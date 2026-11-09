@@ -16,6 +16,7 @@ Decisions land in `docs/adr/` and the spec in `docs/spec/`: a shared `README.md`
 
 - `research/README.md`: everything learned before the map, including how Pipeline works and its limits (`research/pipeline-router.md`), who MetalLegBob is and what he asked for (`research/metallegbob.md`), and full-text archives of his X posts (`research/x/`).
 - `GLOSSARY.md`: the project's language; use its terms in issues, code and tests.
+- `docs/toolchain.md`: the Solana toolchain this project builds and tests with, installed side by side by `scripts/install-toolchain.sh` and put on `PATH` per shell by `source scripts/toolchain-env.sh`; never change the machine's default Solana CLI, which the owner's other projects use.
 - For anything about Jupiter or Meteora, the owner's canonical knowledge base at `/Volumes/Farhan/Work Folder/Dev/AI/Research-Projects/jupiter-meteora`, not the web; for Pool4's Uniswap v4 background, `/Volumes/Farhan/Work Folder/Dev/AI/Research-Projects/v4-hooks`; for Cloudflare, `/Volumes/Farhan/Work Folder/Dev/AI/Research-Projects/cloudflare`.
 
 ## Rules for this project
