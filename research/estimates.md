@@ -9,7 +9,7 @@ They become real only once the map's decisions are made; re-estimate per ticket 
 | 2 | Tax AMM | Yes, the simplest | Buys tax the SOL in, sells tax the SOL out; leave exact-out swaps out of v1 | 3 to 5 days (1 and 2 together about 1.5 to 2 weeks) |
 | 3 | Pipescope | Yes | The Rust quoter cannot run inside a Cloudflare Worker, so Canary checks need a Cloudflare Container or a small server; the Telegram bot must not hold users' keys; the explainer makes paid LLM calls (ask the owner before each) | About 4 to 5 weeks: indexer, feed and charts 1 week; trading and custom-action forms 1 to 1.5 weeks; Canary checks 1 to 1.5 weeks; explainer 2 to 4 days; Telegram bot 1 week |
 | 4 | Pool4 for Solana | Yes | The largest: strategy, buy wall as a second price segment, staking with streamed rewards, five keeper jobs, its own pages; holds the most user money | 3 to 4 weeks |
-| 5 | Lending pool | Yes, with limits | Calling a lending market inside a swap of a hooked token exceeds the call-depth limit, so keep a buffer and rebalance by keeper; swaps larger than the buffer fail while the lending market is fully borrowed; Kamino's devnet presence is unknown, so test against cloned mainnet state | 2 to 3 weeks |
+| 5 | Lending pool | Yes, with limits | Lend through Kamino's cToken path, which leaves one call level spare inside a swap and runs on devnet (corrected 2026-11-09 by the lending market research ticket; hooked tokens cannot be lent at all, and the hook does not deepen the lending call); keep a buffer and rebalance by keeper; swaps larger than the buffer fail while the lending market is fully borrowed | 2 to 3 weeks |
 | 6 | Single-use AMMs | Yes | A service: each needs a client and a design | 3 days to 2 weeks each |
 
 ## Across all of them

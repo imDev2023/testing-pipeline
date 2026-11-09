@@ -35,7 +35,7 @@ Then the strategy's own accounts in the order `pipeline_resolve_accounts` return
 
 ## Limits that shape what we build
 
-- Call depth: trader, router, strategy, token program, transfer hook uses all four nested levels; a strategy that calls another protocol uses the last one, so it fails with hooked tokens (smart wallets add one more level).
+- Call depth: the limit is stack height 5 on devnet and mainnet (SIMD-0268's deeper limit is not active); router (1), strategy (2), token program (3), transfer hook (4) leaves one level spare (`docs/ROUTER.md`). Calls a strategy makes to another protocol sit beside a hooked transfer, not under it, so they do not stack; what counts is the deepest single chain, such as Kamino's cToken redeem at height 4 or Jupiter Lend's withdraw at height 5 (https://github.com/imDev2023/testing-pipeline/issues/12); a smart-wallet trader adds one level to every chain.
 - Compute: a swap through the example strategy costs about 40 to 45k units, 30 to 35k of them the router's; about 1.3M remain for strategies per transaction.
 - Return data is capped at 1 KB; accounts at 10 MB.
 - A token whose hook refuses transfers into the market's fee account can be bought but not sold through Pipeline; fee accounts are associated token accounts of the market's `["fees", market]` PDA, and `sweep_fees` moves them to the treasury owner's token accounts.
