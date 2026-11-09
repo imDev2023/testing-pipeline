@@ -1,15 +1,16 @@
 # testing-pipeline
 
 A suite of products built on Pipeline (https://github.com/MetalLegBob/pipeline), MetalLegBob's permissionless router for experimental Solana markets: Pipescope (a terminal with Canary safety checks and an AI explainer), a containment hook, a tax AMM, Pool4 for Solana, a lending pool, and single-use AMMs built for clients (working names; see `GLOSSARY.md`).
-Started 2026-11-09 from an evaluation of Pipeline; the folder and repo keep the working name `testing-pipeline` until the suite is named.
+Started 2026-11-09 from an evaluation of Pipeline; the folder and repo keep the internal name `testing-pipeline` for good (decided 2026-11-09), and product and suite names are settled on the wayfinder map.
 
 ## Where things stand
 
 Planning: no code yet.
-The next step is charting the wayfinder map: the owner runs `/wayfinder`, using `docs/charting-brief.md` as its input; its "Open questions for the operator" come first.
+The wayfinder map is charted (2026-11-09): [Map: a build-ready spec for the Pipeline suite on devnet](https://github.com/imDev2023/testing-pipeline/issues/1), built from `docs/charting-brief.md`.
+The owner wants it done as soon as possible in parallel sessions: one ticket per session (research tickets excepted), each claimed by assigning yourself before any work.
 Auto mode refuses `gh repo create` and similar outward GitHub writes: write the commands to a script and hand the owner one `! bash <script>` line (`scripts/create-github-repo.sh` is the repo's).
-Once the map exists, start every session by reading its `## Next` section (the map is the issue labelled `wayfinder:map`: `gh issue list --repo imDev2023/testing-pipeline --label wayfinder:map`).
-Decisions land in `docs/adr/` and the spec in `docs/spec.md`; build tickets are labelled `build` and run one per session.
+Start every session by reading the map's `## Next` section (the map is the issue labelled `wayfinder:map`: `gh issue list --repo imDev2023/testing-pipeline --label wayfinder:map`).
+Decisions land in `docs/adr/` and the spec in `docs/spec/`: a shared `README.md` plus one file per product; build tickets are labelled `build` and run one per session.
 
 ## Read first
 
@@ -42,7 +43,7 @@ Single-context. See `docs/agents/domain.md`.
 
 This project is mirrored on the owner's Multica dashboard (workspace Pandora) as project `8eefe62d-d883-4e95-9ee0-d1ae91a2580a`.
 The GitHub issues on `imDev2023/testing-pipeline` stay the source of truth; Multica only mirrors them.
-Until the wayfinder map exists, the starting Multica tickets stand in for it (PAND-764 create the repo: done; PAND-765 send the outreach; PAND-766 chart the map); close each as its step is done.
+The starting Multica tickets (PAND-764 create the repo, PAND-765 send the outreach, PAND-766 chart the map) were done by 2026-11-09; from then on Multica mirrors the map's tickets.
 The Multica project was linked to the local folder because the repo did not exist yet.
 At the end of every session, after the tracker is updated, run the `multica-sync` skill for this project: mirror ticket statuses, add any new tickets, and refresh the project's "Current step" section.
 Every Multica write passes `--no-start` and no ticket is ever assigned to an agent, so the sync never starts an agent run.

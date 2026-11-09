@@ -53,6 +53,9 @@ Tests run in LiteSVM (`crates/pipeline-tests`), including a hostile strategy (`t
 
 Three internal adversarial rounds and a "Stronghold of Security" review on 2026-11-08, every confirmed finding fixed with a regression test (`sos_h009`, `sos_h014`, `sos_h017`, `sos_h022`); no external audit; interfaces "may still change, and package names are placeholders".
 
+Update, commit `a2d5bfb` (2026-11-09 07:14 UTC, "Router verification and security audit, with the hardened router"): formal verification of 47 router properties (Kani proofs, Z3 proofs of the fee maths, Proptest, LiteSVM; `docs/VERIFICATION.md`), a second router-only Stronghold of Security audit with no critical or high findings (one medium in the multi-hop guidance: every hop now carries its own minimum; `docs/SECURITY-AUDIT.md`), and router hardening (swaps that move nothing are refused, fee accounts cannot be the trader's input, balances are re-checked after the strategy call); still no external audit.
+The swap's measurement and fees are now one pure function, `pipeline_strategy_interface::settlement::settle`.
+
 ## Devnet census, 2026-11-09 (through Helius devnet RPC)
 
 | Strategy program | Upgrade authority | Metadata URI | Markets |
