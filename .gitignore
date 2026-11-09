@@ -1,0 +1,12 @@
+node_modules/
+target/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.wrangler/
+.next/
+.open-next/
+dist/
+*-keypair.json
