@@ -4,12 +4,15 @@ Written 2026-11-09 by the session that evaluated Pipeline, for the session that 
 It is input to `/wayfinder`, not the map: the map is a GitHub issue labelled `wayfinder:map` on `imDev2023/testing-pipeline`, created when the owner runs `/wayfinder`.
 Read `research/README.md` first; everything below cites it.
 
-## What the owner has already decided (2026-11-09)
+## What the owner has decided (2026-11-09)
 
 - Build all six of MetalLegBob's asks on Pipeline: the containment hook, the tax AMM, a terminal (Pipescope), Pool4 for Solana, the lending pool, and single-use AMMs as a service.
-- Start with Pipescope, then the containment hook and tax AMM, then Pool4 for Solana, then the lending pool (`research/estimates.md`, Suggested order).
-- Use wayfinder to settle decisions before building, then turn the settled spec into build tickets the relay can run, as in Top-pad.
 - These are new products, not features of the owner's other projects; reusing code from them is welcome (Top-pad's Workers and Durable Object indexer, candle building, Next.js on Workers through OpenNext, Codama Kit clients, solana-verify flow, Playwright end-to-end setup).
+
+## What the evaluating session recommended (confirm in the first grilling)
+
+- Use wayfinder to settle decisions before building, then turn the settled spec into build tickets the relay can run, as in Top-pad; the owner asked whether to use wayfinder or have tickets written directly, and this was the recommendation, because several decisions wait on the owner and on MetalLegBob.
+- Order: Pipescope first, then the containment hook and tax AMM, then Pool4 for Solana, then the lending pool (`research/estimates.md`, Suggested order).
 
 ## Proposed destination
 
@@ -63,6 +66,12 @@ Types follow wayfinder: research (AFK), grilling (HITL), prototype (HITL), task.
 - Single-use AMMs: depend on finding a first client.
 - Whether to publish Canary results on-chain as attestations, or only as a page and API, depends on whether integrators other than us ask for them.
 - Mainnet launch plan, audits and liquidity seeding depend on Pipeline's mainnet date.
+
+## Open questions for the operator
+
+- Has the GitHub repo been created? If `git remote -v` is empty, hand the owner `! bash scripts/create-github-repo.sh` before charting; auto mode refused `gh repo create` on 2026-11-09.
+- Were the reply and DM in `research/outreach.md` sent, and has MetalLegBob answered?
+- What should the suite and the repo be called, if not `testing-pipeline`? Renaming is cheapest before the map and worktrees exist.
 
 ## Out of scope (proposed)
 

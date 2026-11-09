@@ -6,7 +6,8 @@ Started 2026-11-09 from an evaluation of Pipeline; the folder and repo keep the 
 ## Where things stand
 
 Planning: no code yet.
-The next step is charting the wayfinder map: the owner runs `/wayfinder`, using `docs/charting-brief.md` as its input.
+The next step is charting the wayfinder map: the owner runs `/wayfinder`, using `docs/charting-brief.md` as its input; its "Open questions for the operator" come first.
+Auto mode refuses `gh repo create` and similar outward GitHub writes: write the commands to a script and hand the owner one `! bash <script>` line (`scripts/create-github-repo.sh` is the repo's).
 Once the map exists, start every session by reading its `## Next` section (the map is the issue labelled `wayfinder:map`: `gh issue list --repo imDev2023/testing-pipeline --label wayfinder:map`).
 Decisions land in `docs/adr/` and the spec in `docs/spec.md`; build tickets are labelled `build` and run one per session.
 
