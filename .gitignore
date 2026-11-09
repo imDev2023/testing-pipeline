@@ -10,3 +10,4 @@ target/
 .open-next/
 dist/
 *-keypair.json
+.claude/worktrees/
