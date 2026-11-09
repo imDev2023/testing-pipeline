@@ -62,7 +62,7 @@ The swap's measurement and fees are now one pure function, `pipeline_strategy_in
 | --- | --- | --- | --- |
 | `yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx` (example constant product) | `2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ` | `https://example.com/pipeline/constant-product.json` | 14 |
 | `ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb` (bonding curve) | `2yJJsmhv...` | `https://example.com/pipeline/bonding-curve.json` | 12 |
-| `4ajWF6Y3wsxXUbvvaEu7ZcA2RosB1YfaXcqot8kguwJD` (4-mint pool) | `2yJJsmhv...` | `https://example.com/pipeline/pool4.json` | 8 |
+| `4ajWF6Y3wsxXUbvvaEu7ZcA2RosB1YfaXcqot8kguwJD` (MetalLegBob's closed-source Pool4 port, two mints per market, fed by graduations from his bonding curve; first read as a 4-mint pool, corrected by the Pool4 research ticket) | `2yJJsmhv...` | `https://example.com/pipeline/pool4.json` | 8 |
 | `9mAV3pMKXx67poy98jHizWM6TEeKJ5g48ZeD83xFa1UF` (outside builder) | `FWbhWcufRWM3CsVb6MixpwtNXWMYQbhQo3uWEfg4vrKq` | `raw.githubusercontent.com/Hiraeth010/iwao-solana/...` (404, repository private or gone) | 4 |
 
 38 markets in all, and 172 router transactions between 2026-11-07 18:30 and 2026-11-09 03:58 UTC.

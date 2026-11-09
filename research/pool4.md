@@ -16,7 +16,7 @@ For Uniswap v4 hook mechanics, read the owner's v4-hooks knowledge base (`/Volum
 - The wall's floor drops to a new low at once but crawls up only about 4% a day from a block-lagged reference, so a one-block price spike cannot drag it.
 - Staking is an ERC-4626 vault (sIMD) fed by a rate-limited dripper; bonding and the node program are reserves for products not yet live.
 - Five permissionless keeper jobs: place the buy wall, settle claims, sort rewards, drip staking yield, finish burns on Base.
-- The mechanism is meant to be forked; a permissionless launch factory is planned but not built.
+- The mechanism is meant to be forked; IMD's docs contradict themselves on the permissionless launch factory, calling it planned in one place while section 13 says `/launch` is live (2026-11-09).
 - Contract names: `CappedBurnHook`, `RewardDistributor`, `StakedIMD`, `RewardDripper`, `BurnExecutor`, `BaseBurnReceiver`.
 
 ## Porting notes for a Pipeline strategy
@@ -28,4 +28,4 @@ For Uniswap v4 hook mechanics, read the owner's v4-hooks knowledge base (`/Volum
 - Trim, rebalance, distribute and drip are keeper jobs (custom actions), run by our scheduler and callable by anyone.
 - Staking is a separate program or a set of custom actions with a share token; streaming must be rate-limited as in the original.
 - MetalLegBob asked that a Solana variant share part of its fees with Adam and IMD; record the split as a decision.
-- MetalLegBob already registered a 4-mint strategy on devnet with metadata named `pool4.json`; check whether it is his own Pool4 port before we start.
+- MetalLegBob's devnet strategy `4ajWF6Y3...` with metadata named `pool4.json` is his own closed-source Pool4 port (two mints per market, exact-in only, trims to the cap, a SOL buy wall, burns, keeper tips; no 85/15 split and no visible share for IMD or Adam), registered 2026-11-08; ask him whether he ships it before we design ours (https://github.com/imDev2023/testing-pipeline/issues/11).
