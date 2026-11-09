@@ -42,7 +42,8 @@ Single-context. See `docs/agents/domain.md`.
 
 This project is mirrored on the owner's Multica dashboard (workspace Pandora) as project `8eefe62d-d883-4e95-9ee0-d1ae91a2580a`.
 The GitHub issues on `imDev2023/testing-pipeline` stay the source of truth; Multica only mirrors them.
-Until the wayfinder map exists, the three starting Multica tickets (PAND-764 create the repo, PAND-765 send the outreach, PAND-766 chart the map) stand in for it; close each as its step is done.
+Until the wayfinder map exists, the starting Multica tickets stand in for it (PAND-764 create the repo: done; PAND-765 send the outreach; PAND-766 chart the map); close each as its step is done.
+The Multica project was linked to the local folder because the repo did not exist yet.
 At the end of every session, after the tracker is updated, run the `multica-sync` skill for this project: mirror ticket statuses, add any new tickets, and refresh the project's "Current step" section.
 Every Multica write passes `--no-start` and no ticket is ever assigned to an agent, so the sync never starts an agent run.
 If the `multica` CLI is not signed in, say so in the session summary and stop anyway; the sync never blocks the work.

@@ -69,7 +69,7 @@ Types follow wayfinder: research (AFK), grilling (HITL), prototype (HITL), task.
 
 ## Open questions for the operator
 
-- Has the GitHub repo been created? If `git remote -v` is empty, hand the owner `! bash scripts/create-github-repo.sh` before charting; auto mode refused `gh repo create` on 2026-11-09.
+- GitHub repo: answered 2026-11-09, the owner created private `imDev2023/testing-pipeline` with `scripts/create-github-repo.sh`, `main` pushed and all eight wayfinder, build and relay labels present.
 - Were the reply and DM in `research/outreach.md` sent, and has MetalLegBob answered?
 - What should the suite and the repo be called, if not `testing-pipeline`? Renaming is cheapest before the map and worktrees exist.
 
