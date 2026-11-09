@@ -9,7 +9,7 @@ Everything this project learned before its wayfinder map, dated 2026-11-09.
 | `pool4.md` | IMD's Pool4 design, summarised, with notes for porting it to a Pipeline strategy |
 | `landscape.md` | Who routes unusual markets on Solana, prior art for each idea, others building near Pipeline |
 | `estimates.md` | First feasibility and time estimates per product, with the suggested order |
-| `outreach.md` | Drafts of the public reply and DM to MetalLegBob, and the place to record his answers |
+| `outreach.md` | Where the outreach to MetalLegBob is kept: outside this public repo, in the owner's private file |
 | `x/metallegbob-2026-09-01-to-2026-11-09.md` | Full text of all 333 posts and reposts on @MetalLegBob from 2026-09-01 to 2026-11-09 (`.jsonl` beside it is the raw fxtwitter data) |
 | `x/pipeline-launch-thread.md` | The Pipeline launch post and its 35 replies, full text |
 

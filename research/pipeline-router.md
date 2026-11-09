@@ -3,7 +3,7 @@
 Read on 2026-11-09 from https://github.com/MetalLegBob/pipeline at commit `a8b1b1d` ("Security audit fixes and regression tests", 2026-11-08), plus a devnet census the same day.
 Clone it into a scratchpad when you need the source; never copy it into this repo.
 The router is source-available under BSL 1.1 until 2028-11-08 (then GPL-2.0-or-later), so we may read and test it but not run our own copy in production; everything else in that repo is Apache-2.0.
-Its licence has "Additional Use Grant: None" (`programs/pipeline/LICENSE`), and `Quoter::simulate_swap` executes the router's program, so running `simulate_swap` in a production service is non-production use only unless MetalLegBob grants more; the Apache-licensed `pipeline_strategy_interface::settlement::settle` is the fallback (asked in `outreach.md`).
+Its licence has "Additional Use Grant: None" (`programs/pipeline/LICENSE`), and `Quoter::simulate_swap` executes the router's program, so running `simulate_swap` in a production service is non-production use only unless MetalLegBob grants more; the Apache-licensed `pipeline_strategy_interface::settlement::settle` is the fallback (a question for MetalLegBob).
 
 ## What it is
 

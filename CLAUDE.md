@@ -24,7 +24,8 @@ Decisions land in `docs/adr/` and the spec in `docs/spec/`: a shared `README.md`
 - Devnet only until Pipeline's router is on mainnet; never create mainnet deployments before then.
 - Never hold users' private keys, in Pipescope or a Telegram bot.
 - Ask the owner before every paid call, including LLM calls for the explainer and paid RPC tiers, and log approved ones in `~/.config/spend/ledger.csv`.
-- MetalLegBob is a third party: agents draft messages to him in `research/outreach.md`, the owner sends them, and his answers are recorded there with dates.
+- MetalLegBob is a third party: agents draft messages to him in `~/.config/testing-pipeline/outreach.md`, the owner sends them, and his answers are recorded there with dates.
+  The repo is public (2026-11-09), so his words and the messages never go into the repo, its issues or its PRs; those record only the decisions his answers settle.
 - This project's devnet keys live outside the repo in `~/.config/testing-pipeline/devnet/`; it does not use Top-pad's (Heat's) devnet bank.
 - To refresh the X archives, follow `research/README.md` (Claude in Chrome for ids, then `scripts/fetch_x_posts.py`).
 - Code reused from the owner's other projects (Top-pad's indexer, candles, Workers and OpenNext setup, Codama clients, solana-verify flow, Playwright setup) is copied in and owned here; these products stay separate from those projects.
