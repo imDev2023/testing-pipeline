@@ -90,7 +90,8 @@ const FOUND_IN_PIPELINE = [
 // ---- Reading the record ----
 
 function run(command, args) {
-  // GitHub is flaky on this network (docs/toolchain.md), so every call gets a few quiet tries.
+  // GitHub is flaky on this network (docs/toolchain.md): a call can fail, or hang for good.
+  // So every call gets ninety seconds and a few quiet tries.
   for (let attempt = 1; ; attempt++) {
     try {
       return execFileSync(command, args, {
@@ -98,6 +99,7 @@ function run(command, args) {
         encoding: 'utf8',
         maxBuffer: 64 << 20,
         stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 90_000,
       });
     } catch (error) {
       if (attempt === 4) fail(`${command} ${args.join(' ')} failed four times:\n${error.stderr || error.message}`);
