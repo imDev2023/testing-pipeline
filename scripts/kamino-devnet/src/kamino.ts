@@ -27,7 +27,8 @@ import { KLEND_GLOBAL_CONFIG, KLEND_PROGRAM, QUOTE_CURRENCY, type ReservePolicy 
 
 const INSTRUCTIONS_SYSVAR = address("Sysvar1nstructions1111111111111111111111111");
 const RENT_SYSVAR = address("SysvarRent111111111111111111111111111111111");
-const DEFAULT_ADDRESS = address("11111111111111111111111111111111");
+/** The all-zero address, which klend uses for an empty slot or an unused seed. */
+export const DEFAULT_ADDRESS = address("11111111111111111111111111111111");
 const addressBytes = getAddressEncoder();
 
 async function pda(seeds: (string | ReadonlyUint8Array)[]): Promise<Address> {

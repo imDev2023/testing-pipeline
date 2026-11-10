@@ -1,6 +1,7 @@
 // A solana-test-validator running devnet's own Kamino Lend: klend's program and its global config are cloned from
-// devnet at start, and the two Pyth price accounts the reserves name are loaded with their publish time moved to
-// now, so a borrow sees a fresh price. Needs `source scripts/toolchain-env.sh` (Agave 4.4.1, docs/toolchain.md).
+// devnet at start, and the two Pyth price accounts the reserves name are loaded with their publish time moved a day
+// ahead, so every borrow in a run sees a fresh price (klend counts a price from the future as 0 seconds old).
+// Needs `source scripts/toolchain-env.sh` (Agave 4.4.1, docs/toolchain.md).
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,7 +23,21 @@ export interface LocalValidator {
   stop(): Promise<void>;
 }
 
+/** Cloning from public devnet fails now and then (rate limits, timeouts), so a failed start is tried again. */
+const START_ATTEMPTS = 3;
+
 export async function startLocalValidator(port: number): Promise<LocalValidator> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await startOnce(port);
+    } catch (error) {
+      if (attempt >= START_ATTEMPTS) throw error;
+      await sleep(5_000 * attempt);
+    }
+  }
+}
+
+async function startOnce(port: number): Promise<LocalValidator> {
   const dir = mkdtempSync(join(tmpdir(), "kamino-devnet-"));
   const args = [
     "--reset",
@@ -51,11 +66,19 @@ export async function startLocalValidator(port: number): Promise<LocalValidator>
     writeFileSync(file, JSON.stringify(await freshPythAccount(feed)));
     args.push("--account", feed, file);
   }
-  const child = spawn("solana-test-validator", args, { stdio: ["ignore", "ignore", "pipe"] });
-  let stderr = "";
-  child.stderr?.on("data", (chunk) => (stderr += chunk));
+  const child = spawn("solana-test-validator", args, { stdio: ["ignore", "pipe", "pipe"] });
+  // The validator reports a failed clone on stdout; keep the tail of both streams for the error.
+  let output = "";
+  const keep = (chunk: Buffer) => (output = (output + chunk.toString()).slice(-4_000));
+  child.stdout?.on("data", keep);
+  child.stderr?.on("data", keep);
   const url = `http://127.0.0.1:${port}`;
-  await waitForHealth(url, child, () => stderr);
+  try {
+    await waitForHealth(url, child, () => output);
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
   return {
     url,
     dir,
@@ -72,9 +95,9 @@ async function freshPythAccount(feed: string) {
   if (!value) throw new Error(`Pyth feed ${feed} not found on devnet`);
   const data = Buffer.from(value.data[0], "base64");
   if (data[40] !== 1) throw new Error(`Pyth feed ${feed} is not fully verified`);
-  const now = BigInt(Math.floor(Date.now() / 1000));
-  data.writeBigInt64LE(now, PYTH_PUBLISH_TIME);
-  data.writeBigInt64LE(now - 1n, PYTH_PREV_PUBLISH_TIME);
+  const ahead = BigInt(Math.floor(Date.now() / 1000) + 86_400);
+  data.writeBigInt64LE(ahead, PYTH_PUBLISH_TIME);
+  data.writeBigInt64LE(ahead - 1n, PYTH_PREV_PUBLISH_TIME);
   return {
     pubkey: feed,
     account: {
@@ -88,10 +111,10 @@ async function freshPythAccount(feed: string) {
   };
 }
 
-async function waitForHealth(url: string, child: ChildProcess, stderr: () => string) {
+async function waitForHealth(url: string, child: ChildProcess, output: () => string) {
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`solana-test-validator exited: ${stderr()}`);
+    if (child.exitCode !== null) throw new Error(`solana-test-validator exited: ${output()}`);
     try {
       const health = await rpcCall(url, "getHealth", [], 1);
       if (health === "ok") return;
@@ -101,7 +124,7 @@ async function waitForHealth(url: string, child: ChildProcess, stderr: () => str
     await sleep(500);
   }
   await stopProcess(child);
-  throw new Error(`solana-test-validator did not become healthy: ${stderr()}`);
+  throw new Error(`solana-test-validator did not become healthy: ${output()}`);
 }
 
 async function stopProcess(child: ChildProcess) {

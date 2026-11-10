@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { borrow, repayAll } from "./borrower.ts";
-import { openContext } from "./context.ts";
+import { openContext, type Context } from "./context.ts";
 import { deposit, redeem } from "./ctokens.ts";
 import { setEmergencyMode } from "./emergency.ts";
 import { checkLayout, formatChecks } from "./layout-check.ts";
@@ -63,8 +63,8 @@ async function main() {
     console.log(HELP);
     return;
   }
-  await refuseOtherClusters(values.url);
   const ctx = await openContext({ url: values.url, keysDir: values.keys, bookPath: values.addresses });
+  await refuseOtherClusters(ctx);
   const reserve = () => reserveKey(values.reserve);
   switch (command) {
     case "setup":
@@ -128,17 +128,15 @@ async function main() {
   }
 }
 
-/** Devnet only, until Pipeline's router is on mainnet; local validators are for tests. */
-async function refuseOtherClusters(url: string) {
-  const host = new URL(url).hostname;
-  if (host === "127.0.0.1" || host === "localhost") return;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getGenesisHash" }),
-  });
-  const { result } = (await response.json()) as { result?: string };
-  if (result !== DEVNET_GENESIS_HASH) throw new Error(`${url} is not devnet (genesis hash ${result}); this script runs on devnet only`);
+/**
+ * Devnet only, until Pipeline's router is on mainnet; local validators are for tests. Errors name the RPC by its host
+ * alone, since a provider's URL can carry an API key.
+ */
+async function refuseOtherClusters(ctx: Context) {
+  const { hostname } = new URL(ctx.chain.url);
+  if (hostname === "127.0.0.1" || hostname === "localhost") return;
+  const hash = await ctx.chain.genesisHash();
+  if (hash !== DEVNET_GENESIS_HASH) throw new Error(`the RPC at ${hostname} is not devnet (genesis hash ${hash}); this script runs on devnet only`);
 }
 
 function reserveKey(name: string | undefined): ReserveKey {

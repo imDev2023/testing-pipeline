@@ -2,7 +2,7 @@
 // cToken holder and the test borrower.
 import type { Context } from "./context.ts";
 import { deposit, partyAccounts, readReserve, redeem, type DepositResult, type RedeemResult } from "./ctokens.ts";
-import { redeemValue, totalSupplySf } from "./layout.ts";
+import { liquidityToCtokens, redeemValue } from "./layout.ts";
 import { RESERVES, SECOND_DEPOSITOR, type ReserveKey } from "./policy.ts";
 
 /** A few base units above the target, so the cTokens bought, valued back at the stored rate, still reach it. */
@@ -34,11 +34,7 @@ export async function supplySecondDepositor(ctx: Context, key: ReserveKey): Prom
 export async function takeBack(ctx: Context, key: ReserveKey, amount: bigint | "all"): Promise<RedeemResult> {
   let ctokens: bigint | "all" = "all";
   if (amount !== "all") {
-    const reserve = await readReserve(ctx, key);
-    ctokens =
-      reserve.collateralMintTotalSupply === 0n
-        ? amount
-        : (amount * reserve.collateralMintTotalSupply * (1n << 60n)) / totalSupplySf(reserve);
+    ctokens = liquidityToCtokens(await readReserve(ctx, key), amount);
   }
   return redeem(ctx, ctx.keys.wallet, key, ctokens, `second depositor takes back from the ${RESERVES[key].label} reserve`);
 }

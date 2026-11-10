@@ -9,6 +9,11 @@ import {
   getSyncNativeInstruction,
 } from "@solana-program/token";
 
+/** The amount an SPL token account holds, from its raw data. */
+export function tokenAmount(data: Uint8Array): bigint {
+  return new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(64, true);
+}
+
 export async function associatedTokenAccount(owner: Address, mint: Address): Promise<Address> {
   const [ata] = await findAssociatedTokenPda({ owner, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
   return ata;

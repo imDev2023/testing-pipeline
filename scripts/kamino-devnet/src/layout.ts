@@ -154,7 +154,20 @@ export function decodeLendingMarket(data: Uint8Array): LendingMarketView {
   };
 }
 
-const ONE_SF = 1n << 60n;
+/** One in klend's fixed point, which has 60 fractional bits (fields ending in `_sf`). */
+export const ONE_SF = 1n << 60n;
+
+/** A fixed-point amount rounded up to whole base units, as klend rounds a debt. */
+export function ceilSf(valueSf: bigint): bigint {
+  return (valueSf + ONE_SF - 1n) >> 60n;
+}
+
+/** cTokens worth at most `liquidity` at the stored rate: floor(liquidity x cToken supply / total supply), or 1:1. */
+export function liquidityToCtokens(r: ReserveView, liquidity: bigint): bigint {
+  const supplySf = totalSupplySf(r);
+  if (supplySf === 0n || r.collateralMintTotalSupply === 0n) return liquidity;
+  return (liquidity * r.collateralMintTotalSupply * ONE_SF) / supplySf;
+}
 
 /** The reserve's total supply in 60-bit fixed point: available + borrowed - fees owed to the protocol and referrers. */
 export function totalSupplySf(r: ReserveView): bigint {

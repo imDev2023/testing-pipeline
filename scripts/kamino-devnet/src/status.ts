@@ -38,7 +38,8 @@ export async function statusReport(ctx: Context): Promise<StatusReport> {
       key,
       address: ctx.book.reserves[key].address,
       totalSupply: totalSupplySf(r) >> 60n,
-      borrowed: (r.borrowedAmountSf + (1n << 60n) - 1n) >> 60n,
+      // Rounded down like the total supply; a fully repaid reserve can keep less than a lamport of fixed-point dust.
+      borrowed: r.borrowedAmountSf >> 60n,
       freeLiquidity: freeLiquidity(r),
       utilisationBps: utilisationBps(r),
       storedRate: storedRate(r),

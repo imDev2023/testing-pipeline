@@ -26,6 +26,7 @@ import {
 } from "@solana/kit";
 
 import { KLEND_PROGRAM } from "./policy.ts";
+import { tokenAmount } from "./tokens.ts";
 
 export interface AccountData {
   address: Address;
@@ -60,6 +61,7 @@ export interface TransactionDetails {
 const base58 = getBase58Encoder();
 const POLL_MS = 500;
 const RETRY_FOR_MS = 5 * 60_000;
+const FEE_READS_AT_ONCE = 8;
 const RESEND_MS = 2_000;
 
 export class Chain {
@@ -108,8 +110,7 @@ export class Chain {
   /** A token account's balance in base units, or 0 when it does not exist. */
   async tokenBalance(tokenAccount: Address): Promise<bigint> {
     const account = await this.account(tokenAccount);
-    if (!account) return 0n;
-    return new DataView(account.data.buffer, account.data.byteOffset).getBigUint64(64, true);
+    return account ? tokenAmount(account.data) : 0n;
   }
 
   async mintSupply(mint: Address): Promise<bigint> {
@@ -120,12 +121,6 @@ export class Chain {
 
   async rent(space: number): Promise<bigint> {
     return this.retry(() => this.rpc.getMinimumBalanceForRentExemption(BigInt(space)).send());
-  }
-
-  async unixTime(): Promise<bigint> {
-    const slot = await this.retry(() => this.rpc.getSlot({ commitment: "confirmed" }).send());
-    const time = await this.retry(() => this.rpc.getBlockTime(slot).send());
-    return BigInt(time ?? Math.floor(Date.now() / 1000));
   }
 
   /** Local validators only: devnet SOL comes from `devnet-airdrop`, never from the RPC faucet. */
@@ -144,16 +139,7 @@ export class Chain {
   /** Sends one transaction paid by `feePayer` and waits until it is confirmed; throws with klend's error and logs. */
   async send(label: string, instructions: Instruction[], feePayer: TransactionSigner): Promise<Signature> {
     const { signature, wire, lastValidBlockHeight } = await this.sign(instructions, feePayer);
-    try {
-      await this.rpc
-        .sendTransaction(wire, { encoding: "base64", preflightCommitment: "confirmed", maxRetries: 0n })
-        .send();
-    } catch (error) {
-      // The RPC answered and refused it (a failed preflight simulation): report why. Anything else is the network,
-      // and the transaction may still land, so it is resent while its status is polled.
-      if (isRpcRefusal(error)) throw new Error(`${label}: ${describeSendError(error)}`);
-      this.log(`  ${label}: sending failed (${describe(error)}), resending while waiting for ${signature}`);
-    }
+    await this.submit(label, signature, wire, false);
     const failure = await this.confirm(signature, wire, lastValidBlockHeight);
     this.journal.push({ label, signature, ok: !failure, ...(failure && { error: failure.error }) });
     if (failure) throw new Error(`${label}: ${failure.error} (${signature})\n${failure.logs.join("\n")}`);
@@ -171,9 +157,7 @@ export class Chain {
     feePayer: TransactionSigner,
   ): Promise<FailedTransaction> {
     const { signature, wire, lastValidBlockHeight } = await this.sign(instructions, feePayer);
-    await this.rpc
-      .sendTransaction(wire, { encoding: "base64", skipPreflight: true, maxRetries: 0n })
-      .send();
+    await this.submit(label, signature, wire, true);
     const failure = await this.confirm(signature, wire, lastValidBlockHeight);
     this.journal.push({ label, signature, ok: !failure, ...(failure && { error: failure.error }) });
     if (!failure) throw new Error(`${label}: expected a refusal, but it succeeded (${signature})`);
@@ -199,6 +183,36 @@ export class Chain {
       })),
       fee: tx.meta?.fee ?? 0n,
     };
+  }
+
+  /** The fee each transaction paid, read from the cluster a few at a time. */
+  async fees(signatures: Signature[]): Promise<bigint> {
+    let total = 0n;
+    for (let i = 0; i < signatures.length; i += FEE_READS_AT_ONCE) {
+      const details = await Promise.all(signatures.slice(i, i + FEE_READS_AT_ONCE).map((s) => this.transaction(s)));
+      total += details.reduce((sum, d) => sum + d.fee, 0n);
+    }
+    return total;
+  }
+
+  async genesisHash(): Promise<string> {
+    return this.retry(() => this.rpc.getGenesisHash().send());
+  }
+
+  /**
+   * Sends a signed transaction once. When the RPC answers with a refusal (a failed preflight simulation) it throws
+   * with the reason; when the network fails, the transaction may still land, so it is resent while its status is
+   * polled.
+   */
+  private async submit(label: string, signature: Signature, wire: Base64EncodedWireTransaction, skipPreflight: boolean) {
+    try {
+      await this.rpc
+        .sendTransaction(wire, { encoding: "base64", preflightCommitment: "confirmed", skipPreflight, maxRetries: 0n })
+        .send();
+    } catch (error) {
+      if (isRpcRefusal(error)) throw new Error(`${label}: ${describeSendError(error)}`);
+      this.log(`  ${label}: sending failed (${describe(error)}), resending while waiting for ${signature}`);
+    }
   }
 
   private async sign(instructions: Instruction[], feePayer: TransactionSigner) {

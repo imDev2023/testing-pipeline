@@ -8,6 +8,7 @@ import type { Context } from "./context.ts";
 import { mintTestUsdc, readReserve } from "./ctokens.ts";
 import { FEE_RESERVE, topUp } from "./funding.ts";
 import {
+  DEFAULT_ADDRESS,
   borrowObligationLiquidity,
   depositObligationCollateral,
   initObligation,
@@ -18,18 +19,21 @@ import {
   repayAllObligationLiquidity,
   userMetadataAddress,
 } from "./kamino.ts";
-import { totalSupplySf, type ReserveView } from "./layout.ts";
+import { ceilSf, redeemValue, totalSupplySf, type ReserveView } from "./layout.ts";
 import { TEST_BORROWER } from "./policy.ts";
 import { associatedTokenAccount, createAssociatedTokenAccount, unwrapSol, wrapSol } from "./tokens.ts";
 
-const DEFAULT_ADDRESS = "11111111111111111111111111111111";
-/** WSOL wrapped on top of the recorded debt before repaying it, for the interest accrued since the last refresh. */
+/**
+ * WSOL wrapped on top of the debt read right after a refresh, for the interest of the seconds until the repay lands;
+ * 0.01 SOL covers hours even at the curve's top rate.
+ */
 const REPAY_MARGIN = 10_000_000n;
 
 export interface BorrowerPosition {
   obligation: Address;
   exists: boolean;
   collateralReserve: Address | null;
+  /** cTokens of the test USDC reserve the obligation holds as collateral. */
   collateralCtokens: bigint;
   /** WSOL owed, rounded up, as of the obligation's last refresh. */
   debt: bigint;
@@ -73,8 +77,10 @@ export async function borrowerPosition(ctx: Context): Promise<BorrowerPosition> 
     obligation,
     exists: true,
     collateralReserve: deposits[0]?.depositReserve ?? null,
-    collateralCtokens: deposits.reduce((sum, d) => sum + BigInt(d.depositedAmount.toString()), 0n),
-    debt: (debtSf + (1n << 60n) - 1n) >> 60n,
+    collateralCtokens: deposits
+      .filter((d) => d.depositReserve === ctx.book.reserves.testUsdc.address)
+      .reduce((sum, d) => sum + BigInt(d.depositedAmount.toString()), 0n),
+    debt: ceilSf(debtSf),
     reserves: [...deposits.map((d) => d.depositReserve), ...borrows.map((b) => b.borrowReserve)],
   };
 }
@@ -106,11 +112,11 @@ export async function ensureCollateral(ctx: Context): Promise<BorrowerPosition> 
     await ctx.chain.send("test borrower opens an obligation", opening, borrower);
     position = await borrowerPosition(ctx);
   }
-  const reserve = await readReserve(ctx, "testUsdc");
-  const ctokensWanted = (TEST_BORROWER.collateral * reserve.collateralMintTotalSupply * (1n << 60n)) / totalSupplySf(reserve);
-  if (position.collateralCtokens * 100n >= ctokensWanted * 99n) return position;
+  const posted = redeemValue(await readReserve(ctx, "testUsdc"), position.collateralCtokens);
+  // Within 1% of the policy is enough: a top-up of a few base units is not worth a transaction.
+  if (posted * 100n >= TEST_BORROWER.collateral * 99n) return position;
   const source = await associatedTokenAccount(borrower.address, usdc.liquidityMint);
-  const amount = TEST_BORROWER.collateral;
+  const amount = TEST_BORROWER.collateral - posted;
   const held = await ctx.chain.tokenBalance(source);
   if (held < amount) await mintTestUsdc(ctx, borrower, amount - held);
   await ctx.chain.send(
@@ -149,12 +155,17 @@ export async function watchRate(ctx: Context, seconds: number): Promise<RateWatc
   return { signature, before, after, interest: (totalSupplySf(after) - totalSupplySf(before)) >> 60n };
 }
 
-/** Repays the whole WSOL debt, wrapping the borrower's SOL for the interest, and unwraps what is left. */
+/**
+ * Repays the whole WSOL debt and unwraps what is left. The obligation is refreshed first, so the debt read is current
+ * however long the loan was open, and the borrower wraps that much SOL plus a margin for the seconds until the repay.
+ */
 export async function repayAll(ctx: Context): Promise<RepayResult> {
   const { borrower } = ctx.keys;
   const wsol = ctx.book.reserves.wsol;
+  const stale = await borrowerPosition(ctx);
+  if (stale.debt === 0n) throw new Error("the test borrower owes nothing");
+  await ctx.chain.send("refresh the test borrower's obligation", await refreshes(ctx, stale, [wsol.address]), ctx.keys.wallet);
   const position = await borrowerPosition(ctx);
-  if (position.debt === 0n) throw new Error("the test borrower owes nothing");
   const source = await associatedTokenAccount(borrower.address, wsol.liquidityMint);
   const held = await ctx.chain.tokenBalance(source);
   const wrapping = position.debt + REPAY_MARGIN > held ? position.debt + REPAY_MARGIN - held : 0n;

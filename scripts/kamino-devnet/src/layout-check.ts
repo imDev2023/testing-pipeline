@@ -12,10 +12,14 @@ import {
   LENDING_MARKET_SIZE,
   RESERVE_DISCRIMINATOR,
   RESERVE_SIZE,
+  DEPRECATED_RESERVE_VERSION,
   decodeLendingMarket,
   decodeReserve,
 } from "./layout.ts";
 import { KLEND_PROGRAM, RESERVES, RESERVE_KEYS, RESERVE_SEED } from "./policy.ts";
+
+/** 2022-01-01, before Kamino Lend's first release: no last update can be older. */
+const FIRST_KLEND_RELEASE = 1_640_995_200;
 
 export interface LayoutCheck {
   account: string;
@@ -63,7 +67,8 @@ export async function checkLayout(ctx: Context): Promise<LayoutCheck[]> {
     add(name, "fee vault at 192", r.feeVault, entry.feeReceiver);
     add(name, "collateral mint at 2560", r.collateralMint, entry.collateralMint);
     add(name, "collateral supply at 2600", r.collateralSupply, entry.collateralSupply);
-    add(name, "version at 8 (not deprecated)", r.version, BigInt(idl.version.toString()));
+    add(name, "version at 8 matches the IDL layout", r.version, BigInt(idl.version.toString()));
+    add(name, "version at 8 is not the deprecated marker", r.version !== DEPRECATED_RESERVE_VERSION, true);
     add(name, "deposit limit at 5016", r.depositLimit, policy.depositLimit);
     add(name, "borrow rate curve at 4920", r.borrowRateCurve, policy.borrowRateCurve);
     add(name, "withdrawal cap capacity at 5416", r.depositWithdrawalCap.capacity, policy.depositWithdrawalCap.capacity);
@@ -81,7 +86,9 @@ export async function checkLayout(ctx: Context): Promise<LayoutCheck[]> {
     add(name, "queued collateral at 6968 (no tickets)", r.queuedCollateralAmount, 0n);
     add(name, "withdrawal cap used at 5424 matches the IDL layout", r.depositWithdrawalCap.current, BigInt(idl.config.depositWithdrawalCap.currentTotal.toString()));
     add(name, "last update slot at 16 matches the IDL layout", r.lastUpdateSlot, BigInt(idl.lastUpdate.slot.toString()));
-    add(name, "last update time at 28 is a recent Unix time", Math.abs(r.lastUpdateTimestamp - Date.now() / 1000) < 30 * 86_400, true);
+    // klend 1.28.0 keeps the last update's Unix time in what the SDK's older layout calls padding; it must read as
+    // a time between klend's first release and a minute from now, however long the reserve has been idle.
+    add(name, "last update time at 28 is a Unix time", r.lastUpdateTimestamp >= FIRST_KLEND_RELEASE && r.lastUpdateTimestamp <= Date.now() / 1000 + 60, true);
     // Kamino's seed is counted in the reserve's cToken supply but never minted, so the two differ by exactly it.
     const minted = await ctx.chain.mintSupply(entry.collateralMint);
     add(name, "cToken supply at 2592 is the SPL supply plus the seed", r.collateralMintTotalSupply - minted, RESERVE_SEED);

@@ -29,7 +29,7 @@ import {
 } from "./policy.ts";
 import { setup } from "./setup.ts";
 import { statusReport, units } from "./status.ts";
-import { associatedTokenAccount } from "./tokens.ts";
+import { associatedTokenAccount, tokenAmount } from "./tokens.ts";
 
 export interface ProveOptions {
   /** How long the loan stays open before the stored rate is read again. */
@@ -168,15 +168,14 @@ export async function prove(ctx: Context, options: ProveOptions = {}): Promise<P
   // sessions, so its balance would count their spending too. The test borrower's interest is not spent: it went to
   // the reserve's suppliers, chiefly the devnet wallet, and shows in what is locked.
   const journal = ctx.chain.journal.slice(journalStart);
-  let spentLamports = 0n;
-  for (const entry of journal) spentLamports += (await ctx.chain.transaction(entry.signature)).fee;
+  const spentLamports = await ctx.chain.fees(journal.map((entry) => entry.signature));
   const summary = [
     status.text,
     "",
     `Devnet SOL: spent ${units(spentLamports, SOL_DECIMALS)} SOL in fees on ${journal.length} transactions;`,
     `locked ${units(ledgerAfter.locked, SOL_DECIMALS)} SOL (${units(ledgerAfter.supplied, SOL_DECIMALS)} supplied by the devnet wallet, ` +
-      `${units(ledgerAfter.rent, SOL_DECIMALS)} rent in the accounts created, ${units(ledgerAfter.seed, SOL_DECIMALS)} as the WSOL reserve's seed), ` +
-      `${units(ledgerAfter.locked - ledgerBefore.locked, SOL_DECIMALS)} of it by this run.`,
+      `${units(ledgerAfter.rent, SOL_DECIMALS)} rent in the accounts created, ${units(ledgerAfter.seed, SOL_DECIMALS)} as the WSOL reserve's seed); ` +
+      `this run changed what is locked by ${units(ledgerAfter.locked - ledgerBefore.locked, SOL_DECIMALS)} SOL.`,
     "",
     "| Step | Transaction | Result |",
     "| --- | --- | --- |",
@@ -278,7 +277,7 @@ async function solLedger(ctx: Context): Promise<SolLedger> {
   let supplied = 0n;
   tokens.forEach((account, i) => {
     if (!account) return;
-    const amountHeld = new DataView(account.data.buffer, account.data.byteOffset).getBigUint64(64, true);
+    const amountHeld = tokenAmount(account.data);
     const mint = tokenAccounts[i]!.mint;
     if (mint === WSOL_MINT) {
       rent += account.lamports - amountHeld;
@@ -291,7 +290,7 @@ async function solLedger(ctx: Context): Promise<SolLedger> {
     if (!account) return;
     // The WSOL reserve's liquidity supply holds its WSOL as lamports; only the rent is ours.
     if (created[i] === wsol.liquiditySupply) {
-      rent += account.lamports - new DataView(account.data.buffer, account.data.byteOffset).getBigUint64(64, true);
+      rent += account.lamports - tokenAmount(account.data);
     } else {
       rent += account.lamports;
     }
@@ -309,8 +308,11 @@ function short(signature: string): string {
   return `${signature.slice(0, 8)}...${signature.slice(-8)}`;
 }
 
+/** An explorer link: devnet's, or a local validator's by its origin (never an RPC URL, which may carry a key). */
 function explorer(ctx: Context, signature: string): string {
-  const cluster = ctx.chain.url.includes("devnet") ? "devnet" : `custom&customUrl=${encodeURIComponent(ctx.chain.url)}`;
+  const url = new URL(ctx.chain.url);
+  const local = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+  const cluster = local ? `custom&customUrl=${encodeURIComponent(url.origin)}` : "devnet";
   return `https://explorer.solana.com/tx/${signature}?cluster=${cluster}`;
 }
 

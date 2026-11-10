@@ -67,6 +67,7 @@ export async function setup(ctx: Context): Promise<SetupResult> {
 
   if (writeAddressBook(ctx.bookPath, book)) ctx.log(`Wrote ${ctx.bookPath}`);
   ctx.log(created.length > 0 ? `Created or changed: ${created.join("; ")}` : "Nothing to create: all in place");
+  ctx.log(describeAddresses(book));
   return { book, created };
 }
 
@@ -114,15 +115,18 @@ async function createReserve(ctx: Context, key: ReserveKey) {
   const reserve = ctx.book.reserves[key];
   const seedSource = await associatedTokenAccount(marketOwner.address, reserve.liquidityMint);
   const missing = RESERVE_SEED - (await ctx.chain.tokenBalance(seedSource));
-  const prepare: Instruction[] = [await createAssociatedTokenAccount(wallet, marketOwner.address, reserve.liquidityMint)];
   if (missing > 0n) {
-    prepare.push(
-      ...(key === "wsol"
-        ? wrapSol(wallet, seedSource, missing)
-        : [getMintToInstruction({ mint: reserve.liquidityMint, token: seedSource, mintAuthority: testUsdcMintAuthority, amount: missing })]),
+    await ctx.chain.send(
+      `put the ${RESERVES[key].label} reserve's seed in the owner's token account`,
+      [
+        await createAssociatedTokenAccount(wallet, marketOwner.address, reserve.liquidityMint),
+        ...(key === "wsol"
+          ? wrapSol(wallet, seedSource, missing)
+          : [getMintToInstruction({ mint: reserve.liquidityMint, token: seedSource, mintAuthority: testUsdcMintAuthority, amount: missing })]),
+      ],
+      wallet,
     );
   }
-  await ctx.chain.send(`put the ${RESERVES[key].label} reserve's seed in the owner's token account`, prepare, wallet);
   await ctx.chain.send(
     `create the ${RESERVES[key].label} reserve`,
     [
@@ -207,6 +211,21 @@ function createWithSeed(
     space,
     programAddress,
   });
+}
+
+/** Every address in the book, one per line, as `setup` reports them. */
+export function describeAddresses(book: AddressBook): string {
+  const lines = [
+    `  lending market       ${book.lendingMarket.address} (authority ${book.lendingMarket.authority}, owner ${book.lendingMarket.owner})`,
+    `  test USDC mint       ${book.testUsdc.mint} (mint authority ${book.testUsdc.mintAuthority})`,
+  ];
+  for (const key of RESERVE_KEYS) {
+    const r = book.reserves[key];
+    lines.push(
+      `  ${`${RESERVES[key].label} reserve`.padEnd(20)} ${r.address} (liquidity supply ${r.liquiditySupply}, cToken mint ${r.collateralMint})`,
+    );
+  }
+  return lines.join("\n");
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
