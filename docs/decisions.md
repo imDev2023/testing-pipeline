@@ -310,9 +310,9 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-26: Keeper runner: wallet and spending caps
 
 - Question: Which wallet pays for our keeper jobs, and how is its spending bounded?
-- Answer: A new key of its own with tight spending caps, each cap a named setting kept in one place.
+- Answer: A new key made only for the runner, with tight caps kept as named settings in one module: at most 0.003 SOL a transaction, 0.01 SOL a market a day and 0.1 SOL a day in all.
 - Alternatives: The same key with loose caps; reusing the project's deploy wallet.
-- Specified in: [the ticket, Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
+- Specified in: [`docs/spec/keeper-runner.md`, Spending caps](spec/keeper-runner.md#spending-caps)
 - Changes by: runtime setting
 - Status: default
 - Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
@@ -320,9 +320,9 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-27: Keeper runner: failures and due jobs
 
 - Question: What happens when a keeper job fails or the wallet runs dry, and how are due jobs shown?
-- Answer: The runner retries, then parks the job, and a status page in Aviary shows the jobs that are due.
+- Answer: A failed job is retried after 30 seconds, 2 minutes and 10 minutes and then parked until the market's state changes; below its minimum balance or at a cap the runner sends nothing; and Aviary shows every due, held or parked job.
 - Alternatives: The same with a Telegram alert; logs only.
-- Specified in: [the ticket, Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
+- Specified in: [`docs/spec/keeper-runner.md`, Failures](spec/keeper-runner.md#failures)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
@@ -330,9 +330,9 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-28: Keeper runner: tips and coverage
 
 - Question: Does the runner keep the tips it earns, and which markets does it serve?
-- Answer: It keeps the tips, and it serves every market of our strategies, not only the markets we create.
+- Answer: It keeps the tips, unwrapping them into its float, and it serves every market of our strategies on devnet, including markets other people create, within the spending caps.
 - Alternatives: Sending the tips to the suite treasury; serving only markets we create.
-- Specified in: [the ticket, Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
+- Specified in: [`docs/spec/keeper-runner.md`, Keeper tips](spec/keeper-runner.md#keeper-tips)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
@@ -366,6 +366,66 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+
+### SUITE-32: Keeper runner: where it runs
+
+- Question: Where does the keeper runner run on devnet?
+- Answer: On the owner's Mac as a launchd agent, as one Node program in this repo, `apps/keeper`; nothing of it runs on the owner's Cloudflare account, and a Docker image lets anyone run it on their own machine with their own key.
+- Alternatives: A Worker of its own on Cloudflare; inside the terminal's API Worker.
+- Specified in: [`docs/spec/keeper-runner.md`, What it is](spec/keeper-runner.md#what-it-is)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
+
+### SUITE-33: Keeper runner: the jobs
+
+- Question: Which keeper jobs does the runner call?
+- Answer: Every keeper job of our strategies: the buy wall AMM's four, the lending AMM's `rebalance` and the tax AMM's `distribute`; the containment hook's `unlock` has no job in v1.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/keeper-runner.md`, The jobs](spec/keeper-runner.md#the-jobs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
+
+### SUITE-34: Keeper runner: when jobs run
+
+- Question: How does the runner learn that a job is due?
+- Answer: From its own socket on our strategy programs after each transaction, a sweep of every market every 10 minutes, an hourly pass for `settle` and a daily pass for payouts, with one full pass whenever it starts; it reads only the chain.
+- Alternatives: Acting when Aviary's indexer sees a market need a job.
+- Specified in: [`docs/spec/keeper-runner.md`, Triggers](spec/keeper-runner.md#triggers)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
+
+### SUITE-35: Keeper runner: one definition of due
+
+- Question: Where is the rule for when a job is due written?
+- Answer: Once, as a pure function of the market state in the shared package `packages/keeper-jobs`, which both the runner and Aviary's panels use, so a button shows in Aviary exactly when the runner would act.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/keeper-runner.md`, One definition of due](spec/keeper-runner.md#one-definition-of-due)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
+
+### SUITE-36: Keeper runner: RPC
+
+- Question: Which RPC does the runner use?
+- Answer: Alchemy's free devnet endpoint, which keeps its load off Aviary's own Helius key and the owner's shared one; there is no paid tier, and the runner slows its sweeps if the free tier runs out.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/keeper-runner.md`, RPC](spec/keeper-runner.md#rpc)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
+
+### SUITE-37: Keeper runner: what it records
+
+- Question: Where does the runner record what it did?
+- Answer: In one table, `keeper_runs`, of Aviary's Postgres, written directly from the runner, or in its log when it has no database; a public keeper page in Aviary shows the wallet, today's spend against each cap and every held or parked job.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/keeper-runner.md`, What it records](spec/keeper-runner.md#what-it-records)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
 
 ## Engineering and security bar (BAR)
 
@@ -1075,8 +1135,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 
 - Question: How does a trader sign a trade that starts in the Telegram bot, given the bot never holds keys?
 - Answer: Through a link that opens Aviary's trade box with the swap filled in, where the trader's own wallet signs.
-- Alternatives: A Mini App inside Telegram; a link that opens the wallet with the transaction ready.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Alternatives: A Mini App inside Telegram, which needs a second way to connect wallets; a link that opens the wallet with the transaction ready, where Aviary's fee breakdown and exit-test notice could not be guaranteed to appear.
+- Specified in: [`docs/adr/0007-telegram-trades-are-signed-in-aviarys-trade-box.md`, A trade that starts in Telegram is signed in Aviary's own trade box](adr/0007-telegram-trades-are-signed-in-aviarys-trade-box.md#a-trade-that-starts-in-telegram-is-signed-in-aviarys-own-trade-box)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1086,7 +1146,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: What does the Telegram bot do in its first version?
 - Answer: Lookups of markets and strategies, trade links and alerts.
 - Alternatives: Lookups and trade links only; alerts only.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, First version](spec/pipescope-telegram.md#first-version)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1096,7 +1156,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: Which events does the bot alert on?
 - Answer: New listings, and changes to the markets and strategies a chat is watching.
 - Alternatives: New listings only; watched changes only.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, What is sent](spec/pipescope-telegram.md#what-is-sent)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1104,9 +1164,9 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-45: Telegram bot: where it works
 
 - Question: In which kinds of chat does the bot work?
-- Answer: Private chats and groups.
+- Answer: Private chats and groups; in a group anyone can look things up, and only its admins can change its alerts and its watch list.
 - Alternatives: Private chats only; private chats, groups and inline mode.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, Private chats and groups](spec/pipescope-telegram.md#private-chats-and-groups)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1116,7 +1176,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: Where does a trader choose the amount after tapping Buy or Sell in the bot?
 - Answer: On Aviary's page.
 - Alternatives: Preset amount buttons in Telegram; commands only.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, Buy, Sell and Trade](spec/pipescope-telegram.md#buy-sell-and-trade)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1126,7 +1186,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: Do Aviary's fee and before-signing rules change for trades that start in the bot?
 - Answer: No: they apply unchanged, and the exit-test notice is repeated in the bot's market card.
 - Alternatives: The same rules with a shorter card that leaves the notice out; a different fee for bot trades.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, Trading from Telegram](spec/pipescope-telegram.md#trading-from-telegram)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1134,9 +1194,9 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-48: Telegram bot: when a new market is announced
 
 - Question: When does the bot send its alert for a new market?
-- Answer: After the market's first Canary run, so the alert carries its results.
+- Answer: After the market's first Canary run, so the alert carries its results, or after 5 minutes if that run has not finished, then saying tests are pending.
 - Alternatives: At once, then edited; at once, with the results as a reply.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, What is sent](spec/pipescope-telegram.md#what-is-sent)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1146,7 +1206,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: Does the bot's first version know anything about a trader's wallet?
 - Answer: No: it has no wallet features.
 - Alternatives: Lookups by a pasted address; linking an address for alerts.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, First version](spec/pipescope-telegram.md#first-version)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1156,7 +1216,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: Does the bot show the explainer's account of a strategy version?
 - Answer: Yes: the summary, with its AI label.
 - Alternatives: A link only; the full explanation in the chat.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, The explanation](spec/pipescope-telegram.md#the-explanation)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1166,7 +1226,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: Does Aviary also run a public Telegram channel?
 - Answer: Yes: an unfiltered channel that posts every new strategy and market.
 - Alternatives: No channel; deciding at mainnet.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, The channel](spec/pipescope-telegram.md#the-channel)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1174,9 +1234,9 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-52: Telegram bot: its handle on devnet
 
 - Question: Which bot does the build use on devnet before the public handle exists?
-- Answer: A private working bot.
+- Answer: A private working bot and a private working channel under throwaway handles, neither announced; moving to the public ones changes two vars and a secret.
 - Alternatives: Picking the public handle at once.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, Name and handles](spec/pipescope-telegram.md#name-and-handles)
 - Changes by: runtime setting
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
@@ -1186,8 +1246,118 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: When is the bot built, relative to the web terminal?
 - Answer: Alongside the web pages.
 - Alternatives: After the terminal ships; only before mainnet.
-- Specified in: [the ticket, Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+- Specified in: [`docs/spec/pipescope-telegram.md`, When it is built](spec/pipescope-telegram.md#when-it-is-built)
 - Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-54: Telegram bot: the trade link
+
+- Question: What does a trade link from the bot carry?
+- Answer: The market page's address with the input mint, the output mint and, optionally, an amount, and nothing else: no Telegram account, no chat and no tracking id.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-telegram.md`, The trade link](spec/pipescope-telegram.md#the-trade-link)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-55: Telegram bot: on a phone
+
+- Question: How does a trader reach a wallet from Telegram's in-app browser, which has none?
+- Answer: Aviary's market page, when it finds no wallet on a phone, offers to reopen the same address inside Phantom, Solflare or Backpack through each wallet's browse link, for every phone visitor.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-telegram.md`, On a phone](spec/pipescope-telegram.md#on-a-phone)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-56: Telegram bot: upgrade alerts
+
+- Question: When is a strategy upgrade announced?
+- Answer: At once, saying tests and the explanation for the new version are pending, with the Canary results following as a reply when the run ends.
+- Alternatives: Waiting for the new version's Canary run, as a new market's alert does.
+- Specified in: [`docs/spec/pipescope-telegram.md`, What is sent](spec/pipescope-telegram.md#what-is-sent)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-57: Telegram bot: a chat's own alerts
+
+- Question: Which alerts does a chat get without asking?
+- Answer: None: new-strategy and new-market alerts are off until the chat turns them on, its filters (a minimum liquidity, Pipeline's trust flags) all start off, and a watch list of strategies and markets sends their upgrades and changed Canary outcomes.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-telegram.md`, A chat's own alerts](spec/pipescope-telegram.md#a-chats-own-alerts)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-58: Telegram bot: commands
+
+- Question: Which commands does the bot have?
+- Answer: `/start`, `/help`, `/market`, `/strategy`, `/search`, `/new`, `/buy`, `/sell`, `/watch`, `/unwatch`, `/watching`, `/alerts`, `/fees` and `/stop`; in a private chat a message that is not a command is treated as a search.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-telegram.md`, Commands](spec/pipescope-telegram.md#commands)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-59: Telegram bot: how results are worded
+
+- Question: How does the bot word Canary results?
+- Answer: With the outcome words only, each with its number and its reason, the strategy version and the date; no score, no badge, and no coloured or tick-and-cross emoji standing in for an outcome.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-telegram.md`, How results are worded](spec/pipescope-telegram.md#how-results-are-worded)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-60: Telegram bot: untrusted text
+
+- Question: How does the bot keep a strategy's or a token's name from becoming a link or a command in a message?
+- Answer: One function builds every message as text with explicit entities and no parse mode; author text is normalised and always sits inside a `code` entity with the address beside it, message text never contains a link, and link previews are off.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-telegram.md`, Untrusted text in messages](spec/pipescope-telegram.md#untrusted-text-in-messages)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-61: Telegram bot: against impersonation
+
+- Question: How does the bot set itself apart from copies that ask for a seed phrase?
+- Answer: It never asks for a private key, a seed phrase or a wallet address and has no command or button that accepts one, it never messages first, every link it sends goes to Aviary's own origin, and Aviary's site names the official bot and channel.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-telegram.md`, Safety against impersonation](spec/pipescope-telegram.md#safety-against-impersonation)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-62: Telegram bot: where it runs
+
+- Question: Where does the bot run?
+- Answer: Inside `terminal-api`, with no service of its own: a webhook route that Telegram calls, a Cloudflare Queue for alerts, and `packages/terminal-telegram` for the pure message building; nothing is bought.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-telegram.md`, Where it runs](spec/pipescope-telegram.md#where-it-runs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-63: Telegram bot: what it stores
+
+- Question: What does the bot store about a chat?
+- Answer: Only Telegram's chat id, whether it is a private chat or a group, its alert settings and its watch list; no user id, name or message text and no wallet address, and `/stop` deletes it at once.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-telegram.md`, What the bot stores](spec/pipescope-telegram.md#what-the-bot-stores)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
+
+### PIPESCOPE-64: Telegram bot: limits
+
+- Question: Which limits does the bot keep?
+- Answer: A watch list of 100 a chat, 20 lookups a minute a chat, lists of 10 entries and a 5-minute wait for a new market's first Canary run, each in the config module of `packages/terminal-telegram`.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-telegram.md`, One place for every value](spec/pipescope-telegram.md#one-place-for-every-value)
+- Changes by: build-time constant
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
 
@@ -2538,12 +2708,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-16: When the keeper calls rebalance
 
 - Question: When does our keeper runner call `rebalance`?
-- Answer: When Aviary's indexer sees a swap or an LP action leave a market outside its band, and in a sweep of every lending AMM market every 10 minutes.
-- Alternatives: None recorded.
-- Specified in: [`docs/spec/lending-pool.md`, When it runs](spec/lending-pool.md#when-it-runs)
+- Answer: After each transaction on the market, which the runner sees on its own socket, and in its sweep of every market every 10 minutes.
+- Alternatives: Acting when Aviary's indexer sees a market leave its band, as first specified.
+- Specified in: [`docs/spec/keeper-runner.md`, The jobs](spec/keeper-runner.md#the-jobs)
 - Changes by: runtime setting
 - Status: default
-- Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
+- Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
 
 ### LENDING-17: When Kamino cannot pay
 
@@ -2749,11 +2919,9 @@ Each field is one line, and each value is one sentence of inline Markdown.
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
 
-- [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45): where the runner lives; the answers so far are `SUITE-26` to `SUITE-28`.
 - [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16): what the terminal's pages look like and how they behave.
-- [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32): the answers so far are `PIPESCOPE-42` to `PIPESCOPE-53`; its spec is still to land.
 - [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30): the answers so far are `SUITE-29` to `SUITE-31`.
-- The tickets that cut build tickets and were still open, which add a block only when they settle something new: [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and [Cut the lending pool's build tickets](https://github.com/imDev2023/testing-pipeline/issues/25).
+- [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22): it merges the terminal's spec files and adds a block only if it settles something new.
 - Not yet specified on the map: single-use AMMs, Canary results published on-chain as attestations, and Canary calling a strategy's custom instructions.
 
 ## Follow-ups
@@ -2779,7 +2947,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `TAX-02`, `LENDING-09`: the launch forms' defaults are stated in the product specs (the tax side's in two sections of `tax-amm.md`) but live in Aviary's forms; `pool4-for-solana.md` says its pre-filled values are kept in one place in the form, and the other two should say the same.
 - `TAX-06`, `POOL4-04`: `GLOSSARY.md` gives the suite share and the designer share as fixed tenths, so a change to either constant also has to edit the glossary; it should name the constant, not the number.
 - `SUITE-04`, `SUITE-05`, `SUITE-07`, `SUITE-12` to `SUITE-14`: these live only in the map's body; when the map closes they need a home in `docs/spec/README.md`.
-- `SUITE-26` to `SUITE-31`, `PIPESCOPE-42` to `PIPESCOPE-53`: the owner answered these on tickets that are still open, so "Specified in" names the ticket; the session that lands each spec points them at its sections.
+- `SUITE-29` to `SUITE-31`: the owner answered these on a ticket that is still open, so "Specified in" names the ticket; the session that closes it points them at wherever the site's own docs record them.
 - `POOL4-20`, `POOL4-21`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI, One fixed-size layout) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
-- `LENDING-16`, `POOL4-15`: when each keeper job runs is written in the product specs and in the keeper runner's ticket; once the runner's spec lands it should be the one place for every job's schedule.
+- `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.
