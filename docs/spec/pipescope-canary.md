@@ -88,6 +88,8 @@ What came back clean is evidence too:
 - The round-trip return bands are the owner's (2026-11-10): **95% or more back is a pass, 50% up to 95% is a warn, under 50% is a fail**.
   On devnet today the ordinary trade returns 97.0% to 99.5% on seven strategies and 48.8% to 49.4% on the outside builder's AMM, so the bands sit in a wide gap.
 - These words follow `pipeline-check`'s (pass, warn, fail, skip) so one page can show both.
+- An outcome belongs to one check on one market.
+  Canary never adds outcomes up into a score, a badge or a colour, which [`pipescope.md`](pipescope.md) rules out; how a result is shown is for [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16).
 - One consequence of the rule: a strategy that lets a buyer sell at once and refuses them a day later gets a warn, not a fail.
   The result's sentence says plainly that the tokens could not be sold after that wait.
 
@@ -219,6 +221,17 @@ Each check on each market produces one **Canary result**, a record the facts pan
 - Pipescope keeps the latest record of each check for each market and version, and every earlier record whose outcome differed from the one after it.
 - `custom_instructions` and the stranded-market count feed the explainer's F items, where its spec already lists them; every other result, the conformance report included, is one of its C items.
 - Results for an older strategy version stay attached to that version and are never shown as the current version's.
+
+## What counts as "a buyer could not sell back"
+
+[`pipescope.md`](pipescope.md) repeats one Canary observation in the trade box and asks this file to define it.
+
+- It is any latest result of `exit_sizes`, `exit_hold`, `exit_wallets`, `exit_transferred` or `exit_queue`, for the market's current strategy version, in which a wallet's buy worked and the sale of what it bought then failed.
+- It counts whether the result is a fail or a warn, and the notice states the condition from the record: the size, the wait or the wallet's role, and the refusing program's own error message.
+  On devnet today that is the three open bonding curves: "a wallet that bought 1 SOL or more could not sell back; buys of 0.1 SOL and less sold back".
+- `exit_late` and `exit_launch_clock` do not count: they describe another time, and the scheduled runs see that time when it comes.
+- A low round-trip return is not "could not sell back": the outside builder's 49% stays in the facts panel as a `cost` fail.
+- A stranded market cannot be bought either, so it has no trade box to put a notice in; its page says the current version cannot read it.
 
 ## When Canary runs
 
