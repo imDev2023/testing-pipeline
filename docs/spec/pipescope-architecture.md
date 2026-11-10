@@ -36,15 +36,15 @@ Decisions: [ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md) (our own
 | Allowance (Workers Paid, per account per month) | Top-pad's devnet build | Pipescope | Overage |
 | --- | --- | --- | --- |
 | Durable Object duration, 400,000 GB-s | Its always-awake indexer, about 10,300 GB-s a day measured 2026-11-06 to 2026-11-09, so about 310,000 | Its indexer only while someone watches (see Indexer), Canary runs about 8,300, live rooms hibernate | None expected; an always-awake second indexer would have added about 324,000 and gone over (about $3, or $12.50 if the overage rounds up to a whole million GB-s) |
-| Container memory, 25 GiB-hours | Vision, up to about 50 minutes a day | Canary, 18.5 GiB-hours at 500 cold runs a month | At worst about 18.5 GiB-hours over, about $0.17 |
-| Container vCPU, 375 minutes; disk, 200 GB-hours | Small | Under 45 vCPU-minutes and 74 GB-hours | None |
+| Container memory, 25 GiB-hours | Vision, up to about 50 minutes a day | Canary, about 20 GiB-hours for four sweeps a day (`pipescope-canary.md`), plus re-runs of new markets | At worst a few GiB-hours over, cents |
+| Container vCPU, 375 minutes; disk, 200 GB-hours | Small | About 90 vCPU-minutes and under 100 GB-hours | None |
 | Workers requests, 10 million; CPU, 30 million ms | Small | Small at devnet volume | None |
 
 - Prices and allowances: the owner's Cloudflare knowledge base, `build/01-compute.md` (Durable Objects pricing as of 2026-10-05; Containers pricing), from https://developers.cloudflare.com/durable-objects/platform/pricing/ and https://developers.cloudflare.com/containers/platform/pricing/.
 - **Database**: a new Neon project on the free plan, `pipescope-devnet`, separate from Top-pad's (see Data).
 - **RPC**: Pipescope's own free Helius key, separate from the owner's shared key, which Top-pad and every agent session use and which is already rate-limited when several sessions run at once.
   It is kept in the project's `.env` as `RPC_URL` (the Helius devnet URL carrying the key) and as the Worker secret `RPC_URL`, as Top-pad does.
-  Expected use is about 400,000 credits a month for the indexer, about 5,000 for Canary snapshots and a few thousand for trade-box quotes, inside the free plan's 1 million.
+  Expected use is about 400,000 credits a month for the indexer, about 53,000 requests for Canary's sweeps and some thousands for re-runs of new markets, trade-box quotes and pre-signature simulations, about 500,000 credits in all, inside the free plan's 1 million.
 - **GitHub Actions**: verified builds run on GitHub's free minutes (2,000 a month while the repo is private, unlimited on standard runners once it is public).
 - **LLM**: `claude-haiku-5-5` through the `ANTHROPIC_API_KEY` in the owner's `~/.config/env/global.env`, one approved batch at a time (`pipescope-explainer.md`, Model and cost).
 - Nothing else is paid. The paid upgrades for mainnet (a dedicated Helius plan with LaserStream, a paid Neon plan if compute runs out) belong to the mainnet effort.
@@ -58,7 +58,7 @@ Decisions: [ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md) (our own
 - One Container: `crates/canary`'s image, instance type `basic` (a quarter of a vCPU, 1 GiB, 4 GB of disk), `max_instances` 1.
 - Hyperdrive in front of Neon, with its query cache off.
 - A rate-limiting binding for the public API (see API).
-- Crons: every minute (wake the indexer for reconciliation, the ProgramData watch and, every tenth minute, the registry snapshot; poll running verified builds) and every hour (re-fetch strategy metadata).
+- Crons: every minute (wake the indexer for reconciliation, the ProgramData watch and, every tenth minute, the registry snapshot; poll running verified builds) every hour (re-fetch strategy metadata) and every 6 hours (Canary's sweep of every market).
 - Secrets: `RPC_URL`, and `GH_ACTIONS_TOKEN`, a fine-grained GitHub token limited to this repo with Actions read and write and nothing else, for verified builds.
 - No LLM key, no wallet key and no Secrets Store binding.
 
@@ -92,8 +92,10 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - **Reconciliation** from a cursor per watched address, every minute for the router and every five minutes for strategy programs, oldest first, stopping at the first transaction it cannot fetch yet so the cursor never passes an unindexed one (Top-pad's `reconcileAccount`), through `getTransactionsForAddress` while the free key gets it, else `getSignaturesForAddress` plus `getTransaction`, behind one history-source interface.
 - **Registry snapshot** every 10 minutes: `getProgramAccounts` on the router for `Strategy` and `Market` accounts; any account not yet indexed is a missed event and is indexed from its account.
 - **ProgramData watch** every minute: one `getMultipleAccounts` with a 45-byte `dataSlice` per 100 programs reads each strategy's and the router's last-deploy slot.
-  A changed slot on a strategy is a new strategy version: it is recorded, a Canary run starts, a verified build is requested if a source lead exists, and the strategy's markets are re-read.
-  A changed slot on the router is recorded and flagged, since a router upgrade can change event layouts; events the decoder does not know are kept and indexed again by newer code.
+  A changed slot on a strategy is a new strategy version: it is recorded, a Canary run of all its markets starts, a verified build is requested if a source lead exists, and the strategy's markets are re-read.
+  A changed slot on the router is recorded and flagged, and starts a Canary run of every market, since a router upgrade can change event layouts; events the decoder does not know are kept and indexed again by newer code.
+- **New markets**: each `MarketCreated`, and each market the registry snapshot finds, starts a Canary run of that market at once and again 10 minutes, 1 hour and 1 day later.
+- **Strategy-program calls**: every instruction the indexer sees on a strategy program is stored with its caller, which Canary's `control` check reads as who has called each instruction.
 - **Market accounts**: after each event or custom action that touches a market, its market state and vaults are re-read; there are no account subscriptions.
 - **Mints**: when a market brings a mint not yet seen, its mint account and on-chain token metadata are read once and stored, for the facts (Pipeline's trust flags) and for symbols and images, which `pipescope.md` treats as untrusted.
 - **Unknown or failed decodes** are kept with the transaction, and re-indexing transactions first indexed by older code is Top-pad's `reindexTransactions`.
@@ -157,20 +159,24 @@ Top-pad's flow (`apps/web/src/components/coin/QuickTrade.tsx`, `prepareSwap` the
 ## Canary runner
 
 [ADR 0005](../adr/0005-canary-checks-run-natively-in-a-container.md).
-The design is the recommendation of [Where the quoter runs for Canary checks](https://github.com/imDev2023/testing-pipeline/issues/7); what the checks are is [Canary checks on the four devnet strategies](https://github.com/imDev2023/testing-pipeline/issues/14).
+The hosting is the recommendation of [Where the quoter runs for Canary checks](https://github.com/imDev2023/testing-pipeline/issues/7).
+What the checks are, how a run copies a market and when runs happen are in [`pipescope-canary.md`](pipescope-canary.md), from [Canary checks on the four devnet strategies](https://github.com/imDev2023/testing-pipeline/issues/14); this section says where Canary runs and where its results go.
 
-- **Binary**: `crates/canary` in the root Rust workspace, a native Rust program on `litesvm` (0.18.2, pinned by `pipeline-quoter`) and Pipeline's crates (`pipeline-quoter`, `pipeline-client`, its settlement code, and `pipeline-check` if the Canary checks ticket adopts it), taken as git dependencies pinned to a commit and never copied into this repo; Rust per `docs/toolchain.md`.
-  It serves one HTTP endpoint that takes a snapshot and returns one record per check.
+- **Binary**: `crates/canary` in the root Rust workspace, a native Rust program on `litesvm` (0.18.2) and Pipeline's Apache-2.0 crates at a pinned commit through Cargo (`pipeline-check`, `pipeline-quoter`, `pipeline-client` and `pipeline-strategy-interface`), never copied into this repo; Rust per `docs/toolchain.md`.
+  It serves one HTTP endpoint that takes one market's snapshot and returns one Canary result per check, or the addresses of accounts the snapshot lacks.
 - **Image and instance**: linux/amd64, which keeps the sBPF JIT measured on x86_64; a `basic` instance, one at a time, sleeping 2 minutes after its last run; internet access off (`enableInternet = false`), so the container never holds an RPC key and never reaches the network.
-- **Orchestration**: one `CanaryRun` Durable Object per strategy version, keyed by program id and ProgramData slot.
-  The indexer starts it when it sees a new strategy version; it builds the snapshot through Helius, posts it to the single `CanaryContainer`, stores the records in Postgres, and retries on its alarm if the container restarts mid-run.
-  A run for the same version and inputs is idempotent; other triggers (new markets, re-runs) are for the Canary checks ticket, and a manual re-run command is part of the build.
-- **Snapshot**: the router's and the strategy's ProgramData, the router config, each market of the strategy with its market state, mints, vaults and fee accounts, whatever `pipeline_resolve_accounts` asks for over up to four rounds, and the clock; about ten RPC calls and 0.9 MB for one market, mostly program bytes.
+  The build measures a sweep on `basic` before trusting the cost below, and whether a shorter sleep or the `lite` instance (1/16 vCPU, 256 MiB) serves as well.
+- **Orchestration**: one `CanaryRun` Durable Object per strategy version, keyed by program id and ProgramData slot, which runs that version on all of its markets or on one of them.
+  For each market it builds the snapshot through Helius, posts it to the single `CanaryContainer`, fetches any accounts the binary names as missing and posts again, at most four times, stores the results in Postgres, and retries on its alarm if the container restarts mid-run.
+  Its triggers are `pipescope-canary.md`'s: a new strategy version (all its markets), a router upgrade (every market), a market created or registered (that market at once, then 10 minutes, 1 hour and 1 day later), and every 6 hours (every market, from the cron); a manual re-run command is part of the build.
+- **Snapshot**: per market, the router's and the strategy's ProgramData, the router config, the market with its market state, mints, vaults and fee accounts, whatever `pipeline_resolve_accounts` asks for, and the cluster's slot, epoch and time; about 7 RPC requests a market (442 for all 61 devnet markets on 2026-11-10).
   The router is loaded from its deployed bytes, never a local build, so checks test what is on chain.
-- **Records**: one per check, holding check id, strategy version, run date, inputs and outcome, which the facts panel and the explainer read as C items.
-- **Licence seam**: `simulate_swap` executes the router program, which is BSL 1.1 with no Additional Use Grant until 2028-11-08; the harness drives trades through one interface with two implementations, through the router (used on devnet) and calling the strategy directly plus Pipeline's Apache-2.0 settlement code, so Canary can switch without a rewrite unless MetalLegBob grants production use.
+- **Results**: one Canary result per check, market, strategy version and slot, kept as `pipescope-canary.md` says (the latest of each check per market and version, and every earlier one whose outcome differed from the next); the facts panel and the explainer read them as C items, and changed outcomes make a new explanation key.
+- **Licence seam**: `simulate_swap` executes the router program, which is BSL 1.1 with no Additional Use Grant until 2028-11-08; every trade in Canary's checks goes through one swap function with two implementations, through the router (used on devnet) and calling the strategy directly plus Pipeline's Apache-2.0 settlement code, so Canary can switch without a rewrite unless MetalLegBob grants production use.
+  The conformance report is the exception, since `pipeline-check` itself runs the router; without the router it is "not run".
   The question was not put to him as of 2026-11-10.
-- **Cost**: about 500 runs a month fit inside Workers Paid's Container allowances (see Platform and plans).
+- **Cost**: four sweeps a day are about 960 runs a month and about 53,000 RPC requests; if each sweep keeps the container awake about ten minutes, that is about 20 GiB-hours of the 25 included, and re-runs of new markets add their 2-minute sleeps (`pipescope-canary.md`, When Canary runs).
+  With Top-pad's vision service (about 10 GiB-hours a month at its pace since 2026-11-01), the account may go a few GiB-hours over, a few cents a month.
 - **Fallback**: a small server elsewhere (Fly.io from $2.19 a month) runs the same binary if Containers misbehave; it is not built unless needed.
 
 ## Verified builds
