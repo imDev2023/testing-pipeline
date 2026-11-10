@@ -1,0 +1,29 @@
+{
+  "name": "kamino-devnet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Creates and exercises the Kamino lending market every lending AMM market on devnet lends to.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <26"
+  },
+  "scripts": {
+    "cli": "node src/cli.ts",
+    "test": "node --test --test-concurrency=1 test/*.test.ts",
+    "test:unit": "node --test test/layout.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kamino-finance/klend-sdk": "13.1.0",
+    "@solana-program/system": "0.7.0",
+    "@solana-program/token": "0.5.1",
+    "@solana/kit": "2.3.0",
+    "bn.js": "5.2.5"
+  },
+  "devDependencies": {
+    "@types/bn.js": "5.2.0",
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}

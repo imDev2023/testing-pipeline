@@ -52,11 +52,11 @@ Terms are as in `GLOSSARY.md`: lending AMM, buffer, lent side, lending market, c
 | --- | --- | --- | --- |
 | mainnet | WSOL `So11111111111111111111111111111111111111112` | Kamino main market `7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF` | SOL `d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q` |
 | mainnet | USDC `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` | Kamino main market | USDC `D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59` |
-| devnet | WSOL | Our own Kamino lending market (see "Devnet") | Our WSOL reserve |
-| devnet | Our test USDC mint, 6 decimals | Our own Kamino lending market | Our test USDC reserve |
+| devnet | WSOL `So11111111111111111111111111111111111111112` | Our own Kamino lending market `DCKrWS5G3YEcrRP1Ayu8S8nBR4QfgFsSaRzRdPrjqzj3` (see "Devnet") | WSOL `5vJJ1sQi972Qcf6oUy3gHEx6prijjSj31CWo5He85Hjw` |
+| devnet | Our test USDC `CqHMaMB72rTsJGRDzeQmcAsVHuwoBw7V7gdaCexcjcC7`, 6 decimals | Our own Kamino lending market | Test USDC `72wAn7eQBbBSXQcb2eAMHz2SDxUgAM51LHhH3aGbY7T3` |
 
 - Market creators never choose a reserve: a reserve in a lending market the creator owned could be reconfigured to let its owner borrow the LPs' deposits away.
-- The devnet addresses are filled in by the build ticket that creates our devnet lending market.
+- The devnet rows come from [`deployments/kamino-devnet.json`](../../deployments/kamino-devnet.json), which also holds the lending market's authority and each reserve's liquidity supply, fee vault, collateral mint and collateral supply; the program's devnet constants must equal that file.
 - The constants are compiled into the program; changing one is a program upgrade, which ends when the program is frozen.
 
 ## Markets
@@ -358,7 +358,13 @@ Exact-out checks are skipped by design and need no reason.
 - A second depositor, this project's devnet wallet, keeps each reserve's freely available liquidity above `WITHDRAW_MODE_EXIT` times the target lent value of the markets that lend to it.
   A reserve that held only our markets' own deposits would put every market into withdraw mode at its first `rebalance`.
   The test borrower then borrows that liquidity to bring withdraw mode on, and repays it to end it.
-- The sequence has been seen working on devnet (reserve `24EfeXj3XyLLE6GThh8ik4vcxEPMooAU5XXDL5nJHEr8`, 2026-09-14) but not yet run by us.
+- Run by us on 2026-11-10 with [`scripts/kamino-devnet`](../../scripts/kamino-devnet/README.md), from [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77); the sequence had been seen working on devnet before, on reserve `24EfeXj3XyLLE6GThh8ik4vcxEPMooAU5XXDL5nJHEr8` on 2026-09-14.
+  The script creates the market, the mint and both reserves, plays the second depositor, a plain cToken holder and the test borrower, and turns the WSOL reserve's emergency mode, and the whole market's, on and off; each is a command the devnet demo can call.
+  Every account it creates has an address derived from the market owner's or the mint authority's key, so a re-run finds the same accounts, and its `setup` changes only what differs from its policy values.
+- The reserves' policy values live in one place, `scripts/kamino-devnet/src/policy.ts`: the borrow rate curve, steep enough that a few SOL borrowed show interest within seconds, the price max age, the loan-to-value and liquidation threshold, the deposit, borrow and withdrawal caps, and what each party deposits and borrows.
+- Devnet's Pyth feeds were seen updating about every 5 minutes on 2026-11-10, against the 2 to 3 minute price max age of Kamino's mainnet reserves, so our reserves accept an older price; with it the test borrower borrowed and repaid on devnet.
+- Devnet's klend, last deployed at slot 491,561,420, has the layout this file relies on: on 2026-11-10 both reserves read back with the Reserve's size and discriminator, every field of the Kamino facts, section 4, where it puts them, and the fields "Checking the reserve before reading it" compares at version 8, lending market 32, liquidity mint 128, liquidity supply 160, fee vault 192, collateral mint 2560 and collateral supply 2600; the lending market's emergency mode is at 122.
+  Each field moved by exactly what the script did, and `npm run cli -- layout` checks them again at any time.
 
 ## Building it
 

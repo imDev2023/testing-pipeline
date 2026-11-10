@@ -2995,6 +2995,66 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Cut the lending pool's build tickets](https://github.com/imDev2023/testing-pipeline/issues/25)
 
+### LENDING-37: The devnet lending market's script
+
+- Question: How is our devnet Kamino lending market created and exercised?
+- Answer: By `scripts/kamino-devnet`, a standalone TypeScript package with its own lockfile that builds Kamino's instructions with Kamino's MIT-licensed SDK and offers each step (setup, status, layout, the three parties, emergency mode and the whole proof) as a command the devnet demo can call.
+- Alternatives: A Rust script beside `scripts/quote-devnet`, with every Kamino instruction written by hand.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77)
+
+### LENDING-38: Where the devnet lending market's addresses live
+
+- Question: Where do the program and the later scripts find our devnet lending market's addresses?
+- Answer: In `deployments/kamino-devnet.json`, a committed file of its own, where every address is derived with `createAccountWithSeed` from the market owner's or the test USDC mint authority's key in `~/.config/testing-pipeline/devnet/`, so the keys alone rebuild it.
+- Alternatives: Account keypairs kept in the key folder; the addresses only in the spec's `LENT_MINTS` rows.
+- Specified in: [`docs/spec/lending-pool.md`, Constants](spec/lending-pool.md#constants)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-10 in [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77)
+
+### LENDING-39: Devnet reserves' borrow rate curve
+
+- Question: How steep is the borrow rate curve of our devnet reserves?
+- Answer: 0% a year at 0% utilisation, 200% at 50%, 500% at 80% and 1,000% at 100%, so the test borrower's 3.5 SOL at 70% utilisation pays about 440 lamports of interest a second and a demo market's lending yield shows within seconds.
+- Alternatives: Kamino's mainnet SOL curve, a few percent a year, under which a demo market's yield grows by less than a lamport a second.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-10 in [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77)
+
+### LENDING-40: Devnet reserves' price max age
+
+- Question: How old a Pyth price do our devnet reserves accept?
+- Answer: 600 seconds, because devnet's Pyth feeds were seen updating about every 5 minutes on 2026-11-10; Kamino's mainnet SOL and USDC reserves accept 120 and 180 seconds.
+- Alternatives: Kamino's mainnet ages, which would refuse a borrow for much of each 5-minute cycle; posting fresh Pyth prices ourselves before each borrow.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-10 in [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77)
+
+### LENDING-41: Devnet reserves' risk settings and caps
+
+- Question: What collateral settings, limits and caps do our devnet reserves have?
+- Answer: Both take collateral at a 75% loan-to-value with an 85% liquidation threshold and a borrow factor of 100%, both can be borrowed, and each has deposit and borrow limits and a daily withdrawal cap of 10,000 SOL or 100,000,000 test USDC.
+- Alternatives: Only test USDC as collateral and only WSOL borrowable.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-10 in [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77)
+
+### LENDING-42: What the devnet parties deposit and borrow
+
+- Question: How much do the second depositor, the plain cToken holder and the test borrower put into our devnet reserves?
+- Answer: The second depositor, the devnet wallet, supplies 5 SOL and 100,000 test USDC, the plain cToken holder deposits and redeems 0.1 SOL and 100 test USDC, and the test borrower posts 1,000 test USDC and borrows 3.5 SOL.
+- Alternatives: A second depositor in the WSOL reserve only, the one the ticket's criterion names.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-10 in [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
