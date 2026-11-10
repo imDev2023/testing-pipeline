@@ -49,13 +49,23 @@ Terms are as in `GLOSSARY.md`: inventory cap, cap floor, cap decay, trim, retire
 | `KEEPER_TIP_CAP` | 2,000,000 lamports (0.002 SOL) | The most a wall placement tips its caller |
 | `FLOOR_CRAWL_BPS` | 400 a day | How fast the wall's floor may rise, in price terms |
 | `REF_STEP_BPS`, `REF_STEP_WINDOW` | 200, 12 seconds | How fast the reference may follow the price: 2% of the price per 12 seconds |
+| `DECAY_CREDIT_WINDOW` | 86,400 seconds | The most cap decay allowance that builds up while a market is idle: one day's worth |
 | `MIN_SQRT_PRICE`, `MAX_SQRT_PRICE` | 2^32, 2^96 | The square-root prices no trade may reach |
 | `MIN_SEED_LAMPORTS` | 100,000,000 (0.1 SOL) | The least SOL a seed may bring |
+| `MIN_OPENING_SQRT_PRICE`, `MAX_OPENING_SQRT_PRICE` | 2^40, 2^88 | The square-root prices a market may open between |
 | `MIN_LIQUIDITY` | 1,000,000 | The least liquidity the curve may ever hold |
 | `MARKET_STATE_SIZE` | 1,024 bytes | The size of every market state, for good |
 
 The constants are compiled into the program; changing one is a program upgrade, which ends when the program is frozen.
 There is no admin and no settings account.
+
+Every decision here is a default that MetalLegBob may change (the map's standing rule of 2026-11-10), so each policy value lives in exactly one place:
+
+- the constants above, all in one module of the program (`config.rs`), which nothing else in the code repeats;
+- a market's creation parameters, for everything a creator chooses;
+- Pipescope's create form, for the pre-filled values.
+
+Changing a fee, cap, split, limit or default is then one edit in one of those places before a deployment.
 
 `DESIGNER_RECIPIENT` is unset because IMD and Adam have no known Solana address (2026-11-10).
 The designer share builds up in each market from its first swap and waits there; the owner asks Adam for an address, and a program upgrade sets the constant, which must happen before the program is frozen.
@@ -91,7 +101,7 @@ The designer share builds up in each market from its first swap and waits there;
 | `seeder` | pubkey | The only signer the seed action accepts; must not be the default key |
 
 - None of these can change after creation, except through a recipient's own handover (see "Recipients").
-- Pipescope's create form pre-fills IMD's own launch values: a 1% fee, a 15% reward share, a cap floor of 20% and a cap decay of 20% a day.
+- Pipescope's create form pre-fills IMD's own launch values: a 1% fee, a 15% reward share, a cap floor of 20% and a cap decay of 20% a day; they are defaults of the form only, kept in one place there.
 - `pipeline_init_market` refuses anything that breaks a rule, checks the token mint against the mint rules, checks that the market signer is the router's PDA `["market", program, market_state]` and stores it, creates both vaults idempotently, and records the creation slot and Unix time.
 - `pipeline_seed_liquidity` takes the same fields in `SeedRequest.data`, with `seeder` ignored because the calling program's PDA is the seeder.
 
@@ -124,7 +134,7 @@ A launchpad graduating a token instead calls `pipeline_seed_liquidity`, then the
   - `pool_tokens = x`, `pool_sol = y`, `seeded_tokens = x` and the inventory cap is `x`;
   - `cap_floor = max(1, floor(x × cap_floor_bps / 10,000))` and `cap_decay_per_day = floor(x × cap_decay_bps / 10,000)`;
   - the wall's reference, floor and last close all start at `sqrt_price`, and every clock field at the current time.
-- It is refused unless the token's mint and freeze authorities are removed, `y` is at least `MIN_SEED_LAMPORTS`, `sqrt_price` is between 2^40 and 2^88, and `floor(cap_floor × sqrt_price / 2^64)` is at least `MIN_LIQUIDITY`, so the curve stays usable even with its cap at the floor.
+- It is refused unless the token's mint and freeze authorities are removed, `y` is at least `MIN_SEED_LAMPORTS`, `sqrt_price` is between `MIN_OPENING_SQRT_PRICE` and `MAX_OPENING_SQRT_PRICE`, and `floor(cap_floor × sqrt_price / 2^64)` is at least `MIN_LIQUIDITY`, so the curve stays usable even with its cap at the floor.
 - Until the seed, quotes and swaps are refused.
 - `pipeline_seed_liquidity` seeds and opens the market in the same call, taking at most `amounts[i]` from each escrow, and returns `SeedResult { taken, lp_amount: 0 }`; the LP recipient is ignored.
 - Tokens or SOL sent to a vault outside a swap or the seed are donations: never credited as input, never paid out.
@@ -210,7 +220,7 @@ None of it changes the trade just priced.
    If `floor < ref`: `dt = min(now - floor_time, 86,400)` and `floor` rises by `floor(floor × FLOOR_CRAWL_BPS × dt / (2 × 10,000 × 86,400))`, but not above `ref`.
    Then `floor_time = now`, and `floor` drops to the new price if that is lower.
 5. **Decay credit.**
-   `decay_credit = min(decay_credit + cap_decay_per_day × (now - decay_time), cap_decay_per_day × 86,400)` and `decay_time = now`.
+   `decay_credit = min(decay_credit + cap_decay_per_day × (now - decay_time), cap_decay_per_day × DECAY_CREDIT_WINDOW)` and `decay_time = now`.
    The credit is in token-seconds, so nothing is lost to rounding, and at most one day's allowance ever builds up.
 6. **The cap.**
    With `held = floor(L × Q / s)`:
