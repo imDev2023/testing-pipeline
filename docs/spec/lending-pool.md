@@ -294,10 +294,49 @@ The explainer's fact table carries the same facts, and its risks for every lendi
 
 ## Upgrades and freezing
 
-- On devnet the program stays upgradeable, with its upgrade authority in `~/.config/testing-pipeline/devnet/`.
-- It is frozen (upgrade authority removed) before any mainnet deployment, like the tax AMM, rather than kept upgradeable to follow changes in Kamino, which would be an admin key every LP has to trust.
+- On devnet the program stays upgradeable under the project's upgrade-authority key, `~/.config/testing-pipeline/devnet/upgrade-authority.json`, as `docs/spec/README.md` sets for every program.
+- Intended mainnet upgrade policy: frozen (upgrade authority removed) before any mainnet deployment.
+  This departs from the shared default of a multisig with a timelock first: keeping an upgrade key to follow changes in Kamino would be an admin key every LP has to trust, and the in-kind exit already covers a Kamino change.
 - A Kamino change that breaks the layout check stops trading in our markets but never traps LPs, who leave in kind; a new strategy version then serves new markets, and LPs move by removing and adding.
-- The general upgrade policy is in `docs/spec/README.md`.
+- Carrying the policy out belongs to the mainnet launch effort.
+
+## For the shared engineering bar
+
+What `docs/spec/README.md` asks each product's file to add.
+
+### Compute ceilings
+
+Asserted per instruction in test layer 5; the build ticket measures each one and may lower it, and raising one needs a written reason here.
+
+| Instruction | Ceiling (compute units) | Main cost |
+| --- | --- | --- |
+| `pipeline_quote` | 40,000 | Reserve checks and fixed-point maths; well under the quoter's 200,000 cap |
+| `pipeline_swap`, no redeem | 40,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
+| `pipeline_swap`, with a redeem | 80,000 | Kamino's redeem (mainnet median 29,670) |
+| `pipeline_resolve_accounts` | 40,000 | Runs the quote to decide on the redeem accounts |
+| `pipeline_init_market` | 150,000 | Creating two vaults, the cToken account and the LP mint |
+| `pipeline_seed_liquidity` | 200,000 | Creation plus the first deposit |
+| `add_liquidity` | 60,000 | Two transfers in, an LP mint |
+| `remove_liquidity`, cash | 120,000 | Kamino's redeem, transfers out, an LP burn |
+| `remove_liquidity`, in kind | 90,000 | Transfers out, possibly creating the LP's cToken account |
+| `rebalance` | 100,000 | Kamino's deposit (mainnet median 43,704) or redeem |
+| `lock_lp` | 20,000 | One transfer |
+
+### Invariants for test layer 3
+
+Beyond the shared three (value conserved, every holder can exit, each quote equals its swap), checked after every step of the generated sequences, with Kamino's rate moved up between steps and occasionally down by a write-off:
+
+- What the market has recorded never exceeds what it actually holds: the buffer and the other side against their vaults, the cTokens against the cToken account.
+- At a fixed Kamino rate, no swap lowers the product `R x L`, and no instruction lowers the value of an LP share; only a fall in Kamino's rate does.
+- A removal in kind succeeds for every LP in every Kamino state, emergency modes, a deprecated reserve and a failed layout check included.
+- A swap never deposits into Kamino, never redeems when the buffer covers its output, and never redeems more than its shortfall plus one rounding unit's worth of cTokens.
+- `rebalance` only ever moves the buffer's share towards `BUFFER_TARGET_BPS`, and never deposits in withdraw mode or while cToken deposits are blocked.
+- The share count `N` changes only by `add_liquidity`, `remove_liquidity`, seeding and SPL burns, and the lock account's balance never falls.
+
+### Accepted `pipeline-check` warnings
+
+None.
+Exact-out checks are skipped by design and need no reason.
 
 ## Devnet
 
@@ -316,7 +355,8 @@ The explainer's fact table carries the same facts, and its risks for every lendi
 - Keep the program keypair in `~/.config/testing-pipeline/devnet/`, never in the repo.
 - Put every Kamino call and read in one module (deposit, redeem, reserve checks, total supply, what Kamino can pay now, flags), so a later strategy version can add another lending market without touching the pool's maths.
 - Write the Kamino instruction data, account lists and reserve offsets by hand from klend 1.28.0, and never depend on the klend crate: klend is BSL 1.1 with no use grant until 2027-11-17, so we call its deployed program but never compile its code into ours.
-- Tests load klend's deployed program bytes, dumped from mainnet at test setup into an ignored folder, never committed, together with cloned mainnet reserve, lending market and mint accounts.
+- Tests load klend's deployed program bytes with cloned mainnet reserve, lending market and mint accounts, as `docs/spec/README.md` (test layer 6) sets.
+  A fixture script dumps the accounts once and commits them with the slot they were read at, since an RPC cannot serve an account's past state; it fetches klend's program bytes into a gitignored folder at each setup and checks them against a hash pinned in the repo, as the router's fixture does, so a Kamino upgrade fails the check and is re-pinned deliberately; klend's bytes are never committed.
 - Build and test with the toolchain in `docs/toolchain.md` (`source scripts/toolchain-env.sh`).
 
 ### Done means
