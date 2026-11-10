@@ -29,6 +29,9 @@ const MONTHS = 'January February March April May June July August September Octo
 const longDate = (iso) => `${Number(iso.slice(8, 10))} ${MONTHS[iso.slice(5, 7) - 1]} ${iso.slice(0, 4)}`;
 const shortDate = (iso) => `${Number(iso.slice(8, 10))} ${MONTHS[iso.slice(5, 7) - 1].slice(0, 3)}`;
 
+/** True for text with a run too long to sit on a phone's line unbroken, such as an address or a hash. */
+const unbroken = (text) => text.split(/[\s/-]+/).some((run) => run.length > 28);
+
 /** A Markdown renderer that trusts nothing: raw HTML is shown as text and only web links become links. */
 function markdown(sections = []) {
   const ids = new Set();
@@ -48,11 +51,14 @@ function markdown(sections = []) {
       link({ href, tokens }) {
         const text = this.parser.parseInline(tokens);
         if (!/^(https?:\/\/|\/|#)/.test(href)) return text;
-        return `<a href="${escape(href)}"${href.startsWith('http') ? ' rel="noopener"' : ''}>${text}</a>`;
+        const attributes = (href.startsWith('http') ? ' rel="noopener"' : '') + (unbroken(unescape(text)) ? ' class="long"' : '');
+        return `<a href="${escape(href)}"${attributes}>${text}</a>`;
       },
       codespan({ text }) {
-        // A short command stays whole; an address or a path may break where it must.
-        return `<code${text.length <= 24 ? ' class="whole"' : ''}>${escape(text)}</code>`;
+        // A flag such as --check never breaks between its hyphens, and only an address or a hash
+        // may break mid-word: a table column must stay as wide as the names in it.
+        const flags = /(^|[\s=(])(--?[A-Za-z][\w-]*)/g;
+        return `<code${unbroken(text) ? ' class="long"' : ''}>${escape(text).replace(flags, '$1<span class="flag">$2</span>')}</code>`;
       },
       image({ text }) {
         return escape(text);

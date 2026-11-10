@@ -110,7 +110,11 @@ a {
   text-underline-offset: 0.2em;
   text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
   border-radius: 1px;
-  overflow-wrap: anywhere; /* a bare address as link text still has to fit a phone */
+}
+
+/* An address, a hash or a bare URL still has to fit a phone: it alone may break anywhere. */
+.long {
+  overflow-wrap: anywhere;
 }
 
 a:hover {
@@ -225,6 +229,7 @@ main > :last-child {
 
 .tickets {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   row-gap: 1.375rem;
   margin: 0;
   padding: 0;
@@ -322,6 +327,7 @@ main > :last-child {
 
 .found {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   row-gap: 1.5rem;
   margin: 0;
   padding: 0;
@@ -507,10 +513,9 @@ code {
   padding: 0.1em 0.3em;
   border-radius: 0.25rem;
   background: var(--wash);
-  overflow-wrap: anywhere;
 }
 
-code.whole {
+code .flag {
   white-space: nowrap;
 }
 
@@ -617,7 +622,12 @@ td:last-child {
   .prose > .table td:last-child {
     padding-right: var(--edge);
   }
+  /* Two or three columns fit the screen; more get room to be read and scroll sideways. */
   .prose > .table table {
-    min-width: max(100%, var(--columns) * 7.5rem);
+    min-width: max(100%, var(--columns) * 9rem);
+  }
+  .prose > .table[data-columns="2"] table,
+  .prose > .table[data-columns="3"] table {
+    min-width: 100%;
   }
 }
