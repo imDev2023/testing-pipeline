@@ -1,9 +1,9 @@
-# Pipescope: the first devnet version
+# Aviary: the first devnet version
 
 Decided with the owner in [Pipescope v1 scope](https://github.com/imDev2023/testing-pipeline/issues/3) on 2026-11-09 and 2026-11-10.
 MetalLegBob confirmed the scope stands and asked for nothing more for a start ([Record MetalLegBob's answers to the outreach](https://github.com/imDev2023/testing-pipeline/issues/5)).
 Pipeline was read at commit `5ad130d` (its integrator guide, metadata standard and trust facts).
-The explainer has its own file, [`pipescope-explainer.md`](pipescope-explainer.md); [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) merges the Pipescope files.
+The explainer has its own file, [`pipescope-explainer.md`](pipescope-explainer.md); [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) merges the Aviary files.
 
 ## What the first version is
 
@@ -49,32 +49,32 @@ Not in the first version:
 
 ### Simulate before every signature
 
-- Every transaction Pipescope builds is simulated before the wallet is asked to sign: swaps, custom actions and creating a market.
-- If the simulation fails, Pipescope shows the error and the sign button stays off.
+- Every transaction Aviary builds is simulated before the wallet is asked to sign: swaps, custom actions and creating a market.
+- If the simulation fails, Aviary shows the error and the sign button stays off.
 
 ## The integrator fee
 
 - **Rate**: 0.5% (50 basis points), one rate for every market, set in config.
   With Pipeline's 0.25%, a trader pays 0.75% in all, under the 1% usual among terminals.
-- **Fee mints**: the router takes an integrator fee in the mint the trader pays with, so Pipescope charges it only when the input mint is a fee mint: SOL (as wrapped SOL) or USDC.
+- **Fee mints**: the router takes an integrator fee in the mint the trader pays with, so Aviary charges it only when the input mint is a fee mint: SOL (as wrapped SOL) or USDC.
   A swap paying with any other mint passes no integrator fee account and a rate of 0.
   The reasons: a fee account in every mint would cost about 0.002 SOL of rent each, paid by the trader's transaction; the fees would pile up in tokens that are hard to sell; and a hooked token, our own containment hook included, may refuse transfers into our account and so make sells fail.
-  The cost is that Pipescope earns mostly on buys.
-- **Fee wallet**: a dedicated wallet that Pipescope only ever pays into, holding one fee account for wrapped SOL and one for USDC, created once.
+  The cost is that Aviary earns mostly on buys.
+- **Fee wallet**: a dedicated wallet that Aviary only ever pays into, holding one fee account for wrapped SOL and one for USDC, created once.
   On devnet its keypair is `~/.config/testing-pipeline/devnet/fee-wallet.json` and its USDC account is for Circle's devnet USDC mint, `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`.
-  The owner creates the mainnet fee wallet later; its key is never on a server, and Pipescope knows only its address.
+  The owner creates the mainnet fee wallet later; its key is never on a server, and Aviary knows only its address.
   It is a different wallet from the tax AMM's `SUITE_TREASURY` (see [`tax-amm.md`](tax-amm.md)), so each product's revenue stays visible on its own and the fee wallet can change in config without a redeploy.
 
 ### How the fee is shown before signing
 
 - The trade box always shows the fee breakdown, never collapsed, in token amounts and percentages:
   - Pipeline fee: 0.25%;
-  - Pipescope fee: 0.5%, or "none on this swap" when the input is not a fee mint;
+  - Aviary fee: 0.5%, or "none on this swap" when the input is not a fee mint;
   - the strategy's own fees and taxes: "included in the quote", since strategy metadata has no field for them;
   - the expected output and the minimum received after slippage.
 - The swap is built from exactly the rate on screen.
 - The public Fees page states the rate, which payments carry it, and that Pipeline's fee and the strategy's own fees and taxes come on top.
-- "Pipescope fee" takes the product's public name once [Product and suite names](https://github.com/imDev2023/testing-pipeline/issues/17) settles it.
+- The label takes the public name from the web app's one config module ([`README.md`](README.md), Names), so it changes with the name.
 
 ## Wallets and devices
 
@@ -85,7 +85,7 @@ Not in the first version:
 ## Facts and Canary results
 
 - The facts panel shows neutral facts and no verdicts.
-  Program and mint facts use Pipeline's trust flags and their fixed descriptions from `pipeline-client` (upgradeable or frozen and by whom, verified build, metadata status, mint and freeze authorities, transfer hook, transfer fee, permanent delegate and the rest), so Pipescope's wording matches Pipeline's SDK and hosted API.
+  Program and mint facts use Pipeline's trust flags and their fixed descriptions from `pipeline-client` (upgradeable or frozen and by whom, verified build, metadata status, mint and freeze authorities, transfer hook, transfer fee, permanent delegate and the rest), so Aviary's wording matches Pipeline's SDK and hosted API.
   Beside them: liquidity, market age and volume.
 - Each Canary result states what was tested and what happened, in numbers, with the strategy version and the date it ran.
 - There is no overall score, no safe or unsafe badge, and no green or red.
@@ -113,7 +113,7 @@ Not in the first version:
 
 ## Custom-action and create-market forms
 
-- Pipescope renders every `actions` form and the `init` form from any strategy's metadata, with every argument type and account source the schema allows, using the SDK's generic builders (`buildActionInstruction`, `buildCreateMarketFromMetadata`), so no strategy needs code of its own.
+- Aviary renders every `actions` form and the `init` form from any strategy's metadata, with every argument type and account source the schema allows, using the SDK's generic builders (`buildActionInstruction`, `buildCreateMarketFromMetadata`), so no strategy needs code of its own.
 - Strategy metadata is untrusted user content:
   - metadata is validated with Pipeline's metadata parser, and a strategy whose metadata fails gets no forms;
   - labels and descriptions are shown as plain text, never as HTML or Markdown;
@@ -126,16 +126,16 @@ Not in the first version:
 ## Tokens and prices
 
 - Token symbols and images come from each mint's on-chain token metadata, which is untrusted too, so they always appear with the mint's short address beside them.
-- Pipescope names only SOL and USDC itself; no other token gets a "verified" mark, since that would be a judgement.
+- Aviary names only SOL and USDC itself; no other token gets a "verified" mark, since that would be a judgement.
 - Charts and prices are in the market's own mints, for example a token priced in SOL; there are no USD prices on devnet.
 
 ## Shared
 
-What this ticket decided for every product, that our products live inside Pipescope, is in [`README.md`](README.md) ("Our products live inside Pipescope"), with the engineering and security bar for our on-chain programs.
+What this ticket decided for every product, that our products live inside Aviary, is in [`README.md`](README.md) ("Our products live inside Aviary"), with the engineering and security bar for our on-chain programs.
 
 ## For other tickets
 
 - [Pipescope architecture](https://github.com/imDev2023/testing-pipeline/issues/13): where swaps, custom actions and market creation are simulated; where the fee rate and fee wallet are configured; and whether Pipeline's hosted devnet API (`5ad130d`: markets with trust flags and filters, trades, candles, trader history, quotes and a live stream) serves the feed, charts and wallet page or our own indexer does.
 - [Canary checks on the four devnet strategies](https://github.com/imDev2023/testing-pipeline/issues/14): each result as a record of check, version, run date, sizes and outcome, in numbers; and which outcome counts as "a buyer could not sell back" for the trade-box notice.
 - [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16): the six pages and two static pages above, the trade box with its fee breakdown and exit-test acknowledgement, the upgrade notice, and forms with their account lists.
-- [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18), [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20) and [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21): say what each product's Pipescope panel shows and which actions its metadata exposes.
+- [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18), [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20) and [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21): say what each product's Aviary panel shows and which actions its metadata exposes.

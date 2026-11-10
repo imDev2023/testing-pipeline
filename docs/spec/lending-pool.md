@@ -1,10 +1,11 @@
-# Lending pool
+# Lending AMM
 
 Decided in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21) on 2026-11-10 with the owner, against Pipeline commit `5ad130d` (its strategy guide, template and seeding interface) and Kamino Lend (klend) release 1.28.0 (`686913e`).
 It builds on [Which lending market the lending pool lends to](https://github.com/imDev2023/testing-pipeline/issues/12) ([findings](https://github.com/imDev2023/testing-pipeline/blob/research/lending-market/research/lending-market.md)) and on a check of Kamino's flags, caps, exchange rate and devnet setup made for this ticket ([Kamino facts](https://github.com/imDev2023/testing-pipeline/blob/research/lending-market/research/lending-market-kamino-facts.md)).
 MetalLegBob asked for a pool that lends out the idle part of its liquidity, through Kamino or a similar market, and he is not building it himself ([Record MetalLegBob's answers to the follow-up DM](https://github.com/imDev2023/testing-pipeline/issues/27)), so it stays in scope.
-The shared engineering and security bar for our programs lands in `docs/spec/README.md`, from [Engineering and security bar for our on-chain programs](https://github.com/imDev2023/testing-pipeline/issues/4); this file adds only what is particular to the lending pool.
-Terms are as in `GLOSSARY.md`: lending pool, buffer, lent side, lending market, cToken, withdraw mode, keeper job.
+The shared engineering and security bar for our programs lands in `docs/spec/README.md`, from [Engineering and security bar for our on-chain programs](https://github.com/imDev2023/testing-pipeline/issues/4); this file adds only what is particular to the lending AMM.
+It was specified under the working name lending pool; [Product and suite names](https://github.com/imDev2023/testing-pipeline/issues/17) named it the lending AMM, because a lending pool reads as a pool to lend to or borrow from.
+Terms are as in `GLOSSARY.md`: lending AMM, buffer, lent side, lending market, cToken, withdraw mode, keeper job.
 
 ## What it is
 
@@ -70,14 +71,14 @@ Terms are as in `GLOSSARY.md`: lending pool, buffer, lent side, lending market, 
 
 - The lent side is exactly the listed mint, owned by SPL Token.
 - The other side follows the tax AMM's mint rules ([`tax-amm.md`](tax-amm.md), "Mint rules"): SPL Token, or Token-2022 with only transfer hook, metadata pointer, token metadata, group pointer, group member pointer, token group and token group member extensions; transfer fees, permanent delegates and every other extension are refused at creation.
-- So hooked tokens may trade in a lending pool market.
+- So hooked tokens may trade in a lending AMM market.
   The hooked transfer and the Kamino redeem are sibling calls under the strategy and never stack: the deepest chain is the redeem, router (1), strategy (2), klend (3), SPL Token (4), or 5 when the trader uses a smart wallet, inside the limit of 5.
   A transfer hook that makes calls of its own fails for smart-wallet traders, as it does in any Pipeline market.
 - A contained token can only trade in its home market until its unlock, and Kamino refuses hooked mints, so a contained token is never lent.
 
 ### Addresses
 
-- The market state is the PDA `["market", other_mint, lent_mint, lp_fee_bps as u16 little-endian]` of the lending pool program, so there is one market per pair, lent side and fee.
+- The market state is the PDA `["market", other_mint, lent_mint, lp_fee_bps as u16 little-endian]` of the lending AMM program, so there is one market per pair, lent side and fee.
   Every creation parameter is in the seeds, so nobody can occupy a market's address with other parameters.
   Someone may create a market first at a bad price with dust liquidity; correcting that price by a swap costs little, and the locked minimum stops share inflation.
 - Markets created through `pipeline_seed_liquidity` live at `["seeded", seeder, other_mint, lent_mint, lp_fee_bps]` instead, as Pipeline's guide asks, so nobody can create or price them first.
@@ -95,7 +96,7 @@ Terms are as in `GLOSSARY.md`: lending pool, buffer, lent side, lending market, 
 | Field | Type | Rule |
 | --- | --- | --- |
 | `lent_index` | u8 | 0 or 1: which of the two mints is lent; it must be on the cluster's `LENT_MINTS` list |
-| `lp_fee_bps` | u16 | At most `MAX_LP_FEE_BPS`; Pipescope's form defaults it to 30 (0.30%) |
+| `lp_fee_bps` | u16 | At most `MAX_LP_FEE_BPS`; Aviary's form defaults it to 30 (0.30%) |
 
 - `pipeline_init_market` refuses anything that breaks a rule, checks that the market state's address is the PDA above, checks that the market signer is the router's PDA `["market", program, market_state]` and stores it, creates the vaults, the cToken account and the LP mint idempotently, and records the reserve, the creation slot and the Unix time.
 - Rent comes from the router's payer, funded by the creator's `max_creator_lamports`.
@@ -106,7 +107,7 @@ One transaction, as Pipeline's guide recommends:
 
 1. The router's `create_market` with the creation parameters.
 2. The router's `init_fee_account` for each of the two mints.
-3. The lending pool's `add_liquidity`, which makes the first deposit.
+3. The lending AMM's `add_liquidity`, which makes the first deposit.
 
 Until the first deposit, quotes and swaps are refused, because an empty side cannot be priced.
 
@@ -198,8 +199,8 @@ For a trade from side `i` to side `o`, with effective reserves `E` (`R` for the 
 
 - `rebalance {}` is a permissionless custom action: anyone may call it at any time, and inside the band it does nothing, so it cannot be used to grief a market.
 - It creates no accounts, so the caller pays only the transaction fee, and gets no tip.
-- Our keeper runner calls it when Pipescope's indexer sees a swap or an LP action leave a market outside its band, and sweeps every lending pool market every 10 minutes for withdraw mode and anything missed.
-- That is the lending pool's whole answer for the map's keeper runner: one keeper job per market, triggered by events, a few calls an hour at most.
+- Our keeper runner calls it when Aviary's indexer sees a swap or an LP action leave a market outside its band, and sweeps every lending AMM market every 10 minutes for withdraw mode and anything missed.
+- That is the lending AMM's whole answer for the map's keeper runner: one keeper job per market, triggered by events, a few calls an hour at most.
   Kamino's `withdraw_queued_liquidity` is not needed, since the program never holds a withdrawal ticket.
 
 ## When Kamino can't pay
@@ -244,7 +245,7 @@ The program has no switches of its own; it reads Kamino's state at each call.
 
 With `in_kind = false` the cTokens' part is redeemed from Kamino and paid in the lent mint, so the LP receives only the two mints; if Kamino cannot pay that part right now, the instruction fails before calling Kamino, and `min_lent` protects against a rate move.
 With `in_kind = true` the cTokens' part is paid as cTokens into the LP's associated token account for the collateral mint, created at the LP's expense; this path reads no Kamino account and calls no Kamino instruction, so it works whatever state Kamino is in.
-Pipescope offers in kind whenever a cash removal would fail.
+Aviary offers in kind whenever a cash removal would fail.
 Either way the buffer's share of the market is unchanged, so one LP leaving never drains the buffer traders rely on.
 
 ### Locking
@@ -263,7 +264,7 @@ Locked shares still count in `N` and still earn the LP fee and the yield, which 
 
 - LPs: the LP fee and all the lending yield, pro rata through their shares, and Kamino's losses likewise.
 - Pipeline: its 0.25% router fee on every swap.
-- Us: nothing from the strategy; Pipescope earns its integrator fee on the trades it routes.
+- Us: nothing from the strategy; Aviary earns its integrator fee on the trades it routes.
 - A market's creator: nothing beyond their own LP shares.
 
 ## Custom actions and metadata
@@ -276,12 +277,12 @@ Locked shares still count in `N` and still earn the LP fee and the yield, which 
 | `rebalance` | `other` | Anyone |
 
 - Every action that moves the other mint forwards transfer-hook accounts after its own, as the template's swap does.
-- Each instruction emits an event (market created, liquidity added, liquidity removed with the in-kind amount, shares locked, rebalanced with the amount and direction, withdraw mode entered or left, a swap's redeem with its amount) so Pipescope's indexer can show a market's history; Pipescope reads current values from the market state and the reserve, not from events.
+- Each instruction emits an event (market created, liquidity added, liquidity removed with the in-kind amount, shares locked, rebalanced with the amount and direction, withdraw mode entered or left, a swap's redeem with its amount) so Aviary's indexer can show a market's history; Aviary reads current values from the market state and the reserve, not from events.
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, description, category `amm`, tags including `lending` and `kamino`, links including `source` and the IDL, `init` as above with `market_state` as a `pda:` source, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256.
 
-## Pipescope's panel
+## Aviary's panel
 
-Pipescope's lending pool panel shows, per market:
+Aviary's lending AMM panel shows, per market:
 
 - the lent side, its Kamino reserve and lending market, with links;
 - the buffer, the lent value and the buffer's share against its band, and whether the market is in withdraw mode;
@@ -290,7 +291,7 @@ Pipescope's lending pool panel shows, per market:
 - the LP fee, LP share value, locked shares, and the market's lending yield so far;
 - the actions above as forms, with in kind offered whenever a cash removal would fail.
 
-The explainer's fact table carries the same facts, and its risks for every lending pool market are: Kamino's owner and emergency council can stop redeems, as they did on the ETH reserve for 16 hours; LPs bear Kamino's written-off losses, and bad debt not yet written off is not shown in the rate; swaps larger than the buffer plus Kamino's free liquidity fail.
+The explainer's fact table carries the same facts, and its risks for every lending AMM market are: Kamino's owner and emergency council can stop redeems, as they did on the ETH reserve for 16 hours; LPs bear Kamino's written-off losses, and bad debt not yet written off is not shown in the rate; swaps larger than the buffer plus Kamino's free liquidity fail.
 
 ## Upgrades and freezing
 

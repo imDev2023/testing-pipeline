@@ -1,7 +1,7 @@
 # Our on-chain source is public under Apache-2.0
 
 Our on-chain programs are published from this public repo, and the on-chain workspace carries its own Apache-2.0 licence (decided 2026-11-10 in [Engineering and security bar for our on-chain programs](https://github.com/imDev2023/testing-pipeline/issues/4)).
-Published source is what makes verified builds, Pipescope's explainer and integrators' checks possible for our own strategies, and anyone can already copy a program's deployed bytecode and redeploy it, so a restrictive licence would protect little.
+Published source is what makes verified builds, Aviary's explainer and integrators' checks possible for our own strategies, and anyone can already copy a program's deployed bytecode and redeploy it, so a restrictive licence would protect little.
 Apache-2.0 matches Pipeline's strategy template, which our strategies start from.
 
 ## Considered options

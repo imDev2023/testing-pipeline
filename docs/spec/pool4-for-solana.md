@@ -1,10 +1,11 @@
-# Pool4 for Solana
+# Buy wall AMM
 
 Decided in [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20) on 2026-11-10 with the owner, against Pipeline commit `5ad130d` (its strategy guide and template, conformance checker, metadata standard and trust facts).
 It builds on [Pool4 maths on a single Pipeline strategy, and what MetalLegBob's pool4.json strategy is](https://github.com/imDev2023/testing-pipeline/issues/11) ([findings](https://github.com/imDev2023/testing-pipeline/blob/research/pool4-on-pipeline/research/pool4-on-pipeline.md)) and on the verified source of IMD's `CappedBurnHook` at `0xc6c965bd164c483e87d0b550671798e9a3602840` on Ethereum, which is MIT-licensed.
-Pool4 for Solana re-implements IMD's mechanism in Rust and copies none of its code.
+The buy wall AMM re-implements IMD's mechanism in Rust and copies none of its code.
+It was specified under the working name Pool4 for Solana; [Product and suite names](https://github.com/imDev2023/testing-pipeline/issues/17) named it the buy wall AMM, because Pool4 is IMD's product name, and it credits IMD's Pool4 design wherever it is described.
 MetalLegBob is not building it himself ([Record MetalLegBob's answers to the follow-up DM](https://github.com/imDev2023/testing-pipeline/issues/27)), so it stays in scope as our own strategy, to be built, deployed on devnet and registered with Pipeline.
-The shared engineering and security bar for our programs is in [`README.md`](README.md); this file adds only what is particular to Pool4 for Solana.
+The shared engineering and security bar for our programs is in [`README.md`](README.md); this file adds only what is particular to the buy wall AMM.
 [Cut Pool4 for Solana's build tickets](https://github.com/imDev2023/testing-pipeline/issues/24) cuts the build tickets from this file and `README.md`.
 It follows the conventions of [`tax-amm.md`](tax-amm.md) wherever the two strategies share a need, so our strategies have one shape.
 Terms are as in `GLOSSARY.md`: inventory cap, cap floor, cap decay, trim, retired tokens, reward share, buy wall, designer share, suite share, keeper job.
@@ -63,7 +64,7 @@ Every decision here is a default that MetalLegBob may change (the map's standing
 
 - the constants above, all in one module of the program (`config.rs`), which nothing else in the code repeats;
 - a market's creation parameters, for everything a creator chooses;
-- Pipescope's create form, for the pre-filled values.
+- Aviary's create form, for the pre-filled values.
 
 Changing a fee, cap, split, limit or default is then one edit in one of those places before a deployment.
 
@@ -101,7 +102,7 @@ The designer share builds up in each market from its first swap and waits there;
 | `seeder` | pubkey | The only signer the seed action accepts; must not be the default key |
 
 - None of these can change after creation, except through a recipient's own handover (see "Recipients").
-- Pipescope's create form pre-fills IMD's own launch values: a 1% fee, a 15% reward share, a cap floor of 20% and a cap decay of 20% a day; they are defaults of the form only, kept in one place there.
+- Aviary's create form pre-fills IMD's own launch values: a 1% fee, a 15% reward share, a cap floor of 20% and a cap decay of 20% a day; they are defaults of the form only, kept in one place there.
 - `pipeline_init_market` refuses anything that breaks a rule, checks the token mint against the mint rules, checks that the market signer is the router's PDA `["market", program, market_state]` and stores it, creates both vaults idempotently, and records the creation slot and Unix time.
 - `pipeline_seed_liquidity` takes the same fields in `SeedRequest.data`, with `seeder` ignored because the calling program's PDA is the seeder.
 
@@ -110,7 +111,7 @@ The designer share builds up in each market from its first swap and waits there;
 - The token is an SPL Token or Token-2022 mint.
 - Its mint authority and its freeze authority must both be removed by the time the market is seeded.
   A live mint authority could mint and sell into the curve and the buy wall, and would make the burns meaningless; a live freeze authority could freeze the market's vault.
-  The tax AMM allows both because USDC has them; a Pool4 token has no such need.
+  The tax AMM allows both because USDC has them; a token on the buy wall AMM has no such need.
 - A Token-2022 token may carry only the tax AMM's allowlist of mint extensions: transfer hook (any hook program), metadata pointer, token metadata, group pointer, group member pointer, token group and token group member.
   Every other extension is refused at creation, including any the program does not recognise.
 - In Pipeline's trust flags a seeded market's token can therefore only ever show `token-2022`, `transfer-hook` and `transfer-hook-authority`.
@@ -305,7 +306,7 @@ None moves the price.
 - Slot 1 is refused while `DESIGNER_RECIPIENT` is unset; the SOL waits in the vault.
 - Each slot is paid separately, so one broken account never holds up the others.
 - No tip.
-- A recipient unwraps by closing the account (Pipescope offers this).
+- A recipient unwraps by closing the account (Aviary offers this).
 
 ### For the keeper runner
 
@@ -339,8 +340,8 @@ It also keeps the creation slot and time and lifetime totals for display: tokens
 
 ## With the containment hook
 
-- A Pool4 for Solana market cannot be a contained token's home market in v1: the containment hook's first version binds only tax AMM markets and reads only the tax AMM's counter ([`containment-hook.md`](containment-hook.md), [ADR 0006](../adr/0006-unlock-goal-counted-by-the-home-market.md)).
-  So a contained token reaches Pool4 for Solana only after its unlock.
+- A buy wall market cannot be a contained token's home market in v1: the containment hook's first version binds only tax AMM markets and reads only the tax AMM's counter ([`containment-hook.md`](containment-hook.md), [ADR 0006](../adr/0006-unlock-goal-counted-by-the-home-market.md)).
+  So a contained token reaches the buy wall AMM only after its unlock.
 - A token may carry any other transfer hook; the market forwards hook accounts on every transfer of the token.
 - The design keeps everything a later hook version would need to accept these markets, so that change would touch the hook alone:
   - bypass is refused, and the counters count router swaps only;
@@ -349,7 +350,7 @@ It also keeps the creation slot and time and lifetime totals for display: tokens
   - the token moves only between traders and the market's vault (swaps and the seed), out of the vault to the rewards recipient (`pay_rewards`), or is burned;
   - fees and keeper tips are wrapped SOL, which no hook sees;
   - liquidity can never leave: trims only move it, inside the same vaults, to the burn and the buy wall.
-- Pipeline's hosted API refuses to build swaps whose input mint has a transfer hook, so sells of a hooked token are built with the SDK, as Pipescope does.
+- Pipeline's hosted API refuses to build swaps whose input mint has a transfer hook, so sells of a hooked token are built with the SDK, as Aviary does.
 
 ## Market state
 
@@ -414,11 +415,11 @@ The first build ticket fixes the byte offsets and writes them into this file; th
 | `set_rewards_recipient` | `other` | The rewards recipient |
 
 - Every action that moves the token forwards transfer-hook accounts after its own, as the template's swap does.
-  Metadata actions cannot describe those extra accounts, so generic forms work for tokens without a hook and Pipescope builds the hooked ones itself.
-- Each instruction emits an event (market created, seeded, wall placed, settled, rewards paid, fees swept, recipient changed), and a swap emits one when it trims or lowers the cap, so Pipescope's indexer can show a market's history; Pipescope reads current values from the market state, not from events.
+  Metadata actions cannot describe those extra accounts, so generic forms work for tokens without a hook and Aviary builds the hooked ones itself.
+- Each instruction emits an event (market created, seeded, wall placed, settled, rewards paid, fees swept, recipient changed), and a swap emits one when it trims or lowers the cap, so Aviary's indexer can show a market's history; Aviary reads current values from the market state, not from events.
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, a description that credits IMD's Pool4, category `amm`, tags including `pool4`, links including `source` and the IDL, `init` as above with `market_state: new_keypair`, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256; where they are published is in `README.md`.
-- The trust flags describe programs and mints, not markets, so nothing there says a market trims or burns: the metadata declares it, and Pipescope reads each market's parameters, ledgers and cap from its market state.
-- Pipeline's API reports raw vault balances, so retired tokens, the buy wall, idle SOL and unpaid fees show there as liquidity; Pipescope reads the ledgers instead.
+- The trust flags describe programs and mints, not markets, so nothing there says a market trims or burns: the metadata declares it, and Aviary reads each market's parameters, ledgers and cap from its market state.
+- Pipeline's API reports raw vault balances, so retired tokens, the buy wall, idle SOL and unpaid fees show there as liquidity; Aviary reads the ledgers instead.
 
 ## Worked example
 
@@ -438,9 +439,9 @@ A market is seeded with 1,000,000 tokens of 6 decimals (1,000,000,000,000 units)
 
 In the same model, on a market seeded the same way with 5 SOL idle, buying with 30 SOL, placing the wall in the same slot and selling everything back loses 0.595 SOL, and the wall's top ends no higher than the price before the buy.
 
-## Pipescope's panel
+## Aviary's panel
 
-Pipescope's Pool4 for Solana panel shows, per market:
+Aviary's buy wall AMM panel shows, per market:
 
 - the price, the buy wall's top, the SOL in the wall and what it has bought since it was placed, and the wall's floor;
 - the inventory cap against what the curve holds, the cap floor, the cap decay and the allowance built up;
@@ -450,7 +451,7 @@ Pipescope's Pool4 for Solana panel shows, per market:
 - each keeper job that is due, as a button, and the recipients' handover forms;
 - the create form, pre-filled with IMD's launch values and showing the whole fee split, the designer and suite shares included.
 
-The explainer's fact table carries the same facts, and its risks for every Pool4 for Solana market are: the curve thins as the cap falls, so the same trade moves the price more over time; after a fall in price the buy wall can sit well below the price, because its floor rises only about 4% a day; and a token with a transfer hook can be stopped from trading by that hook.
+The explainer's fact table carries the same facts, and its risks for every buy wall market are: the curve thins as the cap falls, so the same trade moves the price more over time; after a fall in price the buy wall can sit well below the price, because its floor rises only about 4% a day; and a token with a transfer hook can be stopped from trading by that hook.
 
 ## For the shared engineering bar
 
@@ -497,7 +498,7 @@ The checker sizes its trades from vault balances, which include the wall and the
 
 ## Where it differs from IMD's Pool4
 
-| | IMD's hook | Pool4 for Solana |
+| | IMD's hook | The buy wall AMM |
 | --- | --- | --- |
 | Fee | 1%, on whichever token comes in | Chosen per market, 0.25% to 3%, always in SOL |
 | Who gets the fee | The hook's owner | 10% IMD and Adam, 10% us, the rest the market's fee recipient and buy wall |
@@ -538,5 +539,5 @@ The checker sizes its trades from vault balances, which include the wall and the
   - the program deployed and registered with the router's `register_strategy`, with its metadata and conformance report published;
   - one market created with a fresh test token, seeded, and traded both ways through the router;
   - a sell that trims, the wall placed and then sold into, a settle that burns, rewards paid and fees swept, with slot 1 refused while `DESIGNER_RECIPIENT` is unset.
-- Its Pipescope panel and forms, as `README.md` asks of every product.
+- Its Aviary panel and forms, as `README.md` asks of every product.
 - Whatever else `README.md` requires of our on-chain programs.
