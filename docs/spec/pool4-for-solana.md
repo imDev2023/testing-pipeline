@@ -1,0 +1,542 @@
+# Pool4 for Solana
+
+Decided in [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20) on 2026-11-10 with the owner, against Pipeline commit `5ad130d` (its strategy guide and template, conformance checker, metadata standard and trust facts).
+It builds on [Pool4 maths on a single Pipeline strategy, and what MetalLegBob's pool4.json strategy is](https://github.com/imDev2023/testing-pipeline/issues/11) ([findings](https://github.com/imDev2023/testing-pipeline/blob/research/pool4-on-pipeline/research/pool4-on-pipeline.md)) and on the verified source of IMD's `CappedBurnHook` at `0xc6c965bd164c483e87d0b550671798e9a3602840` on Ethereum, which is MIT-licensed.
+Pool4 for Solana re-implements IMD's mechanism in Rust and copies none of its code.
+MetalLegBob is not building it himself ([Record MetalLegBob's answers to the follow-up DM](https://github.com/imDev2023/testing-pipeline/issues/27)), so it stays in scope as our own strategy, to be built, deployed on devnet and registered with Pipeline.
+The shared engineering and security bar for our programs is in [`README.md`](README.md); this file adds only what is particular to Pool4 for Solana.
+[Cut Pool4 for Solana's build tickets](https://github.com/imDev2023/testing-pipeline/issues/24) cuts the build tickets from this file and `README.md`.
+It follows the conventions of [`tax-amm.md`](tax-amm.md) wherever the two strategies share a need, so our strategies have one shape.
+Terms are as in `GLOSSARY.md`: inventory cap, cap floor, cap decay, trim, retired tokens, reward share, buy wall, designer share, suite share, keeper job.
+
+## What it is
+
+- A Pipeline strategy whose markets own all their liquidity: a token against wrapped SOL, seeded once, with no LP shares and no way to take liquidity out.
+- Pricing is a constant-product curve plus the buy wall, a second, SOL-only stretch of liquidity below the price.
+- After every swap the market compares the curve's token holdings with its inventory cap.
+  A buy that leaves it below the cap lowers the cap, within the cap decay and never below the cap floor.
+  A sell that leaves it above the cap is trimmed: the excess tokens and the proportional SOL leave the curve without moving the price.
+- Trimmed tokens are retired: burned, except for the market's reward share.
+  Trimmed SOL becomes the buy wall.
+- Every swap pays the market's fee, always in SOL, split between IMD and Adam (the designer share), us (the suite share) and the market, whose part goes to a fee recipient, the buy wall, or both.
+- Four keeper jobs place the wall, burn, pay rewards and pay out fees; anyone may call them.
+- After the seed nobody, us included, has any power over a market, except that each of its two recipients may hand its own role to another wallet.
+
+## Not in v1
+
+- Exact-out swaps.
+- Staking with streamed rewards; a market's rewards recipient can be a staking program later, ours or the creator's.
+- Quote mints other than wrapped SOL.
+- Being a contained token's home market: the containment hook's first version accepts only tax AMM markets ([ADR 0006](../adr/0006-unlock-goal-counted-by-the-home-market.md)); see "With the containment hook".
+- Single-sided launches, LP shares, adding liquidity after the seed, closing a market or withdrawing anything from one.
+- Any change to a market's parameters after creation.
+- IMD's three-way split of the reward share between its own products; a creator who wants a further split names their own splitter as the rewards recipient.
+- Mainnet: nothing deploys there before Pipeline's router does, and the program is frozen first (see "Upgrades and freezing").
+
+## Constants
+
+| Name | Value | Meaning |
+| --- | --- | --- |
+| `MIN_FEE_BPS`, `MAX_FEE_BPS` | 25, 300 | The range a market's fee is chosen from (0.25% to 3%) |
+| `DESIGNER_SHARE_BPS` | 1000 (10% of the fee) | The designer share, owed to IMD and Adam |
+| `SUITE_SHARE_BPS` | 1000 (10% of the fee) | The suite share |
+| `DESIGNER_RECIPIENT` | unset (the all-zero key) on devnet | The wallet the designer share is paid to |
+| `SUITE_TREASURY` | set at build time | The same wallet the tax AMM pays its suite share to; on devnet its key is in `~/.config/testing-pipeline/devnet/` |
+| `MAX_REWARD_SHARE_BPS` | 3000 | The highest reward share, IMD's own limit |
+| `MIN_CAP_FLOOR_BPS` | 10 | The lowest cap floor, as a share of the seeded tokens (0.1%) |
+| `MAX_CAP_DECAY_BPS` | 10,000 | The highest cap decay a day, as a share of the seeded tokens |
+| `WALL_THRESHOLD` | 10,000,000 lamports (0.01 SOL) | Idle SOL, or SOL the wall has spent, that lets the wall be placed again |
+| `KEEPER_TIP_CAP` | 2,000,000 lamports (0.002 SOL) | The most a wall placement tips its caller |
+| `FLOOR_CRAWL_BPS` | 400 a day | How fast the wall's floor may rise, in price terms |
+| `REF_STEP_BPS`, `REF_STEP_WINDOW` | 200, 12 seconds | How fast the reference may follow the price: 2% of the price per 12 seconds |
+| `DECAY_CREDIT_WINDOW` | 86,400 seconds | The most cap decay allowance that builds up while a market is idle: one day's worth |
+| `MIN_SQRT_PRICE`, `MAX_SQRT_PRICE` | 2^32, 2^96 | The square-root prices no trade may reach |
+| `MIN_SEED_LAMPORTS` | 100,000,000 (0.1 SOL) | The least SOL a seed may bring |
+| `MIN_OPENING_SQRT_PRICE`, `MAX_OPENING_SQRT_PRICE` | 2^40, 2^88 | The square-root prices a market may open between |
+| `MIN_LIQUIDITY` | 1,000,000 | The least liquidity the curve may ever hold |
+| `MARKET_STATE_SIZE` | 1,024 bytes | The size of every market state, for good |
+
+The constants are compiled into the program; changing one is a program upgrade, which ends when the program is frozen.
+There is no admin and no settings account.
+
+Every decision here is a default that MetalLegBob may change (the map's standing rule of 2026-11-10), so each policy value lives in exactly one place:
+
+- the constants above, all in one module of the program (`config.rs`), which nothing else in the code repeats;
+- a market's creation parameters, for everything a creator chooses;
+- Pipescope's create form, for the pre-filled values.
+
+Changing a fee, cap, split, limit or default is then one edit in one of those places before a deployment.
+
+`DESIGNER_RECIPIENT` is unset because IMD and Adam have no known Solana address (2026-11-10).
+The designer share builds up in each market from its first swap and waits there; the owner asks Adam for an address, and a program upgrade sets the constant, which must happen before the program is frozen.
+
+## Markets
+
+### Shape
+
+- Exactly two mints: index 0 is the token and index 1 is wrapped SOL (`So11111111111111111111111111111111111111112`), which is the order `pipeline_market_info` reports.
+- Prices below are in lamports per token unit, the token's smallest unit.
+
+### Addresses
+
+- A market created through the router has a fresh keypair as its market state (metadata `init.market_state` is `new_keypair`), as in the tax AMM and for the same reason: a key derived from only some parameters could be taken first by a market with bad ones.
+- The vault authority is the PDA `["authority", market_state]` of the program; it signs every transfer and burn out of the vaults.
+- Each vault is a token account at the PDA `["vault", market_state, mint]`, owned by the vault authority.
+- So the vaults and the router's market and fee accounts can all be computed before `create_market` is sent, as for the tax AMM.
+- A market created through `pipeline_seed_liquidity` lives at the PDA `["seeded", seeder, token_mint, wsol_mint]`, with its vaults and authority derived from that address in the same way.
+
+### Creation parameters
+
+`init_data` is the Borsh encoding of these fields, in this order (metadata `init.args` lists them the same way):
+
+| Field | Type | Rule |
+| --- | --- | --- |
+| `fee_bps` | u16 | `MIN_FEE_BPS` to `MAX_FEE_BPS` |
+| `wall_split_bps` | u16 | 0 to 10,000: the part of the market's share of each fee that goes to the buy wall |
+| `fee_recipient` | pubkey | A wallet; the default (all-zero) key only when `wall_split_bps` is 10,000 |
+| `reward_share_bps` | u16 | 0 to `MAX_REWARD_SHARE_BPS` |
+| `rewards_recipient` | pubkey | A wallet; the default key exactly when `reward_share_bps` is 0 |
+| `cap_floor_bps` | u16 | `MIN_CAP_FLOOR_BPS` to 10,000, of the seeded tokens |
+| `cap_decay_bps` | u16 | 0 to `MAX_CAP_DECAY_BPS`, of the seeded tokens a day; 0 switches the ratchet off |
+| `seeder` | pubkey | The only signer the seed action accepts; must not be the default key |
+
+- None of these can change after creation, except through a recipient's own handover (see "Recipients").
+- Pipescope's create form pre-fills IMD's own launch values: a 1% fee, a 15% reward share, a cap floor of 20% and a cap decay of 20% a day; they are defaults of the form only, kept in one place there.
+- `pipeline_init_market` refuses anything that breaks a rule, checks the token mint against the mint rules, checks that the market signer is the router's PDA `["market", program, market_state]` and stores it, creates both vaults idempotently, and records the creation slot and Unix time.
+- `pipeline_seed_liquidity` takes the same fields in `SeedRequest.data`, with `seeder` ignored because the calling program's PDA is the seeder.
+
+### Mint rules
+
+- The token is an SPL Token or Token-2022 mint.
+- Its mint authority and its freeze authority must both be removed by the time the market is seeded.
+  A live mint authority could mint and sell into the curve and the buy wall, and would make the burns meaningless; a live freeze authority could freeze the market's vault.
+  The tax AMM allows both because USDC has them; a Pool4 token has no such need.
+- A Token-2022 token may carry only the tax AMM's allowlist of mint extensions: transfer hook (any hook program), metadata pointer, token metadata, group pointer, group member pointer, token group and token group member.
+  Every other extension is refused at creation, including any the program does not recognise.
+- In Pipeline's trust flags a seeded market's token can therefore only ever show `token-2022`, `transfer-hook` and `transfer-hook-authority`.
+
+### Creating a market
+
+One transaction, as Pipeline's guide recommends:
+
+1. The router's `create_market` with the creation parameters, signed by the creator and the market state keypair.
+2. The router's `init_fee_account` for each of the two mints.
+3. The `seed` action, signed by the seeder.
+
+A launchpad graduating a token instead calls `pipeline_seed_liquidity`, then the router's `register_existing_market` and `init_fee_account` for each mint, in one transaction.
+
+### The seed
+
+- `seed { token_amount: u64, sol_amount: u64 }` is a custom action signed by the market's `seeder`, from token accounts the seeder owns, allowed once.
+- It records what actually arrived in each vault, `x` token units and `y` lamports, and opens the market:
+  - `sqrt_price = floor(sqrt(y × 2^128 / x))`;
+  - `liquidity = min(floor(x × sqrt_price / 2^64), floor(y × 2^64 / sqrt_price))`, the most both amounts can back at that rounded price, so the ledgers cover the curve from the start (the plain `sqrt(x × y)` can exceed them by a unit);
+  - `pool_tokens = x`, `pool_sol = y`, `seeded_tokens = x` and the inventory cap is `x`;
+  - `cap_floor = max(1, floor(x × cap_floor_bps / 10,000))` and `cap_decay_per_day = floor(x × cap_decay_bps / 10,000)`;
+  - the wall's reference, floor and last close all start at `sqrt_price`, and every clock field at the current time.
+- It is refused unless the token's mint and freeze authorities are removed, `y` is at least `MIN_SEED_LAMPORTS`, `sqrt_price` is between `MIN_OPENING_SQRT_PRICE` and `MAX_OPENING_SQRT_PRICE`, and `floor(cap_floor × sqrt_price / 2^64)` is at least `MIN_LIQUIDITY`, so the curve stays usable even with its cap at the floor.
+- Until the seed, quotes and swaps are refused.
+- `pipeline_seed_liquidity` seeds and opens the market in the same call, taking at most `amounts[i]` from each escrow, and returns `SeedResult { taken, lp_amount: 0 }`; the LP recipient is ignored.
+- Tokens or SOL sent to a vault outside a swap or the seed are donations: never credited as input, never paid out.
+
+## Pricing
+
+Exact-in only: `pipeline_market_info` reports `supports_exact_out = false`, and an exact-out quote or swap is refused.
+
+### What is stored
+
+Square-root prices are unsigned Q64.64 numbers held in 128 bits: the square root of the price, times `Q = 2^64`.
+
+| Field | Meaning |
+| --- | --- |
+| `sqrt_price` | The current square-root price, `s` below |
+| `liquidity` | The curve's liquidity `L`; the curve holds `L × Q / s` token units and `L × s / Q` lamports |
+| `wall_liquidity` | The buy wall's liquidity `W`; 0 when no wall is placed |
+| `wall_top` | The square-root price at and below which the wall trades |
+
+The buy wall is one stretch of liquidity from `wall_top` down to zero, as in IMD's design.
+At or above `wall_top` it is all SOL, `W × wall_top / Q` lamports; below it, it has bought tokens and holds `W × s / Q` lamports.
+While the price is at or below `wall_top`, a trade moves through `L + W`; above it, through `L` alone.
+So a trade crosses at most one boundary and is priced in at most two steps, with no square roots and no extra accounts.
+
+### A sell
+
+For `a` credited token units:
+
+1. Start with `remaining = a`, `gross = 0` and `s = sqrt_price`.
+2. Take up to two steps:
+   - if a wall is placed and `s > wall_top`, the step uses `liq = L` and `target = wall_top`; otherwise `liq = L + W` and `target = MIN_SQRT_PRICE`;
+   - `need = ceil(liq × Q × (s - target) / (s × target))`;
+   - if `remaining >= need`, then `next = target` and `used = need`; otherwise `next = ceil(liq × Q × s / (liq × Q + remaining × s))` and `used = remaining`;
+   - `gross += floor(liq × (s - next) / Q)`, `remaining -= used`, `s = next`, and stop when `remaining` is 0.
+3. `fee = ceil(gross × fee_bps / 10,000)` and `out = gross - fee`.
+
+### A buy
+
+For `a` credited lamports:
+
+1. `fee = ceil(a × fee_bps / 10,000)`; start with `remaining = a - fee`, `out = 0` and `s = sqrt_price`.
+2. Take up to two steps:
+   - if a wall is placed and `s < wall_top`, the step uses `liq = L + W` and `target = wall_top`; otherwise `liq = L` and `target = MAX_SQRT_PRICE`;
+   - `need = ceil(liq × (target - s) / Q)`;
+   - if `remaining >= need`, then `next = target` and `used = need`; otherwise `next = s + floor(remaining × Q / liq)` and `used = remaining`;
+   - `out += floor(liq × Q × (next - s) / (next × s))`, `remaining -= used`, `s = next`, and stop when `remaining` is 0.
+
+### Rules for both
+
+- A quote or swap is refused when the input is 0, when `out` is 0, when a buy leaves nothing after the fee, or when input is left over because a price bound was reached.
+- The trader always gets the worse side of every rounding: prices move no further than the input pays for, outputs round down and the fee rounds up.
+- Intermediate maths uses 256-bit integers with checked operations, staging divisions where a product could overflow (dividing by one square-root price at a time); an overflow refuses the instruction.
+- `pipeline_quote` and `pipeline_swap` call this one pricing function, so quotes include the fee and match swaps exactly, which `pipeline-check`'s `quote_matches_swap` verifies to the unit.
+- Pricing reads no clock: everything time-based below runs after the output is decided, so a quote never depends on when it is asked.
+
+### Credited input
+
+- Input is credited with Pipeline's `credited_input`: what the input vault holds beyond what the market has recorded there, capped at what the router sent.
+- What the market has recorded in a vault is the sum of every ledger kept in it (see "Ledgers"), not the curve's holdings alone.
+- The input stays in the input vault for the whole swap, as Pipeline's guide asks.
+
+### Bypass
+
+- Refused, as for every strategy of ours ([ADR 0001](../adr/0001-our-strategies-refuse-bypass.md)): `pipeline_swap` accepts only the router's market signer stored at creation.
+- So every trade pays Pipeline's fee, emits a swap event and counts in the market's counters.
+- No custom action moves the price.
+
+## After pricing
+
+`pipeline_swap` then updates the market in this order.
+None of it changes the trade just priced.
+`now` is the Clock's Unix time and every time difference saturates at 0.
+
+1. **Reference.**
+   If the Clock's slot is later than `last_slot`: `dt = min(now - ref_time, REF_STEP_WINDOW)`, `step = floor(ref × REF_STEP_BPS × dt / (2 × 10,000 × REF_STEP_WINDOW))`, and `ref` moves toward `last_close` by at most `step`; then `ref_time = now` and `last_slot` is the slot.
+   `last_close` is still the price the previous slot's trading ended at, so no trade in this slot can move the reference.
+2. **Books.**
+   A sell adds `a` to `pool_tokens` and takes `gross` from `pool_sol`; a buy adds `a - fee` to `pool_sol` and takes `out` from `pool_tokens`.
+   The fee is split (see "The fee").
+3. **Price.**
+   `sqrt_price` and `last_close` become the new price.
+4. **Floor.**
+   If `floor < ref`: `dt = min(now - floor_time, 86,400)` and `floor` rises by `floor(floor × FLOOR_CRAWL_BPS × dt / (2 × 10,000 × 86,400))`, but not above `ref`.
+   Then `floor_time = now`, and `floor` drops to the new price if that is lower.
+5. **Decay credit.**
+   `decay_credit = min(decay_credit + cap_decay_per_day × (now - decay_time), cap_decay_per_day × DECAY_CREDIT_WINDOW)` and `decay_time = now`.
+   The credit is in token-seconds, so nothing is lost to rounding, and at most one day's allowance ever builds up.
+6. **The cap.**
+   With `held = floor(L × Q / s)`:
+   - **Ratchet**, when `held < cap`: the cap falls to `max(held, cap - floor(decay_credit / 86,400), cap_floor)`, with the subtraction saturating at 0, and `decay_credit` drops by 86,400 for every token unit the cap fell.
+   - **Trim**, when `held > cap`: `new_L = max(floor(cap × s / Q), MIN_LIQUIDITY)`, and if that is below `L`, the curve gives up `held - ceil(new_L × Q / s)` token units and `floor(L × s / Q) - ceil(new_L × s / Q)` lamports (0 if negative).
+     Both leave the pool ledgers: the tokens join `retired_tokens`, the SOL joins `idle_sol`, and `L` becomes `new_L`.
+     `sqrt_price` is untouched, so a trim never moves the price.
+7. **Counters** (see "Counters").
+
+The halving in steps 1 and 4 turns a rate on the price into a rate on its square root.
+
+### What these do
+
+- The ratchet is IMD's at its deployed setting: a buy lowers the cap by all the room it opens, limited by the cap decay and the cap floor.
+- IMD's hook lets decay allowance build up without limit while a market is idle; ours stops at one day's worth, so a long-idle market's cap can never drop many days at once.
+- The wall's floor follows IMD's guard: it drops at once to any price the market trades at, and rises about 4% a day toward a reference that lags the price.
+  The wall can never be placed above the floor, so pumping the price and placing the wall high earns nothing.
+- IMD's rates are per Ethereum block; ours are per second, because Solana's slot times vary.
+
+## The fee
+
+For each swap's `fee`, in lamports:
+
+- `designer = floor(fee × DESIGNER_SHARE_BPS / 10,000)`, added to `fees_designer`;
+- `suite = floor(fee × SUITE_SHARE_BPS / 10,000)`, added to `fees_suite`;
+- the market's part is the rest: `to_wall = floor(rest × wall_split_bps / 10,000)` joins `idle_sol`, and what is left is added to `fees_recipient`.
+
+Traders pay this fee on top of Pipeline's 0.25%.
+Taking it in SOL in both directions means no recipient is ever paid in the token, so none has tokens to sell, and no fee payout passes through a transfer hook.
+Nothing is paid out during a swap, so a swap needs no recipient accounts and a broken recipient account can never block trading.
+
+## Ledgers
+
+The market state keeps one ledger per claim on a vault:
+
+| Vault | Ledgers |
+| --- | --- |
+| Token | `pool_tokens` (the curve's and the wall's), `retired_tokens` (waiting to be burned and split), `rewards_owed` |
+| Wrapped SOL | `pool_sol` (the curve's and the wall's), `idle_sol` (waiting to be placed as the wall), `fees_recipient`, `fees_designer`, `fees_suite` |
+
+These always hold, and the tests check them after every instruction:
+
+- Each vault's balance is at least the sum of its ledgers.
+- `pool_tokens` and `pool_sol` cover everything the curve and the wall could ever pay out at the current price.
+- The curve never holds more tokens than the inventory cap after a swap, except where `MIN_LIQUIDITY` stopped a trim.
+- The inventory cap never rises and never falls below the cap floor.
+- The wall's floor is never above the current price, and a placed wall's top is never above the floor it was placed under.
+
+## Keeper jobs
+
+Four permissionless custom actions; anyone may call them at any time, and our keeper runner does.
+None moves the price.
+
+### `place_wall`
+
+1. `converted` is the SOL the placed wall has spent buying tokens: `wall_sol_placed - floor(W × min(s, wall_top) / Q)`, or 0 with no wall.
+   The call is refused unless `idle_sol` or `converted` is at least `WALL_THRESHOLD`.
+2. The old wall is closed at the current price: its SOL moves from `pool_sol` to `idle_sol` and the tokens it bought, `floor(W × Q × (wall_top - s) / (wall_top × s))` when `s < wall_top`, move from `pool_tokens` to `retired_tokens`.
+3. Rounding dust follows: whatever `pool_sol` and `pool_tokens` hold beyond the curve's own holdings, rounded up, joins `idle_sol` and `retired_tokens`.
+4. The caller is tipped `min(KEEPER_TIP_CAP, floor(work × fee_bps / 10,000), idle_sol)` lamports from `idle_sol`, where `work` is the larger of `converted` and the idle SOL from step 1 if that reached the threshold.
+   This is IMD's rule: the tip never exceeds the fee the market earned on the work, so faking work never pays.
+   It is paid in wrapped SOL to a token account the caller names.
+5. The wall is placed with everything left: `wall_top = min(s, floor)`, `W = floor(idle_sol × Q / wall_top)`, `wall_sol_placed = floor(W × wall_top / Q)`, and `idle_sol` moves into `pool_sol`.
+
+### `settle`
+
+- Splits `retired_tokens`: `floor(retired × reward_share_bps / 10,000)` joins `rewards_owed`, and the rest is burned from the token vault.
+- Refused when there is nothing retired.
+- No tip.
+- A burn calls no transfer hook, so no hook can refuse it.
+
+### `pay_rewards`
+
+- Sends all of `rewards_owed` to the rewards recipient's associated token account for the token, created if missing at the caller's expense, forwarding transfer-hook accounts.
+- Refused when nothing is owed.
+- No tip.
+- It is separate from `settle` so that burns never wait on a transfer a hook or a broken recipient account might refuse.
+
+### `sweep_fees { slot }`
+
+- Pays one slot's whole ledger in wrapped SOL to the associated token account of that slot's wallet, created if missing at the caller's expense: slot 0 is `fees_recipient` to the fee recipient, slot 1 is `fees_designer` to `DESIGNER_RECIPIENT`, slot 2 is `fees_suite` to `SUITE_TREASURY`.
+- Slot 1 is refused while `DESIGNER_RECIPIENT` is unset; the SOL waits in the vault.
+- Each slot is paid separately, so one broken account never holds up the others.
+- No tip.
+- A recipient unwraps by closing the account (Pipescope offers this).
+
+### For the keeper runner
+
+The runner is not specified yet (the map's "Not yet specified"); what it needs from here:
+
+| Job | Run it when |
+| --- | --- |
+| `place_wall` | `idle_sol` or the wall's `converted` reaches `WALL_THRESHOLD`, checked after each swap event on the market |
+| `settle` | `retired_tokens` is above 0, at most hourly for each market |
+| `pay_rewards` | `rewards_owed` is above 0, daily |
+| `sweep_fees` | A slot's ledger is above 0, daily; slot 1 only once `DESIGNER_RECIPIENT` is set |
+
+## Recipients
+
+- `set_fee_recipient { new }` is signed by the current fee recipient, and `set_rewards_recipient { new }` by the current rewards recipient; `new` must not be the default key.
+- What the role is owed follows it to the new wallet.
+- A market created with no fee recipient or no rewards recipient never gets one.
+- Nobody else can change a recipient, and nothing else about a market can change.
+
+## Counters
+
+The market state keeps the tax AMM's counters, changed only by `pipeline_swap` calls signed by the market signer:
+
+| Field | Type | Adds, per swap |
+| --- | --- | --- |
+| `volume[0]`, `volume[1]` | u128 | For the input mint, the credited input; for the output mint, what the trader was paid |
+| `fees_collected` | u128 | The swap's fee, in lamports |
+| `swap_count` | u64 | 1 |
+
+It also keeps the creation slot and time and lifetime totals for display: tokens trimmed, SOL trimmed, tokens the wall bought, tokens burned, rewards paid and tips paid.
+
+## With the containment hook
+
+- A Pool4 for Solana market cannot be a contained token's home market in v1: the containment hook's first version binds only tax AMM markets and reads only the tax AMM's counter ([`containment-hook.md`](containment-hook.md), [ADR 0006](../adr/0006-unlock-goal-counted-by-the-home-market.md)).
+  So a contained token reaches Pool4 for Solana only after its unlock.
+- A token may carry any other transfer hook; the market forwards hook accounts on every transfer of the token.
+- The design keeps everything a later hook version would need to accept these markets, so that change would touch the hook alone:
+  - bypass is refused, and the counters count router swaps only;
+  - `fees_collected` is in SOL and can't be gamed by changing the rate, since a market's fee never changes and is never below 0.25%;
+  - the vault and the router's `["fees", market]` account are computable before creation;
+  - the token moves only between traders and the market's vault (swaps and the seed), out of the vault to the rewards recipient (`pay_rewards`), or is burned;
+  - fees and keeper tips are wrapped SOL, which no hook sees;
+  - liquidity can never leave: trims only move it, inside the same vaults, to the burn and the buy wall.
+- Pipeline's hosted API refuses to build swaps whose input mint has a transfer hook, so sells of a hooked token are built with the SDK, as Pipescope does.
+
+## Market state
+
+An upgrade must never strand a market.
+On 2026-11-08 an upgrade of another Pool4 port on devnet left 6 of its 8 markets failing every resolve, quote and swap with `AccountDidNotDeserialize`, because the new program could not read market states written by older versions.
+Three rules prevent that here.
+
+### One fixed-size layout
+
+- Every market state is `MARKET_STATE_SIZE` bytes from creation and is never resized.
+- It starts with the 8-byte account discriminator, which never changes, and a layout version byte.
+- Fields are read at fixed offsets (a zero-copy account, not a Borsh-decoded one), with no padding: 128-bit values are stored as little-endian byte arrays.
+- Space after the last field is zeroed and reserved.
+  A later version may only append fields into the reserve; it never moves, resizes or removes a field, and a zeroed new field must mean the old behaviour.
+- So a newer program reads every older market as it is, with no migration step, and every instruction accepts every layout version ever deployed.
+
+Fields, in order:
+
+| Group | Fields |
+| --- | --- |
+| Identity | discriminator, layout version, status (created or open), bumps, market signer, token mint, wrapped SOL mint, token vault, SOL vault, seeder, creation slot, creation time, seed time |
+| Counters | `volume[0]`, `volume[1]`, `fees_collected`, `swap_count` |
+| Parameters | `fee_bps`, `wall_split_bps`, `reward_share_bps`, fee recipient, rewards recipient, `cap_floor`, `cap_decay_per_day`, `seeded_tokens` |
+| Pricing | `sqrt_price`, `liquidity`, `wall_liquidity`, `wall_top`, `wall_sol_placed` |
+| Ledgers | `pool_tokens`, `pool_sol`, `retired_tokens`, `rewards_owed`, `idle_sol`, `fees_recipient`, `fees_designer`, `fees_suite` |
+| Cap | inventory cap, `decay_credit`, `decay_time` |
+| Wall guard | `ref`, `ref_time`, `floor`, `floor_time`, `last_slot`, `last_close` |
+| Totals | tokens trimmed, SOL trimmed, tokens the wall bought, tokens burned, rewards paid, tips paid |
+| Reserve | zeroed to the end of the account |
+
+The first build ticket fixes the byte offsets and writes them into this file; they are frozen from the first devnet deployment and published in the IDL.
+
+### A release gate
+
+- Before any upgrade, a script downloads every live market state of the program from the cluster, with its mints and vaults, and loads them into LiteSVM with the new build and the real router.
+- On every market it runs account resolution, a quote, a buy and a sell through the router, and each keeper job whose condition holds.
+- The upgrade is refused if any of these fails on any market, or if a quote differs from the deployed build's quote on the same state without the release declaring a pricing change.
+- The deploy script accepts only a build whose hash the gate has passed.
+
+### Fixtures in CI
+
+- The repo keeps a saved market state for every layout version ever deployed, taken from a real market.
+- CI runs the release gate's checks on each of them against every build.
+
+## Upgrades and freezing
+
+- On devnet the program stays upgradeable under the project's upgrade-authority key, `~/.config/testing-pipeline/devnet/upgrade-authority.json`, as `README.md` sets for every program, and every upgrade there passes the release gate.
+- Intended mainnet upgrade policy: frozen (upgrade authority removed) before any mainnet deployment, after `DESIGNER_RECIPIENT` is set.
+  This departs from the shared default of a multisig with a timelock first: a market's promise is that nobody has power over it, and an upgrade key would be exactly that power, over locked liquidity, the cap and the burns.
+- Carrying the policy out belongs to the mainnet launch effort.
+
+## Custom actions and metadata
+
+| Action | Metadata `kind` | Signer |
+| --- | --- | --- |
+| `seed` | `add_liquidity` | The seeder |
+| `place_wall` | `other` | Anyone |
+| `settle` | `other` | Anyone |
+| `pay_rewards` | `claim` | Anyone (payer for a missing token account) |
+| `sweep_fees` | `claim` | Anyone (payer for a missing token account) |
+| `set_fee_recipient` | `other` | The fee recipient |
+| `set_rewards_recipient` | `other` | The rewards recipient |
+
+- Every action that moves the token forwards transfer-hook accounts after its own, as the template's swap does.
+  Metadata actions cannot describe those extra accounts, so generic forms work for tokens without a hook and Pipescope builds the hooked ones itself.
+- Each instruction emits an event (market created, seeded, wall placed, settled, rewards paid, fees swept, recipient changed), and a swap emits one when it trims or lowers the cap, so Pipescope's indexer can show a market's history; Pipescope reads current values from the market state, not from events.
+- The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, a description that credits IMD's Pool4, category `amm`, tags including `pool4`, links including `source` and the IDL, `init` as above with `market_state: new_keypair`, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256; where they are published is in `README.md`.
+- The trust flags describe programs and mints, not markets, so nothing there says a market trims or burns: the metadata declares it, and Pipescope reads each market's parameters, ledgers and cap from its market state.
+- Pipeline's API reports raw vault balances, so retired tokens, the buy wall, idle SOL and unpaid fees show there as liquidity; Pipescope reads the ledgers instead.
+
+## Worked example
+
+Checked against an integer model of this file's rules, which also held every invariant in "Ledgers" over 3,000 random runs (about 957,000 swaps, 65,000 trims and 33,000 wall placements).
+The build must reproduce these numbers exactly.
+
+A market is seeded with 1,000,000 tokens of 6 decimals (1,000,000,000,000 units) and 10 SOL, with `fee_bps` 100, `wall_split_bps` 5,000, `reward_share_bps` 1,500, `cap_floor_bps` 2,000 and `cap_decay_bps` 2,000.
+
+| Step | Result |
+| --- | --- |
+| Seed | `sqrt_price` 1,844,674,407,370,955,161; `liquidity` 99,999,999,999; cap 1,000,000,000,000 |
+| One hour later, a buy of 1 SOL | Fee 10,000,000: designer 1,000,000, suite 1,000,000, fee recipient 4,000,000, wall 4,000,000. Out 90,081,892,629 units; `sqrt_price` 2,027,297,173,702,505,949. The cap falls by one hour's allowance to 991,666,666,667 |
+| 60 seconds later, a sell of those 90,081,892,629 units | Gross 989,999,999; fee 9,900,000 (3,960,000 of it to the wall); out 980,099,999. `sqrt_price` 1,844,674,407,372,029,099. The trim retires 8,333,333,329 units and moves 83,333,332 lamports to idle SOL, leaving `liquidity` 99,166,666,666, `pool_tokens` 991,666,666,671, `pool_sol` 9,916,666,669 and `idle_sol` 91,293,332 |
+| `place_wall` | Tip 912,933. `wall_top` 1,844,674,407,372,029,099; `wall_liquidity` 903,804,009; `wall_sol_placed` 90,380,400; `pool_sol` 10,007,047,068; 11 units of dust join the retired tokens (8,333,333,340), leaving `pool_tokens` 991,666,666,660 |
+| `settle` | Burns 7,083,333,339 units; `rewards_owed` 1,250,000,001 |
+| 60 seconds later, a sell of 20,000,000,000 units | Gross 196,081,138; fee 1,960,812; out 194,120,326, through the curve and the wall together. `sqrt_price` 1,808,529,293,213,661,729. The wall has spent 1,770,941 lamports on 180,633,508 units |
+
+In the same model, on a market seeded the same way with 5 SOL idle, buying with 30 SOL, placing the wall in the same slot and selling everything back loses 0.595 SOL, and the wall's top ends no higher than the price before the buy.
+
+## Pipescope's panel
+
+Pipescope's Pool4 for Solana panel shows, per market:
+
+- the price, the buy wall's top, the SOL in the wall and what it has bought since it was placed, and the wall's floor;
+- the inventory cap against what the curve holds, the cap floor, the cap decay and the allowance built up;
+- retired tokens, rewards owed, and the tokens burned so far as a share of the supply;
+- the fee and its split, each fee ledger, and whether the designer share has a wallet yet;
+- the market's parameters and both recipients;
+- each keeper job that is due, as a button, and the recipients' handover forms;
+- the create form, pre-filled with IMD's launch values and showing the whole fee split, the designer and suite shares included.
+
+The explainer's fact table carries the same facts, and its risks for every Pool4 for Solana market are: the curve thins as the cap falls, so the same trade moves the price more over time; after a fall in price the buy wall can sit well below the price, because its floor rises only about 4% a day; and a token with a transfer hook can be stopped from trading by that hook.
+
+## For the shared engineering bar
+
+What `README.md` asks each product's file to add; the mainnet upgrade policy is under "Upgrades and freezing".
+
+### Compute ceilings
+
+Asserted per instruction in test layer 5; the build ticket measures each one and may lower it, and raising one needs a written reason here.
+They start from another Pool4 port's swaps on devnet, measured at 13,000 to 29,000 units, with room for 256-bit maths.
+A transfer hook's own compute is outside them.
+
+| Instruction | Ceiling (compute units) | Main cost |
+| --- | --- | --- |
+| `pipeline_quote` | 40,000 | Two pricing steps at most; well under the quoter's 200,000 cap |
+| `pipeline_swap`, one step | 45,000 | Pricing, one output transfer, the books and the guard |
+| `pipeline_swap`, crossing into the wall and trimming | 60,000 | Two pricing steps and the trim |
+| `pipeline_resolve_accounts` | 10,000 | One account, the output vault |
+| `pipeline_market_info` | 10,000 | |
+| `pipeline_init_market` | 120,000 | Creating two vaults |
+| `seed` | 80,000 | Two transfers in and two square roots |
+| `pipeline_seed_liquidity` | 180,000 | Creation plus the seed |
+| `place_wall` | 50,000 | Closing and placing the wall, one transfer |
+| `settle` | 30,000 | One burn |
+| `pay_rewards` | 60,000 | One transfer, possibly creating the recipient's token account |
+| `sweep_fees` | 60,000 | One transfer, possibly creating the recipient's token account |
+| `set_fee_recipient`, `set_rewards_recipient` | 10,000 | |
+
+### Invariants for test layer 3
+
+Beyond the shared three (value conserved, every holder can exit, each quote equals its swap), checked after every step of generated sequences of swaps, keeper jobs and clock jumps, including several trades in one slot:
+
+- Every invariant in "Ledgers".
+- A trim never changes `sqrt_price`.
+- A buy sold straight back never returns more than it cost, whatever keeper jobs run in between.
+- The reference never moves on a trade in the slot it was last updated in.
+- No instruction other than `pipeline_swap` changes `sqrt_price` or the counters.
+
+### Accepted `pipeline-check` warnings
+
+None.
+Exact-out checks are skipped by design and need no reason.
+The checks that shape this design are `quote_matches_swap` (exact to the unit), `determinism` (the same quote twice, and for any trader), `round_trip` (a buy sold straight back never returns more), `dust_and_zero` (a zero input is refused) and `transaction_size` (a swap resolves one account, the output vault).
+The checker sizes its trades from vault balances, which include the wall and the other ledgers; that needs no special handling.
+
+## Where it differs from IMD's Pool4
+
+| | IMD's hook | Pool4 for Solana |
+| --- | --- | --- |
+| Fee | 1%, on whichever token comes in | Chosen per market, 0.25% to 3%, always in SOL |
+| Who gets the fee | The hook's owner | 10% IMD and Adam, 10% us, the rest the market's fee recipient and buy wall |
+| Owner powers | Close the market, withdraw the position, the wall's SOL and the fees, change every parameter | None; a recipient may hand over its own role |
+| Reward share | To IMD's stakers, bonding reserve and nodes | To one rewards recipient per market |
+| Rates for the wall's guard | Per block | Per second |
+| Decay allowance while idle | Unlimited | One day |
+| Burns | Bridged to Base | Native |
+| Trim and payouts inside a swap | Held as claims, settled later | Booked in ledgers, paid by keeper jobs |
+
+## Building it
+
+- Generate the program from Pipeline's Apache-2.0 strategy template with `scripts/new-strategy.sh`, from a scratchpad clone at `5ad130d`, and pin the Pipeline crates to `rev = "5ad130d"`, as for the tax AMM.
+- Replace the template's Borsh-decoded pool account with the fixed-size, zero-copy market state above.
+- Keep the pricing, the cap and the wall's guard in pure functions that take no accounts, so the proofs and the worked example run against them directly.
+- Keep the program keypair in `~/.config/testing-pipeline/devnet/`, never in the repo.
+- Build and test with the toolchain in `docs/toolchain.md` (`source scripts/toolchain-env.sh`).
+
+### Done means
+
+- LiteSVM tests through the real router cover:
+  - pricing both ways above, across and inside the wall, and quotes matching swaps in each;
+  - the fee and its split at the lowest, a typical and the highest rate, with every wall split from none to all;
+  - the trim leaving the price unchanged, and `MIN_LIQUIDITY` stopping one;
+  - the ratchet with its decay credit, its one-day limit and the cap floor, and the ratchet switched off;
+  - the wall's reference ignoring trades in the same slot, and its floor's crawl;
+  - pumping the price, placing the wall and dumping never profiting;
+  - each keeper job, its refusals and its rounding, with a frozen or missing recipient account never blocking trading or the other payouts;
+  - both recipient handovers and every refusal by anyone else;
+  - refusal of exact-out, of bypass, of every refused mint extension and of live mint or freeze authorities;
+  - a token with a transfer hook (Pipeline's `test-hook`) through the seed, swaps and `pay_rewards`;
+  - donations never credited, and the counters;
+  - seeding by another program at the seeder-scoped address.
+- The worked example's numbers are reproduced exactly.
+- `pipeline-check` passes every check on a seeded market with no warning (with `exact_out_refund` skipped), both in the tests and against devnet.
+- The release gate script exists, runs in CI against the fixtures, and has passed against devnet before every upgrade there.
+- On devnet:
+  - the program deployed and registered with the router's `register_strategy`, with its metadata and conformance report published;
+  - one market created with a fresh test token, seeded, and traded both ways through the router;
+  - a sell that trims, the wall placed and then sold into, a settle that burns, rewards paid and fees swept, with slot 1 refused while `DESIGNER_RECIPIENT` is unset.
+- Its Pipescope panel and forms, as `README.md` asks of every product.
+- Whatever else `README.md` requires of our on-chain programs.
