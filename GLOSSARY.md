@@ -270,6 +270,10 @@ _Avoid_: money market, lending protocol
 The receipt a lending market mints for a deposit, redeemable later for the deposit plus interest at the lending market's exchange rate.
 _Avoid_: collateral token (true only inside a borrower's position), LP share
 
+**Withdraw mode**:
+A lending pool market's state while its lending market is too short of free liquidity to pay it back quickly: it lends nothing and takes back everything it can.
+_Avoid_: emergency mode (that is the lending market's own switch), pause
+
 **Single-use AMM**:
 A strategy designed for one client protocol's or game's token design, built by us for that client.
 _Avoid_: custom AMM alone, white-label
