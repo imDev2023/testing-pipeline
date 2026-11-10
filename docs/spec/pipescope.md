@@ -131,13 +131,7 @@ Not in the first version:
 
 ## Shared
 
-For [Engineering and security bar for our on-chain programs](https://github.com/imDev2023/testing-pipeline/issues/4) or a later session to move into `docs/spec/README.md`.
-
-- **Our products live inside Pipescope.**
-  The tax AMM, the containment hook, Pool4 for Solana and the lending pool get no websites of their own.
-  Their user actions run through Pipescope's custom-action forms, from each strategy's own complete metadata.
-  Each product adds its own panel and forms to Pipescope when it is built, for example progress toward the unlock goal for the containment hook, the buy wall for Pool4 for Solana, the buffer for the lending pool, and the launch form and payouts that [`tax-amm.md`](tax-amm.md) describes for the tax AMM.
-  So each product's build tickets include its metadata, its Pipescope panel and its Pipescope forms.
+What this ticket decided for every product, that our products live inside Pipescope, is in [`README.md`](README.md) ("Our products live inside Pipescope"), with the engineering and security bar for our on-chain programs.
 
 ## For other tickets
 

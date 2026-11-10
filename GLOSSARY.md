@@ -70,6 +70,10 @@ _Avoid_: price (a quote is an amount for an amount), estimate
 Pipeline's `pipeline-quoter` crate, which runs a strategy's real deployed code in an embedded Solana VM on account data you supply.
 _Avoid_: simulator (RPC simulation is the other way to quote), oracle
 
+**Conformance checker**:
+Pipeline's `pipeline-check`, which quotes and trades a market through the real router in a local Solana VM and reports Pass, Warn, Fail or Skip per check; a strategy's developer runs it and may publish its report.
+_Avoid_: Canary checks (Pipescope's own, run on every strategy version), audit
+
 **Swap event**:
 The `SwapEvent` the router emits once per swap through a self-call, which carries everything needed to chart a trade.
 _Avoid_: trade log, fill
@@ -229,6 +233,14 @@ _Avoid_: custom AMM alone, white-label
 **Keeper job**:
 A permissionless instruction that someone must call on a schedule to keep a market or product working, such as rebalancing a buy wall or a buffer.
 _Avoid_: cron (that is how we run it, not what it is), bot
+
+**Verified build**:
+A deployed program whose bytes are shown, by rebuilding a published commit in a pinned Docker build and comparing hashes, to come from that source.
+_Avoid_: verified program (says nothing about source), audited
+
+**Hardening ticket**:
+The last build ticket of each of our on-chain programs, in which a fresh session runs the internal adversarial review and fixes what it finds.
+_Avoid_: audit (an audit is external), security pass
 
 ### People and parties
 
