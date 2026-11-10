@@ -25,7 +25,7 @@ Sizes are always set on the money side (wrapped SOL, or the mint whose vault hol
 ## Run it
 
 ```sh
-source ../../scripts/toolchain-env.sh
+source <a checkout of main>/scripts/toolchain-env.sh   # this branch holds only the prototype
 cargo build --release
 target/release/canary-proto devnet list
 target/release/canary-proto devnet run out <MARKET>...
@@ -36,6 +36,7 @@ target/release/canary-proto devnet probe6002 LCHsnkMfToU5C9G28JikT3eP3AvnCZSsPUe
 
 `devnet` is the public RPC, which throttles; any devnet RPC URL works in its place.
 Pipeline's crates come from its repository at commit `5ad130d` through Cargo; none of its source is in this repo.
+`Cargo.lock` pins the same versions of third-party crates that Pipeline's own lockfile pins, so the build matches what Pipeline tests with.
 The router is loaded from devnet's own bytes, as `pipeline-check` does.
 
 ## Results of 2026-11-10
