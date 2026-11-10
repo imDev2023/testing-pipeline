@@ -141,18 +141,25 @@ Nothing breaks while an unlock waits, since sells into the home market keep work
 - `bind` belongs in the same transaction as the market's creation, but may go in a later one with the seed if the transaction is too large: nothing can move the token before `bind`, the market is closed to swaps until its seed, and only the seeder can seed.
 - Revoking the mint authority is an optional last step; it must come after `bind`, which needs the mint authority's signature, or the token can never be bound and never transfer.
 - Graduating a contained token from a launchpad through `pipeline_seed_liquidity` is not supported in v1, because the seed would move tokens before the `Market` account that `bind` reads exists.
-- Whether Pipescope also gets a launch page is for [Pipescope v1 scope](https://github.com/imDev2023/testing-pipeline/issues/3) to decide; if it does, its launch form fixes the tax side to the quote mint for contained tokens.
+- Pipescope v1 does not launch new tokens (`docs/spec/pipescope.md`), so the script is the only way to launch a contained token.
+  The tax AMM's launch form in Pipescope refuses a mint whose transfer hook is ours, since its seed would fail for a token not yet bound and a bound token already has its home market.
 
-## What Pipescope must do
+## In Pipescope
 
-Posted on [Pipescope v1 scope](https://github.com/imDev2023/testing-pipeline/issues/3) for its spec to take in.
+`docs/spec/pipescope.md` has each product add its own panel to Pipescope; this is the containment hook's, built with its build tickets.
+The hook is not a strategy and has no strategy metadata, so its panel and its one action are built into Pipescope rather than rendered from metadata.
 
-- Recognise a contained token: its transfer hook program is ours, its hook authority is its unlock PDA, and its config exists.
-- Resolve the hook accounts for every swap of it, and build its swaps with the SDK rather than Pipeline's hosted API.
-- Show it as contained, with its home market, the tax collected against the unlock goal and the unlock deadline.
-- Warn before a buy that the token can only be sold back into its home market until it unlocks, and cannot be sent to another wallet.
-- Pass a zero integrator fee on sells of a contained token, and charge its integrator fee on buys as usual.
-- Show an Unlock button to anyone once the unlock is due, and show the token as unlocked afterwards.
+- **Recognising a contained token**: its transfer hook program is ours, its hook authority is its unlock PDA, and its config exists.
+- **Panel**, on the home market's page:
+  - "Contained": the token can only be bought and sold in this market until it unlocks, and cannot be sent to another wallet;
+  - the tax collected against the unlock goal, in the quote mint, as a number and a bar;
+  - the unlock deadline, as a date and the time left;
+  - once unlocked: when, and whether by the goal or the deadline.
+- **Unlock button**: shown to anyone once the unlock is due; it sends `unlock` from the connected wallet.
+- **Trade box**: before a buy of a contained token, the same one-line rule as the panel.
+- **Swaps**: Pipescope resolves the hook accounts for every swap of a hooked token, ours included, and builds those swaps with the SDK, since Pipeline's hosted API refuses them.
+- **Integrator fee**: nothing to add; Pipescope charges its fee only when the trader pays in SOL or USDC, so sells of a contained token already carry none.
+- The facts panel shows the mint's `transfer-hook` and `transfer-hook-authority` trust flags until the unlock clears them, so traders who hide hooked tokens by those flags also hide contained ones.
 
 ## Depends on
 
