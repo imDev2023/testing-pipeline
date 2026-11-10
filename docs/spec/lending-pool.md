@@ -387,8 +387,10 @@ Cut by [Cut the lending pool's build tickets](https://github.com/imDev2023/testi
 11. [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87): the end of the program's chain, with every check under "On devnet" below run on devnet itself.
 12. [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88): after the deploy and Aviary's own build tickets.
 
-The second waits for the tax AMM's first build ticket, which sets up the on-chain workspace, CI, the router fixture, the mint rules and the review skills.
+The second waits for [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58), which sets up the on-chain workspace, CI, the fixtures, the keys, the local demo run and the review skills, and for [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59), whose mint rules it shares.
 Tickets 2 to 10 are verified end to end in LiteSVM through the real router copied from devnet and klend's deployed bytes, with the `mainnet` build on cloned mainnet reserves and the `devnet` build on accounts dumped from our devnet lending market; tickets 1 and 11 run on devnet itself, against the real Kamino Lend there.
+Tickets 2 to 8 and the hardening ticket also pass a local demo run: the demo script, on Pipeline's TypeScript SDK, against a local validator running devnet's router and devnet's klend, with the accounts of our Kamino lending market cloned from devnet.
+Ticket 11 points that same script at devnet.
 The hardening ticket comes before the deploy, not last as `README.md` words it, so that what is registered with Pipeline is the hardened program.
 The keeper runner is specified separately ([Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)); until it runs, the demo script and Aviary's form call `rebalance`.
 
