@@ -31,6 +31,7 @@ source scripts/toolchain-env.sh        # in every shell (and every agent Bash ca
 The install script puts Rust 1.97.1, cargo-build-sbf 4.6.0, the platform tools and the Agave 4.4.1 release side by side under `~/.local/share/testing-pipeline/toolchain` (override with `TESTING_PIPELINE_TOOLCHAIN`).
 It checks the Agave tarball against the SHA-256 digest GitHub publishes for the release asset.
 The env file puts those first on `PATH` for the current shell only, sets `SBF_TOOLS_VERSION` for this host, and puts Node 24 first when nvm has it.
+After the owner ran the script on 2026-11-10, `solana --version` outside the env file still printed 2.2.20, agave-install's `active_release` still pointed at 2.2.20, and rustup still had both the `solana` and `1.95.0-sbpf-solana-v1.57` links.
 
 Two commands from Pipeline's own docs would change every project on the machine, so never run them as written:
 
@@ -79,12 +80,21 @@ This project's devnet wallet is `~/.config/testing-pipeline/devnet/wallet.json` 
 It is never committed, and this project does not use Top-pad's (Heat's) devnet bank.
 Pass it explicitly: `-k ~/.config/testing-pipeline/devnet/wallet.json` to the Solana CLI, `KEYPAIR=...` to Pipeline's scripts.
 
-Funding, as tried on 2026-11-09:
+Fund it from the CLI, never through a web faucet (owner, 2026-11-10), with the owner's machine-wide `devnet-airdrop` (in `~/.local/bin`, not in this repo), started in the background:
 
-- `solana airdrop` on public devnet and on Helius devnet RPC: rate-limited from the first request.
+```sh
+devnet-airdrop ~/.config/testing-pipeline/devnet/wallet.json --target 12
+```
+
+It pulls 1 SOL per request from Alchemy's devnet RPC (key `ALCHEMY_API_KEY` in the shared env file; free tier, so not a paid call), a few per burst, and repeats every 15 minutes until the target.
+That is how this wallet went from 1.94 to 12.94 SOL on 2026-11-10: eleven 1 SOL airdrops from Alchemy between 01:25 and 02:18 UTC, two or three per round.
+What did not work, on 2026-11-09 and 2026-11-10:
+
+- `solana airdrop` on public devnet: rate-limited from the first request, and now closed (HTTP 410).
+- Helius devnet RPC's airdrop: rate-limited, then HTTP 500.
 - `devnet-pow` (installed in `~/.cargo/bin`): every proof-of-work faucet on devnet was empty.
-- Alchemy devnet RPC (`https://solana-devnet.g.alchemy.com/v2/$ALCHEMY_API_KEY`, key in the shared env file): 1 SOL per request, then rate-limited for a while; it gave 1 SOL twice, about 45 minutes apart.
-- https://faucet.solana.com signed in with GitHub: the way to the 10 to 15 SOL a deploying ticket needs (the owner does this).
+
+Spend devnet SOL only on real devnet transactions and deployments; local runs use `solana-test-validator` or LiteSVM, where SOL is free.
 
 ### RPC
 
@@ -139,8 +149,28 @@ RPC simulation through the SDK fails the same way, so these are the markets' own
 
 ## Local validator
 
-Not yet run: it needs the Agave 4.4.1 CLI, which `scripts/install-toolchain.sh` installs.
-Pipeline's `docs/DEVNET.md` gives the command (load the router and the example strategy with `--upgradeable-program`, and pass `--deactivate-feature 6TkHkRmP7JZy1fdM6fg5uXn76wChQBWGokHBJzrLB3mj` because devnet and mainnet do not have SIMD-0268's deeper call limit yet).
+Pipeline's `docs/DEVNET.md` gives the command, adapted here to this project's wallet (the programs' upgrade authority, so the script initialises the router's config and registers the example strategy itself) and a ledger outside the clone:
+
+```sh
+source <this repo>/scripts/toolchain-env.sh
+ME=$(solana-keygen pubkey ~/.config/testing-pipeline/devnet/wallet.json)
+solana-test-validator --reset --ledger <scratchpad>/test-ledger \
+  --deactivate-feature 6TkHkRmP7JZy1fdM6fg5uXn76wChQBWGokHBJzrLB3mj \
+  --upgradeable-program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 programs/target/deploy/pipeline.so $ME \
+  --upgradeable-program yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx programs/target/deploy/test_strategy_cp.so $ME
+# in another shell (agents: start the validator with run_in_background, stop it with TaskStop)
+solana -u localhost airdrop 100 $ME
+cd scripts/devnet && RPC_URL=http://127.0.0.1:8899 KEYPAIR=~/.config/testing-pipeline/devnet/wallet.json node smoke.ts
+```
+
+`--deactivate-feature` switches off SIMD-0268's deeper call limit, which test validators turn on by default but devnet and mainnet do not have yet.
+
+Passed on 2026-11-10 with `solana-test-validator` 4.4.1 and Node 24.4.1, in 126 seconds: config initialised (listing fee 0.01 SOL), strategy registered, market created and funded, quote 1,000,000 A to 1,993,980 B (4,929 CU), the swap (35,488 CU, fee 2,500) and all five event checks.
+It is slower than devnet because the script confirms every transaction at `finalized`, which a fresh local validator reaches only after about 32 slots of 400 ms each.
+Two things to know:
+
+- The first airdrop, sent seconds after the validator came up, failed with "airdrop request failed"; the same request a few seconds later, and every one after it, went through.
+- With a ledger path longer than macOS's 104-character socket limit (any scratchpad path), the validator logs `Unable to start admin rpc service: path must be shorter than SUN_LEN` and its terminal dashboard repeats `admin.rpc does not exist`; RPC, the faucet and the programs work regardless, so it is noise.
 
 ## Known problems
 
