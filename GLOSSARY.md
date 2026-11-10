@@ -131,8 +131,16 @@ The Canary check that buys and then sells back from random wallets, at several s
 _Avoid_: honeypot check alone, sell test
 
 **Explainer**:
-Pipescope's plain-language account of what a market's strategy does and what can go wrong, written by an LLM from its metadata, its source if published and its Canary results.
-_Avoid_: AI summary, review
+Pipescope's plain-language account of what a strategy version's facts mean for a trader, written by an LLM from evidence Pipescope prepares (chain facts, Canary results, source only when the build is verified, and author text marked untrusted), and shown only after code has checked it.
+_Avoid_: AI summary, review, audit
+
+**Facts panel**:
+The part of a Pipescope strategy or market page that code renders from Pipescope's own chain data and Canary results; the explainer narrates it and can never change it.
+_Avoid_: overview, AI panel
+
+**Evidence id**:
+The id of one item of evidence given to the explainer (P, F, C, S or A and a number), which every sentence of an explanation must cite and code checks.
+_Avoid_: citation (the Claude API feature, which we do not use), footnote
 
 **Tax AMM** (working name):
 Our strategy that always takes its tax on the tax side, built to pair with the containment hook.
