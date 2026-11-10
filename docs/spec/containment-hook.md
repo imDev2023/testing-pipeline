@@ -113,7 +113,7 @@ Nothing breaks while an unlock waits, since sells into the home market keep work
 ## Unlock goal
 
 - The tax collected by the home market, in quote-mint base units (lamports when the quote mint is wrapped SOL): the tax AMM's `tax_collected` counter, which only router swaps change, buys and sells alike.
-- Why the tax AMM counts it and not the hook: [ADR 0003](../adr/0003-unlock-goal-counted-by-the-home-market.md).
+- Why the tax AMM counts it and not the hook: [ADR 0006](../adr/0006-unlock-goal-counted-by-the-home-market.md).
 - Set by the launcher at binding and never changed.
 - Why tax collected rather than volume:
   - A tax authority may lower its market's taxes to the bottom of a range fixed at creation, which may be 0, and the tax AMM has no LP fee; at a 0% tax, faking volume would cost only Pipeline's 0.25%, so a vamp could wait for a low-tax window and force a permanent unlock cheaply.
