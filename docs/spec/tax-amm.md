@@ -5,6 +5,7 @@ It builds on the findings of [How the containment hook works with the router and
 The owner made the tax AMM the first product to build (2026-11-10), to be deployed on devnet and registered with Pipeline, which is what MetalLegBob asks builders for.
 MetalLegBob is not building it himself ([Record MetalLegBob's answers to the follow-up DM](https://github.com/imDev2023/testing-pipeline/issues/27)), so it stays in scope.
 The shared engineering and security bar for our programs lands in `docs/spec/README.md`, from [Engineering and security bar for our on-chain programs](https://github.com/imDev2023/testing-pipeline/issues/4); this file adds only what is particular to the tax AMM.
+[Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) cut the build tickets from this file on 2026-11-10 and added what the bar asks of each product's file: "In Aviary", and under "Building it" the order of the build, where its policy values live, the compute ceilings, the invariants, and the `pipeline-check` and Canary warns.
 Terms are as in `GLOSSARY.md`: tax market, tax side, buy tax, sell tax, tax authority, tax recipient, suite share, virtual reserve.
 
 ## What it is
@@ -195,7 +196,8 @@ The market state keeps these totals, changed only by `pipeline_swap` calls signe
 
 With the creation slot and time, the fixed tax ranges and the tax side, that is everything [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18) might measure an unlock goal by (volume, tax paid, age, or a minimum tax), so the hook can choose without changing the tax AMM.
 The market state starts with an 8-byte account discriminator and a version byte, and these fields sit at fixed offsets that later versions never move, because the hook reads them directly.
-Which field the unlock reads, in which unit, and whether a home market needs a minimum tax to resist wash trading are that ticket's decisions; the questions are posted there.
+The build fixes the offsets in the ticket that creates markets, publishes them as constants in the tax AMM's crate and pins them with a test, so the two programs cannot drift apart unnoticed.
+Containment hook policy chose `tax_collected`: the unlock reads it, a home market's tax side must be the quote mint, and no minimum tax is needed, because the goal counts tax and not volume (`docs/spec/containment-hook.md`, "Unlock goal").
 
 ## Custom actions and metadata
 
@@ -210,6 +212,27 @@ Which field the unlock reads, in which unit, and whether a home market needs a m
 - Every action that moves tokens forwards transfer-hook accounts after its own, as the template's swap does.
 - Each instruction emits an event (market created, seeded, taxes changed, recipients changed, authority renounced, distributed) so Aviary's indexer can show a market's history; Aviary reads current values from the market state, not from events.
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, description, category `amm`, tags including `tax`, links including `source` and the IDL, `init` as above with `market_state: new_keypair`, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256.
+- `security.contact`, and the contact in the program's `security.txt`, is this repo's private vulnerability reporting page on GitHub, never a personal address.
+
+## In Aviary
+
+`docs/spec/README.md` has each product add its own panel and forms to Aviary; these are the tax AMM's, built with its build tickets once Aviary's own pages exist.
+Everything here is read from the market state and the strategy metadata, and nothing gives a tax market a badge or a better place in the feed.
+
+- **Actions from metadata**: `seed`, `distribute`, `set_taxes`, `set_recipients` and `renounce_tax_authority` are rendered by Aviary's generic custom-action forms from the strategy metadata, like any strategy's.
+- **Launch form**, the tax AMM's own form on the create-market page:
+  - the tax side defaults to the quote mint (SOL or USDC);
+  - it shows the whole split before signing: the suite share first, then each tax recipient and the burn;
+  - it builds the creation transaction of "Creating a market" (`create_market`, `init_fee_account` for each mint, then `seed`), simulated before the wallet signs like every transaction Aviary builds;
+  - it refuses, with the reason, a mint the mint rules would refuse and a mint whose transfer hook is the containment hook (`docs/spec/containment-hook.md`, "Launch in v1").
+- **Tax panel**, on a tax market's page:
+  - the tax side, the buy tax and the sell tax, each with its fixed range;
+  - the tax authority, or that the market has none or that it renounced, in which case the rates and the tax recipients can never change;
+  - the tax recipients with their shares, the burn share and the suite share;
+  - the tax collected so far, and what each slot is owed and not yet paid out, with a button per slot that sends `distribute`;
+  - the real reserves and the virtual reserve from the market state, since raw vault balances include tax not yet paid out.
+- The trade box needs nothing of its own: the tax is inside the quote, as `docs/spec/pipescope.md` says of every strategy's own fees, and the panel shows the rates beside it.
+- The wallet page's offer to unwrap wrapped SOL covers tax recipients paid in SOL.
 
 ## Upgrades and freezing
 
@@ -223,9 +246,109 @@ Which field the unlock reads, in which unit, and whether a home market needs a m
 - Keep the program keypair the template creates in `~/.config/testing-pipeline/devnet/`, not `~/.config/pipeline/keys/`, and never in the repo.
 - Build and test with the toolchain in `docs/toolchain.md` (`source scripts/toolchain-env.sh`).
 
+### Order of the build
+
+Decided with the owner on 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23).
+
+- **Local first, devnet last.**
+  Until its last feature ticket, the tax AMM is verified by the LiteSVM tests through devnet's real router bytes and by the demo script run against a local validator that runs devnet's router.
+  Only the devnet ticket deploys and registers it, so a half-built strategy never appears in Pipeline's registry and no demo market is stranded by a change to the market state.
+- **Deploy, then harden.**
+  The hardening ticket comes after the devnet ticket, as the bar's last ticket for the program.
+  If it changes the program, it redeploys from a verified build, repeats the devnet demo and republishes the metadata and the conformance report.
+- **The name.**
+  The strategy registers as Aviary Tax AMM (`docs/spec/README.md`, "Names").
+  A later change of name is one `update_metadata` call and a rebuild for the `security.txt`; the crate, the program id and the markets keep theirs.
+- The demo script grows with each ticket and builds every market creation and custom action from the strategy metadata with the SDK's generic builders, as Aviary will, so the metadata is tested from the first ticket on.
+
+### Where its policy values live
+
+The owner's standing rule of 2026-11-10 keeps every decision cheap to change, since each is a default MetalLegBob may change.
+
+- The four values of "Constants" and the mint extension allowlist of "Mint rules" are build-time constants in one config module of the program, and no other file repeats them.
+  They are fixed on-chain because traders rely on them, so they can change until the program is frozen and not after.
+- Every other policy value is a creation parameter, chosen per market and held in its market state: the rates, their ranges, the tax authority, the tax recipients and their shares, the burn share and the virtual reserve.
+- The public name, Aviary Tax AMM, lives only in the strategy metadata's `name` and in the `name` of the embedded `security.txt` (`docs/spec/README.md`, "Names").
+- The compute ceilings live in the table below and in one test module that mirrors it.
+- The demo market's parameters live in one named block of the demo script.
+
+### Compute ceilings
+
+Tests assert the measured cost of each instruction with headroom, never above these ceilings.
+A cost is what the tax AMM's own invocation consumes, its token program calls included, measured on mints without a transfer hook; a hook's cost is the hook's own to bound.
+
+| Instruction | Ceiling (CU) | Why |
+| --- | --- | --- |
+| `pipeline_quote` | 25,000 | Integrators and Canary quote constantly, and the quoter's own cap is 200,000 |
+| `pipeline_swap` | 60,000 | With the router's share and a hooked mint's transfers on top, a swap must stay well under the 200,000 at which `pipeline-check`'s `compute` check warns |
+| `pipeline_market_info`, `pipeline_resolve_accounts` | 15,000 each | Read-only, and called for every account resolution |
+| `pipeline_init_market` | 120,000 | Creates two vaults and reads both mints' extensions |
+| `pipeline_seed_liquidity` | 150,000 | Creates the market state and two vaults and takes from two escrows, inside a launchpad's own instruction, which needs compute too |
+| `seed` | 80,000 | Two transfers in |
+| `distribute` | 90,000 | One transfer or burn, and creating the recipient's token account when it is missing |
+| `set_taxes`, `set_recipients`, `renounce_tax_authority` | 20,000 each | They only write the market state |
+
+### Invariants
+
+For the bar's stateful fuzzing layer, beyond its shared three:
+
+1. Each vault holds at least the market's real reserve of its mint, plus everything owed when it is the tax-side vault; donations only ever add to the surplus.
+2. A swap never lowers the product of the effective reserves, never pays out more of a side than its real reserve, and never changes the virtual reserve.
+3. Every tax is split exactly: the suite share, the tax recipients' parts and the burn add up to the tax, and `tax_collected` always equals what has been paid out or burned plus what is still owed.
+4. No rate ever leaves its range or passes `MAX_TAX_BPS`, and nothing fixed at creation ever changes: the mints, the tax side, the ranges, the seeder and the virtual reserve.
+5. After the seed, only router swaps change the real reserves, and only router swaps ever change the counters; `distribute` moves at most what its slot is owed.
+6. The counters never fall.
+7. Once the tax authority has renounced, or on a market created without one, the rates and the tax recipients never change.
+
+### `pipeline-check` warns
+
+- None is accepted on a seeded market: the tests and the devnet demo require zero Fail and zero Warn, with `exact_out_refund` skipped because exact-out is refused by design.
+- A market that is created but not yet seeded refuses every quote, which `pipeline-check` reports as a `quotes` warn; that is the state between two instructions of one creation transaction, never a demo market's.
+- A market with a virtual reserve is checked with explicit amounts, as "Virtual reserve" says.
+
+### Canary checks
+
+The bar asks our strategies to pass Canary checks on devnet: no fail on any market, with every warn named here (`docs/spec/pipescope-canary.md`, "Outcomes").
+
+- `cost`, and `exit_queue`, which shares its bands: a warn whenever the buy tax, the sell tax and the Pipeline fee on both legs take the ordinary trade's round-trip return under 95%, which is whenever the two taxes together pass about 4.5%.
+  That is the market's stated tax, shown in its panel, and not a hidden cost.
+  The tax alone can never make it a fail: with both taxes at `MAX_TAX_BPS` the round trip still returns about 80%.
+- `token_authorities`: a warn while a mint of the market keeps an authority that could act on holders, such as a launcher's mint authority or USDC's freeze authority; that is a fact about the mint, which the tax AMM allows and Aviary shows.
+- `custom_instructions` notes `seed`, `distribute`, `set_taxes`, `set_recipients` and `renounce_tax_authority`; Canary lists them and does not call them, so a tax authority changing rates inside its range is not exercised.
+- On the home market of a contained token, the containment hook's own warns apply as well (`docs/spec/containment-hook.md`, "Canary checks").
+- No other check may warn or fail on a tax market we create.
+
+### Build tickets
+
+Cut by [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) on 2026-11-10, labelled `build`, one session each, in run order:
+
+1. [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58): the on-chain workspace, the pins, the fixtures, CI, the review skills and the demo script, with the template's own pricing.
+2. [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59): the market state and its pinned offsets, the creation parameters and their rules, the mint rules and the metadata's `init`.
+3. [Tax AMM: seed a market and trade it with buy and sell tax](https://github.com/imDev2023/testing-pipeline/issues/60): `seed`, the pricing with both taxes, the virtual reserve, credited input, the tax booked per slot, and the counters.
+4. [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61): `distribute` for tax recipients, the suite share and the burn.
+5. [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62): `set_taxes`, `set_recipients` and `renounce_tax_authority`.
+6. [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63): `pipeline_seed_liquidity`, with a stand-in launchpad.
+7. [Tax AMM: proofs of the pricing, tax and split maths](https://github.com/imDev2023/testing-pipeline/issues/64): the property list chosen with Book of Knowledge, proven with Kani, Z3 and Proptest.
+8. [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65): the stateful fuzzer and its ten invariants, and every compute ceiling asserted.
+9. [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66): the first devnet deploy, with everything in "Done means" shown on devnet.
+10. [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67): the hardening ticket, after the deploy.
+11. [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75): after the deploy and Aviary's own build tickets.
+
+Tickets 4 to 7 can run side by side once ticket 3 has merged.
+Tickets 1 to 8 are verified by LiteSVM tests through the real router copied from devnet and by the demo script on a local validator; ticket 9 is the first to touch devnet.
+The buy wall AMM and the containment hook start from what ticket 1 sets up.
+
 ### Done means
 
 - LiteSVM tests through the real router cover: the tax maths both ways at 0, typical and maximum rates; the cap and the ranges; the tax authority's three actions and every refusal by anyone else; renounced markets; the split and its rounding; `distribute` for each slot, including a frozen recipient account not blocking others and burning; the virtual reserve and its real-reserve limit; refusal of exact-out, of bypass and of every refused mint extension; donations not credited; and the counters.
 - `pipeline-check` passes every check on a seeded market (with `exact_out_refund` skipped), both in the tests and against devnet.
+- The invariants above under the bar's fuzzing layer, the compute ceilings under its limits layer, and proofs of the pricing, tax and split maths under its maths layer.
 - On devnet: the program deployed and registered with the router's `register_strategy`, its metadata and conformance report published, and one market created, seeded, traded both ways through the router, and paid out with `distribute`.
 - Whatever else `docs/spec/README.md` requires of our on-chain programs.
+
+## Not measured yet
+
+- The compute cost of each instruction.
+  The ceilings above are set from what Pipeline's constant-product example costs at `5ad130d` (a quote of about 4,900 units and a whole router swap of about 35,500, `docs/toolchain.md`), with room for a larger market state and for Token-2022.
+  The build measures each instruction against them, and a ceiling changes only by a PR to this file.
+- Whether the creation transaction (`create_market`, two `init_fee_account` and `seed`) fits in one transaction without an address lookup table when both mints are Token-2022 mints with transfer hooks; the demo script measures it.
