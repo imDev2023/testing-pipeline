@@ -6,7 +6,7 @@ Pool4 for Solana re-implements IMD's mechanism in Rust and copies none of its co
 MetalLegBob is not building it himself ([Record MetalLegBob's answers to the follow-up DM](https://github.com/imDev2023/testing-pipeline/issues/27)), so it stays in scope as our own strategy, to be built, deployed on devnet and registered with Pipeline.
 The shared engineering and security bar for our programs is in [`README.md`](README.md); this file adds only what is particular to Pool4 for Solana.
 [Cut Pool4 for Solana's build tickets](https://github.com/imDev2023/testing-pipeline/issues/24) cuts the build tickets from this file and `README.md`.
-It follows the conventions of [`tax-amm.md`](tax-amm.md) wherever the two strategies share a need, so they and the containment hook have one shape.
+It follows the conventions of [`tax-amm.md`](tax-amm.md) wherever the two strategies share a need, so our strategies have one shape.
 Terms are as in `GLOSSARY.md`: inventory cap, cap floor, cap decay, trim, retired tokens, reward share, buy wall, designer share, suite share, keeper job.
 
 ## What it is
@@ -82,7 +82,7 @@ The designer share builds up in each market from its first swap and waits there;
 - A market created through the router has a fresh keypair as its market state (metadata `init.market_state` is `new_keypair`), as in the tax AMM and for the same reason: a key derived from only some parameters could be taken first by a market with bad ones.
 - The vault authority is the PDA `["authority", market_state]` of the program; it signs every transfer and burn out of the vaults.
 - Each vault is a token account at the PDA `["vault", market_state, mint]`, owned by the vault authority.
-- So the vaults and the router's market and fee accounts can all be computed before `create_market` is sent, which the containment hook needs to bind a home market before its first deposit.
+- So the vaults and the router's market and fee accounts can all be computed before `create_market` is sent, as for the tax AMM.
 - A market created through `pipeline_seed_liquidity` lives at the PDA `["seeded", seeder, token_mint, wsol_mint]`, with its vaults and authority derived from that address in the same way.
 
 ### Creation parameters
@@ -290,7 +290,7 @@ None moves the price.
 - Splits `retired_tokens`: `floor(retired × reward_share_bps / 10,000)` joins `rewards_owed`, and the rest is burned from the token vault.
 - Refused when there is nothing retired.
 - No tip.
-- A burn calls no transfer hook, so it works for a contained token.
+- A burn calls no transfer hook, so no hook can refuse it.
 
 ### `pay_rewards`
 
