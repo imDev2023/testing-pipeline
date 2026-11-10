@@ -1,0 +1,23 @@
+{
+    "name": "tax-amm-scripts",
+    "private": true,
+    "type": "module",
+    "description": "Lists the strategy on Pipeline's devnet router and trades it once",
+    "engines": {
+        "node": ">=22.18"
+    },
+    "scripts": {
+        "deploy-devnet": "node deploy-devnet.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@pipeline-placeholder/sdk": "file:/private/tmp/claude-501/-Users-fisd-orca-workspaces-testing-pipeline-build-58/c730a01f-5e91-4b94-89b7-f005cca7b349/scratchpad/pipeline/sdk/ts",
+        "@solana-program/system": "^0.16.0",
+        "@solana-program/token": "^0.18.0",
+        "@solana/kit": "^8.4.0"
+    },
+    "devDependencies": {
+        "@types/node": "^24.19.2",
+        "typescript": "^7.0.2"
+    }
+}
