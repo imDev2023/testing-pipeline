@@ -206,8 +206,9 @@ Decided with the owner on 2026-11-10 in [Cut the containment hook and tax AMM bu
 
 As for the tax AMM (`docs/spec/tax-amm.md`, "Where its policy values live"), under the owner's standing rule of 2026-11-10.
 
-- The longest unlock deadline (90 days), the mint extension allowlist and the tax AMM's program id are build-time constants in one config module of the program, and no other file repeats them.
-  They are fixed on-chain because holders rely on them, so they can change until the hook is frozen and not after.
+- The longest unlock deadline (90 days) and the tax AMM's program id are build-time constants in one config module of the program, and no other file repeats them.
+- The mint extension allowlist is the tax AMM's own: `bind` calls the shared mint-rules crate (`docs/spec/tax-amm.md`, "Where its policy values live") and adds the hook's stricter rule that the freeze authority is unset.
+- These are fixed on-chain because holders rely on them, so they can change until the hook is frozen and not after.
 - The unlock goal and the unlock deadline are `bind`'s arguments, chosen per token by its launcher, with no default anywhere, the launch script included.
 - The public name, Aviary Containment Hook, lives only in the `name` of the embedded `security.txt`, since the hook has no strategy metadata (`docs/spec/README.md`, "Names").
 - The compute ceilings live in the table below and in one test module that mirrors it.
