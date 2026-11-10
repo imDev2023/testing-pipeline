@@ -112,7 +112,8 @@ const STATE = {
   next: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle class="ring" cx="8" cy="8" r="6.75"/></svg>',
 };
 
-const capital = (text) => text[0].toUpperCase() + text.slice(1);
+/** Starts a sentence with a capital, unless it starts with code, which is never altered. */
+const capital = (text) => (/^\p{Ll}/u.test(text) ? text[0].toUpperCase() + text.slice(1) : text);
 const statement = capital(content.statement);
 const description = unescape(inline(statement));
 const register = content.documents.find((document) => document.path === 'decisions');
@@ -155,7 +156,7 @@ function ticketRow(ticket) {
 ${STATE[ticket.state]}
 ${ticket.resolution ? `<a href="/${ticket.number}/">${title}</a>` : `<span>${title}</span>`}
 ${ticket.closed ? `<time datetime="${ticket.closed.slice(0, 10)}">${shortDate(ticket.closed)}</time>` : ''}
-${ticket.decision ? `<p>${inline(ticket.decision)}</p>` : ''}
+${ticket.decision ? `<p>${inline(capital(ticket.decision))}</p>` : ''}
 </li>`;
 }
 
@@ -232,7 +233,7 @@ ${contents}
 <div class="col">
 <h1>${whole(inline(title))}</h1>
 ${date ? `<time datetime="${date.slice(0, 10)}">${longDate(date)}</time>` : ''}
-${lead ? `<p class="lead">${inline(lead)}</p>` : ''}
+${lead ? `<p class="lead">${inline(capital(lead))}</p>` : ''}
 <div class="prose">
 ${html}</div>
 </div>

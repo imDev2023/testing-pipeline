@@ -289,10 +289,6 @@ main > :last-child {
   line-height: 1.55;
 }
 
-.tickets p::first-letter {
-  text-transform: uppercase;
-}
-
 .tickets time {
   color: var(--quiet);
   font-size: 0.875rem;
@@ -371,10 +367,6 @@ main > :last-child {
   margin: 1.5rem 0 0;
   font-size: 1.1875rem;
   line-height: 1.5;
-}
-
-p.lead::first-letter {
-  text-transform: uppercase;
 }
 
 .document .prose {
