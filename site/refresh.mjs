@@ -432,7 +432,6 @@ if (!introduction) fail('The first line of README.md no longer reads "The intern
 
 const content = {
   refreshed: new Date().toISOString().slice(0, 10),
-  commit: git('rev-parse', '--short', MAIN),
   name: introduction[1],
   statement: introduction[2],
   destination: shown(map.Destination, 'the map, Destination'),
@@ -457,7 +456,7 @@ renameSync(next, join(here, 'content.json'));
 const count = (state) => tickets.filter((ticket) => ticket.state === state).length;
 console.log(
   `content.json: ${count('done')} done, ${count('in progress')} in progress, ${count('next')} next, ` +
-    `${documents.length} documents, at ${content.commit}.`,
+    `${documents.length} documents, with docs from ${MAIN} at ${git('rev-parse', '--short', MAIN)}.`,
 );
 console.log(`Dropped ${dropped.length} blocks that touch the outreach (npm run refresh -- --dropped lists them).`);
 if (process.argv.includes('--dropped')) {

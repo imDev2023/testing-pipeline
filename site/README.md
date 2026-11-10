@@ -12,7 +12,7 @@ Run them in `site/`, after `npm ci`.
 
 | Command | What it does |
 | --- | --- |
-| `npm run refresh` | Rebuilds `content.json` from the project's record and prints what it left out. |
+| `npm run refresh` | Rebuilds `content.json` from the project's record and prints what it left out. `-- --dropped` lists every dropped block; `-- --ref HEAD` reads `README.md` and `docs/` from your branch instead of `origin/main`, to see its docs on the site before it merges. |
 | `npm run build` | Renders `content.json` into `dist/`. |
 | `npm run preview` | Builds, then serves `dist/` at http://127.0.0.1:4310. |
 | `npm run deploy` | Builds, runs the privacy gate, and deploys to production on Vercel. |
@@ -93,6 +93,9 @@ After a refresh, read its report:
   Add a block's line to `approved.txt` only if it states a fact read from public code or the public chain.
   If it must never be shown, add a pattern for its kind to `DROP`, so the report stays empty.
 - "Match nothing any more" lists lines of `approved.txt` whose source changed; delete them.
+- "Decisions left out of the register whole" names the decisions of `docs/decisions.md` with a line that may not be shown.
+  A decision is shown whole or not at all, so a field value that names him, the private correspondence or the unregistered address takes its whole decision off the site.
+- "Done without a page" names closed tickets with no comment that starts with "Resolution" or "Resolved".
 
 ## Vercel
 
