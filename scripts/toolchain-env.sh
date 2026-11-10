@@ -1,7 +1,7 @@
 # Puts this project's Solana toolchain (from scripts/install-toolchain.sh) first on PATH for
 # the current shell only, so the machine's default Solana CLI stays as it is elsewhere:
 #   source scripts/toolchain-env.sh
-#   cargo build-sbf --tools-version "$SBF_TOOLS_VERSION"
+#   cargo build-sbf
 # Each Bash tool call is a fresh shell, so agents source it in every call that needs it.
 
 TESTING_PIPELINE_TOOLCHAIN="${TESTING_PIPELINE_TOOLCHAIN:-$HOME/.local/share/testing-pipeline/toolchain}"
@@ -9,9 +9,11 @@ TESTING_PIPELINE_TOOLCHAIN="${TESTING_PIPELINE_TOOLCHAIN:-$HOME/.local/share/tes
 # cargo-build-sbf 4.6.0 before Agave's bin, which ships its own older cargo-build-sbf.
 export PATH="$TESTING_PIPELINE_TOOLCHAIN/cargo-build-sbf-4.6.0/bin:$TESTING_PIPELINE_TOOLCHAIN/agave-v4.4.1/bin:$PATH"
 
-# Platform tools v1.58, cargo-build-sbf 4.6.0's default, has no Intel macOS build.
+# Platform tools v1.58, cargo-build-sbf 4.6.0's default, has no Intel macOS build, so there
+# a wrapper from install-toolchain.sh comes first and passes --tools-version v1.57 itself.
 if [ "$(uname -sm)" = "Darwin x86_64" ]; then
   export SBF_TOOLS_VERSION=v1.57
+  export PATH="$TESTING_PIPELINE_TOOLCHAIN/shims:$PATH"
 else
   export SBF_TOOLS_VERSION=v1.58
 fi

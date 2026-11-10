@@ -1,7 +1,7 @@
 # Toolchain
 
 What this project builds, tests and runs Pipeline with, and the steps that work.
-Verified on 2026-11-09 against Pipeline commit `a2d5bfb` on the owner's Mac (iMac Pro, Intel Xeon W-2150B, x86_64, 10 cores, 32 GB, macOS 15.7.3), from [Run Pipeline on this Mac and on devnet](https://github.com/imDev2023/testing-pipeline/issues/2).
+Verified on 2026-11-09 against Pipeline commit `a2d5bfb`, and on 2026-11-10 against `5ad130d` (its newest), on the owner's Mac (iMac Pro, Intel Xeon W-2150B, x86_64, 10 cores, 32 GB, macOS 15.7.3), from [Run Pipeline on this Mac and on devnet](https://github.com/imDev2023/testing-pipeline/issues/2).
 Build tickets start here.
 
 ## Versions
@@ -10,7 +10,7 @@ Build tickets start here.
 | --- | --- | --- | --- |
 | Rust (host) | 1.97.1 | rustup toolchain `1.97.1` | Pipeline's `rust-toolchain.toml` selects it |
 | cargo-build-sbf | 4.6.0 | `~/.local/share/testing-pipeline/toolchain/cargo-build-sbf-4.6.0/bin` | sBPF v3 output; Pipeline's CI pins it |
-| Platform tools | v1.57 on Intel macOS, v1.58 elsewhere (rustc 1.95.0, clang 22.1.2) | `~/.cache/solana/v1.57` | v1.58, 4.6.0's default, ships no Intel macOS build |
+| Platform tools | v1.57 on Intel macOS, v1.58 elsewhere (rustc 1.95.0, clang 22.1.2) | `~/.cache/solana/v1.57` | v1.58, 4.6.0's default and Pipeline's pin, ships no Intel macOS build |
 | Agave CLI | 4.4.1 | `~/.local/share/testing-pipeline/toolchain/agave-v4.4.1/bin` | `solana-test-validator` for local runs; Pipeline's docs name 4.4 |
 | Node | 24.4.1 (nvm) | `~/.nvm/versions/node/v24.4.1` | Node 26 breaks WebSocket confirmations on public devnet (see Known problems) |
 | TypeScript SDK | `@solana/kit` 8.6.0, `@solana-program/token` 0.18.0, `@solana-program/system` 0.16.0, TypeScript 7.0.2 | each package's `node_modules` | from Pipeline's lockfiles |
@@ -31,6 +31,9 @@ source scripts/toolchain-env.sh        # in every shell (and every agent Bash ca
 The install script puts Rust 1.97.1, cargo-build-sbf 4.6.0, the platform tools and the Agave 4.4.1 release side by side under `~/.local/share/testing-pipeline/toolchain` (override with `TESTING_PIPELINE_TOOLCHAIN`).
 It checks the Agave tarball against the SHA-256 digest GitHub publishes for the release asset.
 The env file puts those first on `PATH` for the current shell only, sets `SBF_TOOLS_VERSION` for this host, and puts Node 24 first when nvm has it.
+On Intel macOS it also puts a small `cargo-build-sbf` wrapper first (`~/.local/share/testing-pipeline/toolchain/shims`, written by the install script) that adds `--tools-version v1.57` unless the caller passes one.
+cargo-build-sbf takes the platform tools version only from that flag or from `[workspace.metadata.solana] tools-version` in the workspace's `Cargo.toml`, which Pipeline pins to v1.58 since `5ad130d`, and Pipeline's own scripts and strategy template call a bare `cargo build-sbf`; without the wrapper they would ask for v1.58, which cannot be installed on this Mac.
+The explicit flag wins over the workspace pin: every build at `5ad130d` went through the wrapper on v1.57.
 After the owner ran the script on 2026-11-10, `solana --version` outside the env file still printed 2.2.20, agave-install's `active_release` still pointed at 2.2.20, and rustup still had both the `solana` and `1.95.0-sbpf-solana-v1.57` links.
 
 Two commands from Pipeline's own docs would change every project on the machine, so never run them as written:
@@ -49,28 +52,47 @@ Checked by building a small program with 2.2.20, then 4.6.0, then listing the li
 
 Clone Pipeline into a scratchpad, never into this repo, and note the commit.
 
+These are the steps of Pipeline's CI at `5ad130d` (at `a2d5bfb`, before `scripts/build-programs.sh` and the strategy template existed, the programs were built with one `(cd programs && cargo build-sbf)`):
+
 ```sh
 git clone https://github.com/MetalLegBob/pipeline.git && cd pipeline && git log -1 --format=%h
 source <this repo>/scripts/toolchain-env.sh
+export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0
 
-(cd programs && cargo build-sbf --tools-version "$SBF_TOOLS_VERSION")
+scripts/build-programs.sh            # each program on its own, as solana-verify builds them
 cargo fmt --all -- --check && (cd programs && cargo fmt --all -- --check)
-CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
-CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 cargo test --workspace
+cargo test --workspace               # LiteSVM
+cargo clippy --workspace --all-targets -- -D warnings
+scripts/test-template.sh             # builds and tests templates/strategy against these sources
+scripts/test-new-strategy.sh
 (cd sdk/ts && npm ci && npm run build && npm test)
+(cd templates/strategy/scripts && npm ci && npm run typecheck)
 ```
 
-Results at `a2d5bfb`:
-
-| Step | Result | Time on this Mac |
+| Step | `a2d5bfb` (2026-11-09) | `5ad130d` (2026-11-10) |
 | --- | --- | --- |
-| `cargo build-sbf` | 5 programs, sBPF v3 (ELF `e_flags` 3): `pipeline.so` 401,816 bytes, `test_strategy_cp.so` 250,792, `test_strategy_evil.so` 92,208, `test_hook_refill.so` 28,360, `test_hook.so` 25,488 | 37 s from clean |
-| `cargo fmt --check` | both workspaces clean | seconds |
-| `cargo clippy -D warnings` | clean | 38 s after the tests had built |
-| `cargo test --workspace` (LiteSVM) | 425 passed, 0 failed, 0 ignored, in 82 test binaries | 399 s from clean, mostly compiling |
-| SDK `npm test` | typecheck and Prettier clean; 103 tests passed in 8 files | 2.4 s |
+| Build the programs | 5 programs, sBPF v3 (ELF `e_flags` 3): `pipeline.so` 401,816 bytes, `test_strategy_cp.so` 250,792, `test_strategy_evil.so` 92,208, `test_hook_refill.so` 28,360, `test_hook.so` 25,488; 37 s from clean | the same 5, one at a time: `pipeline.so` 402,544, `test_strategy_cp.so` 250,312, the rest unchanged; 52 s |
+| `cargo fmt --check` | both workspaces clean | both workspaces clean |
+| `cargo test --workspace` | 425 passed, 0 failed, 0 ignored, in 82 test binaries; 399 s from clean, mostly compiling | 464 passed, 0 failed, 1 ignored (a doc example in `pipeline-check`), in 94 test binaries; 226 s on top of the earlier build |
+| `cargo clippy -D warnings` | clean, 38 s | clean, 17 s |
+| Strategy template, generator | did not exist | template built and its 4 tests passed (including one that runs `pipeline-check` on a Token-2022 transfer-fee market), 144 s; generator checks passed |
+| TypeScript | SDK: typecheck and Prettier clean, 103 tests in 8 files, 2.4 s | SDK: 248 tests in 14 files, 13 s with `npm ci`; template scripts typecheck clean |
 
 `cargo build-sbf` warns that each program declares both `cdylib` and `lib` crate types, which turns off LTO; that is Pipeline's choice and harmless here.
+
+### Pipeline after `a2d5bfb`
+
+Three commits on 2026-11-09 between 20:18 and 22:21 UTC added pieces that overlap this project's products:
+
+- `crates/pipeline-check`, a conformance checker that quotes and trades a market through the real router in LiteSVM, from a strategy's own tests or against a deployed market (`pipeline-check --url devnet --market <MARKET>`), reporting Pass, Warn, Fail or Skip per check.
+- Trust facts and a metadata standard in `pipeline-client` (`facts.rs`, `metadata.rs`).
+- A strategy template (`templates/strategy`, `scripts/new-strategy.sh`) and reproducible builds with `solana-verify` (`docs/VERIFICATION.md`); `pipeline-strategy-interface` moved from `crates/` to `programs/`.
+- A hosted devnet API, `https://pipeline-devnet.up.railway.app` (`docs/API.md`): strategies and markets with trust flags, quotes, unsigned swap transactions, trades, candles and a live event stream, with no keys and per-IP limits.
+
+Devnet's router was redeployed at 21:00 UTC that day (slot 520,510,501).
+Its bytes differ from both local builds, which proves nothing: Pipeline's `docs/VERIFICATION.md` says macOS builds differ from Linux ones and makes the Docker build the reference.
+Checking which commit devnet runs needs `solana-verify` 0.5.2 or later (this Mac has 0.4.9 in `~/.avm/bin`) and Docker Desktop running; not done yet.
+`scripts/quote-devnet` stays pinned to `a2d5bfb`'s crates, where its timings were measured.
 
 ## Devnet
 
@@ -182,5 +204,5 @@ Two things to know:
   Once, Node 24 timed out connecting to `api.devnet.solana.com` mid-run, and sweeping all 44 markets drew HTTP 429s; `quote-devnet` retries 429s with back-off.
 - **Helius devnet and the smoke script.**
   With `RPC_URL` and `WS_URL` on Helius devnet, the script sent its first transaction, which landed, and then waited for its confirmation for over ten minutes before it was stopped; not diagnosed, so use public devnet for the script.
-- **Platform tools v1.58 has no Intel macOS build**, so on this Mac pass `--tools-version "$SBF_TOOLS_VERSION"` (v1.57) to every `cargo build-sbf`; v1.57 has the same Rust (1.95.0) and builds sBPF v3.
+- **Platform tools v1.58 has no Intel macOS build**, so on this Mac `cargo build-sbf` must run on v1.57, which has the same Rust (1.95.0) and builds sBPF v3; the wrapper `toolchain-env.sh` puts first does this (see Install).
 - **Downloads from GitHub are flaky on this network**: `gh` calls hit TLS timeouts and connection resets; retry.

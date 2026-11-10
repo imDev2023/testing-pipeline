@@ -56,6 +56,31 @@ if [ ! -x "$HOME/.cache/solana/$SBF_TOOLS_VERSION/platform-tools/rust/bin/rustc"
   (cd "$ROOT" && "$CBS/bin/cargo-build-sbf" --install-only --tools-version "$SBF_TOOLS_VERSION")
 fi
 
+# cargo-build-sbf reads the platform tools version only from --tools-version, and Pipeline's
+# own scripts and strategy template call a bare `cargo build-sbf`. Where 4.6.0's default
+# has no build for this host, toolchain-env.sh puts this wrapper first on PATH; it adds
+# --tools-version unless the caller passed one.
+if [ "$SBF_TOOLS_VERSION" != v1.58 ]; then
+  echo "== cargo-build-sbf wrapper (platform tools $SBF_TOOLS_VERSION by default)"
+  mkdir -p "$ROOT/shims"
+  cat > "$ROOT/shims/cargo-build-sbf" <<EOF
+#!/usr/bin/env bash
+# Written by testing-pipeline's scripts/install-toolchain.sh: runs cargo-build-sbf
+# $CARGO_BUILD_SBF_VERSION with platform tools $SBF_TOOLS_VERSION unless --tools-version is given.
+real="$CBS/bin/cargo-build-sbf"
+for arg in "\$@"; do
+  case "\$arg" in --tools-version|--tools-version=*) exec "\$real" "\$@" ;; esac
+done
+# \`cargo build-sbf\` runs this as \`cargo-build-sbf build-sbf ...\`; keep that first.
+if [ "\${1:-}" = build-sbf ]; then
+  shift
+  exec "\$real" build-sbf --tools-version "$SBF_TOOLS_VERSION" "\$@"
+fi
+exec "\$real" --tools-version "$SBF_TOOLS_VERSION" "\$@"
+EOF
+  chmod +x "$ROOT/shims/cargo-build-sbf"
+fi
+
 echo "== Agave $AGAVE_VERSION CLI ($AGAVE_TARGET)"
 AGAVE="$ROOT/agave-$AGAVE_VERSION"
 if ! "$AGAVE/bin/solana" --version 2>/dev/null | grep -q "^solana-cli ${AGAVE_VERSION#v} "; then
