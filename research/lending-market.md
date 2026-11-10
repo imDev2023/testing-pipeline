@@ -2,6 +2,7 @@
 
 Researched 2026-11-09 for [#12](https://github.com/imDev2023/testing-pipeline/issues/12); it feeds [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21).
 Every fact below is dated 2026-11-09 unless it says otherwise.
+A follow-up check for the design ticket, in `lending-market-kamino-facts.md` beside this file, covers devnet reserve setup, farm rewards, the main market's flags and caps, the exchange rate and its staleness, who can set emergency mode, and the withdrawal queue; it corrects one point below: only Kamino's global admin can set `block_ctoken_usage`, not a reserve's admin.
 Source code was read from shallow clones in a scratchpad, never copied into this repo; commits are listed under Sources.
 On-chain checks were read-only: `getAccountInfo` and `getProgramAccounts` on the public devnet RPC and on Helius's free tier for mainnet, plus transaction logs of recent mainnet calls for compute units.
 
