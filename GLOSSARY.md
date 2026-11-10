@@ -231,6 +231,18 @@ _Avoid_: overview, AI panel
 The id of one item of evidence given to the explainer (P, F, C, S or A and a number), which every sentence of an explanation must cite and code checks.
 _Avoid_: citation (the Claude API feature, which we do not use), footnote
 
+**Trade link**:
+A link Aviary's Telegram bot sends that opens one market's trade box with a swap filled in; nothing is signed until the trader acts there in their own wallet.
+_Avoid_: buy link, deep link alone (a wallet's browse link is one too), blink (a Solana Action a wallet unfurls)
+
+**Alert**:
+A message Aviary's Telegram bot sends without being asked, because the chat turned it on or watches what changed: a new strategy, a new market, an upgrade or a changed Canary outcome.
+_Avoid_: notification (Telegram's word for any message), signal and call (an alert is a fact, never advice to trade)
+
+**Watch list**:
+The strategies and markets a Telegram chat has asked the bot to send alerts about.
+_Avoid_: favourites, portfolio (it holds no wallet and no balances)
+
 **Tax AMM**:
 Our strategy whose markets always take their tax on the tax side, outside the price curve, with liquidity locked for good; built to pair with the containment hook.
 _Avoid_: tax token (the token is not the AMM)

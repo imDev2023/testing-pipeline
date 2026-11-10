@@ -29,7 +29,7 @@ Not in the first version:
 - USD prices;
 - a faucet;
 - a native app;
-- the Telegram bot, which has its own ticket, [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32).
+- the Telegram bot, which has its own spec, [`pipescope-telegram.md`](pipescope-telegram.md), and is built alongside these pages.
 
 ## Listing
 
