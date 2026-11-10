@@ -3,7 +3,9 @@
 // research/* branches.
 //
 //   npm run refresh
-//   npm run refresh -- --dropped    also lists every block the outreach rules dropped
+//   npm run refresh -- --dropped      also lists every block the outreach rules dropped
+//   npm run refresh -- --ref HEAD     reads README.md and docs/ from another commit than origin/main,
+//                                     to see a branch's docs on the site before it merges
 //
 // The site is public and the record is not, so three filters run in this order:
 //   1. Only the owner's own resolution comments are read, and the outreach tickets are skipped.
@@ -19,6 +21,7 @@ import { assertPublic } from './private.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const REPO = 'imDev2023/testing-pipeline';
+const MAIN = process.argv.includes('--ref') ? process.argv[process.argv.indexOf('--ref') + 1] : 'origin/main';
 const REPO_URL = `https://github.com/${REPO}`;
 const MAP = 1;
 
@@ -311,7 +314,7 @@ function withPublicLinks(markdown, pages, folder = '') {
 
 git('fetch', '--quiet', '--prune', 'origin');
 
-const readme = fileAt('origin/main', 'README.md').split('\n');
+const readme = fileAt(MAIN, 'README.md').split('\n');
 const map = sectionsOf(github(`issues/${MAP}`).body);
 
 const decisions = new Map();
@@ -372,10 +375,10 @@ const addDocument = (ref, file) => {
   documents.push({ path, title: title[1].trim(), body: markdown.replace(title[0], '') });
   folders.set(path, posix.dirname(file));
 };
-const onMain = git('ls-tree', '--full-tree', '--name-only', '-r', 'origin/main', 'docs/').split('\n');
+const onMain = git('ls-tree', '--full-tree', '--name-only', '-r', MAIN, 'docs/').split('\n');
 // The decision register arrives with "Decision register open to MetalLegBob's review"; until then there is none.
-for (const file of ['docs/decisions.md', 'docs/toolchain.md']) if (onMain.includes(file)) addDocument('origin/main', file);
-for (const file of onMain) if (/^docs\/spec\/[^/]+\.md$/.test(file)) addDocument('origin/main', file);
+for (const file of ['docs/decisions.md', 'docs/toolchain.md']) if (onMain.includes(file)) addDocument(MAIN, file);
+for (const file of onMain) if (/^docs\/spec\/[^/]+\.md$/.test(file)) addDocument(MAIN, file);
 for (const ref of git('for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin/research/').split('\n')) {
   const name = ref.split('/').pop();
   addDocument(ref, `research/${name}.md`);
@@ -429,7 +432,7 @@ if (!introduction) fail('The first line of README.md no longer reads "The intern
 
 const content = {
   refreshed: new Date().toISOString().slice(0, 10),
-  commit: git('rev-parse', '--short', 'origin/main'),
+  commit: git('rev-parse', '--short', MAIN),
   name: introduction[1],
   statement: introduction[2],
   destination: shown(map.Destination, 'the map, Destination'),
