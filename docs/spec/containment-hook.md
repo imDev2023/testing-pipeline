@@ -113,7 +113,7 @@ Nothing breaks while an unlock waits, since sells into the home market keep work
 ## Unlock goal
 
 - The tax collected by the home market, in quote-mint base units (lamports when the quote mint is wrapped SOL): the tax AMM's `tax_collected` counter, which only router swaps change, buys and sells alike.
-- Why the tax AMM counts it and not the hook: [ADR 0001](../adr/0001-unlock-goal-counted-by-the-home-market.md).
+- Why the tax AMM counts it and not the hook: [ADR 0003](../adr/0003-unlock-goal-counted-by-the-home-market.md).
 - Set by the launcher at binding and never changed.
 - Why tax collected rather than volume:
   - A tax authority may lower its market's taxes to the bottom of a range fixed at creation, which may be 0, and the tax AMM has no LP fee; at a 0% tax, faking volume would cost only Pipeline's 0.25%, so a vamp could wait for a low-tax window and force a permanent unlock cheaply.
@@ -164,7 +164,7 @@ The hook is not a strategy and has no strategy metadata, so its panel and its on
 ## Depends on
 
 - The tax AMM (`docs/spec/tax-amm.md`): `tax_collected` and the tax side at fixed offsets that later versions never move, vaults at PDAs `["vault", market_state, mint]`, bypass refused, liquidity locked, tax paid out of the vault only, and the program frozen before mainnet because the unlock trusts its counter.
-- [Engineering and security bar for our on-chain programs](https://github.com/imDev2023/testing-pipeline/issues/4): the hook's guarantees rest on its program, so while it is upgradeable its upgrade authority can change the rules or the unlock; the hook must be frozen before any mainnet use, and its devnet upgrade policy follows that ticket.
+- `docs/spec/README.md`, the engineering and security bar every program of ours meets; "Building it" below adds what it asks of each product's file.
 - Pipeline's router: the fee account's derivation belongs to the router, which is upgradeable on devnet; if an upgrade changed it, sells of contained tokens would fail until their deadline.
 
 ## Ruled out
@@ -179,9 +179,57 @@ The hook is not a strategy and has no strategy metadata, so its panel and its on
 - A minimum age as part of the goal.
 - A keeper job for the unlock in v1.
 - Launchpad graduation into a contained home market in v1.
-- Starting from Pipeline's `test-hook`, which approves every transfer when its extra accounts are left out.
+- Keeping `test-hook`'s fail-open path (see "Starting point").
+- An upgradeable hook on mainnet, even under a multisig with a timelock.
+
+## Building it
+
+What `docs/spec/README.md` asks each product's spec file to add, and how this program meets the bar.
+
+### Starting point
+
+- The bar starts the hook from Pipeline's Apache-2.0 `test-hook` (`programs/test-hook`), for its licence and its extra-account-meta setup.
+- `test-hook` approves every transfer when its whitelist account is left out (still so at `5ad130d`), and Token-2022 calls a hook without its extra accounts whenever a caller leaves them out, so that path is replaced by the fail-closed rule in "The allow rule"; the research's citations of the Factory's transfer hook show the checks to add (the `transferring` flag, the mint's owner, the validation account's seeds), read as a pattern, not copied.
+- Pipeline crates are pinned to `rev = "5ad130d"`, as for the tax AMM; build and test with the toolchain in `docs/toolchain.md`.
+
+### Upgrade policy
+
+- On devnet the hook stays upgradeable under the project upgrade-authority key, as the bar says.
+- It is frozen (upgrade authority removed) before any mainnet use, rather than the bar's default of a multisig with a timelock: the hook's whole promise is that nobody can change the rules, and a key that can upgrade it could block every contained token's transfers at once.
+- The cost is that a bug found after freezing cannot be fixed; the mainnet launch effort, out of scope here, audits the hook before freezing it.
+
+### Compute ceilings
+
+Tests assert the measured cost of each instruction with headroom, never above these ceilings.
+
+| Instruction | Ceiling (CU) | Why |
+| --- | --- | --- |
+| `Execute` | 10,000 | Runs on two transfers in every sell and one in every buy, inside the trader's swap; it uses bumps stored in the config instead of searching for them |
+| `bind` | 60,000 | Creates two accounts and reads the mint's extensions, the router's `Market` and the market state |
+| `unlock` | 30,000 | Two Token-2022 calls signed by the unlock PDA |
+
+### Invariants
+
+For the bar's stateful fuzzing layer, beyond its shared three:
+
+1. While contained, no sequence of actions moves the token between two accounts that are both outside the home vault and the fee account.
+2. A transfer that leaves out or substitutes any hook account is refused.
+3. The config never changes after binding, except the unlock time, which is set once.
+4. `unlock` succeeds exactly when the tax collected reaches the goal or the deadline has passed; afterwards both of the mint's hook fields are unset, and nothing else ever changes them.
+5. The shared "every holder can still exit" invariant holds for contained tokens, through sells into the home market.
+
+### Not applicable
+
+- `pipeline-check` Warns and strategy metadata: the hook is not a strategy; its Pipescope panel and action are in "In Pipescope".
+
+### Done means
+
+- LiteSVM tests through the real router with a tax AMM home market cover: buys, sells, the Pipeline fee and `sweep_fees` with the hook tail; refusal of wallet-to-wallet transfers, of a second market's funding, of a sell with a non-zero integrator fee and of every transfer missing a hook account or calling `Execute` directly; `bind`'s refusal of each refused extension, of a freeze authority, of a wrong signer, of a market on another strategy, of a tax side on the contained token, of a deadline beyond 90 days and of a second `bind`; `unlock` by the goal, by the deadline, its refusal before either, and a second `unlock`; and transfers skipping the hook afterwards.
+- The invariants above under the fuzzing layer, and the compute ceilings and a call-depth test on buys under the limits layer.
+- On devnet: the hook deployed; a contained token launched by the script, bought and sold through the router with the SDK, a wallet-to-wallet transfer refused, then unlocked by a short deadline, with the mint showing both hook fields unset.
+- Whatever else `docs/spec/README.md` requires of our on-chain programs.
 
 ## Not measured yet
 
-- The compute cost of the hook on each hooked transfer: into the vault and into the fee account on a sell, out of the vault on a buy; measured in the build.
+- The compute cost of the hook on each hooked transfer: into the vault and into the fee account on a sell, out of the vault on a buy; measured in the build against the ceilings above.
 - Whether the creation transaction with `bind` fits in one transaction with an address lookup table; if not, `bind` and the seed go in a second one, as above.
