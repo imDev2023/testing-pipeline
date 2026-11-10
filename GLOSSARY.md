@@ -26,6 +26,10 @@ _Avoid_: pool program, hook (that is a Token-2022 or Uniswap v4 term), adapter
 A strategy's program bytes as of one upgrade; a strategy that is upgraded becomes a new strategy version, and Canary checks attach to versions, not to strategies.
 _Avoid_: release, build
 
+**Verified build**:
+A strategy version whose deployed bytes Pipescope rebuilt from a named repository and commit and found identical, so that source may be used as evidence about it.
+_Avoid_: verified program, open source (published source is not verified source), audited
+
 **Market**:
 One tradable instance created from a strategy and recorded by the router, with two to four mints, a vault per mint and a market state.
 _Avoid_: pair (a market can hold four mints), pool (use pool only for the liquidity inside a market)
@@ -181,6 +185,10 @@ _Avoid_: audit (they detect, they cannot prove safety), score, rating
 **Exit test**:
 The Canary check that buys and then sells back from random wallets, at several sizes and with the clock moved forward, to catch markets that let people in but not out.
 _Avoid_: honeypot check alone, sell test
+
+**Canary run**:
+One run of the Canary checks against one strategy version, with the date and inputs it used; its results stay attached to that version.
+_Avoid_: scan, audit, test run
 
 **Explainer**:
 Pipescope's plain-language account of what a strategy version's facts mean for a trader, written by an LLM from evidence Pipescope prepares (chain facts, Canary results, source only when the build is verified, and author text marked untrusted), and shown only after code has checked it.
