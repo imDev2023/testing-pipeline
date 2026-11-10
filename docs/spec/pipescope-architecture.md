@@ -21,7 +21,8 @@ Decisions: [ADR 0001](../adr/0001-pipescope-indexes-pipeline-itself.md) (our own
 | Verified builds | A GitHub Actions workflow in this repo, started and read by `pipescope-api` | Postgres |
 | Explainer | Evidence built by `pipescope-api`; generation by `pnpm explainer:approve` on the owner's Mac | Postgres |
 
-- Pipescope holds no private keys at all: traders sign in their own wallets, the integrator fee goes to a cold wallet named only by its address, the Canary runner signs with throwaway keys inside its simulated chain, and the LLM key never leaves the owner's Mac.
+- Pipescope holds no private keys at all: traders sign in their own wallets, the integrator fee goes to a fee wallet Pipescope knows only by address, the Canary runner signs with throwaway keys inside its simulated chain, and the LLM key never leaves the owner's Mac.
+- Pipeline's hosted devnet API serves none of the pages: the feed, charts and wallet page read our own indexer's data ([ADR 0001](../adr/0001-pipescope-indexes-pipeline-itself.md)).
 - Nothing paid runs from Cloudflare: the only paid call, the explainer's, runs on the owner's Mac when the owner approves it.
 
 ## Platform and plans
@@ -94,6 +95,7 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
   A changed slot on a strategy is a new strategy version: it is recorded, a Canary run starts, a verified build is requested if a source lead exists, and the strategy's markets are re-read.
   A changed slot on the router is recorded and flagged, since a router upgrade can change event layouts; events the decoder does not know are kept and indexed again by newer code.
 - **Market accounts**: after each event or custom action that touches a market, its market state and vaults are re-read; there are no account subscriptions.
+- **Mints**: when a market brings a mint not yet seen, its mint account and on-chain token metadata are read once and stored, for the facts (Pipeline's trust flags) and for symbols and images, which `pipescope.md` treats as untrusted.
 - **Unknown or failed decodes** are kept with the transaction, and re-indexing transactions first indexed by older code is Top-pad's `reindexTransactions`.
 - **Deploys**: an object kept awake goes on running the code from before a deploy, so the indexer resets itself whenever the Worker calling it runs another version (Top-pad's `wake`).
 - **Backfill**: the router's whole history (185 transactions on 2026-11-09) is indexed as soon as the indexer first runs, because devnet history may be reset and Postgres must be the record.
@@ -119,25 +121,38 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
   This is also where Canary results get their "page and API" in the map's Canary attestations fog.
 - Endpoints, as a sketch for the build to settle in the zod contract:
   - strategies, a strategy's versions, and per version its facts, Canary results, verified-build status and explanation;
-  - markets, a market's facts, trades and candles;
-  - `POST` prepare for a swap and for a custom action, each returning a quote or a summary and an unsigned transaction;
+  - markets, a market's facts, trades and candles, with the feed's filters (liquidity, volume, age and Pipeline's trust flags);
+  - search by name, mint, market address or strategy address, from Postgres;
+  - a wallet's swaps through Pipeline, from our trades, and its balances in mints that trade in Pipeline markets, read through RPC;
+  - a quote while the trader types;
+  - `POST` prepare for a swap, a custom action and a new market, each returning the unsigned transaction with its simulation's outcome and balance changes;
   - `POST` a trade's signature (the fast path);
   - `POST` a "This is wrong" report against an explanation key.
 - Owner-only operations are not in the API: the explainer's approve command and the reports list read and write Postgres directly from the owner's Mac.
 
 ## Trading path
 
-Top-pad's flow (`apps/web/src/components/coin/QuickTrade.tsx`, `prepareSwap` then `signAndSendTransaction` then `reportTrade`).
+Top-pad's flow (`apps/web/src/components/coin/QuickTrade.tsx`, `prepareSwap` then `signAndSendTransaction` then `reportTrade`), with what `pipescope.md` asks for.
 
-1. The page asks the API to prepare a swap; the API builds the unsigned transaction with Pipeline's Kit-based TypeScript SDK: the router `swap` instruction, our integrator fee account, the transfer-hook extra accounts, and idempotent creation of the trader's token accounts.
-2. The quote comes from RPC simulation of the strategy's `pipeline_quote` through the SDK's `quoteStrategy` (50 to 300 ms) on Pipescope's Helius key; the Container quoter is never on the trading path.
-3. The wallet signs and sends through Wallet Standard's `signAndSendTransaction`.
-4. The page sends the signature to the API, which waits for it to confirm (asking every 300 ms), reads it back, answers with the trade and a provisional order key, and hands it to the indexer, which later replaces it in place.
+1. While the trader types, the trade box shows a quote from RPC simulation of the strategy's `pipeline_quote` through the SDK's `quoteStrategy` (50 to 300 ms), asked through the API on Pipescope's Helius key; the Container quoter is never on the trading path.
+2. When the trader asks to swap, the API prepares the unsigned transaction with Pipeline's Kit-based TypeScript SDK: the router `swap` instruction, our integrator fee at the rate on screen when the input is a fee mint, the transfer-hook extra accounts, wrapping and unwrapping SOL, idempotent creation of the trader's token accounts, and the market's `init_fee_account` when a sell needs it.
+3. The API simulates that exact transaction (see Simulation before every signature) and returns it with the simulation's outcome; if the simulation failed, the page shows the error and the sign button stays off.
+4. The wallet signs and sends through Wallet Standard's `signAndSendTransaction`.
+5. The page sends the signature to the API, which waits for it to confirm (asking every 300 ms), reads it back, answers with the trade and a provisional order key, and hands it to the indexer, which later replaces it in place.
 
 - Transfer-hook extra accounts are resolved by our own code for buys, sells and sweeps, from each mint's `ExtraAccountMetaList`, because neither Pipeline's SDK nor its Rust client does it ([How the containment hook works with the router and unlocks](https://github.com/imDev2023/testing-pipeline/issues/10)).
-- Custom-action transactions are prepared the same way, from the strategy metadata's action forms after the discriminator check, and are signed directly on the strategy, outside the router's protections.
-- The integrator fee is paid into token accounts owned by a cold fee wallet that Pipescope knows only by address; the rate is for Pipescope's v1 scope.
-  Default set while writing this file, not asked: when the fee wallet has no token account for a mint yet, the swap is prepared without the integrator fee rather than making the trader pay its rent, and the mint is listed for a `pnpm fees:accounts` script that creates the missing accounts from this project's devnet key on the owner's Mac.
+- Custom actions and market creation are prepared and simulated the same way, with the SDK's generic builders (`buildActionInstruction`, `buildCreateMarketFromMetadata`) from the strategy's validated metadata after the discriminator check; a custom action is signed directly on the strategy, outside the router's protections.
+
+### Simulation before every signature
+
+- Every transaction Pipescope prepares (swap, custom action, create market) is simulated by `pipescope-api` in the same request that builds it, with `simulateTransaction` on Pipescope's Helius key, the trader's wallet as fee payer, signature checks off and the blockhash replaced.
+- The simulation is asked for the post-state of every token account the transaction touches; with their balances read just before, the API returns the wallet's balance changes, which the form shows before signing (`pipescope.md`, Custom-action and create-market forms).
+- The transaction returned is exactly the one simulated, so what the trader signs is what was checked, apart from the chain moving in between.
+
+### The integrator fee's configuration
+
+- The rate (50 basis points), the fee mints (wrapped SOL and the cluster's USDC mint) and the fee wallet's two token accounts are vars of `pipescope-api` per environment in its `wrangler.jsonc`, so they change by a configuration deploy, with no code change; the fee wallet's key is never on a server ([`pipescope.md`](pipescope.md), The integrator fee).
+- The API returns the rate it built each swap with, so the trade box shows exactly that rate.
 
 ## Canary runner
 
