@@ -342,7 +342,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: What does the public progress site look like?
 - Answer: One column of content beside a rail of section names, the map's ticket states shown as marks, light and dark following the system, and no script on any page.
 - Alternatives: A notes-style sidebar; a plainer page still.
-- Specified in: [the ticket, Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+- Specified in: [`site/README.md`, Design](../site/README.md#design)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
@@ -352,7 +352,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: At which address is the progress site published?
 - Answer: Under the Vercel project name `testing-pipeline`, a neutral name chosen before the public names were settled.
 - Alternatives: `devnet-suite-progress`; `pipeline-suite-progress`.
-- Specified in: [the ticket, Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+- Specified in: [`site/README.md`, Vercel](../site/README.md#vercel)
 - Changes by: runtime setting
 - Status: default
 - Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
@@ -362,7 +362,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: How much of our research on the Pool4 port already on devnet does the public site show?
 - Answer: Both the ticket's resolution and its research findings, which were worked out from public chain data.
 - Alternatives: The resolution only; leaving that ticket off the site.
-- Specified in: [the ticket, Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+- Specified in: [`site/README.md`, Privacy](../site/README.md#privacy)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
@@ -426,6 +426,86 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
+
+### SUITE-38: Progress site: where its content comes from
+
+- Question: Where does the public site get what it shows?
+- Answer: From one generated file, `site/content.json`, which one command rebuilds from the map and its tickets, `README.md` and `docs/` on `main`, and the findings on the research branches; the pages are static, with no server, no script, and no call to GitHub from a visitor's browser.
+- Alternatives: Fetching from GitHub when a page loads; letting Vercel build from the repo, which needs a token and a connected repo.
+- Specified in: [`site/README.md`, How it fits together](../site/README.md#how-it-fits-together)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+
+### SUITE-39: Progress site: what may be shown
+
+- Question: How does the site keep private material out of public pages?
+- Answer: It reads only the owner's own resolution comments, skips the tickets about private correspondence, drops every block that touches that correspondence, drops every block that names a third party unless that exact block was approved in `site/approved.txt`, and must pass the owner's private-lines check before the content is written and again before every deploy.
+- Alternatives: The private-lines check alone; approving by pattern instead of by exact block.
+- Specified in: [`site/README.md`, Privacy](../site/README.md#privacy)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+
+### SUITE-40: Progress site: its name
+
+- Question: What is the public site called?
+- Answer: Aviary, taken with its headline from the first line of `README.md`, at the address it already had.
+- Alternatives: Keeping the internal name `testing-pipeline` in the header; a new address under the public name.
+- Specified in: [`site/README.md`, What is shown](../site/README.md#what-is-shown)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+
+### SUITE-41: Progress site: working names in dated records
+
+- Question: Do the tickets and resolutions the site shows take the public names?
+- Answer: No: they are dated records and are shown as written, while the site's own name, its headline and the map's Destination use the public names.
+- Alternatives: Rewriting the working names on display from one table of names.
+- Specified in: [`site/README.md`, What is shown](../site/README.md#what-is-shown)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+
+### SUITE-42: Progress site: the address before it is registered
+
+- Question: Does the site show the address and the handle chosen for the suite before the owner has registered them?
+- Answer: No: every block that names either, or says which names are free, stays off the site until both are registered.
+- Alternatives: Showing them without links.
+- Specified in: [`site/README.md`, Privacy](../site/README.md#privacy)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+
+### SUITE-43: Progress site: the decision register
+
+- Question: How does the site show this register?
+- Answer: As one page with a section per product and every decision reachable by its ID (`/decisions/#tax-03`), linked from the front page under the standing rule; a decision with a line that may not be shown is left out whole.
+- Alternatives: Showing such a decision with the line missing; filters by status and by how a decision changes, which need generated views or script.
+- Specified in: [`site/README.md`, What is shown](../site/README.md#what-is-shown)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+
+### SUITE-44: Progress site: readers that are programs
+
+- Question: What does the site give an agent that reads it?
+- Answer: A Markdown twin of every page, an index of them at `/llms.txt`, and everything in one file at `/content.json`.
+- Alternatives: HTML pages only.
+- Specified in: [`site/README.md`, For agents reading the site](../site/README.md#for-agents-reading-the-site)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
+
+### SUITE-45: Progress site: how it is deployed
+
+- Question: How does a new version of the site reach the public address?
+- Answer: By one command on the owner's machine that builds the pages, runs the private-lines check on the built files and uploads exactly those files; the Vercel project is never connected to the repo, and every deploy needs the owner's word.
+- Alternatives: Vercel building from a connected repo on every push.
+- Specified in: [`site/README.md`, Vercel](../site/README.md#vercel)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
 
 ## Engineering and security bar (BAR)
 
@@ -2920,7 +3000,6 @@ Each field is one line, and each value is one sentence of inline Markdown.
 Open on 2026-11-10; the session that settles each one adds its blocks above.
 
 - [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16): what the terminal's pages look like and how they behave.
-- [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30): the answers so far are `SUITE-29` to `SUITE-31`.
 - [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22): it merges the terminal's spec files and adds a block only if it settles something new.
 - Not yet specified on the map: single-use AMMs, Canary results published on-chain as attestations, and Canary calling a strategy's custom instructions.
 

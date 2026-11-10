@@ -42,6 +42,13 @@ Every decision settled so far is one block in `docs/decisions.md`, the decision 
 - To refresh the X archives, follow `research/README.md` (Claude in Chrome for ids, then `scripts/fetch_x_posts.py`).
 - Code reused from the owner's other projects (Top-pad's indexer, candles, Workers and OpenNext setup, Codama clients, solana-verify flow, Playwright setup) is copied in and owned here; these products stay separate from those projects.
 
+## Progress site
+
+https://testing-pipeline.vercel.app is the public site that shows what this project has done so far.
+It lives in `site/`, and all its content is one generated file, `site/content.json`.
+`site/README.md` has the commands (`npm run refresh`, `npm run deploy`) and the privacy rules that guard it; read it before touching the site.
+A deploy goes to production: the owner approved the first on 2026-11-10, so ask before another unless they have said otherwise.
+
 ## Agent skills
 
 ### Issue tracker
