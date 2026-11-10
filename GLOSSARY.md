@@ -311,6 +311,18 @@ _Avoid_: custom AMM alone, white-label
 A permissionless instruction that someone must call on a schedule to keep a market or product working, such as rebalancing a buy wall or a buffer.
 _Avoid_: cron (that is how we run it, not what it is), bot
 
+**Keeper runner**:
+Our program that calls the keeper jobs of every market of our strategies when they are due, paying from the keeper wallet; anyone may run their own copy, since every keeper job is permissionless.
+_Avoid_: keeper alone (ambiguous between the job and the runner), bot, crank
+
+**Keeper wallet**:
+The wallet the keeper runner pays transaction fees and account rent from, and receives keeper tips into; it holds a small float and nothing else.
+_Avoid_: hot wallet, operations wallet (Top-pad's term), treasury
+
+**Keeper tip**:
+What a keeper job pays its caller for the work, bounded by what the market earned on that work; only the buy wall AMM's `place_wall` pays one.
+_Avoid_: reward (that is the reward share), bounty
+
 **Hardening ticket**:
 The last build ticket of each of our on-chain programs, in which a fresh session runs the internal adversarial review and fixes what it finds.
 _Avoid_: audit (an audit is external), security pass

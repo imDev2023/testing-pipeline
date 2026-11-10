@@ -1,0 +1,171 @@
+# Keeper runner
+
+Decided with the owner in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45) on 2026-11-10.
+It builds on the keeper jobs of [`pool4-for-solana.md`](pool4-for-solana.md) (the buy wall AMM, "Keeper jobs"), [`lending-pool.md`](lending-pool.md) (the lending AMM, "When it runs") and [`tax-amm.md`](tax-amm.md) ("Payout"), and on Aviary's architecture in [`pipescope-architecture.md`](pipescope-architecture.md).
+Terms are as in `GLOSSARY.md`: keeper job, keeper runner, keeper wallet, keeper tip.
+Like every decision in this spec, each one here is a default MetalLegBob may change.
+
+## What it is
+
+- The keeper runner is one Node program in this repo, `apps/keeper`, that calls every keeper job of every market of our strategies when it is due, and pays for it from the keeper wallet.
+- On devnet it runs on the owner's Mac as a launchd agent, reading the keeper wallet's key from `~/.config/testing-pipeline/devnet/keeper.json`.
+- Nothing of it runs on the owner's Cloudflare account (owner, 2026-11-10): the work is for MetalLegBob, so it must cost the owner nothing.
+  Aviary itself stays on Cloudflare as [Pipescope architecture](https://github.com/imDev2023/testing-pipeline/issues/13) decided; only the keeper runner, the one part that holds a hot key and spends SOL, lives elsewhere.
+- It is portable: a Docker image and a README let MetalLegBob, or anyone, run it on their own machine with their own key, since every keeper job is permissionless.
+- When the Mac sleeps or is off, jobs wait.
+  Nothing breaks meanwhile: swaps keep working, a lending AMM swap redeems its own shortfall from Kamino, payouts only arrive later, and Aviary's panels show every due job as a button anyone can press.
+
+## The jobs
+
+| Product | Job | Due when | How the runner learns it |
+| --- | --- | --- | --- |
+| Buy wall AMM | `place_wall` | `idle_sol` or the wall's `converted` reaches `WALL_THRESHOLD` | After each transaction on the market, and in every sweep |
+| Buy wall AMM | `settle` | `retired_tokens` above 0, at most once an hour per market | The hourly pass |
+| Buy wall AMM | `pay_rewards` | `rewards_owed` above 0 | The daily pass |
+| Buy wall AMM | `sweep_fees { slot }` | A slot's ledger above 0; slot 1 only once `DESIGNER_RECIPIENT` is set | The daily pass, one transaction per slot |
+| Lending AMM | `rebalance` | The buffer is outside its band, or the market should enter or leave withdraw mode | After each transaction on the market, and the 10-minute sweep |
+| Tax AMM | `distribute { slot }` | A slot is owed more than 0 (the burn slot included) | The daily pass, one transaction per slot |
+
+- The containment hook's `unlock` has no keeper job in v1, as [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18) decided: anyone who wants it presses Aviary's Unlock button.
+- A job a later product adds joins this table and the jobs package below; the runner itself does not change.
+- The lending AMM's spec says the runner acts when Aviary's indexer sees a market leave its band; the runner watches the chain itself instead (see "Triggers"), which gives the same result without tying it to Aviary.
+
+### One definition of due
+
+- Each job's due rule is a pure function of the market state in one shared package, `packages/keeper-jobs`, with the instruction builder for that job.
+- The keeper runner and Aviary's panels both use it, so a button shows in Aviary exactly when the runner would act.
+- Each product's package entry also names the refusal codes that mean "nothing to do" (for example the lending AMM's `WithinBand`, or a payout with nothing owed), which the runner treats as a skip, not a failure.
+
+## Which markets
+
+- Every market of our strategies on devnet, including markets other people create, within the spending caps.
+- The runner finds them with `getProgramAccounts` on each of our strategy programs when it starts and in every 10-minute sweep, and adds a market as soon as a transaction names one it does not know.
+- The per-market daily cap is what stops anyone from making us pay for many markets with fresh recipients (see "Spending caps").
+
+## Triggers
+
+- **Its own socket**: one `logsSubscribe` subscription per strategy program of ours, held open while the runner runs; a notification makes the runner fetch that transaction, find which of our markets it touched, re-read their market states and check `place_wall` and `rebalance`.
+  The socket reconnects on its own, and every reconnect runs a sweep so nothing between is missed.
+- **The 10-minute sweep**: re-reads every known market's state in batches of 100 with `getMultipleAccounts` and checks `place_wall` and `rebalance`; this also catches withdraw mode, which depends on Kamino's state rather than our market's.
+- **The hourly pass**: `settle`.
+- **The daily pass** at `DAILY_PASS_UTC`: `pay_rewards`, `sweep_fees` and `distribute`.
+- **On start**: one full pass of every job, since the Mac may have slept through any of the above; paying out again after a restart costs only transaction fees, because each payout pays the whole amount owed and the next one finds nothing.
+- The runner reads only the chain; it never polls Aviary's database (see "What it records").
+
+## RPC
+
+- Alchemy's free devnet endpoint, from `ALCHEMY_API_KEY` in the owner's `~/.config/env/global.env`, so the runner's load stays off both Aviary's own Helius key (budgeted at about 500,000 of its 1 million free credits) and the owner's shared Helius key (already rate-limited when several sessions run).
+- The HTTP and WebSocket URLs are the settings `KEEPER_RPC_URL` and `KEEPER_WS_URL`; their defaults are built from `ALCHEMY_API_KEY`.
+- The first build ticket checks that Alchemy's devnet WebSocket serves `logsSubscribe`; if it does not, the socket uses Aviary's Helius key and HTTP stays on Alchemy, and the ticket records which.
+- No paid tier: if the free tier runs out, the runner slows its sweeps rather than spending.
+
+## Sending a job
+
+1. Build the job's transaction from `packages/keeper-jobs`, with the keeper wallet as fee payer and, for `place_wall`, the keeper wallet's wrapped-SOL account as the tip account (created in the same transaction if missing).
+2. Simulate it.
+   A "nothing to do" refusal is a skip and costs nothing; any other simulation error counts as a failure (below).
+3. Estimate its cost (the fee plus the rent of any account it creates) and check it against every cap; a job over a cap is held, not sent.
+4. Send it at `PRIORITY_FEE_MICROLAMPORTS` (0 on devnet) and wait for confirmation.
+- One job is sent at a time, so two jobs never race each other or count the same cap headroom twice.
+- Another keeper running the same job first is harmless: the second simulation finds nothing to do.
+
+### Failures
+
+- A failed job is retried after 30 seconds, 2 minutes and 10 minutes (`RETRY_DELAYS`).
+- After the last retry the job is parked: the runner leaves that job on that market alone until the market's state changes, and records the park with the last error.
+- A parked job still shows as due in Aviary, with its button, so anyone can press it.
+
+### When the wallet runs low or a cap is reached
+
+- Below `LOW_BALANCE` the runner keeps working and records a low-balance warning in every pass.
+- Below `MIN_BALANCE`, or once a cap is reached, it sends nothing more (for the day, or for that market) and records why; Aviary's keeper page shows it.
+- The runner never funds itself.
+  The keeper wallet is topped up only with `devnet-airdrop ~/.config/testing-pipeline/devnet/keeper.json --target 2`, run by the owner or an agent session in the background, as the owner's global rules say for every devnet wallet.
+
+## The keeper wallet
+
+- A new key made only for the runner, `~/.config/testing-pipeline/devnet/keeper.json`, by the first build ticket with `solana-keygen new`.
+- It is not `wallet.json` (the deploy wallet) or `upgrade-authority.json`, so a leaked keeper key loses only its float and controls nothing.
+- The key lives only in that file on the owner's Mac: never in the repo, the Docker image, a Worker, a GitHub secret or a log.
+  The path is the setting `KEEPER_KEYPAIR`, so someone else's copy points at their own key; the Docker image takes it as a read-only mount.
+- Its public address is published (in this file once made, and in Aviary's keeper page), so anyone can see what it spends.
+- Its float is kept at `FLOAT_TARGET` (2 SOL) by `devnet-airdrop`.
+
+### Keeper tips
+
+- The buy wall AMM's `place_wall` is the only job that pays a keeper tip, into the keeper wallet's wrapped-SOL account.
+- The runner keeps its tips: once that account holds more than `TIP_UNWRAP_AT`, it closes the account to unwrap them into the float (the account's rent comes back too), and the next `place_wall` recreates it.
+- `place_wall` pays for itself: at the lowest fee (0.25%) on the smallest work (`WALL_THRESHOLD`, 0.01 SOL) the tip is at least 25,000 lamports, five times the 5,000-lamport transaction fee.
+- The other jobs pay no tip, so their fees and any recipient token accounts they create come out of the float.
+- Caps count what the runner spends, never net of tips.
+
+## Spending caps
+
+All the runner's policy values live in one module, `apps/keeper/src/settings.ts`, each one overridable by an environment variable of the same name prefixed `KEEPER_`; no other file repeats a value.
+The runner logs the values it started with.
+
+| Setting | Default | What it limits |
+| --- | --- | --- |
+| `FLOAT_TARGET` | 2 SOL | The balance `devnet-airdrop` tops the keeper wallet up to |
+| `LOW_BALANCE` | 0.5 SOL | Below it, every pass records a low-balance warning |
+| `MIN_BALANCE` | 0.1 SOL | Below it, the runner sends nothing |
+| `MAX_TX_COST` | 0.003 SOL | The most one transaction may cost: the fee plus the rent of one new token account (2,039,280 lamports for a plain one) |
+| `MARKET_DAILY_CAP` | 0.01 SOL | The most the runner spends on one market in a UTC day |
+| `DAILY_CAP` | 0.1 SOL | The most the runner spends in a UTC day, all markets together |
+| `PRIORITY_FEE_MICROLAMPORTS` | 0 | The priority fee on devnet |
+| `TIP_UNWRAP_AT` | 0.05 SOL | The wrapped-SOL balance at which tips are unwrapped |
+| `RETRY_DELAYS` | 30 s, 2 min, 10 min | The retries before a job is parked |
+| `SWEEP_INTERVAL` | 10 min | How often every market is re-read |
+| `SETTLE_INTERVAL` | 1 hour | How often `settle` may run per market |
+| `DAILY_PASS_UTC` | 00:00 | When the daily pass runs |
+| `KEEPER_KEYPAIR` | `~/.config/testing-pipeline/devnet/keeper.json` | Where the key is read from |
+| `RPC_URL`, `WS_URL` | Alchemy devnet, from `ALCHEMY_API_KEY` | The RPC the runner reads and sends through |
+| `DATABASE_URL` | unset | Aviary's database, where runs are recorded; unset, the runner only logs |
+
+- A new market's first payouts may create up to five recipient token accounts (a tax market with four recipients and the suite share), about 0.0102 SOL, so on its first day the last one can wait for the next day's cap; that is accepted.
+- What the runner has spent today is rebuilt from the chain whenever it starts: the keeper wallet's own transactions since 00:00 UTC (`getSignaturesForAddress`, then each one's fee and balance changes), per market from the accounts each one touched.
+  So the runner keeps no state file, and a restart can never reset a cap.
+  This holds because the keeper wallet is used by the runner alone.
+
+## What it records
+
+- The runner writes to Aviary's Postgres (`DATABASE_URL`, the Neon project `terminal-devnet`) directly, as the explainer's approve command does from the Mac, never through Aviary's public API.
+- One table, `keeper_runs`, in Aviary's database package (`packages/terminal-db`): a row per pass (when, which pass, the keeper wallet's balance, today's spend against each cap, the settings it ran with, any warning) and a row per job it sent, held or parked (market, job, slot, signature, cost, outcome, error).
+- It writes only in passes that sent, held or parked something, in one database transaction per pass.
+  Neon's free plan gives 100 compute-hours a month, and the database must sleep while devnet is quiet; `place_wall`, `rebalance` and `settle` follow swaps, when Aviary's indexer has just woken the database anyway, and the daily pass wakes it once a day.
+- Without `DATABASE_URL` (someone else's copy, or before Aviary's database exists) the runner logs the same rows to its log file and works the same.
+- Logs go to `~/Library/Logs/testing-pipeline-keeper.log` on the Mac, and to standard output in Docker.
+
+## How Aviary shows it
+
+These are for Aviary's build tickets ([Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)) and each product's Aviary panel ticket.
+The `keeper_runs` table and the runner's writer for it belong to the Aviary ticket that builds the keeper page, since neither can be tested before Aviary's database exists; until then the runner only logs.
+
+- Each market's panel shows every keeper job that is due, from `packages/keeper-jobs`, with how long it has been due, the runner's last attempt from `keeper_runs` (sent, held by a cap, or parked with its error) and a button that prepares and simulates the job for the viewer's own wallet, as any custom action.
+- A keeper page shows the keeper wallet's address and balance (read through RPC), today's spend against each cap, the last pass of each kind, every held or parked job, and any warning; it is read-only and public, like the rest of Aviary.
+- If the last pass is more than `SWEEP_INTERVAL` plus a few minutes old, the page says the runner looks stopped.
+
+## Running it
+
+- **On the owner's Mac**: a launchd agent, `testing-pipeline.keeper`, with `RunAtLoad` and `KeepAlive`, started by a script in `scripts/` that loads `~/.config/env/global.env` and the project's `.env` (launchd has no direnv) and runs the built program on the Node version in `docs/toolchain.md`.
+  `pnpm keeper:install` writes and loads the agent, `pnpm keeper:uninstall` removes it, and `pnpm keeper:status` prints the wallet's balance, today's spend and the last pass.
+- **Anywhere else**: the Docker image built from `apps/keeper`, with the key mounted read-only and the settings as environment variables, documented in `apps/keeper/README.md`, which also lists the decisions here and invites MetalLegBob to change any of them.
+- **One-off**: `pnpm keeper:once` runs one full pass and exits, for tests, demos and anyone who would rather press nothing in Aviary.
+- On mainnet the runner would need its own hosting decision; that belongs to the mainnet effort, which is out of scope.
+
+## Testing it
+
+- Unit tests of every due rule in `packages/keeper-jobs` against market states from each product's fixtures, including the boundary values (exactly `WALL_THRESHOLD`, the band's edges, slot 1 with `DESIGNER_RECIPIENT` unset).
+- Tests of the runner against a local validator running devnet's router and our programs (each product's local demo run), with a fake clock for the passes: a job sent when due and only then, a "nothing to do" refusal skipped at no cost, every cap holding a job, the spend rebuilt after a restart equal to the spend before it, a failing job retried and parked, and a second keeper racing the runner costing only a refused simulation.
+- On devnet, for each product as its deploy ticket lands: the runner calling that product's jobs on its demo market, with the signatures in the PR.
+
+## Build tickets
+
+Cut by [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45) on 2026-11-10, labelled `build`, one session each, in run order:
+
+1. [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94): `apps/keeper`, `packages/keeper-jobs`, the keeper wallet, the caps, the launchd agent and the Docker image, after [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66).
+2. [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95): with keeper tips, after the first and [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56).
+3. [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96): after the first and [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87).
+
+Each waits for the product whose jobs it adds to be on devnet, so the runner is built against deployed programs; the second and third can run in either order.
+Aviary's side (the `keeper_runs` table and its writer, due jobs on each panel, the keeper page) is left to [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22), where it is posted as a comment.

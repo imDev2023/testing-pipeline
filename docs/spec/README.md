@@ -14,6 +14,7 @@ Terms are as in `GLOSSARY.md`, and the toolchain and its install steps are in `d
 - `containment-hook.md`: the containment hook.
 - `pool4-for-solana.md`: the buy wall AMM.
 - `lending-pool.md`: the lending AMM.
+- `keeper-runner.md`: the keeper runner, which calls our products' keeper jobs.
 
 The files keep the names they were written under, so links to them still work; "Names" below says what each product is called.
 
