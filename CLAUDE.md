@@ -22,7 +22,8 @@ Decisions land in `docs/adr/` and the spec in `docs/spec/`: a shared `README.md`
 ## Rules for this project
 
 - Pipeline's source is read from a clone in a scratchpad at commit `a8b1b1d` or newer (note which); never copy the router (BSL 1.1 until 2028-11-08) or the rest of Pipeline's repo into this repo.
-  The one exception is code generated from Pipeline's Apache-2.0 strategy template (`scripts/new-strategy.sh`), which our strategies start from (owner, 2026-11-10).
+  The exceptions are code generated from Pipeline's Apache-2.0 strategy template (`scripts/new-strategy.sh`), which our strategies start from, and its Apache-2.0 `test-hook` allowlist hook, which the containment hook starts from (owner, 2026-11-10).
+- Every on-chain program meets the engineering and security bar in `docs/spec/README.md` before its build tickets count as done.
 - Devnet only until Pipeline's router is on mainnet; never create mainnet deployments before then.
 - Never hold users' private keys, in Pipescope or a Telegram bot.
 - Ask the owner before every paid call, including LLM calls for the explainer and paid RPC tiers, and log approved ones in `~/.config/spend/ledger.csv`.
