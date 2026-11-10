@@ -292,11 +292,20 @@ function pageFor(url, pages) {
 /** Points links at the site's own pages and unwraps the ones a visitor could not open. */
 function withPublicLinks(markdown, pages, folder = '') {
   for (const [pattern, replacement] of SCRUB) markdown = markdown.replace(pattern, replacement);
+  // A code block is an example, shown as written: only an address of the private repo is replaced in it.
+  return markdown
+    .split(/^(```[\s\S]*?^```)/m)
+    .map((part) => linksIn(part, pages, folder, part.startsWith('```')))
+    .join('');
+}
+
+function linksIn(markdown, pages, folder, isCode) {
   return markdown
     .replace(/\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^)\s]+)\)/g, (link, text, url) => {
       if (/^(https?:|#)/.test(url) && !url.startsWith(REPO_URL)) {
         return /^https:\/\/claude\.ai\//.test(url) ? text : link;
       }
+      if (isCode && !url.startsWith(REPO_URL)) return link;
       // A link into the repo, by its address or relative to the file it is written in.
       const page = url.startsWith(REPO_URL)
         ? pageFor(url, pages)
