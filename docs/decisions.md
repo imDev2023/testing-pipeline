@@ -1,7 +1,7 @@
 # Decision register
 
 Every decision settled so far for the suite, one block each, so that MetalLegBob can review and change any of them.
-The suite is built for him: each answer below is the owner's default, not a final word (owner, 2026-11-10).
+The suite is built for him: each answer below is a default, the owner's unless [Follow-ups](#follow-ups) says a session set it, and none is a final word (owner, 2026-11-10).
 To change one, name its ID in an issue, in a comment on a PR, or in a message to the owner.
 
 The spec stays the source of truth for what a decision means.
@@ -38,7 +38,7 @@ Every decision is one block in exactly this shape:
   - `market-creation parameter`: chosen by whoever creates each market or binds each token; markets that already exist keep theirs.
   - `runtime setting`: a configuration value that changes with no change to the code.
   - `fixed on-chain once deployed`: a rule, an address or an account layout of an on-chain program; free to change until the program is first deployed, afterwards only by an upgrade that existing markets must survive, and never once the program is frozen.
-- **Status** is `default` (the owner's answer, open to change), `confirmed` with the date MetalLegBob confirmed it, or `changed` with the date it changed.
+- **Status** is `default` (the owner's answer, or a session's own choice the owner has not been asked about; either way open to change), `confirmed` with the date MetalLegBob confirmed it, or `changed` with the date it changed.
 - **Decided** is the date and the ticket that settled it.
 
 Each field is one line, and each value is one sentence of inline Markdown.
@@ -632,9 +632,9 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### BAR-27: Hardening and the first deploy
 
 - Question: For the tax AMM and the containment hook, which comes first, the devnet deploy or the hardening ticket?
-- Answer: The deploy and registration on devnet, then the hardening ticket.
-- Alternatives: Hardening before the first deploy.
-- Specified in: [`docs/spec/README.md`, Internal adversarial review](spec/README.md#internal-adversarial-review)
+- Answer: The deploy and registration on devnet, then the hardening ticket, which redeploys and republishes if it changes the program.
+- Alternatives: Hardening first, so that the first registered bytes are already reviewed.
+- Specified in: [`docs/spec/tax-amm.md`, Order of the build](spec/tax-amm.md#order-of-the-build)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
@@ -642,9 +642,19 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### BAR-28: Where build tickets are verified
 
 - Question: Where is each build ticket's work verified before a product's deploy ticket?
-- Answer: Locally, in LiteSVM through the real router copied from devnet; devnet itself comes last, in the product's deploy ticket.
-- Alternatives: Devnet from the first build ticket.
-- Specified in: [`docs/spec/README.md`, Test layers](spec/README.md#test-layers)
+- Answer: Locally, in LiteSVM through the real router copied from devnet and by the demo script on a local validator that runs devnet's router; devnet itself comes last, in the product's devnet ticket.
+- Alternatives: Deploying and registering from the first ticket and upgrading devnet at every ticket, which shows half-built versions in Pipeline's registry and can strand early demo markets.
+- Specified in: [`docs/agents/build-tickets.md`, Verify](agents/build-tickets.md#verify)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### BAR-29: Pipeline's TypeScript SDK
+
+- Question: How does our TypeScript use Pipeline's SDK, which is not on npm?
+- Answer: A script clones Pipeline at the pinned commit into a gitignored folder and builds the SDK there; it is never copied into the repo.
+- Alternatives: A git dependency, which cannot build it.
+- Specified in: [the ticket, Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
@@ -1446,9 +1456,9 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-27: A refused wallet-to-wallet transfer
 
 - Question: How does Canary report a bought token that cannot be sent to a second wallet?
-- Answer: As a warn, for any token, since every contained token refuses such transfers by design.
-- Alternatives: A warn only for tokens under our own containment hook; keeping it a fail.
-- Specified in: [`docs/spec/pipescope-canary.md`, Exit test](spec/pipescope-canary.md#exit-test)
+- Answer: As a warn, for any token, stating that the token could not be sent to another wallet and what the buyer got back by selling it; `exit_transferred` fails only when a transferred token cannot then be sold, and a refusal never raises the trade box's notice.
+- Alternatives: A warn only when the hook is ours, which would exempt our own product; keeping the fail and writing an exception into the bar.
+- Specified in: [`docs/spec/containment-hook.md`, Canary checks](spec/containment-hook.md#canary-checks)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
@@ -1867,6 +1877,76 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19)
 
+### TAX-22: Security contact
+
+- Question: Where does a security report about the tax AMM go?
+- Answer: To this repo's private vulnerability reporting page on GitHub, named as `security.contact` in the strategy metadata and in the program's `security.txt`, never a personal address.
+- Alternatives: An email address; a handle.
+- Specified in: [`docs/spec/tax-amm.md`, Custom actions and metadata](spec/tax-amm.md#custom-actions-and-metadata)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### TAX-23: Compute ceilings
+
+- Question: How much compute may each instruction use?
+- Answer: 25,000 units for a quote and 60,000 for a swap, up to 150,000 for `pipeline_seed_liquidity`, set from what Pipeline's constant-product example costs until the build measures each one.
+- Alternatives: Fixing them only after measuring.
+- Specified in: [`docs/spec/tax-amm.md`, Compute ceilings](spec/tax-amm.md#compute-ceilings)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### TAX-24: Invariants
+
+- Question: Which invariants does the tax AMM's fuzzing check?
+- Answer: Seven beyond the shared three: vaults cover the reserves and everything owed, a swap never lowers the product of the effective reserves, every tax is split exactly, no rate leaves its range, only router swaps change the reserves and the counters, the counters never fall, and a market without a tax authority never changes.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/tax-amm.md`, Invariants](spec/tax-amm.md#invariants)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### TAX-25: In Aviary
+
+- Question: What does Aviary show and offer for the tax AMM?
+- Answer: Its five actions through Aviary's generic forms, its own launch form on the create-market page that shows the whole split before signing, and a tax panel on each market's page with the rates and their ranges, the tax authority, the recipients, the tax collected and what each slot is owed.
+- Alternatives: The generic `init` form for launching.
+- Specified in: [`docs/spec/tax-amm.md`, In Aviary](spec/tax-amm.md#in-aviary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### TAX-26: Where its policy values live
+
+- Question: Where do the tax AMM's policy values live in code?
+- Answer: The four constants and the mint extension allowlist are build-time constants in one config module of the program, which no other file repeats; every other policy value is a creation parameter held in the market state.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/tax-amm.md`, Where its policy values live](spec/tax-amm.md#where-its-policy-values-live)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### TAX-27: Build tickets
+
+- Question: How are the tax AMM and the containment hook cut into build tickets?
+- Answer: Eleven tickets for the tax AMM and seven for the hook, each hook ticket free to start as soon as the tax AMM ticket it builds on has merged.
+- Alternatives: Building the hook strictly after the whole tax AMM.
+- Specified in: [`docs/spec/tax-amm.md`, Build tickets](spec/tax-amm.md#build-tickets)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### TAX-28: Expected Canary warns
+
+- Question: Which Canary warns are expected on a tax market we create?
+- Answer: `cost` and `exit_queue` whenever the two taxes together pass about 4.5%, and `token_authorities` while a mint keeps an authority that could act on holders; no other check may warn or fail.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/tax-amm.md`, Canary checks](spec/tax-amm.md#canary-checks)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
@@ -2048,6 +2128,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
+
+### HOOK-19: Framework
+
+- Question: Is the hook written in Anchor, although the `test-hook` it starts from is native code?
+- Answer: Yes, in Anchor like every program of ours, keeping `test-hook`'s validation account and account order; it goes native only if `Execute` cannot stay under its ceiling in Anchor.
+- Alternatives: Native code, as `test-hook` is written.
+- Specified in: [`docs/spec/containment-hook.md`, Starting point](spec/containment-hook.md#starting-point)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### HOOK-20: A second devnet token
+
+- Question: Which unlocks does the devnet demo show?
+- Answer: Two: one contained token unlocked by a short deadline, and a second unlocked by reaching a small goal, so the unlock's read of the deployed tax AMM's counter is shown on devnet too.
+- Alternatives: Only the token unlocked by its deadline.
+- Specified in: [`docs/spec/containment-hook.md`, Done means](spec/containment-hook.md#done-means)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### HOOK-21: Where its policy values live
+
+- Question: Where do the hook's policy values live in code?
+- Answer: The longest unlock deadline, the mint extension allowlist and the tax AMM's program id are build-time constants in one config module of the program; the unlock goal and the unlock deadline are `bind`'s arguments, with no default anywhere.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/containment-hook.md`, Where its policy values live](spec/containment-hook.md#where-its-policy-values-live)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### HOOK-22: Expected Canary warns
+
+- Question: Which Canary warns are expected on a contained token's home market?
+- Answer: `exit_transferred` on every contained token, `contained_mint` while the hook can still be upgraded, and `token_authorities` while the launcher keeps the mint authority, beside the tax AMM's own.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/containment-hook.md`, Canary checks](spec/containment-hook.md#canary-checks)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
 
 ## Buy wall AMM (POOL4)
 
@@ -2633,7 +2753,7 @@ Open on 2026-11-10; the session that settles each one adds its blocks above.
 - [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16): what the terminal's pages look like and how they behave.
 - [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32): the answers so far are `PIPESCOPE-42` to `PIPESCOPE-53`; its spec is still to land.
 - [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30): the answers so far are `SUITE-29` to `SUITE-31`.
-- The tickets that cut build tickets and were still open, which add a block only when they settle something new: [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22), [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) and [Cut the lending pool's build tickets](https://github.com/imDev2023/testing-pipeline/issues/25).
+- The tickets that cut build tickets and were still open, which add a block only when they settle something new: [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and [Cut the lending pool's build tickets](https://github.com/imDev2023/testing-pipeline/issues/25).
 - Not yet specified on the map: single-use AMMs, Canary results published on-chain as attestations, and Canary calling a strategy's custom instructions.
 
 ## Follow-ups
@@ -2641,25 +2761,25 @@ Open on 2026-11-10; the session that settles each one adds its blocks above.
 Places where a spec disagrees with a later answer, spreads one value over several places, or fixes in prose something that should be one named value.
 They are listed here for the sessions that own those specs, not fixed in this file's PR.
 
-- `CANARY-27`: `pipescope-canary.md` (Exit test) still makes a refused transfer a fail of `exit_transferred`, and counts it as "could not sell back"; the owner's later answer makes it a warn for any token.
+- `CANARY-27`: the owner's answer lives in `containment-hook.md` (Canary checks), while the `exit_transferred` row of `pipescope-canary.md` still makes a refused transfer a fail; the Canary spec's row is its place.
 - `LENDING-19`: the owner approved burning LP shares as the way to make liquidity protocol-owned; the spec adds `lock_lp` for that and has a burn hand its value to the remaining LPs, a refinement the owner was not asked about.
-- `BAR-18`, `BAR-27`, `POOL4-19`, `LENDING-34`: `README.md` makes the hardening ticket each program's last build ticket, and the owner's answer for the tax AMM and the containment hook puts it after the deploy; the buy wall AMM and the lending AMM harden before their first deploy.
+- `BAR-18`, `BAR-27`, `POOL4-19`, `LENDING-34`: `README.md` makes the hardening ticket each program's last build ticket, and the owner's answer for the tax AMM and the containment hook puts it after the deploy; the buy wall AMM and the lending AMM harden before their first deploy, a choice of their sessions.
   One order belongs in `README.md`, with a product's departure and its reason in that product's file.
 - `SUITE-06`: the map's Notes still give the order set while charting, with the terminal first; `tax-amm.md` says the tax AMM is built first.
 - `PIPESCOPE-10`: the rate is written in `pipescope.md` (The integrator fee, and again in the trade box's breakdown) and as 50 basis points in `pipescope-architecture.md`; it should be stated once and referred to.
 - Pipeline's own fee of 0.25% is written as a fixed number in the trade box's breakdown, in Canary's cost split, in three program specs and in the glossary; it is the router's setting, not ours, so Aviary should read it from the router's config.
-- `TAX-16`, `HOOK-12`, `POOL4-17`, `LENDING-23`: the allowlist of mint extensions is written out in `tax-amm.md`, `containment-hook.md` and `pool4-for-solana.md`, and each program would compile its own copy; it needs one spec section and one shared constant.
-- `HOOK-04`, `HOOK-09`, `HOOK-16`: `containment-hook.md` has no Constants section; the 90-day limit is written in prose in three places, and the tax AMM's program id is not a named constant.
-- `tax-amm.md` has no compute ceilings and no invariants for test layer 3, which `README.md` asks of every product's file, so the register has no tax AMM entry for either.
+- `TAX-16`, `TAX-26`, `HOOK-12`, `HOOK-21`, `POOL4-17`, `LENDING-23`: the allowlist of mint extensions is written out in `tax-amm.md`, `containment-hook.md` and `pool4-for-solana.md`, and the tax AMM and the hook each keep a copy in their own config module; it needs one spec section and one shared constant that every program depends on.
+- `HOOK-09`, `HOOK-21`: `containment-hook.md` gives the 90-day limit one home in code but still writes the number in four of its sections, and has no Constants table to name it as the other programs' files do.
 - `CANARY-06` to `CANARY-09`, `CANARY-12`, `CANARY-13`, `CANARY-16`, `CANARY-17`: Canary's policy values are spread through `pipescope-canary.md` (the bands are repeated in the rows of `exit_transferred`, `exit_queue` and `cost`, the 1-point tolerance in three rows), and the spec names no config module for them in `crates/canary`.
 - `CANARY-22`, `CANARY-23`: the schedule is written in `pipescope-canary.md` and three times in `pipescope-architecture.md` (the crons, the indexer's new markets, the Canary runner).
 - `EXPLAINER-11`, `EXPLAINER-12`: the banned terms and the length limits are written in the prompt's text and again in the validator's rules; both should come from one constant, so a change cannot leave them disagreeing.
 - `EXPLAINER-18`: the model's id is written in `pipescope-explainer.md` and twice in `pipescope-architecture.md`.
 - `SUITE-16`, `BAR-02`: Pipeline's pinned commit is written in the "Building it" section of all four program specs; it should be pinned once, in the on-chain workspace's manifest, with `README.md` naming that place.
 - `PIPESCOPE-08`, `PIPESCOPE-28`, `PIPESCOPE-30`, `PIPESCOPE-31`, `PIPESCOPE-36`: only the integrator fee has a named home, `terminal-api`'s vars; default slippage, the indexer's timings, candle retention, live-room batching and the metadata fetcher's limits have none, and the public API's rate limit has no number at all.
-- `TAX-02`, `LENDING-09`: the launch forms' defaults are stated in the product specs but live in Aviary's forms; `pool4-for-solana.md` says its pre-filled values are kept in one place in the form, and the other two should say the same.
+- `TAX-02`, `LENDING-09`: the launch forms' defaults are stated in the product specs (the tax side's in two sections of `tax-amm.md`) but live in Aviary's forms; `pool4-for-solana.md` says its pre-filled values are kept in one place in the form, and the other two should say the same.
 - `TAX-06`, `POOL4-04`: `GLOSSARY.md` gives the suite share and the designer share as fixed tenths, so a change to either constant also has to edit the glossary; it should name the constant, not the number.
 - `SUITE-04`, `SUITE-05`, `SUITE-07`, `SUITE-12` to `SUITE-14`: these live only in the map's body; when the map closes they need a home in `docs/spec/README.md`.
 - `SUITE-26` to `SUITE-31`, `PIPESCOPE-42` to `PIPESCOPE-53`: the owner answered these on tickets that are still open, so "Specified in" names the ticket; the session that lands each spec points them at its sections.
 - `POOL4-20`, `POOL4-21`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI, One fixed-size layout) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
+- `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner or MetalLegBob says otherwise.
 - `LENDING-16`, `POOL4-15`: when each keeper job runs is written in the product specs and in the keeper runner's ticket; once the runner's spec lands it should be the one place for every job's schedule.
