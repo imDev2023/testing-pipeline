@@ -27,8 +27,8 @@ A strategy's program bytes as of one upgrade; a strategy that is upgraded become
 _Avoid_: release, build
 
 **Verified build**:
-A strategy version whose deployed bytes Pipescope rebuilt from a named repository and commit and found identical, so that source may be used as evidence about it.
-_Avoid_: verified program, open source (published source is not verified source), audited
+A deployed program whose bytes are shown, by rebuilding a published commit in a pinned Docker build and comparing hashes, to come from that source; Pipescope uses a strategy version's source as evidence only when its build is verified.
+_Avoid_: verified program (says nothing about source), open source (published source is not verified source), audited
 
 **Market**:
 One tradable instance created from a strategy and recorded by the router, with two to four mints, a vault per mint and a market state.
@@ -157,7 +157,7 @@ An address that receives a fixed share of a market's tax.
 _Avoid_: beneficiary, fee receiver
 
 **Suite share**:
-Our fixed tenth of every tax market's tax, paid to the suite's treasury before the rest is split.
+Our fixed tenth of every tax market's tax and of every Pool4 for Solana market's fee, paid to the suite's treasury before the rest is split.
 _Avoid_: protocol fee (Meteora's term), platform fee
 
 **Virtual reserve**:
@@ -235,7 +235,7 @@ A market on the tax AMM.
 _Avoid_: tax pool, taxed pair
 
 **Pool4 for Solana** (working name):
-Our port of IMD's Pool4 design to a Pipeline strategy: the strategy is the only liquidity provider, trims inventory above a cap after sells, burns most of what it trims, splits the rest, and keeps a buy wall under the price.
+Our port of IMD's Pool4 design to a Pipeline strategy: each market owns all its liquidity, trims inventory above a cap after sells, burns what it trims except for a reward share, and keeps a buy wall under the price.
 _Avoid_: Pool4 alone (that is IMD's Uniswap v4 product)
 
 **Inventory cap**:
@@ -247,8 +247,28 @@ Removing a Pool4-style market's token inventory above the inventory cap together
 _Avoid_: burn (the burn is what happens to most of the trimmed tokens), skim
 
 **Buy wall**:
-A Pool4-style market's SOL-only bid below the price, funded by the SOL that trims recover.
+A Pool4-style market's SOL-only bid below the price, funded by the SOL that trims recover and by any part of its fee the market's creator sent there.
 _Avoid_: floor (it moves), treasury
+
+**Cap floor**:
+The lowest a Pool4-style market's inventory cap can ever fall, fixed when the market is created.
+_Avoid_: floor alone (the buy wall has its own), minimum supply
+
+**Cap decay**:
+The most a Pool4-style market's inventory cap may fall in a day, however much is bought.
+_Avoid_: burn rate (the cap is not the supply), emission
+
+**Retired tokens**:
+Tokens a Pool4-style market has trimmed or its buy wall has bought, waiting to be burned and split.
+_Avoid_: burned (not yet), treasury
+
+**Reward share**:
+The part of a Pool4-style market's retired tokens that goes to its rewards recipient instead of being burned.
+_Avoid_: staking yield (the recipient need not be a staking program), tax
+
+**Designer share**:
+The fixed tenth of every Pool4 for Solana market's fee owed to IMD and Adam, who designed Pool4.
+_Avoid_: royalty, IMD tax
 
 **Lending pool** (working name):
 Our strategy that keeps a buffer of its liquidity for swaps and lends the rest to a lending market between them.
@@ -281,10 +301,6 @@ _Avoid_: custom AMM alone, white-label
 **Keeper job**:
 A permissionless instruction that someone must call on a schedule to keep a market or product working, such as rebalancing a buy wall or a buffer.
 _Avoid_: cron (that is how we run it, not what it is), bot
-
-**Verified build**:
-A deployed program whose bytes are shown, by rebuilding a published commit in a pinned Docker build and comparing hashes, to come from that source.
-_Avoid_: verified program (says nothing about source), audited
 
 **Hardening ticket**:
 The last build ticket of each of our on-chain programs, in which a fresh session runs the internal adversarial review and fixes what it finds.
