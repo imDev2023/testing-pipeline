@@ -93,19 +93,35 @@ A third party opening its own pool for someone else's token to take that token's
 _Avoid_: copycat (a copied token, not a copied pool), fork
 
 **Containment hook** (working name):
-A transfer hook that lets a token trade only in its home market until it reaches its unlock goal, so it cannot be vamped while young.
+A transfer hook that lets a token move only into or out of its home market until its unlock, so it cannot be vamped while young.
 _Avoid_: lock (it locks trading venues, not tokens), anti-sniper
+
+**Contained token**:
+A token whose transfer hook is the containment hook and that has not been unlocked yet.
+_Avoid_: locked token, hooked token (any mint with a transfer hook)
+
+**Launcher**:
+Whoever creates a contained token and binds it, proven by holding the token's mint authority.
+_Avoid_: creator (the router's word for whoever creates a market), deployer, dev
+
+**Binding**:
+The launcher's one-time act, never changeable afterwards, of fixing a contained token's home market, unlock goal and unlock deadline.
+_Avoid_: registration, setup
 
 **Home market**:
 The one market a contained token may trade in before its unlock.
 _Avoid_: main pool, official pool
 
 **Unlock goal**:
-The trading volume through the home market after which anyone may trigger the unlock.
+The tax collected in a contained token's home market, fixed at binding, after which anyone may unlock it.
 _Avoid_: graduation (DBC's term for leaving a curve), threshold alone
 
+**Unlock deadline**:
+The time, fixed at binding, after which anyone may unlock a contained token even if its unlock goal was never met.
+_Avoid_: expiry, timeout
+
 **Unlock**:
-Removing a contained token's transfer hook program, through the hook's own program-owned authority, so the token becomes tradable everywhere.
+Removing a contained token's transfer hook program and hook authority, once its unlock goal is met or its unlock deadline passes, so the token becomes tradable everywhere.
 _Avoid_: graduation, release
 
 **Tax**:
