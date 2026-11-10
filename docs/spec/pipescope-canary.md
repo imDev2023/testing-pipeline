@@ -50,7 +50,14 @@ What came back clean is evidence too:
 
 ## How a run works
 
-- A run takes one market: it copies the market and everything its trades touch from the cluster into a local Solana VM, with the cluster's slot, epoch and time, using `pipeline-check`'s own cloner over read-only RPC.
+- A Canary run covers one strategy version, on all of its markets or on one of them, and treats each market on its own.
+- For each market it builds a copy of the market and everything its trades touch in a local Solana VM, with the cluster's slot, epoch and time, using `pipeline-check`'s own cloner.
+- The cloner reads accounts from a source the caller supplies.
+  On a developer's machine that is read-only RPC, as in the prototype.
+  In the container [`pipescope-architecture.md`](pipescope-architecture.md) specifies, which has no network, it is the snapshot the `CanaryRun` Durable Object posts in.
+- A strategy can name more accounts when a later trade resolves its accounts than it did for the first snapshot.
+  When a trade names an account the snapshot lacks, the binary answers with the missing addresses instead of results, and the Durable Object fetches them and posts the snapshot again, at most four times; after that the affected checks are "not run", naming the accounts.
+  On devnet the prototype needed about 7 RPC requests a market, no more than the first copy takes, so no strategy there asked for more.
 - The router and the strategy are the cluster's own program bytes, so the run tests what is deployed.
 - Signature checks are off in the VM, so the run can act as any key: a fresh wallet, the market creator, an upgrade authority or a token authority.
 - Every trade goes through the router's real `swap`, is committed in the VM, and can be followed by another trade in the state it left.
@@ -243,15 +250,18 @@ Each check on each market produces one **Canary result**, a record the facts pan
 - **Every 6 hours**: every market (owner, 2026-11-10).
   A change in a market's own state, or in a mint's authorities or extensions, shows within 6 hours; v1 has no separate watch on mints.
 - The triggers come from the indexer's ProgramData watch and its market events, as [Where Pipescope's indexer gets its data](https://github.com/imDev2023/testing-pipeline/issues/6) decided; no router event marks a new strategy version.
-- A run of all 61 devnet markets took 2 minutes 27 seconds on the owner's Mac, about 45 seconds of it CPU, and 442 RPC requests (about 7 a market), before the token-authority runs were added; with them the request count was the same.
-  Four sweeps a day are about 1,800 requests.
-- Canary runs as native Rust on `litesvm`, in the container [Where the quoter runs for Canary checks](https://github.com/imDev2023/testing-pipeline/issues/7) chose; the schedule, queueing and storage are for [Pipescope architecture](https://github.com/imDev2023/testing-pipeline/issues/13).
+- Each trigger starts or wakes the `CanaryRun` Durable Object of the strategy version concerned, which [`pipescope-architecture.md`](pipescope-architecture.md) keys by program id and ProgramData slot; that file left the triggers beyond a new version to this one.
+- A sweep of all 61 devnet markets took 2 minutes 27 seconds on the owner's Mac, about 45 seconds of it CPU, and 442 RPC requests (about 7 a market), before the token-authority runs were added; with them the request count was the same.
+- Against the architecture's budget, four sweeps a day are about 32 Canary runs a day (one per strategy version, about 960 a month where it assumed 500) and about 53,000 RPC requests a month (where it assumed about 5,000 credits for Canary snapshots).
+  Both stay inside the plans it lists: the requests are a twentieth of Helius's free million, and if each sweep keeps the one container awake for about ten minutes, four sweeps a day are about 20 GiB-hours a month of the 25 included.
+  The build should measure a sweep on the `basic` instance, a quarter of a vCPU, before trusting the last figure.
 
 ## Built on
 
 - Pipeline's Apache-2.0 crates at a pinned commit, through Cargo: `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
 - The router's program is loaded from the cluster's own bytes, never built or copied into this repo; `pipeline-check` does the same.
-- Whether running the router's bytes inside a production service needs its author's leave under BSL 1.1 stays a question for the mainnet plan; on devnet it is non-production use.
+- Every trade in the checks goes through one swap function, so the architecture's licence seam holds: on devnet it calls the router, and it can be replaced by a direct call to the strategy plus Pipeline's Apache-2.0 settlement code if running the router's bytes in production is not allowed.
+  `conformance` is the exception, because `pipeline-check` itself runs the router; without the router it is "not run".
 
 ## A correction to earlier research
 
