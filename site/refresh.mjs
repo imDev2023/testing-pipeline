@@ -37,6 +37,8 @@ const DROP = [
   /\b(ask|asks|asked|asking|questions?|requests?|answers?|answered|said|says|told)\b[^.]{0,60}\b(metallegbob|him|he)\b/i,
   /\b(metallegbob|he)\b('s)?[^.]{0,40}\b(asked|said|says|told|answers?|answered|requests?|requested|questions?)\b/i,
   /\b(metallegbob|he) is (not )?building\b/i,
+  // What the owner leaves to him is a claim about him, not about the suite.
+  /\bleaves? it to (metallegbob|him)\b/i,
   /\badam\b/i,
   /metallegbob's (five )?public repositories|gh repo list/i,
   /metallegbob's (asks?|ideas?|views?|wish(es)?|list|protocol-owned)/i,
@@ -132,10 +134,13 @@ const approved = new Map(
 );
 const held = [];
 const dropped = [];
+const leftOutWhole = []; // decisions of the register with a line that may not be shown
 
 /** 'keep', or why not. */
 function judge(text, where) {
-  if (DROP.some((pattern) => pattern.test(text))) {
+  // "Answer:" and "Question:" at the head of a register field are labels, not someone answering or asking.
+  const said = text.replace(/^(Question|Answer): /, '');
+  if (DROP.some((pattern) => pattern.test(said))) {
     dropped.push({ where, text });
     return 'dropped';
   }
@@ -186,43 +191,72 @@ function blocksOf(markdown) {
   return blocks;
 }
 
+/** A block as one line of text, without its list or heading marker. */
 const textOf = (block) =>
   block.lines
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/^([-*+]|\d+[.)])\s+/, '');
+    .replace(/^([-*+]|\d+[.)]|#+)\s+/, '');
 
-/** Returns the Markdown with every block that may not be shown removed. */
-function publicPartOf(markdown, where) {
+/**
+ * Returns the Markdown with every block that may not be shown removed.
+ * With `wholeSections` set to a heading level, a section under a heading of that level is shown whole
+ * or not at all: a decision in the register must never appear with one of its fields missing.
+ */
+function publicPartOf(markdown, where, wholeSections = 0) {
   const kept = [];
+  const broken = []; // ranges of `kept` that belong to a section with a block left out
+  let section = null;
   let cut = null; // indent of a dropped list item: what is nested under it goes with it
+  const closeSection = () => {
+    if (section?.broken) {
+      broken.push([section.from, kept.length]);
+      leftOutWhole.push(section.name);
+    }
+    section = null;
+  };
   for (const block of blocksOf(markdown.replace(/<!--[\s\S]*?-->/g, ''))) {
     if (block.kind === 'blank') {
       kept.push(block);
       continue;
     }
+    if (wholeSections && block.kind === 'heading' && block.level <= wholeSections) {
+      closeSection();
+      if (block.level === wholeSections) {
+        section = { from: kept.length, broken: false, name: textOf(block).split(':')[0] };
+      }
+    }
     if (cut !== null && block.indent > cut) continue;
     cut = null;
-    if (judge(textOf(block), where) === 'keep') kept.push(block);
-    else if (block.kind === 'item') cut = block.indent;
+    if (judge(textOf(block), where) === 'keep') {
+      kept.push(block);
+      continue;
+    }
+    if (section) section.broken = true;
+    if (block.kind === 'item') cut = block.indent;
+  }
+  closeSection();
+  for (const [from, to] of broken.reverse()) kept.splice(from, to - from);
+
+  // A table that lost its header, or every row under it, goes whole.
+  const isRule = (block) => /^\s*\|[\s:|-]+\|\s*$/.test(block.lines[0]);
+  for (let i = 0; i < kept.length; ) {
+    let end = i;
+    while (kept[end]?.kind === 'row') end++;
+    const sound = end - i >= 3 && !isRule(kept[i]) && isRule(kept[i + 1]);
+    if (end === i) i++;
+    else if (sound) i = end;
+    else kept.splice(i, end - i);
   }
 
-  // A heading or a table header whose content was dropped goes too.
+  // A heading whose content was dropped goes too.
   for (let again = true; again; ) {
     again = false;
     for (let i = 0; i < kept.length && !again; i++) {
       const after = kept.slice(i + 1).find((block) => block.kind !== 'blank');
-      const emptyHeading =
-        kept[i].kind === 'heading' && (!after || (after.kind === 'heading' && after.level <= kept[i].level));
-      const emptyTable =
-        kept[i].kind === 'row' &&
-        kept[i - 1]?.kind !== 'row' &&
-        kept[i + 1]?.kind === 'row' &&
-        kept[i + 2]?.kind !== 'row';
-      if (emptyHeading) kept.splice(i, 1);
-      if (emptyTable) kept.splice(i, 2);
-      again = emptyHeading || emptyTable;
+      again = kept[i].kind === 'heading' && (!after || (after.kind === 'heading' && after.level <= kept[i].level));
+      if (again) kept.splice(i, 1);
     }
   }
 
@@ -353,14 +387,18 @@ const pages = new Set([
   ...tickets.filter((ticket) => ticket.resolution).map((ticket) => `/${ticket.number}/`),
   ...documents.map((document) => `/${document.path}/`),
 ]);
-const shown = (markdown, where, folder) => withPublicLinks(publicPartOf(markdown, where), pages, folder);
+const shown = (markdown, where, folder, wholeSections) =>
+  withPublicLinks(publicPartOf(markdown, where, wholeSections), pages, folder);
 
 for (const ticket of tickets) {
   const where = `ticket ${ticket.number}`;
   if (ticket.decision) ticket.decision = shown(ticket.decision, `${where}, decision`) || null;
   if (ticket.resolution) ticket.resolution = shown(ticket.resolution, where);
 }
-for (const document of documents) document.body = shown(document.body, document.path, folders.get(document.path));
+for (const document of documents) {
+  // In the register a decision is a third-level section.
+  document.body = shown(document.body, document.path, folders.get(document.path), document.path === 'decisions' ? 3 : 0);
+}
 
 const sources = new Map([
   ...tickets.filter((ticket) => ticket.resolution).map((ticket) => [`/${ticket.number}/`, ticket.resolution]),
@@ -426,6 +464,9 @@ if (held.length) {
   console.log(`\nHeld back ${held.length} blocks that mention a third party.`);
   console.log('To show one, read it against the privacy rules in README.md, then add its line to approved.txt:\n');
   for (const { where, text } of held) console.log(`# ${where}\n${text}\n`);
+}
+if (leftOutWhole.length) {
+  console.log(`\nDecisions left out of the register whole, because a line of theirs may not be shown: ${leftOutWhole.join(', ')}.`);
 }
 if (unresolved.length) {
   console.log(`\nDone without a page, because no comment of theirs starts with "Resolution" or "Resolved": ${unresolved.map((number) => `#${number}`).join(', ')}.`);

@@ -32,6 +32,10 @@ const shortDate = (iso) => `${Number(iso.slice(8, 10))} ${MONTHS[iso.slice(5, 7)
 /** True for text with a run too long to sit on a phone's line unbroken, such as an address or a hash. */
 const unbroken = (text) => text.split(/[\s/-]+/).some((run) => run.length > 28);
 
+/** Keeps a hyphenated word such as "on-chain" on one line, for headings, where a break after the hyphen reads badly. */
+const whole = (html) =>
+  html.replace(/(<[^>]+>)|([\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)+)/gu, (match, tag, word) => tag ?? `<span class="whole">${word}</span>`);
+
 /** A Markdown renderer that trusts nothing: raw HTML is shown as text and only web links become links. */
 function markdown(sections = []) {
   const ids = new Set();
@@ -51,7 +55,12 @@ function markdown(sections = []) {
         for (let n = 1; ids.has(id); n++) id = `${base}-${n}`;
         ids.add(id);
         if (depth === 2) sections.push({ id, text });
-        return `<h${depth} id="${id}">${html}</h${depth}>\n`;
+        return `<h${depth} id="${id}">${whole(html)}</h${depth}>\n`;
+      },
+      listitem(item) {
+        // A numbered item keeps the number it was written with, even when an item before it is not shown.
+        const number = item.raw.match(/^\s*(\d+)[.)]\s/);
+        return `<li${number ? ` value="${number[1]}"` : ''}>${this.parser.parse(item.tokens, !!item.loose)}</li>\n`;
       },
       link({ href, tokens }) {
         const text = this.parser.parseInline(tokens);
@@ -141,7 +150,7 @@ ${body}
 }
 
 function ticketRow(ticket) {
-  const title = escape(ticket.title);
+  const title = whole(escape(ticket.title));
   return `<li>
 ${STATE[ticket.state]}
 ${ticket.resolution ? `<a href="/${ticket.number}/">${title}</a>` : `<span>${title}</span>`}
@@ -176,7 +185,7 @@ function frontPage() {
     twin: '/index.md',
     date: `<time datetime="${content.refreshed}">${longDate(content.refreshed)}</time>`,
     body: `<div class="band intro">
-<h1 class="col">${inline(statement)}</h1>
+<h1 class="col">${whole(inline(statement))}</h1>
 </div>
 <section class="band">
 <h2>Destination</h2>
@@ -221,7 +230,7 @@ ${sections.map(({ id, text }) => `<li><a href="#${id}">${escape(text)}</a></li>`
     body: `<article class="band document">
 ${contents}
 <div class="col">
-<h1>${inline(title)}</h1>
+<h1>${whole(inline(title))}</h1>
 ${date ? `<time datetime="${date.slice(0, 10)}">${longDate(date)}</time>` : ''}
 ${lead ? `<p class="lead">${inline(lead)}</p>` : ''}
 <div class="prose">

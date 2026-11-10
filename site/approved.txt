@@ -40,3 +40,16 @@ MetalLegBob's Pool4 port did not change with the clock alone over 30 days on its
 Built for MetalLegBob
 No name uses Pipeline's or the Factory's branding; "built on Pipeline" appears only as a plain description.
 No name of ours uses Pipeline's or the Factory's branding; "built on Pipeline" appears only as a plain description.
+It never quotes MetalLegBob and draws on no private file; a change he asks for is recorded only as `changed` with its date.
+**The progress site**: the format is agreed with [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30), whose session answered that the shape works as it is; its refresh picks the file up from `main` and shows it at `/decisions/`, one section per product, each decision with its ID as an anchor. Its privacy filter drops any list item that names MetalLegBob or the unregistered address, so field values avoid both; the three decisions that are about him by nature (`SUITE-01`, `SUITE-03`, `SUITE-14`) are named there for that session to approve.
+`GLOSSARY.md` gains Default and Decision register, and Owner and MetalLegBob are reworded, since the suite is built for him.
+**Where:** a portable Node program, `apps/keeper`, run on the owner's Mac as a launchd agent; nothing of it runs on the owner's Cloudflare account, because the work is for MetalLegBob and must cost the owner nothing. Aviary itself stays where [Pipescope architecture](https://github.com/imDev2023/testing-pipeline/issues/13) put it. A Docker image and README let anyone else run it with their own key. While the Mac sleeps, jobs wait and nothing breaks.
+Every decision settled so far for the suite, one block each, so that MetalLegBob can review and change any of them. The suite is built for him: each answer below is a default, the owner's unless [Follow-ups](#follow-ups) says a session set it, and none is a final word (owner, 2026-11-10). To change one, name its ID in an issue, in a comment on a PR, or in a message to the owner.
+**Status** is `default` (the owner's answer, or a session's own choice the owner has not been asked about; either way open to change), `confirmed` with the date MetalLegBob confirmed it, or `changed` with the date it changed.
+When MetalLegBob confirms a decision, set **Status** to `confirmed` with the date.
+Question: What does a PR, a demo, the progress site or a message carry when it is shown or sent to MetalLegBob?
+Alternatives: Copying nothing at all from Pipeline's repo, the project's first rule; starting the hook from the Factory's fail-closed hook, which is read as a pattern instead.
+Nothing of it runs on the owner's Cloudflare account (owner, 2026-11-10): the work is for MetalLegBob, so it must cost the owner nothing. Aviary itself stays on Cloudflare as [Pipescope architecture](https://github.com/imDev2023/testing-pipeline/issues/13) decided; only the keeper runner, the one part that holds a hot key and spends SOL, lives elsewhere.
+It is portable: a Docker image and a README let MetalLegBob, or anyone, run it on their own machine with their own key, since every keeper job is permissionless.
+SUITE-03: What is shown to MetalLegBob names its decisions
+Answer: MetalLegBob, for whom the suite is built: every decision the owner makes is a default he may change, and each session records the decisions it settles in this register.

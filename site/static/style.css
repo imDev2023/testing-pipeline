@@ -520,7 +520,8 @@ code {
   background: var(--wash);
 }
 
-code .flag {
+code .flag,
+.whole {
   white-space: nowrap;
 }
 
@@ -578,8 +579,13 @@ pre:has(> .language-text) {
     margin-right: calc(-1 * var(--spill));
   }
   .table table {
-    width: max(var(--column), var(--columns) * 6.5rem);
+    width: var(--column);
     min-width: 0;
+  }
+  /* Five columns or more read badly in 42rem: they take the free space, then scroll. */
+  .table:is([data-columns="5"], [data-columns="6"], [data-columns="7"], [data-columns="8"], [data-columns="9"], [data-columns="10"]) table {
+    width: min(100%, var(--columns) * 11rem);
+    min-width: max(var(--column), var(--columns) * 6.5rem);
   }
   .prose > pre:not(:has(> .language-text)) {
     width: max-content;
