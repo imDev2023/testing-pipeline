@@ -315,6 +315,10 @@ _Avoid_: cron (that is how we run it, not what it is), bot
 The last build ticket of each of our on-chain programs, in which a fresh session runs the internal adversarial review and fixes what it finds.
 _Avoid_: audit (an audit is external), security pass
 
+**Release gate**:
+The check a new build of one of our strategies must pass before it may be deployed as an upgrade: it replays every live market of the program against the new build, so no upgrade can leave a stranded market.
+_Avoid_: migration (nothing is migrated), smoke test
+
 ### People and parties
 
 **Owner**:

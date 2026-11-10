@@ -381,7 +381,7 @@ Fields, in order:
 | Totals | tokens trimmed, SOL trimmed, tokens the wall bought, tokens burned, rewards paid, tips paid |
 | Reserve | zeroed to the end of the account |
 
-The first build ticket fixes the byte offsets and writes them into this file; they are frozen from the first devnet deployment and published in the IDL.
+The first build ticket ([Buy wall AMM: a market opens](https://github.com/imDev2023/testing-pipeline/issues/47)) fixes the byte offsets and writes them into this file; they are frozen from the first devnet deployment ([Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56)) and published in the IDL.
 
 ### A release gate
 
@@ -516,6 +516,24 @@ The checker sizes its trades from vault balances, which include the wall and the
 - Keep the pricing, the cap and the wall's guard in pure functions that take no accounts, so the proofs and the worked example run against them directly.
 - Keep the program keypair in `~/.config/testing-pipeline/devnet/`, never in the repo.
 - Build and test with the toolchain in `docs/toolchain.md` (`source scripts/toolchain-env.sh`).
+
+### Build tickets
+
+Cut by [Cut Pool4 for Solana's build tickets](https://github.com/imDev2023/testing-pipeline/issues/24) on 2026-11-10, labelled `build`, one session each, in run order:
+
+1. [Buy wall AMM: a market opens](https://github.com/imDev2023/testing-pipeline/issues/47): the program from the template, the fixed-size market state and its byte offsets, creation, the mint rules and the seed.
+2. [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48): curve pricing both ways, the fee and its split, the ledgers and counters, and `pipeline-check` clean.
+3. [Buy wall AMM: the inventory cap](https://github.com/imDev2023/testing-pipeline/issues/49): the ratchet, the decay credit and the trim.
+4. [Buy wall AMM: the buy wall](https://github.com/imDev2023/testing-pipeline/issues/50): two-step pricing, the guard and `place_wall`.
+5. [Buy wall AMM: payouts and recipient handovers](https://github.com/imDev2023/testing-pipeline/issues/51): `settle`, `pay_rewards`, `sweep_fees` and both handovers.
+6. [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53): `pipeline_seed_liquidity` with a stand-in launchpad; it can run beside tickets 3 to 5.
+7. [Buy wall AMM: the release gate and layout fixtures](https://github.com/imDev2023/testing-pipeline/issues/54): the gate, the fixtures and their CI job, and tests that show it refusing a build that would strand a market.
+8. [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55): the hardening ticket, before the first deploy, so the registered bytes are hardened and the layout freezes once.
+9. [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56): the end of the program's chain, with the whole lifecycle on devnet and one upgrade through the release gate on a live market.
+10. [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57): after the deploy and Aviary's own build tickets.
+
+The first waits for the tax AMM's first build ticket, which sets up the on-chain workspace, CI, the router fixture and the review skills.
+Tickets 1 to 8 are verified end to end through the real router copied from devnet, in LiteSVM; ticket 9 runs every check in "Done means" on devnet itself.
 
 ### Done means
 
