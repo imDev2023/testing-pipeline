@@ -13,7 +13,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertPublic } from './private.mjs';
 
@@ -36,17 +36,27 @@ const DROP = [
   // What Pipeline's author was asked, what he asked for and what he said.
   /\b(ask|asks|asked|asking|questions?|requests?|answers?|answered|said|says|told)\b[^.]{0,60}\b(metallegbob|him|he)\b/i,
   /\b(metallegbob|he)\b('s)?[^.]{0,40}\b(asked|said|says|told|answers?|answered|requests?|requested|questions?)\b/i,
+  /\b(metallegbob|he) is (not )?building\b/i,
   /\badam\b/i,
   /metallegbob's (five )?public repositories|gh repo list/i,
   /metallegbob's (asks?|ideas?|views?|wish(es)?|list|protocol-owned)/i,
+  // The address and handle the owner has chosen but not registered yet, and the lookups that say what is free:
+  // publishing either invites someone else to register them first. Remove once the owner has registered both.
+  /aviary\.(trade|markets|exchange|so|fun|com|xyz|app|fi|io)\b|aviarytrade|@aviary\b/i,
+  /`\.(trade|markets)`|\|\s*(free|taken)\s*\|/i,
   // His messages on Telegram; the Telegram bot the map plans is not one of them.
   /telegram (message|chat|group|reply|answer)|(message|chat|said|wrote|answer(ed)?|repl(y|ied)) (on|in|over|via|through) telegram/i,
   ...OUTREACH_TICKETS.map((number) => new RegExp(`/issues/${number}\\b`)),
 ];
 
 // A block matching one of these mentions a third party: it is dropped unless approved.txt lists it.
-// Pipeline's own address is not a mention.
-const PIPELINE = /github\.com\/MetalLegBob\/pipeline/gi;
+// Pipeline's own address is not a mention, and neither is the standing rule that he may change a decision.
+const NOT_A_MENTION = [
+  /github\.com\/MetalLegBob\/pipeline/gi,
+  /Decisions open to MetalLegBob/g,
+  /open to MetalLegBob's (review|change)/g,
+  /(that|which) MetalLegBob may change/g,
+];
 const REVIEW = [/metallegbob|mlbob/i, /\b(he|him|his)\b/i, /\b[Tt]he Factory\b/, /fantastical|fffactory/i];
 
 // Paths on the owner's machine are cut down to the part that says something.
@@ -54,6 +64,9 @@ const SCRUB = [
   [/\/Volumes\/[^/`\s]+\/Work Folder\/Dev\/(AI\/)?/g, ''],
   [/\/Users\/[^/`\s]+\//g, '~/'],
 ];
+
+// README.md's first line, which names the suite and says what it is.
+const INTRODUCTION = /^The internal home of ([^:]+): (.+)$/;
 
 // The owner's standing rule in the map's Notes, shown above the decisions: "<name> (owner, <date>): <sentence>."
 const STANDING_RULE = /^- (Built for [^(:]+?) \(owner, [\d-]+\): ([^.]+\.)/m;
@@ -125,8 +138,8 @@ function judge(text, where) {
     dropped.push({ where, text });
     return 'dropped';
   }
-  const withoutPipeline = text.replace(PIPELINE, '');
-  if (!REVIEW.some((pattern) => pattern.test(withoutPipeline))) return 'keep';
+  const rest = NOT_A_MENTION.reduce((left, phrase) => left.replace(phrase, ''), text);
+  if (!REVIEW.some((pattern) => pattern.test(rest))) return 'keep';
   if (approved.has(text)) {
     approved.set(text, true);
     return 'keep';
@@ -221,33 +234,36 @@ function publicPartOf(markdown, where) {
 
 // ---- Links ----
 
+/** The site's page for a file of the repo ("docs/spec/tax-amm.md#constants"), or null when there is none. */
+function pageForFile(file, pages) {
+  const [path, anchor] = file.split('#');
+  const doc = path.match(/^docs\/(.+)\.md$/) ?? path.match(/^(research\/.+)\.md$/);
+  const page = doc && `/${doc[1]}/`;
+  return pages.has(page) ? page + (anchor ? `#${anchor}` : '') : null;
+}
+
 /** The site's page for a link into the private repo, or null when there is none. */
 function pageFor(url, pages) {
-  const path = url.slice(REPO_URL.length).replace(/[#?].*$/, '');
-  const ticket = path.match(/^\/issues\/(\d+)$/);
-  const research = path.match(/^\/blob\/research\/([^/]+)\/research\/\1\.md$/);
-  const doc = path.match(/^\/blob\/main\/docs\/(.+)\.md$/);
-  const page = ticket
-    ? `/${ticket[1]}/`
-    : research
-      ? `/research/${research[1]}/`
-      : doc
-        ? `/${doc[1]}/`
-        : null;
-  return pages.has(page) ? page : null;
+  const path = url.slice(REPO_URL.length).replace(/\?[^#]*/, '');
+  const ticket = path.match(/^\/issues\/(\d+)(#.*)?$/);
+  if (ticket) return pages.has(`/${ticket[1]}/`) ? `/${ticket[1]}/` : null;
+  const file = path.match(/^\/blob\/[^/]+(?:\/[^/]+)?\/((?:docs|research)\/.+)$/);
+  return file ? pageForFile(file[1], pages) : null;
 }
 
 /** Points links at the site's own pages and unwraps the ones a visitor could not open. */
-function withPublicLinks(markdown, pages) {
+function withPublicLinks(markdown, pages, folder = '') {
   for (const [pattern, replacement] of SCRUB) markdown = markdown.replace(pattern, replacement);
   return markdown
     .replace(/\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^)\s]+)\)/g, (link, text, url) => {
-      if (url.startsWith(REPO_URL)) {
-        const page = pageFor(url, pages);
-        return page ? `[${text}](${page})` : text;
+      if (/^(https?:|#)/.test(url) && !url.startsWith(REPO_URL)) {
+        return /^https:\/\/claude\.ai\//.test(url) ? text : link;
       }
-      if (/^https:\/\/claude\.ai\//.test(url) || !/^(https?:|#)/.test(url)) return text;
-      return link;
+      // A link into the repo, by its address or relative to the file it is written in.
+      const page = url.startsWith(REPO_URL)
+        ? pageFor(url, pages)
+        : pageForFile(posix.normalize(posix.join(folder, url)), pages);
+      return page ? `[${text}](${page})` : text;
     })
     .replace(new RegExp(`(?<!\\]\\()${REPO_URL}/[^\\s)]+`, 'g'), (url) => {
       const page = pageFor(url, pages);
@@ -311,19 +327,23 @@ tickets.sort(
 );
 
 const documents = [];
-const addDocument = (path, markdown) => {
+const folders = new Map(); // where each document sits in the repo, for the links written relative to it
+const addDocument = (ref, file) => {
+  const path = file.replace(/^docs\//, '').replace(/\.md$/, '');
+  const markdown = fileAt(ref, file);
   const title = markdown.match(/^# (.+)$/m);
-  if (!title) fail(`${path} has no title.`);
+  if (!title) fail(`${file} has no title.`);
   if (judge(title[1].trim(), `${path}, title (the document is left out until this is settled)`) !== 'keep') return;
   documents.push({ path, title: title[1].trim(), body: markdown.replace(title[0], '') });
+  folders.set(path, posix.dirname(file));
 };
-addDocument('toolchain', fileAt('origin/main', 'docs/toolchain.md'));
-for (const file of git('ls-tree', '--full-tree', '--name-only', 'origin/main', 'docs/spec/').split('\n')) {
-  if (file.endsWith('.md')) addDocument(file.slice('docs/'.length, -'.md'.length), fileAt('origin/main', file));
-}
+const onMain = git('ls-tree', '--full-tree', '--name-only', '-r', 'origin/main', 'docs/').split('\n');
+// The decision register arrives with "Decision register open to MetalLegBob's review"; until then there is none.
+for (const file of ['docs/decisions.md', 'docs/toolchain.md']) if (onMain.includes(file)) addDocument('origin/main', file);
+for (const file of onMain) if (/^docs\/spec\/[^/]+\.md$/.test(file)) addDocument('origin/main', file);
 for (const ref of git('for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin/research/').split('\n')) {
   const name = ref.split('/').pop();
-  addDocument(`research/${name}`, fileAt(ref, `research/${name}.md`));
+  addDocument(ref, `research/${name}.md`);
 }
 
 // ---- The record, made public ----
@@ -332,14 +352,14 @@ const pages = new Set([
   ...tickets.filter((ticket) => ticket.resolution).map((ticket) => `/${ticket.number}/`),
   ...documents.map((document) => `/${document.path}/`),
 ]);
-const shown = (markdown, where) => withPublicLinks(publicPartOf(markdown, where), pages);
+const shown = (markdown, where, folder) => withPublicLinks(publicPartOf(markdown, where), pages, folder);
 
 for (const ticket of tickets) {
   const where = `ticket ${ticket.number}`;
   if (ticket.decision) ticket.decision = shown(ticket.decision, `${where}, decision`) || null;
   if (ticket.resolution) ticket.resolution = shown(ticket.resolution, where);
 }
-for (const document of documents) document.body = shown(document.body, document.path);
+for (const document of documents) document.body = shown(document.body, document.path, folders.get(document.path));
 
 const sources = new Map([
   ...tickets.filter((ticket) => ticket.resolution).map((ticket) => [`/${ticket.number}/`, ticket.resolution]),
@@ -364,11 +384,15 @@ if (judge(ruleName, 'the map, standing rule') !== 'keep' || judge(ruleText, 'the
   fail('The standing rule mentions a third party, so both its name and its sentence need a line in approved.txt.');
 }
 
+// The public name and what it is, from the one line of README.md that holds both.
+const introduction = readme.find((line) => line.trim() && !line.startsWith('#')).match(INTRODUCTION);
+if (!introduction) fail('The first line of README.md no longer reads "The internal home of <name>: <what it is>". Fix INTRODUCTION.');
+
 const content = {
   refreshed: new Date().toISOString().slice(0, 10),
   commit: git('rev-parse', '--short', 'origin/main'),
-  name: readme.find((line) => line.startsWith('# ')).slice(2).trim(),
-  statement: readme.find((line) => line.trim() && !line.startsWith('#')).trim(),
+  name: introduction[1],
+  statement: introduction[2],
   destination: shown(map.Destination, 'the map, Destination'),
   rule: { name: ruleName, text: ruleText },
   tickets,

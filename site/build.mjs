@@ -41,9 +41,14 @@ function markdown(sections = []) {
       heading({ tokens, depth }) {
         const html = this.parser.parseInline(tokens);
         const text = unescape(html);
-        const base = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'section';
+        // The same anchors GitHub gives the file, so a link written for the repo lands here too;
+        // a decision ("TAX-03: ...") is also reachable by its id alone.
+        const decision = text.match(/^([A-Z0-9]+-\d{2}): /);
+        const base = decision
+          ? decision[1].toLowerCase()
+          : text.toLowerCase().trim().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-') || 'section';
         let id = base;
-        for (let n = 2; ids.has(id); n++) id = `${base}-${n}`;
+        for (let n = 1; ids.has(id); n++) id = `${base}-${n}`;
         ids.add(id);
         if (depth === 2) sections.push({ id, text });
         return `<h${depth} id="${id}">${html}</h${depth}>\n`;
@@ -98,7 +103,10 @@ const STATE = {
   next: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle class="ring" cx="8" cy="8" r="6.75"/></svg>',
 };
 
-const description = unescape(inline(content.statement));
+const capital = (text) => text[0].toUpperCase() + text.slice(1);
+const statement = capital(content.statement);
+const description = unescape(inline(statement));
+const register = content.documents.find((document) => document.path === 'decisions');
 
 function page({ path, title, body, date = '', twin = '' }) {
   return `<!doctype html>
@@ -168,7 +176,7 @@ function frontPage() {
     twin: '/index.md',
     date: `<time datetime="${content.refreshed}">${longDate(content.refreshed)}</time>`,
     body: `<div class="band intro">
-<h1 class="col">${inline(content.statement)}</h1>
+<h1 class="col">${inline(statement)}</h1>
 </div>
 <section class="band">
 <h2>Destination</h2>
@@ -177,7 +185,10 @@ ${prose(content.destination).html}</div>
 </section>
 <section class="band">
 <h2>${escape(content.rule.name)}</h2>
-<p class="lead rule">${inline(content.rule.text)}</p>
+<div class="col rule">
+<p class="lead">${inline(capital(content.rule.text))}</p>
+${register ? `<a href="/decisions/">${inline(register.title)}</a>` : ''}
+</div>
 </section>
 ${ticketGroup('Done', 'done')}
 ${ticketGroup('In progress', 'in progress')}
@@ -274,7 +285,7 @@ for (const document of content.documents) {
 
 const index = `# ${content.name}
 
-> ${content.statement}
+> ${statement}
 
 As of ${content.refreshed}. Everything here is also in one file, [content.json](/content.json).
 
@@ -284,7 +295,7 @@ ${content.destination}
 
 ## ${content.rule.name}
 
-${content.rule.text[0].toUpperCase()}${content.rule.text.slice(1)}
+${capital(content.rule.text)}${register ? ` See [${register.title}](/decisions.md).` : ''}
 
 ## Done
 

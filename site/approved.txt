@@ -37,6 +37,7 @@ Tools: Stronghold of Security (an adversarial audit) and Book of Knowledge (math
 `test-hook` approves every transfer when its whitelist account is left out (still so at `5ad130d`), and Token-2022 calls a hook without its extra accounts whenever a caller leaves them out, so that path is replaced by the fail-closed rule in "The allow rule"; the research's citations of the Factory's transfer hook show the checks to add (the `transferring` flag, the mint's owner, the validation account's seeds), read as a pattern, not copied.
 | MetalLegBob's Pool4 port `4ajWF6...` | 8 | 6 | 0 | 2 | 98.3% to 98.4% | None |
 MetalLegBob's Pool4 port did not change with the clock alone over 30 days on its two readable markets, so any daily decay of its inventory cap needs one of its own instructions to be called.
-Decision register open to MetalLegBob's review
 Built for MetalLegBob
 every decision the owner makes is a default he may change.
+No name uses Pipeline's or the Factory's branding; "built on Pipeline" appears only as a plain description.
+No name of ours uses Pipeline's or the Factory's branding; "built on Pipeline" appears only as a plain description.
