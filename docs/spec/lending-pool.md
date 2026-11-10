@@ -5,6 +5,8 @@ It builds on [Which lending market the lending pool lends to](https://github.com
 MetalLegBob asked for a pool that lends out the idle part of its liquidity, through Kamino or a similar market, and he is not building it himself ([Record MetalLegBob's answers to the follow-up DM](https://github.com/imDev2023/testing-pipeline/issues/27)), so it stays in scope.
 The shared engineering and security bar for our programs lands in `docs/spec/README.md`, from [Engineering and security bar for our on-chain programs](https://github.com/imDev2023/testing-pipeline/issues/4); this file adds only what is particular to the lending AMM.
 It was specified under the working name lending pool; [Product and suite names](https://github.com/imDev2023/testing-pipeline/issues/17) named it the lending AMM, because a lending pool reads as a pool to lend to or borrow from.
+Amended on 2026-11-10 in [Cut the lending pool's build tickets](https://github.com/imDev2023/testing-pipeline/issues/25), with the owner: what withdraw mode's thresholds are measured against (see "Withdraw mode"), and with it the second depositor our devnet reserve needs and the shape of the `init` form.
+The build tickets cut there are listed under "Build tickets" below.
 Terms are as in `GLOSSARY.md`: lending AMM, buffer, lent side, lending market, cToken, withdraw mode, keeper job.
 
 ## What it is
@@ -36,8 +38,8 @@ Terms are as in `GLOSSARY.md`: lending AMM, buffer, lent side, lending market, c
 | `BUFFER_TARGET_BPS` | 2000 (20%) | The buffer's target share of the lent side's total |
 | `BUFFER_MIN_BPS`, `BUFFER_MAX_BPS` | 1000, 3000 | The band; `rebalance` acts only when the buffer's share is outside it |
 | `MIN_REBALANCE` | 0.05 SOL (50,000,000 lamports) for WSOL, 5 USDC (5,000,000 base units) for USDC | Smaller moves are skipped |
-| `WITHDRAW_MODE_ENTER` | 5 | Enter withdraw mode when Kamino's freely available liquidity is below 5 times the market's lent value |
-| `WITHDRAW_MODE_EXIT` | 10 | Leave withdraw mode when it is back above 10 times |
+| `WITHDRAW_MODE_ENTER` | 5 | Enter withdraw mode when Kamino's freely available liquidity is below 5 times the larger of the market's lent value and its target lent value (see "Withdraw mode") |
+| `WITHDRAW_MODE_EXIT` | 10 | Leave withdraw mode when it is back above 10 times that amount |
 | `MAX_LP_FEE_BPS` | 200 (2%) | The highest LP fee a market may charge |
 | `MINIMUM_LIQUIDITY` | 1,000 LP base units | Locked for good by the first deposit |
 | `LP_DECIMALS` | 9 | Decimals of every market's LP mint |
@@ -190,9 +192,11 @@ For a trade from side `i` to side `o`, with effective reserves `E` (`R` for the 
 
 ### Withdraw mode
 
-- `rebalance` checks Kamino's freely available liquidity against the market's lent value `V`.
-- Below `WITHDRAW_MODE_ENTER` times `V`, the market enters withdraw mode: `rebalance` redeems everything Kamino can pay and deposits nothing.
-- Above `WITHDRAW_MODE_EXIT` times `V`, it leaves withdraw mode and the band applies again.
+- `rebalance` checks Kamino's freely available liquidity against `X = max(V, T)`: the larger of the market's lent value `V` and its target lent value `T = L x (10,000 - BUFFER_TARGET_BPS) / 10,000`, what it would lend with the buffer at its target.
+- Below `WITHDRAW_MODE_ENTER` times `X`, the market enters withdraw mode: `rebalance` redeems everything Kamino can pay and deposits nothing.
+- Above `WITHDRAW_MODE_EXIT` times `X`, it leaves withdraw mode and the band applies again.
+- Measured against `V` alone the rule would flap: once the market has redeemed everything `V` is 0, so the next `rebalance` would leave withdraw mode at once, lend back into the same crunch and re-enter (owner, 2026-11-10).
+  With the target term a market that has redeemed everything stays in withdraw mode until Kamino has 10 times its target lent value free, and a market never makes its first deposit into a reserve too thin to pay it back.
 - On 2026-11-09 Kamino's SOL reserve had about 218,000 SOL free at 90.9% utilisation, and it blocks new borrowing above 90%, so withdraw mode only bites in a real crunch, and then our LPs leave early rather than last.
 
 ### When it runs
@@ -279,6 +283,8 @@ Locked shares still count in `N` and still earn the LP fee and the yield, which 
 - Every action that moves the other mint forwards transfer-hook accounts after its own, as the template's swap does.
 - Each instruction emits an event (market created, liquidity added, liquidity removed with the in-kind amount, shares locked, rebalanced with the amount and direction, withdraw mode entered or left, a swap's redeem with its amount) so Aviary's indexer can show a market's history; Aviary reads current values from the market state and the reserve, not from events.
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, description, category `amm`, tags including `lending` and `kamino`, links including `source` and the IDL, `init` as above with `market_state` as a `pda:` source, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256.
+- A `pda:` source lists its seeds in a fixed order and metadata arguments have no default values (the schema at `5ad130d`), so the `init` form takes the two mints as named inputs in the order of the market state's seeds, the other mint and then the lent mint, and that order makes `lent_index` 1; the form's label for `lent_index` says so, and Aviary's own form fills it in.
+  A caller that builds `create_market` itself, and a launchpad seeding a market, may give the mints in either order.
 
 ## Aviary's panel
 
@@ -331,7 +337,8 @@ Beyond the shared three (value conserved, every holder can exit, each quote equa
 - At a fixed Kamino rate, no swap lowers the product `R x L`, and no instruction lowers the value of an LP share; only a fall in Kamino's rate does.
 - A removal in kind succeeds for every LP in every Kamino state, emergency modes, a deprecated reserve and a failed layout check included.
 - A swap never deposits into Kamino, never redeems when the buffer covers its output, and never redeems more than its shortfall plus one rounding unit's worth of cTokens.
-- `rebalance` only ever moves the buffer's share towards `BUFFER_TARGET_BPS`, and never deposits in withdraw mode or while cToken deposits are blocked.
+- Outside withdraw mode `rebalance` only ever moves the buffer's share towards `BUFFER_TARGET_BPS`; in withdraw mode it only redeems; and it never deposits while cToken deposits are blocked.
+- A market in withdraw mode stays in it across `rebalance` calls for as long as Kamino's freely available liquidity is at or below `WITHDRAW_MODE_EXIT` times `max(V, T)`, however much it has already redeemed.
 - The share count `N` changes only by `add_liquidity`, `remove_liquidity`, seeding and SPL burns, and the lock account's balance never falls.
 
 ### Accepted `pipeline-check` warnings
@@ -348,6 +355,9 @@ Exact-out checks are skipped by design and need no reason.
   3. While each reserve holds only the seed, `update_reserve_config` with validation skipped for the Pyth price account, the borrow rate curve and a borrow factor of 100.
   4. `update_reserve_config` for the deposit limit, with full validation, which opens deposits.
 - Both reserves name the live devnet Pyth feeds (`7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE` for SOL, `Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX` for USDC), even though the cToken path never reads them, so a test borrower can open an obligation and create utilisation.
+- A second depositor, this project's devnet wallet, keeps each reserve's freely available liquidity above `WITHDRAW_MODE_EXIT` times the target lent value of the markets that lend to it.
+  A reserve that held only our markets' own deposits would put every market into withdraw mode at its first `rebalance`.
+  The test borrower then borrows that liquidity to bring withdraw mode on, and repays it to end it.
 - The sequence has been seen working on devnet (reserve `24EfeXj3XyLLE6GThh8ik4vcxEPMooAU5XXDL5nJHEr8`, 2026-09-14) but not yet run by us.
 
 ## Building it
@@ -360,6 +370,28 @@ Exact-out checks are skipped by design and need no reason.
   A fixture script dumps the accounts once and commits them with the slot they were read at, since an RPC cannot serve an account's past state; it fetches klend's program bytes into a gitignored folder at each setup and checks them against a hash pinned in the repo, as the router's fixture does, so a Kamino upgrade fails the check and is re-pinned deliberately; klend's bytes are never committed.
 - Build and test with the toolchain in `docs/toolchain.md` (`source scripts/toolchain-env.sh`).
 
+### Build tickets
+
+Cut by [Cut the lending pool's build tickets](https://github.com/imDev2023/testing-pipeline/issues/25) on 2026-11-10, labelled `build`, one session each, in run order:
+
+1. [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77): the devnet script that creates our Kamino lending market, its two reserves and the test USDC mint, and proves the cToken path, a test borrower and emergency mode there; it needs no program of ours and can run first.
+2. [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78): the program from the template, the market state's final layout, creation, the mint rules, adding liquidity and exact-in swaps, with nothing lent yet.
+3. [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79): the fixture script for both clusters, the reserve checks, and quotes, swaps and deposits priced from the buffer plus cTokens at the stored rate.
+4. [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80): the band, the target, the dust floor, and Kamino's deposit and redeem by CPI.
+5. [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81): the in-swap redeem, the redeem accounts resolved only when needed, and the call-depth test with a smart-wallet stand-in and a hooked token.
+6. [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82): `remove_liquidity` both ways, `lock_lp` and SPL burns of LP shares.
+7. [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83): withdraw mode as amended, every row of "When Kamino can't pay", and a falling rate from Kamino's real `socialize_loss`.
+8. [Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84): `pipeline_seed_liquidity` with a stand-in launchpad.
+9. [Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85): the invariants checked while Kamino's rate and state move, the Kani and Z3 proofs completed, and the compute table measured.
+10. [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86): the hardening ticket, before the first deploy, so the registered bytes are hardened and the layout freezes once.
+11. [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87): the end of the program's chain, with every check under "On devnet" below run on devnet itself.
+12. [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88): after the deploy and Aviary's own build tickets.
+
+The second waits for the tax AMM's first build ticket, which sets up the on-chain workspace, CI, the router fixture, the mint rules and the review skills.
+Tickets 2 to 10 are verified end to end in LiteSVM through the real router copied from devnet and klend's deployed bytes, with the `mainnet` build on cloned mainnet reserves and the `devnet` build on accounts dumped from our devnet lending market; tickets 1 and 11 run on devnet itself, against the real Kamino Lend there.
+The hardening ticket comes before the deploy, not last as `README.md` words it, so that what is registered with Pipeline is the hardened program.
+The keeper runner is specified separately ([Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)); until it runs, the demo script and Aviary's form call `rebalance`.
+
 ### Done means
 
 - LiteSVM tests through the real router and the real klend program cover:
@@ -369,7 +401,7 @@ Exact-out checks are skipped by design and need no reason.
   - a swap needing a redeem but built without the redeem accounts, failing cleanly;
   - Kamino states made by editing cloned account data: too little free liquidity, the withdrawal cap used up, reserve and market emergency mode, `block_ctoken_usage`, a deprecated reserve, and a reserve failing each part of the layout check, with quotes, swaps, `rebalance`, adding and removing behaving as in the table above;
   - a falling rate from Kamino's real `socialize_loss`, run on an edited obligation that has debt and no collateral, lowering LP share value pro rata;
-  - `rebalance`: inside the band, above it, below it, the dust floor, entering and leaving withdraw mode, and deposits skipped under `block_ctoken_usage`;
+  - `rebalance`: inside the band, above it, below it, the dust floor, entering and leaving withdraw mode, a market that has redeemed everything staying in withdraw mode until Kamino's free liquidity is back above the exit threshold, no first deposit into a reserve below the entry threshold, and deposits skipped under `block_ctoken_usage`;
   - LP shares: the first deposit and its locked minimum, an inflation attempt by donating to the vaults or the cToken account, adding at the ratio, removing in cash and in kind, locking, and an SPL burn;
   - seeding at the seeder-scoped address, shares to the LP recipient, and the vault authority as recipient locking them;
   - refusal of exact-out, of bypass, of every refused mint extension, and of a lent mint not on the list;
