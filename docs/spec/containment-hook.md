@@ -2,7 +2,7 @@
 
 Decided in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18) on 2026-11-10 with the owner, building on the findings of [How the containment hook works with the router and unlocks](https://github.com/imDev2023/testing-pipeline/issues/10) ([findings](https://github.com/imDev2023/testing-pipeline/blob/research/containment-hook-mechanics/research/containment-hook-mechanics.md)) and on the tax AMM's rules in `docs/spec/tax-amm.md`.
 Pipeline facts are from its repo at commit `5ad130d` (the router's `Market` account and seeds are unchanged since `a2d5bfb`, where the research read them).
-[Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) cuts the build tickets from this file, `docs/spec/tax-amm.md` and `docs/spec/README.md`.
+[Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) cut the build tickets from this file, `docs/spec/tax-amm.md` and `docs/spec/README.md` on 2026-11-10, and added to "Building it" the order of the build, where its policy values live, the framework and the Canary warns, with the owner's decision on how Canary reports a refused transfer.
 MetalLegBob is not building this product himself, so it stays in scope ([Record MetalLegBob's answers to the follow-up DM](https://github.com/imDev2023/testing-pipeline/issues/27)).
 
 ## What it is
@@ -191,6 +191,26 @@ What `docs/spec/README.md` asks each product's spec file to add, and how this pr
 - The bar starts the hook from Pipeline's Apache-2.0 `test-hook` (`programs/test-hook`), for its licence and its extra-account-meta setup.
 - `test-hook` approves every transfer when its whitelist account is left out (still so at `5ad130d`), and Token-2022 calls a hook without its extra accounts whenever a caller leaves them out, so that path is replaced by the fail-closed rule in "The allow rule"; the research's citations of the Factory's transfer hook show the checks to add (the `transferring` flag, the mint's owner, the validation account's seeds), read as a pattern, not copied.
 - Pipeline crates are pinned to `rev = "5ad130d"`, as for the tax AMM; build and test with the toolchain in `docs/toolchain.md`.
+- `test-hook` is native `solana-program` code, while the bar builds every program in Anchor 1.2.2 unless a build ticket measures that it cannot fit its compute budget.
+  So the hook is written in Anchor, keeping `test-hook`'s validation account and `Execute`'s account order, and goes native only if `Execute` cannot stay under its ceiling below in Anchor, with the measurement recorded in that ticket.
+
+### Order of the build
+
+Decided with the owner on 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23), as for the tax AMM (`docs/spec/tax-amm.md`, "Order of the build").
+
+- The tax AMM is built first; the hook's tests need a tax AMM home market, so each hook ticket follows the tax AMM ticket it builds on, and the hook's devnet ticket follows the tax AMM's.
+- **Local first, devnet last**: until its devnet ticket, the hook is verified by the LiteSVM tests through devnet's real router bytes and by the launch script run against a local validator that runs devnet's router.
+- **Deploy, then harden**: the hardening ticket comes after the devnet ticket, and redeploys and repeats the devnet demo if it changes the program.
+
+### Where its policy values live
+
+As for the tax AMM (`docs/spec/tax-amm.md`, "Where its policy values live"), under the owner's standing rule of 2026-11-10.
+
+- The longest unlock deadline (90 days), the mint extension allowlist and the tax AMM's program id are build-time constants in one config module of the program, and no other file repeats them.
+  They are fixed on-chain because holders rely on them, so they can change until the hook is frozen and not after.
+- The unlock goal and the unlock deadline are `bind`'s arguments, chosen per token by its launcher, with no default anywhere, the launch script included.
+- The public name, Aviary Containment Hook, lives only in the `name` of the embedded `security.txt`, since the hook has no strategy metadata (`docs/spec/README.md`, "Names").
+- The compute ceilings live in the table below and in one test module that mirrors it.
 
 ### Upgrade policy
 
@@ -218,15 +238,44 @@ For the bar's stateful fuzzing layer, beyond its shared three:
 4. `unlock` succeeds exactly when the tax collected reaches the goal or the deadline has passed; afterwards both of the mint's hook fields are unset, and nothing else ever changes them.
 5. The shared "every holder can still exit" invariant holds for contained tokens, through sells into the home market.
 
+### Canary checks
+
+The bar asks our strategies to pass Canary checks on devnet with every warn named in the product's file.
+A contained token's home market is a tax market, so these add to the tax AMM's own (`docs/spec/tax-amm.md`, "Canary checks").
+
+- `exit_transferred`: a warn on every contained token, because the hook refuses the wallet-to-wallet transfer the check makes.
+  - Decided with the owner on 2026-11-10: a refused transfer is a warn for any token, ours or anyone else's, stating that the token could not be sent to another wallet and what the buyer got back by selling it.
+  - The check fails only when a token that was transferred cannot then be sold.
+  - A refused transfer is not "a buyer could not sell back", so it never raises the trade-box notice.
+  - This replaces the fail in the `exit_transferred` row of `docs/spec/pipescope-canary.md`, which was written before this file fixed the allow rule.
+    It follows that file's own rule that only what the ordinary trade meets can fail, and it gives our hook no exemption.
+- `contained_mint`: a warn while the hook program can still be upgraded, which is always the case on devnet; it passes only once the hook is frozen.
+- `token_authorities`: a warn while the launcher keeps the mint authority; revoking it after `bind` clears it.
+
 ### Not applicable
 
 - `pipeline-check` Warns and strategy metadata: the hook is not a strategy; its Aviary panel and action are in "In Aviary".
+
+### Build tickets
+
+Cut by [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) on 2026-11-10, labelled `build`, one session each, in run order after the tax AMM's (`docs/spec/tax-amm.md`, "Build tickets"):
+
+1. [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68): the program, its accounts and `bind` with every check; it needs the tax AMM's market creation.
+2. [Containment hook: a contained token moves only through its home market](https://github.com/imDev2023/testing-pipeline/issues/69): the allow rule and the hook accounts callers pass; it needs the tax AMM's trading and payouts.
+3. [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70): `unlock`, and transfers free of the hook afterwards.
+4. [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71): the hook's five invariants on the tax AMM's fuzzing harness.
+5. [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73): the first devnet deploy, after the tax AMM's, with everything in "Done means" shown on devnet.
+6. [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74): the hardening ticket, after the deploy.
+7. [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76): after the deploy, the tax AMM's own Aviary ticket and Aviary's build tickets.
+
+Tickets 1 to 4 are verified by LiteSVM tests through the real router copied from devnet and by the launch script on a local validator; ticket 5 is the first to touch devnet.
 
 ### Done means
 
 - LiteSVM tests through the real router with a tax AMM home market cover: buys, sells, the Pipeline fee and `sweep_fees` with the hook tail; refusal of wallet-to-wallet transfers, of a second market's funding, of a sell with a non-zero integrator fee and of every transfer missing a hook account or calling `Execute` directly; `bind`'s refusal of each refused extension, of a freeze authority, of a wrong signer, of a market on another strategy, of a tax side on the contained token, of a deadline beyond 90 days and of a second `bind`; `unlock` by the goal, by the deadline, its refusal before either, and a second `unlock`; and transfers skipping the hook afterwards.
 - The invariants above under the fuzzing layer, and the compute ceilings and a call-depth test on buys under the limits layer.
 - On devnet: the hook deployed; a contained token launched by the script, bought and sold through the router with the SDK, a wallet-to-wallet transfer refused, then unlocked by a short deadline, with the mint showing both hook fields unset.
+  A second contained token is unlocked by reaching a small goal, so the unlock's read of the deployed tax AMM's counter is shown on devnet too (added when the build tickets were cut).
 - Whatever else `docs/spec/README.md` requires of our on-chain programs.
 
 ## Not measured yet
