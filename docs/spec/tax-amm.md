@@ -265,8 +265,10 @@ Decided with the owner on 2026-11-10 in [Cut the containment hook and tax AMM bu
 
 The owner's standing rule of 2026-11-10 keeps every decision cheap to change, since each is a default MetalLegBob may change.
 
-- The four values of "Constants" and the mint extension allowlist of "Mint rules" are build-time constants in one config module of the program, and no other file repeats them.
-  They are fixed on-chain because traders rely on them, so they can change until the program is frozen and not after.
+- The four values of "Constants" are build-time constants in one config module of the program, and no other file repeats them.
+- The mint extension allowlist of "Mint rules", and the check that applies it, live in one small library crate of the on-chain workspace.
+  The tax AMM, the containment hook and the lending AMM all depend on that crate, so there is one list and never a second copy; a product with a stricter rule adds it on top.
+- Both are fixed on-chain because traders rely on them, so they can change until a program is frozen and not after.
 - Every other policy value is a creation parameter, chosen per market and held in its market state: the rates, their ranges, the tax authority, the tax recipients and their shares, the burn share and the virtual reserve.
 - The public name, Aviary Tax AMM, lives only in the strategy metadata's `name` and in the `name` of the embedded `security.txt` (`docs/spec/README.md`, "Names").
 - The compute ceilings live in the table below and in one test module that mirrors it.
