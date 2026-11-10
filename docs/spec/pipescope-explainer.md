@@ -45,6 +45,16 @@ The model receives evidence items, each with an id, a label and a value; Pipesco
 - Each metadata action's discriminator is cross-checked in code against the program's instruction list, and the result is an F item ("The action labelled X calls the instruction deposit"), so a lying label is caught by code, not left to the model.
 - Author text reaches the model JSON-encoded in a tool result labelled with its origin; everything else is in the user message.
 
+### Pipeline's trust facts and metadata standard
+
+Pipeline added both on 2026-11-09, after the samples were written (`crates/pipeline-client/src/facts.rs` and `metadata.rs` at `5ad130d`, Apache-2.0, ports of the TypeScript SDK that give the same results).
+
+- Program and mint F items are computed with `pipeline-client`'s facts, so Pipescope's facts and their wording match Pipeline's SDK and hosted API: its stable flags (`upgradeable`, `frozen`, `verified-build`, `unverified-build`, `metadata-missing`, `metadata-unreachable`, `metadata-invalid`, `mint-authority`, `freeze-authority`, `transfer-hook`, `transfer-fee`, `permanent-delegate`, `default-frozen`, `pausable` and the rest) and their fixed descriptions become F items, and the version hash is its `executable_sha256`.
+- Metadata is validated with its `parse_strategy_metadata` before normalising; an invalid document gives the `metadata-invalid` fact, and its warnings are not passed to the model.
+- The standard's `source` (repository, commit, path) is a lead, not evidence: Pipescope runs `solana-verify` on it, and only a hash match turns that source into S items.
+- `security.audits` entries (who, link, date) are author text: they go to the model as A items and to the facts panel as reviews the author lists, unverified; the model may say the author lists outside reviews, never that the strategy was audited.
+- A `conformance` report link is author text too; Pipescope's own Canary results are the evidence, and whether Canary also runs Pipeline's `pipeline-check` is for [Canary checks on the four devnet strategies](https://github.com/imDev2023/testing-pipeline/issues/14).
+
 ## The prompt, version `explainer-v0`
 
 System prompt, word for word:
