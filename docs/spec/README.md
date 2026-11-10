@@ -61,7 +61,8 @@ When MetalLegBob upgrades the devnet router the check fails, and a PR re-pins it
    Book of Knowledge (see "Internal adversarial review") chooses the properties.
 3. **Stateful invariant fuzzing**: Proptest generates sequences of swaps, custom actions and clock jumps against LiteSVM and checks after every step that value is conserved (no token is created or lost beyond the stated fees), that every holder can still exit, and that each quote equals its swap; each product's spec file adds its own invariants.
    Trident is not used: its stable release (0.12) is built on solana-sdk 2.3 and 0.13 has been a release candidate since 2026-05, so it cannot load Anchor 1.2 and Solana 3 and 4 crates.
-   Revisit this if that changes, or if [Prior art for behavioural testing of Solana programs](https://github.com/imDev2023/testing-pipeline/issues/8) finds a better fuzzer.
+   [Prior art for behavioural testing of Solana programs](https://github.com/imDev2023/testing-pipeline/issues/8) found no fuzzer that fits better: Trident runs hand-written flows on its own SVM rather than LiteSVM.
+   Revisit this if Trident moves to current Solana crates.
 4. **Conformance**: every strategy's LiteSVM tests run `pipeline-check`'s `check_market` on their markets and require zero Fail and zero Warn.
 5. **Limits**: a compute ceiling asserted per instruction, with headroom, and a call-depth test with hooked mints wherever a program calls another program inside a swap.
 6. **Outside protocols**: wherever a program calls one (the lending pool's lending market), its tests also run in LiteSVM loaded with that protocol's programs and accounts dumped from mainnet by a fixture script pinned to a slot, and against the protocol's devnet deployment if it has one.
