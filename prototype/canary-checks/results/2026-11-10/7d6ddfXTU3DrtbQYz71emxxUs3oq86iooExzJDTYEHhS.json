@@ -1,0 +1,522 @@
+{
+  "control": {
+    "created_by": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ",
+    "custom_instructions": [
+      "ClaimAllocation",
+      "ClaimCreatorFees",
+      "ClaimLeftover",
+      "FundCurve",
+      "Graduate",
+      "SetFeeRecipient"
+    ],
+    "idl_instructions": false,
+    "instruction_names_without_a_discriminator": [],
+    "instructions_in_bytecode": [
+      "ClaimAllocation",
+      "ClaimCreatorFees",
+      "ClaimLeftover",
+      "FundCurve",
+      "Graduate",
+      "PipelineInitMarket",
+      "PipelineMarketInfo",
+      "PipelineQuote",
+      "PipelineResolveAccounts",
+      "PipelineSwap",
+      "SetFeeRecipient"
+    ],
+    "supports_exact_out": true,
+    "upgrade_authority": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ"
+  },
+  "exits": [
+    {
+      "money": 1,
+      "money_is_sol": true,
+      "not_run": "no size could be bought and sold back, so the timed, wallet, transfer and queue runs have nothing to use",
+      "sizes": [
+        {
+          "amount": 10000,
+          "bought": false,
+          "buy": {
+            "amount_in": 10000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629121,
+              "unix_timestamp": 1794286448
+            },
+            "failure": {
+              "account": null,
+              "code": 6004,
+              "error": "InstructionError(1, Custom(6004))",
+              "kind": "strategy refused",
+              "message": "Not allowed in the curve's current status",
+              "name": "WrongStatus",
+              "origin": "bonding-curve/src/lib.rs:1127",
+              "panic": null,
+              "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+              "reason": "custom program error: 0x1774",
+              "stage": "swap",
+              "who": "strategy"
+            },
+            "input": 1,
+            "ok": false,
+            "output": 0,
+            "quote": {
+              "error": "strategy failed: InstructionError(1, Custom(6004)): Program ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb failed: custom program error: 0x1774",
+              "failure": {
+                "account": null,
+                "code": 6004,
+                "error": "InstructionError(1, Custom(6004))",
+                "kind": "strategy refused",
+                "message": "Not allowed in the curve's current status",
+                "name": "WrongStatus",
+                "origin": "bonding-curve/src/lib.rs:1127",
+                "panic": null,
+                "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+                "reason": "custom program error: 0x1774",
+                "stage": "quote",
+                "who": "strategy"
+              }
+            },
+            "units": 26494
+          }
+        },
+        {
+          "amount": 1000000,
+          "bought": false,
+          "buy": {
+            "amount_in": 1000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629121,
+              "unix_timestamp": 1794286448
+            },
+            "failure": {
+              "account": null,
+              "code": 6004,
+              "error": "InstructionError(1, Custom(6004))",
+              "kind": "strategy refused",
+              "message": "Not allowed in the curve's current status",
+              "name": "WrongStatus",
+              "origin": "bonding-curve/src/lib.rs:1127",
+              "panic": null,
+              "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+              "reason": "custom program error: 0x1774",
+              "stage": "swap",
+              "who": "strategy"
+            },
+            "input": 1,
+            "ok": false,
+            "output": 0,
+            "quote": {
+              "error": "strategy failed: InstructionError(1, Custom(6004)): Program ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb failed: custom program error: 0x1774",
+              "failure": {
+                "account": null,
+                "code": 6004,
+                "error": "InstructionError(1, Custom(6004))",
+                "kind": "strategy refused",
+                "message": "Not allowed in the curve's current status",
+                "name": "WrongStatus",
+                "origin": "bonding-curve/src/lib.rs:1127",
+                "panic": null,
+                "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+                "reason": "custom program error: 0x1774",
+                "stage": "quote",
+                "who": "strategy"
+              }
+            },
+            "units": 26494
+          }
+        },
+        {
+          "amount": 10000000,
+          "bought": false,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629121,
+              "unix_timestamp": 1794286448
+            },
+            "failure": {
+              "account": null,
+              "code": 6004,
+              "error": "InstructionError(1, Custom(6004))",
+              "kind": "strategy refused",
+              "message": "Not allowed in the curve's current status",
+              "name": "WrongStatus",
+              "origin": "bonding-curve/src/lib.rs:1127",
+              "panic": null,
+              "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+              "reason": "custom program error: 0x1774",
+              "stage": "swap",
+              "who": "strategy"
+            },
+            "input": 1,
+            "ok": false,
+            "output": 0,
+            "quote": {
+              "error": "strategy failed: InstructionError(1, Custom(6004)): Program ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb failed: custom program error: 0x1774",
+              "failure": {
+                "account": null,
+                "code": 6004,
+                "error": "InstructionError(1, Custom(6004))",
+                "kind": "strategy refused",
+                "message": "Not allowed in the curve's current status",
+                "name": "WrongStatus",
+                "origin": "bonding-curve/src/lib.rs:1127",
+                "panic": null,
+                "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+                "reason": "custom program error: 0x1774",
+                "stage": "quote",
+                "who": "strategy"
+              }
+            },
+            "units": 26494
+          }
+        },
+        {
+          "amount": 100000000,
+          "bought": false,
+          "buy": {
+            "amount_in": 100000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629121,
+              "unix_timestamp": 1794286448
+            },
+            "failure": {
+              "account": null,
+              "code": 6004,
+              "error": "InstructionError(1, Custom(6004))",
+              "kind": "strategy refused",
+              "message": "Not allowed in the curve's current status",
+              "name": "WrongStatus",
+              "origin": "bonding-curve/src/lib.rs:1127",
+              "panic": null,
+              "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+              "reason": "custom program error: 0x1774",
+              "stage": "swap",
+              "who": "strategy"
+            },
+            "input": 1,
+            "ok": false,
+            "output": 0,
+            "quote": {
+              "error": "strategy failed: InstructionError(1, Custom(6004)): Program ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb failed: custom program error: 0x1774",
+              "failure": {
+                "account": null,
+                "code": 6004,
+                "error": "InstructionError(1, Custom(6004))",
+                "kind": "strategy refused",
+                "message": "Not allowed in the curve's current status",
+                "name": "WrongStatus",
+                "origin": "bonding-curve/src/lib.rs:1127",
+                "panic": null,
+                "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+                "reason": "custom program error: 0x1774",
+                "stage": "quote",
+                "who": "strategy"
+              }
+            },
+            "units": 26494
+          }
+        },
+        {
+          "amount": 1000000000,
+          "bought": false,
+          "buy": {
+            "amount_in": 1000000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629121,
+              "unix_timestamp": 1794286448
+            },
+            "failure": {
+              "account": null,
+              "code": 6004,
+              "error": "InstructionError(1, Custom(6004))",
+              "kind": "strategy refused",
+              "message": "Not allowed in the curve's current status",
+              "name": "WrongStatus",
+              "origin": "bonding-curve/src/lib.rs:1127",
+              "panic": null,
+              "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+              "reason": "custom program error: 0x1774",
+              "stage": "swap",
+              "who": "strategy"
+            },
+            "input": 1,
+            "ok": false,
+            "output": 0,
+            "quote": {
+              "error": "strategy failed: InstructionError(1, Custom(6004)): Program ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb failed: custom program error: 0x1774",
+              "failure": {
+                "account": null,
+                "code": 6004,
+                "error": "InstructionError(1, Custom(6004))",
+                "kind": "strategy refused",
+                "message": "Not allowed in the curve's current status",
+                "name": "WrongStatus",
+                "origin": "bonding-curve/src/lib.rs:1127",
+                "panic": null,
+                "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+                "reason": "custom program error: 0x1774",
+                "stage": "quote",
+                "who": "strategy"
+              }
+            },
+            "units": 26494
+          }
+        },
+        {
+          "amount": 10000000000,
+          "bought": false,
+          "buy": {
+            "amount_in": 10000000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629121,
+              "unix_timestamp": 1794286448
+            },
+            "failure": {
+              "account": null,
+              "code": 6004,
+              "error": "InstructionError(1, Custom(6004))",
+              "kind": "strategy refused",
+              "message": "Not allowed in the curve's current status",
+              "name": "WrongStatus",
+              "origin": "bonding-curve/src/lib.rs:1127",
+              "panic": null,
+              "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+              "reason": "custom program error: 0x1774",
+              "stage": "swap",
+              "who": "strategy"
+            },
+            "input": 1,
+            "ok": false,
+            "output": 0,
+            "quote": {
+              "error": "strategy failed: InstructionError(1, Custom(6004)): Program ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb failed: custom program error: 0x1774",
+              "failure": {
+                "account": null,
+                "code": 6004,
+                "error": "InstructionError(1, Custom(6004))",
+                "kind": "strategy refused",
+                "message": "Not allowed in the curve's current status",
+                "name": "WrongStatus",
+                "origin": "bonding-curve/src/lib.rs:1127",
+                "panic": null,
+                "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+                "reason": "custom program error: 0x1774",
+                "stage": "quote",
+                "who": "strategy"
+              }
+            },
+            "units": 26494
+          }
+        }
+      ],
+      "token": 0
+    }
+  ],
+  "fee_accounts_missing": [],
+  "market": "7d6ddfXTU3DrtbQYz71emxxUs3oq86iooExzJDTYEHhS",
+  "mints": [
+    {
+      "address": "DNKERD7faN86zVFGx3HLDYM2KAwp8huzKyWUJmFFu9Qp",
+      "decimals": 6,
+      "extensions": [
+        "MetadataPointer",
+        "TokenMetadata"
+      ],
+      "fee_account": "CY8aqUeXduBPYu3MAJLw3WDjZxxRXzA6JnAfPEMddVFi",
+      "fee_account_exists": true,
+      "freeze_authority": null,
+      "mint_authority": null,
+      "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "vault": "7WbNdTenavvhFUeRzHxqngUufxMn9ux7jA98T3ZdSWGn",
+      "vault_balance": 0
+    },
+    {
+      "address": "So11111111111111111111111111111111111111112",
+      "decimals": 9,
+      "extensions": [],
+      "fee_account": "BYVkhy33ct9duwtFqH5JRpu9KdFBDDHf7Gozpb1ew9R9",
+      "fee_account_exists": true,
+      "freeze_authority": null,
+      "mint_authority": null,
+      "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "vault": "5B6FTtBg3PsWBH8YjGMhKojxNkeYPxmw41Z3iS8gQEf1",
+      "vault_balance": 1113803
+    }
+  ],
+  "money_side": {
+    "is_sol": true,
+    "mint": 1
+  },
+  "pipeline_check": {
+    "checks": [
+      {
+        "id": "market_account",
+        "message": "Market of registered strategy ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb with 2 mints; router config found.",
+        "status": "pass"
+      },
+      {
+        "id": "market_info",
+        "message": "The strategy reports the same mints, vaults and exact-out support the router recorded.",
+        "status": "pass"
+      },
+      {
+        "id": "fee_accounts",
+        "message": "Every mint has its Pipeline fee account.",
+        "status": "pass"
+      },
+      {
+        "id": "mint_extensions",
+        "message": "Extensions present, none of which stop trading: mint 0: MetadataPointer, TokenMetadata.",
+        "status": "pass"
+      },
+      {
+        "id": "resolve_accounts",
+        "message": "Resolves in at most 1 of 4 rounds in every direction; swaps need up to 1 strategy account(s).",
+        "status": "pass"
+      },
+      {
+        "id": "transaction_size",
+        "message": "No direction could be quoted, so no swap was built.",
+        "status": "skip"
+      },
+      {
+        "id": "quotes",
+        "message": "The strategy refused every quote, so the trading checks were skipped. That is expected if the market is closed or not open yet; otherwise integrators can't price it. First failure: mint 0→1 exact-in 10000 (small): strategy failed: InstructionError(1, Custom(6004)): Program ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb failed: custom program error: 0x1774.",
+        "status": "warn"
+      },
+      {
+        "id": "quote_matches_swap",
+        "message": "No quote succeeded, so nothing was swapped.",
+        "status": "skip"
+      },
+      {
+        "id": "min_out_enforced",
+        "message": "No swap matched its quote, so there is nothing to tighten.",
+        "status": "skip"
+      },
+      {
+        "id": "determinism",
+        "message": "No direction could be quoted.",
+        "status": "skip"
+      },
+      {
+        "id": "compute",
+        "message": "No swap succeeded, so nothing was measured.",
+        "status": "skip"
+      },
+      {
+        "id": "exact_out_refund",
+        "message": "No exact-out quote succeeded.",
+        "status": "skip"
+      },
+      {
+        "id": "round_trip",
+        "message": "No buy succeeded, so nothing was sold back.",
+        "status": "skip"
+      },
+      {
+        "id": "dust_and_zero",
+        "message": "Zero-input quotes give no output, zero-input swaps are refused, and 1-unit swaps either fail cleanly or deliver what was quoted.",
+        "status": "pass"
+      }
+    ],
+    "round_trip_details": {
+      "trips": []
+    },
+    "summary": {
+      "fail": 0,
+      "pass": 6,
+      "result": "warn",
+      "skip": 7,
+      "warn": 1
+    }
+  },
+  "quote_parity": {
+    "compared": 0,
+    "matched": 0,
+    "max_strategy_units": 0,
+    "max_swap_units": 0,
+    "mismatches": [],
+    "quote_failed_swap_ok": [],
+    "quote_ok_swap_failed": [],
+    "swaps": 6
+  },
+  "readable": {
+    "probes": [
+      {
+        "amount": 1000,
+        "input": 0,
+        "output": 1,
+        "state": {
+          "account": null,
+          "code": 6004,
+          "error": "InstructionError(1, Custom(6004))",
+          "kind": "strategy refused",
+          "message": "Not allowed in the curve's current status",
+          "name": "WrongStatus",
+          "origin": "bonding-curve/src/lib.rs:1127",
+          "panic": null,
+          "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+          "reason": "custom program error: 0x1774",
+          "stage": "quote",
+          "who": "strategy"
+        }
+      },
+      {
+        "amount": 10000,
+        "input": 1,
+        "output": 0,
+        "state": {
+          "account": null,
+          "code": 6004,
+          "error": "InstructionError(1, Custom(6004))",
+          "kind": "strategy refused",
+          "message": "Not allowed in the curve's current status",
+          "name": "WrongStatus",
+          "origin": "bonding-curve/src/lib.rs:1127",
+          "panic": null,
+          "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+          "reason": "custom program error: 0x1774",
+          "stage": "quote",
+          "who": "strategy"
+        }
+      }
+    ],
+    "unreadable": false
+  },
+  "router": {
+    "deploy_slot": 520510501,
+    "executable_len": 400569,
+    "executable_sha256": "fb0003280ef9d0bbeca3919c4491e4728620eddd1d7ebd96340727b15ca621b8",
+    "loader": "bpf-loader-upgradeable",
+    "program_id": "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34",
+    "upgrade_authority": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ"
+  },
+  "run_at": 1794286449,
+  "schema": "canary-proto/0",
+  "source": {
+    "accounts_cloned": 14,
+    "epoch": 1205,
+    "genesis_hash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+    "notes": [],
+    "slot": 520629121,
+    "unix_timestamp": 1794286448
+  },
+  "strategy": {
+    "deploy_slot": 520151724,
+    "executable_len": 357713,
+    "executable_sha256": "74fca48eb995bb0ab472f642c0c88ac9125168797effe3c880bc6ce4309c3923",
+    "loader": "bpf-loader-upgradeable",
+    "program_id": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+    "upgrade_authority": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ"
+  },
+  "tradable_directions": [],
+  "transaction_describing_accounts": []
+}

@@ -1,0 +1,21 @@
+market LCHsnkMfToU5C9G28JikT3eP3AvnCZSsPUeYvVLBS52, strategy yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx, slot 520629945
+router sha256 fb0003280ef9d0bbeca3919c4491e4728620eddd1d7ebd96340727b15ca621b8
+strategy accounts for 0>1: ["6SmaUhsze7M5Zv9gVzdqXcWgGzveD1Wrg6vGVHjPTJN"]
+strategy accounts for 1>0: ["9yyetTJuUuaXWU6n6ueEGMaawKTBExiccxBbfeHLYTc"]
+vaults: ["9yyetTJuUuaXWU6n6ueEGMaawKTBExiccxBbfeHLYTc", "6SmaUhsze7M5Zv9gVzdqXcWgGzveD1Wrg6vGVHjPTJN"]
+
+sell 1>0 of 100000 with the buy direction's accounts:
+  Quoter::simulate_swap failed: strategy failed: InstructionError(1, Custom(6002)): Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x1772
+  full VM failed: strategy refused: WrongAccount (6002)
+  raised by: "strategy" ("yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx")
+    Program ComputeBudget111111111111111111111111111111 invoke [1]
+    Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 invoke [1]
+    Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
+    Program yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx invoke [2]
+    Program log: AnchorError thrown in test-strategy-cp/src/lib.rs:199. Error Code: WrongAccount. Error Number: 6002. Error Message: Unexpected account.
+    Program yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx failed: custom program error: 0x1772
+    Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x1772
+
+sell 1>0 of 100000 with the sale's own accounts:
+  Quoter::simulate_swap ok: received 362551406577, net_sent 100000, fee 250
+  full VM ok: Some((362551406577, 100000, 250))

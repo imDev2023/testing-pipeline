@@ -1,0 +1,380 @@
+{
+  "control": {
+    "created_by": "ENj4ENQWKzMfFdsbWi96vMNaBPRkQDoRDaFzsgi2PbD6",
+    "custom_instructions": [
+      "ClaimFees",
+      "ClosePack",
+      "OpenDraw",
+      "OpenPack"
+    ],
+    "idl_instructions": false,
+    "instruction_names_without_a_discriminator": [],
+    "instructions_in_bytecode": [
+      "ClaimFees",
+      "ClosePack",
+      "OpenDraw",
+      "OpenPack",
+      "PipelineInitMarket",
+      "PipelineMarketInfo",
+      "PipelineQuote",
+      "PipelineResolveAccounts",
+      "PipelineSwap"
+    ],
+    "supports_exact_out": false,
+    "upgrade_authority": "ENj4ENQWKzMfFdsbWi96vMNaBPRkQDoRDaFzsgi2PbD6"
+  },
+  "exits": [
+    {
+      "money": 0,
+      "money_is_sol": false,
+      "not_run": "no size could be bought and sold back, so the timed, wallet, transfer and queue runs have nothing to use",
+      "sizes": [
+        {
+          "amount": 2000,
+          "bought": false,
+          "buy": {
+            "amount_in": 2000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629015,
+              "unix_timestamp": 1794286423
+            },
+            "failure": {
+              "account": "curve",
+              "code": 3003,
+              "error": "InstructionError(1, Custom(3003))",
+              "kind": "cannot read state",
+              "message": "Failed to deserialize the account",
+              "name": "AccountDidNotDeserialize",
+              "origin": null,
+              "panic": null,
+              "program": "2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G",
+              "reason": "custom program error: 0xbbb",
+              "stage": "resolve accounts",
+              "who": "strategy"
+            },
+            "input": 0,
+            "ok": false,
+            "output": 1
+          }
+        },
+        {
+          "amount": 200000,
+          "bought": false,
+          "buy": {
+            "amount_in": 200000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629015,
+              "unix_timestamp": 1794286423
+            },
+            "failure": {
+              "account": "curve",
+              "code": 3003,
+              "error": "InstructionError(1, Custom(3003))",
+              "kind": "cannot read state",
+              "message": "Failed to deserialize the account",
+              "name": "AccountDidNotDeserialize",
+              "origin": null,
+              "panic": null,
+              "program": "2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G",
+              "reason": "custom program error: 0xbbb",
+              "stage": "resolve accounts",
+              "who": "strategy"
+            },
+            "input": 0,
+            "ok": false,
+            "output": 1
+          }
+        },
+        {
+          "amount": 2000000,
+          "bought": false,
+          "buy": {
+            "amount_in": 2000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629015,
+              "unix_timestamp": 1794286423
+            },
+            "failure": {
+              "account": "curve",
+              "code": 3003,
+              "error": "InstructionError(1, Custom(3003))",
+              "kind": "cannot read state",
+              "message": "Failed to deserialize the account",
+              "name": "AccountDidNotDeserialize",
+              "origin": null,
+              "panic": null,
+              "program": "2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G",
+              "reason": "custom program error: 0xbbb",
+              "stage": "resolve accounts",
+              "who": "strategy"
+            },
+            "input": 0,
+            "ok": false,
+            "output": 1
+          }
+        },
+        {
+          "amount": 20000000,
+          "bought": false,
+          "buy": {
+            "amount_in": 20000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629015,
+              "unix_timestamp": 1794286423
+            },
+            "failure": {
+              "account": "curve",
+              "code": 3003,
+              "error": "InstructionError(1, Custom(3003))",
+              "kind": "cannot read state",
+              "message": "Failed to deserialize the account",
+              "name": "AccountDidNotDeserialize",
+              "origin": null,
+              "panic": null,
+              "program": "2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G",
+              "reason": "custom program error: 0xbbb",
+              "stage": "resolve accounts",
+              "who": "strategy"
+            },
+            "input": 0,
+            "ok": false,
+            "output": 1
+          }
+        },
+        {
+          "amount": 100000000,
+          "bought": false,
+          "buy": {
+            "amount_in": 100000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629015,
+              "unix_timestamp": 1794286423
+            },
+            "failure": {
+              "account": "curve",
+              "code": 3003,
+              "error": "InstructionError(1, Custom(3003))",
+              "kind": "cannot read state",
+              "message": "Failed to deserialize the account",
+              "name": "AccountDidNotDeserialize",
+              "origin": null,
+              "panic": null,
+              "program": "2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G",
+              "reason": "custom program error: 0xbbb",
+              "stage": "resolve accounts",
+              "who": "strategy"
+            },
+            "input": 0,
+            "ok": false,
+            "output": 1
+          }
+        }
+      ],
+      "token": 1
+    }
+  ],
+  "fee_accounts_missing": [],
+  "market": "3fjboEpgdFNFqNZeZ6gynah7H6SsM1Cb1eLCc9DMnJaf",
+  "mints": [
+    {
+      "address": "DgNnRVeGmaCu4AVwGya3W6Hcxo3HB3yT7QaDR5WW8qu",
+      "decimals": 9,
+      "extensions": [],
+      "fee_account": "3wXh5BYryEVTFUepQHuA18MvU8wDkRAf2PoVop1Cx7dJ",
+      "fee_account_exists": true,
+      "freeze_authority": null,
+      "mint_authority": "ENj4ENQWKzMfFdsbWi96vMNaBPRkQDoRDaFzsgi2PbD6",
+      "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "vault": "27ncRY3CspqLRPERwDYZBNnFpeD1D723YRNkF1UDpiTi",
+      "vault_balance": 2000000000
+    },
+    {
+      "address": "5ZMhj2g7R1QMY7ZQuZXX2e7HeBg18UCnAZ7363Skr7XC",
+      "decimals": 6,
+      "extensions": [],
+      "fee_account": "GkbfYiomiFhkPcPAYtJh7KcFTiBCKGESxHUts445Fr6h",
+      "fee_account_exists": true,
+      "freeze_authority": null,
+      "mint_authority": null,
+      "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "vault": "CTjCJQFWVxjapM4Gc89Cet816iPixExgHy2XtY793feQ",
+      "vault_balance": 920000000000001
+    }
+  ],
+  "money_side": {
+    "is_sol": false,
+    "mint": 0
+  },
+  "pipeline_check": {
+    "checks": [
+      {
+        "id": "market_account",
+        "message": "Market of registered strategy 2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G with 2 mints; router config found.",
+        "status": "pass"
+      },
+      {
+        "id": "market_info",
+        "message": "pipeline_market_info fails when given only the market state (InstructionError(0, Custom(3003)): Program 2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G failed: custom program error: 0xbbb). If it needs more accounts, the checker can't tell which.",
+        "status": "warn"
+      },
+      {
+        "id": "fee_accounts",
+        "message": "Every mint has its Pipeline fee account.",
+        "status": "pass"
+      },
+      {
+        "id": "mint_extensions",
+        "message": "No Token-2022 extensions.",
+        "status": "pass"
+      },
+      {
+        "id": "resolve_accounts",
+        "message": "Resolution fails for every size in at least one direction, so integrators can't build swaps there. First failure: mint 0→1 exact-in 1 (dust): strategy failed: InstructionError(1, Custom(3003)): Program 2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G failed: custom program error: 0xbbb.",
+        "status": "fail"
+      },
+      {
+        "id": "transaction_size",
+        "message": "No direction could be quoted, so no swap was built.",
+        "status": "skip"
+      },
+      {
+        "id": "quotes",
+        "message": "The strategy refused every quote, so the trading checks were skipped. That is expected if the market is closed or not open yet; otherwise integrators can't price it. First failure: mint 0→1 exact-in 20000 (small): account resolution failed: strategy failed: InstructionError(1, Custom(3003)): Program 2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G failed: custom program error: 0xbbb.",
+        "status": "warn"
+      },
+      {
+        "id": "quote_matches_swap",
+        "message": "No quote succeeded, so nothing was swapped.",
+        "status": "skip"
+      },
+      {
+        "id": "min_out_enforced",
+        "message": "No swap matched its quote, so there is nothing to tighten.",
+        "status": "skip"
+      },
+      {
+        "id": "determinism",
+        "message": "No direction could be quoted.",
+        "status": "skip"
+      },
+      {
+        "id": "compute",
+        "message": "No swap succeeded, so nothing was measured.",
+        "status": "skip"
+      },
+      {
+        "id": "exact_out_refund",
+        "message": "The market does not support exact-out.",
+        "status": "skip"
+      },
+      {
+        "id": "round_trip",
+        "message": "No buy succeeded, so nothing was sold back.",
+        "status": "skip"
+      },
+      {
+        "id": "dust_and_zero",
+        "message": "No direction could be resolved.",
+        "status": "skip"
+      }
+    ],
+    "round_trip_details": {
+      "trips": []
+    },
+    "summary": {
+      "fail": 1,
+      "pass": 3,
+      "result": "fail",
+      "skip": 8,
+      "warn": 2
+    }
+  },
+  "quote_parity": {
+    "compared": 0,
+    "matched": 0,
+    "max_strategy_units": 0,
+    "max_swap_units": 0,
+    "mismatches": [],
+    "quote_failed_swap_ok": [],
+    "quote_ok_swap_failed": [],
+    "swaps": 0
+  },
+  "readable": {
+    "probes": [
+      {
+        "amount": 2000,
+        "input": 0,
+        "output": 1,
+        "state": {
+          "account": "curve",
+          "code": 3003,
+          "error": "InstructionError(1, Custom(3003))",
+          "kind": "cannot read state",
+          "message": "Failed to deserialize the account",
+          "name": "AccountDidNotDeserialize",
+          "origin": null,
+          "panic": null,
+          "program": "2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G",
+          "reason": "custom program error: 0xbbb",
+          "stage": "resolve accounts",
+          "who": "strategy"
+        }
+      },
+      {
+        "amount": 920000000,
+        "input": 1,
+        "output": 0,
+        "state": {
+          "account": "curve",
+          "code": 3003,
+          "error": "InstructionError(1, Custom(3003))",
+          "kind": "cannot read state",
+          "message": "Failed to deserialize the account",
+          "name": "AccountDidNotDeserialize",
+          "origin": null,
+          "panic": null,
+          "program": "2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G",
+          "reason": "custom program error: 0xbbb",
+          "stage": "resolve accounts",
+          "who": "strategy"
+        }
+      }
+    ],
+    "unreadable": true
+  },
+  "router": {
+    "deploy_slot": 520510501,
+    "executable_len": 400569,
+    "executable_sha256": "fb0003280ef9d0bbeca3919c4491e4728620eddd1d7ebd96340727b15ca621b8",
+    "loader": "bpf-loader-upgradeable",
+    "program_id": "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34",
+    "upgrade_authority": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ"
+  },
+  "run_at": 1794286424,
+  "schema": "canary-proto/0",
+  "source": {
+    "accounts_cloned": 14,
+    "epoch": 1205,
+    "genesis_hash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+    "notes": [
+      "resolving 0→1 for 0 stopped early: InstructionError(1, Custom(3003)): Program 2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G failed: custom program error: 0xbbb"
+    ],
+    "slot": 520629015,
+    "unix_timestamp": 1794286423
+  },
+  "strategy": {
+    "deploy_slot": 520610391,
+    "executable_len": 353265,
+    "executable_sha256": "2a05af131304b169d006350a8e4f42113dad86cb25934d17e676193d69c5b784",
+    "loader": "bpf-loader-upgradeable",
+    "program_id": "2TmcmquxnCB8AHoLmLJFYxZnVQdm9pREMEsmHqByQq7G",
+    "upgrade_authority": "ENj4ENQWKzMfFdsbWi96vMNaBPRkQDoRDaFzsgi2PbD6"
+  },
+  "tradable_directions": [],
+  "transaction_describing_accounts": []
+}

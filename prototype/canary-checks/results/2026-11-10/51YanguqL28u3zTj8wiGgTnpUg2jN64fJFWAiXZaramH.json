@@ -1,0 +1,2685 @@
+{
+  "control": {
+    "created_by": "8VKU74PrpBhaxHTqYLQTE82CLGMAHSJ4qESLSqww5pbg",
+    "custom_instructions": [
+      "ClaimTax",
+      "InitializeConfig",
+      "Launch",
+      "SweepProtocolFees",
+      "UpdateConfig"
+    ],
+    "idl_instructions": false,
+    "instruction_names_without_a_discriminator": [],
+    "instructions_in_bytecode": [
+      "ClaimTax",
+      "InitializeConfig",
+      "Launch",
+      "PipelineInitMarket",
+      "PipelineMarketInfo",
+      "PipelineQuote",
+      "PipelineResolveAccounts",
+      "PipelineSwap",
+      "SweepProtocolFees",
+      "UpdateConfig"
+    ],
+    "supports_exact_out": true,
+    "upgrade_authority": "DEwdbWGmGf6vdtRMkBXez2zJ71JbAaJ1DdD1s3bN8tYn"
+  },
+  "exits": [
+    {
+      "bypass": [
+        {
+          "accepted": false,
+          "attempt": "another key signs as the market signer",
+          "failure": {
+            "account": "market_signer",
+            "code": 6002,
+            "error": "InstructionError(2, Custom(6002))",
+            "kind": "strategy refused",
+            "message": "Caller is not this pool's Pipeline market",
+            "name": "NotPipeline",
+            "origin": null,
+            "panic": null,
+            "program": "EZwLuZ8mSiBoeKtbHwQK4kxCqqj4JuureT1kHpTK3i6b",
+            "reason": "custom program error: 0x1772",
+            "stage": "direct pipeline_swap",
+            "who": "strategy"
+          }
+        },
+        {
+          "accepted": false,
+          "attempt": "the real market signer, not signing",
+          "failure": {
+            "account": "market_signer",
+            "code": 3010,
+            "error": "InstructionError(2, Custom(3010))",
+            "kind": "strategy refused",
+            "message": "The given account did not sign",
+            "name": "AccountNotSigner",
+            "origin": null,
+            "panic": null,
+            "program": "EZwLuZ8mSiBoeKtbHwQK4kxCqqj4JuureT1kHpTK3i6b",
+            "reason": "custom program error: 0xbc2",
+            "stage": "direct pipeline_swap",
+            "who": "strategy"
+          }
+        }
+      ],
+      "hold": [
+        {
+          "got_back": 9976231,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "wait": "same slot"
+        },
+        {
+          "got_back": 9976231,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629052,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "wait": "next slot"
+        },
+        {
+          "got_back": 9976231,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629076,
+              "unix_timestamp": 1794286442
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "wait": "10 seconds"
+        },
+        {
+          "got_back": 9976231,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629201,
+              "unix_timestamp": 1794286492
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "wait": "1 minute"
+        },
+        {
+          "got_back": 9976231,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520630551,
+              "unix_timestamp": 1794287032
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "wait": "10 minutes"
+        },
+        {
+          "got_back": 9976231,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520638051,
+              "unix_timestamp": 1794290032
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "wait": "1 hour"
+        },
+        {
+          "got_back": 9976231,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520845051,
+              "unix_timestamp": 1794372832
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "wait": "1 day"
+        },
+        {
+          "got_back": 9976231,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1206,
+              "slot": 521277051,
+              "unix_timestamp": 1794545632
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "wait": "3 days"
+        },
+        {
+          "got_back": 9976231,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1220,
+              "slot": 527109051,
+              "unix_timestamp": 1796878432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "wait": "30 days"
+        }
+      ],
+      "late": [
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629052,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629052,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "wait": "next slot"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629076,
+              "unix_timestamp": 1794286442
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629076,
+              "unix_timestamp": 1794286442
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "wait": "10 seconds"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629201,
+              "unix_timestamp": 1794286492
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629201,
+              "unix_timestamp": 1794286492
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "wait": "1 minute"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520630551,
+              "unix_timestamp": 1794287032
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520630551,
+              "unix_timestamp": 1794287032
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "wait": "10 minutes"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520638051,
+              "unix_timestamp": 1794290032
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520638051,
+              "unix_timestamp": 1794290032
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "wait": "1 hour"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520845051,
+              "unix_timestamp": 1794372832
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520845051,
+              "unix_timestamp": 1794372832
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "wait": "1 day"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1206,
+              "slot": 521277051,
+              "unix_timestamp": 1794545632
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1206,
+              "slot": 521277051,
+              "unix_timestamp": 1794545632
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "wait": "3 days"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1220,
+              "slot": 527109051,
+              "unix_timestamp": 1796878432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1220,
+              "slot": 527109051,
+              "unix_timestamp": 1796878432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "wait": "30 days"
+        }
+      ],
+      "money": 1,
+      "money_is_sol": true,
+      "powers": [],
+      "queue": {
+        "could_not_sell": 0,
+        "got_back": 49899931,
+        "money_vault": {
+          "after_buys": 300000000,
+          "after_sells": 250100069,
+          "start": 250000000
+        },
+        "put_in": 50125000,
+        "returned_pct": 99.551,
+        "wallets": [
+          {
+            "bought": true,
+            "failure": null,
+            "got_back": 13958159,
+            "put_in": 10025000,
+            "returned_pct": 139.2335,
+            "sold": true,
+            "wallet": 1
+          },
+          {
+            "bought": true,
+            "failure": null,
+            "got_back": 11428303,
+            "put_in": 10025000,
+            "returned_pct": 113.998,
+            "sold": true,
+            "wallet": 2
+          },
+          {
+            "bought": true,
+            "failure": null,
+            "got_back": 9529084,
+            "put_in": 10025000,
+            "returned_pct": 95.0532,
+            "sold": true,
+            "wallet": 3
+          },
+          {
+            "bought": true,
+            "failure": null,
+            "got_back": 8066979,
+            "put_in": 10025000,
+            "returned_pct": 80.4686,
+            "sold": true,
+            "wallet": 4
+          },
+          {
+            "bought": true,
+            "failure": null,
+            "got_back": 6917406,
+            "put_in": 10025000,
+            "returned_pct": 69.0016,
+            "sold": true,
+            "wallet": 5
+          }
+        ]
+      },
+      "reference_amount": 10000000,
+      "rewind": [
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1204,
+              "slot": 520548641,
+              "unix_timestamp": 1794254268
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 389222809624,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5453,
+              "total_spend": 10025000
+            },
+            "received": 389222809624,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 389222809624
+            },
+            "spent": 10025000,
+            "strategy_units": 9860,
+            "units": 35204,
+            "vault_change": [
+              -389222809624,
+              10000000
+            ]
+          },
+          "got_back": 99750,
+          "pipeline_fee_pct": 0.2519,
+          "put_in": 10025000,
+          "returned_pct": 0.995,
+          "sell": {
+            "amount_in": 388252179176,
+            "clock": {
+              "epoch": 1204,
+              "slot": 520548641,
+              "unix_timestamp": 1794254268
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 99750,
+              "net_sent": 388252179176,
+              "pipeline_fee": 970630448,
+              "strategy_units": 5515,
+              "total_spend": 389222809624
+            },
+            "received": 99750,
+            "result": {
+              "net_sent": 388252179176,
+              "pipeline_fee": 970630448,
+              "received": 99750
+            },
+            "spent": 389222809624,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              388252179176,
+              -99750
+            ]
+          },
+          "sold": true,
+          "tokens": 389222809624,
+          "wait": "at creation"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1204,
+              "slot": 520548666,
+              "unix_timestamp": 1794254278
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 4645476358517,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5472,
+              "total_spend": 10025000
+            },
+            "received": 4645476358517,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 4645476358517
+            },
+            "spent": 10025000,
+            "strategy_units": 9879,
+            "units": 35223,
+            "vault_change": [
+              -4645476358517,
+              10000000
+            ]
+          },
+          "got_back": 1197025,
+          "pipeline_fee_pct": 0.2792,
+          "put_in": 10025000,
+          "returned_pct": 11.9404,
+          "sell": {
+            "amount_in": 4633891629443,
+            "clock": {
+              "epoch": 1204,
+              "slot": 520548666,
+              "unix_timestamp": 1794254278
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 1197025,
+              "net_sent": 4633891629443,
+              "pipeline_fee": 11584729074,
+              "strategy_units": 5515,
+              "total_spend": 4645476358517
+            },
+            "received": 1197025,
+            "result": {
+              "net_sent": 4633891629443,
+              "pipeline_fee": 11584729074,
+              "received": 1197025
+            },
+            "spent": 4645476358517,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              4633891629443,
+              -1197025
+            ]
+          },
+          "sold": true,
+          "tokens": 4645476358517,
+          "wait": "10 seconds after"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1204,
+              "slot": 520548791,
+              "unix_timestamp": 1794254328
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 25255987813043,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5472,
+              "total_spend": 10025000
+            },
+            "received": 25255987813043,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 25255987813043
+            },
+            "spent": 10025000,
+            "strategy_units": 9879,
+            "units": 35223,
+            "vault_change": [
+              -25255987813043,
+              10000000
+            ]
+          },
+          "got_back": 6683825,
+          "pipeline_fee_pct": 0.416,
+          "put_in": 10025000,
+          "returned_pct": 66.6716,
+          "sell": {
+            "amount_in": 25193005299793,
+            "clock": {
+              "epoch": 1204,
+              "slot": 520548791,
+              "unix_timestamp": 1794254328
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 6683825,
+              "net_sent": 25193005299793,
+              "pipeline_fee": 62982513250,
+              "strategy_units": 5515,
+              "total_spend": 25255987813043
+            },
+            "received": 6683825,
+            "result": {
+              "net_sent": 25193005299793,
+              "pipeline_fee": 62982513250,
+              "received": 6683825
+            },
+            "spent": 25255987813043,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              25193005299793,
+              -6683825
+            ]
+          },
+          "sold": true,
+          "tokens": 25255987813043,
+          "wait": "1 minute after"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1204,
+              "slot": 520550141,
+              "unix_timestamp": 1794254868
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1204,
+              "slot": 520550141,
+              "unix_timestamp": 1794254868
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "wait": "10 minutes after"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1204,
+              "slot": 520557641,
+              "unix_timestamp": 1794257868
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1204,
+              "slot": 520557641,
+              "unix_timestamp": 1794257868
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "wait": "1 hour after"
+        }
+      ],
+      "sizes": [
+        {
+          "amount": 10000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 38939561833,
+              "net_sent": 10000,
+              "pipeline_fee": 25,
+              "strategy_units": 5355,
+              "total_spend": 10025
+            },
+            "received": 38939561833,
+            "result": {
+              "net_sent": 10000,
+              "pipeline_fee": 25,
+              "received": 38939561833
+            },
+            "spent": 10025,
+            "strategy_units": 9762,
+            "units": 35106,
+            "vault_change": [
+              -38939561833,
+              10000
+            ]
+          },
+          "got_back": 9975,
+          "pipeline_fee_pct": 0.4888,
+          "put_in": 10025,
+          "returned_pct": 99.5012,
+          "sell": {
+            "amount_in": 38842455693,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9975,
+              "net_sent": 38842455693,
+              "pipeline_fee": 97106140,
+              "strategy_units": 5339,
+              "total_spend": 38939561833
+            },
+            "received": 9975,
+            "result": {
+              "net_sent": 38842455693,
+              "pipeline_fee": 97106140,
+              "received": 9975
+            },
+            "spent": 38939561833,
+            "strategy_units": 9701,
+            "units": 39530,
+            "vault_change": [
+              38842455693,
+              -9975
+            ]
+          },
+          "sold": true,
+          "tokens": 38939561833
+        },
+        {
+          "amount": 1000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 1000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 3875031212165,
+              "net_sent": 1000000,
+              "pipeline_fee": 2500,
+              "strategy_units": 5378,
+              "total_spend": 1002500
+            },
+            "received": 3875031212165,
+            "result": {
+              "net_sent": 1000000,
+              "pipeline_fee": 2500,
+              "received": 3875031212165
+            },
+            "spent": 1002500,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -3875031212165,
+              1000000
+            ]
+          },
+          "got_back": 997518,
+          "pipeline_fee_pct": 0.4981,
+          "put_in": 1002500,
+          "returned_pct": 99.503,
+          "sell": {
+            "amount_in": 3865367792683,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 997518,
+              "net_sent": 3865367792683,
+              "pipeline_fee": 9663419482,
+              "strategy_units": 5515,
+              "total_spend": 3875031212165
+            },
+            "received": 997518,
+            "result": {
+              "net_sent": 3865367792683,
+              "pipeline_fee": 9663419482,
+              "received": 997518
+            },
+            "spent": 3875031212165,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              3865367792683,
+              -997518
+            ]
+          },
+          "sold": true,
+          "tokens": 3875031212165
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495
+        },
+        {
+          "amount": 100000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 100000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 260767709916784,
+              "net_sent": 100000000,
+              "pipeline_fee": 250000,
+              "strategy_units": 5378,
+              "total_spend": 100250000
+            },
+            "received": 260767709916784,
+            "result": {
+              "net_sent": 100000000,
+              "pipeline_fee": 250000,
+              "received": 260767709916784
+            },
+            "spent": 100250000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -260767709916784,
+              100000000
+            ]
+          },
+          "got_back": 99832869,
+          "pipeline_fee_pct": 0.4983,
+          "put_in": 100250000,
+          "returned_pct": 99.5839,
+          "sell": {
+            "amount_in": 260117416375844,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 99832869,
+              "net_sent": 260117416375844,
+              "pipeline_fee": 650293540940,
+              "strategy_units": 5515,
+              "total_spend": 260767709916784
+            },
+            "received": 99832869,
+            "result": {
+              "net_sent": 260117416375844,
+              "pipeline_fee": 650293540940,
+              "received": 99832869
+            },
+            "spent": 260767709916784,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              260117416375844,
+              -99832869
+            ]
+          },
+          "sold": true,
+          "tokens": 260767709916784
+        },
+        {
+          "amount": 1000000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 1000000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 656309851100113,
+              "net_sent": 1000000000,
+              "pipeline_fee": 2500000,
+              "strategy_units": 5378,
+              "total_spend": 1002500000
+            },
+            "received": 656309851100113,
+            "result": {
+              "net_sent": 1000000000,
+              "pipeline_fee": 2500000,
+              "received": 656309851100113
+            },
+            "spent": 1002500000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -656309851100113,
+              1000000000
+            ]
+          },
+          "got_back": 999578833,
+          "pipeline_fee_pct": 0.4986,
+          "put_in": 1002500000,
+          "returned_pct": 99.7086,
+          "sell": {
+            "amount_in": 654673168179663,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 999578833,
+              "net_sent": 654673168179663,
+              "pipeline_fee": 1636682920450,
+              "strategy_units": 5515,
+              "total_spend": 656309851100113
+            },
+            "received": 999578833,
+            "result": {
+              "net_sent": 654673168179663,
+              "pipeline_fee": 1636682920450,
+              "received": 999578833
+            },
+            "spent": 656309851100113,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              654673168179663,
+              -999578833
+            ]
+          },
+          "sold": true,
+          "tokens": 656309851100113
+        },
+        {
+          "amount": 10000000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 773661734558603,
+              "net_sent": 10000000000,
+              "pipeline_fee": 25000000,
+              "strategy_units": 5604,
+              "total_spend": 10025000000
+            },
+            "received": 773661734558603,
+            "result": {
+              "net_sent": 10000000000,
+              "pipeline_fee": 25000000,
+              "received": 773661734558603
+            },
+            "spent": 10025000000,
+            "strategy_units": 10011,
+            "units": 35355,
+            "vault_change": [
+              -773661734558603,
+              10000000000
+            ]
+          },
+          "got_back": 9999503342,
+          "pipeline_fee_pct": 0.4987,
+          "put_in": 10025000000,
+          "returned_pct": 99.7457,
+          "sell": {
+            "amount_in": 771732403549728,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9999503342,
+              "net_sent": 771732403549728,
+              "pipeline_fee": 1929331008875,
+              "strategy_units": 5587,
+              "total_spend": 773661734558603
+            },
+            "received": 9999503342,
+            "result": {
+              "net_sent": 771732403549728,
+              "pipeline_fee": 1929331008875,
+              "received": 9999503342
+            },
+            "spent": 773661734558603,
+            "strategy_units": 9949,
+            "units": 39778,
+            "vault_change": [
+              771732403549728,
+              -9999503342
+            ]
+          },
+          "sold": true,
+          "tokens": 773661734558603
+        }
+      ],
+      "token": 0,
+      "transfer": {
+        "arrived": 37110665628495,
+        "bought": true,
+        "got_back": 9976231,
+        "put_in": 10025000,
+        "returned_pct": 99.5135,
+        "sell": {
+          "amount_in": 37018120327675,
+          "clock": {
+            "epoch": 1205,
+            "slot": 520629051,
+            "unix_timestamp": 1794286432
+          },
+          "input": 0,
+          "matches_quote": true,
+          "ok": true,
+          "output": 1,
+          "quote": {
+            "amount_out": 9976231,
+            "net_sent": 37018120327675,
+            "pipeline_fee": 92545300820,
+            "strategy_units": 5515,
+            "total_spend": 37110665628495
+          },
+          "received": 9976231,
+          "result": {
+            "net_sent": 37018120327675,
+            "pipeline_fee": 92545300820,
+            "received": 9976231
+          },
+          "spent": 37110665628495,
+          "strategy_units": 9877,
+          "units": 39706,
+          "vault_change": [
+            37018120327675,
+            -9976231
+          ]
+        },
+        "sent": 37110665628495,
+        "sold": true,
+        "transferred": true
+      },
+      "wallets": [
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "who": "fresh wallet"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "who": "fresh wallet"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "who": "fresh wallet"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "who": "fresh wallet"
+        },
+        {
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "who": "fresh wallet"
+        },
+        {
+          "address": "8VKU74PrpBhaxHTqYLQTE82CLGMAHSJ4qESLSqww5pbg",
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5375,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9782,
+            "units": 35126,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5524,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9886,
+            "units": 39715,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "who": "market creator"
+        },
+        {
+          "address": "DEwdbWGmGf6vdtRMkBXez2zJ71JbAaJ1DdD1s3bN8tYn",
+          "amount": 10000000,
+          "bought": true,
+          "buy": {
+            "amount_in": 10000000,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 1,
+            "matches_quote": true,
+            "ok": true,
+            "output": 0,
+            "quote": {
+              "amount_out": 37110665628495,
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "strategy_units": 5378,
+              "total_spend": 10025000
+            },
+            "received": 37110665628495,
+            "result": {
+              "net_sent": 10000000,
+              "pipeline_fee": 25000,
+              "received": 37110665628495
+            },
+            "spent": 10025000,
+            "strategy_units": 9785,
+            "units": 35129,
+            "vault_change": [
+              -37110665628495,
+              10000000
+            ]
+          },
+          "got_back": 9976231,
+          "pipeline_fee_pct": 0.4982,
+          "put_in": 10025000,
+          "returned_pct": 99.5135,
+          "sell": {
+            "amount_in": 37018120327675,
+            "clock": {
+              "epoch": 1205,
+              "slot": 520629051,
+              "unix_timestamp": 1794286432
+            },
+            "input": 0,
+            "matches_quote": true,
+            "ok": true,
+            "output": 1,
+            "quote": {
+              "amount_out": 9976231,
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "strategy_units": 5515,
+              "total_spend": 37110665628495
+            },
+            "received": 9976231,
+            "result": {
+              "net_sent": 37018120327675,
+              "pipeline_fee": 92545300820,
+              "received": 9976231
+            },
+            "spent": 37110665628495,
+            "strategy_units": 9877,
+            "units": 39706,
+            "vault_change": [
+              37018120327675,
+              -9976231
+            ]
+          },
+          "sold": true,
+          "tokens": 37110665628495,
+          "who": "upgrade authority"
+        }
+      ]
+    }
+  ],
+  "fee_accounts_missing": [],
+  "market": "51YanguqL28u3zTj8wiGgTnpUg2jN64fJFWAiXZaramH",
+  "mints": [
+    {
+      "address": "Ba4YHrvJiFCuctvPHPQvWUS84RFRGDjxv4aYaPXjECx9",
+      "decimals": 6,
+      "extensions": [],
+      "fee_account": "AgX454ztEcS8H2uWWJqig1HkPiFoeRSzinK75p7zr177",
+      "fee_account_exists": true,
+      "freeze_authority": null,
+      "mint_authority": null,
+      "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "vault": "B2DNmJqtBd7HEf4TheXCwEonjVoCiNNtMXsTTU1RpKTV",
+      "vault_balance": 789343857918106
+    },
+    {
+      "address": "So11111111111111111111111111111111111111112",
+      "decimals": 9,
+      "extensions": [],
+      "fee_account": "C4A165LMrLmoyBQLMjEz144orfjhPJpbVkqJbDMGyecs",
+      "fee_account_exists": true,
+      "freeze_authority": null,
+      "mint_authority": null,
+      "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "vault": "BYPWAiuvDPuQPhQTiFGr8xxH4HyyUTQJaNY9av6Nto2y",
+      "vault_balance": 250000000
+    }
+  ],
+  "money_side": {
+    "is_sol": true,
+    "mint": 1
+  },
+  "pipeline_check": {
+    "checks": [
+      {
+        "id": "market_account",
+        "message": "Market of registered strategy EZwLuZ8mSiBoeKtbHwQK4kxCqqj4JuureT1kHpTK3i6b with 2 mints; router config found.",
+        "status": "pass"
+      },
+      {
+        "id": "market_info",
+        "message": "The strategy reports the same mints, vaults and exact-out support the router recorded.",
+        "status": "pass"
+      },
+      {
+        "id": "fee_accounts",
+        "message": "Every mint has its Pipeline fee account.",
+        "status": "pass"
+      },
+      {
+        "id": "mint_extensions",
+        "message": "No Token-2022 extensions.",
+        "status": "pass"
+      },
+      {
+        "id": "resolve_accounts",
+        "message": "Resolves in at most 1 of 4 rounds in every direction; swaps need up to 1 strategy account(s).",
+        "status": "pass"
+      },
+      {
+        "id": "transaction_size",
+        "message": "The largest swap is 715 of 1232 bytes with 17 accounts, so it fits in a legacy transaction.",
+        "status": "pass"
+      },
+      {
+        "id": "quotes",
+        "message": "All 10 quotes succeeded through pipeline-quoter using only the resolved accounts (up to 5827 compute units each).",
+        "status": "pass"
+      },
+      {
+        "id": "quote_matches_swap",
+        "message": "All 10 router swaps delivered exactly the quoted output and charged exactly the quoted input and fee.",
+        "status": "pass"
+      },
+      {
+        "id": "min_out_enforced",
+        "message": "In 2 direction(s), asking for one unit more than the quote makes the swap fail.",
+        "status": "pass"
+      },
+      {
+        "id": "determinism",
+        "message": "Repeated quotes agree, and two different traders get the anonymous quote.",
+        "status": "pass"
+      },
+      {
+        "id": "compute",
+        "message": "Router swaps used 35105–39881 compute units, of which the strategy used up to 10264.",
+        "status": "pass"
+      },
+      {
+        "id": "exact_out_refund",
+        "message": "In 2 direction(s), an exact-out swap allowed twice the quoted input kept only the quoted input, and the fee was charged on that.",
+        "status": "pass"
+      },
+      {
+        "id": "round_trip",
+        "message": "In 2 pair(s), buying and immediately selling back returned less than was put in.",
+        "status": "pass"
+      },
+      {
+        "id": "dust_and_zero",
+        "message": "Zero-input quotes give no output, zero-input swaps are refused, and 1-unit swaps either fail cleanly or deliver what was quoted.",
+        "status": "pass"
+      }
+    ],
+    "round_trip_details": {
+      "trips": [
+        {
+          "error": null,
+          "got_back": 787375349371,
+          "intermediate": 202497,
+          "pipeline_fees": 1973360150,
+          "put_in": 789343857918,
+          "route": "0→1→0"
+        },
+        {
+          "error": null,
+          "got_back": 249377,
+          "intermediate": 972337839268,
+          "pipeline_fees": 2424783267,
+          "put_in": 250000,
+          "route": "1→0→1"
+        }
+      ]
+    },
+    "summary": {
+      "fail": 0,
+      "pass": 14,
+      "result": "pass",
+      "skip": 0,
+      "warn": 0
+    }
+  },
+  "quote_parity": {
+    "compared": 74,
+    "matched": 74,
+    "max_strategy_units": 10011,
+    "max_swap_units": 39778,
+    "mismatches": [],
+    "quote_failed_swap_ok": [],
+    "quote_ok_swap_failed": [],
+    "swaps": 74
+  },
+  "readable": {
+    "probes": [
+      {
+        "amount": 789343857,
+        "input": 0,
+        "output": 1,
+        "state": {
+          "amount_out": 202,
+          "kind": "quotes"
+        }
+      },
+      {
+        "amount": 10000,
+        "input": 1,
+        "output": 0,
+        "state": {
+          "amount_out": 38939561833,
+          "kind": "quotes"
+        }
+      }
+    ],
+    "unreadable": false
+  },
+  "router": {
+    "deploy_slot": 520510501,
+    "executable_len": 400569,
+    "executable_sha256": "fb0003280ef9d0bbeca3919c4491e4728620eddd1d7ebd96340727b15ca621b8",
+    "loader": "bpf-loader-upgradeable",
+    "program_id": "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34",
+    "upgrade_authority": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ"
+  },
+  "run_at": 1794286432,
+  "schema": "canary-proto/0",
+  "source": {
+    "accounts_cloned": 14,
+    "epoch": 1205,
+    "genesis_hash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+    "notes": [],
+    "slot": 520629051,
+    "unix_timestamp": 1794286432
+  },
+  "strategy": {
+    "deploy_slot": 520494490,
+    "executable_len": 362809,
+    "executable_sha256": "997f1597c8fb6897ff7614f69288235c6728138da83739b72950048a83f0cdc4",
+    "loader": "bpf-loader-upgradeable",
+    "program_id": "EZwLuZ8mSiBoeKtbHwQK4kxCqqj4JuureT1kHpTK3i6b",
+    "upgrade_authority": "DEwdbWGmGf6vdtRMkBXez2zJ71JbAaJ1DdD1s3bN8tYn"
+  },
+  "tradable_directions": [
+    [
+      0,
+      1
+    ],
+    [
+      1,
+      0
+    ]
+  ],
+  "transaction_describing_accounts": []
+}

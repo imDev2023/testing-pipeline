@@ -1,0 +1,26 @@
+# PROTOTYPE, throwaway: a rough Canary harness for the wayfinder ticket
+# "Canary checks on the four devnet strategies". Not production code.
+# Pipeline's crates come from its repository at a pinned commit; none of its source is copied here.
+[package]
+name = "canary-proto"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+borsh = "1.5"
+litesvm = "=0.18.2"
+pipeline-check = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d69e9e55420946199dfa81e6c75a8d595b" }
+pipeline-client = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d69e9e55420946199dfa81e6c75a8d595b" }
+pipeline-quoter = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d69e9e55420946199dfa81e6c75a8d595b" }
+pipeline-strategy-interface = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d69e9e55420946199dfa81e6c75a8d595b" }
+serde_json = "1"
+solana-account = "=4.7.0"
+solana-clock = "~3.2.0"
+solana-keypair = "=3.1.2"
+solana-signer = "=3.0.1"
+solana-transaction = "=4.3.0"
+
+# Its own workspace, so it stays out of any workspace this repo grows.
+[workspace]
