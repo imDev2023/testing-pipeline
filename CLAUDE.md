@@ -12,11 +12,13 @@ The owner wants it done as soon as possible in parallel sessions: one ticket per
 Auto mode refuses `gh repo create` and similar outward GitHub writes: write the commands to a script and hand the owner one `! bash <script>` line (`scripts/create-github-repo.sh` is the repo's).
 Start every session by reading the map's `## Next` section (the map is the issue labelled `wayfinder:map`: `gh issue list --repo imDev2023/testing-pipeline --label wayfinder:map`).
 Decisions land in `docs/adr/` and the spec in `docs/spec/`: a shared `README.md` plus one file per product; build tickets are labelled `build` and run one per session.
+Every decision settled so far is one block in `docs/decisions.md`, the decision register, with a stable ID.
 
 ## Read first
 
 - `research/README.md`: everything learned before the map, including how Pipeline works and its limits (`research/pipeline-router.md`), who MetalLegBob is and what he asked for (`research/metallegbob.md`), and full-text archives of his X posts (`research/x/`).
 - `GLOSSARY.md`: the project's language; use its terms in issues, code and tests.
+- `docs/decisions.md`: the decision register, every decision with its ID, the one place its value lives and how it would change; its top says how to add or change an entry.
 - `docs/toolchain.md`: the Solana toolchain this project builds and tests with, installed side by side by `scripts/install-toolchain.sh` and put on `PATH` per shell by `source scripts/toolchain-env.sh`; never change the machine's default Solana CLI, which the owner's other projects use.
 - For anything about Jupiter or Meteora, the owner's canonical knowledge base at `/Volumes/Farhan/Work Folder/Dev/AI/Research-Projects/jupiter-meteora`, not the web; for Pool4's Uniswap v4 background, `/Volumes/Farhan/Work Folder/Dev/AI/Research-Projects/v4-hooks`; for Cloudflare, `/Volumes/Farhan/Work Folder/Dev/AI/Research-Projects/cloudflare`.
 
@@ -24,6 +26,12 @@ Decisions land in `docs/adr/` and the spec in `docs/spec/`: a shared `README.md`
 
 - Pipeline's source is read from a clone in a scratchpad at commit `a8b1b1d` or newer (note which); never copy the router (BSL 1.1 until 2028-11-08) or the rest of Pipeline's repo into this repo.
   The exceptions are code generated from Pipeline's Apache-2.0 strategy template (`scripts/new-strategy.sh`), which our strategies start from, and its Apache-2.0 `test-hook` allowlist hook, which the containment hook starts from (owner, 2026-11-10).
+- The suite is built for MetalLegBob (owner, 2026-11-10): every decision the owner makes is a default that he may change.
+  Each session records the decisions it settles in the decision register, `docs/decisions.md`, in its block format, and runs `node scripts/decisions.mjs --check`.
+- Specs and code keep each decision cheap to change: policy values (fees, caps, splits, defaults, limits) live in one named place per product, a config module or creation parameters, never scattered.
+  A value that must be fixed on-chain for trust stays a build-time constant in that place, so it can change before deployment.
+- Anything shown or sent to MetalLegBob (a PR, a demo, the progress site, a message) lists the decisions it rests on, by ID, and invites him to change any of them.
+  The register never quotes him: a change he asks for is recorded only as a changed decision with its date.
 - Every on-chain program meets the engineering and security bar in `docs/spec/README.md` before its build tickets count as done.
 - Devnet only until Pipeline's router is on mainnet; never create mainnet deployments before then.
 - Never hold users' private keys, in Aviary or a Telegram bot.
