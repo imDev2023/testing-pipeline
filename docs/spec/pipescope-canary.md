@@ -253,8 +253,9 @@ Each check on each market produces one **Canary result**, a record the facts pan
 - Each trigger starts or wakes the `CanaryRun` Durable Object of the strategy version concerned, which [`pipescope-architecture.md`](pipescope-architecture.md) keys by program id and ProgramData slot; that file left the triggers beyond a new version to this one.
 - A sweep of all 61 devnet markets took 2 minutes 27 seconds on the owner's Mac, about 45 seconds of it CPU, and 442 RPC requests (about 7 a market), before the token-authority runs were added; with them the request count was the same.
 - Against the architecture's budget, four sweeps a day are about 32 Canary runs a day (one per strategy version, about 960 a month where it assumed 500) and about 53,000 RPC requests a month (where it assumed about 5,000 credits for Canary snapshots).
-  Both stay inside the plans it lists: the requests are a twentieth of Helius's free million, and if each sweep keeps the one container awake for about ten minutes, four sweeps a day are about 20 GiB-hours a month of the 25 included.
-  The build should measure a sweep on the `basic` instance, a quarter of a vCPU, before trusting the last figure.
+  The requests are about a twentieth of Helius's free million credits.
+  If each sweep keeps the one container awake for about ten minutes, four sweeps a day are about 20 GiB-hours a month, close to the 18.5 the architecture budgeted and, like them, at worst a few cents over the allowance shared with the owner's other project.
+  The build should measure a sweep on the `basic` instance, a quarter of a vCPU, before trusting that figure.
 
 ## Built on
 
