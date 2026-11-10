@@ -258,6 +258,22 @@ _Avoid_: vault (Meteora's Dynamic Vault is the prior art), yield pool
 The share of a lending pool's liquidity kept in its own vaults so swaps never wait on the lending market.
 _Avoid_: reserve (a lending market's term)
 
+**Lent side**:
+The one mint of a lending pool market whose liquidity is partly lent to a lending market; the market's other mint is never lent.
+_Avoid_: quote side (the lent side is chosen for lending, not for quoting), collateral
+
+**Lending market**:
+An outside protocol that lends deposited tokens to borrowers and pays the depositors interest; for the lending pool, Kamino Lend.
+_Avoid_: money market, lending protocol
+
+**cToken**:
+The receipt a lending market mints for a deposit, redeemable later for the deposit plus interest at the lending market's exchange rate.
+_Avoid_: collateral token (true only inside a borrower's position), LP share
+
+**Withdraw mode**:
+A lending pool market's state while its lending market is too short of free liquidity to pay it back quickly: it lends nothing and takes back everything it can.
+_Avoid_: emergency mode (that is the lending market's own switch), pause
+
 **Single-use AMM**:
 A strategy designed for one client protocol's or game's token design, built by us for that client.
 _Avoid_: custom AMM alone, white-label
