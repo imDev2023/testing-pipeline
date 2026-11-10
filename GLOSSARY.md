@@ -179,16 +179,40 @@ The wallet Pipescope's integrator fees are paid into; it is not the suite's trea
 _Avoid_: treasury (Pipeline's and the suite's are other wallets), revenue wallet
 
 **Canary checks** (working name):
-The automated tests Pipescope runs against each strategy version in the quoter: the exit test, quote against swap, fee honesty and control, re-run whenever the strategy is upgraded.
+The automated tests Pipescope runs on a private copy of each market, for the strategy version then deployed: readability, Pipeline's conformance report, the exit test, quote against swap, fee honesty and control; re-run when the strategy or the router is upgraded, when a market is created, and on a schedule.
 _Avoid_: audit (they detect, they cannot prove safety), score, rating
 
+**Canary result**:
+The record of one Canary check on one market of one strategy version at one slot: what was tried, what was measured, and an outcome of pass, warn, fail, not run or noted.
+_Avoid_: verdict, finding (a result can be a clean pass), score
+
 **Exit test**:
-The Canary check that buys and then sells back from random wallets, at several sizes and with the clock moved forward, to catch markets that let people in but not out.
+The Canary checks that buy and then sell back: at several sizes, after waits, with the clock set back to the market's launch, from fresh wallets and insiders' wallets, with transferred tokens, and as a queue of buyers leaving in turn, to catch markets that let people in but not out.
 _Avoid_: honeypot check alone, sell test
 
 **Canary run**:
-One run of the Canary checks against one strategy version, with the date and inputs it used; its results stay attached to that version.
+One run of the Canary checks against one strategy version, on all of its markets or on one of them, with the date and inputs it used; its results stay attached to that version.
 _Avoid_: scan, audit, test run
+
+**Round-trip return**:
+The share of what a trader put into a buy, Pipeline fee included, that comes back when they sell everything they bought.
+_Avoid_: slippage (that is price movement against a quote), tax, spread
+
+**Ordinary trade**:
+The trade Canary judges hardest: a small buy at the present clock, sold straight back; only what it meets can make a Canary result fail.
+_Avoid_: test trade, base case
+
+**Money side**:
+The mint of a market that Canary spends and counts its results in: wrapped SOL when the market has it.
+_Avoid_: quote side (a market need not have one), tax side (that is the tax AMM's)
+
+**Stranded market**:
+A market whose strategy's current version can no longer read its market state, left behind by an upgrade, so it cannot be quoted or traded through Pipeline.
+_Avoid_: dead market, broken pool, closed market (a closed market is read and refuses trades by its own rules)
+
+**Conformance report**:
+The report of Pipeline's own checker, `pipeline-check`, on one market: whether quoting and trading it through the router behaves as the strategy interface requires.
+_Avoid_: audit, Canary result alone (Canary keeps it as one result among its own)
 
 **Explainer**:
 Pipescope's plain-language account of what a strategy version's facts mean for a trader, written by an LLM from evidence Pipescope prepares (chain facts, Canary results, source only when the build is verified, and author text marked untrusted), and shown only after code has checked it.
