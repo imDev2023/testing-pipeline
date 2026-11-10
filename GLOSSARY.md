@@ -150,7 +150,7 @@ _Avoid_: exit fee, sell fee
 
 **Tax authority**:
 The one address that may change a tax market's rates, within ranges fixed when the market was created, and its tax recipients, until it renounces.
-_Avoid_: admin, owner (the Owner is the person this suite is built for)
+_Avoid_: admin, owner (the Owner is the person who runs this project)
 
 **Tax recipient**:
 An address that receives a fixed share of a market's tax.
@@ -346,11 +346,11 @@ _Avoid_: migration (nothing is migrated), smoke test
 ### People and parties
 
 **Owner**:
-The person this suite is built for, who decides scope and spends money.
+The person who runs this project: sets its scope, answers each decision with a default and spends money.
 _Avoid_: user (that is a trader or LP), client
 
 **MetalLegBob**:
-Pipeline's author (display name mlbob), founder of The Fantastical Finance Factory; see `research/metallegbob.md`.
+Pipeline's author (display name mlbob), founder of The Fantastical Finance Factory, for whom the suite is built, so he may change any of its decisions; see `research/metallegbob.md`.
 _Avoid_: Bob, the dev
 
 **Factory**:
@@ -360,3 +360,13 @@ _Avoid_: fffactory in prose, Motion (that is the token)
 **IMD**:
 imd.fun's AI agent swarm and its token, whose developer designed Pool4 and to whom MetalLegBob asked a Pool4 port to route some fees.
 _Avoid_: the oracle alone, the swarm alone
+
+### How decisions are kept
+
+**Default**:
+A decision as the owner answered it, which stands until MetalLegBob changes it.
+_Avoid_: final decision, requirement
+
+**Decision register**:
+`docs/decisions.md`, the list of every decision settled for the suite: one block each, with a stable ID, the single place where its value lives and how it would change.
+_Avoid_: changelog, ADR (an ADR argues one lasting trade-off; the register indexes every decision)

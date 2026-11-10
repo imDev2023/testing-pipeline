@@ -1,0 +1,32 @@
+# Keeps docs/decisions.md in the block format the progress site parses,
+# and every "Specified in" link pointing at a section that exists.
+name: Decision register
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "CLAUDE.md"
+      - "scripts/decisions*.mjs"
+      - ".github/workflows/decisions.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "CLAUDE.md"
+      - "scripts/decisions*.mjs"
+      - ".github/workflows/decisions.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Test the parser
+        run: node --test scripts/decisions.test.mjs
+      - name: Check the register
+        run: node scripts/decisions.mjs --check
