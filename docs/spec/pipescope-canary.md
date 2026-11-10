@@ -90,6 +90,8 @@ What came back clean is evidence too:
 - These words follow `pipeline-check`'s (pass, warn, fail, skip) so one page can show both.
 - An outcome belongs to one check on one market.
   Canary never adds outcomes up into a score, a badge or a colour, which [`pipescope.md`](pipescope.md) rules out; how a result is shown is for [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16).
+- The engineering bar in [`README.md`](README.md) asks our own strategies to pass Canary checks on devnet.
+  That means no fail on any market of the version, with every warn named and explained in that product's spec; it is a gate for us, never something shown to traders.
 - One consequence of the rule: a strategy that lets a buyer sell at once and refuses them a day later gets a warn, not a fail.
   The result's sentence says plainly that the tokens could not be sold after that wait.
 
