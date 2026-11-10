@@ -1,9 +1,9 @@
-# Pipescope: Canary checks
+# Aviary: Canary checks
 
 Decided in [Canary checks on the four devnet strategies](https://github.com/imDev2023/testing-pipeline/issues/14) on 2026-11-10, from a rough harness run on every devnet market and the owner's reaction to its results.
 The harness, its output for all 61 markets and a summary table are on the throwaway branch [`prototype/canary-checks`](https://github.com/imDev2023/testing-pipeline/tree/prototype/canary-checks/prototype/canary-checks); that branch is never merged.
 It builds on [Prior art for behavioural testing of Solana programs](https://github.com/imDev2023/testing-pipeline/issues/8) ([findings](https://github.com/imDev2023/testing-pipeline/blob/research/behavioural-testing-prior-art/research/behavioural-testing-prior-art.md)) and [Where the quoter runs for Canary checks](https://github.com/imDev2023/testing-pipeline/issues/7) ([findings](https://github.com/imDev2023/testing-pipeline/blob/research/quoter-hosting/research/quoter-hosting.md)).
-[Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) merges this file with the other Pipescope spec files.
+[Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) merges this file with the other Aviary spec files.
 
 ## What Canary is
 
@@ -227,7 +227,7 @@ Each check on each market produces one **Canary result**, a record the facts pan
 - A check that has not run for a market and version still has a record, with the outcome "not run" and why.
 - Per strategy version, Canary also keeps a roll-up: for each check, how many markets got each outcome, and which markets warn or fail.
   This is where "6 of 8 markets stranded since the version deployed in slot 520,151,758" comes from.
-- Pipescope keeps the latest record of each check for each market and version, and every earlier record whose outcome differed from the one after it.
+- Aviary keeps the latest record of each check for each market and version, and every earlier record whose outcome differed from the one after it.
 - `custom_instructions` and the stranded-market count feed the explainer's F items, where its spec already lists them; every other result, the conformance report included, is one of its C items.
 - Results for an older strategy version stay attached to that version and are never shown as the current version's.
 

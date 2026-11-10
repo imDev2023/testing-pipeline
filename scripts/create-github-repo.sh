@@ -4,7 +4,7 @@ set -euo pipefail
 cd "/Volumes/Farhan/Work Folder/Dev/AI/Research-Projects/testing-pipeline"
 
 gh repo create imDev2023/testing-pipeline --private \
-  --description "Products on MetalLegBob's Pipeline router for Solana: a terminal with safety checks, a containment hook, a tax AMM, Pool4 for Solana and a lending pool" \
+  --description "Products on MetalLegBob's Pipeline router for Solana: a terminal with safety checks, a containment hook, a tax AMM, a buy wall AMM and a lending AMM" \
   --source . --remote origin --push
 
 R=imDev2023/testing-pipeline

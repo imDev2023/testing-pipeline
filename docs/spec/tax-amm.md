@@ -43,7 +43,7 @@ The constants are compiled into the program; changing one is a program upgrade, 
 - Exactly two mints, in the order the creator gives them (index 0 and 1), which is the order `pipeline_market_info` reports.
 - The mints must differ, and each must be owned by SPL Token or Token-2022 and pass the mint rules below.
 - The tax side is one of the two indexes, chosen by the creator and fixed for the market's life.
-- Pipescope's launch form defaults the tax side to the quote mint (SOL or USDC), so recipients are paid in SOL or USDC rather than in the token they would sell.
+- Aviary's launch form defaults the tax side to the quote mint (SOL or USDC), so recipients are paid in SOL or USDC rather than in the token they would sell.
 
 ### Addresses
 
@@ -83,9 +83,9 @@ The constants are compiled into the program; changing one is a program upgrade, 
 
 - A Token-2022 mint may carry only these mint extensions: transfer hook (any hook program), metadata pointer, token metadata, group pointer, group member pointer, token group and token group member.
 - Every other mint extension is refused at creation, including transfer fee, permanent delegate (it could take tokens out of the vaults), confidential transfers, pausable, default account state, non-transferable, mint close authority, interest-bearing, scaled UI amount and permissioned burn, as well as any extension the program doesn't recognise.
-- Mint and freeze authorities are allowed, since USDC has both; Pipescope shows them.
+- Mint and freeze authorities are allowed, since USDC has both; Aviary shows them.
 - In Pipeline's trust flags this means a tax market's mints can only ever show `token-2022`, `mint-authority`, `freeze-authority`, `transfer-hook` and `transfer-hook-authority`; a contained token shows the last two until its unlock clears both.
-- The trust flags describe strategy programs and mints, not markets, so no flag ever says a market is taxed: the strategy metadata declares it (category `amm`, tag `tax`) and Pipescope reads each market's rates, bounds, authority and recipients from its market state.
+- The trust flags describe strategy programs and mints, not markets, so no flag ever says a market is taxed: the strategy metadata declares it (category `amm`, tag `tax`) and Aviary reads each market's rates, bounds, authority and recipients from its market state.
 
 ### Creating a market
 
@@ -166,7 +166,7 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
 
 - From every tax, the suite share comes first: `floor(tax × SUITE_SHARE_BPS / 10,000)`, owed to `SUITE_TREASURY`.
 - The rest is the creator's part, split by the market's shares: each recipient `floor(rest × share / 10,000)`, the burn `floor(rest × burn_share_bps / 10,000)`, and any rounding remainder to the first recipient.
-- Pipescope's launch form shows creators the whole split, the suite share included.
+- Aviary's launch form shows creators the whole split, the suite share included.
 
 ### Payout
 
@@ -176,12 +176,12 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
   - Under the containment hook the home market's vault is the only account allowed to pay out a contained token, so tax held anywhere else would be stuck.
 - `distribute { slot }` is permissionless: anyone may call it, at any time, for one slot.
   - A recipient or the suite share is paid its whole owed amount to the associated token account of its wallet for the tax-side mint, which the instruction creates if missing, at the caller's expense.
-    For native SOL that account holds wrapped SOL, which the recipient unwraps by closing it (Pipescope offers this).
+    For native SOL that account holds wrapped SOL, which the recipient unwraps by closing it (Aviary offers this).
   - The burn slot burns its owed amount from the vault.
   - Each slot is paid separately, so one broken recipient account never holds up the others.
 - Owed amounts belong to slots: if the tax authority changes a slot's recipient, what the slot is owed goes to the new recipient, so a recipient leaving should be paid out first (anyone can call `distribute`).
 - Owed amounts fit in u64, because together with the real reserve they never exceed the vault's balance.
-- Pipeline's API reports raw vault balances, so tax not yet paid out shows there as liquidity; Pipescope reads the real reserves from the market state instead.
+- Pipeline's API reports raw vault balances, so tax not yet paid out shows there as liquidity; Aviary reads the real reserves from the market state instead.
 
 ## Counters for the containment hook
 
@@ -208,7 +208,7 @@ Which field the unlock reads, in which unit, and whether a home market needs a m
 | `renounce_tax_authority` | `other` | The tax authority |
 
 - Every action that moves tokens forwards transfer-hook accounts after its own, as the template's swap does.
-- Each instruction emits an event (market created, seeded, taxes changed, recipients changed, authority renounced, distributed) so Pipescope's indexer can show a market's history; Pipescope reads current values from the market state, not from events.
+- Each instruction emits an event (market created, seeded, taxes changed, recipients changed, authority renounced, distributed) so Aviary's indexer can show a market's history; Aviary reads current values from the market state, not from events.
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, description, category `amm`, tags including `tax`, links including `source` and the IDL, `init` as above with `market_state: new_keypair`, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256.
 
 ## Upgrades and freezing

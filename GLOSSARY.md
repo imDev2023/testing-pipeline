@@ -1,10 +1,10 @@
 # testing-pipeline
 
 A suite of products built on Pipeline, MetalLegBob's permissionless router for experimental Solana markets.
-The repo and folder keep the working name testing-pipeline until the owner names the suite.
+The suite's public name is Aviary; the repo and folder keep the internal name testing-pipeline.
 Its reason to exist is that new market designs on Solana get no distribution, and Pipeline only fixes that if people can find, trust and trade what is listed on it.
 
-Product names below marked "working name" are placeholders until the wayfinder map settles them.
+Product names below are the public names the owner settled on 2026-11-10; where one replaced a working name, its _Avoid_ line says which.
 
 ## Language
 
@@ -27,7 +27,7 @@ A strategy's program bytes as of one upgrade; a strategy that is upgraded become
 _Avoid_: release, build
 
 **Verified build**:
-A deployed program whose bytes are shown, by rebuilding a published commit in a pinned Docker build and comparing hashes, to come from that source; Pipescope uses a strategy version's source as evidence only when its build is verified.
+A deployed program whose bytes are shown, by rebuilding a published commit in a pinned Docker build and comparing hashes, to come from that source; Aviary uses a strategy version's source as evidence only when its build is verified.
 _Avoid_: verified program (says nothing about source), open source (published source is not verified source), audited
 
 **Market**:
@@ -76,7 +76,7 @@ _Avoid_: simulator (RPC simulation is the other way to quote), oracle
 
 **Conformance checker**:
 Pipeline's `pipeline-check`, which quotes and trades a market through the real router in a local Solana VM and reports Pass, Warn, Fail or Skip per check; a strategy's developer runs it and may publish its report.
-_Avoid_: Canary checks (Pipescope's own, run on every strategy version), audit
+_Avoid_: Canary checks (Aviary's own, run on every strategy version), audit
 
 **Swap event**:
 The `SwapEvent` the router emits once per swap through a self-call, which carries everything needed to chart a trade.
@@ -100,7 +100,7 @@ _Avoid_: hook alone when Uniswap v4 hooks are also in play
 A third party opening its own pool for someone else's token to take that token's volume and fees; MetalLegBob's "vampire LP".
 _Avoid_: copycat (a copied token, not a copied pool), fork
 
-**Containment hook** (working name):
+**Containment hook**:
 A transfer hook that lets a token move only into or out of its home market until its unlock, so it cannot be vamped while young.
 _Avoid_: lock (it locks trading venues, not tokens), anti-sniper
 
@@ -157,29 +157,34 @@ An address that receives a fixed share of a market's tax.
 _Avoid_: beneficiary, fee receiver
 
 **Suite share**:
-Our fixed tenth of every tax market's tax and of every Pool4 for Solana market's fee, paid to the suite's treasury before the rest is split.
+Our fixed tenth of every tax market's tax and of every buy wall market's fee, paid to the suite's treasury before the rest is split.
 _Avoid_: protocol fee (Meteora's term), platform fee
 
 **Virtual reserve**:
 An amount a market prices as if it held on one side, so a token can launch without the other side; it is never paid out.
 _Avoid_: fake liquidity, virtual liquidity
 
-### Our products (working names)
+### Our products
 
-**Pipescope** (working name):
-Our Pipeline terminal: it finds every strategy and market as it appears, charts them from swap events, trades them through the router with our integrator fee, renders their custom-action forms and shows Canary results and an explainer for each.
-_Avoid_: dashboard, explorer, screener alone (it trades too)
+**Aviary**:
+The public name of the suite and of its terminal, which share it: the terminal finds every strategy and market as it appears, charts them from swap events, trades them through the router with our integrator fee, renders their custom-action forms and shows Canary results and an explainer for each.
+In these documents Aviary alone means the terminal, and the suite is called the suite.
+_Avoid_: Pipescope (the working name, retired because it borrowed Pipeline's), dashboard, explorer, screener alone (it trades too)
+
+**Suite**:
+Everything we build on Pipeline: the terminal and our on-chain products, which carry the suite's name before their own in public (Aviary Tax AMM, Aviary Containment Hook, Aviary Buy Wall AMM, Aviary Lending AMM).
+_Avoid_: the protocol, the platform, the Factory (that is MetalLegBob's)
 
 **Fee mint**:
-A mint Pipescope takes its integrator fee in when a trader pays with it: SOL and USDC; a swap paying with any other mint carries no integrator fee.
+A mint Aviary takes its integrator fee in when a trader pays with it: SOL and USDC; a swap paying with any other mint carries no integrator fee.
 _Avoid_: quote mint (a market need not quote in it), fee token
 
 **Fee wallet**:
-The wallet Pipescope's integrator fees are paid into; it is not the suite's treasury, which receives the tax AMM's suite share.
+The wallet Aviary's integrator fees are paid into; it is not the suite's treasury, which receives the tax AMM's suite share.
 _Avoid_: treasury (Pipeline's and the suite's are other wallets), revenue wallet
 
-**Canary checks** (working name):
-The automated tests Pipescope runs on a private copy of each market, for the strategy version then deployed: readability, Pipeline's conformance report, the exit test, quote against swap, fee honesty and control; re-run when the strategy or the router is upgraded, when a market is created, and on a schedule.
+**Canary checks**:
+The automated tests Aviary runs on a private copy of each market, for the strategy version then deployed: readability, Pipeline's conformance report, the exit test, quote against swap, fee honesty and control; re-run when the strategy or the router is upgraded, when a market is created, and on a schedule.
 _Avoid_: audit (they detect, they cannot prove safety), score, rating
 
 **Canary result**:
@@ -215,18 +220,18 @@ The report of Pipeline's own checker, `pipeline-check`, on one market: whether q
 _Avoid_: audit, Canary result alone (Canary keeps it as one result among its own)
 
 **Explainer**:
-Pipescope's plain-language account of what a strategy version's facts mean for a trader, written by an LLM from evidence Pipescope prepares (chain facts, Canary results, source only when the build is verified, and author text marked untrusted), and shown only after code has checked it.
+Aviary's plain-language account of what a strategy version's facts mean for a trader, written by an LLM from evidence Aviary prepares (chain facts, Canary results, source only when the build is verified, and author text marked untrusted), and shown only after code has checked it.
 _Avoid_: AI summary, review, audit
 
 **Facts panel**:
-The part of a Pipescope strategy or market page that code renders from Pipescope's own chain data and Canary results; the explainer narrates it and can never change it.
+The part of an Aviary strategy or market page that code renders from Aviary's own chain data and Canary results; the explainer narrates it and can never change it.
 _Avoid_: overview, AI panel
 
 **Evidence id**:
 The id of one item of evidence given to the explainer (P, F, C, S or A and a number), which every sentence of an explanation must cite and code checks.
 _Avoid_: citation (the Claude API feature, which we do not use), footnote
 
-**Tax AMM** (working name):
+**Tax AMM**:
 Our strategy whose markets always take their tax on the tax side, outside the price curve, with liquidity locked for good; built to pair with the containment hook.
 _Avoid_: tax token (the token is not the AMM)
 
@@ -234,56 +239,60 @@ _Avoid_: tax token (the token is not the AMM)
 A market on the tax AMM.
 _Avoid_: tax pool, taxed pair
 
-**Pool4 for Solana** (working name):
+**Buy wall AMM**:
 Our port of IMD's Pool4 design to a Pipeline strategy: each market owns all its liquidity, trims inventory above a cap after sells, burns what it trims except for a reward share, and keeps a buy wall under the price.
-_Avoid_: Pool4 alone (that is IMD's Uniswap v4 product)
+_Avoid_: Pool4 for Solana (the working name; Pool4 is IMD's product name, so ours only credits it), Pool4 alone (that is IMD's Uniswap v4 product)
+
+**Buy wall market**:
+A market on the buy wall AMM.
+_Avoid_: Pool4-style market, Pool4 pool
 
 **Inventory cap**:
-The most of the token a Pool4-style market may hold after a sell; anything above it is trimmed.
+The most of the token a buy wall market may hold after a sell; anything above it is trimmed.
 _Avoid_: max supply, reserve limit
 
 **Trim**:
-Removing a Pool4-style market's token inventory above the inventory cap together with the proportional SOL, without moving the price.
+Removing a buy wall market's token inventory above the inventory cap together with the proportional SOL, without moving the price.
 _Avoid_: burn (the burn is what happens to most of the trimmed tokens), skim
 
 **Buy wall**:
-A Pool4-style market's SOL-only bid below the price, funded by the SOL that trims recover and by any part of its fee the market's creator sent there.
+A buy wall market's SOL-only bid below the price, funded by the SOL that trims recover and by any part of its fee the market's creator sent there.
 _Avoid_: floor (it moves), treasury
 
 **Cap floor**:
-The lowest a Pool4-style market's inventory cap can ever fall, fixed when the market is created.
+The lowest a buy wall market's inventory cap can ever fall, fixed when the market is created.
 _Avoid_: floor alone (the buy wall has its own), minimum supply
 
 **Cap decay**:
-The most a Pool4-style market's inventory cap may fall in a day, however much is bought.
+The most a buy wall market's inventory cap may fall in a day, however much is bought.
 _Avoid_: burn rate (the cap is not the supply), emission
 
 **Retired tokens**:
-Tokens a Pool4-style market has trimmed or its buy wall has bought, waiting to be burned and split.
+Tokens a buy wall market has trimmed or its buy wall has bought, waiting to be burned and split.
 _Avoid_: burned (not yet), treasury
 
 **Reward share**:
-The part of a Pool4-style market's retired tokens that goes to its rewards recipient instead of being burned.
+The part of a buy wall market's retired tokens that goes to its rewards recipient instead of being burned.
 _Avoid_: staking yield (the recipient need not be a staking program), tax
 
 **Designer share**:
-The fixed tenth of every Pool4 for Solana market's fee owed to IMD and Adam, who designed Pool4.
+The fixed tenth of every buy wall market's fee owed to IMD and Adam, who designed Pool4.
 _Avoid_: royalty, IMD tax
 
-**Lending pool** (working name):
+**Lending AMM**:
 Our strategy that keeps a buffer of its liquidity for swaps and lends the rest to a lending market between them.
-_Avoid_: vault (Meteora's Dynamic Vault is the prior art), yield pool
+_Avoid_: lending pool (the working name; it reads as a pool to lend to or borrow from, which is a lending market), vault (Meteora's Dynamic Vault is the prior art), yield pool
 
 **Buffer**:
-The share of a lending pool's liquidity kept in its own vaults so swaps never wait on the lending market.
+The share of a lending AMM's liquidity kept in its own vaults so swaps never wait on the lending market.
 _Avoid_: reserve (a lending market's term)
 
 **Lent side**:
-The one mint of a lending pool market whose liquidity is partly lent to a lending market; the market's other mint is never lent.
+The one mint of a lending AMM market whose liquidity is partly lent to a lending market; the market's other mint is never lent.
 _Avoid_: quote side (the lent side is chosen for lending, not for quoting), collateral
 
 **Lending market**:
-An outside protocol that lends deposited tokens to borrowers and pays the depositors interest; for the lending pool, Kamino Lend.
+An outside protocol that lends deposited tokens to borrowers and pays the depositors interest; for the lending AMM, Kamino Lend.
 _Avoid_: money market, lending protocol
 
 **cToken**:
@@ -291,7 +300,7 @@ The receipt a lending market mints for a deposit, redeemable later for the depos
 _Avoid_: collateral token (true only inside a borrower's position), LP share
 
 **Withdraw mode**:
-A lending pool market's state while its lending market is too short of free liquidity to pay it back quickly: it lends nothing and takes back everything it can.
+A lending AMM market's state while its lending market is too short of free liquidity to pay it back quickly: it lends nothing and takes back everything it can.
 _Avoid_: emergency mode (that is the lending market's own switch), pause
 
 **Single-use AMM**:

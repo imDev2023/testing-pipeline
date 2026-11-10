@@ -6,24 +6,49 @@ Terms are as in `GLOSSARY.md`, and the toolchain and its install steps are in `d
 
 ## Product files
 
-- `pipescope.md`: Pipescope's first devnet version.
-- `pipescope-explainer.md`: Pipescope's explainer.
+- `pipescope.md`: Aviary's first devnet version.
+- `pipescope-architecture.md`: where each part of Aviary runs and keeps its data.
+- `pipescope-canary.md`: Aviary's Canary checks.
+- `pipescope-explainer.md`: Aviary's explainer.
 - `tax-amm.md`: the tax AMM.
-- One more file per product as its decision tickets close: the containment hook, Pool4 for Solana and the lending pool.
+- `containment-hook.md`: the containment hook.
+- `pool4-for-solana.md`: the buy wall AMM.
+- `lending-pool.md`: the lending AMM.
 
-## Our products live inside Pipescope
+The files keep the names they were written under, so links to them still work; "Names" below says what each product is called.
+
+## Names
+
+Decided with the owner in [Product and suite names](https://github.com/imDev2023/testing-pipeline/issues/17) on 2026-11-10.
+Like every decision in this spec, they are defaults that MetalLegBob may change.
+
+- The suite and its terminal share one public name, **Aviary**.
+- Our on-chain products keep plain descriptive names and carry the suite's name before their own in public: Aviary Tax AMM, Aviary Containment Hook, Aviary Buy Wall AMM and Aviary Lending AMM.
+  In prose they are the tax AMM, the containment hook, the buy wall AMM and the lending AMM.
+- Canary checks keep their name; they are a feature of Aviary, with no address or handle of their own.
+- The buy wall AMM is a port of IMD's Pool4 design and says so wherever it is described; Pool4 is IMD's product name and is never part of ours.
+- No name of ours uses Pipeline's or the Factory's branding; "built on Pipeline" appears only as a plain description.
+- Aviary's address is `aviary.trade` and its X handle is `@aviarytrade`.
+  The owner registers both, and nothing links to either until it exists.
+- A name is cheap to change, because each lives in one place:
+  - the terminal's public name, address and fee label are one config module of the web app ([`pipescope-architecture.md`](pipescope-architecture.md), "`terminal-web`");
+  - each on-chain program's public name lives beside the program and nowhere else: the `name` in its strategy metadata, and the `name` in the `security.txt` it embeds, a build-time constant.
+- Nothing else in code carries a public name: apps, packages, Workers, databases, crates and programs are named for what they are (`terminal-web`, `tax-amm`, `containment-hook`, `buy-wall-amm`, `lending-amm`).
+- The repo and folder keep the internal name `testing-pipeline`.
+
+## Our products live inside Aviary
 
 Decided with the owner in [Pipescope v1 scope](https://github.com/imDev2023/testing-pipeline/issues/3).
 
-- The tax AMM, the containment hook, Pool4 for Solana and the lending pool get no websites of their own.
-- Their user actions run through Pipescope's custom-action forms, from each strategy's own complete metadata (see "Metadata, IDL and conformance report" below).
-- Each product adds its own panel and forms to Pipescope when it is built, for example progress toward the unlock goal for the containment hook, the buy wall for Pool4 for Solana, the buffer for the lending pool, and the launch form and payouts that [`tax-amm.md`](tax-amm.md) describes for the tax AMM.
-- So each product's build tickets include its metadata, its Pipescope panel and its Pipescope forms.
+- The tax AMM, the containment hook, the buy wall AMM and the lending AMM get no websites of their own.
+- Their user actions run through Aviary's custom-action forms, from each strategy's own complete metadata (see "Metadata, IDL and conformance report" below).
+- Each product adds its own panel and forms to Aviary when it is built, for example progress toward the unlock goal for the containment hook, the wall and the inventory cap for the buy wall AMM, the buffer for the lending AMM, and the launch form and payouts that [`tax-amm.md`](tax-amm.md) describes for the tax AMM.
+- So each product's build tickets include its metadata, its Aviary panel and its Aviary forms.
 
 ## Engineering and security bar for on-chain programs
 
 Decided with the owner on 2026-11-10 in [Engineering and security bar for our on-chain programs](https://github.com/imDev2023/testing-pipeline/issues/4), against Pipeline commit `5ad130d`.
-It applies to every on-chain program we write: the tax AMM, the containment hook, Pool4 for Solana, the lending pool and any single-use AMM.
+It applies to every on-chain program we write: the tax AMM, the containment hook, the buy wall AMM, the lending AMM and any single-use AMM.
 A program's build tickets count as done on devnet only when the program meets all of it, and each build ticket's acceptance criteria name the sections below that it covers.
 External audits belong to the mainnet launch effort, which is out of scope.
 
@@ -65,9 +90,9 @@ When MetalLegBob upgrades the devnet router the check fails, and a PR re-pins it
    Revisit this if Trident moves to current Solana crates.
 4. **Conformance**: every strategy's LiteSVM tests run `pipeline-check`'s `check_market` on their markets and require zero Fail and zero Warn.
 5. **Limits**: a compute ceiling asserted per instruction, with headroom, and a call-depth test with hooked mints wherever a program calls another program inside a swap.
-6. **Outside protocols**: wherever a program calls one (the lending pool's lending market), its tests also run in LiteSVM loaded with that protocol's programs and accounts dumped from mainnet by a fixture script pinned to a slot, and against the protocol's devnet deployment if it has one.
+6. **Outside protocols**: wherever a program calls one (the lending AMM's lending market), its tests also run in LiteSVM loaded with that protocol's programs and accounts dumped from mainnet by a fixture script pinned to a slot, and against the protocol's devnet deployment if it has one.
 7. **Devnet demo**: a script deploys the program, registers it, creates a market and swaps through the router with the TypeScript SDK, and every demo market passes `pipeline-check --url devnet --market <market> --fail-on-warn`.
-8. **Canary checks**: once Pipescope's Canary checks exist, our strategies must pass them on devnet, like any other strategy.
+8. **Canary checks**: once Aviary's Canary checks exist, our strategies must pass them on devnet, like any other strategy.
 
 A `pipeline-check` Warn, in layer 4 or 7, is accepted only with a written reason in the program's spec file; a Skip for a feature the program refuses by design (such as exact-out) needs no reason.
 
@@ -116,7 +141,7 @@ A `pipeline-check` Warn, in layer 4 or 7, is accepted only with a written reason
 - On devnet every program stays upgradeable, under one project upgrade-authority key, `~/.config/testing-pipeline/devnet/upgrade-authority.json`, separate from the wallet that pays for deploys (`wallet.json`) and never committed.
   The upgrade authority also signs `register_strategy` and pays its listing fee, so it holds a little devnet SOL.
 - Nothing is frozen on devnet while Pipeline's interfaces can still change.
-- Pipescope gives our programs no exemption and no trusted badge: Canary checks and trust facts show them as upgradeable by a single key, exactly as they would anyone else's.
+- Aviary gives our programs no exemption and no trusted badge: Canary checks and trust facts show them as upgradeable by a single key, exactly as they would anyone else's.
 - Each product's spec file states the product's intended mainnet upgrade policy: a multisig with a timelock, then frozen once stable, unless the product says otherwise.
   The containment hook is the most sensitive, because an upgrade to it could block every contained token's transfers.
   Carrying the policy out belongs to the mainnet launch effort.
@@ -127,4 +152,4 @@ A `pipeline-check` Warn, in layer 4 or 7, is accepted only with a written reason
 - Its compute ceilings per instruction.
 - Its invariants for test layer 3, beyond the shared three.
 - Any accepted `pipeline-check` Warn, with the reason.
-- What its Pipescope panel shows and which actions its metadata exposes.
+- What its Aviary panel shows and which actions its metadata exposes.

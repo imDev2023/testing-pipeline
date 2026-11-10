@@ -1,7 +1,8 @@
 # testing-pipeline
 
-A suite of products built on Pipeline (https://github.com/MetalLegBob/pipeline), MetalLegBob's permissionless router for experimental Solana markets: Pipescope (a terminal with Canary safety checks and an AI explainer), a containment hook, a tax AMM, Pool4 for Solana, a lending pool, and single-use AMMs built for clients (working names; see `GLOSSARY.md`).
-Started 2026-11-09 from an evaluation of Pipeline; the folder and repo keep the internal name `testing-pipeline` for good (decided 2026-11-09), and product and suite names are settled on the wayfinder map.
+Aviary, a suite of products built on Pipeline (https://github.com/MetalLegBob/pipeline), MetalLegBob's permissionless router for experimental Solana markets: a terminal of the same name with Canary safety checks and an AI explainer, a containment hook, a tax AMM, a buy wall AMM (a port of IMD's Pool4 design), a lending AMM, and single-use AMMs built for clients (see `GLOSSARY.md`).
+Started 2026-11-09 from an evaluation of Pipeline; the folder and repo keep the internal name `testing-pipeline` for good (decided 2026-11-09).
+The public names were settled on 2026-11-10 (`docs/spec/README.md`, Names) and are defaults MetalLegBob may change; the working names Pipescope, Pool4 for Solana and lending pool survive only in file names, ticket titles and dated research notes.
 
 ## Where things stand
 
@@ -25,7 +26,7 @@ Decisions land in `docs/adr/` and the spec in `docs/spec/`: a shared `README.md`
   The exceptions are code generated from Pipeline's Apache-2.0 strategy template (`scripts/new-strategy.sh`), which our strategies start from, and its Apache-2.0 `test-hook` allowlist hook, which the containment hook starts from (owner, 2026-11-10).
 - Every on-chain program meets the engineering and security bar in `docs/spec/README.md` before its build tickets count as done.
 - Devnet only until Pipeline's router is on mainnet; never create mainnet deployments before then.
-- Never hold users' private keys, in Pipescope or a Telegram bot.
+- Never hold users' private keys, in Aviary or a Telegram bot.
 - Ask the owner before every paid call, including LLM calls for the explainer and paid RPC tiers, and log approved ones in `~/.config/spend/ledger.csv`.
 - MetalLegBob is a third party: agents draft messages to him in `~/.config/testing-pipeline/outreach.md`, the owner sends them, and his answers are recorded there with dates.
   The repo is public (2026-11-09), so his words and the messages never go into the repo, its issues or its PRs; those record only the decisions his answers settle.

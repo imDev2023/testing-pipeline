@@ -102,7 +102,7 @@ A buy may deliver the token to anyone's account, since the router does not check
 - A second call fails, because the authority is gone.
 
 There is no keeper job for the unlock in v1.
-Nothing breaks while an unlock waits, since sells into the home market keep working, and whoever wants out or wants the token trading elsewhere can press Pipescope's Unlock button.
+Nothing breaks while an unlock waits, since sells into the home market keep working, and whoever wants out or wants the token trading elsewhere can press Aviary's Unlock button.
 
 ### After the unlock
 
@@ -131,7 +131,7 @@ Nothing breaks while an unlock waits, since sells into the home market keep work
 
 - Every transfer of a contained token needs the same tail: the hook program, the validation account and the config, read-only.
 - Sells put it in the router's `input_hook_accounts`; buys put it after the strategy's own accounts; `sweep_fees` takes it as remaining accounts; the tax AMM's `seed` takes it after its own accounts.
-- Neither Pipeline client resolves hook accounts, and Pipeline's hosted API refuses to build swaps whose input mint has a transfer hook (`docs/API.md` at `5ad130d`), so Pipescope, our scripts and anyone sweeping fees resolve them from the validation account and build those transactions with the SDK; a call that leaves them out is refused.
+- Neither Pipeline client resolves hook accounts, and Pipeline's hosted API refuses to build swaps whose input mint has a transfer hook (`docs/API.md` at `5ad130d`), so Aviary, our scripts and anyone sweeping fees resolve them from the validation account and build those transactions with the SDK; a call that leaves them out is refused.
 
 ## Launch in v1
 
@@ -141,13 +141,13 @@ Nothing breaks while an unlock waits, since sells into the home market keep work
 - `bind` belongs in the same transaction as the market's creation, but may go in a later one with the seed if the transaction is too large: nothing can move the token before `bind`, the market is closed to swaps until its seed, and only the seeder can seed.
 - Revoking the mint authority is an optional last step; it must come after `bind`, which needs the mint authority's signature, or the token can never be bound and never transfer.
 - Graduating a contained token from a launchpad through `pipeline_seed_liquidity` is not supported in v1, because the seed would move tokens before the `Market` account that `bind` reads exists.
-- Pipescope v1 does not launch new tokens (`docs/spec/pipescope.md`), so the script is the only way to launch a contained token.
-  The tax AMM's launch form in Pipescope refuses a mint whose transfer hook is ours, since its seed would fail for a token not yet bound and a bound token already has its home market.
+- Aviary v1 does not launch new tokens (`docs/spec/pipescope.md`), so the script is the only way to launch a contained token.
+  The tax AMM's launch form in Aviary refuses a mint whose transfer hook is ours, since its seed would fail for a token not yet bound and a bound token already has its home market.
 
-## In Pipescope
+## In Aviary
 
-`docs/spec/pipescope.md` has each product add its own panel to Pipescope; this is the containment hook's, built with its build tickets.
-The hook is not a strategy and has no strategy metadata, so its panel and its one action are built into Pipescope rather than rendered from metadata.
+`docs/spec/pipescope.md` has each product add its own panel to Aviary; this is the containment hook's, built with its build tickets.
+The hook is not a strategy and has no strategy metadata, so its panel and its one action are built into Aviary rather than rendered from metadata.
 
 - **Recognising a contained token**: its transfer hook program is ours, its hook authority is its unlock PDA, and its config exists.
 - **Panel**, on the home market's page:
@@ -157,8 +157,8 @@ The hook is not a strategy and has no strategy metadata, so its panel and its on
   - once unlocked: when, and whether by the goal or the deadline.
 - **Unlock button**: shown to anyone once the unlock is due; it sends `unlock` from the connected wallet.
 - **Trade box**: before a buy of a contained token, the same one-line rule as the panel.
-- **Swaps**: Pipescope resolves the hook accounts for every swap of a hooked token, ours included, and builds those swaps with the SDK, since Pipeline's hosted API refuses them.
-- **Integrator fee**: nothing to add; Pipescope charges its fee only when the trader pays in SOL or USDC, so sells of a contained token already carry none.
+- **Swaps**: Aviary resolves the hook accounts for every swap of a hooked token, ours included, and builds those swaps with the SDK, since Pipeline's hosted API refuses them.
+- **Integrator fee**: nothing to add; Aviary charges its fee only when the trader pays in SOL or USDC, so sells of a contained token already carry none.
 - The facts panel shows the mint's `transfer-hook` and `transfer-hook-authority` trust flags until the unlock clears them, so traders who hide hooked tokens by those flags also hide contained ones.
 
 ## Depends on
@@ -220,7 +220,7 @@ For the bar's stateful fuzzing layer, beyond its shared three:
 
 ### Not applicable
 
-- `pipeline-check` Warns and strategy metadata: the hook is not a strategy; its Pipescope panel and action are in "In Pipescope".
+- `pipeline-check` Warns and strategy metadata: the hook is not a strategy; its Aviary panel and action are in "In Aviary".
 
 ### Done means
 
