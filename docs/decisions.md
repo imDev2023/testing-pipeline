@@ -101,7 +101,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 
 - Question: Which products does the suite build?
 - Answer: The terminal (Aviary), the containment hook, the tax AMM, the buy wall AMM and the lending AMM, all on devnet; single-use AMMs wait for a first client.
-- Alternatives: Dropping any product MetalLegBob builds himself, the rule set while charting; he builds none of the five.
+- Alternatives: Leaving out a product that someone else is already building, the rule set while charting; nobody is building any of the five.
 - Specified in: [the map, Destination](https://github.com/imDev2023/testing-pipeline/issues/1)
 - Changes by: spec only
 - Status: default
@@ -241,7 +241,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 
 - Question: What are the suite and its terminal called?
 - Answer: Aviary, which in code lives in one config module of the web app, `apps/terminal-web/src/brand.ts`; Canary checks keep their name as a feature of Aviary.
-- Alternatives: Quirk, the runner-up; Telltale; Leftfield; Offshoot; Canary itself, whose domains are taken.
+- Alternatives: Quirk, the runner-up; Telltale; Leftfield; Offshoot; Canary itself.
 - Specified in: [`docs/spec/README.md`, Names](spec/README.md#names)
 - Changes by: build-time constant
 - Status: default
@@ -280,8 +280,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-23: Address and handle
 
 - Question: Which web address and X handle does Aviary use?
-- Answer: `aviary.trade` and `@aviarytrade`, a matching pair with no defensive domains; the owner registers both, and nothing links to either until it exists.
-- Alternatives: `aviary.markets`, `aviary.exchange`, `aviary.so` or `aviary.fun`; the bare handle `@aviary`, if X will give it.
+- Answer: The `.trade` domain of the suite's name and the matching handle on X, a pair with no defensive domains; the owner registers both, and nothing links to either until it exists.
+- Alternatives: Other endings for the same name; the bare handle, if X will give it.
 - Specified in: [`docs/spec/README.md`, Names](spec/README.md#names)
 - Changes by: build-time constant
 - Status: default
@@ -532,7 +532,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### BAR-17: Review tools
 
 - Question: Which tools run the internal adversarial review?
-- Answer: Stronghold of Security and Book of Knowledge from MetalLegBob's MIT-licensed Solana Vibes Kit, installed in this repo at a pinned commit.
+- Answer: Stronghold of Security and Book of Knowledge from the MIT-licensed Solana Vibes Kit, the process Pipeline's router went through twice, installed in this repo at a pinned commit.
 - Alternatives: None recorded.
 - Specified in: [`docs/spec/README.md`, Internal adversarial review](spec/README.md#internal-adversarial-review)
 - Changes by: spec only
@@ -1920,8 +1920,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-26: Where its policy values live
 
 - Question: Where do the tax AMM's policy values live in code?
-- Answer: The four constants and the mint extension allowlist are build-time constants in one config module of the program, which no other file repeats; every other policy value is a creation parameter held in the market state.
-- Alternatives: None recorded.
+- Answer: The four constants are build-time constants in one config module of the program, which no other file repeats; the mint extension allowlist lives in one small shared crate that the tax AMM, the containment hook and the lending AMM all depend on; every other policy value is a creation parameter held in the market state.
+- Alternatives: A copy of the allowlist in each program.
 - Specified in: [`docs/spec/tax-amm.md`, Where its policy values live](spec/tax-amm.md#where-its-policy-values-live)
 - Changes by: spec only
 - Status: default
@@ -2152,7 +2152,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-21: Where its policy values live
 
 - Question: Where do the hook's policy values live in code?
-- Answer: The longest unlock deadline, the mint extension allowlist and the tax AMM's program id are build-time constants in one config module of the program; the unlock goal and the unlock deadline are `bind`'s arguments, with no default anywhere.
+- Answer: The longest unlock deadline and the tax AMM's program id are build-time constants in one config module of the program; the mint extension allowlist is the shared crate's, with the hook's stricter rule on the freeze authority added on top; the unlock goal and the unlock deadline are `bind`'s arguments, with no default anywhere.
 - Alternatives: None recorded.
 - Specified in: [`docs/spec/containment-hook.md`, Where its policy values live](spec/containment-hook.md#where-its-policy-values-live)
 - Changes by: spec only
@@ -2176,7 +2176,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-01: Whether we build it
 
 - Question: Do we build a port of IMD's Pool4 design at all?
-- Answer: Yes, as our own strategy, the buy wall AMM, since MetalLegBob is not building one himself.
+- Answer: Yes, as our own strategy, the buy wall AMM, built, deployed on devnet and registered with Pipeline.
 - Alternatives: Supporting only an existing port in Aviary; building on top of one.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Buy wall AMM](spec/pool4-for-solana.md#buy-wall-amm)
 - Changes by: spec only
@@ -2768,7 +2768,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-06`: the map's Notes still give the order set while charting, with the terminal first; `tax-amm.md` says the tax AMM is built first.
 - `PIPESCOPE-10`: the rate is written in `pipescope.md` (The integrator fee, and again in the trade box's breakdown) and as 50 basis points in `pipescope-architecture.md`; it should be stated once and referred to.
 - Pipeline's own fee of 0.25% is written as a fixed number in the trade box's breakdown, in Canary's cost split, in three program specs and in the glossary; it is the router's setting, not ours, so Aviary should read it from the router's config.
-- `TAX-16`, `TAX-26`, `HOOK-12`, `HOOK-21`, `POOL4-17`, `LENDING-23`: the allowlist of mint extensions is written out in `tax-amm.md`, `containment-hook.md` and `pool4-for-solana.md`, and the tax AMM and the hook each keep a copy in their own config module; it needs one spec section and one shared constant that every program depends on.
+- `TAX-26`, `POOL4-17`: the allowlist of mint extensions now has one home in code, a shared crate that the tax AMM, the containment hook and the lending AMM depend on; `pool4-for-solana.md` still writes the list out and does not say the buy wall AMM uses that crate.
 - `HOOK-09`, `HOOK-21`: `containment-hook.md` gives the 90-day limit one home in code but still writes the number in four of its sections, and has no Constants table to name it as the other programs' files do.
 - `CANARY-06` to `CANARY-09`, `CANARY-12`, `CANARY-13`, `CANARY-16`, `CANARY-17`: Canary's policy values are spread through `pipescope-canary.md` (the bands are repeated in the rows of `exit_transferred`, `exit_queue` and `cost`, the 1-point tolerance in three rows), and the spec names no config module for them in `crates/canary`.
 - `CANARY-22`, `CANARY-23`: the schedule is written in `pipescope-canary.md` and three times in `pipescope-architecture.md` (the crons, the indexer's new markets, the Canary runner).
@@ -2781,5 +2781,5 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-04`, `SUITE-05`, `SUITE-07`, `SUITE-12` to `SUITE-14`: these live only in the map's body; when the map closes they need a home in `docs/spec/README.md`.
 - `SUITE-26` to `SUITE-31`, `PIPESCOPE-42` to `PIPESCOPE-53`: the owner answered these on tickets that are still open, so "Specified in" names the ticket; the session that lands each spec points them at its sections.
 - `POOL4-20`, `POOL4-21`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI, One fixed-size layout) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
-- `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner or MetalLegBob says otherwise.
+- `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
 - `LENDING-16`, `POOL4-15`: when each keeper job runs is written in the product specs and in the keeper runner's ticket; once the runner's spec lands it should be the one place for every job's schedule.
