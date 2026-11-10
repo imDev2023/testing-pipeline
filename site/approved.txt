@@ -38,6 +38,5 @@ Tools: Stronghold of Security (an adversarial audit) and Book of Knowledge (math
 | MetalLegBob's Pool4 port `4ajWF6...` | 8 | 6 | 0 | 2 | 98.3% to 98.4% | None |
 MetalLegBob's Pool4 port did not change with the clock alone over 30 days on its two readable markets, so any daily decay of its inventory cap needs one of its own instructions to be called.
 Built for MetalLegBob
-every decision the owner makes is a default he may change.
 No name uses Pipeline's or the Factory's branding; "built on Pipeline" appears only as a plain description.
 No name of ours uses Pipeline's or the Factory's branding; "built on Pipeline" appears only as a plain description.

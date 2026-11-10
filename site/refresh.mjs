@@ -55,7 +55,8 @@ const NOT_A_MENTION = [
   /github\.com\/MetalLegBob\/pipeline/gi,
   /Decisions open to MetalLegBob/g,
   /open to MetalLegBob's (review|change)/g,
-  /(that|which) MetalLegBob may change/g,
+  /\b(MetalLegBob|he) may change\b/g,
+  /\binvit(e|es|ing) (MetalLegBob|him) to change\b/g,
 ];
 const REVIEW = [/metallegbob|mlbob/i, /\b(he|him|his)\b/i, /\b[Tt]he Factory\b/, /fantastical|fffactory/i];
 

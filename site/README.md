@@ -45,16 +45,22 @@ Everything runs on the machine's default Node 26; if a tool breaks there, use No
 
 ### What is shown
 
-- The front page: the first line of the repo's `README.md`, the map's Destination, the map's tickets grouped as Done, In progress and Next, and the six things found in Pipeline itself.
+- The site's name and its headline: both from the first line of the repo's `README.md`, "The internal home of Aviary: a terminal and ...".
+  That line is the one place the site takes the public name from (`INTRODUCTION` in `refresh.mjs`), so a rename there renames the site.
+- The front page: that headline, the map's Destination, the map's tickets grouped as Done, In progress and Next, and the six things found in Pipeline itself.
+- Tickets and their resolutions are dated records: they keep the working names they were written with (Pipescope, Pool4 for Solana), and the site shows them as written (owner, 2026-11-10).
 - Above the tickets, the owner's standing rule from the map's Notes, "Built for MetalLegBob": every decision is a default he may change.
   It is there because anything shown to him must list the decisions it rests on and invite him to change any (the map's Notes, 2026-11-10); the Done list below it is that list.
   `STANDING_RULE` in `refresh.mjs` finds it, and `refresh` stops if the note is reworded.
 - A ticket is Done when it is closed as completed, In progress when it is open and assigned, Next when it is open and unassigned.
 - A Done ticket shows its line from the map's "Decisions so far" and links to a page with its resolution comment.
 - One page per document: `docs/toolchain.md`, every file in `docs/spec/`, and the findings file of every `research/*` branch.
+- The decision register, `docs/decisions.md`, becomes a page at `/decisions/` as soon as it is on `main`, and the front page then links to it under the standing rule.
+  Each decision is reachable by its id, for example `/decisions/#tax-03`.
 - The six findings about Pipeline are picked by a phrase each, in `FOUND_IN_PIPELINE` at the top of `refresh.mjs`, and shown as their source wrote them.
   If a source is reworded, `refresh` stops and names the phrase to fix.
-- The repo is private, so links into it are pointed at the site's own pages, and the ones with no page are turned into plain text.
+- The repo is private, so links into it, whether full addresses or relative links between files, are pointed at the site's own pages, and the ones with no page are turned into plain text.
+  Headings get the anchors GitHub gives them, so a link to a section of a file lands on that section here.
 - To show another document, add one `addDocument` line in `refresh.mjs`.
 
 ### For agents reading the site
@@ -73,6 +79,8 @@ Public devnet addresses and transaction links are fine.
 2. It judges every block of text (a paragraph, a list item, a table row, a code block).
    A block that touches the outreach, or says what he was asked, asked for or said, is dropped (`DROP`).
    A block that names him or refers to him is dropped unless that exact block is in `approved.txt` (`REVIEW`).
+   The standing rule's own phrases, such as "a default he may change", are not mentions (`NOT_A_MENTION`).
+   A block that names the address or the handle the owner has chosen but not registered yet, or says which names are free, is dropped too, so nobody can register them first; remove that rule from `DROP` once the owner has registered both.
 3. The result must pass the privacy gate before it replaces `content.json`.
 
 The privacy gate is `grep -r -i -F -f ~/.config/testing-pipeline/private-lines.txt` over the content, and again over the built output before every deploy.
@@ -89,6 +97,8 @@ After a refresh, read its report:
 ## Vercel
 
 - Project `testing-pipeline`, in the `imdev2023-8959` account, at https://testing-pipeline.vercel.app.
+  The address keeps the repo's internal name; the site itself is called Aviary (owner, 2026-11-10).
+- `package.json` asks for Node 24 or later because the builder in Vercel CLI 59 refuses the project's default, 26.x.
 - A deploy goes to production.
   The owner approved the first on 2026-11-10; ask before another unless they have said otherwise.
 - Do not connect the GitHub repo to the project, and do not buy a domain or anything else.
