@@ -116,6 +116,30 @@ _Avoid_: Pipeline fee, transfer fee (a Token-2022 extension that taxes every tra
 The one mint of a market in which its tax is always taken, whichever way the trade goes.
 _Avoid_: fee token, quote side (the tax side need not be the quote)
 
+**Buy tax**:
+The tax a market takes when the tax side is paid in.
+_Avoid_: entry fee, buy fee
+
+**Sell tax**:
+The tax a market takes when the tax side is paid out.
+_Avoid_: exit fee, sell fee
+
+**Tax authority**:
+The one address that may change a tax market's rates, within ranges fixed when the market was created, and its tax recipients, until it renounces.
+_Avoid_: admin, owner (the Owner is the person this suite is built for)
+
+**Tax recipient**:
+An address that receives a fixed share of a market's tax.
+_Avoid_: beneficiary, fee receiver
+
+**Suite share**:
+Our fixed tenth of every tax market's tax, paid to the suite's treasury before the rest is split.
+_Avoid_: protocol fee (Meteora's term), platform fee
+
+**Virtual reserve**:
+An amount a market prices as if it held on one side, so a token can launch without the other side; it is never paid out.
+_Avoid_: fake liquidity, virtual liquidity
+
 ### Our products (working names)
 
 **Pipescope** (working name):
@@ -143,8 +167,12 @@ The id of one item of evidence given to the explainer (P, F, C, S or A and a num
 _Avoid_: citation (the Claude API feature, which we do not use), footnote
 
 **Tax AMM** (working name):
-Our strategy that always takes its tax on the tax side, built to pair with the containment hook.
+Our strategy whose markets always take their tax on the tax side, outside the price curve, with liquidity locked for good; built to pair with the containment hook.
 _Avoid_: tax token (the token is not the AMM)
+
+**Tax market**:
+A market on the tax AMM.
+_Avoid_: tax pool, taxed pair
 
 **Pool4 for Solana** (working name):
 Our port of IMD's Pool4 design to a Pipeline strategy: the strategy is the only liquidity provider, trims inventory above a cap after sells, burns most of what it trims, splits the rest, and keeps a buy wall under the price.
