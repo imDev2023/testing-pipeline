@@ -5,7 +5,7 @@ It builds on the findings of [Where Pipescope's indexer gets its data](https://g
 Patterns are copied from Top-pad at commit `b833a7b` (`/Volumes/Farhan/Work Folder/Dev/AI/Top-pad`, read only), whose devnet build runs on the same Cloudflare account.
 [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) merges this file with the other Pipescope spec files.
 
-Decisions: [ADR 0001](../adr/0001-pipescope-indexes-pipeline-itself.md) (our own indexer, not Pipeline's hosted API), [ADR 0002](../adr/0002-postgres-on-neon-is-pipescopes-record.md) (Postgres on Neon is the only system of record), [ADR 0003](../adr/0003-canary-checks-run-natively-in-a-container.md) (Canary checks run natively in a Cloudflare Container).
+Decisions: [ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md) (our own indexer, not Pipeline's hosted API), [ADR 0004](../adr/0004-postgres-on-neon-is-pipescopes-record.md) (Postgres on Neon is the only system of record), [ADR 0005](../adr/0005-canary-checks-run-natively-in-a-container.md) (Canary checks run natively in a Cloudflare Container).
 
 ## Where each part runs
 
@@ -22,7 +22,7 @@ Decisions: [ADR 0001](../adr/0001-pipescope-indexes-pipeline-itself.md) (our own
 | Explainer | Evidence built by `pipescope-api`; generation by `pnpm explainer:approve` on the owner's Mac | Postgres |
 
 - Pipescope holds no private keys at all: traders sign in their own wallets, the integrator fee goes to a fee wallet Pipescope knows only by address, the Canary runner signs with throwaway keys inside its simulated chain, and the LLM key never leaves the owner's Mac.
-- Pipeline's hosted devnet API serves none of the pages: the feed, charts and wallet page read our own indexer's data ([ADR 0001](../adr/0001-pipescope-indexes-pipeline-itself.md)).
+- Pipeline's hosted devnet API serves none of the pages: the feed, charts and wallet page read our own indexer's data ([ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md)).
 - Nothing paid runs from Cloudflare: the only paid call, the explainer's, runs on the owner's Mac when the owner approves it.
 
 ## Platform and plans
@@ -70,7 +70,7 @@ Decisions: [ADR 0001](../adr/0001-pipescope-indexes-pipeline-itself.md) (our own
 
 ## Data
 
-[ADR 0002](../adr/0002-postgres-on-neon-is-pipescopes-record.md).
+[ADR 0004](../adr/0004-postgres-on-neon-is-pipescopes-record.md).
 
 - Postgres on Neon is the only system of record, through Drizzle, reached by the Workers through Hyperdrive with its query cache off (Hyperdrive never invalidates a cached read when a write lands, and the indexer, the Canary runner and the explainer must read what was just written).
 - What it holds, as tables for the build to name: strategies; strategy versions (program id, ProgramData slot, `executable_sha256`, when seen); markets and their mints; indexed transactions; trades (keyed by signature and event index, with slot and in-block position); candles; indexer cursors; metadata snapshots (URI, fetch time, outcome, hash, normalised document); Canary runs and one record per check; verified-build requests and results; explanation keys with their stored evidence, estimated cost and status; explanations; reports from the "This is wrong" control.
@@ -80,7 +80,7 @@ Decisions: [ADR 0001](../adr/0001-pipescope-indexes-pipeline-itself.md) (our own
 
 ## Indexer
 
-[ADR 0001](../adr/0001-pipescope-indexes-pipeline-itself.md).
+[ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md).
 The design is the recommendation of [Where Pipescope's indexer gets its data](https://github.com/imDev2023/testing-pipeline/issues/6), ported from Top-pad's indexer.
 
 - **What it watches**: the router and every registered strategy program; a strategy joins the watched list when its `StrategyRegistered` event arrives or the registry snapshot finds it.
@@ -156,7 +156,7 @@ Top-pad's flow (`apps/web/src/components/coin/QuickTrade.tsx`, `prepareSwap` the
 
 ## Canary runner
 
-[ADR 0003](../adr/0003-canary-checks-run-natively-in-a-container.md).
+[ADR 0005](../adr/0005-canary-checks-run-natively-in-a-container.md).
 The design is the recommendation of [Where the quoter runs for Canary checks](https://github.com/imDev2023/testing-pipeline/issues/7); what the checks are is [Canary checks on the four devnet strategies](https://github.com/imDev2023/testing-pipeline/issues/14).
 
 - **Binary**: `crates/canary` in the root Rust workspace, a native Rust program on `litesvm` (0.18.2, pinned by `pipeline-quoter`) and Pipeline's crates (`pipeline-quoter`, `pipeline-client`, its settlement code, and `pipeline-check` if the Canary checks ticket adopts it), taken as git dependencies pinned to a commit and never copied into this repo; Rust per `docs/toolchain.md`.
