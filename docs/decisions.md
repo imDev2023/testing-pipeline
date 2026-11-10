@@ -2629,8 +2629,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
 
-- [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45): where the runner lives.
-  A Worker on the owner's Cloudflare account is ruled out if it adds cost there.
+- [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45): where the runner lives; the answers so far are `SUITE-26` to `SUITE-28`.
 - [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16): what the terminal's pages look like and how they behave.
 - [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32): the answers so far are `PIPESCOPE-42` to `PIPESCOPE-53`; its spec is still to land.
 - [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30): the answers so far are `SUITE-29` to `SUITE-31`.
