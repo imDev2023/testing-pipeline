@@ -146,6 +146,14 @@ _Avoid_: fake liquidity, virtual liquidity
 Our Pipeline terminal: it finds every strategy and market as it appears, charts them from swap events, trades them through the router with our integrator fee, renders their custom-action forms and shows Canary results and an explainer for each.
 _Avoid_: dashboard, explorer, screener alone (it trades too)
 
+**Fee mint**:
+A mint Pipescope takes its integrator fee in when a trader pays with it: SOL and USDC; a swap paying with any other mint carries no integrator fee.
+_Avoid_: quote mint (a market need not quote in it), fee token
+
+**Fee wallet**:
+The wallet Pipescope's integrator fees are paid into; it is not the suite's treasury, which receives the tax AMM's suite share.
+_Avoid_: treasury (Pipeline's and the suite's are other wallets), revenue wallet
+
 **Canary checks** (working name):
 The automated tests Pipescope runs against each strategy version in the quoter: the exit test, quote against swap, fee honesty and control, re-run whenever the strategy is upgraded.
 _Avoid_: audit (they detect, they cannot prove safety), score, rating
