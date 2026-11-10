@@ -1,0 +1,208 @@
+# Toolchain
+
+What this project builds, tests and runs Pipeline with, and the steps that work.
+Verified on 2026-11-09 against Pipeline commit `a2d5bfb`, and on 2026-11-10 against `5ad130d` (its newest), on the owner's Mac (iMac Pro, Intel Xeon W-2150B, x86_64, 10 cores, 32 GB, macOS 15.7.3), from [Run Pipeline on this Mac and on devnet](https://github.com/imDev2023/testing-pipeline/issues/2).
+Build tickets start here.
+
+## Versions
+
+| Tool | Version | Where it lives | Why |
+| --- | --- | --- | --- |
+| Rust (host) | 1.97.1 | rustup toolchain `1.97.1` | Pipeline's `rust-toolchain.toml` selects it |
+| cargo-build-sbf | 4.6.0 | `~/.local/share/testing-pipeline/toolchain/cargo-build-sbf-4.6.0/bin` | sBPF v3 output; Pipeline's CI pins it |
+| Platform tools | v1.57 on Intel macOS, v1.58 elsewhere (rustc 1.95.0, clang 22.1.2) | `~/.cache/solana/v1.57` | v1.58, 4.6.0's default and Pipeline's pin, ships no Intel macOS build |
+| Agave CLI | 4.4.1 | `~/.local/share/testing-pipeline/toolchain/agave-v4.4.1/bin` | `solana-test-validator` for local runs; Pipeline's docs name 4.4 |
+| Node | 24.4.1 (nvm) | `~/.nvm/versions/node/v24.4.1` | Node 26 breaks WebSocket confirmations on public devnet (see Known problems) |
+| TypeScript SDK | `@solana/kit` 8.6.0, `@solana-program/token` 0.18.0, `@solana-program/system` 0.16.0, TypeScript 7.0.2 | each package's `node_modules` | from Pipeline's lockfiles |
+| LiteSVM | 0.18.2 | Cargo | pinned by `pipeline-quoter` |
+
+The machine's own defaults stay as they were, because the owner's other projects use them:
+
+- Solana CLI 2.2.20 through agave-install's `active_release`, with its cargo-build-sbf 2.2.20 and platform tools v1.48 linked as the rustup toolchain `solana`.
+- Default Node 26.9.0 (`~/.local/bin/node`) and default Rust `stable` 1.88.0.
+
+## Install
+
+```sh
+bash scripts/install-toolchain.sh      # once per machine; safe to run again
+source scripts/toolchain-env.sh        # in every shell (and every agent Bash call) that needs it
+```
+
+The install script puts Rust 1.97.1, cargo-build-sbf 4.6.0, the platform tools and the Agave 4.4.1 release side by side under `~/.local/share/testing-pipeline/toolchain` (override with `TESTING_PIPELINE_TOOLCHAIN`).
+It checks the Agave tarball against the SHA-256 digest GitHub publishes for the release asset.
+The env file puts those first on `PATH` for the current shell only, sets `SBF_TOOLS_VERSION` for this host, and puts Node 24 first when nvm has it.
+On Intel macOS it also puts a small `cargo-build-sbf` wrapper first (`~/.local/share/testing-pipeline/toolchain/shims`, written by the install script) that adds `--tools-version v1.57` unless the caller passes one.
+cargo-build-sbf takes the platform tools version only from that flag or from `[workspace.metadata.solana] tools-version` in the workspace's `Cargo.toml`, which Pipeline pins to v1.58 since `5ad130d`, and Pipeline's own scripts and strategy template call a bare `cargo build-sbf`; without the wrapper they would ask for v1.58, which cannot be installed on this Mac.
+The explicit flag wins over the workspace pin: every build at `5ad130d` went through the wrapper on v1.57.
+After the owner ran the script on 2026-11-10, `solana --version` outside the env file still printed 2.2.20, agave-install's `active_release` still pointed at 2.2.20, and rustup still had both the `solana` and `1.95.0-sbpf-solana-v1.57` links.
+
+Two commands from Pipeline's own docs would change every project on the machine, so never run them as written:
+
+- `cargo install cargo-build-sbf --version 4.6.0 --locked` without `--root` puts it in `~/.cargo/bin`, which cargo searches before `PATH`, so every project's `cargo build-sbf` would become 4.6.0.
+- `sh -c "$(curl -sSfL https://release.anza.xyz/v4.4.1/install)"` (in Pipeline's `docs/DEVNET.md`) switches agave-install's `active_release`, and with it the `solana` every project uses.
+
+### How the two cargo-build-sbf versions share rustup
+
+On its first run cargo-build-sbf 4.6.0 uninstalls rustup's `solana` toolchain link and links its own, `1.95.0-sbpf-solana-v1.57`.
+cargo-build-sbf 2.2.20 only looks at toolchains whose name starts with `solana` and relinks its own when it is missing, and 4.6.0 stops at its own link (which rustup lists first), so after the first run the two leave each other alone.
+The install script restores the `solana` link anyway.
+Checked by building a small program with 2.2.20, then 4.6.0, then listing the links: both builds passed and both links stayed.
+
+## Build and test Pipeline
+
+Clone Pipeline into a scratchpad, never into this repo, and note the commit.
+
+These are the steps of Pipeline's CI at `5ad130d` (at `a2d5bfb`, before `scripts/build-programs.sh` and the strategy template existed, the programs were built with one `(cd programs && cargo build-sbf)`):
+
+```sh
+git clone https://github.com/MetalLegBob/pipeline.git && cd pipeline && git log -1 --format=%h
+source <this repo>/scripts/toolchain-env.sh
+export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0
+
+scripts/build-programs.sh            # each program on its own, as solana-verify builds them
+cargo fmt --all -- --check && (cd programs && cargo fmt --all -- --check)
+cargo test --workspace               # LiteSVM
+cargo clippy --workspace --all-targets -- -D warnings
+scripts/test-template.sh             # builds and tests templates/strategy against these sources
+scripts/test-new-strategy.sh
+(cd sdk/ts && npm ci && npm run build && npm test)
+(cd templates/strategy/scripts && npm ci && npm run typecheck)
+```
+
+| Step | `a2d5bfb` (2026-11-09) | `5ad130d` (2026-11-10) |
+| --- | --- | --- |
+| Build the programs | 5 programs, sBPF v3 (ELF `e_flags` 3): `pipeline.so` 401,816 bytes, `test_strategy_cp.so` 250,792, `test_strategy_evil.so` 92,208, `test_hook_refill.so` 28,360, `test_hook.so` 25,488; 37 s from clean | the same 5, one at a time: `pipeline.so` 402,544, `test_strategy_cp.so` 250,312, the rest unchanged; 52 s |
+| `cargo fmt --check` | both workspaces clean | both workspaces clean |
+| `cargo test --workspace` | 425 passed, 0 failed, 0 ignored, in 82 test binaries; 399 s from clean, mostly compiling | 464 passed, 0 failed, 1 ignored (a doc example in `pipeline-check`), in 94 test binaries; 226 s on top of the earlier build |
+| `cargo clippy -D warnings` | clean, 38 s | clean, 17 s |
+| Strategy template, generator | did not exist | template built and its 4 tests passed (including one that runs `pipeline-check` on a Token-2022 transfer-fee market), 144 s; generator checks passed |
+| TypeScript | SDK: typecheck and Prettier clean, 103 tests in 8 files, 2.4 s | SDK: 248 tests in 14 files, 13 s with `npm ci`; template scripts typecheck clean |
+
+`cargo build-sbf` warns that each program declares both `cdylib` and `lib` crate types, which turns off LTO; that is Pipeline's choice and harmless here.
+
+### Pipeline after `a2d5bfb`
+
+Three commits on 2026-11-09 between 20:18 and 22:21 UTC added pieces that overlap this project's products:
+
+- `crates/pipeline-check`, a conformance checker that quotes and trades a market through the real router in LiteSVM, from a strategy's own tests or against a deployed market (`pipeline-check --url devnet --market <MARKET>`), reporting Pass, Warn, Fail or Skip per check.
+- Trust facts and a metadata standard in `pipeline-client` (`facts.rs`, `metadata.rs`).
+- A strategy template (`templates/strategy`, `scripts/new-strategy.sh`) and reproducible builds with `solana-verify` (`docs/VERIFICATION.md`); `pipeline-strategy-interface` moved from `crates/` to `programs/`.
+- A hosted devnet API, `https://pipeline-devnet.up.railway.app` (`docs/API.md`): strategies and markets with trust flags, quotes, unsigned swap transactions, trades, candles and a live event stream, with no keys and per-IP limits.
+
+Devnet's router was redeployed at 21:00 UTC that day (slot 520,510,501).
+Its bytes differ from both local builds, which proves nothing: Pipeline's `docs/VERIFICATION.md` says macOS builds differ from Linux ones and makes the Docker build the reference.
+Checking which commit devnet runs needs `solana-verify` 0.5.2 or later (this Mac has 0.4.9 in `~/.avm/bin`) and Docker Desktop running; not done yet.
+`scripts/quote-devnet` stays pinned to `a2d5bfb`'s crates, where its timings were measured.
+
+## Devnet
+
+### Wallet
+
+This project's devnet wallet is `~/.config/testing-pipeline/devnet/wallet.json` (mode 600, directory 700), public key `9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt`.
+It is never committed, and this project does not use Top-pad's (Heat's) devnet bank.
+Pass it explicitly: `-k ~/.config/testing-pipeline/devnet/wallet.json` to the Solana CLI, `KEYPAIR=...` to Pipeline's scripts.
+
+Fund it from the CLI, never through a web faucet (owner, 2026-11-10), with the owner's machine-wide `devnet-airdrop` (in `~/.local/bin`, not in this repo), started in the background:
+
+```sh
+devnet-airdrop ~/.config/testing-pipeline/devnet/wallet.json --target 12
+```
+
+It pulls 1 SOL per request from Alchemy's devnet RPC (key `ALCHEMY_API_KEY` in the shared env file; free tier, so not a paid call), a few per burst, and repeats every 15 minutes until the target.
+That is how this wallet went from 1.94 to 12.94 SOL on 2026-11-10: eleven 1 SOL airdrops from Alchemy between 01:25 and 02:18 UTC, two or three per round.
+What did not work, on 2026-11-09 and 2026-11-10:
+
+- `solana airdrop` on public devnet: rate-limited from the first request, and now closed (HTTP 410).
+- Helius devnet RPC's airdrop: rate-limited, then HTTP 500.
+- `devnet-pow` (installed in `~/.cargo/bin`): every proof-of-work faucet on devnet was empty.
+
+Spend devnet SOL only on real devnet transactions and deployments; local runs use `solana-test-validator` or LiteSVM, where SOL is free.
+
+### RPC
+
+Public devnet (`https://api.devnet.solana.com`) with Node 24 is what works for Pipeline's scripts.
+Devnet now finalizes in about a second: each of the smoke script's six transactions, confirmed at `finalized`, landed one second after the last.
+
+### Smoke swap
+
+```sh
+(cd sdk/ts && npm ci && npm run build)
+cd scripts/devnet && npm ci
+RPC_URL=https://api.devnet.solana.com KEYPAIR=$HOME/.config/testing-pipeline/devnet/wallet.json node smoke.ts
+```
+
+Passed with Node 24.4.1 in 6 seconds: two fresh mints, a constant-product market and its fee accounts, liquidity, account resolution, a quote by RPC simulation (1,000,000 A to 1,993,980 B, 4,927 CU), the swap, and all five event checks (output equals the quote, `net_sent` equals the input, fee 2,500 is 0.25% rounded up, the market matches).
+Swap signature: [`5GC4aG6oEphMyrLng9bRb2NLqr3NNPKg1e3XezPSypi4fbyj6aqctZwRVCR6Ynz5ejWMjCSNVfs5nMTHxkvxNn3n`](https://explorer.solana.com/tx/5GC4aG6oEphMyrLng9bRb2NLqr3NNPKg1e3XezPSypi4fbyj6aqctZwRVCR6Ynz5ejWMjCSNVfs5nMTHxkvxNn3n?cluster=devnet) (35,478 CU).
+A run costs about 0.015 devnet SOL.
+
+### Quoting with pipeline-quoter
+
+`pipeline-quoter` never touches the network, so `scripts/quote-devnet` feeds it from RPC: it lists the router's markets, or fetches one market, its strategy's bytecode, the accounts the trade reads and the clock, resolves the strategy's accounts, then times the first quote and 10,000 warm quotes.
+It takes Pipeline's crates from Pipeline's repository at `a2d5bfb` and calls only `Quoter::quote`, never `simulate_swap`, which runs the BSL-licensed router.
+
+```sh
+cd scripts/quote-devnet
+cargo run --release -- https://api.devnet.solana.com list
+cargo run --release -- https://api.devnet.solana.com <MARKET> [AMOUNT] [INPUT_INDEX] [OUTPUT_INDEX]
+```
+
+On this Mac, quoting 1,000,000 units of mint 0 into mint 1:
+
+| Market | Strategy | Fetch (RPC) | Load program | Resolve | First quote | Warm quote mean, p50, p99 | Strategy CU |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `35H28SveyPAVr64VHYYZBif8cbhiXyALPghRxFZcVDSz` | constant product `yRptCd...` | 391 ms, 3 calls | 2.1 ms | 2.8 ms | 188 us | 139, 124, 343 us | 4,902 |
+| `2u5ep2aLFzp2SACkG5ZLUrAkEY7vCzm2vL56Q6YiQxb9` | outside builder `9mAV3p...` | 410 ms, 4 calls | 8.6 ms | 59 ms (one RPC round) | 457 us | 216, 195, 495 us | 39,826 |
+
+Warm quotes take about 100 to 220 microseconds on this 2017 Xeon, against the 10 to 20 microseconds Pipeline's integrator guide quotes; a market's first quote costs a few hundred milliseconds of RPC, then nothing more while its accounts stay cached.
+The same quote by RPC simulation through the TypeScript SDK (`quoteStrategy`) took 21 ms on a warm connection and 229 ms on a cold one, plus 36 to 286 ms to resolve accounts, and several seconds or connect timeouts while public devnet was throttling.
+Both ways gave the same output to the unit (6,946,345,550,466 and 1,993,940); the SDK reports about 25 more compute units because it counts the whole simulated transaction.
+
+Of the 44 markets on devnet at 08:45 UTC, quoting 1,000,000 units of mint 0 into mint 1:
+
+| Strategy | Markets | Quote | Do not quote |
+| --- | --- | --- | --- |
+| Constant product (example) `yRptCd...` | 20 | 18 (6 of them quote 0 out: their pools are so lopsided, such as 763 trillion units of A against 210 million of B, that the input is worth less than one unit out) | 2: `AccountDidNotDeserialize` (3003) on the `pool` account during account resolution |
+| Outside builder `9mAV3p...` | 4 | 4 | none |
+| Bonding curve `ETrmUe...` | 12 | none | 9 `WrongStatus` (6004, "Not allowed in the curve's current status"), 3 `CannotFill` (6006, "The curve cannot fill that trade") |
+| Pool4 `4ajWF6...` | 8 | none | 6 `AccountDidNotDeserialize` (3003) on `pool` during account resolution, 2 `CannotFill` (6006, "The pool cannot fill that trade") |
+
+RPC simulation through the SDK fails the same way, so these are the markets' own states, not the quoter.
+`AccountDidNotDeserialize` on `pool` suggests markets created by an older version of the strategy program, whose state the upgraded program can no longer read.
+
+## Local validator
+
+Pipeline's `docs/DEVNET.md` gives the command, adapted here to this project's wallet (the programs' upgrade authority, so the script initialises the router's config and registers the example strategy itself) and a ledger outside the clone:
+
+```sh
+source <this repo>/scripts/toolchain-env.sh
+ME=$(solana-keygen pubkey ~/.config/testing-pipeline/devnet/wallet.json)
+solana-test-validator --reset --ledger <scratchpad>/test-ledger \
+  --deactivate-feature 6TkHkRmP7JZy1fdM6fg5uXn76wChQBWGokHBJzrLB3mj \
+  --upgradeable-program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 programs/target/deploy/pipeline.so $ME \
+  --upgradeable-program yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx programs/target/deploy/test_strategy_cp.so $ME
+# in another shell (agents: start the validator with run_in_background, stop it with TaskStop)
+solana -u localhost airdrop 100 $ME
+cd scripts/devnet && RPC_URL=http://127.0.0.1:8899 KEYPAIR=~/.config/testing-pipeline/devnet/wallet.json node smoke.ts
+```
+
+`--deactivate-feature` switches off SIMD-0268's deeper call limit, which test validators turn on by default but devnet and mainnet do not have yet.
+
+Passed on 2026-11-10 with `solana-test-validator` 4.4.1 and Node 24.4.1, in 126 seconds: config initialised (listing fee 0.01 SOL), strategy registered, market created and funded, quote 1,000,000 A to 1,993,980 B (4,929 CU), the swap (35,488 CU, fee 2,500) and all five event checks.
+It is slower than devnet because the script confirms every transaction at `finalized`, which a fresh local validator reaches only after about 32 slots of 400 ms each.
+Two things to know:
+
+- The first airdrop, sent seconds after the validator came up, failed with "airdrop request failed"; the same request a few seconds later, and every one after it, went through.
+- With a ledger path longer than macOS's 104-character socket limit (any scratchpad path), the validator logs `Unable to start admin rpc service: path must be shorter than SUN_LEN` and its terminal dashboard repeats `admin.rpc does not exist`; RPC, the faucet and the programs work regardless, so it is noise.
+
+## Known problems
+
+- **Node 26 and public devnet WebSockets.**
+  Node 26.9.0 opens WebSockets over HTTP/2, which it marks experimental, and against `wss://api.devnet.solana.com` the fifth and every later connection on the same session fails at once (Node 24 opened ten in a row).
+  `@solana/kit` opens a connection per `sendAndConfirm`, so Pipeline's smoke script failed with `SolanaError: WebSocket failed to connect` at its sixth transaction, the swap, which had landed anyway.
+  Use Node 24 (`scripts/toolchain-env.sh` does) until this is fixed; Helius devnet WebSockets did not show it.
+- **Public devnet throttles.**
+  Once, Node 24 timed out connecting to `api.devnet.solana.com` mid-run, and sweeping all 44 markets drew HTTP 429s; `quote-devnet` retries 429s with back-off.
+- **Helius devnet and the smoke script.**
+  With `RPC_URL` and `WS_URL` on Helius devnet, the script sent its first transaction, which landed, and then waited for its confirmation for over ten minutes before it was stopped; not diagnosed, so use public devnet for the script.
+- **Platform tools v1.58 has no Intel macOS build**, so on this Mac `cargo build-sbf` must run on v1.57, which has the same Rust (1.95.0) and builds sBPF v3; the wrapper `toolchain-env.sh` puts first does this (see Install).
+- **Downloads from GitHub are flaky on this network**: `gh` calls hit TLS timeouts and connection resets; retry.
