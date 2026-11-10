@@ -44,3 +44,6 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 - **Frontier query**: list the map's open children (`gh issue list --state open`, scoped to the map's sub-issues / task list), drop any with an open blocker (`issue_dependencies_summary.blocked_by > 0`, or an open issue in the `Blocked by` line) or an assignee; first in map order wins.
 - **Claim**: `gh issue edit <n> --add-assignee @me`, the session's first write.
 - **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
+- **Edit the map body**: fetch the body to a file, check that the file is not empty and still starts with `## Destination`, change only your own lines, then write it back with `gh issue edit <map> --body-file <file>`.
+  Chain every step with `&&`, so the write cannot run when the fetch or the check failed: `gh` calls time out on this network and a failed fetch leaves an empty file, which on 2026-11-10 emptied the map for 33 seconds.
+  To recover an overwritten body, read the issue's edit history, where each `diff` is the whole body after that edit: `gh api graphql -f query='query { repository(owner:"<owner>", name:"<repo>") { issue(number:<map>) { userContentEdits(first:5) { nodes { editedAt diff } } } } }'`.
