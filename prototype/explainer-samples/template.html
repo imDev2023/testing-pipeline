@@ -1,0 +1,168 @@
+<title>Pipescope Explainer Samples</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a mock of Pipescope's strategy page. The explanation column sits beside the facts rail that code builds;
+   a floating pill switches the presentation variant, tabs switch the sample. Canary yellow marks Canary results. */
+:root {
+  --bg: #f3f5f8; --surface: #ffffff; --sunk: #eaeef3; --fg: #141920; --muted: #586373; --line: #d6dce4;
+  --accent: #1d5bb8; --canary: #7a5900; --canary-bg: #fff3c4; --ok: #17703f; --ok-bg: #e2f3e9;
+  --bad: #ad2216; --bad-bg: #fce7e4; --author: #6b3fa0; --author-bg: #f1eafa; --hi: #ffe98a;
+  --pill-bg: #141920; --pill-fg: #f3f5f8;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.0625rem; --step-2: 1.375rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1015; --surface: #151a21; --sunk: #1b222b; --fg: #e5e9ef; --muted: #98a3b3; --line: #29313c;
+    --accent: #7fb0ff; --canary: #f0c94a; --canary-bg: #33290a; --ok: #63d394; --ok-bg: #102a1b;
+    --bad: #ff8c80; --bad-bg: #36130f; --author: #c9a6f5; --author-bg: #261a36; --hi: #4d3f0c;
+    --pill-bg: #e5e9ef; --pill-fg: #0d1015; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1015; --surface: #151a21; --sunk: #1b222b; --fg: #e5e9ef; --muted: #98a3b3; --line: #29313c;
+  --accent: #7fb0ff; --canary: #f0c94a; --canary-bg: #33290a; --ok: #63d394; --ok-bg: #102a1b;
+  --bad: #ff8c80; --bad-bg: #36130f; --author: #c9a6f5; --author-bg: #261a36; --hi: #4d3f0c;
+  --pill-bg: #e5e9ef; --pill-fg: #0d1015; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: var(--step-0); line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header.top { border-bottom: 1px solid var(--line); background: var(--surface); }
+header.top .wrap { display: flex; flex-direction: column; gap: 10px; padding-block: 14px 0; }
+.brand { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.brand b { font-family: var(--mono); font-weight: 500; letter-spacing: 0.02em; }
+.brand span { color: var(--muted); font-size: var(--step--1); }
+.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.tabs button { font: inherit; font-size: var(--step--1); background: none; border: 0; color: var(--muted); padding: 8px 12px 10px; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); font-weight: 500; }
+.tabs button:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+main .wrap { display: flex; flex-direction: column; gap: 20px; padding-block: 22px 96px; }
+.head { display: flex; flex-direction: column; gap: 4px; }
+.head h1 { font-size: var(--step-2); font-weight: 600; margin: 0; text-wrap: balance; }
+.head .sub { color: var(--muted); font-size: var(--step--1); display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.mono { font-family: var(--mono); font-size: 0.92em; }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); gap: 20px; align-items: start; }
+@media (max-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+.explainer { padding: 18px 20px 16px; display: flex; flex-direction: column; gap: 14px; }
+.ai-label { font-size: var(--step--1); color: var(--muted); border-left: 3px solid var(--line); padding: 2px 0 2px 10px; max-width: 68ch; }
+.ai-label strong { color: var(--fg); font-weight: 500; }
+.notice { font-size: var(--step--1); background: var(--author-bg); color: var(--fg); border-radius: 4px; padding: 8px 10px; }
+.notice b { color: var(--author); font-weight: 600; }
+.lede { font-size: var(--step-1); line-height: 1.6; max-width: 66ch; margin: 0; }
+.tail { white-space: nowrap; }
+.cite { display: inline-flex; gap: 2px; vertical-align: 2px; margin-left: 2px; }
+.chip { font-family: var(--mono); font-size: 0.66rem; line-height: 1; padding: 3px 4px; border-radius: 3px; border: 1px solid var(--line); background: var(--sunk); color: var(--muted); cursor: pointer; }
+.chip[data-k="C"] { background: var(--canary-bg); color: var(--canary); border-color: transparent; }
+.chip[data-k="A"] { background: var(--author-bg); color: var(--author); border-color: transparent; }
+.chip.missing { background: var(--bad-bg); color: var(--bad); border-color: transparent; text-decoration: line-through; }
+h2.sec { font-size: var(--step--1); text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; margin: 4px 0 0; }
+ul.claims { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-width: 68ch; }
+ul.claims li { padding-left: 14px; position: relative; }
+ul.claims li::before { content: ""; position: absolute; left: 0; top: 0.72em; width: 5px; height: 5px; border-radius: 50%; background: var(--line); }
+ul.claims li.inferred::before { background: transparent; border: 1px solid var(--muted); }
+ul.claims li.author::before { background: var(--author); }
+.unknowns { background: var(--sunk); border-radius: 4px; padding: 10px 12px; font-size: var(--step--1); display: flex; flex-direction: column; gap: 4px; }
+.unknowns b { font-weight: 600; }
+details.more > summary { cursor: pointer; color: var(--accent); font-size: var(--step--1); list-style: none; }
+details.more > summary::-webkit-details-marker { display: none; }
+details.more[open] > summary { margin-bottom: 12px; }
+.ledger-wrap { overflow-x: auto; }
+table.ledger { border-collapse: collapse; width: 100%; font-size: var(--step--1); }
+table.ledger th { text-align: left; font-weight: 600; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+table.ledger td { padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.ledger td.st { width: 46%; min-width: 15em; }
+table.ledger td.n { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; width: 2.2em; }
+table.ledger .ev { display: flex; flex-direction: column; gap: 6px; min-width: 14em; font-size: 0.78rem; line-height: 1.45; }
+table.ledger .ev span { color: var(--muted); }
+.basis { font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; white-space: nowrap; font-weight: 500; }
+.basis.confirmed { background: var(--ok-bg); color: var(--ok); }
+.basis.inferred { background: var(--sunk); color: var(--muted); border: 1px dashed var(--muted); }
+.basis.author { background: var(--author-bg); color: var(--author); }
+.feedback { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: var(--step--1); color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+.feedback button { font: inherit; font-size: var(--step--1); background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.fallback { background: var(--sunk); border-radius: 4px; padding: 14px; display: flex; flex-direction: column; gap: 6px; max-width: 66ch; }
+.fallback b { font-weight: 600; }
+.facts { padding: 14px 0 6px; }
+.facts h2 { font-size: var(--step-0); margin: 0 16px 2px; font-weight: 600; }
+.facts .why { margin: 0 16px 10px; color: var(--muted); font-size: var(--step--1); }
+.group { border-top: 1px solid var(--line); padding: 10px 16px 8px; display: flex; flex-direction: column; gap: 6px; }
+.group h3 { margin: 0; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tag { text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 0.7rem; padding: 1px 6px; border-radius: 10px; }
+.tag.canary { background: var(--canary-bg); color: var(--canary); }
+.tag.author { background: var(--author-bg); color: var(--author); }
+.fact { display: grid; grid-template-columns: 2.6em minmax(0, 1fr); gap: 8px; font-size: var(--step--1); padding: 4px 6px; margin: 0 -6px; border-radius: 4px; transition: background 0.2s; }
+.fact .id { font-family: var(--mono); color: var(--muted); font-size: 0.72rem; padding-top: 2px; }
+.fact .lab { color: var(--muted); overflow-wrap: anywhere; }
+.fact .lab .addr { font-family: var(--mono); font-size: 0.74rem; }
+.fact .val { overflow-wrap: anywhere; }
+.fact .val .addr { font-family: var(--mono); font-size: 0.78rem; }
+.fact .src { color: var(--muted); font-size: 0.72rem; overflow-wrap: anywhere; }
+.fact.hit { background: var(--hi); }
+.fact.cited-none .id { opacity: 0.55; }
+.checks { padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; border-style: dashed; }
+.checks h2 { margin: 0; font-size: var(--step-0); font-weight: 600; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.checks p { margin: 0; color: var(--muted); font-size: var(--step--1); max-width: 80ch; }
+.verdict { font-size: 0.72rem; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+.verdict.pass { background: var(--ok-bg); color: var(--ok); }
+.verdict.fail { background: var(--bad-bg); color: var(--bad); }
+.checks ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 18px; font-size: var(--step--1); }
+.checks li { display: grid; grid-template-columns: 1.2em minmax(0, 1fr); gap: 4px; }
+.checks li .m { font-weight: 600; }
+.checks li.ok .m { color: var(--ok); }
+.checks li.no .m { color: var(--bad); }
+.checks li .err { grid-column: 2; color: var(--bad); font-size: 0.78rem; }
+.drafts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: var(--step--1); color: var(--muted); }
+.drafts button { font: inherit; font-size: var(--step--1); border: 1px solid var(--line); background: var(--surface); color: var(--fg); padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+.drafts button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+details.io { padding: 12px 18px; }
+details.io summary { cursor: pointer; font-weight: 500; }
+details.io p { color: var(--muted); font-size: var(--step--1); max-width: 80ch; }
+details.io pre { font-family: var(--mono); font-size: 0.75rem; background: var(--sunk); padding: 12px; border-radius: 4px; overflow-x: auto; max-height: 420px; }
+.about { font-size: var(--step--1); color: var(--muted); max-width: 90ch; display: flex; flex-direction: column; gap: 6px; }
+.about p { margin: 0; }
+.switcher { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 2px; background: var(--pill-bg); color: var(--pill-fg); border-radius: 999px; padding: 4px; box-shadow: 0 6px 24px rgba(0,0,0,0.25); z-index: 20; font-size: var(--step--1); max-width: calc(100vw - 32px); }
+.switcher button { font: inherit; background: none; color: inherit; border: 0; padding: 6px 12px; border-radius: 999px; cursor: pointer; }
+.switcher button:hover { background: rgba(127,127,127,0.25); }
+.switcher .label { padding: 0 8px; white-space: nowrap; font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .fact { transition: none; } }
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand"><b>Pipescope</b><span>Explainer samples, a prototype to judge. Written by hand in a session from the production prompt; no AI model was called.</span></div>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Sample"></nav>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <section class="head" id="head"></section>
+    <div class="cols">
+      <article class="panel explainer" id="explainer" aria-live="polite"></article>
+      <aside class="panel facts" id="facts"></aside>
+    </div>
+    <section class="panel checks" id="checks"></section>
+    <details class="panel io" id="io"></details>
+    <section class="about" id="about"></section>
+  </div>
+</main>
+<div class="switcher" role="group" aria-label="Presentation variant">
+  <button type="button" id="prev" aria-label="Previous variant">&#8249;</button>
+  <span class="label" id="vlabel"></span>
+  <button type="button" id="next" aria-label="Next variant">&#8250;</button>
+</div>
+
+<script>
+/*LOGIC*/
+</script>
+<script>
+/*DATA*/
+</script>
+<script>
+/*APP*/
+</script>
