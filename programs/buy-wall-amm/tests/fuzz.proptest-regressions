@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6de48c99f789049b5df30eb707cc25f7be543e99e1edbef3f0f029a66e2a29d3 # shrinks to steps = [Seed { market: 1, tokens: 3921196638939414857, lamports: 234075397905, by_seeder: true }]

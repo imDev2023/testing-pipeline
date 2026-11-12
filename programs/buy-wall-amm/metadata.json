@@ -1,0 +1,68 @@
+{
+    "schema": "pipeline-strategy-metadata/1",
+    "name": "Aviary Buy Wall AMM",
+    "description": "A port of IMD's Pool4 design. Each market pairs a token with wrapped SOL on a constant-product curve that owns all its liquidity: seeded once, with no LP shares and no way to take liquidity out. An inventory cap trims the curve when sells leave it holding too many tokens; trimmed tokens are burned except for the market's reward share, and trimmed SOL becomes a buy wall below the price. Every swap pays the market's fee in SOL, split between IMD and Adam, the suite and the market. Nobody controls a market after its seed. This build opens markets; trading arrives in later builds.",
+    "category": "amm",
+    "tags": ["pool4", "buy-wall", "inventory-cap", "burn"],
+    "links": {
+        "source": "https://github.com/imDev2023/testing-pipeline/tree/main/programs/buy-wall-amm",
+        "idl": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/buy-wall-amm/idl/buy_wall_amm.json",
+        "github": "https://github.com/imDev2023/testing-pipeline"
+    },
+    "source": {
+        "repository": "https://github.com/imDev2023/testing-pipeline",
+        "path": "programs/buy-wall-amm"
+    },
+    "init": {
+        "description": "Creates a market for a token against wrapped SOL. Seed it with the seed action in the same transaction; its parameters never change after creation.",
+        "idl_type": "InitParams",
+        "market_state": "new_keypair",
+        "args": [
+            { "name": "fee_bps", "type": "u16", "label": "Fee (basis points)" },
+            { "name": "wall_split_bps", "type": "u16", "label": "Share of the market's fee for the buy wall (basis points)" },
+            { "name": "fee_recipient", "type": "pubkey", "label": "Fee recipient", "description": "Receives the market's part of the fee that does not go to the buy wall. Leave unset only when the wall takes all of it." },
+            { "name": "reward_share_bps", "type": "u16", "label": "Reward share of trimmed tokens (basis points)" },
+            { "name": "rewards_recipient", "type": "pubkey", "label": "Rewards recipient", "description": "Receives the reward share of trimmed tokens. Unset exactly when the reward share is 0." },
+            { "name": "cap_floor_bps", "type": "u16", "label": "Cap floor (basis points of the seeded tokens)" },
+            { "name": "cap_decay_bps", "type": "u16", "label": "Cap decay a day (basis points of the seeded tokens)", "description": "How far buys may lower the inventory cap each day. 0 switches the ratchet off." },
+            { "name": "seeder", "type": "pubkey", "label": "Seeder", "description": "The only wallet that may seed the market." }
+        ],
+        "accounts": [
+            { "name": "token_mint", "source": "input:token_mint" },
+            { "name": "wsol_mint", "source": "fixed:So11111111111111111111111111111111111111112" },
+            { "name": "vault_authority", "source": "pda:strategy:str:authority,key:market_state" },
+            { "name": "token_vault", "source": "pda:strategy:str:vault,key:market_state,key:input:token_mint", "writable": true },
+            { "name": "sol_vault", "source": "pda:strategy:str:vault,key:market_state,key:fixed:So11111111111111111111111111111111111111112", "writable": true },
+            { "name": "token_program", "source": "token_program_of:input:token_mint" },
+            { "name": "sol_token_program", "source": "fixed:TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }
+        ]
+    },
+    "actions": [
+        {
+            "name": "seed",
+            "label": "Seed the market",
+            "kind": "add_liquidity",
+            "description": "Seeds and opens the market, once, signed by its seeder, from the seeder's own token and wrapped SOL accounts. The token's mint and freeze authorities must be removed first. The seed stays in the market for good: there is no withdrawal. A token with a transfer hook needs the hook's accounts after these, which this form cannot add.",
+            "args": [
+                { "name": "token_amount", "type": "u64", "label": "Tokens", "decimals_of": "mint:0" },
+                { "name": "sol_amount", "type": "u64", "label": "Wrapped SOL", "decimals_of": "mint:1" }
+            ],
+            "accounts": [
+                { "name": "seeder", "source": "wallet", "signer": true },
+                { "name": "market_state", "source": "market_state", "writable": true },
+                { "name": "seeder_token", "source": "wallet_token_account:0", "writable": true },
+                { "name": "seeder_sol", "source": "wallet_token_account:1", "writable": true },
+                { "name": "token_vault", "source": "vault:0", "writable": true },
+                { "name": "sol_vault", "source": "vault:1", "writable": true },
+                { "name": "token_mint", "source": "mint:0" },
+                { "name": "wsol_mint", "source": "mint:1" },
+                { "name": "token_program", "source": "token_program:0" },
+                { "name": "sol_token_program", "source": "token_program:1" }
+            ]
+        }
+    ],
+    "security": {
+        "contact": "https://github.com/imDev2023/testing-pipeline/security/advisories/new",
+        "policy": "https://github.com/imDev2023/testing-pipeline/security/policy"
+    }
+}
