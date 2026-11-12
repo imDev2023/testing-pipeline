@@ -59,20 +59,33 @@ export const TAX_AMM_ERROR__MARKET_NOT_OPEN = 0x1783; // 6019
 export const TAX_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED = 0x1784; // 6020
 /** Overflow: Arithmetic overflow */
 export const TAX_AMM_ERROR__OVERFLOW = 0x1785; // 6021
+/** NotSeeder: Only the market's seeder can seed it */
+export const TAX_AMM_ERROR__NOT_SEEDER = 0x1786; // 6022
+/** AlreadySeeded: The market has already been seeded */
+export const TAX_AMM_ERROR__ALREADY_SEEDED = 0x1787; // 6023
+/** ZeroSeed: A side without a virtual reserve needs a seed above 0 */
+export const TAX_AMM_ERROR__ZERO_SEED = 0x1788; // 6024
+/** ZeroOutput: The trade's output would be 0 */
+export const TAX_AMM_ERROR__ZERO_OUTPUT = 0x1789; // 6025
+/** InsufficientLiquidity: The trade would pay out more than the market's real reserve */
+export const TAX_AMM_ERROR__INSUFFICIENT_LIQUIDITY = 0x178a; // 6026
 
 export type TaxAmmError =
+  | typeof TAX_AMM_ERROR__ALREADY_SEEDED
   | typeof TAX_AMM_ERROR__BAD_INIT_DATA
   | typeof TAX_AMM_ERROR__BAD_TAX_SIDE
   | typeof TAX_AMM_ERROR__BAD_VIRTUAL_SIDE
   | typeof TAX_AMM_ERROR__BURN_ON_NATIVE_SOL
   | typeof TAX_AMM_ERROR__EQUAL_MINTS
   | typeof TAX_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED
+  | typeof TAX_AMM_ERROR__INSUFFICIENT_LIQUIDITY
   | typeof TAX_AMM_ERROR__MARKET_NOT_OPEN
   | typeof TAX_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED
   | typeof TAX_AMM_ERROR__NO_RECIPIENT
   | typeof TAX_AMM_ERROR__NO_SEEDER
   | typeof TAX_AMM_ERROR__NOT_A_MINT
   | typeof TAX_AMM_ERROR__NOT_PIPELINE
+  | typeof TAX_AMM_ERROR__NOT_SEEDER
   | typeof TAX_AMM_ERROR__OVERFLOW
   | typeof TAX_AMM_ERROR__RANGE_INVERTED
   | typeof TAX_AMM_ERROR__RATE_OUTSIDE_RANGE
@@ -82,23 +95,28 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__TAX_ABOVE_CAP
   | typeof TAX_AMM_ERROR__WRONG_ACCOUNT
   | typeof TAX_AMM_ERROR__WRONG_TOKEN_PROGRAM
+  | typeof TAX_AMM_ERROR__ZERO_OUTPUT
+  | typeof TAX_AMM_ERROR__ZERO_SEED
   | typeof TAX_AMM_ERROR__ZERO_SHARE;
 
 let taxAmmErrorMessages: Record<TaxAmmError, string> | undefined;
 if (process.env["NODE_ENV"] !== "production") {
   taxAmmErrorMessages = {
+    [TAX_AMM_ERROR__ALREADY_SEEDED]: `The market has already been seeded`,
     [TAX_AMM_ERROR__BAD_INIT_DATA]: `Init data is not valid creation parameters`,
     [TAX_AMM_ERROR__BAD_TAX_SIDE]: `The tax side must be 0 or 1`,
     [TAX_AMM_ERROR__BAD_VIRTUAL_SIDE]: `The virtual side must be 0 or 1`,
     [TAX_AMM_ERROR__BURN_ON_NATIVE_SOL]: `Native SOL can't be burned, so its tax side has no burn share`,
     [TAX_AMM_ERROR__EQUAL_MINTS]: `A market's two mints must differ`,
     [TAX_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED]: `Exact-out swaps are not supported`,
+    [TAX_AMM_ERROR__INSUFFICIENT_LIQUIDITY]: `The trade would pay out more than the market's real reserve`,
     [TAX_AMM_ERROR__MARKET_NOT_OPEN]: `The market is not open: it has not been seeded`,
     [TAX_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED]: `The mint carries an extension the mint rules refuse`,
     [TAX_AMM_ERROR__NO_RECIPIENT]: `A market needs at least one tax recipient`,
     [TAX_AMM_ERROR__NO_SEEDER]: `The seeder must not be the default key`,
     [TAX_AMM_ERROR__NOT_A_MINT]: `A market's mints must be SPL Token or Token-2022 mints`,
     [TAX_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
+    [TAX_AMM_ERROR__NOT_SEEDER]: `Only the market's seeder can seed it`,
     [TAX_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
     [TAX_AMM_ERROR__RANGE_INVERTED]: `A tax range's minimum is above its maximum`,
     [TAX_AMM_ERROR__RATE_OUTSIDE_RANGE]: `A tax rate is outside its range`,
@@ -108,6 +126,8 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__TAX_ABOVE_CAP]: `A tax range may not go above MAX_TAX_BPS`,
     [TAX_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,
     [TAX_AMM_ERROR__WRONG_TOKEN_PROGRAM]: `The token program is not the mint's`,
+    [TAX_AMM_ERROR__ZERO_OUTPUT]: `The trade's output would be 0`,
+    [TAX_AMM_ERROR__ZERO_SEED]: `A side without a virtual reserve needs a seed above 0`,
     [TAX_AMM_ERROR__ZERO_SHARE]: `A used recipient slot needs a share above 0`,
   };
 }

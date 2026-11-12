@@ -53,6 +53,7 @@ The constants are compiled into the program; changing one is a program upgrade, 
   A fresh keypair can't be taken by anyone else; if someone pre-funds it, the creation fails and the creator retries with another keypair, as Pipeline's guide describes.
   Checked against devnet's router in LiteSVM on 2026-11-12 (`programs/tax-amm/tests/hostile.rs`): once the address holds lamports the router passes it on unsigned, the program's account creation fails with a signer privilege escalation, and the whole `create_market` fails, leaving only the lamports; the same creation with a fresh keypair succeeds.
 - The vault authority is the PDA `["authority", market_state]` of the tax AMM program; it signs every transfer and burn out of the vaults.
+  So `pipeline_resolve_accounts` lists it, read-only, after the output vault: a swap's transfer out of the vault needs it among the swap's accounts ([Tax AMM: seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60), 2026-11-12).
 - Each vault is a token account at the PDA `["vault", market_state, mint]`, owned by the vault authority.
   `pipeline_init_market` creates both itself, after every rule below has passed, so a refused mint meets the rule that refuses it rather than a vault creation that can't read it (Anchor's own vault constraints read the mint first and fail on an extension they don't know); each is sized by its mint's token program (`GetAccountDataSize`), which leaves room for a hooked mint's account extension.
   Lamports someone sent to a vault's address beforehand stay in it without blocking the creation; on a native SOL vault the token program turns them into wrapped SOL, a donation the market never counts (see "Locked for good").
@@ -101,6 +102,12 @@ One transaction, as Pipeline's guide recommends:
 3. The tax AMM's `seed` action, signed by the seeder.
 
 A launchpad graduating a token instead calls `pipeline_seed_liquidity`, then the router's `register_existing_market` and `init_fee_account` for each mint, in one transaction.
+
+How big that transaction is, against a transaction's 1,232 bytes without an address lookup table, with the creator as the seeder, measured on 2026-11-12 by [Tax AMM: seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60) (`programs/tax-amm/tests/seed.rs`, as a legacy transaction):
+
+- 1,210 bytes for two SPL Token mints or two Token-2022 mints; the demo script's version 0 transaction is 2 bytes longer, 1,212.
+- 1,242 bytes for one of each, and 1,308 with a hooked mint (Pipeline's `test-hook`, which adds the fewest accounts a hook can); a seeder other than the creator adds 96 bytes.
+- So a market pairing a Token-2022 token with SOL or USDC, and every contained token's home market, needs an address lookup table for its creation transaction, or sends the seed as a second transaction (the market refuses every swap until then); that choice belongs to [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75).
 
 ## Liquidity
 
@@ -274,6 +281,7 @@ Decided with the owner on 2026-11-10 in [Cut the containment hook and tax AMM bu
 The owner's standing rule of 2026-11-10 keeps every decision cheap to change, since each is a default MetalLegBob may change.
 
 - The four values of "Constants" are build-time constants in one config module of the program, and no other file repeats them.
+  `MAX_TAX_BPS` and `SUITE_SHARE_BPS` are also published in the program's IDL (Anchor's `#[constant]`), so the TypeScript client generated from it carries them for Aviary's launch form and the demo script, rather than either restating them.
 - The mint extension allowlist of "Mint rules", and the check that applies it, live in one small library crate of the on-chain workspace.
   The tax AMM, the containment hook, the buy wall AMM and the lending AMM all depend on that crate, so there is one list and never a second copy; a product with a stricter rule adds it on top.
   The crate is `programs/mint-rules`; it depends on nothing and reads a mint's extension entries itself, the way Token-2022 lays them out, so an extension Token-2022 adds after the crate was written is refused by its number rather than misread.
@@ -363,4 +371,5 @@ The buy wall AMM and the containment hook start from what ticket 1 sets up.
   The ceilings above are set from what Pipeline's constant-product example costs at `5ad130d` (a quote of about 4,900 units and a whole router swap of about 35,500, `docs/toolchain.md`), with room for a larger market state and for Token-2022.
   The build measures each instruction against them, and a ceiling changes only by a PR to this file.
   Measured on 2026-11-12 by [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59), on mints without a transfer hook: `pipeline_init_market` 37,909 units on SPL Token mints and 37,345 on Token-2022 mints, `pipeline_market_info` 4,249 inside `create_market` and 2,531 called directly, `pipeline_resolve_accounts` 4,484.
-- Whether the creation transaction (`create_market`, two `init_fee_account` and `seed`) fits in one transaction without an address lookup table when both mints are Token-2022 mints with transfer hooks; the demo script measures it.
+- Measured on 2026-11-12 by [Tax AMM: seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60), on mints without a transfer hook: `pipeline_quote` 5,429 to 5,439 units, `pipeline_swap` 14,110 to 14,163 on SPL Token mints and 15,804 to 15,857 on Token-2022 mints (a whole router swap 39,805 to 46,442), and `seed` 13,040 on SPL Token mints and 16,420 on Token-2022 mints.
+  A swap of a mint with Pipeline's allow-all `test-hook` took 51,347 to 63,250 units in all, the hook called at depth 4 inside the tax AMM's transfer when the hooked mint is the output.

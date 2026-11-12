@@ -9,6 +9,7 @@ mod common;
 
 use common::*;
 use pipeline_client::Pubkey;
+use solana_signer::Signer;
 
 /// The spec's table, in compute units.
 mod ceilings {
@@ -87,6 +88,153 @@ fn pipeline_resolve_accounts_stays_under_its_ceiling() {
                 cost <= ceilings::PIPELINE_RESOLVE_ACCOUNTS,
                 "{name}: {cost}"
             );
+        }
+    }
+}
+
+/// Seeded markets on plain mints of each token program, with the seed's metadata, taxed
+/// on side 1 at typical rates.
+fn seeded_markets() -> Vec<(
+    &'static str,
+    Env,
+    Market,
+    litesvm::types::TransactionMetadata,
+)> {
+    [("SPL Token", TOKEN), ("Token-2022", TOKEN_2022)]
+        .into_iter()
+        .map(|(name, token_program)| {
+            let mut env = Env::new();
+            let mints = [
+                (env.create_mint(&token_program), token_program),
+                (env.create_mint(&token_program), token_program),
+            ];
+            let seeder = solana_keypair::Keypair::new();
+            let market = env
+                .create_tax_market(mints, &valid_params(&seeder.pubkey()))
+                .unwrap();
+            let amounts = [100_000_000_000, 200_000_000_000];
+            env.fund(&seeder.pubkey(), &market, amounts);
+            let seeded = env.seed(&market, &seeder, amounts).unwrap();
+            (name, env, market, seeded)
+        })
+        .collect()
+}
+
+#[test]
+fn seed_stays_under_its_ceiling() {
+    for (name, _, _, seeded) in seeded_markets() {
+        let costs = strategy_compute(&seeded.logs);
+        assert_eq!(costs.len(), 1);
+        println!("seed on {name} mints: {} CU", costs[0]);
+        assert!(costs[0] <= ceilings::SEED, "{name}: {}", costs[0]);
+    }
+}
+
+#[test]
+fn pipeline_quote_stays_under_its_ceiling() {
+    for (name, env, market, _) in seeded_markets() {
+        for (input, output) in [(0, 1), (1, 0)] {
+            let trade = exact_in(input, output, 1_000_000_000);
+            let mut accounts = env.read_accounts(&market, &trade);
+            accounts.extend(
+                env.resolve_accounts(&market, &trade)
+                    .unwrap()
+                    .into_iter()
+                    .map(|a| pipeline_client::AccountMeta::new_readonly(a.pubkey, false)),
+            );
+            let call = strategy_call(
+                pipeline_client::interface::discriminator::QUOTE,
+                &trade,
+                accounts,
+            );
+            let cost = strategy_compute(&env.simulate_meta(call).unwrap().logs)[0];
+            println!("pipeline_quote {input}->{output} on {name} mints: {cost} CU");
+            assert!(cost <= ceilings::PIPELINE_QUOTE, "{name}: {cost}");
+        }
+    }
+}
+
+#[test]
+fn pipeline_swap_stays_under_its_ceiling() {
+    for (name, mut env, market, _) in seeded_markets() {
+        let trader = env.funded_wallet(&market, 1_000_000_000_000);
+        for (input, output) in [(0, 1), (1, 0)] {
+            let meta = env
+                .swap_with(
+                    &market,
+                    &trader,
+                    (input, output),
+                    1_000_000_000,
+                    &SwapOptions::default(),
+                )
+                .unwrap();
+            let costs = strategy_compute(&meta.logs);
+            assert_eq!(costs.len(), 1);
+            println!(
+                "pipeline_swap {input}->{output} on {name} mints: {} CU, the whole router swap {} CU",
+                costs[0], meta.compute_units_consumed
+            );
+            assert!(costs[0] <= ceilings::PIPELINE_SWAP, "{name}: {}", costs[0]);
+        }
+    }
+}
+
+#[test]
+fn a_swap_calls_a_transfer_hook_inside_it_as_the_input_and_as_the_output() {
+    // docs/spec/README.md, "Test layers" 5: router (1) -> tax AMM (2) -> Token-2022 (3) ->
+    // transfer hook (4) is the deepest call a swap makes, when the hooked mint is the
+    // output; as the input, the router's own transfers call the hook at depth 3.
+    for hooked_side in [0usize, 1] {
+        let mut env = Env::new();
+        let hooked = env.create_mint_with_test_hook();
+        let plain = env.create_mint(&TOKEN);
+        let mut mints = [(plain, TOKEN), (plain, TOKEN)];
+        mints[hooked_side] = (hooked, TOKEN_2022);
+        let market = env.seeded_market(
+            mints,
+            &valid_params(&Pubkey::new_unique()),
+            [100_000_000_000, 200_000_000_000],
+        );
+        let trader = env.funded_wallet(&market, 1_000_000_000_000);
+        let hook = test_hook_id();
+        for (input, output) in [(0, 1), (1, 0)] {
+            let quote = env
+                .quote(&market, &exact_in(input, output, 1_000_000_000))
+                .unwrap();
+            let meta = env
+                .swap_with(
+                    &market,
+                    &trader,
+                    (input, output),
+                    1_000_000_000,
+                    &SwapOptions::default(),
+                )
+                .unwrap();
+            let depths: Vec<u32> = meta
+                .logs
+                .iter()
+                .filter_map(|line| line.strip_prefix(&format!("Program {hook} invoke [")))
+                .map(|rest| rest.trim_end_matches(']').parse().unwrap())
+                .collect();
+            let as_output = output == hooked_side;
+            println!(
+                "hooked mint as the {}: hook called at depths {depths:?}, {} CU in all",
+                if as_output { "output" } else { "input" },
+                meta.compute_units_consumed
+            );
+            if as_output {
+                assert_eq!(
+                    depths,
+                    vec![4],
+                    "once, inside the tax AMM's output transfer"
+                );
+            } else {
+                // The trader's input to the vault, then Pipeline's fee.
+                assert_eq!(depths, vec![3, 3], "in the router's two transfers");
+            }
+            let result: pipeline_client::SwapResult =
+                borsh::from_slice(&meta.return_data.data).unwrap();
+            assert_eq!(result.received, quote.amount_out);
         }
     }
 }

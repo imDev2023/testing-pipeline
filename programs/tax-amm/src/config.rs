@@ -11,10 +11,13 @@
 use anchor_lang::prelude::*;
 
 /// The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so no
-/// tax market can be a honeypot through its tax.
+/// tax market can be a honeypot through its tax. Published in the IDL (`#[constant]`).
+#[constant]
 pub const MAX_TAX_BPS: u16 = 1_000;
 
 /// The suite share, in basis points of every tax, taken before the creator's split: 10%.
+/// Published in the IDL (`#[constant]`), where the demo script reads it.
+#[constant]
 pub const SUITE_SHARE_BPS: u16 = 1_000;
 
 /// The wallet the suite share is paid to. On devnet its key is

@@ -10,7 +10,7 @@ use anchor_lang::Discriminator;
 use common::*;
 use pipeline_client::interface::discriminator;
 use serde_json::Value;
-use tax_amm::events::MarketCreated;
+use tax_amm::events::{MarketCreated, Seeded};
 use tax_amm::state::layout;
 use tax_amm::TaxMarket;
 
@@ -76,9 +76,15 @@ fn the_idl_is_this_programs() {
 }
 
 #[test]
-fn its_instructions_are_pipelines_with_pipelines_discriminators() {
+fn its_instructions_are_pipelines_with_pipelines_discriminators_and_its_actions() {
     let idl = idl();
     let expected = [
+        (
+            "seed",
+            tax_amm::instruction::Seed::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
         ("pipeline_init_market", discriminator::INIT_MARKET),
         ("pipeline_market_info", discriminator::MARKET_INFO),
         ("pipeline_quote", discriminator::QUOTE),
@@ -179,21 +185,65 @@ fn its_market_state_has_the_programs_discriminator_and_layout() {
 }
 
 #[test]
-fn its_event_and_errors_are_the_programs() {
+fn it_publishes_the_tax_cap_and_the_suite_share_from_the_config_module() {
     let idl = idl();
-    let event = &idl["events"][0];
-    assert_eq!(event["name"], "MarketCreated");
-    assert_eq!(bytes(&event["discriminator"]), MarketCreated::DISCRIMINATOR);
+    let constants: Vec<(&str, &str, String)> = idl["constants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["name"].as_str().unwrap(),
+                c["type"].as_str().unwrap(),
+                c["value"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        constants,
+        [
+            (
+                "MAX_TAX_BPS",
+                "u16",
+                tax_amm::config::MAX_TAX_BPS.to_string()
+            ),
+            (
+                "SUITE_SHARE_BPS",
+                "u16",
+                tax_amm::config::SUITE_SHARE_BPS.to_string()
+            ),
+        ]
+    );
+}
 
-    // Errors are numbered from 6000 in the enum's order, the last being `Overflow`.
+#[test]
+fn its_events_and_errors_are_the_programs() {
+    let idl = idl();
+    let events: Vec<(&str, Vec<u8>)> = idl["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["name"].as_str().unwrap(), bytes(&e["discriminator"])))
+        .collect();
+    assert_eq!(
+        events,
+        [
+            ("MarketCreated", MarketCreated::DISCRIMINATOR.to_vec()),
+            ("Seeded", Seeded::DISCRIMINATOR.to_vec()),
+        ]
+    );
+
+    // Errors are numbered from 6000 in the enum's order, the last being
+    // `InsufficientLiquidity`.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "Overflow");
+    assert_eq!(last["name"], "InsufficientLiquidity");
     assert_eq!(
         last["code"].as_u64().unwrap() as u32,
-        anchor_lang::error::ERROR_CODE_OFFSET + tax_amm::StrategyError::Overflow as u32
+        anchor_lang::error::ERROR_CODE_OFFSET
+            + tax_amm::StrategyError::InsufficientLiquidity as u32
     );
 }

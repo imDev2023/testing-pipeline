@@ -46,21 +46,25 @@ import {
   getPipelineQuoteInstruction,
   getPipelineResolveAccountsInstruction,
   getPipelineSwapInstruction,
+  getSeedInstruction,
   parsePipelineInitMarketInstruction,
   parsePipelineMarketInfoInstruction,
   parsePipelineQuoteInstruction,
   parsePipelineResolveAccountsInstruction,
   parsePipelineSwapInstruction,
+  parseSeedInstruction,
   type ParsedPipelineInitMarketInstruction,
   type ParsedPipelineMarketInfoInstruction,
   type ParsedPipelineQuoteInstruction,
   type ParsedPipelineResolveAccountsInstruction,
   type ParsedPipelineSwapInstruction,
+  type ParsedSeedInstruction,
   type PipelineInitMarketAsyncInput,
   type PipelineMarketInfoInput,
   type PipelineQuoteInput,
   type PipelineResolveAccountsInput,
   type PipelineSwapInput,
+  type SeedInput,
 } from "../instructions/index.ts";
 import {
   findAuthorityPda,
@@ -99,7 +103,12 @@ export function identifyTaxAmmAccount(
   );
 }
 
-export const TaxAmmEvent = { 0: "MarketCreated", MarketCreated: 0 } as const;
+export const TaxAmmEvent = {
+  0: "MarketCreated",
+  1: "Seeded",
+  MarketCreated: 0,
+  Seeded: 1,
+} as const;
 
 export type TaxAmmEvent = (typeof TaxAmmEvent)[Exclude<
   keyof typeof TaxAmmEvent,
@@ -121,6 +130,17 @@ export function identifyTaxAmmEvent(
   ) {
     return TaxAmmEvent.MarketCreated;
   }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([95, 55, 75, 113, 178, 157, 251, 224]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmEvent.Seeded;
+  }
   throw new Error(
     "The provided event could not be identified as a taxAmm event.",
   );
@@ -132,11 +152,13 @@ export const TaxAmmInstruction = {
   2: "PipelineQuote",
   3: "PipelineResolveAccounts",
   4: "PipelineSwap",
+  5: "Seed",
   PipelineInitMarket: 0,
   PipelineMarketInfo: 1,
   PipelineQuote: 2,
   PipelineResolveAccounts: 3,
   PipelineSwap: 4,
+  Seed: 5,
 } as const;
 
 export type TaxAmmInstruction = (typeof TaxAmmInstruction)[Exclude<
@@ -203,6 +225,17 @@ export function identifyTaxAmmInstruction(
   ) {
     return TaxAmmInstruction.PipelineSwap;
   }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([255, 178, 140, 239, 113, 22, 214, 231]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmInstruction.Seed;
+  }
   throw new SolanaError(
     SOLANA_ERROR__PROGRAM_CLIENTS__FAILED_TO_IDENTIFY_INSTRUCTION,
     { instructionData: data, programName: "taxAmm" },
@@ -226,7 +259,10 @@ export type ParsedTaxAmmInstruction<
     } & ParsedPipelineResolveAccountsInstruction<TProgram>)
   | ({
       instructionType: typeof TaxAmmInstruction.PipelineSwap;
-    } & ParsedPipelineSwapInstruction<TProgram>);
+    } & ParsedPipelineSwapInstruction<TProgram>)
+  | ({
+      instructionType: typeof TaxAmmInstruction.Seed;
+    } & ParsedSeedInstruction<TProgram>);
 
 export function parseTaxAmmInstruction<TProgram extends string>(
   instruction: Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array>,
@@ -266,6 +302,13 @@ export function parseTaxAmmInstruction<TProgram extends string>(
       return {
         instructionType: TaxAmmInstruction.PipelineSwap,
         ...parsePipelineSwapInstruction(instruction),
+      };
+    }
+    case TaxAmmInstruction.Seed: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: TaxAmmInstruction.Seed,
+        ...parseSeedInstruction(instruction),
       };
     }
     default:
@@ -315,6 +358,10 @@ export type TaxAmmPluginInstructions = {
     input: PipelineSwapInput,
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getPipelineSwapInstruction> & SelfPlanAndSendFunctions;
+  seed: (
+    input: SeedInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getSeedInstruction> & SelfPlanAndSendFunctions;
 };
 
 export type TaxAmmPluginPdas = {
@@ -381,6 +428,14 @@ export function taxAmmProgram(
             addSelfPlanAndSendFunctions(
               client,
               getPipelineSwapInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          seed: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getSeedInstruction(input, {
                 programAddress:
                   instructionConfig?.programAddress ?? config.programAddress,
               }),
