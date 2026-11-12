@@ -12,6 +12,8 @@ use anchor_lang::prelude::*;
 
 /// The latest unlock deadline a launcher may set, in seconds after the binding: 90 days,
 /// which caps how long holders can be stuck if the home market stops working.
+/// Published in the IDL, so clients such as the launch script check it without repeating it.
+#[constant]
 pub const MAX_UNLOCK_DEADLINE_SECS: i64 = 90 * 24 * 60 * 60;
 
 /// The only strategy a home market may run on: the tax AMM, taken from its own crate so its

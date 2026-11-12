@@ -7,6 +7,7 @@
  */
 
 export * from "./accounts/index.ts";
+export * from "./constants/index.ts";
 export * from "./errors/index.ts";
 export * from "./instructions/index.ts";
 export * from "./pdas/index.ts";

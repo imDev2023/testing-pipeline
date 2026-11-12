@@ -2,18 +2,16 @@
 //! hook extension, as pure functions that take no accounts. Which extensions a mint may
 //! carry at all is the shared `mint-rules` crate's check, which `bind` runs first.
 //!
-//! The bytes are read as Token-2022 lays them out; `tests/mint_layout.rs` checks that
-//! against Token-2022's own state code.
+//! The bytes are read as Token-2022 lays them out, the extension entries by the shared
+//! crate's own walk; `tests/layout.rs` checks the reading against Token-2022's own state
+//! code.
 
-/// An SPL Token mint, and a Token-2022 mint's base, before any extension.
-const MINT_LEN: usize = 82;
+use mint_rules::MINT_LEN;
+
 /// `mint_authority`: a 4-byte option tag, then the key.
 const MINT_AUTHORITY: usize = 0;
 /// `freeze_authority`: a 4-byte option tag, then the key.
 const FREEZE_AUTHORITY: usize = 46;
-/// Token-2022 pads an extended mint to a token account's length, then writes the account
-/// type, then its type-length-value extension entries.
-const ACCOUNT_LEN: usize = 165;
 /// Token-2022's number for the transfer hook extension.
 const TRANSFER_HOOK: u16 = mint_rules::extension::TRANSFER_HOOK;
 /// The transfer hook extension's value: the hook authority, then the hook program, each an
@@ -43,7 +41,7 @@ pub fn read_mint(data: &[u8]) -> Option<MintFacts> {
     Some(MintFacts {
         mint_authority: read_option_key(data, MINT_AUTHORITY)?,
         freeze_authority: read_option_key(data, FREEZE_AUTHORITY)?,
-        transfer_hook: match find_extension(data, TRANSFER_HOOK) {
+        transfer_hook: match mint_rules::find_extension(data, TRANSFER_HOOK) {
             Some(value) if value.len() == TRANSFER_HOOK_LEN => Some(TransferHook {
                 authority: read_nonzero_key(&value[..32]),
                 program: read_nonzero_key(&value[32..]),
@@ -70,24 +68,4 @@ fn read_option_key(data: &[u8], offset: usize) -> Option<Option<[u8; 32]>> {
 fn read_nonzero_key(bytes: &[u8]) -> Option<[u8; 32]> {
     let key: [u8; 32] = bytes.try_into().ok()?;
     (key != [0; 32]).then_some(key)
-}
-
-/// The value of the mint's first extension entry of `extension_type`, walking the entries
-/// as Token-2022 does; `None` for a mint without extensions or without that entry.
-fn find_extension(data: &[u8], extension_type: u16) -> Option<&[u8]> {
-    let mut entries = data.get(ACCOUNT_LEN + 1..)?;
-    while let [t0, t1, l0, l1, rest @ ..] = entries {
-        let found = u16::from_le_bytes([*t0, *t1]);
-        let len = u16::from_le_bytes([*l0, *l1]) as usize;
-        // Token-2022's `Uninitialized` type ends the list.
-        if found == 0 {
-            return None;
-        }
-        let value = rest.get(..len)?;
-        if found == extension_type {
-            return Some(value);
-        }
-        entries = rest.get(len..)?;
-    }
-    None
 }

@@ -12,7 +12,8 @@
 //! market](https://github.com/imDev2023/testing-pipeline/issues/69); `unlock` arrives with
 //! [Containment hook: unlock by the goal or the
 //! deadline](https://github.com/imDev2023/testing-pipeline/issues/70). No instruction
-//! changes a config once `bind` has written it.
+//! changes what `bind` wrote in a config: not the launcher, not us; the unlock will only
+//! record its time, once, in the config's last field.
 //!
 //! Where things live: the build-time policy values in [`config`], the unlock terms' rules
 //! in [`terms`], the accounts in [`state`], what is read from a mint in [`mint`], from the

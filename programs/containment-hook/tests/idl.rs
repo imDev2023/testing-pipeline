@@ -101,6 +101,19 @@ fn no_instruction_changes_a_config() {
 }
 
 #[test]
+fn it_publishes_the_longest_deadline_as_the_program_defines_it() {
+    let idl = idl();
+    let constants = idl["constants"].as_array().unwrap();
+    assert_eq!(constants.len(), 1);
+    assert_eq!(constants[0]["name"], "MAX_UNLOCK_DEADLINE_SECS");
+    assert_eq!(constants[0]["type"], "i64");
+    assert_eq!(
+        constants[0]["value"],
+        containment_hook::config::MAX_UNLOCK_DEADLINE_SECS.to_string()
+    );
+}
+
+#[test]
 fn its_config_and_errors_are_the_programs() {
     let idl = idl();
     let account = &idl["accounts"][0];

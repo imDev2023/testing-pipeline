@@ -3,6 +3,10 @@
 //! once, in the program's config module, and no other file repeats them; the mint extension
 //! allowlist is the shared mint-rules crate's and the hook keeps no copy of it; the goal and
 //! the deadline are `bind`'s arguments, and the launch script has no default for either.
+//!
+//! The IDL and the client generated from it carry the longest deadline as a published
+//! constant, which `tests/idl.rs` and `pnpm typecheck` keep equal to the program's, so they
+//! are not counted as repeating it.
 
 use std::path::{Path, PathBuf};
 
@@ -47,7 +51,13 @@ fn files_containing(needle: &str) -> Vec<String> {
                 .to_string()
         })
         .filter(|path| path != "tests/policy_values.rs")
+        .filter(|path| !generated(path))
         .collect()
+}
+
+/// The IDL and the TypeScript client, generated from the program.
+fn generated(path: &str) -> bool {
+    path == "idl/containment_hook.json" || path.starts_with("scripts/client/")
 }
 
 #[test]
@@ -92,7 +102,8 @@ fn the_launch_script_has_no_default_for_the_goal_or_the_deadline() {
             .unwrap_or_else(|| panic!("the script has no --{flag} option"));
         assert!(!line.contains("default"), "--{flag} has a default: {line}");
     }
-    // Nor does it repeat the program's limit on the deadline.
+    // Nor does it repeat the program's limit on the deadline: it reads the generated client's.
+    assert!(script.contains("MAX_UNLOCK_DEADLINE_SECS"));
     for value in ["90", &MAX_UNLOCK_DEADLINE_SECS.to_string()] {
         assert!(
             !script.contains(&format!("{value} days")) && !script.contains(&format!("= {value}")),

@@ -192,7 +192,7 @@ cd ../../containment-hook/scripts && pnpm launch --cluster localnet \
 ```
 
 Passed on 2026-11-12 with `solana-test-validator` 4.4.1 and Node 24.4.1, in 2.6 seconds: the mint created with only the transfer hook extension, the hook as its program and its unlock PDA as its authority, no freeze authority, and its supply minted; the tax market created with its tax on wrapped SOL and both fee accounts; `bind` in the next transaction, because with it the creation would be 1,307 of the 1,232 bytes a transaction may hold; and the config read back with the generated client holding the market, the market state, the vault, the fee account, the quote mint, the goal and the deadline expected.
-Without `--goal` or `--deadline` it stops before connecting; with a zero goal or a deadline already past it stops before sending anything; a deadline too far away is refused by the hook itself (`DeadlineTooFar`), and the script then names the market left unbound.
+Without `--goal` or `--deadline`, or with a goal too large for a `u64`, it stops before connecting; with a zero goal, a deadline already past or one beyond `MAX_UNLOCK_DEADLINE_SECS`, which it reads from the generated client (the hook publishes it in its IDL), it stops before sending anything; if `bind` fails anyway, it names the market left unbound.
 
 ### CI
 

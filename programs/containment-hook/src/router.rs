@@ -3,7 +3,7 @@
 //!
 //! The router's source is never copied here (BSL 1.1); the `Market` layout is read from the
 //! Borsh struct Pipeline's Apache-2.0 `pipeline-client` publishes at the pinned commit, and
-//! `tests/router_market.rs` checks this reading against `pipeline-client`'s own decoder on
+//! `tests/layout.rs` checks this reading against `pipeline-client`'s own decoder on
 //! markets the real router created.
 
 use anchor_lang::prelude::*;
@@ -49,9 +49,7 @@ pub struct RouterMarket {
 impl RouterMarket {
     /// The market's mints, as many as it trades.
     pub fn mints(&self) -> &[Pubkey] {
-        self.mints
-            .get(..self.mint_count as usize)
-            .unwrap_or(&self.mints)
+        self.mints.get(..self.mint_count as usize).unwrap_or(&[])
     }
 }
 

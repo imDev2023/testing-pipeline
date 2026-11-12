@@ -194,8 +194,8 @@ fn check_home_market(
         .vaults
         .get(contained as usize)
         .ok_or(HookError::MarketDoesNotHoldMint)?;
-    let fee_account = router::fee_account(&market.key(), &recorded, mint)
-        .ok_or(HookError::MarketNotAtItsAddress)?;
+    let fee_account =
+        router::fee_account(&market.key(), &recorded, mint).ok_or(HookError::NotARouterMarket)?;
     Ok(HomeMarket {
         vault,
         fee_account,

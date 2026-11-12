@@ -84,12 +84,14 @@ import {
     findExtraAccountMetasPda,
     findUnlockPda,
     getBindInstructionAsync,
+    MAX_UNLOCK_DEADLINE_SECS,
 } from './client/index.ts';
 import { findVault0Pda, findVault1Pda, TAX_AMM_PROGRAM_ADDRESS } from '../../tax-amm/scripts/client/index.ts';
 
 const TOKEN_2022_PROGRAM_ADDRESS = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
 const WRAPPED_SOL = address('So11111111111111111111111111111111111111112');
 const DEFAULT_ADDRESS = address('11111111111111111111111111111111');
+const U64_MAX = 2n ** 64n - 1n;
 
 // The launch's own choices, in one place: the token and its home market. None of them is a
 // policy value of the hook, whose limits live in its config module and are enforced on
@@ -166,6 +168,7 @@ function clusterUrl(cluster: string | undefined): { url: string; local: boolean 
 function parseGoal(goal: string | undefined): bigint {
     if (goal === undefined) usage('--goal is required: the tax the home market must collect for the unlock, in quote-mint base units');
     if (!/^\d+$/.test(goal)) usage(`--goal must be a whole number of quote-mint base units, not "${goal}"`);
+    if (BigInt(goal) > U64_MAX) usage(`--goal must fit in a u64 (at most ${U64_MAX}), not ${goal}`);
     return BigInt(goal);
 }
 
@@ -213,9 +216,11 @@ function info(message: string) {
     console.log(`   ${message}`);
 }
 
+/** Why the launch stopped; `main` prints it and exits. */
+class Stopped extends Error {}
+
 function fail(message: string): never {
-    console.error(`\nStopped: ${message}`);
-    process.exit(1);
+    throw new Stopped(message);
 }
 
 function explorer(kind: 'tx' | 'address', value: string) {
@@ -248,9 +253,14 @@ async function waitFor(label: string, signature: Signature) {
     }
 }
 
+type Blockhash = Awaited<ReturnType<ReturnType<typeof rpc.getLatestBlockhash>['send']>>['value'];
+
+async function latestBlockhash(): Promise<Blockhash> {
+    return (await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()).value;
+}
+
 /** A version 0 transaction message of `instructions`, paid for by `feePayer`. */
-async function message(feePayer: KeyPairSigner, instructions: Instruction[], extra: KeyPairSigner[]) {
-    const { value: blockhash } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
+function message(feePayer: KeyPairSigner, instructions: Instruction[], extra: KeyPairSigner[], blockhash: Blockhash) {
     return pipe(
         createTransactionMessage({ version: 0 }),
         (m) => setTransactionMessageFeePayerSigner(feePayer, m),
@@ -262,7 +272,7 @@ async function message(feePayer: KeyPairSigner, instructions: Instruction[], ext
 
 /** Sends a transaction and waits for confirmation by polling. */
 async function send(label: string, feePayer: KeyPairSigner, instructions: Instruction[], extra: KeyPairSigner[] = []) {
-    const signed = await signTransactionMessageWithSigners(await message(feePayer, instructions, extra));
+    const signed = await signTransactionMessageWithSigners(message(feePayer, instructions, extra, await latestBlockhash()));
     const signature = getSignatureFromTransaction(signed);
     await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64' }).send();
     await waitFor(label, signature);
@@ -340,9 +350,14 @@ async function main() {
     // The hook enforces the terms; these two checks only stop a launch that would leave an
     // unbound mint behind. The longest deadline is the hook's alone to check.
     if (unlockGoal === 0n) fail('--goal must be above zero');
+    // The longest deadline is the hook's own constant, read from its IDL through the client.
     const clusterTime = await rpc.getBlockTime(await rpc.getSlot({ commitment: 'confirmed' }).send()).send();
-    if (clusterTime !== null && unlockDeadline <= clusterTime) {
+    if (clusterTime === null) fail("the cluster did not give its time");
+    if (unlockDeadline <= clusterTime) {
         fail(`--deadline must be later than the cluster's time, ${new Date(Number(clusterTime) * 1000).toISOString()}`);
+    }
+    if (unlockDeadline > clusterTime + MAX_UNLOCK_DEADLINE_SECS) {
+        fail(`--deadline may be at most ${MAX_UNLOCK_DEADLINE_SECS} seconds after the binding (MAX_UNLOCK_DEADLINE_SECS), ${new Date(Number(clusterTime + MAX_UNLOCK_DEADLINE_SECS) * 1000).toISOString()} at the cluster's time now`);
     }
 
     step('2. Computing every address the launch will use, before sending anything');
@@ -376,8 +391,11 @@ async function main() {
         ['fee account, contained', feeAccounts[CONTAINED_INDEX]!],
         ['fee account, quote', feeAccounts[QUOTE_INDEX]!],
     ];
-    for (const [label, address] of computed) {
-        if (await account(address)) fail(`the ${label} ${address} exists before the launch`);
+    const { value: existing } = await rpc
+        .getMultipleAccounts(computed.map(([, address]) => address), { encoding: 'base64', commitment: 'confirmed' })
+        .send();
+    for (const [i, [label, address]] of computed.entries()) {
+        if (existing[i]) fail(`the ${label} ${address} exists before the launch`);
         info(`${label.padEnd(23)} ${address}`);
     }
 
@@ -457,11 +475,12 @@ async function main() {
         unlockDeadline,
     });
     const creation = [createMarket, ...initFeeAccounts];
-    let bindSent = false;
-    const together = await message(launcher, [...creation, bind], [marketStateKey]);
+    // Measured with one blockhash, which does not change a message's size.
+    const blockhash = await latestBlockhash();
+    const together = message(launcher, [...creation, bind], [marketStateKey], blockhash);
     const size = getTransactionMessageSize(together);
     const limit = getTransactionMessageSizeLimit(together);
-    const alone = getTransactionMessageSize(await message(launcher, creation, [marketStateKey]));
+    const alone = getTransactionMessageSize(message(launcher, creation, [marketStateKey], blockhash));
     // With an address lookup table holding every account that does not sign, which would
     // cost a transaction of its own to create and a slot to wait before it can be used.
     const lookup = [...new Set([...creation, bind].flatMap((ix) => [ix.programAddress, ...(ix.accounts ?? []).map((a) => a.address)]))]
@@ -477,13 +496,17 @@ async function main() {
         record.push(['bind in the creation transaction', `no: ${size} of ${limit} bytes (${withTable} with a lookup table), so bind went in the next one`]);
         info('bind does not fit, so it goes in the next transaction, before the seed');
         await send('create_market + init_fee_account x2', launcher, creation, [marketStateKey]);
-        process.on('exit', (code) => {
-            if (code !== 0 && !bindSent) {
-                console.error(`The market ${market} exists and the mint ${mint} is not bound: send bind again with valid terms.`);
+        try {
+            await send('bind', launcher, [bind]);
+        } catch (error) {
+            // A bind whose confirmation timed out may still have landed: the config says.
+            if (await account(config)) {
+                info(`bind landed after all: the config ${config} exists`);
+            } else {
+                const why = error instanceof Error ? error.message : String(error);
+                fail(`${why}\n   The market ${market} exists and the mint ${mint} is not bound: send bind again with valid terms.`);
             }
-        });
-        await send('bind', launcher, [bind]);
-        bindSent = true;
+        }
     }
     record.push(['mint', mint], ['market', market], ['market state', marketState], ['config', config]);
 
@@ -539,6 +562,6 @@ async function main() {
 }
 
 main().catch((error) => {
-    console.error(error);
+    console.error(error instanceof Stopped ? `\nStopped: ${error.message}` : error);
     process.exit(1);
 });
