@@ -50,7 +50,7 @@ pub fn handle_seed<'info>(
     sol_amount: u64,
 ) -> Result<()> {
     let accounts = &ctx.accounts;
-    let (cap_floor_bps, cap_decay_bps) = {
+    {
         let state = accounts.market_state.load()?;
         require!(state.status == STATUS_CREATED, StrategyError::AlreadySeeded);
         require_keys_eq!(
@@ -78,49 +78,111 @@ pub fn handle_seed<'info>(
             state.wsol_mint,
             StrategyError::WrongAccount
         );
-        (state.cap_floor_bps(), state.cap_decay_bps())
-    };
-    // A live mint authority could mint and sell into the curve and the wall, and a live
-    // freeze authority could freeze the vault (the spec's "Mint rules").
-    require!(
-        accounts.token_mint.mint_authority.is_none(),
-        StrategyError::MintAuthorityLive
-    );
-    require!(
-        accounts.token_mint.freeze_authority.is_none(),
-        StrategyError::FreezeAuthorityLive
-    );
+    }
+    check_authorities_removed(&accounts.token_mint)?;
 
-    let seeder = accounts.seeder.to_account_info();
-    let x = transfer_measured(
-        Transfer {
+    let (x, y) = bring_seed(
+        SeedSource {
+            seeder: &accounts.seeder.to_account_info(),
+            token_from: &accounts.seeder_token.to_account_info(),
+            sol_from: &accounts.seeder_sol.to_account_info(),
+            token_vault: &accounts.token_vault.to_account_info(),
+            sol_vault: &accounts.sol_vault.to_account_info(),
+            token_mint: &accounts.token_mint,
+            wsol_mint: &accounts.wsol_mint,
             token_program: &accounts.token_program.to_account_info(),
-            from: &accounts.seeder_token.to_account_info(),
-            mint: &accounts.token_mint.to_account_info(),
-            to: &accounts.token_vault.to_account_info(),
-            authority: &seeder,
+            sol_token_program: &accounts.sol_token_program.to_account_info(),
             hook_accounts: ctx.remaining_accounts,
         },
         token_amount,
-        accounts.token_mint.decimals,
+        sol_amount,
+    )?;
+
+    let mut state = accounts.market_state.load_mut()?;
+    open_market(
+        &mut state,
+        accounts.market_state.key(),
+        x,
+        y,
+        &Clock::get()?,
+    )
+}
+
+/// Where a seed comes from and goes to: the seeder's own token accounts (the escrows, when
+/// another program seeds), signed for by the seeder, into the market's vaults.
+pub struct SeedSource<'a, 'info> {
+    pub seeder: &'a AccountInfo<'info>,
+    pub token_from: &'a AccountInfo<'info>,
+    pub sol_from: &'a AccountInfo<'info>,
+    pub token_vault: &'a AccountInfo<'info>,
+    pub sol_vault: &'a AccountInfo<'info>,
+    pub token_mint: &'a InterfaceAccount<'info, Mint>,
+    pub wsol_mint: &'a InterfaceAccount<'info, Mint>,
+    pub token_program: &'a AccountInfo<'info>,
+    pub sol_token_program: &'a AccountInfo<'info>,
+    /// The token's transfer-hook accounts.
+    pub hook_accounts: &'a [AccountInfo<'info>],
+}
+
+/// Transfers `token_amount` and `sol_amount` into the vaults and returns what actually
+/// arrived in each, `x` token units and `y` lamports, so anything sent to a vault earlier
+/// stays a donation.
+pub fn bring_seed(source: SeedSource, token_amount: u64, sol_amount: u64) -> Result<(u64, u64)> {
+    let x = transfer_measured(
+        Transfer {
+            token_program: source.token_program,
+            from: source.token_from,
+            mint: &source.token_mint.to_account_info(),
+            to: source.token_vault,
+            authority: source.seeder,
+            hook_accounts: source.hook_accounts,
+        },
+        token_amount,
+        source.token_mint.decimals,
     )?;
     let y = transfer_measured(
         Transfer {
-            token_program: &accounts.sol_token_program.to_account_info(),
-            from: &accounts.seeder_sol.to_account_info(),
-            mint: &accounts.wsol_mint.to_account_info(),
-            to: &accounts.sol_vault.to_account_info(),
-            authority: &seeder,
+            token_program: source.sol_token_program,
+            from: source.sol_from,
+            mint: &source.wsol_mint.to_account_info(),
+            to: source.sol_vault,
+            authority: source.seeder,
             hook_accounts: &[],
         },
         sol_amount,
-        accounts.wsol_mint.decimals,
+        source.wsol_mint.decimals,
     )?;
+    Ok((x, y))
+}
 
-    let opened = opening::open(x, y, cap_floor_bps, cap_decay_bps).map_err(StrategyError::from)?;
-    let clock = Clock::get()?;
+/// The token's mint and freeze authorities must both be removed before a seed: a live mint
+/// authority could mint and sell into the curve and the wall, and a live freeze authority
+/// could freeze the vault (the spec's "Mint rules").
+pub fn check_authorities_removed(token_mint: &Mint) -> Result<()> {
+    require!(
+        token_mint.mint_authority.is_none(),
+        StrategyError::MintAuthorityLive
+    );
+    require!(
+        token_mint.freeze_authority.is_none(),
+        StrategyError::FreezeAuthorityLive
+    );
+    Ok(())
+}
+
+/// Opens a created market from what its seed brought, `x` token units and `y` lamports
+/// (`opening::open`, refusing a seed the spec refuses), and emits `MarketSeeded`. Both
+/// `seed` and `pipeline_seed_liquidity` open a market through this.
+pub fn open_market(
+    state: &mut MarketState,
+    market_state: Pubkey,
+    x: u64,
+    y: u64,
+    clock: &Clock,
+) -> Result<()> {
+    let opened = opening::open(x, y, state.cap_floor_bps(), state.cap_decay_bps())
+        .map_err(StrategyError::from)?;
     let now = clock.unix_timestamp;
-    let mut state = accounts.market_state.load_mut()?;
     state.status = STATUS_OPEN;
     state.set_seed_time(now);
     state.set_seeded_tokens(x);
@@ -141,7 +203,7 @@ pub fn handle_seed<'info>(
     state.set_last_close(opened.sqrt_price);
 
     emit!(MarketSeeded {
-        market_state: accounts.market_state.key(),
+        market_state,
         token_amount: x,
         sol_amount: y,
         sqrt_price: opened.sqrt_price,

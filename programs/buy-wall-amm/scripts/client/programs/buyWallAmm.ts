@@ -45,28 +45,33 @@ import {
   getPipelineMarketInfoInstruction,
   getPipelineQuoteInstruction,
   getPipelineResolveAccountsInstruction,
+  getPipelineSeedLiquidityInstructionAsync,
   getPipelineSwapInstruction,
   getSeedInstruction,
   parsePipelineInitMarketInstruction,
   parsePipelineMarketInfoInstruction,
   parsePipelineQuoteInstruction,
   parsePipelineResolveAccountsInstruction,
+  parsePipelineSeedLiquidityInstruction,
   parsePipelineSwapInstruction,
   parseSeedInstruction,
   type ParsedPipelineInitMarketInstruction,
   type ParsedPipelineMarketInfoInstruction,
   type ParsedPipelineQuoteInstruction,
   type ParsedPipelineResolveAccountsInstruction,
+  type ParsedPipelineSeedLiquidityInstruction,
   type ParsedPipelineSwapInstruction,
   type ParsedSeedInstruction,
   type PipelineInitMarketAsyncInput,
   type PipelineMarketInfoInput,
   type PipelineQuoteInput,
   type PipelineResolveAccountsInput,
+  type PipelineSeedLiquidityAsyncInput,
   type PipelineSwapInput,
   type SeedInput,
 } from "../instructions/index.ts";
 import {
+  findMarketStatePda,
   findSolVaultPda,
   findTokenVaultPda,
   findVaultAuthorityPda,
@@ -151,14 +156,16 @@ export const BuyWallAmmInstruction = {
   1: "PipelineMarketInfo",
   2: "PipelineQuote",
   3: "PipelineResolveAccounts",
-  4: "PipelineSwap",
-  5: "Seed",
+  4: "PipelineSeedLiquidity",
+  5: "PipelineSwap",
+  6: "Seed",
   PipelineInitMarket: 0,
   PipelineMarketInfo: 1,
   PipelineQuote: 2,
   PipelineResolveAccounts: 3,
-  PipelineSwap: 4,
-  Seed: 5,
+  PipelineSeedLiquidity: 4,
+  PipelineSwap: 5,
+  Seed: 6,
 } as const;
 
 export type BuyWallAmmInstruction = (typeof BuyWallAmmInstruction)[Exclude<
@@ -218,6 +225,17 @@ export function identifyBuyWallAmmInstruction(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([197, 81, 12, 118, 24, 65, 212, 81]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmInstruction.PipelineSeedLiquidity;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
         new Uint8Array([161, 235, 193, 107, 155, 234, 162, 140]),
       ),
       0,
@@ -258,6 +276,9 @@ export type ParsedBuyWallAmmInstruction<
       instructionType: typeof BuyWallAmmInstruction.PipelineResolveAccounts;
     } & ParsedPipelineResolveAccountsInstruction<TProgram>)
   | ({
+      instructionType: typeof BuyWallAmmInstruction.PipelineSeedLiquidity;
+    } & ParsedPipelineSeedLiquidityInstruction<TProgram>)
+  | ({
       instructionType: typeof BuyWallAmmInstruction.PipelineSwap;
     } & ParsedPipelineSwapInstruction<TProgram>)
   | ({
@@ -295,6 +316,13 @@ export function parseBuyWallAmmInstruction<TProgram extends string>(
       return {
         instructionType: BuyWallAmmInstruction.PipelineResolveAccounts,
         ...parsePipelineResolveAccountsInstruction(instruction),
+      };
+    }
+    case BuyWallAmmInstruction.PipelineSeedLiquidity: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: BuyWallAmmInstruction.PipelineSeedLiquidity,
+        ...parsePipelineSeedLiquidityInstruction(instruction),
       };
     }
     case BuyWallAmmInstruction.PipelineSwap: {
@@ -357,6 +385,11 @@ export type BuyWallAmmPluginInstructions = {
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getPipelineResolveAccountsInstruction> &
     SelfPlanAndSendFunctions;
+  pipelineSeedLiquidity: (
+    input: MakeOptional<PipelineSeedLiquidityAsyncInput, "payer">,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getPipelineSeedLiquidityInstructionAsync> &
+    SelfPlanAndSendFunctions;
   pipelineSwap: (
     input: PipelineSwapInput,
     config?: { programAddress?: Address | HasAddress },
@@ -371,6 +404,7 @@ export type BuyWallAmmPluginPdas = {
   vaultAuthority: typeof findVaultAuthorityPda;
   tokenVault: typeof findTokenVaultPda;
   solVault: typeof findSolVaultPda;
+  marketState: typeof findMarketStatePda;
 };
 
 export type BuyWallAmmPluginRequirements = ClientWithRpc<
@@ -427,6 +461,17 @@ export function buyWallAmmProgram(
                   instructionConfig?.programAddress ?? config.programAddress,
               }),
             ),
+          pipelineSeedLiquidity: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getPipelineSeedLiquidityInstructionAsync(
+                { ...input, payer: input.payer ?? client.payer },
+                {
+                  programAddress:
+                    instructionConfig?.programAddress ?? config.programAddress,
+                },
+              ),
+            ),
           pipelineSwap: (input, instructionConfig) =>
             addSelfPlanAndSendFunctions(
               client,
@@ -457,6 +502,11 @@ export function buyWallAmmProgram(
             }),
           solVault: (seeds, pdaConfig) =>
             findSolVaultPda(seeds, {
+              programAddress:
+                pdaConfig?.programAddress ?? config.programAddress,
+            }),
+          marketState: (seeds, pdaConfig) =>
+            findMarketStatePda(seeds, {
               programAddress:
                 pdaConfig?.programAddress ?? config.programAddress,
             }),

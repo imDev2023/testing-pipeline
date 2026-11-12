@@ -62,85 +62,138 @@ pub struct InitMarket<'info> {
 
 pub fn handle_init_market(ctx: Context<InitMarket>, data: Vec<u8>) -> Result<()> {
     let params = InitParams::decode(&data)?;
-    params.validate()?;
-    check_token_mint(&ctx.accounts.token_mint.to_account_info())?;
+    let accounts = &ctx.accounts;
+    let market_state = accounts.market_state.key();
+    let new_market = NewMarket {
+        market_state,
+        payer: accounts.payer.to_account_info(),
+        system_program: accounts.system_program.to_account_info(),
+        token_mint: accounts.token_mint.to_account_info(),
+        wsol_mint: accounts.wsol_mint.to_account_info(),
+        vault_authority: accounts.vault_authority.to_account_info(),
+        token_vault: accounts.token_vault.to_account_info(),
+        sol_vault: accounts.sol_vault.to_account_info(),
+        token_program: accounts.token_program.to_account_info(),
+        sol_token_program: accounts.sol_token_program.to_account_info(),
+        bumps: MarketBumps {
+            authority: ctx.bumps.vault_authority,
+            token_vault: ctx.bumps.token_vault,
+            sol_vault: ctx.bumps.sol_vault,
+        },
+    };
+    new_market.check(&params)?;
 
     // Remember which router market may call `pipeline_swap` on this market (Pipeline's
     // rule 4). Only the router can sign as this PDA.
-    let market_state_key = ctx.accounts.market_state.key();
-    let market_signer = pipeline_market_signer(&market_state_key);
     require_keys_eq!(
-        ctx.accounts.market_signer.key(),
-        market_signer,
+        accounts.market_signer.key(),
+        pipeline_market_signer(&market_state),
         StrategyError::NotPipeline
     );
 
-    // Both vaults, idempotently, now that the token is known to be acceptable.
-    let accounts = &ctx.accounts;
-    let bumps = &ctx.bumps;
-    let market_state_seed = market_state_key.to_bytes();
-    let authority = accounts.vault_authority.to_account_info();
-    let payer = accounts.payer.to_account_info();
-    let system_program = accounts.system_program.to_account_info();
-    for (vault, mint, token_program, bump) in [
-        (
-            accounts.token_vault.to_account_info(),
-            accounts.token_mint.to_account_info(),
-            accounts.token_program.to_account_info(),
-            bumps.token_vault,
-        ),
-        (
-            accounts.sol_vault.to_account_info(),
-            accounts.wsol_mint.to_account_info(),
-            accounts.sol_token_program.to_account_info(),
-            bumps.sol_vault,
-        ),
-    ] {
-        let mint_seed = mint.key.to_bytes();
-        create_vault(
-            VaultAccounts {
-                payer: &payer,
-                vault: &vault,
-                mint: &mint,
-                authority: &authority,
-                token_program: &token_program,
-                system_program: &system_program,
-            },
-            &[b"vault", &market_state_seed, &mint_seed, &[bump]],
-        )?;
+    new_market.create_vaults()?;
+    let mut state = accounts.market_state.load_init()?;
+    new_market.record(&mut state, &params, &Clock::get()?);
+    Ok(())
+}
+
+/// The bumps of a new market's PDAs.
+pub struct MarketBumps {
+    pub authority: u8,
+    pub token_vault: u8,
+    pub sol_vault: u8,
+}
+
+/// A market being created, through the router (`pipeline_init_market`) or by another
+/// program (`pipeline_seed_liquidity`): both run exactly this code, so a seeded market is
+/// held to every creation rule and mint rule a created one is, and is recorded the same way.
+/// Each instruction's own constraints check the accounts first.
+pub struct NewMarket<'info> {
+    pub market_state: Pubkey,
+    pub payer: AccountInfo<'info>,
+    pub system_program: AccountInfo<'info>,
+    pub token_mint: AccountInfo<'info>,
+    pub wsol_mint: AccountInfo<'info>,
+    pub vault_authority: AccountInfo<'info>,
+    pub token_vault: AccountInfo<'info>,
+    pub sol_vault: AccountInfo<'info>,
+    pub token_program: AccountInfo<'info>,
+    pub sol_token_program: AccountInfo<'info>,
+    pub bumps: MarketBumps,
+}
+
+impl NewMarket<'_> {
+    /// Every creation rule (`InitParams::validate`), then the suite's mint rules.
+    pub fn check(&self, params: &InitParams) -> Result<()> {
+        params.validate()?;
+        check_token_mint(&self.token_mint)
     }
 
-    let clock = Clock::get()?;
-    let mut state = ctx.accounts.market_state.load_init()?;
-    state.layout_version = LAYOUT_VERSION;
-    state.status = STATUS_CREATED;
-    state.authority_bump = ctx.bumps.vault_authority;
-    state.token_vault_bump = ctx.bumps.token_vault;
-    state.sol_vault_bump = ctx.bumps.sol_vault;
-    state.market_signer = market_signer;
-    state.token_mint = ctx.accounts.token_mint.key();
-    state.wsol_mint = ctx.accounts.wsol_mint.key();
-    state.token_vault = ctx.accounts.token_vault.key();
-    state.sol_vault = ctx.accounts.sol_vault.key();
-    state.seeder = params.seeder;
-    state.set_creation_slot(clock.slot);
-    state.set_creation_time(clock.unix_timestamp);
-    state.set_fee_bps(params.fee_bps);
-    state.set_wall_split_bps(params.wall_split_bps);
-    state.set_reward_share_bps(params.reward_share_bps);
-    state.fee_recipient = params.fee_recipient;
-    state.rewards_recipient = params.rewards_recipient;
-    state.set_cap_floor_bps(params.cap_floor_bps);
-    state.set_cap_decay_bps(params.cap_decay_bps);
+    /// Both vaults, idempotently; call it once the token is known to be acceptable.
+    pub fn create_vaults(&self) -> Result<()> {
+        let market_state_seed = self.market_state.to_bytes();
+        for (vault, mint, token_program, bump) in [
+            (
+                &self.token_vault,
+                &self.token_mint,
+                &self.token_program,
+                self.bumps.token_vault,
+            ),
+            (
+                &self.sol_vault,
+                &self.wsol_mint,
+                &self.sol_token_program,
+                self.bumps.sol_vault,
+            ),
+        ] {
+            let mint_seed = mint.key.to_bytes();
+            create_vault(
+                VaultAccounts {
+                    payer: &self.payer,
+                    vault,
+                    mint,
+                    authority: &self.vault_authority,
+                    token_program,
+                    system_program: &self.system_program,
+                },
+                &[b"vault", &market_state_seed, &mint_seed, &[bump]],
+            )?;
+        }
+        Ok(())
+    }
 
-    emit!(MarketCreated {
-        market_state: market_state_key,
-        token_mint: state.token_mint,
-        params,
-        creation_slot: clock.slot,
-        creation_time: clock.unix_timestamp,
-    });
-    Ok(())
+    /// Writes the new market state, created and waiting for its seed, with the router's
+    /// market PDA as the only signer `pipeline_swap` accepts, and emits `MarketCreated`.
+    pub fn record(&self, state: &mut MarketState, params: &InitParams, clock: &Clock) {
+        state.layout_version = LAYOUT_VERSION;
+        state.status = STATUS_CREATED;
+        state.authority_bump = self.bumps.authority;
+        state.token_vault_bump = self.bumps.token_vault;
+        state.sol_vault_bump = self.bumps.sol_vault;
+        state.market_signer = pipeline_market_signer(&self.market_state);
+        state.token_mint = self.token_mint.key();
+        state.wsol_mint = self.wsol_mint.key();
+        state.token_vault = self.token_vault.key();
+        state.sol_vault = self.sol_vault.key();
+        state.seeder = params.seeder;
+        state.set_creation_slot(clock.slot);
+        state.set_creation_time(clock.unix_timestamp);
+        state.set_fee_bps(params.fee_bps);
+        state.set_wall_split_bps(params.wall_split_bps);
+        state.set_reward_share_bps(params.reward_share_bps);
+        state.fee_recipient = params.fee_recipient;
+        state.rewards_recipient = params.rewards_recipient;
+        state.set_cap_floor_bps(params.cap_floor_bps);
+        state.set_cap_decay_bps(params.cap_decay_bps);
+
+        emit!(MarketCreated {
+            market_state: self.market_state,
+            token_mint: state.token_mint,
+            params: params.clone(),
+            creation_slot: clock.slot,
+            creation_time: clock.unix_timestamp,
+        });
+    }
 }
 
 /// The router's market PDA for a market state of this program: `["market", program,
@@ -159,7 +212,7 @@ pub fn pipeline_market_signer(market_state: &Pubkey) -> Pubkey {
 
 /// Whether `mint` is wrapped SOL, SPL Token's or Token-2022's: either would pair SOL with
 /// SOL.
-fn is_wrapped_sol(mint: &Pubkey) -> bool {
+pub(crate) fn is_wrapped_sol(mint: &Pubkey) -> bool {
     *mint == native_mint::ID || *mint == anchor_spl::token_2022::spl_token_2022::native_mint::ID
 }
 
