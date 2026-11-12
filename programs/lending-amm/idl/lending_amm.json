@@ -1,0 +1,1181 @@
+{
+  "address": "Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG",
+  "metadata": {
+    "name": "lending_amm",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "A Pipeline strategy whose markets lend one side to Kamino Lend and trade from their own vaults",
+    "repository": "https://github.com/imDev2023/testing-pipeline"
+  },
+  "instructions": [
+    {
+      "name": "add_liquidity",
+      "docs": [
+        "Adds both mints to a market for LP shares; the first deposit opens it."
+      ],
+      "discriminator": [
+        181,
+        157,
+        89,
+        67,
+        143,
+        182,
+        52,
+        72
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "docs": [
+            "The LP, who pays for their shares account if it is missing."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "lp_token_0",
+          "docs": [
+            "authority."
+          ],
+          "writable": true
+        },
+        {
+          "name": "lp_token_1",
+          "writable": true
+        },
+        {
+          "name": "vault_0",
+          "writable": true
+        },
+        {
+          "name": "vault_1",
+          "writable": true
+        },
+        {
+          "name": "mint_0"
+        },
+        {
+          "name": "mint_1"
+        },
+        {
+          "name": "lp_mint",
+          "writable": true,
+          "relations": [
+            "market_state"
+          ]
+        },
+        {
+          "name": "lp_shares",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  112,
+                  95,
+                  115,
+                  104,
+                  97,
+                  114,
+                  101,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program_0"
+        },
+        {
+          "name": "token_program_1"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "SPL Token, the LP mint's program."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "max_0",
+          "type": "u64"
+        },
+        {
+          "name": "max_1",
+          "type": "u64"
+        },
+        {
+          "name": "min_lp",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "pipeline_init_market",
+      "docs": [
+        "Creates a market. `data` is the Borsh-encoded [`InitParams`]."
+      ],
+      "discriminator": [
+        178,
+        5,
+        160,
+        22,
+        249,
+        172,
+        13,
+        224
+      ],
+      "accounts": [
+        {
+          "name": "market_signer",
+          "docs": [
+            "The router's market PDA for this market state."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "docs": [
+            "and created by the handler."
+          ],
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "A router PDA holding the SOL the creator allowed for setup. Rent comes from it; the",
+            "router returns what is left to the creator."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "mint_0"
+        },
+        {
+          "name": "mint_1"
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_0",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "mint_0"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_1",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "mint_1"
+              }
+            ]
+          }
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "ctoken_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lp_mint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  112,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program_0"
+        },
+        {
+          "name": "token_program_1"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "SPL Token, which owns the lent mint, the collateral mint and the LP mint."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "data",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "pipeline_market_info",
+      "docs": [
+        "Reports the market's mints, vaults and exact-out support."
+      ],
+      "discriminator": [
+        180,
+        137,
+        108,
+        173,
+        216,
+        7,
+        77,
+        97
+      ],
+      "accounts": [
+        {
+          "name": "market_state"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "pipeline_quote",
+      "docs": [
+        "Prices a trade without changing anything."
+      ],
+      "discriminator": [
+        134,
+        139,
+        91,
+        59,
+        182,
+        37,
+        152,
+        218
+      ],
+      "accounts": [
+        {
+          "name": "market_signer"
+        },
+        {
+          "name": "market_state"
+        },
+        {
+          "name": "trader"
+        },
+        {
+          "name": "trader_input"
+        },
+        {
+          "name": "trader_output"
+        },
+        {
+          "name": "input_vault"
+        },
+        {
+          "name": "input_mint"
+        },
+        {
+          "name": "output_mint"
+        },
+        {
+          "name": "input_token_program"
+        },
+        {
+          "name": "output_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "TradeRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pipeline_resolve_accounts",
+      "docs": [
+        "Lists the strategy accounts a swap needs, after the router's ten fixed ones."
+      ],
+      "discriminator": [
+        12,
+        225,
+        237,
+        111,
+        47,
+        123,
+        6,
+        62
+      ],
+      "accounts": [
+        {
+          "name": "market_signer"
+        },
+        {
+          "name": "market_state"
+        },
+        {
+          "name": "trader"
+        },
+        {
+          "name": "trader_input"
+        },
+        {
+          "name": "trader_output"
+        },
+        {
+          "name": "input_vault"
+        },
+        {
+          "name": "input_mint"
+        },
+        {
+          "name": "output_mint"
+        },
+        {
+          "name": "input_token_program"
+        },
+        {
+          "name": "output_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "ResolveRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pipeline_swap",
+      "docs": [
+        "Settles a trade the router sends."
+      ],
+      "discriminator": [
+        161,
+        235,
+        193,
+        107,
+        155,
+        234,
+        162,
+        140
+      ],
+      "accounts": [
+        {
+          "name": "market_signer",
+          "docs": [
+            "The router's market PDA; compared with the market state's `market_signer`."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "trader"
+        },
+        {
+          "name": "trader_input",
+          "writable": true
+        },
+        {
+          "name": "trader_output",
+          "writable": true
+        },
+        {
+          "name": "input_vault",
+          "writable": true
+        },
+        {
+          "name": "input_mint"
+        },
+        {
+          "name": "output_mint"
+        },
+        {
+          "name": "input_token_program"
+        },
+        {
+          "name": "output_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "SwapRequest"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "LendingAmmMarket",
+      "discriminator": [
+        60,
+        78,
+        33,
+        27,
+        20,
+        219,
+        0,
+        143
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "LiquidityAdded",
+      "discriminator": [
+        154,
+        26,
+        221,
+        108,
+        238,
+        64,
+        217,
+        161
+      ]
+    },
+    {
+      "name": "MarketCreated",
+      "discriminator": [
+        88,
+        184,
+        130,
+        231,
+        226,
+        84,
+        6,
+        58
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "BadInitData",
+      "msg": "Init data is not valid creation parameters"
+    },
+    {
+      "code": 6001,
+      "name": "NotPipeline",
+      "msg": "Caller is not this market's Pipeline market"
+    },
+    {
+      "code": 6002,
+      "name": "WrongAccount",
+      "msg": "Unexpected account"
+    },
+    {
+      "code": 6003,
+      "name": "WrongMarketState",
+      "msg": "The market state is not the PDA of its mints, lent side and fee"
+    },
+    {
+      "code": 6004,
+      "name": "EqualMints",
+      "msg": "A market's two mints must differ"
+    },
+    {
+      "code": 6005,
+      "name": "NotAMint",
+      "msg": "A market's mints must be SPL Token or Token-2022 mints"
+    },
+    {
+      "code": 6006,
+      "name": "MintExtensionNotAllowed",
+      "msg": "The mint carries an extension the mint rules refuse"
+    },
+    {
+      "code": 6007,
+      "name": "WrongTokenProgram",
+      "msg": "The token program is not the mint's"
+    },
+    {
+      "code": 6008,
+      "name": "BadLentIndex",
+      "msg": "The lent index must be 0 or 1"
+    },
+    {
+      "code": 6009,
+      "name": "LentMintNotListed",
+      "msg": "The lent mint is not on this cluster's list of lent mints"
+    },
+    {
+      "code": 6010,
+      "name": "LentMintNotSplToken",
+      "msg": "The lent mint must be owned by SPL Token"
+    },
+    {
+      "code": 6011,
+      "name": "LpFeeAboveCap",
+      "msg": "The LP fee may not go above MAX_LP_FEE_BPS"
+    },
+    {
+      "code": 6012,
+      "name": "WrongCollateralMint",
+      "msg": "The collateral mint is not the lent mint's Kamino reserve's"
+    },
+    {
+      "code": 6013,
+      "name": "MarketNotOpen",
+      "msg": "The market is not open: it has had no first deposit"
+    },
+    {
+      "code": 6014,
+      "name": "ExactOutNotSupported",
+      "msg": "Exact-out swaps are not supported"
+    },
+    {
+      "code": 6015,
+      "name": "ZeroOutput",
+      "msg": "The trade would pay out nothing"
+    },
+    {
+      "code": 6016,
+      "name": "WouldEmptySide",
+      "msg": "The trade would pay out a side's whole reserve"
+    },
+    {
+      "code": 6017,
+      "name": "BeyondBuffer",
+      "msg": "The trade would pay out more of the lent side than the buffer holds"
+    },
+    {
+      "code": 6018,
+      "name": "ZeroDeposit",
+      "msg": "The first deposit needs both amounts above 0"
+    },
+    {
+      "code": 6019,
+      "name": "FirstDepositTooSmall",
+      "msg": "The first deposit is too small to mint any shares above the locked minimum"
+    },
+    {
+      "code": 6020,
+      "name": "ZeroShares",
+      "msg": "The deposit would mint no shares"
+    },
+    {
+      "code": 6021,
+      "name": "BelowMinLp",
+      "msg": "The deposit would mint fewer shares than min_lp"
+    },
+    {
+      "code": 6022,
+      "name": "LentValueUnavailable",
+      "msg": "The market holds cTokens, which this version cannot value yet"
+    },
+    {
+      "code": 6023,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6024,
+      "name": "EmptySide",
+      "msg": "A side of the market holds nothing to price a deposit against"
+    }
+  ],
+  "types": [
+    {
+      "name": "InitParams",
+      "docs": [
+        "`create_market`'s `init_data`: these fields, Borsh-encoded in this order."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "lent_index",
+            "docs": [
+              "Which of the two mints, 0 or 1, is lent; it must be on the cluster's `LENT_MINTS`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "lp_fee_bps",
+            "docs": [
+              "The LP fee in basis points, at most `MAX_LP_FEE_BPS`."
+            ],
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LendingAmmMarket",
+      "docs": [
+        "A lending AMM market: the market state account the router records and passes to every",
+        "call."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "docs": [
+              "[`STATE_VERSION`]."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "The bump of the market state's own PDA."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "authority_bump",
+            "docs": [
+              "The bump of the vault authority PDA."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "lent_index",
+            "docs": [
+              "The mint index (0 or 1) that is lent; the other is never lent."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "lp_fee_bps",
+            "docs": [
+              "The LP fee, in basis points of every swap's input; it stays in the market."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "withdraw_mode",
+            "docs": [
+              "Set while the market is in withdraw mode (docs/spec/lending-pool.md, \"Withdraw mode\")."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "mints",
+            "docs": [
+              "The two mints, in the creator's order."
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                2
+              ]
+            }
+          },
+          {
+            "name": "vaults",
+            "docs": [
+              "The vault for each mint, in the same order; the lent mint's vault holds the buffer."
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                2
+              ]
+            }
+          },
+          {
+            "name": "market_signer",
+            "docs": [
+              "The router's market PDA for this market state, the only caller allowed to swap."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_mint",
+            "docs": [
+              "The market's LP mint."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "ctoken_account",
+            "docs": [
+              "The token account holding the market's cTokens."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "reserve",
+            "docs": [
+              "The Kamino reserve the lent side is deposited into, from `LENT_MINTS`."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "collateral_mint",
+            "docs": [
+              "That reserve's collateral (cToken) mint."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "seeder",
+            "docs": [
+              "For a market created by `pipeline_seed_liquidity`, the seeder whose address scopes",
+              "it; the default key for a market created through the router."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "reserves",
+            "docs": [
+              "What the market has recorded in each vault, by mint index: the other side's reserve",
+              "`R`, and on the lent side the buffer `B`. Tokens sent to a vault any other way are",
+              "donations, never counted."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                2
+              ]
+            }
+          },
+          {
+            "name": "ctokens",
+            "docs": [
+              "The cTokens the market has recorded in its cToken account, `c`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "deposited",
+            "docs": [
+              "Running total of the lent mint deposited into Kamino."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "redeemed",
+            "docs": [
+              "Running total of the lent mint redeemed from Kamino, in swaps, removals and",
+              "`rebalance`."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "created_slot",
+            "docs": [
+              "When the market was created."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                256
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "LiquidityAdded",
+      "docs": [
+        "An LP added liquidity with `add_liquidity`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp",
+            "type": "pubkey"
+          },
+          {
+            "name": "amounts",
+            "docs": [
+              "What the market took of each mint, by mint index."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                2
+              ]
+            }
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "The LP shares minted to the LP."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "share_count",
+            "docs": [
+              "The market's share count after the deposit, the locked minimum included."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "first",
+            "docs": [
+              "Whether this was the first deposit, which set the price."
+            ],
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketCreated",
+      "docs": [
+        "A market was created through the router's `create_market`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "mints",
+            "docs": [
+              "In the creator's order."
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                2
+              ]
+            }
+          },
+          {
+            "name": "vaults",
+            "type": {
+              "array": [
+                "pubkey",
+                2
+              ]
+            }
+          },
+          {
+            "name": "params",
+            "type": {
+              "defined": {
+                "name": "InitParams"
+              }
+            }
+          },
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "ctoken_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "created_slot",
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ResolveRequest",
+      "docs": [
+        "`pipeline_strategy_interface::ResolveRequest`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "trade",
+            "type": {
+              "defined": {
+                "name": "TradeRequest"
+              }
+            }
+          },
+          {
+            "name": "round",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwapRequest",
+      "docs": [
+        "`pipeline_strategy_interface::SwapRequest`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "trade",
+            "type": {
+              "defined": {
+                "name": "TradeRequest"
+              }
+            }
+          },
+          {
+            "name": "amount_sent",
+            "type": "u64"
+          },
+          {
+            "name": "min_amount_out",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradeMode",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "ExactIn"
+          },
+          {
+            "name": "ExactOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradeRequest",
+      "docs": [
+        "`pipeline_strategy_interface::TradeRequest`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mode",
+            "type": {
+              "defined": {
+                "name": "TradeMode"
+              }
+            }
+          },
+          {
+            "name": "input_index",
+            "type": "u8"
+          },
+          {
+            "name": "output_index",
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "trader",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "extra",
+            "type": "bytes"
+          }
+        ]
+      }
+    }
+  ],
+  "constants": [
+    {
+      "name": "MAX_LP_FEE_BPS",
+      "docs": [
+        "The highest LP fee a market may charge, in basis points: 2%. Exported in the IDL, from",
+        "which forms and the demo read it."
+      ],
+      "type": "u16",
+      "value": "200"
+    },
+    {
+      "name": "MINIMUM_LIQUIDITY",
+      "docs": [
+        "LP base units the first deposit locks for good: counted in every market's share count",
+        "and never minted. Exported in the IDL, from which the demo reads it."
+      ],
+      "type": "u64",
+      "value": "1000"
+    }
+  ]
+}

@@ -7,7 +7,10 @@
 #     account as devnet has it, so the listing fee and recipients are devnet's;
 #   - every program of programs/Cargo.toml's workspace, from programs/target/deploy (or
 #     $CARGO_TARGET_DIR/deploy, where scripts/build-programs.sh writes them then), at its
-#     declare_id! address and upgradeable by the project upgrade authority, as on devnet.
+#     declare_id! address and upgradeable by the project upgrade authority, as on devnet;
+#   - every account copied from devnet into fixtures/accounts/*.json (`solana account --output
+#     json`), at its address, such as the Kamino accounts the lending AMM's demo needs
+#     (programs/lending-amm/scripts/fetch-accounts.sh).
 #
 #   scripts/local-validator.sh [ledger directory]     # default fixtures/test-ledger
 #
@@ -58,6 +61,13 @@ while IFS= read -r member; do
   echo "$member at $id, upgradeable by $AUTHORITY"
   args+=(--upgradeable-program "$id" "$so" "$AUTHORITY")
 done < <(python3 "$ROOT/scripts/workspace-programs.py")
+
+shopt -s nullglob
+for account in "$FIXTURES_DIR"/accounts/*.json; do
+  address="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["pubkey"])' "$account")"
+  echo "account $address from $account"
+  args+=(--account "$address" "$account")
+done
 
 echo "Router $ROUTER_PROGRAM from $ROUTER_SO (pinned), config $ROUTER_CONFIG as on devnet"
 echo "Ledger $LEDGER; RPC http://127.0.0.1:8899"
