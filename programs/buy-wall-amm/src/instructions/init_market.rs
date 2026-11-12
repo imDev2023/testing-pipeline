@@ -66,6 +66,7 @@ pub fn handle_init_market(ctx: Context<InitMarket>, data: Vec<u8>) -> Result<()>
     let market_state = accounts.market_state.key();
     let new_market = NewMarket {
         market_state,
+        market_signer: pipeline_market_signer(&market_state),
         payer: accounts.payer.to_account_info(),
         system_program: accounts.system_program.to_account_info(),
         token_mint: accounts.token_mint.to_account_info(),
@@ -87,7 +88,7 @@ pub fn handle_init_market(ctx: Context<InitMarket>, data: Vec<u8>) -> Result<()>
     // rule 4). Only the router can sign as this PDA.
     require_keys_eq!(
         accounts.market_signer.key(),
-        pipeline_market_signer(&market_state),
+        new_market.market_signer,
         StrategyError::NotPipeline
     );
 
@@ -110,6 +111,9 @@ pub struct MarketBumps {
 /// Each instruction's own constraints check the accounts first.
 pub struct NewMarket<'info> {
     pub market_state: Pubkey,
+    /// The router's market PDA for `market_state` ([`pipeline_market_signer`]), derived
+    /// once by the caller.
+    pub market_signer: Pubkey,
     pub payer: AccountInfo<'info>,
     pub system_program: AccountInfo<'info>,
     pub token_mint: AccountInfo<'info>,
@@ -170,7 +174,7 @@ impl NewMarket<'_> {
         state.authority_bump = self.bumps.authority;
         state.token_vault_bump = self.bumps.token_vault;
         state.sol_vault_bump = self.bumps.sol_vault;
-        state.market_signer = pipeline_market_signer(&self.market_state);
+        state.market_signer = self.market_signer;
         state.token_mint = self.token_mint.key();
         state.wsol_mint = self.wsol_mint.key();
         state.token_vault = self.token_vault.key();

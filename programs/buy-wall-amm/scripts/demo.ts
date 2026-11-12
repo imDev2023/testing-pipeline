@@ -599,7 +599,7 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
     info(`SeedResult: taken ${show(graduation.taken)}, exactly what left the escrows, lp_amount 0`);
     const consumed = logs
         .map((line) => line.match(new RegExp(`^Program ${programId} consumed (\\d+) of`))?.[1])
-        .find((units) => units !== undefined);
+        .find((units) => units !== undefined) ?? fail('the graduation logged no compute line for the strategy');
     info(`pipeline_seed_liquidity: ${consumed} CU`);
     record.push(['pipeline_seed_liquidity', `${consumed} CU`]);
 

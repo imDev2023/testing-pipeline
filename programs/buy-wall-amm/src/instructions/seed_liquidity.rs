@@ -18,8 +18,8 @@ use anchor_spl::token::{spl_token::native_mint, Token};
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use pipeline_strategy_interface as psi;
 
-use super::init_market::{is_wrapped_sol, MarketBumps, NewMarket};
-use super::seed::{bring_seed, check_authorities_removed, open_market, SeedSource};
+use super::init_market::{is_wrapped_sol, pipeline_market_signer, MarketBumps, NewMarket};
+use super::seed::{bring_seed, open_market, SeedSource};
 use crate::config::MARKET_STATE_SIZE;
 use crate::errors::StrategyError;
 use crate::interface::SeedRequest;
@@ -100,6 +100,7 @@ pub fn handle_seed_liquidity<'info>(
     let market_state = accounts.market_state.key();
     let new_market = NewMarket {
         market_state,
+        market_signer: pipeline_market_signer(&market_state),
         payer: accounts.payer.to_account_info(),
         system_program: accounts.system_program.to_account_info(),
         token_mint: accounts.token_mint.to_account_info(),
@@ -116,7 +117,6 @@ pub fn handle_seed_liquidity<'info>(
         },
     };
     new_market.check(&params)?;
-    check_authorities_removed(&accounts.token_mint)?;
     new_market.create_vaults()?;
 
     // What leaves each escrow, measured, for the caller to check against its own measure.

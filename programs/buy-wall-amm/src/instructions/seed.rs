@@ -79,7 +79,6 @@ pub fn handle_seed<'info>(
             StrategyError::WrongAccount
         );
     }
-    check_authorities_removed(&accounts.token_mint)?;
 
     let (x, y) = bring_seed(
         SeedSource {
@@ -124,10 +123,12 @@ pub struct SeedSource<'a, 'info> {
     pub hook_accounts: &'a [AccountInfo<'info>],
 }
 
-/// Transfers `token_amount` and `sol_amount` into the vaults and returns what actually
+/// Refuses the seed unless the token's mint and freeze authorities are removed, then
+/// transfers `token_amount` and `sol_amount` into the vaults and returns what actually
 /// arrived in each, `x` token units and `y` lamports, so anything sent to a vault earlier
-/// stays a donation.
+/// stays a donation. Every path that seeds a market brings its seed through this.
 pub fn bring_seed(source: SeedSource, token_amount: u64, sol_amount: u64) -> Result<(u64, u64)> {
+    check_authorities_removed(source.token_mint)?;
     let x = transfer_measured(
         Transfer {
             token_program: source.token_program,
@@ -158,7 +159,7 @@ pub fn bring_seed(source: SeedSource, token_amount: u64, sol_amount: u64) -> Res
 /// The token's mint and freeze authorities must both be removed before a seed: a live mint
 /// authority could mint and sell into the curve and the wall, and a live freeze authority
 /// could freeze the vault (the spec's "Mint rules").
-pub fn check_authorities_removed(token_mint: &Mint) -> Result<()> {
+fn check_authorities_removed(token_mint: &Mint) -> Result<()> {
     require!(
         token_mint.mint_authority.is_none(),
         StrategyError::MintAuthorityLive

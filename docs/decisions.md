@@ -3477,7 +3477,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 
 - Question: What does the buy wall AMM's `pipeline_seed_liquidity` check beyond the creation, mint and seed rules, and what does it report and emit?
 - Answer: Exactly two amounts, the token's then wrapped SOL's (an error of its own otherwise), `data` exactly the creation parameters, escrows owned by the seeder as `seed` requires of the seeder's accounts, `SeedResult.taken` as what it measured leaving each escrow, and the same `MarketCreated` and `MarketSeeded` events as the router's path, every market being created and opened by the same code as one created through the router and seeded by `seed`; any signer, a wallet included, may call it and becomes its market's seeder.
-- Alternatives: Reporting the amounts requested as taken, as Pipeline's reference strategy does; an event of its own for a graduation; refusing a seeder that is not a program's PDA, which a program cannot check of its caller.
+- Alternatives: Reporting the amounts requested as taken, as Pipeline's reference strategy does; an event of its own for a graduation; refusing an on-curve seeder (a wallet) so only programs' PDAs can seed, which protects nothing the seeder-keyed address does not already protect and would stop a wallet launching its own market this way.
 - Specified in: [`docs/spec/pool4-for-solana.md`, The seed](spec/pool4-for-solana.md#the-seed)
 - Changes by: fixed on-chain once deployed
 - Status: default

@@ -1,7 +1,6 @@
 //! `metadata.json` (docs/spec/pool4-for-solana.md, "Custom actions and metadata") passes
 //! Pipeline's validator with zero warnings, and its `init`, `seed_liquidity` and `seed` forms
-//! describe exactly
-//! the instructions the program takes: the same arguments in the same order and Borsh
+//! describe exactly the instructions the program takes: the same arguments in the same order and Borsh
 //! encoding, and the same accounts, resolved here from each form's account sources.
 
 mod common;
