@@ -205,7 +205,11 @@ fn resolve_action_with(
     inputs: &HashMap<&str, Pubkey>,
 ) -> Pubkey {
     let token_program_of = |mint: &Pubkey| {
-        let i = market.mints.iter().position(|m| m == mint).expect("a market mint");
+        let i = market
+            .mints
+            .iter()
+            .position(|m| m == mint)
+            .expect("a market mint");
         market.token_programs[i]
     };
     let nested = |source: &AccountSource| resolve_action_with(source, market, wallet, inputs);
@@ -330,7 +334,10 @@ fn the_distribute_action_is_exactly_the_programs_distribute_for_every_slot() {
         let args = distribute["args"].as_array().unwrap();
         assert_eq!(args.len(), 1);
         let mut data = expected.data[..8].to_vec();
-        data.extend(encode_arg(args[0]["type"].as_str().unwrap(), &Value::from(slot)));
+        data.extend(encode_arg(
+            args[0]["type"].as_str().unwrap(),
+            &Value::from(slot),
+        ));
         assert_eq!(data, expected.data, "slot {slot}");
 
         let accounts = distribute["accounts"].as_array().unwrap();
@@ -343,7 +350,11 @@ fn the_distribute_action_is_exactly_the_programs_distribute_for_every_slot() {
                 meta.pubkey,
                 "slot {slot}, {name}"
             );
-            assert_eq!(account["signer"].as_bool().unwrap_or(false), meta.is_signer, "{name}");
+            assert_eq!(
+                account["signer"].as_bool().unwrap_or(false),
+                meta.is_signer,
+                "{name}"
+            );
             assert_eq!(
                 account["writable"].as_bool().unwrap_or(false),
                 meta.is_writable,

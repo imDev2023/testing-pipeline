@@ -191,7 +191,7 @@ fn its_market_state_has_the_programs_discriminator_and_layout() {
 }
 
 #[test]
-fn it_publishes_the_tax_cap_and_the_suite_share_from_the_config_module() {
+fn it_publishes_the_tax_cap_the_suite_share_and_the_suite_treasury_from_the_config_module() {
     let idl = idl();
     let constants: Vec<(&str, &str, String)> = idl["constants"]
         .as_array()
@@ -217,6 +217,11 @@ fn it_publishes_the_tax_cap_and_the_suite_share_from_the_config_module() {
                 "SUITE_SHARE_BPS",
                 "u16",
                 tax_amm::config::SUITE_SHARE_BPS.to_string()
+            ),
+            (
+                "SUITE_TREASURY",
+                "pubkey",
+                tax_amm::config::SUITE_TREASURY.to_string()
             ),
         ]
     );
@@ -251,8 +256,7 @@ fn its_events_and_errors_are_the_programs() {
     assert_eq!(last["name"], "NotSlotTokenAccount");
     assert_eq!(
         last["code"].as_u64().unwrap() as u32,
-        anchor_lang::error::ERROR_CODE_OFFSET
-            + tax_amm::StrategyError::NotSlotTokenAccount as u32
+        anchor_lang::error::ERROR_CODE_OFFSET + tax_amm::StrategyError::NotSlotTokenAccount as u32
     );
 }
 
@@ -274,13 +278,25 @@ fn its_actions_accounts_and_args_are_the_metadatas() {
             .as_array()
             .unwrap()
             .iter()
-            .map(|a| (a["name"].as_str().unwrap(), flags(a, "writable"), flags(a, "signer")))
+            .map(|a| {
+                (
+                    a["name"].as_str().unwrap(),
+                    flags(a, "writable"),
+                    flags(a, "signer"),
+                )
+            })
             .collect();
         let ours: Vec<(&str, bool, bool)> = action["accounts"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|a| (a["name"].as_str().unwrap(), flags(a, "writable"), flags(a, "signer")))
+            .map(|a| {
+                (
+                    a["name"].as_str().unwrap(),
+                    flags(a, "writable"),
+                    flags(a, "signer"),
+                )
+            })
             .collect();
         assert_eq!(ours, theirs, "{name}");
         let arg_names = |args: &Value| -> Vec<String> {

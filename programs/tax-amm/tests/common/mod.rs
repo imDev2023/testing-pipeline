@@ -644,11 +644,14 @@ impl Env {
         owner: &Pubkey,
         amount: u64,
     ) -> Pubkey {
-        let address = write_token_account(&mut self.svm, mint, token_program, owner, amount).unwrap();
+        let address =
+            write_token_account(&mut self.svm, mint, token_program, owner, amount).unwrap();
         let native_2022 = ck(&tax_amm::params::NATIVE_MINTS[1]);
         if *mint == native_2022 && *token_program == TOKEN_2022 {
             let mut account = self.svm.get_account(&address).unwrap();
-            let rent = self.svm.minimum_balance_for_rent_exemption(account.data.len());
+            let rent = self
+                .svm
+                .minimum_balance_for_rent_exemption(account.data.len());
             // is_native: a COption<u64> holding the rent-exempt reserve.
             account.data[109..113].copy_from_slice(&1u32.to_le_bytes());
             account.data[113..121].copy_from_slice(&rent.to_le_bytes());

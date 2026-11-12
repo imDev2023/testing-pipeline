@@ -187,10 +187,18 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
   - Swaps then need no recipient accounts.
   - Under the containment hook the home market's vault is the only account allowed to pay out a contained token, so tax held anywhere else would be stuck.
 - `distribute { slot }` is permissionless: anyone may call it, at any time, for one slot.
+  - The slots are numbered as the market state books them: 0 to 3 the tax recipients, 4 the burn and 5 the suite share.
+    A slot number above 5 is refused (`NoSuchSlot`), and so is a recipient slot the market does not use, which has no wallet to pay (`UnusedSlot`).
   - A recipient or the suite share is paid its whole owed amount to the associated token account of its wallet for the tax-side mint, which the instruction creates if missing, at the caller's expense.
     For native SOL that account holds wrapped SOL, which the recipient unwraps by closing it (Aviary offers this).
   - The burn slot burns its owed amount from the vault.
-  - Each slot is paid separately, so one broken recipient account never holds up the others.
+  - A slot owed nothing moves nothing, creates no account and emits no event; any other payout emits a distributed event with the slot, its wallet and the amount.
+  - Each slot is paid separately, so one broken recipient account never holds up the others: a frozen recipient account fails only its own slot's `distribute`, swaps go on booking tax to the slot, and it pays out once the account is thawed ([Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61), 2026-11-12).
+- Its accounts are the caller, who signs and pays for a missing token account, the market state, the vault authority, the tax-side vault and mint, the slot's wallet, that wallet's associated token account for the tax-side mint, the tax-side token program, the associated token program and the system program, then the tax-side mint's transfer-hook accounts.
+  - The slot's wallet is its tax recipient, `SUITE_TREASURY` for the suite share, and the default key for the burn, which pays no wallet.
+  - Refused: any other wallet (`NotSlotWallet`); any token account but that wallet's associated token account, including one of the other mint and one whose owner the wallet has handed to someone else, which SPL Token allows (`NotSlotTokenAccount`); the other vault, another vault authority and the other mint passed as the tax-side mint (`WrongAccount`).
+  - Metadata sources can't name a mint by the market's tax side or a wallet held in the market state, so the metadata's `distribute` action takes both as inputs, `tax_mint` and `recipient`, from which it derives the vault and the token account; Aviary's tax panel, the keeper runner and the demo script read them from the market state, and the program refuses any that are not the slot's.
+  - `SUITE_TREASURY` is published in the IDL beside `MAX_TAX_BPS` and `SUITE_SHARE_BPS`, so the generated client carries the suite share's wallet.
 - Owed amounts belong to slots: if the tax authority changes a slot's recipient, what the slot is owed goes to the new recipient, so a recipient leaving should be paid out first (anyone can call `distribute`).
 - Owed amounts fit in u64, because together with the real reserve they never exceed the vault's balance.
 - Pipeline's API reports raw vault balances, so tax not yet paid out shows there as liquidity; Aviary reads the real reserves from the market state instead.
@@ -281,7 +289,7 @@ Decided with the owner on 2026-11-10 in [Cut the containment hook and tax AMM bu
 The owner's standing rule of 2026-11-10 keeps every decision cheap to change, since each is a default MetalLegBob may change.
 
 - The four values of "Constants" are build-time constants in one config module of the program, and no other file repeats them.
-  `MAX_TAX_BPS` and `SUITE_SHARE_BPS` are also published in the program's IDL (Anchor's `#[constant]`), so the TypeScript client generated from it carries them for Aviary's launch form and the demo script, rather than either restating them.
+  `MAX_TAX_BPS`, `SUITE_SHARE_BPS` and `SUITE_TREASURY` are also published in the program's IDL (Anchor's `#[constant]`), so the TypeScript client generated from it carries them for Aviary's launch form and tax panel and the demo script, rather than any of them restating one.
 - The mint extension allowlist of "Mint rules", and the check that applies it, live in one small library crate of the on-chain workspace.
   The tax AMM, the containment hook, the buy wall AMM and the lending AMM all depend on that crate, so there is one list and never a second copy; a product with a stricter rule adds it on top.
   The crate is `programs/mint-rules`; it depends on nothing and reads a mint's extension entries itself, the way Token-2022 lays them out, so an extension Token-2022 adds after the crate was written is refused by its number rather than misread.
@@ -289,7 +297,7 @@ The owner's standing rule of 2026-11-10 keeps every decision cheap to change, si
 - Every other policy value is a creation parameter, chosen per market and held in its market state: the rates, their ranges, the tax authority, the tax recipients and their shares, the burn share and the virtual reserve.
 - The public name, Aviary Tax AMM, lives only in the strategy metadata's `name` and in the `name` of the embedded `security.txt` (`docs/spec/README.md`, "Names").
 - The compute ceilings live in the table below and in one test module that mirrors it.
-- The demo market's parameters live in one named block of the demo script.
+- The demo markets' parameters live in one named block of the demo script.
 
 ### Compute ceilings
 
@@ -373,3 +381,4 @@ The buy wall AMM and the containment hook start from what ticket 1 sets up.
   Measured on 2026-11-12 by [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59), on mints without a transfer hook: `pipeline_init_market` 37,909 units on SPL Token mints and 37,345 on Token-2022 mints, `pipeline_market_info` 4,249 inside `create_market` and 2,531 called directly, `pipeline_resolve_accounts` 4,484.
 - Measured on 2026-11-12 by [Tax AMM: seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60), on mints without a transfer hook: `pipeline_quote` 5,429 to 5,439 units, `pipeline_swap` 14,110 to 14,163 on SPL Token mints and 15,804 to 15,857 on Token-2022 mints (a whole router swap 39,805 to 46,442), and `seed` 13,040 on SPL Token mints and 16,420 on Token-2022 mints.
   A swap of a mint with Pipeline's allow-all `test-hook` took 51,347 to 63,250 units in all, the hook called at depth 4 inside the tax AMM's transfer when the hooked mint is the output.
+- Measured on 2026-11-12 by [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61), on mints without a transfer hook: `distribute` 34,907 units paying a tax recipient into a token account it creates and 30,399 for the suite share on SPL Token mints, 44,045 and 35,037 on Token-2022 mints; 15,062 (SPL Token) and 18,372 (Token-2022) into a token account that exists; and 20,206 (SPL Token) and 13,960 (Token-2022) burning.

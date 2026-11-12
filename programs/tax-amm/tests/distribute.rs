@@ -214,8 +214,7 @@ fn substituted_accounts_are_refused() {
     );
     // A token account the recipient owns that is not its associated token account.
     let other = Pubkey::new_unique();
-    let written =
-        env.write_token_account(&market.mints[1], &TOKEN_2022, &recipient, 0);
+    let written = env.write_token_account(&market.mints[1], &TOKEN_2022, &recipient, 0);
     let mut data = env.svm.get_account(&written).unwrap();
     env.svm.set_account(other, data.clone()).unwrap();
     assert_refused(
@@ -275,7 +274,10 @@ fn substituted_accounts_are_refused() {
     );
 
     // Nothing moved, and the right accounts still pay out.
-    assert_eq!(format!("{:?}", env.tax_market(&market.market_state)), before);
+    assert_eq!(
+        format!("{:?}", env.tax_market(&market.market_state)),
+        before
+    );
     env.distribute(&market, &caller, 0).unwrap();
     assert_eq!(env.balance(&ata), state.owed[0]);
 }
@@ -292,10 +294,7 @@ fn a_frozen_recipient_account_blocks_only_its_own_slot_until_it_is_thawed() {
                 ..MintOptions::default()
             },
         );
-        let mints = [
-            (env.create_mint(&TOKEN), TOKEN),
-            (taxed, token_program),
-        ];
+        let mints = [(env.create_mint(&TOKEN), TOKEN), (taxed, token_program)];
         let market = traded_market(&mut env, mints);
         env.set_supply(&taxed, 10 * SEED[1]);
         let caller = caller(&mut env);
@@ -309,7 +308,9 @@ fn a_frozen_recipient_account_blocks_only_its_own_slot_until_it_is_thawed() {
         let owed = env.tax_market(&market.market_state).owed;
         let refused = env.distribute(&market, &caller, 0);
         assert!(
-            refused.as_ref().is_err_and(|logs| logs.contains("Account is frozen")),
+            refused
+                .as_ref()
+                .is_err_and(|logs| logs.contains("Account is frozen")),
             "{token_program}: {refused:?}"
         );
         for slot in [1, BURN_SLOT as u8, SUITE_SLOT as u8] {
@@ -330,7 +331,11 @@ fn a_frozen_recipient_account_blocks_only_its_own_slot_until_it_is_thawed() {
         env.send(&[thaw], &[]).unwrap();
         env.distribute(&market, &caller, 0).unwrap();
         assert_eq!(env.balance(&account), owed_now, "{token_program}");
-        assert_eq!(env.tax_market(&market.market_state).owed[0], 0, "{token_program}");
+        assert_eq!(
+            env.tax_market(&market.market_state).owed[0],
+            0,
+            "{token_program}"
+        );
     }
 }
 
@@ -379,7 +384,10 @@ fn every_kind_of_slot_pays_out_in_each_kind_of_tax_side_mint_to_any_caller() {
         let mut owed = start.owed;
         for slot in [0u8, 1, BURN_SLOT as u8, SUITE_SLOT as u8] {
             let paid = owed[slot as usize];
-            assert!(paid > 0 || (native && slot == BURN_SLOT as u8), "{name} slot {slot}");
+            assert!(
+                paid > 0 || (native && slot == BURN_SLOT as u8),
+                "{name} slot {slot}"
+            );
             let account = slot_account(&env, &market, slot);
             let (balance, supply) = (env.balance_or_zero(&account), env.supply(&taxed));
             let lamports = env.svm.get_account(&account).map_or(0, |a| a.lamports);
@@ -482,7 +490,8 @@ fn each_payout_emits_a_distributed_event_and_a_slot_with_nothing_owed_emits_none
 }
 
 #[test]
-fn after_any_sequence_of_swaps_payouts_and_donations_the_vault_holds_the_reserve_plus_what_is_owed() {
+fn after_any_sequence_of_swaps_payouts_and_donations_the_vault_holds_the_reserve_plus_what_is_owed()
+{
     // A fixed pseudo-random sequence per run seed, so a failure reproduces.
     for run in 1..=3u64 {
         let mut env = Env::new();
@@ -517,7 +526,11 @@ fn after_any_sequence_of_swaps_payouts_and_donations_the_vault_holds_the_reserve
                     let after = env.tax_market(&market.market_state);
                     // It moved exactly what the slot was owed, and changed nothing else.
                     let paid = before.owed[slot as usize];
-                    assert_eq!(env.balance(&market.vaults[1]), vault - paid, "run {run} step {step}");
+                    assert_eq!(
+                        env.balance(&market.vaults[1]),
+                        vault - paid,
+                        "run {run} step {step}"
+                    );
                     let mut owed = before.owed;
                     owed[slot as usize] = 0;
                     assert_eq!(after.owed, owed, "run {run} step {step}");
@@ -528,7 +541,8 @@ fn after_any_sequence_of_swaps_payouts_and_donations_the_vault_holds_the_reserve
                 }
                 _ => {
                     let amount = 1 + next(1_000_000);
-                    env.transfer(&market, &trader, 1, market.vaults[1], amount).unwrap();
+                    env.transfer(&market, &trader, 1, market.vaults[1], amount)
+                        .unwrap();
                     donated += amount;
                 }
             }

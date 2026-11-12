@@ -1291,6 +1291,17 @@
       ],
       "type": "u16",
       "value": "1000"
+    },
+    {
+      "name": "SUITE_TREASURY",
+      "docs": [
+        "The wallet the suite share is paid to. On devnet its key is",
+        "`~/.config/testing-pipeline/devnet/suite-treasury.json` (docs/toolchain.md, \"Keys\").",
+        "Published in the IDL (`#[constant]`), where the demo script and Aviary read the suite",
+        "share slot's wallet for `distribute`."
+      ],
+      "type": "pubkey",
+      "value": "CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF"
     }
   ]
 }

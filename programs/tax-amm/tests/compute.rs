@@ -254,20 +254,29 @@ fn distribute_stays_under_its_ceiling_when_it_creates_the_token_account_and_when
         let cases = [
             (0, "paying a tax recipient, creating its token account"),
             (BURN_SLOT as u8, "burning"),
-            (SUITE_SLOT as u8, "paying the suite share, creating its token account"),
+            (
+                SUITE_SLOT as u8,
+                "paying the suite share, creating its token account",
+            ),
         ];
         for (slot, what) in cases {
             let meta = env.distribute(&market, &caller, slot).unwrap();
             let costs = strategy_compute(&meta.logs);
             assert_eq!(costs.len(), 1);
             println!("distribute {what} on {name} mints: {} CU", costs[0]);
-            assert!(costs[0] <= ceilings::DISTRIBUTE, "{name}, {what}: {}", costs[0]);
+            assert!(
+                costs[0] <= ceilings::DISTRIBUTE,
+                "{name}, {what}: {}",
+                costs[0]
+            );
         }
         // Into a token account that already exists, after more tax is booked.
         env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
         let meta = env.distribute(&market, &caller, 0).unwrap();
         let cost = strategy_compute(&meta.logs)[0];
-        println!("distribute paying a tax recipient's existing token account on {name} mints: {cost} CU");
+        println!(
+            "distribute paying a tax recipient's existing token account on {name} mints: {cost} CU"
+        );
         assert!(cost <= ceilings::DISTRIBUTE, "{name}: {cost}");
     }
 }

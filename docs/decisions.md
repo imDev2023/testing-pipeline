@@ -2727,6 +2727,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: seed a market and trade it with buy and sell tax](https://github.com/imDev2023/testing-pipeline/issues/60)
 
+### TAX-38: Which tax slots `distribute` pays
+
+- Question: How does `distribute` name a slot, and which calls does it refuse or treat as nothing to do?
+- Answer: By the slot's number as the market state books it, 0 to 3 the tax recipients, 4 the burn and 5 the suite share; a number above 5 and a recipient slot the market does not use are refused with errors of their own, and a slot owed nothing moves nothing, creates no account and emits no event.
+- Alternatives: Paying every slot in one call, which one broken recipient account would block; treating an unused slot like a slot owed nothing.
+- Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
+### TAX-39: Where `distribute` pays
+
+- Question: Into which account is a slot paid, and which accounts are refused?
+- Answer: A tax recipient or the suite share only into the associated token account its wallet still owns for the tax-side mint, created at the caller's expense when missing; the burn names no wallet (the default key) and burns from the vault; any other wallet or token account is refused, including the wallet's account of the other mint and an SPL Token account whose owner the wallet has handed to someone else.
+- Alternatives: Paying whatever account sits at the associated token address, whoever owns it now; paying any token account the wallet owns.
+- Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
+### TAX-40: The `distribute` action's inputs
+
+- Question: How does the metadata's `distribute` action find a market's tax-side mint and a slot's wallet, which no metadata account source can name?
+- Answer: As two address inputs, `tax_mint` and `recipient`, from which it derives the vault and the token account; whoever builds the call (Aviary's tax panel, the keeper runner, the demo script) reads both from the market state, and the program refuses any that are not the slot's.
+- Alternatives: One action per tax side with fixed indexes, which a terminal would have to choose between; passing both vaults and mints and leaving the recipient's token account to the caller.
+- Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
+### TAX-41: The suite treasury in the IDL
+
+- Question: How do Aviary and the demo script learn the suite share's wallet, which `distribute` needs for slot 5?
+- Answer: The program publishes `SUITE_TREASURY` in its IDL with Anchor's `#[constant]`, beside the tax cap and the suite share, so the generated client carries it and the config module stays its one place.
+- Alternatives: Each reader restating the address.
+- Specified in: [`docs/spec/tax-amm.md`, Where its policy values live](spec/tax-amm.md#where-its-policy-values-live)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
+### TAX-42: The demo's two markets
+
+- Question: Which markets does the demo script create, trade and pay out?
+- Answer: Two: one taxed in wrapped SOL, Aviary's default tax side, whose recipients are paid wrapped SOL and which burns nothing, and one taxed in a token, whose burn lowers the token's supply.
+- Alternatives: One market taxed in a token, which never shows a payout in wrapped SOL.
+- Specified in: [`docs/toolchain.md`, Local demo run](toolchain.md#local-demo-run)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
