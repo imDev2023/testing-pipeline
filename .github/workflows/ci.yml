@@ -108,7 +108,7 @@ jobs:
         with:
           path: fixtures/pipeline
           key: ${{ runner.os }}-pipeline-${{ hashFiles('programs/Cargo.toml', 'scripts/fetch-pipeline.sh') }}
-      - name: Build Pipeline's test programs (test-hook and the rest, for hostile tests)
+      - name: Build Pipeline's test programs, for hostile tests (a second strategy, test hooks)
         run: source scripts/toolchain-env.sh && scripts/fetch-pipeline.sh programs
       - name: Formatting
         run: cd programs && cargo fmt --all -- --check

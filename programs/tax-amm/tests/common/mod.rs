@@ -160,6 +160,16 @@ pub fn valid_params(seeder: &Pubkey) -> InitParams {
     }
 }
 
+/// [`valid_params`] for a market whose tax is taken in its quote mint, the mint at
+/// `quote_index`: how a containment hook home market is created
+/// (docs/spec/containment-hook.md, "Checks on the home market").
+pub fn quote_taxed_params(seeder: &Pubkey, quote_index: u8) -> InitParams {
+    InitParams {
+        tax_side: quote_index,
+        ..valid_params(seeder)
+    }
+}
+
 /// A market recorded by the router.
 #[derive(Debug)]
 pub struct Market {
@@ -292,10 +302,19 @@ impl Env {
     /// A new mint with the admin as its mint authority. For Token-2022, `options` adds
     /// extensions and a freeze authority, each set up by Token-2022 itself.
     pub fn create_mint_with(&mut self, token_program: &Pubkey, options: MintOptions) -> Pubkey {
+        self.create_mint_at(&Keypair::new(), token_program, options)
+    }
+
+    /// [`Env::create_mint_with`] at a given mint keypair's address.
+    pub fn create_mint_at(
+        &mut self,
+        mint: &Keypair,
+        token_program: &Pubkey,
+        options: MintOptions,
+    ) -> Pubkey {
         use spl_token_2022_interface::extension::{transfer_fee, transfer_hook, ExtensionType};
         use spl_token_2022_interface::{instruction, state};
 
-        let mint = Keypair::new();
         let authority = self.admin.pubkey();
         let mut extensions = vec![];
         if options.transfer_fee_bps.is_some() {
@@ -338,7 +357,7 @@ impl Env {
                 transfer_hook::instruction::initialize(
                     token_program,
                     &mint.pubkey(),
-                    Some(authority),
+                    Some(options.transfer_hook_authority.unwrap_or(authority)),
                     Some(hook_program),
                 )
                 .unwrap(),
@@ -365,8 +384,28 @@ impl Env {
             )
             .unwrap(),
         );
-        self.send(&instructions, &[&mint]).unwrap();
+        self.send(&instructions, &[mint]).unwrap();
         mint.pubkey()
+    }
+
+    /// A Token-2022 mint whose transfer hook is `hook_program`, with the hook authority
+    /// `hook_authority` derives from the mint's address, 6 decimals, no freeze authority and
+    /// the admin as mint authority: a containment hook's contained mint when the authority
+    /// is the mint's unlock PDA (docs/spec/containment-hook.md, "Lifecycle").
+    pub fn create_hooked_mint(
+        &mut self,
+        hook_program: &Pubkey,
+        hook_authority: impl FnOnce(&Pubkey) -> Pubkey,
+        options: MintOptions,
+    ) -> Pubkey {
+        let mint = Keypair::new();
+        let authority = hook_authority(&mint.pubkey());
+        let options = MintOptions {
+            transfer_hook: Some(*hook_program),
+            transfer_hook_authority: Some(authority),
+            ..options
+        };
+        self.create_mint_at(&mint, &TOKEN_2022, options)
     }
 
     /// A plain mint of `token_program` with 6 decimals and no freeze authority.
@@ -798,16 +837,11 @@ impl Env {
     }
 
     /// A Token-2022 mint whose transfer hook is Pipeline's `test-hook`, approving every
-    /// transfer.
-    pub fn create_hooked_mint(&mut self) -> Pubkey {
+    /// transfer, with the admin as its hook authority.
+    pub fn create_mint_with_test_hook(&mut self) -> Pubkey {
         let hook = self.add_test_hook();
-        let mint = self.create_mint_with(
-            &TOKEN_2022,
-            MintOptions {
-                transfer_hook: Some(hook),
-                ..MintOptions::default()
-            },
-        );
+        let admin = self.admin.pubkey();
+        let mint = self.create_hooked_mint(&hook, |_| admin, MintOptions::default());
         let validation = pipeline_check::hooks::validation_address(&hook, &mint);
         let whitelist = Pubkey::find_program_address(&[b"whitelist", mint.as_ref()], &hook).0;
         let initialize = Instruction::new_with_bytes(
@@ -900,6 +934,8 @@ pub struct MintOptions {
     pub decimals: u8,
     pub freeze_authority: bool,
     pub transfer_hook: Option<Pubkey>,
+    /// The transfer hook's authority; the admin when `None`.
+    pub transfer_hook_authority: Option<Pubkey>,
     pub transfer_fee_bps: Option<u16>,
     pub permanent_delegate: bool,
 }
@@ -910,6 +946,7 @@ impl Default for MintOptions {
             decimals: 6,
             freeze_authority: false,
             transfer_hook: None,
+            transfer_hook_authority: None,
             transfer_fee_bps: None,
             permanent_delegate: false,
         }

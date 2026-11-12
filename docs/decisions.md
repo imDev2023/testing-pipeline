@@ -2799,6 +2799,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
 
+### HOOK-23: The edges of the unlock terms
+
+- Question: What exactly do "later than now" and "at most 90 days" allow, and in what units are the goal and the deadline given?
+- Answer: The goal is a `u64` in quote-mint base units above zero; the deadline is a Unix time strictly later than the binding's clock, and one exactly `MAX_UNLOCK_DEADLINE_SECS` (7,776,000 seconds) after it is allowed, a rule proved with Kani over every pair of times.
+- Alternatives: A `u128` goal to match the tax AMM's `tax_collected` counter; allowing a deadline equal to the binding time.
+- Specified in: [`docs/spec/containment-hook.md`, Binding (`bind`)](spec/containment-hook.md#binding-bind)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+
+### HOOK-24: Who pays for a binding
+
+- Question: Must the mint authority also pay the rent of the config and the validation account?
+- Answer: No: `bind` takes a payer that may be the mint authority or any other signer, so only the mint authority's signature is what makes the binding the launcher's.
+- Alternatives: The mint authority pays, which a launcher whose mint authority is a cold key holding no SOL could not do.
+- Specified in: [`docs/spec/containment-hook.md`, Binding (`bind`)](spec/containment-hook.md#binding-bind)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+
+### HOOK-25: Binding in its own transaction
+
+- Question: Since `bind` does not fit in the market's creation transaction (1,307 of 1,232 bytes, measured), how does the launch script send it?
+- Answer: In the next transaction, before the seed, measuring the size on every run and sending one transaction whenever it fits; it creates no address lookup table, with which the transaction would be 690 bytes.
+- Alternatives: An address lookup table created first, which costs a transaction of its own and a slot's wait before it can be used.
+- Specified in: [`docs/spec/containment-hook.md`, Launch in v1](spec/containment-hook.md#launch-in-v1)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+
+### HOOK-26: The launch script's own choices
+
+- Question: What does the launch script choose for the token and its home market besides the goal and the deadline?
+- Answer: Wrapped SOL as the quote mint unless `--quote-mint` names another, 6 decimals and a supply of 1,000,000,000 tokens, and a home market with a 3% buy tax (range 1% to 8%), a 5% sell tax (range 0% to 9%), the launcher as tax authority, seeder and only tax recipient, no burn, and a 30 SOL virtual quote reserve, all in one block at the top of the script.
+- Alternatives: Flags for every market parameter, which the launch form in Aviary would carry instead once Aviary launches tokens.
+- Specified in: [the ticket, Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+
+### HOOK-27: Where the tax AMM's address comes from
+
+- Question: How is the tax AMM's program id fixed in the hook?
+- Answer: The hook's config module takes it from the tax AMM's own crate (`tax_amm::ID`), and reads the market state through the offsets that crate publishes, so the address and the layout are each written once in the workspace and a test fails if the hook's reading and the tax AMM's layout disagree.
+- Alternatives: The address written out again in the hook's config module, checked against the tax AMM's by a test.
+- Specified in: [`docs/spec/containment-hook.md`, Where its policy values live](spec/containment-hook.md#where-its-policy-values-live)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+
 ## Buy wall AMM (POOL4)
 
 `POOL4-01` to `POOL4-21` keep the numbers their tickets proposed, which the buy wall AMM's build tickets already cite.
@@ -3474,7 +3524,6 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-06`: the map's Notes still give the order set while charting, with the terminal first; `tax-amm.md` says the tax AMM is built first.
 - `PIPESCOPE-10`: the rate is written in `pipescope.md` (The integrator fee, and again in the trade box's breakdown) and as 50 basis points in `pipescope-architecture.md`; it should be stated once and referred to.
 - Pipeline's own fee of 0.25% is written as a fixed number in the trade box's breakdown, in Canary's cost split, in three program specs and in the glossary; it is the router's setting, not ours, so Aviary should read it from the router's config.
-- `HOOK-09`, `HOOK-21`: `containment-hook.md` gives the 90-day limit one home in code but still writes the number in four of its sections, and has no Constants table to name it as the other programs' files do.
 - `CANARY-06` to `CANARY-09`, `CANARY-12`, `CANARY-13`, `CANARY-16`, `CANARY-17`: Canary's policy values are spread through `pipescope-canary.md` (the bands are repeated in the rows of `exit_transferred`, `exit_queue` and `cost`, the 1-point tolerance in three rows), and the spec names no config module for them in `crates/canary`.
 - `CANARY-22`, `CANARY-23`: the schedule is written in `pipescope-canary.md` and three times in `pipescope-architecture.md` (the crons, the indexer's new markets, the Canary runner).
 - `EXPLAINER-11`, `EXPLAINER-12`: the banned terms and the length limits are written in the prompt's text and again in the validator's rules; both should come from one constant, so a change cannot leave them disagreeing.
@@ -3487,6 +3536,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-29` to `SUITE-31`: the owner answered these on a ticket that is still open, so "Specified in" names the ticket; the session that closes it points them at wherever the site's own docs record them.
 - `POOL4-20`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
+- `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.

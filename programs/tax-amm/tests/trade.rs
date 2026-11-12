@@ -128,7 +128,7 @@ fn the_tax_maths_both_ways_with_a_transfer_hook_on_the_tax_side_and_on_the_other
     for hooked_side in [0usize, 1] {
         for tax_side in [0u8, 1] {
             let mut env = Env::new();
-            let hooked = env.create_hooked_mint();
+            let hooked = env.create_mint_with_test_hook();
             let plain = env.create_mint(&TOKEN);
             let mut mints = [(plain, TOKEN), (plain, TOKEN)];
             mints[hooked_side] = (hooked, TOKEN_2022);

@@ -185,7 +185,7 @@ fn the_creation_transaction_seeds_the_market_it_creates() {
         let mints = kinds.map(|kind| match kind {
             0 => (env.create_mint(&TOKEN), TOKEN),
             1 => (env.create_mint(&TOKEN_2022), TOKEN_2022),
-            _ => (env.create_hooked_mint(), TOKEN_2022),
+            _ => (env.create_mint_with_test_hook(), TOKEN_2022),
         });
         let state = Keypair::new();
         let mint_keys = mints.map(|(mint, _)| mint);

@@ -186,7 +186,7 @@ fn a_swap_calls_a_transfer_hook_inside_it_as_the_input_and_as_the_output() {
     // output; as the input, the router's own transfers call the hook at depth 3.
     for hooked_side in [0usize, 1] {
         let mut env = Env::new();
-        let hooked = env.create_hooked_mint();
+        let hooked = env.create_mint_with_test_hook();
         let plain = env.create_mint(&TOKEN);
         let mut mints = [(plain, TOKEN), (plain, TOKEN)];
         mints[hooked_side] = (hooked, TOKEN_2022);

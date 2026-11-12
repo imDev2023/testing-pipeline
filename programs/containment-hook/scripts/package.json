@@ -1,0 +1,28 @@
+{
+    "name": "containment-hook-scripts",
+    "private": true,
+    "type": "module",
+    "description": "The containment hook's launch script, which launches a contained token on its tax AMM home market, and its generated TypeScript client",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "scripts": {
+        "launch": "node launch.ts",
+        "idl": "bash build-idl.sh",
+        "client": "node codama.ts",
+        "typecheck": "node codama.ts --check && tsc --noEmit"
+    },
+    "dependencies": {
+        "@pipeline-placeholder/sdk": "link:../../../fixtures/pipeline/sdk/ts",
+        "@solana-program/system": "0.16.0",
+        "@solana-program/token": "0.18.0",
+        "@solana/kit": "8.6.0"
+    },
+    "devDependencies": {
+        "@codama/nodes-from-anchor": "1.5.6",
+        "@codama/renderers-js": "2.8.0",
+        "@types/node": "24.19.2",
+        "codama": "1.11.0",
+        "typescript": "7.0.2"
+    }
+}

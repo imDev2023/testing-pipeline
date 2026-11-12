@@ -1,0 +1,454 @@
+{
+  "address": "aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv",
+  "metadata": {
+    "name": "containment_hook",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "A Token-2022 transfer hook that keeps a token in its one home market until it unlocks",
+    "repository": "https://github.com/imDev2023/testing-pipeline"
+  },
+  "instructions": [
+    {
+      "name": "bind",
+      "docs": [
+        "Binds a Token-2022 mint to its home market, once and for good: the unlock goal, in",
+        "quote-mint base units, and the unlock deadline, a Unix time."
+      ],
+      "discriminator": [
+        178,
+        57,
+        187,
+        254,
+        138,
+        43,
+        99,
+        134
+      ],
+      "accounts": [
+        {
+          "name": "mint_authority",
+          "docs": [
+            "The mint's mint authority: only the launcher can bind a mint."
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Pays the rent of the config and the validation account."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The mint to contain."
+          ]
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Created here, so a second `bind` of the same mint fails."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "extra_account_metas",
+          "docs": [
+            "The validation account, created here and written by the handler."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  116,
+                  114,
+                  97,
+                  45,
+                  97,
+                  99,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "unlock",
+          "docs": [
+            "The unlock PDA, which must be the mint's transfer hook authority; it holds no data."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  110,
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "The home market: the router's `Market` account."
+          ]
+        },
+        {
+          "name": "market_state",
+          "docs": [
+            "The tax AMM market state the `Market` records."
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "unlock_goal",
+          "type": "u64"
+        },
+        {
+          "name": "unlock_deadline",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "execute",
+      "docs": [
+        "The transfer hook interface's `Execute`, which Token-2022 calls on every transfer of",
+        "a mint whose hook is this program."
+      ],
+      "discriminator": [
+        105,
+        37,
+        101,
+        197,
+        75,
+        251,
+        102,
+        26
+      ],
+      "accounts": [
+        {
+          "name": "source",
+          "docs": [
+            "The source token account."
+          ]
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The mint."
+          ]
+        },
+        {
+          "name": "destination",
+          "docs": [
+            "The destination token account."
+          ]
+        },
+        {
+          "name": "owner",
+          "docs": [
+            "The source's owner or delegate."
+          ]
+        },
+        {
+          "name": "extra_account_metas",
+          "docs": [
+            "The validation account `[\"extra-account-metas\", mint]`."
+          ]
+        },
+        {
+          "name": "config",
+          "docs": [
+            "The config `[\"config\", mint]`."
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "TransferRefused",
+      "msg": "A contained token can't be transferred there"
+    },
+    {
+      "code": 6001,
+      "name": "MintNotToken2022",
+      "msg": "The mint is not owned by Token-2022"
+    },
+    {
+      "code": 6002,
+      "name": "NotAMint",
+      "msg": "The account is not an initialized mint"
+    },
+    {
+      "code": 6003,
+      "name": "MintExtensionNotAllowed",
+      "msg": "The mint carries an extension the mint rules refuse"
+    },
+    {
+      "code": 6004,
+      "name": "FreezeAuthoritySet",
+      "msg": "A contained mint must have no freeze authority"
+    },
+    {
+      "code": 6005,
+      "name": "NotMintAuthority",
+      "msg": "The signer is not the mint's mint authority"
+    },
+    {
+      "code": 6006,
+      "name": "WrongHookProgram",
+      "msg": "The mint's transfer hook program is not this program"
+    },
+    {
+      "code": 6007,
+      "name": "WrongHookAuthority",
+      "msg": "The mint's transfer hook authority is not its unlock PDA"
+    },
+    {
+      "code": 6008,
+      "name": "ZeroGoal",
+      "msg": "The unlock goal must be above zero"
+    },
+    {
+      "code": 6009,
+      "name": "DeadlineNotInFuture",
+      "msg": "The unlock deadline must be later than now"
+    },
+    {
+      "code": 6010,
+      "name": "DeadlineTooFar",
+      "msg": "The unlock deadline may be at most MAX_UNLOCK_DEADLINE_SECS after the binding"
+    },
+    {
+      "code": 6011,
+      "name": "NotARouterMarket",
+      "msg": "The market is not a Market account of Pipeline's router"
+    },
+    {
+      "code": 6012,
+      "name": "MarketNotAtItsAddress",
+      "msg": "The Market account is not at its router PDA"
+    },
+    {
+      "code": 6013,
+      "name": "NotATaxMarket",
+      "msg": "The home market must run on the tax AMM"
+    },
+    {
+      "code": 6014,
+      "name": "MarketDoesNotHoldMint",
+      "msg": "The home market must trade the mint against one quote mint"
+    },
+    {
+      "code": 6015,
+      "name": "WrongMarketState",
+      "msg": "The market state is not the one the Market records"
+    },
+    {
+      "code": 6016,
+      "name": "NotATaxMarketState",
+      "msg": "The market state is not a tax AMM market state"
+    },
+    {
+      "code": 6017,
+      "name": "TaxSideNotQuote",
+      "msg": "The home market's tax must be taken in the quote mint"
+    }
+  ],
+  "types": [
+    {
+      "name": "Config",
+      "docs": [
+        "One contained mint's binding to its home market. `bind` writes it once; no instruction",
+        "changes it afterwards, and it is never closed, so it stays as the record of the token's",
+        "containment. Only `unlocked_at` will be set, once, by the unlock."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "docs": [
+              "[`CONFIG_VERSION`]."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "mint",
+            "docs": [
+              "The contained mint."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "market",
+            "docs": [
+              "The home market: the router's `Market` account."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "market_state",
+            "docs": [
+              "The tax AMM market state the `Market` records."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "docs": [
+              "The contained token's vault in the home market, as the `Market` records it."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_account",
+            "docs": [
+              "The home market's Pipeline fee account for the contained token."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_mint",
+            "docs": [
+              "The market's other mint, which its tax is taken in."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "unlock_goal",
+            "docs": [
+              "The tax the home market must collect for the unlock, in quote-mint base units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "unlock_deadline",
+            "docs": [
+              "The Unix time from which the unlock is due whatever the tax collected."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bound_at",
+            "docs": [
+              "The Unix time of the binding."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "config_bump",
+            "type": "u8"
+          },
+          {
+            "name": "extra_account_metas_bump",
+            "type": "u8"
+          },
+          {
+            "name": "unlock_bump",
+            "type": "u8"
+          },
+          {
+            "name": "unlocked_at",
+            "docs": [
+              "The Unix time of the unlock, or none while the token is contained."
+            ],
+            "type": {
+              "option": "i64"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "constants": [
+    {
+      "name": "MAX_UNLOCK_DEADLINE_SECS",
+      "docs": [
+        "The latest unlock deadline a launcher may set, in seconds after the binding: 90 days,",
+        "which caps how long holders can be stuck if the home market stops working.",
+        "Published in the IDL, so clients such as the launch script check it without repeating it."
+      ],
+      "type": "i64",
+      "value": "7776000"
+    }
+  ]
+}
