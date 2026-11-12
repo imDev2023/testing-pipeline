@@ -10,7 +10,9 @@ use anchor_lang::Discriminator;
 use common::*;
 use pipeline_client::interface::discriminator;
 use serde_json::Value;
-use tax_amm::events::{MarketCreated, Seeded};
+use tax_amm::events::{
+    MarketCreated, RecipientsChanged, Seeded, TaxAuthorityRenounced, TaxesChanged,
+};
 use tax_amm::state::layout;
 use tax_amm::TaxMarket;
 
@@ -82,6 +84,24 @@ fn its_instructions_are_pipelines_with_pipelines_discriminators_and_its_actions(
         (
             "seed",
             tax_amm::instruction::Seed::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
+            "set_taxes",
+            tax_amm::instruction::SetTaxes::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
+            "set_recipients",
+            tax_amm::instruction::SetRecipients::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
+            "renounce_tax_authority",
+            tax_amm::instruction::RenounceTaxAuthority::DISCRIMINATOR
                 .try_into()
                 .unwrap(),
         ),
@@ -228,22 +248,31 @@ fn its_events_and_errors_are_the_programs() {
     assert_eq!(
         events,
         [
+            // In the IDL's order, by name.
             ("MarketCreated", MarketCreated::DISCRIMINATOR.to_vec()),
+            (
+                "RecipientsChanged",
+                RecipientsChanged::DISCRIMINATOR.to_vec()
+            ),
             ("Seeded", Seeded::DISCRIMINATOR.to_vec()),
+            (
+                "TaxAuthorityRenounced",
+                TaxAuthorityRenounced::DISCRIMINATOR.to_vec()
+            ),
+            ("TaxesChanged", TaxesChanged::DISCRIMINATOR.to_vec()),
         ]
     );
 
     // Errors are numbered from 6000 in the enum's order, the last being
-    // `InsufficientLiquidity`.
+    // `OwedSlotLeftEmpty`.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "InsufficientLiquidity");
+    assert_eq!(last["name"], "OwedSlotLeftEmpty");
     assert_eq!(
         last["code"].as_u64().unwrap() as u32,
-        anchor_lang::error::ERROR_CODE_OFFSET
-            + tax_amm::StrategyError::InsufficientLiquidity as u32
+        anchor_lang::error::ERROR_CODE_OFFSET + tax_amm::StrategyError::OwedSlotLeftEmpty as u32
     );
 }
