@@ -143,6 +143,7 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
   The trader receives `out`; afterwards `R_i += a` and `R_o -= g`, and the tax stays in the tax-side vault.
 - Intermediate maths is in u128; the tax rounds up and curve output rounds down, so the product of the effective reserves never falls.
 - A quote or swap is refused when `out` is 0, or when the curve would pay out more of `o` than `R_o`.
+- The pricing refuses a rate above `MAX_TAX_BPS` for every trade, before anything is priced, although creation and the tax authority's changes already keep such a rate out of every market state, so no pricing path can apply one.
 - `pipeline_quote` and `pipeline_swap` call the same pricing function, so quotes include the tax and match swaps exactly, which `pipeline-check`'s `quote_matches_swap` verifies.
 - Rates are read at the time of the swap: a rate change applies from the next swap, and a trader's minimum output protects against a change between quote and swap.
 
@@ -178,6 +179,7 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
 
 - From every tax, the suite share comes first: `floor(tax × SUITE_SHARE_BPS / 10,000)`, owed to `SUITE_TREASURY`.
 - The rest is the creator's part, split by the market's shares: each recipient `floor(rest × share / 10,000)`, the burn `floor(rest × burn_share_bps / 10,000)`, and any rounding remainder to the first recipient.
+- The split refuses shares that do not sum to 10,000 with the burn share, for every tax, although creation and `set_recipients` already refuse them, so the parts always add up to the tax.
 - Aviary's launch form shows creators the whole split, the suite share included.
 
 ### Payout
@@ -318,6 +320,11 @@ For the bar's stateful fuzzing layer, beyond its shared three:
 5. After the seed, only router swaps change the real reserves, and only router swaps ever change the counters; `distribute` moves at most what its slot is owed.
 6. The counters never fall.
 7. Once the tax authority has renounced, or on a market created without one, the rates and the tax recipients never change.
+
+### Maths proofs
+
+The properties the pricing, tax and split maths satisfy for every input, and the tool that establishes each, are listed in [`docs/security/tax-amm/maths-properties.md`](../security/tax-amm/maths-properties.md), chosen with Book of Knowledge as the bar's "Test layers" 2 asks.
+Kani proves what it can in `src/pricing.rs`, `src/split.rs` and `src/params.rs`, Z3 proves the division and rounding claims for every input in `proofs/pricing_z3.py`, and Proptest checks every property on at least 10,000 cases in `tests/maths.rs`.
 
 ### `pipeline-check` warns
 

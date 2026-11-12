@@ -108,3 +108,58 @@ impl InitParams {
         Ok(())
     }
 }
+
+// Kani proof of the creation rules on rates and shares (`cargo kani`, docs/toolchain.md);
+// the property IDs are docs/security/tax-amm/maths-properties.md's.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    fn any_key() -> Pubkey {
+        Pubkey::new_from_array(kani::any())
+    }
+
+    /// T2 and P1 at creation: for any parameters and mints, a market is accepted only with
+    /// both rates and both ranges inside `[0, MAX_TAX_BPS]`, each rate inside its range, and
+    /// shares that sum to exactly 10,000 with the burn share, so a market state never
+    /// holds a rate above the cap or shares the split refuses.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn creation_accepts_only_capped_rates_and_whole_shares() {
+        let params = InitParams {
+            tax_side: kani::any(),
+            buy_tax_bps: kani::any(),
+            sell_tax_bps: kani::any(),
+            buy_tax_min_bps: kani::any(),
+            buy_tax_max_bps: kani::any(),
+            sell_tax_min_bps: kani::any(),
+            sell_tax_max_bps: kani::any(),
+            tax_authority: any_key(),
+            seeder: any_key(),
+            recipients: [any_key(), any_key(), any_key(), any_key()],
+            shares: kani::any(),
+            burn_share_bps: kani::any(),
+            virtual_side: kani::any(),
+            virtual_reserve: kani::any(),
+        };
+        if params.validate(&[any_key(), any_key()]).is_ok() {
+            for (rate, min, max) in [
+                (
+                    params.buy_tax_bps,
+                    params.buy_tax_min_bps,
+                    params.buy_tax_max_bps,
+                ),
+                (
+                    params.sell_tax_bps,
+                    params.sell_tax_min_bps,
+                    params.sell_tax_max_bps,
+                ),
+            ] {
+                assert!(min <= rate && rate <= max && max <= MAX_TAX_BPS);
+            }
+            let whole = params.shares.iter().map(|&share| share as u32).sum::<u32>()
+                + params.burn_share_bps as u32;
+            assert!(whole as u64 == pipeline_strategy_interface::BPS_DENOMINATOR);
+        }
+    }
+}
