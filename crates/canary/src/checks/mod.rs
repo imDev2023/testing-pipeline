@@ -4,6 +4,7 @@
 
 pub mod conformance;
 pub mod cost;
+pub mod direct_call;
 pub mod exit_sizes;
 pub mod quote_matches_swap;
 pub mod readable;
@@ -14,6 +15,14 @@ pub const CONFORMANCE: &str = "conformance";
 pub const EXIT_SIZES: &str = "exit_sizes";
 pub const QUOTE_MATCHES_SWAP: &str = "quote_matches_swap";
 pub const COST: &str = "cost";
+pub const DIRECT_CALL: &str = "direct_call";
 
 /// Every check this binary runs, in the order of its records.
-pub const CHECKS: [&str; 5] = [READABLE, CONFORMANCE, EXIT_SIZES, QUOTE_MATCHES_SWAP, COST];
+pub const CHECKS: [&str; 6] = [
+    READABLE,
+    CONFORMANCE,
+    EXIT_SIZES,
+    QUOTE_MATCHES_SWAP,
+    COST,
+    DIRECT_CALL,
+];

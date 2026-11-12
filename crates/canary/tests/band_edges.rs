@@ -107,7 +107,12 @@ fn mint() -> MintFacts {
         token_program: pipeline_client::TOKEN_PROGRAM_ID,
         decimals: 9,
         supply: 0,
+        mint_authority: None,
+        freeze_authority: None,
         transfer_fee: None,
+        transfer_hook: None,
+        permanent_delegate: None,
+        pause_authority: None,
     }
 }
 

@@ -420,6 +420,8 @@ impl Session<'_> {
             }
         };
         let quote = self.quote(svm, &request, &resolved);
+        let expected_out = quote.as_ref().map_or(0, |q| q.strategy_amount_out);
+        let hooks = self.hook_accounts(svm, trader, input, output, amount_in, expected_out);
         let swap = path.swap(
             svm,
             &self.market,
@@ -430,6 +432,7 @@ impl Session<'_> {
                 amount_in,
                 strategy_accounts: &resolved,
                 extra: &extra,
+                hooks: &hooks,
             },
         );
         Leg {

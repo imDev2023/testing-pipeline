@@ -14,6 +14,7 @@ pub mod bands;
 pub mod checks;
 pub mod config;
 pub mod failure;
+pub mod hooks;
 pub mod http;
 pub mod market;
 pub mod record;
@@ -22,6 +23,7 @@ pub mod sizes;
 pub mod source;
 pub mod swap;
 pub mod trade;
+pub mod trader;
 pub mod wallets;
 pub mod words;
 

@@ -14,6 +14,10 @@
 
 #![allow(dead_code)]
 
+pub mod token2022;
+#[allow(unused_imports)]
+pub use token2022::*;
+
 use std::path::PathBuf;
 
 use litesvm::LiteSVM;
@@ -156,6 +160,10 @@ impl Cluster {
 
     pub fn send(&mut self, instructions: &[Instruction], signers: &[&Keypair]) {
         self.try_send(instructions, signers).unwrap();
+    }
+
+    pub fn admin_key(&self) -> Pubkey {
+        self.admin.pubkey()
     }
 
     /// Deploys and registers a strategy program, unless it already is.

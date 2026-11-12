@@ -10,12 +10,14 @@ use pipeline_check::{clone::cluster_name, CheckOptions};
 use pipeline_client::Pubkey;
 use serde::Serialize;
 
-use crate::checks::{self, conformance, cost, exit_sizes, quote_matches_swap, readable};
+use crate::checks::{
+    self, conformance, cost, direct_call, exit_sizes, quote_matches_swap, readable,
+};
 use crate::market::{token_amount, Copy, Session, Version};
 use crate::record::{Record, RecordContext, Verdict};
 use crate::sizes::{ladder, money_side, Side};
 use crate::source::{ClockMemo, Source};
-use crate::swap::{SwapPath, ThroughRouter};
+use crate::swap::SwapPath;
 use crate::wallets::Seed;
 
 /// How to run.
@@ -37,7 +39,7 @@ impl Default for RunOptions {
         RunOptions {
             extra: vec![],
             last_round: true,
-            swap: &ThroughRouter,
+            swap: crate::config::SWAP_PATH,
             seed: None,
         }
     }
@@ -211,9 +213,24 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
     };
     let sizes_lacking = session.lacking_since_begin();
 
+    // The control checks, each in fresh copies of its own.
+    let first_token = (0..session.market.len()).find(|t| *t != money);
+    session.begin_measurement();
+    let direct_measured = match (&trading, first_token) {
+        (readable::Trading::Open, Some(token)) => Some(direct_call::measure(
+            &mut session,
+            money,
+            token,
+            sizes.reference,
+        )),
+        _ => None,
+    };
+    let direct_lacking = session.lacking_since_begin();
+
     let mut lacking = copy_lacking.clone();
     lacking.extend(readable_lacking.iter().copied());
     lacking.extend(sizes_lacking.iter().copied());
+    lacking.extend(direct_lacking.iter().copied());
     if !lacking.is_empty() && !options.last_round {
         return MarketRun::Missing {
             addresses: source_order(&lacking, &session),
@@ -223,8 +240,10 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
     // The trading checks rest on readable's verdict when it closed trading, so they also
     // lack whatever readable's probes lacked.
     let mut trading_lacking = sizes_lacking.clone();
+    let mut direct_needed = direct_lacking.clone();
     if matches!(trading, readable::Trading::NotRun(_)) {
         trading_lacking.extend(readable_lacking.iter().copied());
+        direct_needed.extend(readable_lacking.iter().copied());
     }
     let gate = |own: &BTreeSet<Pubkey>, verdict: Verdict| {
         let mut needed = copy_lacking.clone();
@@ -261,6 +280,18 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         context.record(
             checks::COST,
             gate(&trading_lacking, cost::judge(&sizes_measured, &trading)),
+        ),
+        context.record(
+            checks::DIRECT_CALL,
+            gate(
+                &direct_needed,
+                direct_call::judge(
+                    direct_measured.as_ref(),
+                    &trading,
+                    &market,
+                    sizes_measured.amount(sizes.reference),
+                ),
+            ),
         ),
     ];
     let mut notes = copy.notes.clone();
