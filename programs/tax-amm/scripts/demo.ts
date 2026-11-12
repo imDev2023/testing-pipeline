@@ -34,7 +34,8 @@
 //
 // and last, for each market:
 //
-//  pay out every slot with the metadata's `distribute` action: each tax recipient and the
+//  pay out every slot with the metadata's `distribute` action, and the burn slot with its
+//  `burn` action (the same instruction, with the mint writable): each tax recipient and the
 //  suite treasury must receive exactly what the market state said it was owed, a recipient
 //  with no token account must get one, the burn must lower the mint's supply by exactly its
 //  owed amount, and every owed amount must be 0 afterwards, with the tax-side vault holding
@@ -105,7 +106,9 @@ import {
     findVault1Pda,
     getTaxAmmErrorMessage,
     MarketStatus,
+    BURN_SLOT,
     SUITE_SHARE_BPS,
+    SUITE_SLOT,
     SUITE_TREASURY,
     TAX_AMM_ERROR__ALREADY_RENOUNCED,
     type TaxAmmError,
@@ -174,9 +177,6 @@ const TAX_SIDE = 1;
 const VIRTUAL_SIDE = 0;
 // SPL Token's native SOL mint: wrapped SOL, the same address on every cluster.
 const WRAPPED_SOL = address('So11111111111111111111111111111111111111112');
-// Tax slots, as the program numbers them (docs/spec/tax-amm.md, "Payout").
-const BURN_SLOT = 4;
-const SUITE_SLOT = 5;
 // The most SOL the strategy's setup may spend on rent; the router returns the rest.
 const MAX_CREATOR_LAMPORTS = 100_000_000n;
 // What a local run airdrops when a key holds less: the payer creates tokens and a market,
@@ -396,8 +396,8 @@ function show(value: unknown) {
     return JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
 }
 
-async function walletTokenAccount(owner: Address, mint: Address): Promise<Address> {
-    const [account] = await findAssociatedTokenPda({ owner, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+async function walletTokenAccount(owner: Address, mint: Address, tokenProgram: Address = TOKEN_PROGRAM_ADDRESS): Promise<Address> {
+    const [account] = await findAssociatedTokenPda({ owner, mint, tokenProgram });
     return account;
 }
 
@@ -555,11 +555,15 @@ type DemoRun = {
     checkBooks: () => Promise<void>;
 };
 
-/** The SOL a market taxed in wrapped SOL takes from the payer: its seed, and its buys with Pipeline's fee. */
+/**
+ * The SOL a market taxed in wrapped SOL takes from the payer: its seed, and its buys with
+ * Pipeline's fee, twice when the tax authority trades again at new rates.
+ */
 function wrappedSolNeeded(demo: DemoMarket): bigint {
+    const rounds = demo.newTaxesBps ? 2n : 1n;
     const buys = demo.trades.filter(([input]) => input === TAX_SIDE).map(([, , amount]) => amount);
     const spend = (amount: bigint) => pipeline.maxTotalSpend(amount, 0) ?? fail(`a buy of ${amount} overflows`);
-    return buys.reduce<bigint>((sum, amount) => sum + spend(amount), demo.seed[TAX_SIDE]);
+    return buys.reduce<bigint>((sum, amount) => sum + rounds * spend(amount), demo.seed[TAX_SIDE]);
 }
 
 /** Moves `amount` lamports into the wallet's wrapped SOL account, creating it if needed. */
@@ -970,9 +974,14 @@ async function exerciseTaxAuthority(
 
 /** The last step for one market: pay out every slot it uses through the metadata's `distribute`. */
 async function payOut({ payer, metadata }: Context, n: number, demo: DemoMarket, { view, spec }: DemoRun) {
-    step(`${n}.${demo.newTaxesBps ? 13 : 10}. ${demo.label}: paying out every slot with the metadata's distribute action`);
-    const action = metadata.actions?.find((candidate) => candidate.name === 'distribute') ?? fail('metadata.json has no distribute action');
+    step(`${n}.${demo.newTaxesBps ? 13 : 10}. ${demo.label}: paying out every slot with the metadata's distribute and burn actions`);
+    const actionNamed = (name: string) =>
+        metadata.actions?.find((candidate) => candidate.name === name) ?? fail(`metadata.json has no ${name} action`);
+    // `burn` is `distribute` for the burn slot with the mint writable, so the recipients'
+    // payouts never write-lock the mint.
+    const [distribute, burn] = [actionNamed('distribute'), actionNamed('burn')];
     const taxMint = view.mints[TAX_SIDE]!;
+    const taxTokenProgram = view.tokenPrograms[TAX_SIDE]!;
     const { data: before } = await fetchTaxMarket(rpc, view.marketState, { commitment: 'confirmed' });
     if (show(before.owed) !== show(spec.owed)) fail(`the market owes ${show(before.owed)}, but the spec's formulas give ${show(spec.owed)}`);
     // Each slot the market uses, with the wallet the market state names for it: the tax
@@ -987,18 +996,18 @@ async function payOut({ payer, metadata }: Context, n: number, demo: DemoMarket,
     ];
     for (const [slot, label, wallet] of slots) {
         const owed = before.owed[slot]!;
-        const account = await walletTokenAccount(wallet, taxMint);
+        const account = await walletTokenAccount(wallet, taxMint, taxTokenProgram);
         const existed = (await accountData(account)) !== null;
         const balance = existed ? await tokenBalance(account) : 0n;
-        const supply = await mintSupply(taxMint);
+        const supply = slot === BURN_SLOT ? await mintSupply(taxMint) : 0n;
         const instruction = await pipeline.buildActionInstruction({
-            action,
+            action: slot === BURN_SLOT ? burn : distribute,
             market: view,
             wallet: payer.address,
             args: { slot },
             inputs: { tax_mint: taxMint, recipient: wallet },
         });
-        await send(`${demo.label}: distribute slot ${slot} (${label})`, payer, [instruction]);
+        await send(`${demo.label}: ${slot === BURN_SLOT ? 'burn' : 'distribute'} slot ${slot} (${label})`, payer, [instruction]);
         if (slot === BURN_SLOT) {
             const burned = supply - (await mintSupply(taxMint));
             if (burned !== owed) fail(`the burn lowered the supply by ${burned}, but the slot was owed ${owed}`);
@@ -1012,8 +1021,8 @@ async function payOut({ payer, metadata }: Context, n: number, demo: DemoMarket,
         const exists = (await accountData(account)) !== null;
         const received = exists ? (await tokenBalance(account)) - balance : 0n;
         if (received !== owed) fail(`${label} ${wallet} received ${received}, but was owed ${owed}`);
-        // The tax recipients other than the payer are fresh wallets: the payout made their account.
-        const fresh = slot < BURN_SLOT && wallet !== payer.address;
+        // The tax recipients other than the payer are fresh wallets: a payout made their account.
+        const fresh = slot < BURN_SLOT && wallet !== payer.address && owed > 0n;
         if (fresh && (existed || !exists)) fail(`${label} ${wallet} had a token account before, or has none now`);
         info(`${label}: ${wallet} received exactly the ${owed} owed${existed ? '' : ', in a token account created for it'}`);
         if (fresh) record.push([`${demo.label}: ${label}`, `had no token account and got one, ${account}`]);

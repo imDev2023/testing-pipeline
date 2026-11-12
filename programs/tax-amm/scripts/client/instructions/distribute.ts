@@ -85,7 +85,7 @@ export type DistributeInstruction<
         ? WritableAccount<TAccountTaxVault>
         : TAccountTaxVault,
       TAccountTaxMint extends string
-        ? WritableAccount<TAccountTaxMint>
+        ? ReadonlyAccount<TAccountTaxMint>
         : TAccountTaxMint,
       TAccountRecipient extends string
         ? ReadonlyAccount<TAccountRecipient>
@@ -162,7 +162,10 @@ export type DistributeInput<
   marketState: TAccountMarketState;
   vaultAuthority: TAccountVaultAuthority;
   taxVault: TAccountTaxVault;
-  /** Writable, since the burn lowers its supply. */
+  /**
+   * Read-only for a payout, so payouts never write-lock the mint (for wrapped SOL, the one
+   * native mint every SOL transfer reads); writable for the burn, which lowers its supply.
+   */
   taxMint: TAccountTaxMint;
   recipient: TAccountRecipient;
   /** and, when missing, created by the handler. */
@@ -275,7 +278,7 @@ export function getDistributeInstruction<
     taxMint: {
       value: input.taxMint ?? null,
       isSigner: false,
-      isWritable: true,
+      isWritable: false,
     },
     recipient: {
       value: input.recipient ?? null,
@@ -398,7 +401,10 @@ export type ParsedDistributeInstruction<
     marketState: TAccountMetas[1];
     vaultAuthority: TAccountMetas[2];
     taxVault: TAccountMetas[3];
-    /** Writable, since the burn lowers its supply. */
+    /**
+     * Read-only for a payout, so payouts never write-lock the mint (for wrapped SOL, the one
+     * native mint every SOL transfer reads); writable for the burn, which lowers its supply.
+     */
     taxMint: TAccountMetas[4];
     recipient: TAccountMetas[5];
     /** and, when missing, created by the handler. */

@@ -8,9 +8,13 @@
 
 import { address, type Address, type HasAddress } from "@solana/kit";
 
+export const BURN_SLOT: number = 4;
+
 export const MAX_TAX_BPS: number = 1000;
 
 export const SUITE_SHARE_BPS: number = 1000;
+
+export const SUITE_SLOT: number = 5;
 
 export const SUITE_TREASURY: Address = address(
   "CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF",

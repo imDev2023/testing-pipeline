@@ -59,6 +59,7 @@ fn the_metadata_describes_a_tax_amm() {
         [
             "seed",
             "distribute",
+            "burn",
             "set_taxes",
             "set_recipients",
             "renounce_tax_authority"
@@ -403,11 +404,25 @@ fn the_tax_authority_actions_are_exactly_the_programs() {
 }
 
 #[test]
-fn the_distribute_action_is_exactly_the_programs_distribute_for_every_slot() {
+fn the_distribute_and_burn_actions_are_exactly_the_programs_distribute_for_every_slot() {
+    use anchor_lang::Discriminator;
     use tax_amm::state::{BURN_SLOT, SUITE_SLOT};
     let distribute = action("distribute");
+    let burn = action("burn");
     assert_eq!(distribute["kind"], "claim");
+    assert_eq!(burn["kind"], "claim");
+    // `distribute` uses Anchor's default discriminator; `burn` is the same instruction for
+    // the burn slot, so it names that discriminator.
     assert!(distribute.get("discriminator").is_none());
+    let hex: String = tax_amm::instruction::Distribute::DISCRIMINATOR
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(burn["discriminator"], hex);
+    // The slot numbers the descriptions give are the program's.
+    let slot_text = |a: &Value| a["args"][0]["description"].as_str().unwrap().to_string();
+    assert!(slot_text(&distribute).contains(&format!("{SUITE_SLOT} the suite share")));
+    assert!(slot_text(&burn).contains(&format!("Always {BURN_SLOT}, the burn slot")));
 
     // Taxed on side 1, a Token-2022 mint, so a wrong mint or token program would show.
     let mut env = Env::new();
@@ -420,13 +435,18 @@ fn the_distribute_action_is_exactly_the_programs_distribute_for_every_slot() {
         .unwrap();
     let state = env.tax_market(&market.market_state);
     let caller = Keypair::new().pubkey();
-    for slot in [0u8, 1, BURN_SLOT as u8, SUITE_SLOT as u8] {
+    for slot in [0u8, 1, BURN_SLOT, SUITE_SLOT] {
+        let action = if slot == BURN_SLOT {
+            &burn
+        } else {
+            &distribute
+        };
         let wallet = slot_wallet(&state, slot);
         let expected = distribute_instruction(&market, 1, &caller, slot, &wallet, vec![]);
         // What a terminal reads from the market state for the action's two inputs.
         let inputs = HashMap::from([("tax_mint", market.mints[1]), ("recipient", wallet)]);
 
-        let args = distribute["args"].as_array().unwrap();
+        let args = action["args"].as_array().unwrap();
         assert_eq!(args.len(), 1);
         let mut data = expected.data[..8].to_vec();
         data.extend(encode_arg(
@@ -435,7 +455,7 @@ fn the_distribute_action_is_exactly_the_programs_distribute_for_every_slot() {
         ));
         assert_eq!(data, expected.data, "slot {slot}");
 
-        let accounts = distribute["accounts"].as_array().unwrap();
+        let accounts = action["accounts"].as_array().unwrap();
         assert_eq!(accounts.len(), expected.accounts.len());
         for (account, meta) in accounts.iter().zip(&expected.accounts) {
             let name = account["name"].as_str().unwrap();
@@ -448,12 +468,12 @@ fn the_distribute_action_is_exactly_the_programs_distribute_for_every_slot() {
             assert_eq!(
                 account["signer"].as_bool().unwrap_or(false),
                 meta.is_signer,
-                "{name}"
+                "slot {slot}, {name}"
             );
             assert_eq!(
                 account["writable"].as_bool().unwrap_or(false),
                 meta.is_writable,
-                "{name}"
+                "slot {slot}, {name}"
             );
         }
     }

@@ -70,11 +70,11 @@ fn the_suite_share_is_paid_to_the_suite_treasury() {
         (env.create_mint(&TOKEN), TOKEN),
     ];
     let market = traded_market(&mut env, mints);
-    let owed = env.tax_market(&market.market_state).owed[SUITE_SLOT];
+    let owed = env.tax_market(&market.market_state).owed[SUITE_SLOT as usize];
     assert!(owed > 0);
 
     let caller = caller(&mut env);
-    env.distribute(&market, &caller, SUITE_SLOT as u8).unwrap();
+    env.distribute(&market, &caller, SUITE_SLOT).unwrap();
 
     let treasury = pda::associated_token(
         &ck(&tax_amm::config::SUITE_TREASURY),
@@ -82,7 +82,10 @@ fn the_suite_share_is_paid_to_the_suite_treasury() {
         &TOKEN,
     );
     assert_eq!(env.balance(&treasury), owed);
-    assert_eq!(env.tax_market(&market.market_state).owed[SUITE_SLOT], 0);
+    assert_eq!(
+        env.tax_market(&market.market_state).owed[SUITE_SLOT as usize],
+        0
+    );
 }
 
 #[test]
@@ -93,18 +96,21 @@ fn the_burn_slot_burns_its_owed_amount_from_the_vault() {
         (env.create_mint(&TOKEN), TOKEN),
     ];
     let market = traded_market(&mut env, mints);
-    let owed = env.tax_market(&market.market_state).owed[BURN_SLOT];
+    let owed = env.tax_market(&market.market_state).owed[BURN_SLOT as usize];
     assert!(owed > 0);
     let supply = 10 * SEED[1];
     env.set_supply(&market.mints[1], supply);
     let vault = env.balance(&market.vaults[1]);
 
     let caller = caller(&mut env);
-    env.distribute(&market, &caller, BURN_SLOT as u8).unwrap();
+    env.distribute(&market, &caller, BURN_SLOT).unwrap();
 
     assert_eq!(env.supply(&market.mints[1]), supply - owed);
     assert_eq!(env.balance(&market.vaults[1]), vault - owed);
-    assert_eq!(env.tax_market(&market.market_state).owed[BURN_SLOT], 0);
+    assert_eq!(
+        env.tax_market(&market.market_state).owed[BURN_SLOT as usize],
+        0
+    );
 }
 
 #[test]
@@ -117,7 +123,7 @@ fn a_slot_with_nothing_owed_moves_nothing_and_creates_no_account() {
     let market = env.seeded_market(mints, &valid_params(&Pubkey::new_unique()), SEED);
     env.set_supply(&market.mints[1], 10 * SEED[1]);
     let caller = caller(&mut env);
-    for slot in [0, 1, BURN_SLOT as u8, SUITE_SLOT as u8] {
+    for slot in [0, 1, BURN_SLOT, SUITE_SLOT] {
         let before = env.tax_market(&market.market_state);
         let vault = env.balance(&market.vaults[1]);
         let supply = env.supply(&market.mints[1]);
@@ -126,7 +132,7 @@ fn a_slot_with_nothing_owed_moves_nothing_and_creates_no_account() {
         assert_eq!(format!("{before:?}"), format!("{after:?}"), "slot {slot}");
         assert_eq!(env.balance(&market.vaults[1]), vault, "slot {slot}");
         assert_eq!(env.supply(&market.mints[1]), supply, "slot {slot}");
-        if slot != BURN_SLOT as u8 {
+        if slot != BURN_SLOT {
             let account = slot_account(&env, &market, slot);
             assert!(env.svm.get_account(&account).is_none(), "slot {slot}");
         }
@@ -215,8 +221,11 @@ fn substituted_accounts_are_refused() {
     // A token account the recipient owns that is not its associated token account.
     let other = Pubkey::new_unique();
     let written = env.write_token_account(&market.mints[1], &TOKEN_2022, &recipient, 0);
-    let mut data = env.svm.get_account(&written).unwrap();
-    env.svm.set_account(other, data.clone()).unwrap();
+    let data = env.svm.get_account(&written).unwrap();
+    env.svm.set_account(other, data).unwrap();
+    env.svm
+        .set_account(written, solana_account::Account::default())
+        .unwrap();
     assert_refused(
         distribute_with(&mut env, &market, &caller, 0, |a| {
             a[6] = AccountMeta::new(other, false)
@@ -231,17 +240,7 @@ fn substituted_accounts_are_refused() {
         }),
         StrategyError::NotSlotTokenAccount,
     );
-    // The recipient's associated token account, handed by its owner to another wallet.
     let ata = pda::associated_token(&recipient, &market.mints[1], &TOKEN_2022);
-    data.data[32..64].copy_from_slice(caller.pubkey().as_ref());
-    env.svm.set_account(ata, data).unwrap();
-    assert_refused(
-        env.distribute(&market, &caller, 0),
-        StrategyError::NotSlotTokenAccount,
-    );
-    env.svm
-        .set_account(ata, solana_account::Account::default())
-        .unwrap();
     // The other vault, a substituted vault authority, and the other mint (with its own
     // token program and the recipient's account of it) as the tax-side mint.
     assert_refused(
@@ -266,7 +265,7 @@ fn substituted_accounts_are_refused() {
     );
     // The burn slot names no wallet: anyone's in its place is refused too.
     assert_refused(
-        distribute_with(&mut env, &market, &caller, BURN_SLOT as u8, |a| {
+        distribute_with(&mut env, &market, &caller, BURN_SLOT, |a| {
             a[5] = AccountMeta::new_readonly(caller.pubkey(), false);
             a[6] = AccountMeta::new(own, false);
         }),
@@ -313,7 +312,7 @@ fn a_frozen_recipient_account_blocks_only_its_own_slot_until_it_is_thawed() {
                 .is_err_and(|logs| logs.contains("Account is frozen")),
             "{token_program}: {refused:?}"
         );
-        for slot in [1, BURN_SLOT as u8, SUITE_SLOT as u8] {
+        for slot in [1, BURN_SLOT, SUITE_SLOT] {
             env.distribute(&market, &caller, slot).unwrap();
         }
         let state = env.tax_market(&market.market_state);
@@ -382,10 +381,10 @@ fn every_kind_of_slot_pays_out_in_each_kind_of_tax_side_mint_to_any_caller() {
         let caller = caller(&mut env);
         let start = env.tax_market(&market.market_state);
         let mut owed = start.owed;
-        for slot in [0u8, 1, BURN_SLOT as u8, SUITE_SLOT as u8] {
+        for slot in [0u8, 1, BURN_SLOT, SUITE_SLOT] {
             let paid = owed[slot as usize];
             assert!(
-                paid > 0 || (native && slot == BURN_SLOT as u8),
+                paid > 0 || (native && slot == BURN_SLOT),
                 "{name} slot {slot}"
             );
             let account = slot_account(&env, &market, slot);
@@ -409,7 +408,7 @@ fn every_kind_of_slot_pays_out_in_each_kind_of_tax_side_mint_to_any_caller() {
                 state.reserves[1] + owed.iter().sum::<u64>(),
                 "{name} slot {slot}"
             );
-            if slot == BURN_SLOT as u8 {
+            if slot == BURN_SLOT {
                 assert_eq!(env.supply(&taxed), supply - paid, "{name}");
             } else {
                 assert_eq!(env.balance(&account), balance + paid, "{name} slot {slot}");
@@ -440,7 +439,7 @@ fn a_hooked_tax_side_mint_is_paid_out_with_its_hook_accounts_after_distributes_o
     // Without the hook's accounts Token-2022 can't call the hook, so the payout fails.
     assert!(distribute_with(&mut env, &market, &caller, 0, |_| {}).is_err());
 
-    for slot in [0u8, 1, BURN_SLOT as u8, SUITE_SLOT as u8] {
+    for slot in [0u8, 1, BURN_SLOT, SUITE_SLOT] {
         let account = slot_account(&env, &market, slot);
         let meta = env.distribute(&market, &caller, slot).unwrap();
         let hook_calls = meta
@@ -448,7 +447,7 @@ fn a_hooked_tax_side_mint_is_paid_out_with_its_hook_accounts_after_distributes_o
             .iter()
             .filter(|line| line.starts_with(&format!("Program {} invoke", test_hook_id())))
             .count();
-        if slot == BURN_SLOT as u8 {
+        if slot == BURN_SLOT {
             // A burn is no transfer, so the hook is not called.
             assert_eq!(hook_calls, 0);
         } else {
@@ -471,7 +470,7 @@ fn each_payout_emits_a_distributed_event_and_a_slot_with_nothing_owed_emits_none
     env.set_supply(&market.mints[1], 10 * SEED[1]);
     let caller = caller(&mut env);
     let state = env.tax_market(&market.market_state);
-    for slot in [0u8, BURN_SLOT as u8, SUITE_SLOT as u8] {
+    for slot in [0u8, BURN_SLOT, SUITE_SLOT] {
         let meta = env.distribute(&market, &caller, slot).unwrap();
         let events: Vec<Distributed> = strategy_events(&meta.logs);
         assert_eq!(
@@ -520,7 +519,7 @@ fn after_any_sequence_of_swaps_payouts_and_donations_the_vault_holds_the_reserve
                     env.swap(&market, &trader, direction, amount).unwrap();
                 }
                 2 => {
-                    let slot = [0u8, 1, BURN_SLOT as u8, SUITE_SLOT as u8][next(4) as usize];
+                    let slot = [0u8, 1, BURN_SLOT, SUITE_SLOT][next(4) as usize];
                     let vault = env.balance(&market.vaults[1]);
                     env.distribute(&market, &caller, slot).unwrap();
                     let after = env.tax_market(&market.market_state);
@@ -554,4 +553,69 @@ fn after_any_sequence_of_swaps_payouts_and_donations_the_vault_holds_the_reserve
             );
         }
     }
+}
+
+#[test]
+fn a_recipient_account_its_owner_handed_to_another_wallet_is_still_paid() {
+    // SPL Token lets an account's owner hand it to another wallet (Token-2022's associated
+    // token accounts can't be). The payout still goes to the account at the slot wallet's
+    // associated token address, as its owner chose; refusing it would strand the slot's tax,
+    // for good once the tax authority renounces.
+    use spl_token_2022_interface::instruction::{set_authority, AuthorityType};
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN), TOKEN),
+    ];
+    let recipient = Keypair::new();
+    let mut params = valid_params(&Pubkey::new_unique());
+    params.recipients[0] = ak(&recipient.pubkey());
+    let market = env.seeded_market(mints, &params, SEED);
+    let trader = env.funded_wallet(&market, 1_000_000_000_000);
+    env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
+    let owed = env.tax_market(&market.market_state).owed[0];
+    let account = env.write_token_account(&market.mints[1], &TOKEN, &recipient.pubkey(), 0);
+    let other = Pubkey::new_unique();
+    let hand_over = set_authority(
+        &TOKEN,
+        &account,
+        Some(&other),
+        AuthorityType::AccountOwner,
+        &recipient.pubkey(),
+        &[],
+    )
+    .unwrap();
+    env.send(&[hand_over], &[&recipient]).unwrap();
+
+    let caller = caller(&mut env);
+    env.distribute(&market, &caller, 0).unwrap();
+
+    assert_eq!(env.balance(&account), owed);
+    assert_eq!(env.tax_market(&market.market_state).owed[0], 0);
+}
+
+#[test]
+fn payouts_leave_the_tax_side_mint_read_only_and_only_the_burn_needs_it_writable() {
+    // Recipients and the suite share are paid with the mint read-only, so payouts never
+    // write-lock it (for wrapped SOL, the one native mint every SOL transfer reads); the
+    // burn changes its supply, so it needs the mint writable.
+    use pipeline_client::AccountMeta;
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN), TOKEN),
+    ];
+    let market = traded_market(&mut env, mints);
+    env.set_supply(&market.mints[1], 10 * SEED[1]);
+    let caller = caller(&mut env);
+    let read_only = |a: &mut Vec<AccountMeta>| a[4] = AccountMeta::new_readonly(a[4].pubkey, false);
+    for slot in [0u8, 1, SUITE_SLOT] {
+        distribute_with(&mut env, &market, &caller, slot, read_only).unwrap();
+    }
+    assert_refused(
+        distribute_with(&mut env, &market, &caller, BURN_SLOT, read_only),
+        StrategyError::BurnNeedsWritableMint,
+    );
+    env.distribute(&market, &caller, BURN_SLOT).unwrap();
+    assert_eq!(env.tax_market(&market.market_state).owed, [0; 6]);
 }

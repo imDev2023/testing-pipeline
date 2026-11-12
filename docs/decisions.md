@@ -2770,8 +2770,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-42: Where `distribute` pays
 
 - Question: Into which account is a slot paid, and which accounts are refused?
-- Answer: A tax recipient or the suite share only into the associated token account its wallet still owns for the tax-side mint, created at the caller's expense when missing; the burn names no wallet (the default key) and burns from the vault; any other wallet or token account is refused, including the wallet's account of the other mint and an SPL Token account whose owner the wallet has handed to someone else.
-- Alternatives: Paying whatever account sits at the associated token address, whoever owns it now; paying any token account the wallet owns.
+- Answer: A tax recipient or the suite share only into its wallet's associated token account for the tax-side mint, created at the caller's expense when missing, and paid even when the wallet has handed that SPL Token account to another owner, since refusing would strand the slot's tax for good once the authority renounces; the burn names no wallet (the default key) and burns from the vault; any other wallet or token account is refused, including the wallet's account of the other mint.
+- Alternatives: Refusing an associated token account whose owner the wallet has handed away, which a review on 2026-11-12 showed strands that slot's tax after a renounce; paying any token account the wallet owns.
 - Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
 - Changes by: fixed on-chain once deployed
 - Status: default
@@ -2780,18 +2780,18 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-43: The `distribute` action's inputs
 
 - Question: How does the metadata's `distribute` action find a market's tax-side mint and a slot's wallet, which no metadata account source can name?
-- Answer: As two address inputs, `tax_mint` and `recipient`, from which it derives the vault and the token account; whoever builds the call (Aviary's tax panel, the keeper runner, the demo script) reads both from the market state, and the program refuses any that are not the slot's.
+- Answer: As two address inputs, `tax_mint` and `recipient` (the default key for the burn), from which it derives the vault and the token account; whoever builds the call (Aviary's tax panel, the keeper runner, the demo script) reads both from the market state, and the program refuses any that are not the slot's.
 - Alternatives: One action per tax side with fixed indexes, which a terminal would have to choose between; passing both vaults and mints and leaving the recipient's token account to the caller.
 - Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
 
-### TAX-44: The suite treasury in the IDL
+### TAX-44: The suite treasury and the slot numbers in the IDL
 
-- Question: How do Aviary and the demo script learn the suite share's wallet, which `distribute` needs for slot 5?
-- Answer: The program publishes `SUITE_TREASURY` in its IDL with Anchor's `#[constant]`, beside the tax cap and the suite share, so the generated client carries it and the config module stays its one place.
-- Alternatives: Each reader restating the address.
+- Question: How do Aviary and the demo script learn the suite share's wallet and which slot is the burn's and which the suite share's, all of which `distribute` needs?
+- Answer: The program publishes `SUITE_TREASURY`, `BURN_SLOT` and `SUITE_SLOT` in its IDL with Anchor's `#[constant]`, beside the tax cap and the suite share, so the generated client carries them and the config module (and `MAX_RECIPIENTS`, from which the slots follow) stays their one place.
+- Alternatives: Each reader restating the address and the slot numbers.
 - Specified in: [`docs/spec/tax-amm.md`, Where its policy values live](spec/tax-amm.md#where-its-policy-values-live)
 - Changes by: spec only
 - Status: default
@@ -2804,6 +2804,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Alternatives: One market taxed in a token, which never shows a payout in wrapped SOL.
 - Specified in: [`docs/toolchain.md`, Local demo run](toolchain.md#local-demo-run)
 - Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
+### TAX-46: The burn's own action
+
+- Question: How does `distribute` keep payouts from write-locking the tax-side mint, which only the burn changes?
+- Answer: The mint is read-only for a payout and writable only for the burn, which refuses a read-only mint; the metadata describes the one instruction as two actions, `distribute` with the mint read-only and `burn`, for the burn slot, with the mint writable, so payouts of SOL-taxed markets never write-lock the native mint.
+- Alternatives: One action with the mint always writable, which would serialize every payout against every transfer of the mint; a separate burn instruction.
+- Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
+- Changes by: fixed on-chain once deployed
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
 

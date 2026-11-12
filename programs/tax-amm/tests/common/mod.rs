@@ -1079,17 +1079,14 @@ pub fn seed_instruction(
     Instruction::new_with_bytes(strategy_id(), &data, accounts)
 }
 
-/// The wallet a tax slot is paid to (docs/spec/tax-amm.md, "Payout"): a tax recipient's
-/// for slots 0 to 3, none (the default key) for the burn, and the suite treasury for the
-/// suite share. A slot number out of range gets the default key too.
+/// The wallet a tax slot is paid to, as the program's `TaxMarket::slot_wallet` says
+/// (docs/spec/tax-amm.md, "Payout"), as the client's key type; the default key for the burn,
+/// an unused slot and a slot number out of range.
 pub fn slot_wallet(state: &TaxMarket, slot: u8) -> Pubkey {
-    use tax_amm::state::{BURN_SLOT, SUITE_SLOT};
-    match slot as usize {
-        i if i < MAX_RECIPIENTS => ck(&state.recipients[i]),
-        SUITE_SLOT => ck(&tax_amm::config::SUITE_TREASURY),
-        BURN_SLOT => Pubkey::default(),
-        _ => Pubkey::default(),
-    }
+    state
+        .slot_wallet(slot as usize)
+        .map(|wallet| ck(&wallet))
+        .unwrap_or_default()
 }
 
 /// The tax AMM's `distribute` action, in the account order `metadata.json` lists: the
@@ -1113,7 +1110,12 @@ pub fn distribute_instruction(
         AccountMeta::new(market.market_state, false),
         AccountMeta::new_readonly(market.authority, false),
         AccountMeta::new(market.vaults[tax_side], false),
-        AccountMeta::new(mint, false),
+        // Writable only for the burn, which changes the supply.
+        if slot == tax_amm::state::BURN_SLOT {
+            AccountMeta::new(mint, false)
+        } else {
+            AccountMeta::new_readonly(mint, false)
+        },
         AccountMeta::new_readonly(*wallet, false),
         AccountMeta::new(pda::associated_token(wallet, &mint, &token_program), false),
         AccountMeta::new_readonly(token_program, false),

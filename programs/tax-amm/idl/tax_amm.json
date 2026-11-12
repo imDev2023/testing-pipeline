@@ -49,9 +49,9 @@
         {
           "name": "tax_mint",
           "docs": [
-            "Writable, since the burn lowers its supply."
-          ],
-          "writable": true
+            "Read-only for a payout, so payouts never write-lock the mint (for wrapped SOL, the one",
+            "native mint every SOL transfer reads); writable for the burn, which lowers its supply."
+          ]
         },
         {
           "name": "recipient"
@@ -884,7 +884,7 @@
     {
       "code": 6031,
       "name": "NoSuchSlot",
-      "msg": "No such tax slot: slots are 0 to 3 for the tax recipients, 4 for the burn, 5 for the suite share"
+      "msg": "No such tax slot: there is one per tax recipient, then the burn's and the suite share's"
     },
     {
       "code": 6032,
@@ -899,7 +899,12 @@
     {
       "code": 6034,
       "name": "NotSlotTokenAccount",
-      "msg": "The token account is not the associated token account the slot's wallet owns for the tax-side mint"
+      "msg": "The token account is not the slot wallet's associated token account for the tax-side mint"
+    },
+    {
+      "code": 6035,
+      "name": "BurnNeedsWritableMint",
+      "msg": "The burn lowers the tax-side mint's supply, so it needs the mint writable"
     }
   ],
   "types": [
@@ -1550,6 +1555,15 @@
   ],
   "constants": [
     {
+      "name": "BURN_SLOT",
+      "docs": [
+        "The burn's slot. Published in the IDL (`#[constant]`), where the demo script and Aviary",
+        "read which `distribute` slot burns."
+      ],
+      "type": "u8",
+      "value": "4"
+    },
+    {
       "name": "MAX_TAX_BPS",
       "docs": [
         "The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so no",
@@ -1566,6 +1580,14 @@
       ],
       "type": "u16",
       "value": "1000"
+    },
+    {
+      "name": "SUITE_SLOT",
+      "docs": [
+        "The suite share's slot. Published in the IDL (`#[constant]`), like [`BURN_SLOT`]."
+      ],
+      "type": "u8",
+      "value": "5"
     },
     {
       "name": "SUITE_TREASURY",

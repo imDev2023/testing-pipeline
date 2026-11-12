@@ -332,9 +332,9 @@ fn distribute_stays_under_its_ceiling_when_it_creates_the_token_account_and_when
         env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
         let cases = [
             (0, "paying a tax recipient, creating its token account"),
-            (BURN_SLOT as u8, "burning"),
+            (BURN_SLOT, "burning"),
             (
-                SUITE_SLOT as u8,
+                SUITE_SLOT,
                 "paying the suite share, creating its token account",
             ),
         ];

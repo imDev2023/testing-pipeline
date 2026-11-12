@@ -211,7 +211,7 @@ fn its_market_state_has_the_programs_discriminator_and_layout() {
 }
 
 #[test]
-fn it_publishes_the_tax_cap_the_suite_share_and_the_suite_treasury_from_the_config_module() {
+fn it_publishes_the_tax_cap_the_suite_share_the_suite_treasury_and_the_slot_numbers() {
     let idl = idl();
     let constants: Vec<(&str, &str, String)> = idl["constants"]
         .as_array()
@@ -225,26 +225,28 @@ fn it_publishes_the_tax_cap_the_suite_share_and_the_suite_treasury_from_the_conf
             )
         })
         .collect();
-    assert_eq!(
-        constants,
-        [
-            (
-                "MAX_TAX_BPS",
-                "u16",
-                tax_amm::config::MAX_TAX_BPS.to_string()
-            ),
-            (
-                "SUITE_SHARE_BPS",
-                "u16",
-                tax_amm::config::SUITE_SHARE_BPS.to_string()
-            ),
-            (
-                "SUITE_TREASURY",
-                "pubkey",
-                tax_amm::config::SUITE_TREASURY.to_string()
-            ),
-        ]
-    );
+    // In the IDL's own order, by name.
+    let mut expected = vec![
+        (
+            "MAX_TAX_BPS",
+            "u16",
+            tax_amm::config::MAX_TAX_BPS.to_string(),
+        ),
+        (
+            "SUITE_SHARE_BPS",
+            "u16",
+            tax_amm::config::SUITE_SHARE_BPS.to_string(),
+        ),
+        (
+            "SUITE_TREASURY",
+            "pubkey",
+            tax_amm::config::SUITE_TREASURY.to_string(),
+        ),
+        ("BURN_SLOT", "u8", tax_amm::state::BURN_SLOT.to_string()),
+        ("SUITE_SLOT", "u8", tax_amm::state::SUITE_SLOT.to_string()),
+    ];
+    expected.sort();
+    assert_eq!(constants, expected);
 }
 
 #[test]
@@ -276,16 +278,17 @@ fn its_events_and_errors_are_the_programs() {
     );
 
     // Errors are numbered from 6000 in the enum's order, the last being
-    // `NotSlotTokenAccount`.
+    // `BurnNeedsWritableMint`.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "NotSlotTokenAccount");
+    assert_eq!(last["name"], "BurnNeedsWritableMint");
     assert_eq!(
         last["code"].as_u64().unwrap() as u32,
-        anchor_lang::error::ERROR_CODE_OFFSET + tax_amm::StrategyError::NotSlotTokenAccount as u32
+        anchor_lang::error::ERROR_CODE_OFFSET
+            + tax_amm::StrategyError::BurnNeedsWritableMint as u32
     );
 }
 
@@ -296,23 +299,24 @@ fn its_actions_accounts_and_args_are_the_metadatas() {
     let actions = metadata["actions"].as_array().unwrap();
     for action in actions {
         let name = action["name"].as_str().unwrap();
+        // `burn` is `distribute` for the burn slot, with the mint writable: its own action,
+        // so the recipients' payouts never write-lock the mint.
+        let instruction_name = if name == "burn" { "distribute" } else { name };
         let instruction = idl["instructions"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|i| i["name"] == name)
-            .unwrap_or_else(|| panic!("the IDL has no instruction {name}"));
+            .find(|i| i["name"] == instruction_name)
+            .unwrap_or_else(|| panic!("the IDL has no instruction {instruction_name}"));
         let flags = |account: &Value, key: &str| account[key].as_bool().unwrap_or(false);
         let theirs: Vec<(&str, bool, bool)> = instruction["accounts"]
             .as_array()
             .unwrap()
             .iter()
             .map(|a| {
-                (
-                    a["name"].as_str().unwrap(),
-                    flags(a, "writable"),
-                    flags(a, "signer"),
-                )
+                let account = a["name"].as_str().unwrap();
+                let writable = flags(a, "writable") || (name == "burn" && account == "tax_mint");
+                (account, writable, flags(a, "signer"))
             })
             .collect();
         let ours: Vec<(&str, bool, bool)> = action["accounts"]

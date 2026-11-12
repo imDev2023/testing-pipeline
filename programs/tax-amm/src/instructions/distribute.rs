@@ -22,7 +22,7 @@ use anchor_spl::token_interface::{Mint, TokenInterface};
 use crate::errors::StrategyError;
 use crate::events::Distributed;
 use crate::state::{vault_authority, TaxMarket, AUTHORITY_SEED, BURN_SLOT};
-use crate::token::{token_owner, transfer_checked};
+use crate::token::transfer_checked;
 
 /// The order is `metadata.json`'s `distribute` action; keep them in step. Transfer-hook
 /// accounts follow.
@@ -41,9 +41,9 @@ pub struct Distribute<'info> {
         address = market_state.vaults[market_state.tax_side as usize] @ StrategyError::WrongAccount,
     )]
     pub tax_vault: UncheckedAccount<'info>,
-    /// Writable, since the burn lowers its supply.
+    /// Read-only for a payout, so payouts never write-lock the mint (for wrapped SOL, the one
+    /// native mint every SOL transfer reads); writable for the burn, which lowers its supply.
     #[account(
-        mut,
         address = market_state.mints[market_state.tax_side as usize] @ StrategyError::WrongAccount,
         mint::token_program = token_program,
     )]
@@ -66,7 +66,7 @@ pub fn distribute_slot<'info>(ctx: Context<'info, Distribute<'info>>, slot: u8) 
     let wallet = market.slot_wallet(slot).ok_or(StrategyError::NoSuchSlot)?;
     // A tax recipient slot the market does not use has no wallet to pay.
     require!(
-        slot == BURN_SLOT || wallet != Pubkey::default(),
+        slot == BURN_SLOT as usize || wallet != Pubkey::default(),
         StrategyError::UnusedSlot
     );
     require_keys_eq!(
@@ -74,8 +74,10 @@ pub fn distribute_slot<'info>(ctx: Context<'info, Distribute<'info>>, slot: u8) 
         wallet,
         StrategyError::NotSlotWallet
     );
-    // Paid only to the wallet's associated token account for the tax-side mint, and only
-    // while the wallet still owns it (an SPL Token account's owner can be changed).
+    // Paid only to the wallet's associated token account for the tax-side mint. An SPL Token
+    // account's owner may have handed it to another wallet; it is paid all the same, as its
+    // owner chose, since refusing would strand the slot's tax (for good once the tax
+    // authority renounces). Token-2022's associated token accounts can't change owner.
     let token_account = &accounts.recipient_token_account;
     require_keys_eq!(
         token_account.key(),
@@ -87,13 +89,10 @@ pub fn distribute_slot<'info>(ctx: Context<'info, Distribute<'info>>, slot: u8) 
         StrategyError::NotSlotTokenAccount
     );
     let missing = token_account.data_is_empty();
-    if !missing {
-        require!(
-            *token_account.owner == accounts.token_program.key()
-                && token_owner(&token_account.to_account_info())? == wallet,
-            StrategyError::NotSlotTokenAccount
-        );
-    }
+    require!(
+        missing || *token_account.owner == accounts.token_program.key(),
+        StrategyError::NotSlotTokenAccount
+    );
 
     let market_state = market.key();
     let authority_key =
@@ -111,7 +110,11 @@ pub fn distribute_slot<'info>(ctx: Context<'info, Distribute<'info>>, slot: u8) 
     if amount == 0 {
         return Ok(());
     }
-    if slot == BURN_SLOT {
+    if slot == BURN_SLOT as usize {
+        require!(
+            accounts.tax_mint.to_account_info().is_writable,
+            StrategyError::BurnNeedsWritableMint
+        );
         token_2022::burn_checked(
             CpiContext::new(
                 accounts.token_program.key(),

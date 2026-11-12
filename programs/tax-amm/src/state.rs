@@ -24,8 +24,13 @@ pub const VAULT_SEED: &[u8] = b"vault";
 /// What each tax slot is owed, by index: the tax recipients, then the burn, then the suite
 /// share (docs/spec/tax-amm.md, "Payout").
 pub const OWED_SLOTS: usize = MAX_RECIPIENTS + 2;
-pub const BURN_SLOT: usize = MAX_RECIPIENTS;
-pub const SUITE_SLOT: usize = MAX_RECIPIENTS + 1;
+/// The burn's slot. Published in the IDL (`#[constant]`), where the demo script and Aviary
+/// read which `distribute` slot burns.
+#[constant]
+pub const BURN_SLOT: u8 = MAX_RECIPIENTS as u8;
+/// The suite share's slot. Published in the IDL (`#[constant]`), like [`BURN_SLOT`].
+#[constant]
+pub const SUITE_SLOT: u8 = MAX_RECIPIENTS as u8 + 1;
 
 /// Room kept at the end of the account, all zeros, so a later version can add a field
 /// without moving any and without reallocating existing markets.
@@ -168,8 +173,8 @@ impl TaxMarket {
     /// for the suite share; `None` for a slot number out of range.
     pub fn slot_wallet(&self, slot: usize) -> Option<Pubkey> {
         match slot {
-            BURN_SLOT => Some(Pubkey::default()),
-            SUITE_SLOT => Some(SUITE_TREASURY),
+            slot if slot == BURN_SLOT as usize => Some(Pubkey::default()),
+            slot if slot == SUITE_SLOT as usize => Some(SUITE_TREASURY),
             recipient => self.recipients.get(recipient).copied(),
         }
     }

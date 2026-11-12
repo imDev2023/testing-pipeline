@@ -67,12 +67,18 @@ pub enum StrategyError {
     NotTaxAuthority,
     #[msg("A recipient slot still owed tax can't be emptied; pay it out or name another wallet")]
     OwedSlotLeftEmpty,
-    #[msg("No such tax slot: slots are 0 to 3 for the tax recipients, 4 for the burn, 5 for the suite share")]
+    #[msg(
+        "No such tax slot: there is one per tax recipient, then the burn's and the suite share's"
+    )]
     NoSuchSlot,
     #[msg("The tax recipient slot is unused: it has no wallet to pay")]
     UnusedSlot,
     #[msg("The wallet is not the tax slot's")]
     NotSlotWallet,
-    #[msg("The token account is not the associated token account the slot's wallet owns for the tax-side mint")]
+    #[msg(
+        "The token account is not the slot wallet's associated token account for the tax-side mint"
+    )]
     NotSlotTokenAccount,
+    #[msg("The burn lowers the tax-side mint's supply, so it needs the mint writable")]
+    BurnNeedsWritableMint,
 }
