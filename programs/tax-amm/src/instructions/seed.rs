@@ -74,7 +74,7 @@ pub fn seed_market<'info>(
             token_program: accounts.token_program_1.to_account_info(),
         },
     ];
-    let taken = take_seed(
+    let arrived = take_seed(
         market,
         &accounts.seeder.to_account_info(),
         sides,
@@ -84,12 +84,12 @@ pub fn seed_market<'info>(
 
     let market_state = ctx.accounts.market_state.key();
     let state = &mut ctx.accounts.market_state;
-    state.reserves = taken.arrived;
+    state.reserves = arrived;
     state.status = MarketStatus::Open;
     emit!(Seeded {
         market_state,
         seeder: state.seeder,
-        amounts: taken.arrived,
+        amounts: arrived,
     });
     Ok(())
 }
@@ -103,30 +103,20 @@ pub(crate) struct SeedSide<'info> {
     pub token_program: AccountInfo<'info>,
 }
 
-/// What a seed moved, per side, in mint order.
-pub(crate) struct SeedTaken {
-    /// What left the seeder's token account.
-    pub left: [u64; 2],
-    /// What arrived in the vault, which the market records as its real reserve.
-    pub arrived: [u64; 2],
-}
-
 /// Moves each side's amount from a token account the seeder owns into the market's vault, as
-/// the `seed` action and `pipeline_seed_liquidity` both do. Each side's real amount must be
-/// above 0, except the virtual side's when the market has a virtual reserve.
+/// the `seed` action and `pipeline_seed_liquidity` both do, and returns what arrived in each
+/// vault, in mint order, which the market records as its real reserves. Each side's real
+/// amount must be above 0, except the virtual side's when the market has a virtual reserve.
 pub(crate) fn take_seed<'info>(
     market: &TaxMarket,
     seeder: &AccountInfo<'info>,
     sides: [SeedSide<'info>; 2],
     amounts: [u64; 2],
     hook_accounts: &[AccountInfo<'info>],
-) -> Result<SeedTaken> {
+) -> Result<[u64; 2]> {
     // A side may be seeded with nothing only when its virtual reserve prices it.
     let may_be_empty = |i: usize| market.virtual_side as usize == i && market.virtual_reserve > 0;
-    let mut taken = SeedTaken {
-        left: [0; 2],
-        arrived: [0; 2],
-    };
+    let mut arrived = [0u64; 2];
     for (i, side) in sides.into_iter().enumerate() {
         if amounts[i] > 0 {
             // From token accounts the seeder owns, never one it is only a delegate of.
@@ -135,7 +125,6 @@ pub(crate) fn take_seed<'info>(
                 seeder.key(),
                 StrategyError::WrongAccount
             );
-            let from_before = token_balance(&side.from)?;
             let vault_before = token_balance(&side.vault)?;
             transfer_checked(
                 &side.token_program,
@@ -148,17 +137,11 @@ pub(crate) fn take_seed<'info>(
                 side.decimals,
                 &[],
             )?;
-            taken.left[i] = from_before
-                .checked_sub(token_balance(&side.from)?)
-                .ok_or(StrategyError::Overflow)?;
-            taken.arrived[i] = token_balance(&side.vault)?
+            arrived[i] = token_balance(&side.vault)?
                 .checked_sub(vault_before)
                 .ok_or(StrategyError::Overflow)?;
         }
-        require!(
-            taken.arrived[i] > 0 || may_be_empty(i),
-            StrategyError::ZeroSeed
-        );
+        require!(arrived[i] > 0 || may_be_empty(i), StrategyError::ZeroSeed);
     }
-    Ok(taken)
+    Ok(arrived)
 }

@@ -27,14 +27,18 @@ pub fn launchpad_id() -> Pubkey {
     ck(&stand_in_launchpad::ID)
 }
 
-/// The launchpad's compiled program, from `fixtures/test-programs`.
+/// The launchpad's compiled program, from where `scripts/build-programs.sh` writes it:
+/// `$TEST_PROGRAMS_DIR`, else `$FIXTURES_DIR/test-programs`, else `fixtures/test-programs`.
 pub fn launchpad_so() -> Vec<u8> {
-    let path = std::env::var("TEST_PROGRAMS_DIR")
+    let dir = std::env::var("TEST_PROGRAMS_DIR")
         .map(PathBuf::from)
+        .or_else(|_| {
+            std::env::var("FIXTURES_DIR").map(|dir| PathBuf::from(dir).join("test-programs"))
+        })
         .unwrap_or_else(|_| {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/test-programs")
-        })
-        .join("stand_in_launchpad.so");
+        });
+    let path = dir.join("stand_in_launchpad.so");
     std::fs::read(&path).unwrap_or_else(|e| {
         panic!(
             "{}: {e}. Build it first: scripts/build-programs.sh test-programs/stand-in-launchpad",

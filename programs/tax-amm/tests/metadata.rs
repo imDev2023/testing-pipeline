@@ -190,20 +190,21 @@ fn the_seed_liquidity_form_describes_exactly_what_the_program_takes() {
     let m = metadata();
     let form = &m["seed_liquidity"];
     assert_eq!(form["idl_type"], "InitParams");
-    // `data` is the creation parameters: init's arguments, by name and type, in order.
-    let shape = |args: &Value| -> Vec<(String, String)> {
-        args.as_array()
-            .unwrap()
-            .iter()
-            .map(|a| {
-                (
-                    a["name"].as_str().unwrap().into(),
-                    a["type"].as_str().unwrap().into(),
-                )
-            })
-            .collect()
-    };
-    assert_eq!(shape(&form["args"]), shape(&m["init"]["args"]));
+    // `data` is the creation parameters: init's arguments, word for word, in order, except
+    // the seeder's description, which says it is ignored.
+    let init_args = m["init"]["args"].as_array().unwrap();
+    let form_args = form["args"].as_array().unwrap();
+    assert_eq!(form_args.len(), init_args.len());
+    for (ours, init) in form_args.iter().zip(init_args) {
+        let (mut ours, mut init) = (ours.clone(), init.clone());
+        if init["name"] == "seeder" {
+            let description = ours["description"].as_str().unwrap();
+            assert!(description.starts_with("Ignored"), "{description}");
+            ours.as_object_mut().unwrap().remove("description");
+            init.as_object_mut().unwrap().remove("description");
+        }
+        assert_eq!(ours, init);
+    }
 
     // The market state is the seeded PDA of the seeder and the mints, and the accounts after
     // Pipeline's fixed ones and the three per mint are the program's own.

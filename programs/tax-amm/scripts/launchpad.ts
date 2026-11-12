@@ -6,9 +6,18 @@
 
 import {
     AccountRole,
+    addEncoderSizePrefix,
     address,
     getAddressEncoder,
+    getArrayDecoder,
+    getArrayEncoder,
+    getBytesEncoder,
     getProgramDerivedAddress,
+    getStructDecoder,
+    getStructEncoder,
+    getU32Encoder,
+    getU64Decoder,
+    getU64Encoder,
     type AccountMeta,
     type Address,
     type Instruction,
@@ -39,17 +48,19 @@ export async function findPayerPda(seeder: Address): Promise<Address> {
     return pda;
 }
 
-function u32(value: number): Uint8Array {
-    const bytes = new Uint8Array(4);
-    new DataView(bytes.buffer).setUint32(0, value, true);
-    return bytes;
-}
+/** `graduate`'s arguments after its discriminator, Borsh-encoded. */
+const graduateArgs = getStructEncoder([
+    ['amounts', getArrayEncoder(getU64Encoder())],
+    ['data', addEncoderSizePrefix(getBytesEncoder(), getU32Encoder())],
+    ['maxPayerLamports', getU64Encoder()],
+]);
 
-function u64(value: bigint): Uint8Array {
-    const bytes = new Uint8Array(8);
-    new DataView(bytes.buffer).setBigUint64(0, value, true);
-    return bytes;
-}
+/** `graduate`'s return data, Borsh-decoded. */
+const graduationDecoder = getStructDecoder([
+    ['taken', getArrayDecoder(getU64Decoder())],
+    ['lpAmount', getU64Decoder()],
+    ['leftEscrows', getArrayDecoder(getU64Decoder())],
+]);
 
 /**
  * `graduate { amounts, data, max_payer_lamports }`. `accounts` are the strategy's
@@ -66,20 +77,15 @@ export async function graduateInstruction(input: {
     accounts: readonly AccountMeta[];
 }): Promise<Instruction> {
     const seeder = await findSeederPda(input.creator);
-    const parts = [
-        await pipeline.anchorDiscriminator('graduate'),
-        u32(input.amounts.length),
-        ...input.amounts.map(u64),
-        u32(input.data.length),
-        input.data,
-        u64(input.maxPayerLamports),
-    ];
-    const data = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
-    let offset = 0;
-    for (const part of parts) {
-        data.set(part, offset);
-        offset += part.length;
-    }
+    const discriminator = await pipeline.anchorDiscriminator('graduate');
+    const args = graduateArgs.encode({
+        amounts: [...input.amounts],
+        data: input.data,
+        maxPayerLamports: input.maxPayerLamports,
+    });
+    const data = new Uint8Array(discriminator.length + args.length);
+    data.set(discriminator);
+    data.set(args, discriminator.length);
     return {
         programAddress: LAUNCHPAD_PROGRAM_ADDRESS,
         accounts: [
@@ -97,26 +103,19 @@ export async function graduateInstruction(input: {
 /** `graduate`'s return data: the strategy's `SeedResult` beside what left each escrow. */
 export type Graduation = { taken: bigint[]; lpAmount: bigint; leftEscrows: bigint[] };
 
-/** Decodes `graduate`'s return data from a transaction's "Program return:" log line. */
+/**
+ * Decodes `graduate`'s return data from a transaction's "Program return:" log line, or
+ * returns null when there is none or it is not exactly a `Graduation`.
+ */
 export function graduationFromLogs(logs: readonly string[]): Graduation | null {
     const prefix = `Program return: ${LAUNCHPAD_PROGRAM_ADDRESS} `;
     const line = logs.find((entry) => entry.startsWith(prefix));
     if (!line) return null;
     const bytes = new Uint8Array(Buffer.from(line.slice(prefix.length), 'base64'));
-    const view = new DataView(bytes.buffer);
-    let offset = 0;
-    const readU64s = () => {
-        const length = view.getUint32(offset, true);
-        offset += 4;
-        return Array.from({ length }, () => {
-            const value = view.getBigUint64(offset, true);
-            offset += 8;
-            return value;
-        });
-    };
-    const taken = readU64s();
-    const lpAmount = view.getBigUint64(offset, true);
-    offset += 8;
-    const leftEscrows = readU64s();
-    return offset === bytes.length ? { taken, lpAmount, leftEscrows } : null;
+    try {
+        const [graduation, read] = graduationDecoder.read(bytes, 0);
+        return read === bytes.length ? graduation : null;
+    } catch {
+        return null;
+    }
 }

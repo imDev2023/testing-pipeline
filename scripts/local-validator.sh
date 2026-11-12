@@ -8,15 +8,17 @@
 #   - every program of programs/Cargo.toml's workspace, from programs/target/deploy (or
 #     $CARGO_TARGET_DIR/deploy, where scripts/build-programs.sh writes them then), at its
 #     declare_id! address and upgradeable by the project upgrade authority, as on devnet;
-#   - the workspace's test programs (the stand-in launchpad), from fixtures/test-programs,
+#   - the workspace's test programs (the stand-in launchpad), from $TEST_PROGRAMS_DIR
+#     (default fixtures/test-programs),
 #     at their declare_id! addresses and frozen; they never go to devnet.
 #
 #   scripts/local-validator.sh [ledger directory] [solana-test-validator flags ...]
 #
-# The ledger defaults to fixtures/test-ledger. Flags after it go to solana-test-validator,
-# such as other ports when another project's validator holds the defaults:
+# The ledger defaults to fixtures/test-ledger. Flags (the arguments from the first that
+# starts with "-") go to solana-test-validator, such as other ports when another project's
+# validator holds the defaults:
 #
-#   scripts/local-validator.sh fixtures/test-ledger --rpc-port 8999 --faucet-port 9910 \
+#   scripts/local-validator.sh --rpc-port 8999 --faucet-port 9910 \
 #     --gossip-port 8100 --dynamic-port-range 8101-8130
 #
 # Environment: UPGRADE_AUTHORITY, the upgrade authority's keypair (default
@@ -26,8 +28,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIXTURES_DIR="${FIXTURES_DIR:-$ROOT/fixtures}"
-LEDGER="${1:-$FIXTURES_DIR/test-ledger}"
-[ "$#" -gt 0 ] && shift
+TEST_PROGRAMS_DIR="${TEST_PROGRAMS_DIR:-$FIXTURES_DIR/test-programs}"
+LEDGER="$FIXTURES_DIR/test-ledger"
+if [ "$#" -gt 0 ] && [ "${1#-}" = "$1" ]; then
+  LEDGER="$1"
+  shift
+fi
 EXTRA_FLAGS=("$@")
 UPGRADE_AUTHORITY="${UPGRADE_AUTHORITY:-$HOME/.config/testing-pipeline/devnet/upgrade-authority.json}"
 # SIMD-0268's deeper call limit: test validators turn it on, devnet and mainnet don't have it.
@@ -74,7 +80,7 @@ done < <(python3 "$ROOT/scripts/workspace-programs.py")
 while IFS= read -r member; do
   lib="$(basename "$member")"
   lib="${lib//-/_}"
-  so="$FIXTURES_DIR/test-programs/$lib.so"
+  so="$TEST_PROGRAMS_DIR/$lib.so"
   id="$(sed -n 's/^declare_id!("\([1-9A-HJ-NP-Za-km-z]*\)");$/\1/p' "$ROOT/programs/$member/src/lib.rs")"
   if [ ! -f "$so" ]; then
     echo "No $so: build it with scripts/build-programs.sh $member" >&2

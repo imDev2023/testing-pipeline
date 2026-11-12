@@ -134,6 +134,7 @@ const DEMO_MARKET = {
 // takes exactly the seed and leaves the rest; the launchpad lends the strategy at most
 // `maxPayerLamports` for rent and takes back what it did not spend.
 const LAUNCH = {
+    decimals: [6, 9],
     escrowed: [150_000_000_000n, 300_000_000_000n],
     maxPayerLamports: 50_000_000n,
 } as const;
@@ -578,8 +579,8 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
     const form = metadata.seed_liquidity as pipeline.MetadataInit | undefined;
     if (!form?.market_state || !form.args || !form.accounts) fail('metadata.json needs its seed_liquidity form');
 
-    const mintA = await createTestToken(payer, 'launched token', 6, MINTED);
-    const mintB = await createTestToken(payer, 'launch quote token', 9, MINTED);
+    const mintA = await createTestToken(payer, 'launched token', LAUNCH.decimals[0], MINTED);
+    const mintB = await createTestToken(payer, 'launch quote token', LAUNCH.decimals[1], MINTED);
     const mints = [mintA, mintB];
     const tokenPrograms = mints.map(() => TOKEN_PROGRAM_ADDRESS);
     const seeder = await findSeederPda(payer.address);
@@ -587,7 +588,6 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
         mints.map(async (mint) => (await findAssociatedTokenPda({ owner: seeder, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS }))[0]),
     );
     const payerAccounts = await Promise.all(mints.map((mint) => walletTokenAccount(payer.address, mint)));
-    const decimals = [6, 9];
     await send(
         'fill the launch escrows',
         payer,
@@ -601,7 +601,7 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
                         destination: escrows[i]!,
                         authority: payer,
                         amount: LAUNCH.escrowed[i]!,
-                        decimals: decimals[i]!,
+                        decimals: LAUNCH.decimals[i]!,
                     }),
                 ),
             ]),

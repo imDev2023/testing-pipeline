@@ -6,8 +6,9 @@
 //! `pipeline_seed_liquidity` with the seeder signing, and with a payer of its own, the PDA
 //! `["payer", seeder]`, funded with at most `max_payer_lamports` and emptied back to the
 //! creator afterwards. It checks what a careful launchpad checks: the strategy took at most
-//! `amounts[i]` from each escrow (measured, not trusted from its return data) and left the
-//! payer a plain system account. It sets its own return data to [`Graduation`]: the
+//! `amounts[i]` from each escrow (measured, not trusted from its return data), spent at most
+//! `max_payer_lamports` of the payer, whatever it held before, and left the payer a plain
+//! system account. It sets its own return data to [`Graduation`]: the
 //! strategy's `SeedResult` beside what actually left each escrow.
 //!
 //! The caller records the market with the router's `register_existing_market` and
@@ -80,6 +81,8 @@ pub mod stand_in_launchpad {
             .collect::<Result<Vec<u64>>>()?;
 
         let accounts = &ctx.accounts;
+        // Lamports anyone sent to the payer beforehand stay out of what the strategy may spend.
+        let payer_before = accounts.payer.lamports();
         system_program::transfer(
             CpiContext::new(
                 accounts.system_program.key(),
@@ -149,6 +152,8 @@ pub mod stand_in_launchpad {
             LaunchpadError::PayerTampered
         );
         let unspent = payer.lamports();
+        require!(unspent >= payer_before, LaunchpadError::PayerOverspent);
+        let rent = payer_before + max_payer_lamports - unspent;
         if unspent > 0 {
             system_program::transfer(
                 CpiContext::new_with_signer(
@@ -168,7 +173,7 @@ pub mod stand_in_launchpad {
             strategy,
             result.taken,
             left_escrows,
-            max_payer_lamports - unspent
+            rent
         );
         let graduation = Graduation {
             taken: result.taken,
@@ -254,6 +259,8 @@ pub enum LaunchpadError {
     PayerTampered,
     #[msg("An escrow is not a token account")]
     NotATokenAccount,
+    #[msg("The strategy spent more of the payer than the graduation lent it")]
+    PayerOverspent,
 }
 
 fn meta(account: &AccountInfo) -> AccountMeta {

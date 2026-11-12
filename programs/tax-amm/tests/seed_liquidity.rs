@@ -101,6 +101,24 @@ fn a_seeder_seeds_a_pair_of_mints_once() {
     );
     let second = env.graduate(&other, &params, AMOUNTS).unwrap();
     assert_ne!(second.market.market_state, first.market.market_state);
+
+    // The market state is keyed by the mints in the order given, as the metadata says: the
+    // same seeder with the mints the other way round makes another market.
+    let swapped = Launch {
+        creator: launch.creator.insecure_clone(),
+        seeder: launch.seeder,
+        mints: [launch.mints[1], launch.mints[0]],
+        token_programs: [launch.token_programs[1], launch.token_programs[0]],
+        escrows: [launch.escrows[1], launch.escrows[0]],
+    };
+    let reversed = env.graduate(&swapped, &params, AMOUNTS).unwrap();
+    assert_ne!(reversed.market.market_state, first.market.market_state);
+    assert_eq!(
+        env.tax_market(&reversed.market.market_state)
+            .mints
+            .map(|m| ck(&m)),
+        swapped.mints
+    );
 }
 
 #[test]
@@ -433,12 +451,14 @@ fn token_2022_and_hooked_mints_graduate_and_trade() {
 }
 
 #[test]
-fn lamports_sent_to_the_market_state_or_a_vault_beforehand_do_not_block_the_graduation() {
+fn lamports_sent_beforehand_to_the_market_state_a_vault_or_the_payer_do_not_block_the_graduation() {
     let mut env = Env::new();
     let launch = launch_on_spl_token(&mut env);
     let market_state = launch.market_state();
     let (_, vaults) = tax_market_addresses(&market_state, launch.mints);
-    for address in [market_state, vaults[0]] {
+    // The launchpad's payer too: what it lends the strategy stays bounded all the same.
+    let payer = ck(&stand_in_launchpad::payer_address(&ak(&launch.seeder)));
+    for address in [market_state, vaults[0], payer] {
         env.svm.airdrop(&address, 1_000_000).unwrap();
     }
     let graduated = env
@@ -447,6 +467,8 @@ fn lamports_sent_to_the_market_state_or_a_vault_beforehand_do_not_block_the_grad
     let state = env.tax_market(&graduated.market.market_state);
     assert_eq!(state.status, MarketStatus::Open);
     assert_eq!(state.reserves, AMOUNTS);
+    // The launchpad gave the creator back everything the payer held after the strategy.
+    assert_eq!(env.svm.get_balance(&payer).unwrap_or(0), 0);
 }
 
 #[test]
@@ -516,6 +538,10 @@ fn the_graduation_transaction_fits_for_mints_of_one_token_program() {
             assert!(size <= MAX_TRANSACTION_BYTES, "{what}: {size}");
         }
         env.svm.send_transaction(transaction).unwrap();
-        assert_eq!(env.tax_market(&launch.market_state()).reserves, AMOUNTS, "{what}");
+        assert_eq!(
+            env.tax_market(&launch.market_state()).reserves,
+            AMOUNTS,
+            "{what}"
+        );
     }
 }

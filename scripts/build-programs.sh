@@ -8,22 +8,29 @@
 # Test programs (scripts/workspace-programs.py --test-programs, such as the stand-in
 # launchpad) are built the same way but into the gitignored fixtures/test-programs, like
 # Pipeline's test programs, so nothing that deploys from programs/target/deploy finds them.
+# TEST_PROGRAMS_DIR moves them (default $FIXTURES_DIR/test-programs); the tests and
+# local-validator.sh read the same variable.
 #
 #   scripts/build-programs.sh [program ...]     # default: every program, test programs too
 #
 # Needs the toolchain (source scripts/toolchain-env.sh).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TEST_PROGRAMS_DIR="${FIXTURES_DIR:-$ROOT/fixtures}/test-programs"
+TEST_PROGRAMS_DIR="${TEST_PROGRAMS_DIR:-${FIXTURES_DIR:-$ROOT/fixtures}/test-programs}"
 cd "$ROOT/programs"
 
+# A program's folder, resolved, so any spelling of a test program's path is recognised.
+resolved() { (cd "$1" && pwd -P); }
 test_programs=()
 while IFS= read -r member; do
-  test_programs+=("$member")
+  test_programs+=("$(resolved "$member")")
 done < <(python3 "$ROOT/scripts/workspace-programs.py" --test-programs)
 is_test_program() {
-  local member
-  for member in "${test_programs[@]}"; do [ "$member" = "$1" ] && return 0; done
+  local member dir
+  dir="$(resolved "$1")"
+  for member in ${test_programs[@]+"${test_programs[@]}"}; do
+    [ "$member" = "$dir" ] && return 0
+  done
   return 1
 }
 
@@ -34,7 +41,9 @@ else
   while IFS= read -r member; do
     programs+=("$member")
   done < <(python3 "$ROOT/scripts/workspace-programs.py")
-  programs+=("${test_programs[@]}")
+  while IFS= read -r member; do
+    programs+=("$member")
+  done < <(python3 "$ROOT/scripts/workspace-programs.py" --test-programs)
 fi
 
 for program in "${programs[@]}"; do

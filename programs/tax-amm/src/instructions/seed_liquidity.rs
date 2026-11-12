@@ -23,7 +23,7 @@ use crate::events::Seeded;
 use crate::interface::SeedRequest;
 use crate::params::InitParams;
 use crate::state::{MarketStatus, TaxMarket, AUTHORITY_SEED, SEEDED_SEED, VAULT_SEED};
-use crate::token::mint_decimals;
+use crate::token::{mint_decimals, token_balance};
 
 /// Pipeline's fixed seed accounts (`psi::seed_accounts`), three per mint, then the tax AMM's
 /// own, in the order `metadata.json`'s `seed_liquidity.accounts` lists them. Transfer-hook
@@ -115,24 +115,41 @@ pub fn seed_liquidity<'info>(
             token_program: accounts.token_program_1.to_account_info(),
         },
     ];
-    let taken = take_seed(
+    // What leaves each escrow, measured, for the caller to check against its own measurement.
+    let escrows = [&accounts.escrow_0, &accounts.escrow_1];
+    let mut escrowed = [0u64; 2];
+    for i in 0..2 {
+        if request.amounts[i] > 0 {
+            escrowed[i] = token_balance(&escrows[i].to_account_info())?;
+        }
+    }
+    let arrived = take_seed(
         &market,
         &accounts.seeder.to_account_info(),
         sides,
         [amount_0, amount_1],
         ctx.remaining_accounts,
     )?;
+    let mut taken = vec![0u64; 2];
+    for i in 0..2 {
+        // A side of 0 is never transferred, so nothing left its escrow.
+        if request.amounts[i] > 0 {
+            taken[i] = escrowed[i]
+                .checked_sub(token_balance(&escrows[i].to_account_info())?)
+                .ok_or(StrategyError::Overflow)?;
+        }
+    }
 
-    market.reserves = taken.arrived;
+    market.reserves = arrived;
     market.status = MarketStatus::Open;
     ctx.accounts.market_state.set_inner(market);
     emit!(Seeded {
         market_state,
         seeder,
-        amounts: taken.arrived,
+        amounts: arrived,
     });
     let result = psi::SeedResult {
-        taken: taken.left.to_vec(),
+        taken,
         lp_amount: 0,
     };
     set_return_data(&crate::borsh_encode(&result)?);
