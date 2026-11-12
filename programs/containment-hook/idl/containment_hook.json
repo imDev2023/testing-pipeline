@@ -331,6 +331,21 @@
       "code": 6017,
       "name": "TaxSideNotQuote",
       "msg": "The home market's tax must be taken in the quote mint"
+    },
+    {
+      "code": 6018,
+      "name": "NotTransferring",
+      "msg": "Execute runs only inside a Token-2022 transfer of this mint"
+    },
+    {
+      "code": 6019,
+      "name": "WrongConfig",
+      "msg": "The config is not this mint's, at its address and owned by the hook"
+    },
+    {
+      "code": 6020,
+      "name": "WrongValidationAccount",
+      "msg": "The validation account is not this mint's, at its address and owned by the hook"
     }
   ],
   "types": [

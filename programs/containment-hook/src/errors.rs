@@ -41,4 +41,10 @@ pub enum HookError {
     NotATaxMarketState,
     #[msg("The home market's tax must be taken in the quote mint")]
     TaxSideNotQuote,
+    #[msg("Execute runs only inside a Token-2022 transfer of this mint")]
+    NotTransferring,
+    #[msg("The config is not this mint's, at its address and owned by the hook")]
+    WrongConfig,
+    #[msg("The validation account is not this mint's, at its address and owned by the hook")]
+    WrongValidationAccount,
 }

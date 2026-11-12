@@ -296,7 +296,15 @@ By [Containment hook: bind a token to its home market](https://github.com/imDev2
 - The market's creation transaction (`create_market` and `init_fee_account` for each mint, as a version 0 transaction) is 1,143 bytes; with `bind` it is 1,307 bytes, over the 1,232 a transaction may hold, so `bind` goes in the next transaction.
   With an address lookup table holding every account that does not sign, the same transaction would be 690 bytes.
   The launch script measures both on every run, in step 4.
+- `bind`'s cost moves with the bumps its PDAs need, which differ from mint to mint: 25,414 and 34,415 units on two mints measured on 2026-11-12 by [Containment hook: a contained token moves only through its home market](https://github.com/imDev2023/testing-pipeline/issues/69), still under its ceiling.
 
-## Not measured yet
+By [Containment hook: a contained token moves only through its home market](https://github.com/imDev2023/testing-pipeline/issues/69) on 2026-11-12, against devnet's router bytes, with `Execute` written in Anchor:
 
-- The compute cost of the hook on each hooked transfer: into the vault and into the fee account on a sell, out of the vault on a buy; measured in the build against the ceilings above.
+| Hooked transfer | `Execute` (CU), LiteSVM | `Execute` (CU), local validator |
+| --- | --- | --- |
+| Out of the vault, on a buy | 5,578 | 5,578 |
+| Into the vault, on a sell | 5,602 | 5,602 |
+| Into the fee account, on a sell | 5,603 | 5,603 |
+
+- Every one is under the 10,000 ceiling, so `Execute` stays in Anchor (see "Starting point"); `tests/compute.rs` asserts the ceiling on each, and the launch script prints the cost of each from its transactions' logs.
+- On a buy the hook runs at the fourth call level (router, tax AMM, Token-2022, hook), the deepest a swap reaches, under devnet's limit, which does not have SIMD-0268's deeper calls; the whole buy costs 64,438 units.
