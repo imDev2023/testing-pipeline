@@ -269,8 +269,8 @@ impl Reserve {
 }
 
 /// A reserve's total supply in 60-bit fixed point, klend's `total_supply`:
-/// `total_available_amount + borrowed_amount_sf - accumulated_protocol_fees_sf
-/// - accumulated_referrer_fees_sf - pending_referrer_fees_sf`, in that order. `None` where
+/// `total_available_amount + borrowed_amount_sf - accumulated_protocol_fees_sf -
+/// accumulated_referrer_fees_sf - pending_referrer_fees_sf`, in that order. `None` where
 /// klend's own fixed-point maths would fail too: a sum beyond 128 bits or a negative supply.
 pub fn total_supply_sf(
     total_available_amount: u64,

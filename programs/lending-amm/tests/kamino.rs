@@ -84,11 +84,11 @@ fn the_dumped_reserves_are_the_ones_this_build_lends_to() {
 #[test]
 fn every_reserve_this_build_lends_to_passes_the_check() {
     let env = Env::new();
-    for i in 0..LENT_MINTS.len() {
+    for (i, entry) in LENT_MINTS.iter().enumerate() {
         let reserve = read(&env, i);
         assert_eq!(reserve.version, 1);
         assert!(!reserve.emergency_mode && !reserve.block_ctoken_usage);
-        let market = read_lending_market(&env, &LENT_MINTS[i]);
+        let market = read_lending_market(&env, entry);
         assert!(!market.emergency_mode);
     }
 }
@@ -100,8 +100,8 @@ fn the_total_supply_and_the_ctoken_supply_are_read_at_the_specs_offsets() {
     // S_ctoken = collateral.mint_total_supply, at the offsets of the Kamino facts, section 4,
     // written out here independently of the module.
     let env = Env::new();
-    for i in 0..LENT_MINTS.len() {
-        let data = env.data(&ck(&LENT_MINTS[i].reserve));
+    for (i, entry) in LENT_MINTS.iter().enumerate() {
+        let data = env.data(&ck(&entry.reserve));
         let expected = ((u64_at(&data, 224) as u128) << 60) + u128_at(&data, 232)
             - u128_at(&data, 344)
             - u128_at(&data, 360)
