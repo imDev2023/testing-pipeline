@@ -65,8 +65,8 @@ IDs are stable; the Kani harnesses, the Z3 claims and the Proptest names carry t
 
 | ID | Property | How |
 | --- | --- | --- |
-| T1 | The tax is exactly `ceil(amount × rate / 10,000)`, never more than the amount, and 0 exactly when the amount or the rate is 0 | Z3 (every u64 amount, every rate up to the cap); Kani (the zero case and the amount bound for every input, the formula for amounts below 2^16); Proptest |
-| T2 | No rate above `MAX_TAX_BPS` can be applied: the tax and the pricing refuse it (`TaxAboveCap`) for every amount and market before anything else, and creation accepts only rates and ranges inside `[0, MAX_TAX_BPS]` with each rate inside its range | Kani (every input, pricing and creation); Proptest |
+| T1 | The tax is exactly `ceil(amount × rate / 10,000)`, never more than the amount, and 0 exactly when the amount or the rate is 0 | Z3 (every u64 amount, every rate up to the cap); Kani (the zero case and the amount bound for every input, the formula for amounts below 2^10); Proptest |
+| T2 | No rate above `MAX_TAX_BPS` can be applied: the tax and the pricing refuse it (`TaxAboveCap`) for every amount and market before anything else, and the rules creation and `set_taxes` apply (`params::check_rates`) accept only ranges inside `[0, MAX_TAX_BPS]` with each rate inside its range | Kani (every input, the pricing and the rules); Proptest |
 | T3 | The tax never falls as the amount or the rate rises, and what a buy tax leaves for the curve never falls as the amount rises | Z3; Proptest |
 | T4 | Two taxes are never less than one on the sum | Z3 |
 
@@ -84,7 +84,7 @@ IDs are stable; the Kani harnesses, the Z3 claims and the Proptest names carry t
 
 | ID | Property | How |
 | --- | --- | --- |
-| P1 | The suite share, the recipients' parts and the burn always add up to the tax and no part exceeds it; with whole shares each part is its share rounded down, the suite share first, and the remainder, under one unit a part, goes to the first recipient; shares that are not the whole are refused for every tax (`SharesNotWhole`), and creation accepts only whole shares | Kani (adds up or refused, for every tax and any shares; the parts' values for taxes below 2^16; creation for every input); Z3 (whole shares never refused and the parts' values, every tax); Proptest |
+| P1 | The suite share, the recipients' parts and the burn always add up to the tax and no part exceeds it; with whole shares each part is its share rounded down, the suite share first, and the remainder, under one unit a part, goes to the first recipient; shares that are not the whole are refused for every tax (`SharesNotWhole`), and the rules creation and `set_recipients` apply (`params::check_split`) accept only whole shares | Kani (adds up or refused, for every tax and any shares; the parts' values for taxes below 2^10; the rules for every input); Z3 (whole shares never refused and the parts' values, every tax); Proptest |
 
 **No overflow and no panic**
 
@@ -115,13 +115,13 @@ IDs are stable; the Kani harnesses, the Z3 claims and the Proptest names carry t
 
 ## Counterexamples found
 
-Both were in the maths layer only: no instruction could hand the maths a bad value, because creation refuses it first.
+Both were in the maths layer only: no instruction could hand the maths a bad value, because the rules creation and the tax authority's changes apply refuse it first.
 Each is fixed in the program with a regression test, and the spec says what the fix does.
 
 1. **The pricing applied any rate up to 100%.**
    `exact_in` capped nothing itself, so a rate between `MAX_TAX_BPS` and 10,000 was priced; only the creation rules kept such a rate out of a market state.
    Fixed: `pricing::tax_of` and `exact_in` refuse a rate above the cap for every input (`TaxAboveCap`), before anything is priced.
-   Regression: `no_rate_above_the_cap_is_ever_applied` (Proptest, and the Kani harness of the same name), and its saved case in `tests/maths.proptest-regressions`.
+   Regression: `no_rate_above_the_cap_is_ever_applied` (Proptest, and the Kani harness of the same name).
 2. **The split booked shares that sum past the whole when the tax was small.**
    `split_tax` was documented to refuse shares summing to more than 10,000, but it refused them only when the rounded parts outgrew the creator's part: a tax of 9 with one share of 10,001 was booked.
    Fixed: `split_tax` refuses any shares that are not the whole, for every tax (`SharesNotWhole`).

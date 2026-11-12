@@ -55,62 +55,93 @@ impl InitParams {
         if self.virtual_side > 1 {
             return Err(StrategyError::BadVirtualSide);
         }
-        for (rate, min, max) in [
-            (self.buy_tax_bps, self.buy_tax_min_bps, self.buy_tax_max_bps),
-            (
-                self.sell_tax_bps,
-                self.sell_tax_min_bps,
-                self.sell_tax_max_bps,
-            ),
-        ] {
-            if max > MAX_TAX_BPS {
-                return Err(StrategyError::TaxAboveCap);
-            }
-            if min > max {
-                return Err(StrategyError::RangeInverted);
-            }
-            if rate < min || rate > max {
-                return Err(StrategyError::RateOutsideRange);
-            }
-        }
+        check_rates(
+            [self.buy_tax_bps, self.sell_tax_bps],
+            [
+                [self.buy_tax_min_bps, self.buy_tax_max_bps],
+                [self.sell_tax_min_bps, self.sell_tax_max_bps],
+            ],
+        )?;
         if self.seeder == Pubkey::default() {
             return Err(StrategyError::NoSeeder);
         }
-        let used = self
-            .recipients
-            .iter()
-            .take_while(|recipient| **recipient != Pubkey::default())
-            .count();
-        if used == 0 {
-            return Err(StrategyError::NoRecipient);
-        }
-        if self.recipients[used..]
-            .iter()
-            .any(|recipient| *recipient != Pubkey::default())
-        {
-            return Err(StrategyError::RecipientsOutOfOrder);
-        }
-        if self.shares[..used].contains(&0) {
-            return Err(StrategyError::ZeroShare);
-        }
-        if self.shares[used..].iter().any(|&share| share != 0) {
-            return Err(StrategyError::ShareWithoutRecipient);
-        }
-        let total: u32 =
-            self.shares.iter().map(|&share| share as u32).sum::<u32>() + self.burn_share_bps as u32;
-        // Every share is in basis points of the creator's part of the tax.
-        if total as u64 != pipeline_strategy_interface::BPS_DENOMINATOR {
-            return Err(StrategyError::SharesNotWhole);
-        }
-        if self.burn_share_bps > 0 && NATIVE_MINTS.contains(&mints[self.tax_side as usize]) {
-            return Err(StrategyError::BurnOnNativeSol);
-        }
-        Ok(())
+        check_split(
+            &self.recipients,
+            &self.shares,
+            self.burn_share_bps,
+            &mints[self.tax_side as usize],
+        )
     }
 }
 
-// Kani proof of the creation rules on rates and shares (`cargo kani`, docs/toolchain.md);
-// the property IDs are docs/security/tax-amm/maths-properties.md's.
+/// The rules on the buy and sell tax (`rates`, in that order), each inside its `[min, max]`
+/// range, every range inside `[0, MAX_TAX_BPS]`: checked at creation and by `set_taxes`,
+/// so no sequence of calls can take a rate past its range or the cap.
+pub fn check_rates(
+    rates: [u16; 2],
+    ranges: [[u16; 2]; 2],
+) -> core::result::Result<(), StrategyError> {
+    for (rate, [min, max]) in rates.into_iter().zip(ranges) {
+        if max > MAX_TAX_BPS {
+            return Err(StrategyError::TaxAboveCap);
+        }
+        if min > max {
+            return Err(StrategyError::RangeInverted);
+        }
+        if rate < min || rate > max {
+            return Err(StrategyError::RateOutsideRange);
+        }
+    }
+    Ok(())
+}
+
+/// The rules on the tax recipients, their shares and the burn share of a market whose tax
+/// is taken in `tax_mint`: checked at creation and by `set_recipients`, which follows the
+/// rules of creation exactly.
+pub fn check_split(
+    recipients: &[Pubkey; MAX_RECIPIENTS],
+    shares: &[u16; MAX_RECIPIENTS],
+    burn_share_bps: u16,
+    tax_mint: &Pubkey,
+) -> core::result::Result<(), StrategyError> {
+    let used = used_slots(recipients);
+    if used == 0 {
+        return Err(StrategyError::NoRecipient);
+    }
+    if recipients[used..]
+        .iter()
+        .any(|recipient| *recipient != Pubkey::default())
+    {
+        return Err(StrategyError::RecipientsOutOfOrder);
+    }
+    if shares[..used].contains(&0) {
+        return Err(StrategyError::ZeroShare);
+    }
+    if shares[used..].iter().any(|&share| share != 0) {
+        return Err(StrategyError::ShareWithoutRecipient);
+    }
+    let total: u32 = shares.iter().map(|&share| share as u32).sum::<u32>() + burn_share_bps as u32;
+    // Every share is in basis points of the creator's part of the tax.
+    if total as u64 != pipeline_strategy_interface::BPS_DENOMINATOR {
+        return Err(StrategyError::SharesNotWhole);
+    }
+    if burn_share_bps > 0 && NATIVE_MINTS.contains(tax_mint) {
+        return Err(StrategyError::BurnOnNativeSol);
+    }
+    Ok(())
+}
+
+/// How many recipient slots are used: the leading slots that name a wallet.
+pub fn used_slots(recipients: &[Pubkey; MAX_RECIPIENTS]) -> usize {
+    recipients
+        .iter()
+        .take_while(|recipient| **recipient != Pubkey::default())
+        .count()
+}
+
+// Kani proofs of the rules on rates and shares (`cargo kani`, docs/toolchain.md), which
+// creation, `set_taxes` and `set_recipients` all apply; the property IDs are
+// docs/security/tax-amm/maths-properties.md's.
 #[cfg(kani)]
 mod proofs {
     use super::*;
@@ -119,46 +150,32 @@ mod proofs {
         Pubkey::new_from_array(kani::any())
     }
 
-    /// T2 and P1 at creation: for any parameters and mints, a market is accepted only with
-    /// both rates and both ranges inside `[0, MAX_TAX_BPS]`, each rate inside its range, and
-    /// shares that sum to exactly 10,000 with the burn share, so a market state never
-    /// holds a rate above the cap or shares the split refuses.
+    /// T2 where rates are stored: for any rates and ranges, the rules accept them only
+    /// with every range inside `[0, MAX_TAX_BPS]` and each rate inside its range, so no
+    /// market state ever holds a rate above the cap, at creation or after `set_taxes`.
     #[kani::proof]
     #[kani::solver(cadical)]
-    fn creation_accepts_only_capped_rates_and_whole_shares() {
-        let params = InitParams {
-            tax_side: kani::any(),
-            buy_tax_bps: kani::any(),
-            sell_tax_bps: kani::any(),
-            buy_tax_min_bps: kani::any(),
-            buy_tax_max_bps: kani::any(),
-            sell_tax_min_bps: kani::any(),
-            sell_tax_max_bps: kani::any(),
-            tax_authority: any_key(),
-            seeder: any_key(),
-            recipients: [any_key(), any_key(), any_key(), any_key()],
-            shares: kani::any(),
-            burn_share_bps: kani::any(),
-            virtual_side: kani::any(),
-            virtual_reserve: kani::any(),
-        };
-        if params.validate(&[any_key(), any_key()]).is_ok() {
-            for (rate, min, max) in [
-                (
-                    params.buy_tax_bps,
-                    params.buy_tax_min_bps,
-                    params.buy_tax_max_bps,
-                ),
-                (
-                    params.sell_tax_bps,
-                    params.sell_tax_min_bps,
-                    params.sell_tax_max_bps,
-                ),
-            ] {
+    fn the_rules_accept_only_capped_rates() {
+        let rates: [u16; 2] = kani::any();
+        let ranges: [[u16; 2]; 2] = kani::any();
+        if check_rates(rates, ranges).is_ok() {
+            for (rate, [min, max]) in rates.into_iter().zip(ranges) {
                 assert!(min <= rate && rate <= max && max <= MAX_TAX_BPS);
             }
-            let whole = params.shares.iter().map(|&share| share as u32).sum::<u32>()
-                + params.burn_share_bps as u32;
+        }
+    }
+
+    /// P1 where shares are stored: for any recipients, shares, burn share and tax mint, the
+    /// rules accept them only when the shares and the burn share sum to exactly 10,000, the
+    /// shares `split_tax` books, at creation or after `set_recipients`.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn the_rules_accept_only_whole_shares() {
+        let recipients = [any_key(), any_key(), any_key(), any_key()];
+        let shares: [u16; MAX_RECIPIENTS] = kani::any();
+        let burn: u16 = kani::any();
+        if check_split(&recipients, &shares, burn, &any_key()).is_ok() {
+            let whole = shares.iter().map(|&share| share as u32).sum::<u32>() + burn as u32;
             assert!(whole as u64 == pipeline_strategy_interface::BPS_DENOMINATOR);
         }
     }

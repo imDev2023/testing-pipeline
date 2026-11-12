@@ -118,6 +118,13 @@ jobs:
         run: cd programs && cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (LiteSVM through devnet's router, with pipeline-check)
         run: cd programs && cargo test --workspace
+      - name: The lending AMM's mainnet build (its default is devnet)
+        run: |
+          source scripts/toolchain-env.sh
+          cargo build-sbf --manifest-path programs/lending-amm/Cargo.toml --no-default-features --features mainnet --sbf-out-dir programs/target/deploy-mainnet
+          cd programs
+          cargo clippy -p lending-amm --no-default-features --features mainnet --all-targets -- -D warnings
+          cargo test -p lending-amm --no-default-features --features mainnet --lib
 
   typescript:
     name: typescript

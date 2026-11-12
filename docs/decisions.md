@@ -2727,7 +2727,37 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: seed a market and trade it with buy and sell tax](https://github.com/imDev2023/testing-pipeline/issues/60)
 
-### TAX-38: The maths re-checks the creation rules
+### TAX-38: What renouncing leaves in the market state
+
+- Question: What does the market state hold once its tax authority renounces?
+- Answer: The default key as its tax authority, as on a market created without one, and its renounced flag set, so Aviary can tell the two apart while both refuse every action for good.
+- Alternatives: Keeping the former authority's key beside the flag, which would leave a key in the field that can no longer act.
+- Specified in: [`docs/spec/tax-amm.md`, Tax authority](spec/tax-amm.md#tax-authority)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
+
+### TAX-39: Emptying a recipient slot that is still owed
+
+- Question: May `set_recipients` empty a recipient slot that is still owed tax?
+- Answer: No: it refuses with `OwedSlotLeftEmpty`, so every owed amount always has a wallet or the burn to go to; the slot can be handed to another wallet instead, or paid out first, and the burn share may still drop to 0 since the burn needs no wallet.
+- Alternatives: Allowing it, which would strand the owed amount in the vault for good once the authority renounced; moving the owed amount to another slot, which would make `set_recipients` change owed amounts, which none of the tax authority's actions does.
+- Specified in: [`docs/spec/tax-amm.md`, Tax authority](spec/tax-amm.md#tax-authority)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
+
+### TAX-40: How a refused tax authority action is reported
+
+- Question: How does the program say why it refused `set_taxes`, `set_recipients` or `renounce_tax_authority`?
+- Answer: With `AlreadyRenounced` on a market whose authority renounced, `NoTaxAuthority` on one created without an authority and `NotTaxAuthority` for any other signer, checked in that order, then the same error as creation for a rate or split creation would refuse.
+- Alternatives: One error for any signer who is not the tax authority.
+- Specified in: [`docs/spec/tax-amm.md`, Tax authority](spec/tax-amm.md#tax-authority)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
+
+### TAX-41: The maths re-checks the creation rules
 
 - Question: Should the pricing and the split refuse a rate above the cap and shares that are not the whole themselves, when creation and the tax authority's changes already refuse them?
 - Answer: Yes: the pricing refuses a rate above `MAX_TAX_BPS` and the split refuses shares that do not sum to 10,000 with the burn share, for every input, so the proven properties hold for the maths on its own and not only for the market states creation allows.
@@ -2737,7 +2767,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: proofs of the pricing, tax and split maths](https://github.com/imDev2023/testing-pipeline/issues/64)
 
-### TAX-39: How the tax AMM's maths is proven
+### TAX-42: How the tax AMM's maths is proven
 
 - Question: Which properties of the pricing, tax and split maths are proven, and how is each established?
 - Answer: The property list in `docs/security/tax-amm/maths-properties.md`, chosen with Book of Knowledge: Kani proves for every input what needs no quotient and the rest for small inputs, Z3 proves every quotient claim for every input from lemmas proven on their own, and Proptest checks every property on at least 10,000 cases that exercise it.
@@ -3675,6 +3705,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77)
 
+### LENDING-43: Which cluster's lent mints a build carries
+
+- Question: How does the program choose between the devnet and mainnet rows of `LENT_MINTS`?
+- Answer: By the crate's `devnet` or `mainnet` feature, exactly one of them, with `devnet` the default because devnet is the only cluster this project deploys to; CI builds both, and the devnet rows must equal `deployments/kamino-devnet.json`.
+- Alternatives: No default feature, so every build and test command names its cluster; a mainnet default.
+- Specified in: [`docs/spec/lending-pool.md`, Constants](spec/lending-pool.md#constants)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
+
+### LENDING-44: The market state's final layout
+
+- Question: What does a lending AMM market's state hold, and how can it grow?
+- Answer: Every field the whole spec needs from the first build (withdraw mode, the recorded cTokens and the running totals deposited into and redeemed from Kamino included), after a version byte, at fixed offsets, with 256 reserved bytes that only ever gain appended fields, a zeroed value meaning the old behaviour; 663 bytes.
+- Alternatives: Adding fields with each ticket and reallocating; a smaller reserve.
+- Specified in: [`docs/spec/lending-pool.md`, Market state](spec/lending-pool.md#market-state)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
+
+### LENDING-45: Where an LP's shares go
+
+- Question: Into which account does `add_liquidity` mint an LP's shares?
+- Answer: The LP's shares account, a token account of the LP mint owned by the LP at the PDA `["lp_shares", market_state, lp]`, which `add_liquidity` creates at the LP's expense if it is missing, because metadata cannot describe the associated token account of a mint that is itself a PDA.
+- Alternatives: The LP's associated token account, which a generic desk could not build from the metadata; any token account the LP names.
+- Specified in: [`docs/spec/lending-pool.md`, Addresses](spec/lending-pool.md#addresses)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
+
+### LENDING-46: How add_liquidity takes its amounts
+
+- Question: In what order does `add_liquidity` take the most an LP will add of each mint?
+- Answer: By mint index, `max_0` and `max_1`, as its accounts are ordered, so a form can show each amount with its own mint's decimals whichever side is lent.
+- Alternatives: By side, `max_other` and `max_lent`, as the spec first wrote it.
+- Specified in: [`docs/spec/lending-pool.md`, Adding](spec/lending-pool.md#adding)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
+
+### LENDING-47: The collateral mint at creation
+
+- Question: How does market creation get the lent mint's collateral mint, which its cToken account needs?
+- Answer: As a named input of the metadata's `init` form, which Aviary's form fills in, and which the program refuses unless it is the collateral mint `LENT_MINTS` names for the lent mint.
+- Alternatives: A fixed address in the metadata, which cannot serve both lent mints; creating the cToken account later, at the first `rebalance`.
+- Specified in: [`docs/spec/lending-pool.md`, Custom actions and metadata](spec/lending-pool.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -3706,5 +3786,6 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
+- `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.
 - `BAR-04`, `BAR-29`, `PIPESCOPE-87`: Pipeline's crates are on crates.io and its SDK on npm since 2026-11-10; the terminal uses the published packages, while the bar still pins the on-chain workspace's crates by git `rev` and the programs' demo scripts link a local SDK build from `scripts/fetch-pipeline.sh`; whether they move to the published packages is for the bar's owner.
