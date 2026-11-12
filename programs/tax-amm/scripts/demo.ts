@@ -22,11 +22,23 @@
 //      checking that it delivered the quote and that the quote is the spec's price;
 //   9. read the market state back: its reserves, owed amounts and counters must equal this
 //      script's own calculation from the spec's formulas (spec-model.ts), to the unit;
-//  10. pay out every slot with the metadata's `distribute` action: each tax recipient and the
-//      suite treasury must receive exactly what the market state said it was owed, a
-//      recipient with no token account must get one, the burn must lower the mint's supply
-//      by exactly its owed amount, and every owed amount must be 0 afterwards, with the
-//      tax-side vault holding exactly the real reserve.
+//
+// then, for the market that names new rates (the second), as its tax authority:
+//
+//  10. change both rates through the metadata's `set_taxes` action, then trade both ways
+//      again and check each swap was taxed at the new rates;
+//  11. change a tax recipient through the metadata's `set_recipients` action, and check the
+//      slot names the new wallet with what it is owed unchanged;
+//  12. renounce through the metadata's `renounce_tax_authority` action, and check that both
+//      changes are refused afterwards, leaving the market as it was;
+//
+// and last, for each market:
+//
+//  pay out every slot with the metadata's `distribute` action: each tax recipient and the
+//  suite treasury must receive exactly what the market state said it was owed, a recipient
+//  with no token account must get one, the burn must lower the mint's supply by exactly its
+//  owed amount, and every owed amount must be 0 afterwards, with the tax-side vault holding
+//  exactly the real reserve.
 //
 // Grown from Pipeline's strategy template (scripts/deploy-devnet.ts at 5ad130d). Deploy the
 // program first; docs/toolchain.md says how, on a local validator and on devnet.
@@ -91,9 +103,12 @@ import {
     findAuthorityPda,
     findVault0Pda,
     findVault1Pda,
+    getTaxAmmErrorMessage,
     MarketStatus,
     SUITE_SHARE_BPS,
     SUITE_TREASURY,
+    TAX_AMM_ERROR__ALREADY_RENOUNCED,
+    type TaxAmmError,
 } from './client/index.ts';
 import { price, swap as specSwap, type SpecMarket } from './spec-model.ts';
 
@@ -112,7 +127,10 @@ const DEFAULT_METADATA_URI =
 // reserve. The first market is taxed in wrapped SOL, Aviary's default tax side, so it has no
 // burn; the second is taxed in token B (9 decimals) and burns part of the creator's share.
 // Each trades both ways: buy token A with the tax side (a buy tax, on the input), then sell
-// some back (a sell tax, on the output), as [input index, output index, amount in].
+// some back (a sell tax, on the output), as [input index, output index, amount in]. After
+// trading, the second market's tax authority moves both rates inside their ranges to
+// `newTaxesBps` ([buy, sell]), trades again, hands the second recipient's slot to a new
+// wallet, and renounces, before its tax is paid out.
 const MINTED = 1_000_000_000_000n;
 const DEMO_MARKETS = [
     {
@@ -130,6 +148,7 @@ const DEMO_MARKETS = [
             [1, 0, 50_000_000n],
             [0, 1, 1_000_000_000n],
         ],
+        newTaxesBps: null,
     },
     {
         label: 'market 2, taxed in token B',
@@ -146,6 +165,7 @@ const DEMO_MARKETS = [
             [1, 0, 1_000_000_000n],
             [0, 1, 300_000n],
         ],
+        newTaxesBps: [600, 900],
     },
 ] as const;
 type DemoMarket = (typeof DEMO_MARKETS)[number];
@@ -285,8 +305,8 @@ async function waitFor(label: string, signature: Signature) {
     }
 }
 
-/** Sends a transaction and waits for confirmation by polling (public RPCs often refuse WebSockets). */
-async function send(label: string, feePayer: KeyPairSigner, instructions: Instruction[], extra: KeyPairSigner[] = []) {
+/** A version 0 transaction of `instructions`, signed and ready to send or simulate. */
+async function buildSigned(feePayer: KeyPairSigner, instructions: Instruction[], extra: KeyPairSigner[] = []) {
     const { value: blockhash } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
     const message = pipe(
         createTransactionMessage({ version: 0 }),
@@ -296,14 +316,32 @@ async function send(label: string, feePayer: KeyPairSigner, instructions: Instru
         (m) => addSignersToTransactionMessage(extra, m),
     );
     const signed = await signTransactionMessageWithSigners(message);
-    const signature = getSignatureFromTransaction(signed);
-    const wire = getBase64EncodedWireTransaction(signed);
+    return { signature: getSignatureFromTransaction(signed), wire: getBase64EncodedWireTransaction(signed) };
+}
+
+/** Sends a transaction and waits for confirmation by polling (public RPCs often refuse WebSockets). */
+async function send(label: string, feePayer: KeyPairSigner, instructions: Instruction[], extra: KeyPairSigner[] = []) {
+    const { signature, wire } = await buildSigned(feePayer, instructions, extra);
     await rpc.sendTransaction(wire, { encoding: 'base64' }).send();
     await waitFor(label, signature);
     const bytes = Buffer.from(wire, 'base64').length;
     info(`${label}: ${explorer('tx', signature)} (${bytes} of ${MAX_TRANSACTION_BYTES} bytes)`);
     record.push([label, signature]);
     return signature;
+}
+
+/**
+ * Simulates a transaction and returns the custom error code its first failing instruction
+ * returned, or null if it would succeed. Used to show a refusal without paying for it.
+ */
+async function simulatedErrorCode(feePayer: KeyPairSigner, instructions: Instruction[]): Promise<number | null> {
+    const { wire } = await buildSigned(feePayer, instructions);
+    const { value } = await rpc.simulateTransaction(wire, { encoding: 'base64', commitment: 'confirmed' }).send();
+    if (!value.err) return null;
+    const failure = (value.err as { InstructionError?: [unknown, { Custom?: number | bigint }] }).InstructionError;
+    const custom = failure?.[1]?.Custom;
+    if (custom === undefined) fail(`the simulation failed without a custom error: ${JSON.stringify(value.err, (_, v) => (typeof v === 'bigint' ? v.toString() : v))}`);
+    return Number(custom);
 }
 
 /** On a local validator, tops `key` up to `amount` lamports. */
@@ -497,6 +535,7 @@ async function main() {
     const context = { payer, programId, metadata };
     for (const [n, demo] of DEMO_MARKETS.entries()) {
         const market = await createAndTrade(context, n + 1, demo, [mintA, sideOne[demo.taxedIn]]);
+        if (demo.newTaxesBps) await exerciseTaxAuthority(context, n + 1, demo, demo.newTaxesBps, market);
         await payOut(context, n + 1, demo, market);
     }
 
@@ -508,7 +547,13 @@ async function main() {
 type Context = { payer: KeyPairSigner; programId: Address; metadata: pipeline.StrategyMetadata };
 
 /** What a market's later steps need from its creation and trades. */
-type DemoRun = { view: pipeline.MarketView; spec: SpecMarket; recipients: Address[] };
+type DemoRun = {
+    view: pipeline.MarketView;
+    spec: SpecMarket;
+    sent: { buyTaxBps: number; sellTaxBps: number };
+    tradeAndCheck: (input: number, output: number, amount: bigint) => Promise<void>;
+    checkBooks: () => Promise<void>;
+};
 
 /** The SOL a market taxed in wrapped SOL takes from the payer: its seed, and its buys with Pipeline's fee. */
 function wrappedSolNeeded(demo: DemoMarket): bigint {
@@ -744,7 +789,12 @@ async function createAndTrade({ payer, programId, metadata }: Context, n: number
         swapCount: 0n,
     };
     const payerAccounts = await Promise.all([mintA, mintB].map((mint) => walletTokenAccount(payer.address, mint)));
-    for (const [input, output, amount] of demo.trades) {
+    /**
+     * Swaps `amount` of mint `input` for mint `output` through the router with the SDK,
+     * with its quote as the minimum, and stops unless the quote is the spec's price and the
+     * swap delivered it; then applies the swap to the spec's account of the market.
+     */
+    const tradeAndCheck = async (input: number, output: number, amount: bigint) => {
         const label = `${demo.label}: swap ${amount} ${names[input]} for ${names[output]}`;
         const trade = {
             mode: pipeline.TradeMode.ExactIn,
@@ -804,31 +854,123 @@ async function createAndTrade({ payer, programId, metadata }: Context, n: number
         }
         info(`${label}: received exactly the quote, Pipeline's fee ${event.pipelineFee}`);
         specSwap(spec, input, output, event.netSent);
-    }
+    };
+    for (const [input, output, amount] of demo.trades) await tradeAndCheck(input, output, amount);
     record.push([`${demo.label}: swaps`, 'both delivered their quotes, the spec\'s prices']);
 
     step(`${n}.9. ${demo.label}: reading the market state back against the spec's formulas`);
-    const { data: traded } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
-    const books = {
-        reserves: [traded.reserves, spec.reserves],
-        owed: [traded.owed, spec.owed],
-        taxCollected: [traded.taxCollected, spec.taxCollected],
-        volume: [traded.volume, spec.volume],
-        swapCount: [traded.swapCount, spec.swapCount],
+    /** Stops unless the market state's books equal the spec's account of the market. */
+    const checkBooks = async () => {
+        const { data: traded } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
+        const books = {
+            reserves: [traded.reserves, spec.reserves],
+            owed: [traded.owed, spec.owed],
+            taxCollected: [traded.taxCollected, spec.taxCollected],
+            volume: [traded.volume, spec.volume],
+            swapCount: [traded.swapCount, spec.swapCount],
+        };
+        for (const [key, [got, wanted]] of Object.entries(books)) {
+            if (show(got) !== show(wanted)) fail(`the market state's ${key} is ${show(got)}, but the spec's formulas give ${show(wanted)}`);
+            info(`${key.padEnd(14)} ${show(got)}`);
+        }
+        if (traded.virtualReserve !== sent.virtualReserve) fail('the virtual reserve changed');
+        info("reserves, owed amounts and counters equal the spec's formulas to the unit");
     };
-    for (const [key, [got, wanted]] of Object.entries(books)) {
-        if (show(got) !== show(wanted)) fail(`the market state's ${key} is ${show(got)}, but the spec's formulas give ${show(wanted)}`);
-        info(`${key.padEnd(14)} ${show(got)}`);
-    }
-    if (traded.virtualReserve !== sent.virtualReserve) fail('the virtual reserve changed');
-    info("reserves, owed amounts and counters equal the spec's formulas to the unit");
+    await checkBooks();
     record.push([`${demo.label}: market state after trading`, "equal to the spec's formulas"]);
-    return { view, spec, recipients };
+    return { view, spec, sent, tradeAndCheck, checkBooks };
 }
 
-/** Step 10 for one market: pay out every slot it uses through the metadata's `distribute`. */
-async function payOut({ payer, metadata }: Context, n: number, demo: DemoMarket, { view, spec, recipients }: DemoRun) {
-    step(`${n}.10. ${demo.label}: paying out every slot with the metadata's distribute action`);
+/** Steps 10 to 12 for a market that names new rates: its tax authority's three actions. */
+async function exerciseTaxAuthority(
+    { payer, metadata }: Context,
+    n: number,
+    demo: DemoMarket,
+    [newBuy, newSell]: readonly [number, number],
+    { view, spec, sent, tradeAndCheck, checkBooks }: DemoRun,
+) {
+    const marketState = view.marketState;
+    // The tax authority's actions, from the metadata, as Aviary's generic forms build them.
+    const actionNamed = (name: string) =>
+        metadata.actions?.find((action) => action.name === name) ?? fail(`metadata.json has no ${name} action`);
+    const authorityAction = async (name: string, actionArgs: Record<string, number | bigint | Address>) =>
+        pipeline.buildActionInstruction({ action: actionNamed(name), market: view, wallet: payer.address, args: actionArgs });
+    const recipientArgs = (recipients: readonly Address[], shares: readonly number[], burnShareBps: number) => {
+        const result: Record<string, number | Address> = { burn_share_bps: burnShareBps };
+        recipients.forEach((recipient, i) => (result[`recipient_${i}`] = recipient));
+        shares.forEach((share, i) => (result[`share_${i}`] = share));
+        return result;
+    };
+
+    step(`${n}.10. ${demo.label}: changing both rates through the metadata's set_taxes action, then trading at them`);
+    await send(`${demo.label}: set_taxes (buy ${newBuy}, sell ${newSell})`, payer, [
+        await authorityAction('set_taxes', { buy_tax_bps: newBuy, sell_tax_bps: newSell }),
+    ]);
+    const { data: retaxed } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
+    if (retaxed.buyTaxBps !== newBuy || retaxed.sellTaxBps !== newSell) {
+        fail(`the market state's rates are ${retaxed.buyTaxBps} and ${retaxed.sellTaxBps}, not ${newBuy} and ${newSell}`);
+    }
+    info(`buy tax ${sent.buyTaxBps} -> ${retaxed.buyTaxBps} bps, sell tax ${sent.sellTaxBps} -> ${retaxed.sellTaxBps} bps`);
+    spec.buyTaxBps = newBuy;
+    spec.sellTaxBps = newSell;
+    // The same trades again: each quote must be the spec's price at the new rates.
+    for (const [input, output, amount] of demo.trades) await tradeAndCheck(input, output, amount);
+    await checkBooks();
+    record.push([`${demo.label}: set_taxes`, `the next swaps were taxed at ${newBuy} and ${newSell} bps`]);
+
+    step(`${n}.11. ${demo.label}: changing a tax recipient through the metadata's set_recipients action`);
+    const { data: beforeHandover } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
+    const newRecipient = (await generateKeyPairSigner()).address;
+    const handedOver = [...beforeHandover.recipients];
+    const slot = 1;
+    handedOver[slot] = newRecipient;
+    await send(`${demo.label}: set_recipients`, payer, [
+        await authorityAction('set_recipients', recipientArgs(handedOver, beforeHandover.shares, beforeHandover.burnShareBps)),
+    ]);
+    const { data: afterHandover } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
+    if (afterHandover.recipients.join() !== handedOver.join()) {
+        fail(`the market state names recipients ${afterHandover.recipients.join(', ')}`);
+    }
+    if (beforeHandover.owed[slot] === 0n || show(afterHandover.owed) !== show(beforeHandover.owed)) {
+        fail(`slot ${slot} was owed ${beforeHandover.owed[slot]} and is now owed ${afterHandover.owed[slot]}`);
+    }
+    if (show(afterHandover.shares) !== show(beforeHandover.shares) || afterHandover.burnShareBps !== beforeHandover.burnShareBps) {
+        fail('the shares or the burn share changed');
+    }
+    info(`slot ${slot}: ${beforeHandover.recipients[slot]} -> ${afterHandover.recipients[slot]}`);
+    info(`slot ${slot} is still owed ${afterHandover.owed[slot]}, now the new wallet's; every owed amount unchanged ${show(afterHandover.owed)}`);
+    record.push([`${demo.label}: set_recipients`, `slot ${slot} names ${newRecipient}, still owed ${afterHandover.owed[slot]}`]);
+
+    step(`${n}.12. ${demo.label}: renouncing through the metadata's renounce_tax_authority action`);
+    await send(`${demo.label}: renounce_tax_authority`, payer, [await authorityAction('renounce_tax_authority', {})]);
+    const { data: renounced } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
+    if (!renounced.taxAuthorityRenounced || renounced.taxAuthority !== DEFAULT_ADDRESS) {
+        fail(`after renouncing, the market state's tax authority is ${renounced.taxAuthority} (renounced: ${renounced.taxAuthorityRenounced})`);
+    }
+    info('the market has no tax authority now, and is marked as renounced');
+    const refusals: [string, Instruction][] = [
+        ['set_taxes', await authorityAction('set_taxes', { buy_tax_bps: sent.buyTaxBps, sell_tax_bps: sent.sellTaxBps })],
+        [
+            'set_recipients',
+            await authorityAction('set_recipients', recipientArgs(beforeHandover.recipients, renounced.shares, renounced.burnShareBps)),
+        ],
+    ];
+    for (const [name, instruction] of refusals) {
+        const code = await simulatedErrorCode(payer, [instruction]);
+        if (code !== TAX_AMM_ERROR__ALREADY_RENOUNCED) {
+            fail(`${name} after renouncing: expected error ${TAX_AMM_ERROR__ALREADY_RENOUNCED} (AlreadyRenounced), got ${code ?? 'success'}`);
+        }
+        info(`${name}: refused with ${code}, "${getTaxAmmErrorMessage(code as TaxAmmError)}"`);
+    }
+    const { data: unchanged } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
+    if (show(unchanged) !== show(renounced)) fail('the market state changed after renouncing');
+    info('the market state is exactly as it was when the authority renounced');
+    record.push([`${demo.label}: renounce_tax_authority`, 'set_taxes and set_recipients refused afterwards']);
+}
+
+/** The last step for one market: pay out every slot it uses through the metadata's `distribute`. */
+async function payOut({ payer, metadata }: Context, n: number, demo: DemoMarket, { view, spec }: DemoRun) {
+    step(`${n}.${demo.newTaxesBps ? 13 : 10}. ${demo.label}: paying out every slot with the metadata's distribute action`);
     const action = metadata.actions?.find((candidate) => candidate.name === 'distribute') ?? fail('metadata.json has no distribute action');
     const taxMint = view.mints[TAX_SIDE]!;
     const { data: before } = await fetchTaxMarket(rpc, view.marketState, { commitment: 'confirmed' });
@@ -843,9 +985,6 @@ async function payOut({ payer, metadata }: Context, n: number, demo: DemoMarket,
         [BURN_SLOT, 'burn', DEFAULT_ADDRESS],
         [SUITE_SLOT, 'suite share', SUITE_TREASURY],
     ];
-    if (show(slots.slice(0, -2).map(([, , wallet]) => wallet)) !== show(recipients.filter((r) => r !== DEFAULT_ADDRESS))) {
-        fail('the market state names other tax recipients than those sent');
-    }
     for (const [slot, label, wallet] of slots) {
         const owed = before.owed[slot]!;
         const account = await walletTokenAccount(wallet, taxMint);
@@ -873,8 +1012,8 @@ async function payOut({ payer, metadata }: Context, n: number, demo: DemoMarket,
         const exists = (await accountData(account)) !== null;
         const received = exists ? (await tokenBalance(account)) - balance : 0n;
         if (received !== owed) fail(`${label} ${wallet} received ${received}, but was owed ${owed}`);
-        // The recipients other than the payer are fresh wallets: the payout made their account.
-        const fresh = recipients.indexOf(wallet) > 0;
+        // The tax recipients other than the payer are fresh wallets: the payout made their account.
+        const fresh = slot < BURN_SLOT && wallet !== payer.address;
         if (fresh && (existed || !exists)) fail(`${label} ${wallet} had a token account before, or has none now`);
         info(`${label}: ${wallet} received exactly the ${owed} owed${existed ? '' : ', in a token account created for it'}`);
         if (fresh) record.push([`${demo.label}: ${label}`, `had no token account and got one, ${account}`]);

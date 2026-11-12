@@ -58,6 +58,8 @@ Terms are as in `GLOSSARY.md`: lending AMM, buffer, lent side, lending market, c
 - Market creators never choose a reserve: a reserve in a lending market the creator owned could be reconfigured to let its owner borrow the LPs' deposits away.
 - The devnet rows come from [`deployments/kamino-devnet.json`](../../deployments/kamino-devnet.json), which also holds the lending market's authority and each reserve's liquidity supply, fee vault, collateral mint and collateral supply; the program's devnet constants must equal that file.
 - The constants are compiled into the program; changing one is a program upgrade, which ends when the program is frozen.
+- They live in one module, `programs/lending-amm/src/config.rs`, where each `LENT_MINTS` entry also names its reserve's lending market and collateral mint and its `MIN_REBALANCE`.
+  The cluster is chosen by the crate's `devnet` or `mainnet` feature, exactly one of them; `devnet` is the default, since devnet is the only cluster this project deploys to, and CI builds both ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78), 2026-11-12).
 
 ## Markets
 
@@ -89,7 +91,18 @@ Terms are as in `GLOSSARY.md`: lending AMM, buffer, lent side, lending market, c
 - The cToken account is a token account at `["ctoken", market_state]` for the reserve's collateral mint, owned by the vault authority; each market holds its own cTokens.
 - The LP mint is an SPL Token mint at `["lp_mint", market_state]`, with `LP_DECIMALS` decimals, the vault authority as mint authority and no freeze authority.
 - The lock account is the vault authority's associated token account for the LP mint; no instruction ever moves LP shares out of it.
+- An LP's shares account is a token account of the LP mint at `["lp_shares", market_state, lp]`, owned by the LP; `add_liquidity` mints the LP's shares into it and creates it, at the LP's expense, if it is missing.
+  It is a PDA rather than the LP's associated token account because metadata cannot describe the associated token account of a mint that is itself a PDA (a `pda:` source cannot sit inside an `ata:` one at `5ad130d`), and a generic desk could then not build `add_liquidity` ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78), 2026-11-12).
+  The shares are the LP's own tokens, free to move to any account.
 - Metadata describes all of them as `pda:` sources, so the SDK can resolve them before the market exists.
+
+### Market state
+
+The market state has its final layout from the first build ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78), 2026-11-12), because on 2026-11-08 an upgrade of another strategy on devnet stranded most of its markets when the new program could no longer read what older versions had written.
+
+- Anchor's discriminator, then a version byte (1), then fixed-size fields only, so each sits at a fixed offset: the bumps of the market state and the vault authority, `lent_index`, `lp_fee_bps`, withdraw mode, the two mints and vaults in the creator's order, the market signer, the LP mint, the cToken account, the reserve and its collateral mint, the seeder (the default key for a market created through the router), the recorded reserves by mint index (`R`, and the buffer `B` on the lent side), the recorded cTokens `c`, the running totals deposited into and redeemed from Kamino (u128), the creation slot and time, and 256 reserved bytes; 663 bytes in all.
+- No field ever moves, resizes or disappears; a new field takes reserved space, with a zeroed value meaning the old behaviour.
+- `programs/lending-amm/src/state.rs` publishes the offsets and `tests/layout.rs` pins every one.
 
 ### Creation parameters
 
@@ -167,6 +180,7 @@ For a trade from side `i` to side `o`, with effective reserves `E` (`R` for the 
 
 ### Accounts
 
+- Every swap needs the output vault and the vault authority, which signs the payout; `pipeline_resolve_accounts` lists both, in that order, and resolves in one round.
 - `pipeline_resolve_accounts` receives the trade, so it lists the Kamino redeem accounts (klend, lending market, lending market authority, reserve liquidity supply, reserve collateral mint, both token programs, the instructions sysvar) and marks the reserve writable only when the trade's quote needs a redeem.
 - Ordinary swaps then pass the reserve read-only, for valuation, and never write-lock Kamino's reserve, which every Kamino user of that mint shares.
 - A swap that needs a redeem but was built without those accounts, because the buffer shrank between quote and swap, fails cleanly with its own error, and the integrator resolves again.
@@ -232,7 +246,7 @@ The program has no switches of its own; it reads Kamino's state at each call.
 
 ### Adding
 
-`add_liquidity { max_other: u64, max_lent: u64, min_lp: u64 }`, signed by the LP:
+`add_liquidity { max_0: u64, max_1: u64, min_lp: u64 }`, signed by the LP, with the most it will add of each mint by mint index, as its accounts are ordered, so a form can show each amount with its own mint's decimals whichever side is lent ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78), 2026-11-12; below, `other` and `lent` are the two maximums by side):
 
 - The first deposit takes both amounts in full, both above 0, sets the price, and mints `isqrt(other x lent) - MINIMUM_LIQUIDITY` shares; it fails if that is not above 0.
 - Later deposits take both mints at the current ratio `R : L`, with the lent side valued at its total, mint `min(other x N / R, lent x N / L)` shares rounded down, and take only the amounts those shares are worth, rounded up.
@@ -285,6 +299,7 @@ Locked shares still count in `N` and still earn the LP fee and the yield, which 
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, description, category `amm`, tags including `lending` and `kamino`, links including `source` and the IDL, `init` as above with `market_state` as a `pda:` source, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256.
 - A `pda:` source lists its seeds in a fixed order and metadata arguments have no default values (the schema at `5ad130d`), so the `init` form takes the two mints as named inputs in the order of the market state's seeds, the other mint and then the lent mint, and that order makes `lent_index` 1; the form's label for `lent_index` says so, and Aviary's own form fills it in.
   A caller that builds `create_market` itself, and a launchpad seeding a market, may give the mints in either order.
+- The `init` form also takes the lent mint's collateral mint as a named input, because a market creates its cToken account at creation and metadata has no source for a value that depends on which mint is lent; the program refuses any collateral mint but the one `LENT_MINTS` names, and Aviary's form fills it in ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78), 2026-11-12).
 
 ## Aviary's panel
 
@@ -314,6 +329,7 @@ What `docs/spec/README.md` asks each product's file to add.
 ### Compute ceilings
 
 Asserted per instruction in test layer 5; the build ticket measures each one and may lower it, and raising one needs a written reason here.
+The tests measure each on plain SPL Token and Token-2022 mints and on a mint with Pipeline's `test-hook`; on 2026-11-12 the highest were `pipeline_init_market` 65k, `add_liquidity` 45k (a first deposit that creates the LP's shares account, with the hook), `pipeline_swap` 24k (paying out the hooked token), and `pipeline_quote` and `pipeline_resolve_accounts` 6k ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)).
 
 | Instruction | Ceiling (compute units) | Main cost |
 | --- | --- | --- |

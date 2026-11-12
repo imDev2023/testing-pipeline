@@ -69,16 +69,25 @@ export const TAX_AMM_ERROR__ZERO_SEED = 0x1788; // 6024
 export const TAX_AMM_ERROR__ZERO_OUTPUT = 0x1789; // 6025
 /** InsufficientLiquidity: The trade would pay out more than the market's real reserve */
 export const TAX_AMM_ERROR__INSUFFICIENT_LIQUIDITY = 0x178a; // 6026
+/** NoTaxAuthority: The market has no tax authority, so its taxes and recipients never change */
+export const TAX_AMM_ERROR__NO_TAX_AUTHORITY = 0x178b; // 6027
+/** AlreadyRenounced: The tax authority renounced, so the market's taxes and recipients never change again */
+export const TAX_AMM_ERROR__ALREADY_RENOUNCED = 0x178c; // 6028
+/** NotTaxAuthority: Only the market's tax authority can change its taxes and recipients */
+export const TAX_AMM_ERROR__NOT_TAX_AUTHORITY = 0x178d; // 6029
+/** OwedSlotLeftEmpty: A recipient slot still owed tax can't be emptied; pay it out or name another wallet */
+export const TAX_AMM_ERROR__OWED_SLOT_LEFT_EMPTY = 0x178e; // 6030
 /** NoSuchSlot: No such tax slot: slots are 0 to 3 for the tax recipients, 4 for the burn, 5 for the suite share */
-export const TAX_AMM_ERROR__NO_SUCH_SLOT = 0x178b; // 6027
+export const TAX_AMM_ERROR__NO_SUCH_SLOT = 0x178f; // 6031
 /** UnusedSlot: The tax recipient slot is unused: it has no wallet to pay */
-export const TAX_AMM_ERROR__UNUSED_SLOT = 0x178c; // 6028
+export const TAX_AMM_ERROR__UNUSED_SLOT = 0x1790; // 6032
 /** NotSlotWallet: The wallet is not the tax slot's */
-export const TAX_AMM_ERROR__NOT_SLOT_WALLET = 0x178d; // 6029
+export const TAX_AMM_ERROR__NOT_SLOT_WALLET = 0x1791; // 6033
 /** NotSlotTokenAccount: The token account is not the associated token account the slot's wallet owns for the tax-side mint */
-export const TAX_AMM_ERROR__NOT_SLOT_TOKEN_ACCOUNT = 0x178e; // 6030
+export const TAX_AMM_ERROR__NOT_SLOT_TOKEN_ACCOUNT = 0x1792; // 6034
 
 export type TaxAmmError =
+  | typeof TAX_AMM_ERROR__ALREADY_RENOUNCED
   | typeof TAX_AMM_ERROR__ALREADY_SEEDED
   | typeof TAX_AMM_ERROR__BAD_INIT_DATA
   | typeof TAX_AMM_ERROR__BAD_TAX_SIDE
@@ -93,11 +102,14 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__NO_SEEDER
   | typeof TAX_AMM_ERROR__NO_SUCH_SLOT
   | typeof TAX_AMM_ERROR__NOT_A_MINT
+  | typeof TAX_AMM_ERROR__NO_TAX_AUTHORITY
   | typeof TAX_AMM_ERROR__NOT_PIPELINE
   | typeof TAX_AMM_ERROR__NOT_SEEDER
   | typeof TAX_AMM_ERROR__NOT_SLOT_TOKEN_ACCOUNT
   | typeof TAX_AMM_ERROR__NOT_SLOT_WALLET
+  | typeof TAX_AMM_ERROR__NOT_TAX_AUTHORITY
   | typeof TAX_AMM_ERROR__OVERFLOW
+  | typeof TAX_AMM_ERROR__OWED_SLOT_LEFT_EMPTY
   | typeof TAX_AMM_ERROR__RANGE_INVERTED
   | typeof TAX_AMM_ERROR__RATE_OUTSIDE_RANGE
   | typeof TAX_AMM_ERROR__RECIPIENTS_OUT_OF_ORDER
@@ -114,6 +126,7 @@ export type TaxAmmError =
 let taxAmmErrorMessages: Record<TaxAmmError, string> | undefined;
 if (process.env["NODE_ENV"] !== "production") {
   taxAmmErrorMessages = {
+    [TAX_AMM_ERROR__ALREADY_RENOUNCED]: `The tax authority renounced, so the market's taxes and recipients never change again`,
     [TAX_AMM_ERROR__ALREADY_SEEDED]: `The market has already been seeded`,
     [TAX_AMM_ERROR__BAD_INIT_DATA]: `Init data is not valid creation parameters`,
     [TAX_AMM_ERROR__BAD_TAX_SIDE]: `The tax side must be 0 or 1`,
@@ -128,11 +141,14 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__NO_SEEDER]: `The seeder must not be the default key`,
     [TAX_AMM_ERROR__NO_SUCH_SLOT]: `No such tax slot: slots are 0 to 3 for the tax recipients, 4 for the burn, 5 for the suite share`,
     [TAX_AMM_ERROR__NOT_A_MINT]: `A market's mints must be SPL Token or Token-2022 mints`,
+    [TAX_AMM_ERROR__NO_TAX_AUTHORITY]: `The market has no tax authority, so its taxes and recipients never change`,
     [TAX_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
     [TAX_AMM_ERROR__NOT_SEEDER]: `Only the market's seeder can seed it`,
     [TAX_AMM_ERROR__NOT_SLOT_TOKEN_ACCOUNT]: `The token account is not the associated token account the slot's wallet owns for the tax-side mint`,
     [TAX_AMM_ERROR__NOT_SLOT_WALLET]: `The wallet is not the tax slot's`,
+    [TAX_AMM_ERROR__NOT_TAX_AUTHORITY]: `Only the market's tax authority can change its taxes and recipients`,
     [TAX_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
+    [TAX_AMM_ERROR__OWED_SLOT_LEFT_EMPTY]: `A recipient slot still owed tax can't be emptied; pay it out or name another wallet`,
     [TAX_AMM_ERROR__RANGE_INVERTED]: `A tax range's minimum is above its maximum`,
     [TAX_AMM_ERROR__RATE_OUTSIDE_RANGE]: `A tax rate is outside its range`,
     [TAX_AMM_ERROR__RECIPIENTS_OUT_OF_ORDER]: `Used recipient slots come first, unused slots after them`,

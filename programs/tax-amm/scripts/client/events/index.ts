@@ -8,4 +8,7 @@
 
 export * from "./distributed.ts";
 export * from "./marketCreated.ts";
+export * from "./recipientsChanged.ts";
 export * from "./seeded.ts";
+export * from "./taxAuthorityRenounced.ts";
+export * from "./taxesChanged.ts";

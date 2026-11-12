@@ -14,11 +14,15 @@
 //! | `pipeline_swap`             | the router, from `swap`          | settles a trade, booking its tax      |
 //! | `seed`                      | the market's seeder, directly    | funds the market once and opens it    |
 //! | `distribute`                | anyone, directly                 | pays out what one tax slot is owed    |
+//! | `set_taxes`                 | the tax authority, directly      | moves the rates inside their ranges   |
+//! | `set_recipients`            | the tax authority, directly      | changes the recipients and the burn   |
+//! | `renounce_tax_authority`    | the tax authority, directly      | gives up its powers for good          |
 //!
 //! A market is created through the router and opens with its seed, usually in the same
 //! transaction; until then every quote and swap is refused. From then on its liquidity is
 //! locked for good, and every trade's tax is booked as owed to its slots in the tax-side
-//! vault.
+//! vault. Its optional tax authority may move the rates inside the ranges fixed at
+//! creation, change the tax recipients, and renounce; nobody else can change a market.
 //!
 //! Where things live: the build-time policy values in [`config`], the creation parameters
 //! and their rules in [`params`], the market state and its fixed layout in [`state`], the
@@ -100,6 +104,33 @@ pub mod tax_amm {
     /// Remaining accounts are the tax-side mint's transfer-hook accounts.
     pub fn distribute<'info>(ctx: Context<'info, Distribute<'info>>, slot: u8) -> Result<()> {
         instructions::distribute_slot(ctx, slot)
+    }
+
+    /// Custom action: the tax authority moves the buy and sell tax, each inside the range
+    /// fixed at creation. The next swap pays the new rates.
+    pub fn set_taxes(
+        ctx: Context<TaxAuthorityAction>,
+        buy_tax_bps: u16,
+        sell_tax_bps: u16,
+    ) -> Result<()> {
+        instructions::change_taxes(ctx, buy_tax_bps, sell_tax_bps)
+    }
+
+    /// Custom action: the tax authority replaces the tax recipients, their shares and the
+    /// burn share, under the rules of creation. What each slot is owed stays with the slot.
+    pub fn set_recipients(
+        ctx: Context<TaxAuthorityAction>,
+        recipients: [Pubkey; config::MAX_RECIPIENTS],
+        shares: [u16; config::MAX_RECIPIENTS],
+        burn_share_bps: u16,
+    ) -> Result<()> {
+        instructions::change_recipients(ctx, recipients, shares, burn_share_bps)
+    }
+
+    /// Custom action: the tax authority renounces, after which the market's taxes and
+    /// recipients never change again.
+    pub fn renounce_tax_authority(ctx: Context<TaxAuthorityAction>) -> Result<()> {
+        instructions::renounce(ctx)
     }
 }
 

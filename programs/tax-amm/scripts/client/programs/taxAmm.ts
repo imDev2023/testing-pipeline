@@ -47,14 +47,20 @@ import {
   getPipelineQuoteInstruction,
   getPipelineResolveAccountsInstruction,
   getPipelineSwapInstruction,
+  getRenounceTaxAuthorityInstruction,
   getSeedInstruction,
+  getSetRecipientsInstruction,
+  getSetTaxesInstruction,
   parseDistributeInstruction,
   parsePipelineInitMarketInstruction,
   parsePipelineMarketInfoInstruction,
   parsePipelineQuoteInstruction,
   parsePipelineResolveAccountsInstruction,
   parsePipelineSwapInstruction,
+  parseRenounceTaxAuthorityInstruction,
   parseSeedInstruction,
+  parseSetRecipientsInstruction,
+  parseSetTaxesInstruction,
   type DistributeInput,
   type ParsedDistributeInstruction,
   type ParsedPipelineInitMarketInstruction,
@@ -62,13 +68,19 @@ import {
   type ParsedPipelineQuoteInstruction,
   type ParsedPipelineResolveAccountsInstruction,
   type ParsedPipelineSwapInstruction,
+  type ParsedRenounceTaxAuthorityInstruction,
   type ParsedSeedInstruction,
+  type ParsedSetRecipientsInstruction,
+  type ParsedSetTaxesInstruction,
   type PipelineInitMarketAsyncInput,
   type PipelineMarketInfoInput,
   type PipelineQuoteInput,
   type PipelineResolveAccountsInput,
   type PipelineSwapInput,
+  type RenounceTaxAuthorityInput,
   type SeedInput,
+  type SetRecipientsInput,
+  type SetTaxesInput,
 } from "../instructions/index.ts";
 import {
   findAuthorityPda,
@@ -110,10 +122,16 @@ export function identifyTaxAmmAccount(
 export const TaxAmmEvent = {
   0: "Distributed",
   1: "MarketCreated",
-  2: "Seeded",
+  2: "RecipientsChanged",
+  3: "Seeded",
+  4: "TaxAuthorityRenounced",
+  5: "TaxesChanged",
   Distributed: 0,
   MarketCreated: 1,
-  Seeded: 2,
+  RecipientsChanged: 2,
+  Seeded: 3,
+  TaxAuthorityRenounced: 4,
+  TaxesChanged: 5,
 } as const;
 
 export type TaxAmmEvent = (typeof TaxAmmEvent)[Exclude<
@@ -151,12 +169,45 @@ export function identifyTaxAmmEvent(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([215, 155, 152, 43, 202, 57, 245, 7]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmEvent.RecipientsChanged;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
         new Uint8Array([95, 55, 75, 113, 178, 157, 251, 224]),
       ),
       0,
     )
   ) {
     return TaxAmmEvent.Seeded;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([208, 127, 220, 168, 80, 164, 208, 100]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmEvent.TaxAuthorityRenounced;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([127, 34, 114, 126, 1, 90, 131, 58]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmEvent.TaxesChanged;
   }
   throw new Error(
     "The provided event could not be identified as a taxAmm event.",
@@ -170,14 +221,20 @@ export const TaxAmmInstruction = {
   3: "PipelineQuote",
   4: "PipelineResolveAccounts",
   5: "PipelineSwap",
-  6: "Seed",
+  6: "RenounceTaxAuthority",
+  7: "Seed",
+  8: "SetRecipients",
+  9: "SetTaxes",
   Distribute: 0,
   PipelineInitMarket: 1,
   PipelineMarketInfo: 2,
   PipelineQuote: 3,
   PipelineResolveAccounts: 4,
   PipelineSwap: 5,
-  Seed: 6,
+  RenounceTaxAuthority: 6,
+  Seed: 7,
+  SetRecipients: 8,
+  SetTaxes: 9,
 } as const;
 
 export type TaxAmmInstruction = (typeof TaxAmmInstruction)[Exclude<
@@ -259,12 +316,45 @@ export function identifyTaxAmmInstruction(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([46, 141, 56, 157, 134, 91, 105, 75]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmInstruction.RenounceTaxAuthority;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
         new Uint8Array([255, 178, 140, 239, 113, 22, 214, 231]),
       ),
       0,
     )
   ) {
     return TaxAmmInstruction.Seed;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([232, 87, 98, 47, 60, 65, 199, 169]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmInstruction.SetRecipients;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([86, 41, 237, 64, 40, 120, 61, 194]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmInstruction.SetTaxes;
   }
   throw new SolanaError(
     SOLANA_ERROR__PROGRAM_CLIENTS__FAILED_TO_IDENTIFY_INSTRUCTION,
@@ -294,8 +384,17 @@ export type ParsedTaxAmmInstruction<
       instructionType: typeof TaxAmmInstruction.PipelineSwap;
     } & ParsedPipelineSwapInstruction<TProgram>)
   | ({
+      instructionType: typeof TaxAmmInstruction.RenounceTaxAuthority;
+    } & ParsedRenounceTaxAuthorityInstruction<TProgram>)
+  | ({
       instructionType: typeof TaxAmmInstruction.Seed;
-    } & ParsedSeedInstruction<TProgram>);
+    } & ParsedSeedInstruction<TProgram>)
+  | ({
+      instructionType: typeof TaxAmmInstruction.SetRecipients;
+    } & ParsedSetRecipientsInstruction<TProgram>)
+  | ({
+      instructionType: typeof TaxAmmInstruction.SetTaxes;
+    } & ParsedSetTaxesInstruction<TProgram>);
 
 export function parseTaxAmmInstruction<TProgram extends string>(
   instruction: Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array>,
@@ -344,11 +443,32 @@ export function parseTaxAmmInstruction<TProgram extends string>(
         ...parsePipelineSwapInstruction(instruction),
       };
     }
+    case TaxAmmInstruction.RenounceTaxAuthority: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: TaxAmmInstruction.RenounceTaxAuthority,
+        ...parseRenounceTaxAuthorityInstruction(instruction),
+      };
+    }
     case TaxAmmInstruction.Seed: {
       assertIsInstructionWithAccounts(instruction);
       return {
         instructionType: TaxAmmInstruction.Seed,
         ...parseSeedInstruction(instruction),
+      };
+    }
+    case TaxAmmInstruction.SetRecipients: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: TaxAmmInstruction.SetRecipients,
+        ...parseSetRecipientsInstruction(instruction),
+      };
+    }
+    case TaxAmmInstruction.SetTaxes: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: TaxAmmInstruction.SetTaxes,
+        ...parseSetTaxesInstruction(instruction),
       };
     }
     default:
@@ -402,10 +522,24 @@ export type TaxAmmPluginInstructions = {
     input: PipelineSwapInput,
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getPipelineSwapInstruction> & SelfPlanAndSendFunctions;
+  renounceTaxAuthority: (
+    input: RenounceTaxAuthorityInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getRenounceTaxAuthorityInstruction> &
+    SelfPlanAndSendFunctions;
   seed: (
     input: SeedInput,
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getSeedInstruction> & SelfPlanAndSendFunctions;
+  setRecipients: (
+    input: SetRecipientsInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getSetRecipientsInstruction> &
+    SelfPlanAndSendFunctions;
+  setTaxes: (
+    input: SetTaxesInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getSetTaxesInstruction> & SelfPlanAndSendFunctions;
 };
 
 export type TaxAmmPluginPdas = {
@@ -487,10 +621,34 @@ export function taxAmmProgram(
                   instructionConfig?.programAddress ?? config.programAddress,
               }),
             ),
+          renounceTaxAuthority: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getRenounceTaxAuthorityInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
           seed: (input, instructionConfig) =>
             addSelfPlanAndSendFunctions(
               client,
               getSeedInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          setRecipients: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getSetRecipientsInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          setTaxes: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getSetTaxesInstruction(input, {
                 programAddress:
                   instructionConfig?.programAddress ?? config.programAddress,
               }),

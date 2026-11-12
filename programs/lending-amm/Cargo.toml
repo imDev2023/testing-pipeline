@@ -1,0 +1,57 @@
+[package]
+name = "lending-amm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A Pipeline strategy whose markets lend one side to Kamino Lend and trade from their own vaults"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "lending_amm"
+
+[features]
+# The cluster whose lent mints and Kamino reserves the program is built for
+# (src/config.rs, `LENT_MINTS`): exactly one of `devnet` and `mainnet`. The default is
+# devnet, the only cluster this project deploys to; the mainnet build is
+# `--no-default-features --features mainnet`, and CI builds both.
+default = ["devnet"]
+devnet = []
+mainnet = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+custom-heap = []
+custom-panic = []
+anchor-debug = []
+no-log-ix-name = []
+
+[dependencies]
+anchor-lang.workspace = true
+anchor-spl.workspace = true
+mint-rules.workspace = true
+pipeline-strategy-interface.workspace = true
+solana-security-txt.workspace = true
+
+# Anchor's macros check `target_os = "solana"`, which host builds don't know about, and
+# Kani sets `kani`; `kani_full` turns on the full-domain proofs, as in Pipeline.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))', 'cfg(kani)', 'cfg(kani_full)'] }
+
+# For the tests in `tests/` and the unit tests only. `cargo build-sbf` never builds these.
+[dev-dependencies]
+base64.workspace = true
+borsh.workspace = true
+litesvm.workspace = true
+pipeline-check.workspace = true
+pipeline-client.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+solana-account.workspace = true
+solana-clock.workspace = true
+solana-keypair.workspace = true
+solana-signer.workspace = true
+solana-transaction.workspace = true
+spl-token-2022-interface.workspace = true
+toml.workspace = true

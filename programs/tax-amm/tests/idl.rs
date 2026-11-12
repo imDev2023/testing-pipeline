@@ -10,7 +10,9 @@ use anchor_lang::Discriminator;
 use common::*;
 use pipeline_client::interface::discriminator;
 use serde_json::Value;
-use tax_amm::events::{Distributed, MarketCreated, Seeded};
+use tax_amm::events::{
+    Distributed, MarketCreated, RecipientsChanged, Seeded, TaxAuthorityRenounced, TaxesChanged,
+};
 use tax_amm::state::layout;
 use tax_amm::TaxMarket;
 
@@ -88,6 +90,24 @@ fn its_instructions_are_pipelines_with_pipelines_discriminators_and_its_actions(
         (
             "distribute",
             tax_amm::instruction::Distribute::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
+            "set_taxes",
+            tax_amm::instruction::SetTaxes::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
+            "set_recipients",
+            tax_amm::instruction::SetRecipients::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
+            "renounce_tax_authority",
+            tax_amm::instruction::RenounceTaxAuthority::DISCRIMINATOR
                 .try_into()
                 .unwrap(),
         ),
@@ -238,11 +258,20 @@ fn its_events_and_errors_are_the_programs() {
         .collect();
     assert_eq!(
         events,
-        // In the IDL's own order, by name.
         [
+            // In the IDL's order, by name.
             ("Distributed", Distributed::DISCRIMINATOR.to_vec()),
             ("MarketCreated", MarketCreated::DISCRIMINATOR.to_vec()),
+            (
+                "RecipientsChanged",
+                RecipientsChanged::DISCRIMINATOR.to_vec()
+            ),
             ("Seeded", Seeded::DISCRIMINATOR.to_vec()),
+            (
+                "TaxAuthorityRenounced",
+                TaxAuthorityRenounced::DISCRIMINATOR.to_vec()
+            ),
+            ("TaxesChanged", TaxesChanged::DISCRIMINATOR.to_vec()),
         ]
     );
 
@@ -306,10 +335,19 @@ fn its_actions_accounts_and_args_are_the_metadatas() {
                 .map(|a| a["name"].as_str().unwrap().to_string())
                 .collect()
         };
-        assert_eq!(
-            arg_names(&action["args"]),
-            arg_names(&instruction["args"]),
-            "{name}"
-        );
+        // Metadata arguments have no arrays, so an action with an array argument flattens
+        // it (`set_recipients`), and tests/metadata.rs checks its encoding instead.
+        let has_array = instruction["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["type"].get("array").is_some());
+        if !has_array {
+            assert_eq!(
+                arg_names(&action["args"]),
+                arg_names(&instruction["args"]),
+                "{name}"
+            );
+        }
     }
 }
