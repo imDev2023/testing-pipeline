@@ -2727,6 +2727,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: seed a market and trade it with buy and sell tax](https://github.com/imDev2023/testing-pipeline/issues/60)
 
+### TAX-38: What renouncing leaves in the market state
+
+- Question: What does the market state hold once its tax authority renounces?
+- Answer: The default key as its tax authority, as on a market created without one, and its renounced flag set, so Aviary can tell the two apart while both refuse every action for good.
+- Alternatives: Keeping the former authority's key beside the flag, which would leave a key in the field that can no longer act.
+- Specified in: [`docs/spec/tax-amm.md`, Tax authority](spec/tax-amm.md#tax-authority)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
+
+### TAX-39: Emptying a recipient slot that is still owed
+
+- Question: May `set_recipients` empty a recipient slot that is still owed tax?
+- Answer: No: it refuses with `OwedSlotLeftEmpty`, so every owed amount always has a wallet or the burn to go to; the slot can be handed to another wallet instead, or paid out first, and the burn share may still drop to 0 since the burn needs no wallet.
+- Alternatives: Allowing it, which would strand the owed amount in the vault for good once the authority renounced; moving the owed amount to another slot, which would make `set_recipients` change owed amounts, which none of the tax authority's actions does.
+- Specified in: [`docs/spec/tax-amm.md`, Tax authority](spec/tax-amm.md#tax-authority)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
+
+### TAX-40: How a refused tax authority action is reported
+
+- Question: How does the program say why it refused `set_taxes`, `set_recipients` or `renounce_tax_authority`?
+- Answer: With `AlreadyRenounced` on a market whose authority renounced, `NoTaxAuthority` on one created without an authority and `NotTaxAuthority` for any other signer, checked in that order, then the same error as creation for a rate or split creation would refuse.
+- Alternatives: One error for any signer who is not the tax authority.
+- Specified in: [`docs/spec/tax-amm.md`, Tax authority](spec/tax-amm.md#tax-authority)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
