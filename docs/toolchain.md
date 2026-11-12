@@ -165,6 +165,8 @@ Until this repo's `main` has the metadata, step 2 warns that the published copy 
 `scripts/github-settings.sh` makes it required, through a repository ruleset that admins may bypass (so a history rewrite can still be force-pushed), and switches on private vulnerability reporting, which every program's `security.txt` names as its contact.
 Both settings need the repository public on GitHub Free, so the owner runs `bash scripts/github-settings.sh` once it is.
 
+The first run, on [the PR that added CI](https://github.com/imDev2023/testing-pipeline/pull/102) on 2026-11-12, took 9 minutes from cold caches: `rust` 9 minutes (2 minutes 13 seconds of it compiling cargo-build-sbf, then the SBF build in 44 seconds, clippy in 64 seconds and the test build in 49 seconds), `kani` 3 minutes with Kani's install, `typescript` 28 seconds, and `changes`, `no keypairs` and `gate` a few seconds each.
+
 ### Review skills
 
 Stronghold of Security and Book of Knowledge, from MetalLegBob's MIT-licensed [Solana Vibes Kit](https://github.com/MetalLegBob/solana-vibes-kit), are in `.claude/skills/` (commands `/SOS:*` and `/BOK:*` in `.claude/commands/`) at commit `969c43d`, the newest on 2026-11-10.
@@ -330,4 +332,5 @@ Two things to know:
 - **Downloads from GitHub are flaky on this network**: `gh` calls hit TLS timeouts and connection resets; retry.
 - **`Invalid syscall code 131074`.**
   `cargo build-sbf` 4.6.0 on platform tools v1.57 prints `WARN cargo_build_sbf::post_processing] Invalid syscall code 131074` for every Anchor program built here, Pipeline's own `test-strategy-cp` included (its native `test-hook` does not print it).
+  CI's Linux build on platform tools v1.58 does not print it, so it belongs to v1.57, which only the owner's Intel Mac uses.
   The programs load and run in LiteSVM and on the local validator, through devnet's router, so it is noise from the toolchain, not a fault of a program.
