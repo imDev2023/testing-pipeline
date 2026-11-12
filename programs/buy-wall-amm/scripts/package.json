@@ -1,0 +1,28 @@
+{
+    "name": "buy-wall-amm-scripts",
+    "private": true,
+    "type": "module",
+    "description": "The buy wall AMM's demo, which registers the strategy on a Pipeline router, then creates and seeds a market from its metadata in one transaction, and its generated TypeScript client",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "scripts": {
+        "demo": "node demo.ts",
+        "idl": "bash build-idl.sh",
+        "client": "node codama.ts",
+        "typecheck": "node codama.ts --check && tsc --noEmit"
+    },
+    "dependencies": {
+        "@pipeline-placeholder/sdk": "link:../../../fixtures/pipeline/sdk/ts",
+        "@solana-program/system": "0.16.0",
+        "@solana-program/token": "0.18.0",
+        "@solana/kit": "8.6.0"
+    },
+    "devDependencies": {
+        "@codama/nodes-from-anchor": "1.5.6",
+        "@codama/renderers-js": "2.8.0",
+        "@types/node": "24.19.2",
+        "codama": "1.11.0",
+        "typescript": "7.0.2"
+    }
+}

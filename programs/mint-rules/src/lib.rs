@@ -84,7 +84,7 @@ pub fn check_mint(owner: &[u8; 32], data: &[u8]) -> Result<(), MintRefusal> {
     } else {
         return Err(MintRefusal::NotATokenProgram);
     };
-    if data.len() < MINT_LEN || data[IS_INITIALIZED] != 1 {
+    if data.len() < MINT_LEN || data.get(IS_INITIALIZED) != Some(&1) {
         return Err(MintRefusal::NotAMint);
     }
     if data.len() == MINT_LEN {
@@ -94,34 +94,35 @@ pub fn check_mint(owner: &[u8; 32], data: &[u8]) -> Result<(), MintRefusal> {
     if !token_2022 || data.len() == MULTISIG_LEN || data.len() <= ACCOUNT_LEN {
         return Err(MintRefusal::NotAMint);
     }
-    if data[MINT_LEN..ACCOUNT_LEN].iter().any(|&b| b != 0) || data[ACCOUNT_LEN] != ACCOUNT_TYPE_MINT
-    {
+    let padding = data
+        .get(MINT_LEN..ACCOUNT_LEN)
+        .ok_or(MintRefusal::NotAMint)?;
+    if padding.iter().any(|&b| b != 0) || data.get(ACCOUNT_LEN) != Some(&ACCOUNT_TYPE_MINT) {
         return Err(MintRefusal::NotAMint);
     }
-    check_extensions(&data[ACCOUNT_LEN + 1..])
+    check_extensions(data.get(ACCOUNT_LEN + 1..).ok_or(MintRefusal::NotAMint)?)
 }
 
 /// Walks the type-length-value entries as Token-2022 does: an `Uninitialized` type, or too
 /// few bytes left for a type, ends the list; an entry whose length runs past the account
 /// is malformed.
 fn check_extensions(mut entries: &[u8]) -> Result<(), MintRefusal> {
-    while entries.len() >= 2 {
-        let extension_type = u16::from_le_bytes([entries[0], entries[1]]);
+    while let Some(&[low, high]) = entries.get(0..2) {
+        let extension_type = u16::from_le_bytes([low, high]);
         if extension_type == UNINITIALIZED {
             return Ok(());
         }
         let len = match entries.get(2..4) {
-            Some(len) => u16::from_le_bytes([len[0], len[1]]) as usize,
-            None => return Err(MintRefusal::NotAMint),
+            Some(&[low, high]) => u16::from_le_bytes([low, high]) as usize,
+            _ => return Err(MintRefusal::NotAMint),
         };
         let rest = entries.get(4..).unwrap_or(&[]);
-        if len > rest.len() {
-            return Err(MintRefusal::NotAMint);
-        }
+        // An entry whose length runs past the account is malformed.
+        let after = rest.get(len..).ok_or(MintRefusal::NotAMint)?;
         if !ALLOWED_MINT_EXTENSIONS.contains(&extension_type) {
             return Err(MintRefusal::ExtensionNotAllowed(extension_type));
         }
-        entries = &rest[len..];
+        entries = after;
     }
     Ok(())
 }

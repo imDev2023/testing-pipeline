@@ -1,0 +1,1531 @@
+{
+  "address": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+  "metadata": {
+    "name": "buy_wall_amm",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "A Pipeline strategy whose markets own their liquidity: a token against wrapped SOL on a constant-product curve with an inventory cap and a buy wall below the price, a port of IMD's Pool4 design",
+    "repository": "https://github.com/imDev2023/testing-pipeline"
+  },
+  "instructions": [
+    {
+      "name": "pipeline_init_market",
+      "docs": [
+        "Creates a market. `data` is the Borsh encoding of [`InitParams`]."
+      ],
+      "discriminator": [
+        178,
+        5,
+        160,
+        22,
+        249,
+        172,
+        13,
+        224
+      ],
+      "accounts": [
+        {
+          "name": "market_signer",
+          "docs": [
+            "The router's market PDA for this market state; checked in the handler."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "docs": [
+            "A fresh keypair the creator signs with (`init.market_state` is `new_keypair`)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "A router PDA holding the SOL the creator allowed for setup. Rent comes from it; the",
+            "router returns what is left to the creator."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_mint",
+          "docs": [
+            "The token, index 0. Its extensions are checked against the allowlist before the",
+            "vaults are created."
+          ]
+        },
+        {
+          "name": "wsol_mint",
+          "docs": [
+            "Wrapped SOL, index 1."
+          ],
+          "address": "So11111111111111111111111111111111111111112"
+        },
+        {
+          "name": "vault_authority",
+          "docs": [
+            "transfer and burn out of them; it holds nothing itself."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_vault",
+          "docs": [
+            "handler once the parameters and the mint rules have been checked (`vaults.rs`)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sol_vault",
+          "docs": [
+            "token vault."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "wsol_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "The token's program, SPL Token or Token-2022."
+          ]
+        },
+        {
+          "name": "sol_token_program",
+          "docs": [
+            "SPL Token, wrapped SOL's program."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "data",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "pipeline_market_info",
+      "docs": [
+        "Reports the market's mints (the token at index 0, wrapped SOL at index 1), its",
+        "vaults and that it does not support exact-out."
+      ],
+      "discriminator": [
+        180,
+        137,
+        108,
+        173,
+        216,
+        7,
+        77,
+        97
+      ],
+      "accounts": [
+        {
+          "name": "market_state"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "pipeline_quote",
+      "docs": [
+        "Prices a trade without changing anything; refuses every request in this build."
+      ],
+      "discriminator": [
+        134,
+        139,
+        91,
+        59,
+        182,
+        37,
+        152,
+        218
+      ],
+      "accounts": [
+        {
+          "name": "market_signer"
+        },
+        {
+          "name": "market_state"
+        },
+        {
+          "name": "trader"
+        },
+        {
+          "name": "trader_input"
+        },
+        {
+          "name": "trader_output"
+        },
+        {
+          "name": "input_vault"
+        },
+        {
+          "name": "input_mint"
+        },
+        {
+          "name": "output_mint"
+        },
+        {
+          "name": "input_token_program"
+        },
+        {
+          "name": "output_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "TradeRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pipeline_resolve_accounts",
+      "docs": [
+        "Lists the accounts a swap needs after the router's ten: the output vault."
+      ],
+      "discriminator": [
+        12,
+        225,
+        237,
+        111,
+        47,
+        123,
+        6,
+        62
+      ],
+      "accounts": [
+        {
+          "name": "market_signer"
+        },
+        {
+          "name": "market_state"
+        },
+        {
+          "name": "trader"
+        },
+        {
+          "name": "trader_input"
+        },
+        {
+          "name": "trader_output"
+        },
+        {
+          "name": "input_vault"
+        },
+        {
+          "name": "input_mint"
+        },
+        {
+          "name": "output_mint"
+        },
+        {
+          "name": "input_token_program"
+        },
+        {
+          "name": "output_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "ResolveRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pipeline_swap",
+      "docs": [
+        "Settles a trade the router sends; refuses every request in this build."
+      ],
+      "discriminator": [
+        161,
+        235,
+        193,
+        107,
+        155,
+        234,
+        162,
+        140
+      ],
+      "accounts": [
+        {
+          "name": "market_signer",
+          "docs": [
+            "The router's market PDA; compared with the stored market signer."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "trader"
+        },
+        {
+          "name": "trader_input",
+          "writable": true
+        },
+        {
+          "name": "trader_output",
+          "writable": true
+        },
+        {
+          "name": "input_vault",
+          "writable": true
+        },
+        {
+          "name": "input_mint"
+        },
+        {
+          "name": "output_mint"
+        },
+        {
+          "name": "input_token_program"
+        },
+        {
+          "name": "output_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "SwapRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "seed",
+      "docs": [
+        "Custom action: seeds and opens a market, signed by its seeder, once. Remaining",
+        "accounts are the token's transfer-hook accounts."
+      ],
+      "discriminator": [
+        255,
+        178,
+        140,
+        239,
+        113,
+        22,
+        214,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "seeder",
+          "docs": [
+            "The market's stored seeder; checked in the handler."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "seeder_token",
+          "docs": [
+            "The seeder's own token account (owned by the seeder, not merely delegated to them)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "seeder_sol",
+          "docs": [
+            "The seeder's own wrapped SOL account."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "sol_vault",
+          "writable": true
+        },
+        {
+          "name": "token_mint"
+        },
+        {
+          "name": "wsol_mint"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "sol_token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "token_amount",
+          "type": "u64"
+        },
+        {
+          "name": "sol_amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "MarketState",
+      "discriminator": [
+        66,
+        87,
+        77,
+        65,
+        82,
+        75,
+        69,
+        84
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "MarketCreated",
+      "discriminator": [
+        88,
+        184,
+        130,
+        231,
+        226,
+        84,
+        6,
+        58
+      ]
+    },
+    {
+      "name": "MarketSeeded",
+      "discriminator": [
+        132,
+        95,
+        90,
+        213,
+        26,
+        63,
+        25,
+        185
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "BadInitData",
+      "msg": "Init data is not valid creation parameters"
+    },
+    {
+      "code": 6001,
+      "name": "NotPipeline",
+      "msg": "Caller is not this market's Pipeline market"
+    },
+    {
+      "code": 6002,
+      "name": "WrongAccount",
+      "msg": "Unexpected account"
+    },
+    {
+      "code": 6003,
+      "name": "NotAMarket",
+      "msg": "Not a buy wall market state of a deployed layout"
+    },
+    {
+      "code": 6004,
+      "name": "FeeOutOfRange",
+      "msg": "The fee must be between MIN_FEE_BPS and MAX_FEE_BPS"
+    },
+    {
+      "code": 6005,
+      "name": "WallSplitOutOfRange",
+      "msg": "The wall split must be at most 10,000 basis points"
+    },
+    {
+      "code": 6006,
+      "name": "FeeRecipientRequired",
+      "msg": "A fee recipient is required unless the whole market share goes to the wall"
+    },
+    {
+      "code": 6007,
+      "name": "RewardShareOutOfRange",
+      "msg": "The reward share must be at most MAX_REWARD_SHARE_BPS"
+    },
+    {
+      "code": 6008,
+      "name": "RewardsRecipientMismatch",
+      "msg": "A rewards recipient is required exactly when the reward share is above 0"
+    },
+    {
+      "code": 6009,
+      "name": "CapFloorOutOfRange",
+      "msg": "The cap floor must be between MIN_CAP_FLOOR_BPS and 10,000 basis points"
+    },
+    {
+      "code": 6010,
+      "name": "CapDecayOutOfRange",
+      "msg": "The cap decay must be at most MAX_CAP_DECAY_BPS"
+    },
+    {
+      "code": 6011,
+      "name": "SeederRequired",
+      "msg": "The seeder must not be the default key"
+    },
+    {
+      "code": 6012,
+      "name": "SameMint",
+      "msg": "The token must not be wrapped SOL, SPL Token's or Token-2022's"
+    },
+    {
+      "code": 6013,
+      "name": "MintExtensionNotAllowed",
+      "msg": "The token carries a Token-2022 extension outside the allowlist"
+    },
+    {
+      "code": 6014,
+      "name": "NotSeeder",
+      "msg": "Only the market's seeder may seed it"
+    },
+    {
+      "code": 6015,
+      "name": "AlreadySeeded",
+      "msg": "The market is already seeded"
+    },
+    {
+      "code": 6016,
+      "name": "MintAuthorityLive",
+      "msg": "The token's mint authority must be removed before the seed"
+    },
+    {
+      "code": 6017,
+      "name": "FreezeAuthorityLive",
+      "msg": "The token's freeze authority must be removed before the seed"
+    },
+    {
+      "code": 6018,
+      "name": "EmptySeed",
+      "msg": "The seed brought no tokens"
+    },
+    {
+      "code": 6019,
+      "name": "SeedTooSmall",
+      "msg": "The seed must bring at least MIN_SEED_LAMPORTS"
+    },
+    {
+      "code": 6020,
+      "name": "OpeningPriceOutOfBounds",
+      "msg": "The opening price is outside the opening bounds"
+    },
+    {
+      "code": 6021,
+      "name": "CapFloorTooThin",
+      "msg": "The curve at the cap floor would hold less than MIN_LIQUIDITY"
+    },
+    {
+      "code": 6022,
+      "name": "MarketNotOpen",
+      "msg": "The market is not seeded yet"
+    },
+    {
+      "code": 6023,
+      "name": "ExactOutNotSupported",
+      "msg": "Exact-out trades are not supported"
+    },
+    {
+      "code": 6024,
+      "name": "TradingNotAvailable",
+      "msg": "Trading is not available in this build"
+    },
+    {
+      "code": 6025,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    }
+  ],
+  "types": [
+    {
+      "name": "InitParams",
+      "docs": [
+        "`create_market`'s `init_data`: these fields, Borsh-encoded in this order (metadata",
+        "`init.args` lists them the same way)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "fee_bps",
+            "docs": [
+              "The market's fee, `MIN_FEE_BPS` to `MAX_FEE_BPS`."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "wall_split_bps",
+            "docs": [
+              "The part of the market's share of each fee that goes to the buy wall, 0 to 10,000."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "fee_recipient",
+            "docs": [
+              "A wallet; the default key only when `wall_split_bps` is 10,000."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_share_bps",
+            "docs": [
+              "0 to `MAX_REWARD_SHARE_BPS` of the trimmed tokens."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "rewards_recipient",
+            "docs": [
+              "A wallet; the default key exactly when `reward_share_bps` is 0."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "cap_floor_bps",
+            "docs": [
+              "`MIN_CAP_FLOOR_BPS` to 10,000 of the seeded tokens."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "cap_decay_bps",
+            "docs": [
+              "0 to `MAX_CAP_DECAY_BPS` of the seeded tokens a day; 0 switches the ratchet off."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "seeder",
+            "docs": [
+              "The only signer `seed` accepts; not the default key."
+            ],
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketCreated",
+      "docs": [
+        "`pipeline_init_market` created a market."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "params",
+            "docs": [
+              "The creation parameters, as the market keeps them for good."
+            ],
+            "type": {
+              "defined": {
+                "name": "InitParams"
+              }
+            }
+          },
+          {
+            "name": "creation_slot",
+            "type": "u64"
+          },
+          {
+            "name": "creation_time",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketSeeded",
+      "docs": [
+        "`seed` opened a market."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_amount",
+            "docs": [
+              "What arrived in the token vault."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "sol_amount",
+            "docs": [
+              "What arrived in the SOL vault."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "sqrt_price",
+            "type": "u128"
+          },
+          {
+            "name": "liquidity",
+            "type": "u128"
+          },
+          {
+            "name": "cap",
+            "type": "u64"
+          },
+          {
+            "name": "cap_floor",
+            "type": "u64"
+          },
+          {
+            "name": "cap_decay_per_day",
+            "type": "u64"
+          },
+          {
+            "name": "seed_time",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketState",
+      "docs": [
+        "A buy wall market. The 8-byte discriminator comes first in the account and is not part",
+        "of the struct; offsets in the comments are from the start of the account."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "layout_version",
+            "docs": [
+              "8: the layout version, `LAYOUT_VERSION` when written by this build."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "docs": [
+              "9: `STATUS_CREATED` or `STATUS_OPEN`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "authority_bump",
+            "docs": [
+              "10: the bump of the vault authority, `[\"authority\", market_state]`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "token_vault_bump",
+            "docs": [
+              "11: the bump of the token vault, `[\"vault\", market_state, token_mint]`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "sol_vault_bump",
+            "docs": [
+              "12: the bump of the SOL vault, `[\"vault\", market_state, wsol_mint]`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "market_signer",
+            "docs": [
+              "13: the router's market PDA, the only signer `pipeline_swap` accepts."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "docs": [
+              "45"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "wsol_mint",
+            "docs": [
+              "77"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_vault",
+            "docs": [
+              "109"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "sol_vault",
+            "docs": [
+              "141"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "seeder",
+            "docs": [
+              "173: the only signer `seed` accepts."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "creation_slot",
+            "docs": [
+              "205: u64"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "creation_time",
+            "docs": [
+              "213: i64, Unix seconds"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "seed_time",
+            "docs": [
+              "221: i64, Unix seconds; 0 until the seed"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "volume",
+            "docs": [
+              "229 and 245: u128 each, by mint index"
+            ],
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    16
+                  ]
+                },
+                2
+              ]
+            }
+          },
+          {
+            "name": "fees_collected",
+            "docs": [
+              "261: u128, lamports"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "swap_count",
+            "docs": [
+              "277: u64"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "fee_bps",
+            "docs": [
+              "285: u16"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "wall_split_bps",
+            "docs": [
+              "287: u16"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "reward_share_bps",
+            "docs": [
+              "289: u16"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "fee_recipient",
+            "docs": [
+              "291"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "rewards_recipient",
+            "docs": [
+              "323"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "cap_floor_bps",
+            "docs": [
+              "355: u16, the creation parameter `cap_floor` is computed from at the seed"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "cap_decay_bps",
+            "docs": [
+              "357: u16, the creation parameter `cap_decay_per_day` is computed from at the seed"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "cap_floor",
+            "docs": [
+              "359: u64, token units"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "cap_decay_per_day",
+            "docs": [
+              "367: u64, token units a day"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "seeded_tokens",
+            "docs": [
+              "375: u64, token units"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "sqrt_price",
+            "docs": [
+              "383: u128, Q64.64"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "liquidity",
+            "docs": [
+              "399: u128"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "wall_liquidity",
+            "docs": [
+              "415: u128"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "wall_top",
+            "docs": [
+              "431: u128, Q64.64"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "wall_sol_placed",
+            "docs": [
+              "447: u64, lamports"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "pool_tokens",
+            "docs": [
+              "455: token units"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "pool_sol",
+            "docs": [
+              "463: lamports"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "retired_tokens",
+            "docs": [
+              "471: token units"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "rewards_owed",
+            "docs": [
+              "479: token units"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "idle_sol",
+            "docs": [
+              "487: lamports"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "fees_recipient",
+            "docs": [
+              "495: lamports"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "fees_designer",
+            "docs": [
+              "503: lamports"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "fees_suite",
+            "docs": [
+              "511: lamports"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "cap",
+            "docs": [
+              "519: u64, the inventory cap, token units"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "decay_credit",
+            "docs": [
+              "527: u128, token-seconds"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "decay_time",
+            "docs": [
+              "543: i64"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "reference",
+            "docs": [
+              "551: u128, Q64.64, the spec's `ref`"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "ref_time",
+            "docs": [
+              "567: i64"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "floor",
+            "docs": [
+              "575: u128, Q64.64"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "floor_time",
+            "docs": [
+              "591: i64"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "last_slot",
+            "docs": [
+              "599: u64"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "last_close",
+            "docs": [
+              "607: u128, Q64.64"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "tokens_trimmed",
+            "docs": [
+              "623: token units"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "sol_trimmed",
+            "docs": [
+              "639: lamports"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "wall_tokens_bought",
+            "docs": [
+              "655: token units"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "tokens_burned",
+            "docs": [
+              "671: token units"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "rewards_paid",
+            "docs": [
+              "687: token units"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "tips_paid",
+            "docs": [
+              "703: lamports"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "reserve",
+            "docs": [
+              "719 to the end: zeroed, for fields later layouts append."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                305
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ResolveRequest",
+      "docs": [
+        "`pipeline_strategy_interface::ResolveRequest`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "trade",
+            "type": {
+              "defined": {
+                "name": "TradeRequest"
+              }
+            }
+          },
+          {
+            "name": "round",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwapRequest",
+      "docs": [
+        "`pipeline_strategy_interface::SwapRequest`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "trade",
+            "type": {
+              "defined": {
+                "name": "TradeRequest"
+              }
+            }
+          },
+          {
+            "name": "amount_sent",
+            "type": "u64"
+          },
+          {
+            "name": "min_amount_out",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradeMode",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "ExactIn"
+          },
+          {
+            "name": "ExactOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradeRequest",
+      "docs": [
+        "`pipeline_strategy_interface::TradeRequest`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mode",
+            "type": {
+              "defined": {
+                "name": "TradeMode"
+              }
+            }
+          },
+          {
+            "name": "input_index",
+            "type": "u8"
+          },
+          {
+            "name": "output_index",
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "trader",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "extra",
+            "type": "bytes"
+          }
+        ]
+      }
+    }
+  ]
+}
