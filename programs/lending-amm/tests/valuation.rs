@@ -601,3 +601,39 @@ fn the_stored_rate_is_used_as_it_is() {
     let paid = env.swap(&market, &trader, (0, 1), OTHER / 100).unwrap();
     assert_eq!(paid.received, accrued.amount_out);
 }
+
+#[test]
+fn a_market_with_no_ctokens_trades_from_its_buffer_when_the_reserve_supply_cannot_be_computed() {
+    // V = 0 needs nothing from the reserve but its check, so a reserve whose fees exceed what
+    // it holds (which klend could not redeem from either) stops only markets holding cTokens.
+    let mut env = Env::new();
+    let spec = spec(&mut env, 0, 30);
+    let (market, _) = env.create_funded_market(&spec, [OTHER, 10 * SOL]).unwrap();
+    let (lent_market, lent_trader, lent_lp) = market_with_ctokens(&mut env);
+    let trader = env.funded_wallet(&market, [OTHER, 100 * SOL]);
+    let lp = env.funded_wallet(&market, [OTHER, 100 * SOL]);
+    let address = ck(&LENT_MINTS[0].reserve);
+    env.patch(
+        &address,
+        offsets::ACCUMULATED_PROTOCOL_FEES_SF,
+        &u128::MAX.to_le_bytes(),
+    );
+
+    let quote = env.quote(&market, &exact_in(1, 0, SOL)).unwrap();
+    assert_eq!(
+        env.swap(&market, &trader, (1, 0), SOL).unwrap().received,
+        quote.amount_out
+    );
+    env.add_liquidity(&market, &lp, [OTHER / 10, 5 * SOL], 0)
+        .unwrap();
+
+    assert_all_refused(
+        &mut env,
+        &lent_market,
+        &lent_trader,
+        &lent_lp,
+        Some(address),
+        StrategyError::ReserveSupplyInvalid,
+        "supply invalid, holding cTokens",
+    );
+}

@@ -23,7 +23,7 @@ fn source_files() -> Vec<PathBuf> {
                 if !["target", "node_modules"].contains(&name.as_str()) {
                     walk(&path, out);
                 }
-            } else if ["rs", "ts", "json", "toml"]
+            } else if ["rs", "ts", "json", "toml", "py", "sh"]
                 .iter()
                 .any(|ext| path.extension().is_some_and(|e| e == *ext))
             {
@@ -183,4 +183,16 @@ fn the_constants_have_the_specs_values() {
         LENT_MINTS.map(|entry| entry.min_rebalance),
         [50_000_000, 5_000_000]
     );
+}
+
+#[test]
+fn the_pinned_klend_program_is_the_config_modules() {
+    // fetch-klend.sh and the local validator read klend's address from fixtures/pins.env,
+    // beside the hashes they check its bytes against; it must be the config module's.
+    let pins = std::fs::read_to_string(programs_dir().join("../fixtures/pins.env")).unwrap();
+    let pinned: Vec<&str> = pins
+        .lines()
+        .filter_map(|line| line.strip_prefix("KLEND_PROGRAM="))
+        .collect();
+    assert_eq!(pinned, vec![config::KLEND_PROGRAM.to_string().as_str()]);
 }

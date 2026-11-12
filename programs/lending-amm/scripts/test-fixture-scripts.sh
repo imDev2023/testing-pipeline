@@ -23,6 +23,11 @@ cat > "$work/bin/solana" <<'STUB'
 #!/usr/bin/env bash
 # Stand-in for `solana program dump --url <cluster> <program> <out>`.
 echo "$*" >> "$(dirname "$0")/../calls"
+# FAKE_DOWN=<cluster>: that cluster's RPC never answers.
+if [ -n "${FAKE_DOWN:-}" ] && [ "$4" = "$FAKE_DOWN" ]; then
+  echo "Error: connection refused" >&2
+  exit 1
+fi
 if [ -n "${FAKE_FAILURES:-}" ] && [ "$(cat "$FAKE_FAILURES")" -gt 0 ]; then
   echo $(($(cat "$FAKE_FAILURES") - 1)) > "$FAKE_FAILURES"
   echo "Error: error decoding response body" >&2
@@ -45,7 +50,7 @@ pass() { echo "ok: $*"; }
 fixtures="$work/fixtures"
 mkdir -p "$fixtures"
 cat > "$fixtures/pins.env" <<PINS
-KLEND_PROGRAM=KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD
+KLEND_PROGRAM=the-stand-in-klend-program
 KLEND_MAINNET_SHA256=$(sha256 'pinned mainnet klend')
 KLEND_DEVNET_SHA256=$(sha256 'pinned devnet klend')
 PINS
@@ -103,6 +108,19 @@ else
   pass "a hash mismatch fails without retrying"
 fi
 
+# 4b. A cluster whose RPC never answers fails, after its retries, without stopping the
+# other cluster's fetch.
+rm -f "$fixtures/klend/devnet.so"
+if FAKE_DOWN=mainnet-beta run_fetch 'pinned mainnet klend' 'pinned devnet klend'; then
+  fail "a run with mainnet's RPC down succeeded"
+elif ! holds devnet 'pinned devnet klend'; then
+  fail "mainnet's RPC being down stopped devnet's fetch: $(cat "$work/out.log")"
+elif ! grep -q "Could not download klend from mainnet" "$work/out.log"; then
+  fail "the failed download does not say so: $(cat "$work/out.log")"
+else
+  pass "a cluster whose RPC is down fails without stopping the other's fetch"
+fi
+
 # 5. Re-pinning deliberately: KLEND_ACCEPT_ANY_HASH writes the new bytes and prints their hash.
 if KLEND_ACCEPT_ANY_HASH=1 run_fetch 'pinned mainnet klend' 'upgraded devnet klend' devnet \
   && holds devnet 'upgraded devnet klend' && grep -q "$(sha256 'upgraded devnet klend')" "$work/out.log"; then
@@ -147,6 +165,8 @@ tamper reserve-usdc 'data[0] ^= 1' "discriminator"
 tamper reserve-sol 'data[32] ^= 1' "lending_market"
 tamper reserve-sol 'data[2560] ^= 1' "collateral_mint"
 tamper liquidity-supply-usdc 'data[40] ^= 1' "token_owner"
+# The lending market's owner is the 32 bytes after its version and bump, at offset 24.
+tamper lending-market 'data[55] ^= 1' "lending_market_owner"
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures failed" >&2

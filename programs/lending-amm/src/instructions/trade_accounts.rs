@@ -33,11 +33,10 @@ pub fn strategy_accounts<'a, 'info>(
     let (reserve, rest) = rest
         .split_first()
         .ok_or(StrategyError::ReserveWrongAddress)?;
-    let lent_mint = market.mints[market.lent_index as usize & 1];
     Ok(StrategyAccounts {
         output_vault,
         authority,
-        reserve: kamino::reserve_of(&lent_mint, reserve)?,
+        reserve: kamino::reserve_of(&market.lent_mint(), reserve)?,
         rest,
     })
 }

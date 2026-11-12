@@ -64,7 +64,11 @@ for cluster in "${clusters[@]}"; do
     rm -f "$target"
   fi
 
-  retry solana program dump --url "$url" "$KLEND_PROGRAM" "$work/$cluster.so" >/dev/null
+  if ! retry solana program dump --url "$url" "$KLEND_PROGRAM" "$work/$cluster.so" >/dev/null; then
+    echo "Could not download klend from $cluster after 3 tries; its copy is not refreshed." >&2
+    status=1
+    continue
+  fi
   actual="$(sha256 "$work/$cluster.so")"
   if [ "$actual" != "$pinned" ] && [ -z "${KLEND_ACCEPT_ANY_HASH:-}" ]; then
     cat >&2 <<EOF

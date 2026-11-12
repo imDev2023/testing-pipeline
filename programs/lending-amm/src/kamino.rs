@@ -220,8 +220,13 @@ impl Reserve {
         .ok_or(StrategyError::ReserveSupplyInvalid)
     }
 
-    /// What `ctokens` cTokens are worth at the stored rate, `V`.
+    /// What `ctokens` cTokens are worth at the stored rate, `V`. No cTokens are worth nothing
+    /// whatever the reserve holds, so a market that has lent nothing keeps trading from its
+    /// buffer even while the reserve's supply cannot be computed.
     pub fn lent_value(&self, ctokens: u64) -> core::result::Result<u64, StrategyError> {
+        if ctokens == 0 {
+            return Ok(0);
+        }
         collateral_value(ctokens, self.total_supply_sf()?, self.mint_total_supply)
             .ok_or(StrategyError::Overflow)
     }
@@ -510,6 +515,22 @@ mod tests {
         assert_eq!(
             withdrawal_cap_remaining(&cap(i64::MAX, i64::MIN, 0, 86_400), 0),
             u64::MAX
+        );
+    }
+
+    #[test]
+    fn no_ctokens_are_worth_nothing_whatever_the_reserve_holds() {
+        // Fees above everything supplied: klend could not compute the supply either.
+        let reserve = Reserve {
+            total_available_amount: 1,
+            accumulated_protocol_fees_sf: 2 << 60,
+            mint_total_supply: 10,
+            ..Reserve::default()
+        };
+        assert_eq!(reserve.lent_value(0).map_err(|e| e as u32), Ok(0));
+        assert_eq!(
+            reserve.lent_value(1).map_err(|e| e as u32),
+            Err(StrategyError::ReserveSupplyInvalid as u32)
         );
     }
 

@@ -90,14 +90,11 @@ pub fn add_liquidity_handler<'info>(
     min_lp: u64,
 ) -> Result<()> {
     let market = &ctx.accounts.market_state;
-    let lent_index = market.lent_index as usize & 1;
+    let lent_index = market.lent_side();
     let other_index = market.other_index();
     let max = [max_0, max_1];
     let (max_other, max_lent) = (max[other_index], max[lent_index]);
-    let reserve = kamino::reserve_of(
-        &market.mints[lent_index],
-        &ctx.accounts.reserve.to_account_info(),
-    )?;
+    let reserve = kamino::reserve_of(&market.lent_mint(), &ctx.accounts.reserve.to_account_info())?;
     let first = !market.is_open();
     let deposit = if first {
         shares::first_deposit(max_other, max_lent)?

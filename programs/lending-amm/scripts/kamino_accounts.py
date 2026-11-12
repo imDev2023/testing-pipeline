@@ -54,7 +54,6 @@ import subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 COMMITTED = ROOT / "programs" / "lending-amm" / "tests" / "fixtures" / "kamino"
 
-KLEND = "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"
 TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 SYSTEM = "11111111111111111111111111111111"
 RPC = {
@@ -75,6 +74,8 @@ RESERVE_KEYS = {
 }
 RESERVE_SIZE = 8624
 LENDING_MARKET_SIZE = 4664
+# klend's LendingMarket: discriminator, version (u64), bump seed (u64), then the owner.
+LENDING_MARKET_OWNER = 24
 
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -154,12 +155,21 @@ def rpc(url: str, method: str, params: list) -> dict:
 def mainnet_reserves() -> dict[str, str]:
     """The reserves of the mainnet `LENT_MINTS` in config.rs, in order."""
     text = CONFIG.read_text()
-    start = text.index('#[cfg(feature = "mainnet")]\npub const LENT_MINTS')
+    # The LENT_MINTS definition under the mainnet feature.
+    start = text.index("LENT_MINTS", text.index('#[cfg(feature = "mainnet")]'))
     block = text[start : text.index("];", start)]
     reserves = re.findall(r'reserve: pubkey!\("([1-9A-HJ-NP-Za-km-z]+)"\)', block)
     if len(reserves) != len(LENT_NAMES):
         raise SystemExit(f"found {len(reserves)} reserves in the mainnet LENT_MINTS of {CONFIG}")
     return dict(zip(LENT_NAMES, reserves))
+
+
+def klend_program() -> str:
+    """`KLEND_PROGRAM` in config.rs, its one place."""
+    found = re.search(r'KLEND_PROGRAM: Pubkey = pubkey!\("([1-9A-HJ-NP-Za-km-z]+)"\);', CONFIG.read_text())
+    if not found:
+        raise SystemExit(f"no KLEND_PROGRAM in {CONFIG}")
+    return found.group(1)
 
 
 def reserves_of(cluster: str) -> dict[str, str]:
@@ -198,7 +208,7 @@ def dump(cluster: str, out: pathlib.Path) -> dict:
         raise SystemExit(f"the reserves name {len(lending_markets)} lending markets; expected one")
     lending_market = lending_markets.pop()
     labels["lending-market"] = lending_market
-    labels["lending-market-authority"] = find_program_address([b"lma", b58decode(lending_market)], KLEND)
+    labels["lending-market-authority"] = find_program_address([b"lma", b58decode(lending_market)], klend_program())
 
     # Then every account at once, so all of them are as they were at one slot.
     slot, accounts = get_accounts(url, list(labels.values()))
@@ -266,12 +276,12 @@ def load(folder: pathlib.Path) -> tuple[dict, dict[str, bytes], dict[str, dict]]
 def layout(label: str, owner: str, data: bytes) -> dict:
     """What must not change between dumps: everything but balances, rates and times."""
     facts = {"owner": owner, "size": len(data)}
-    if owner == KLEND:
+    if owner == klend_program():
         facts["discriminator"] = data[:8].hex()
     if label.startswith("reserve-"):
         facts.update({field: key_at(data, offset) for field, offset in RESERVE_KEYS.items()})
     elif label == "lending-market":
-        facts["lending_market_owner_field"] = key_at(data, 16)
+        facts["lending_market_owner"] = key_at(data, LENDING_MARKET_OWNER)
     elif owner == TOKEN and len(data) == 165:
         facts.update({"mint": key_at(data, 0), "token_owner": key_at(data, 32)})
     elif owner == TOKEN and len(data) == 82:

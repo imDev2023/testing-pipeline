@@ -19,8 +19,7 @@ pub fn resolve_accounts(ctx: Context<ReadTrade>, request: ResolveRequest) -> Res
         .trade_sides(request.trade.input_index, request.trade.output_index)
         .ok_or(StrategyError::WrongAccount)?;
     // The reserve `LENT_MINTS` names for the lent mint, which the market also recorded.
-    let lent_mint = market.mints[market.lent_index as usize & 1];
-    let reserve = config::lent_mint(&lent_mint)
+    let reserve = config::lent_mint(&market.lent_mint())
         .ok_or(StrategyError::LentMintNotListed)?
         .reserve;
     let result = psi::ResolveResult {

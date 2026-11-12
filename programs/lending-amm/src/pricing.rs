@@ -82,7 +82,7 @@ pub fn lent_total(
     market: &LendingAmmMarket,
     reserve: &Reserve,
 ) -> core::result::Result<u64, StrategyError> {
-    let buffer = market.reserves[market.lent_index as usize & 1];
+    let buffer = market.reserves[market.lent_side()];
     buffer
         .checked_add(reserve.lent_value(market.ctokens)?)
         .ok_or(StrategyError::Overflow)
@@ -114,7 +114,7 @@ pub fn quote(
         .trade_sides(trade.input_index, trade.output_index)
         .ok_or(StrategyError::WrongAccount)?;
     require!(market.is_open(), StrategyError::MarketNotOpen);
-    let lent = market.lent_index as usize & 1;
+    let lent = market.lent_side();
     let mut effective = market.reserves;
     effective[lent] = lent_total(market, reserve)?;
     let priced = exact_in(

@@ -68,9 +68,18 @@ export function decodeReserve(data: Uint8Array): ReserveView | string {
     };
 }
 
-/** What `ctokens` cTokens are worth at the reserve's stored rate: `floor(c x S_total / S_ctoken)`. */
+/**
+ * What `ctokens` cTokens are worth at the reserve's stored rate, `floor(c x S_total / S_ctoken)`,
+ * as the program values them: nothing for no cTokens, or when either supply is 0; and a
+ * refusal (here a thrown error) when the total supply is negative or beyond 128 bits, which
+ * klend could not compute either.
+ */
 export function lentValue(ctokens: bigint, reserve: ReserveView): bigint {
-    if (ctokens === 0n || reserve.totalSupplySf <= 0n || reserve.mintTotalSupply === 0n) return 0n;
+    if (ctokens === 0n) return 0n;
+    if (reserve.totalSupplySf < 0n || reserve.totalSupplySf >= 1n << 128n) {
+        throw new Error(`the reserve's total supply ${reserve.totalSupplySf} cannot be computed; the program refuses it`);
+    }
+    if (reserve.totalSupplySf === 0n || reserve.mintTotalSupply === 0n) return 0n;
     return (ctokens * reserve.totalSupplySf) / (reserve.mintTotalSupply << 60n);
 }
 
