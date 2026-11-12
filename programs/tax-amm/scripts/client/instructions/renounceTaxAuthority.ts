@@ -106,8 +106,8 @@ export type RenounceTaxAuthorityInput<
   TAccountMarketState extends InstructionAccountInput = InstructionAccountInput,
 > = {
   /**
-   * Checked against the market's tax authority by each handler, so a market that has
-   * none, or renounced, says so rather than naming the signer.
+   * Checked against the market's tax authority by [`TaxAuthorityAction::authorize`], so a
+   * market that has none, or renounced, says so rather than naming the signer.
    */
   taxAuthority: TAccountTaxAuthority;
   marketState: TAccountMarketState;
@@ -188,8 +188,8 @@ export type ParsedRenounceTaxAuthorityInstruction<
   programAddress: Address<TProgram>;
   accounts: {
     /**
-     * Checked against the market's tax authority by each handler, so a market that has
-     * none, or renounced, says so rather than naming the signer.
+     * Checked against the market's tax authority by [`TaxAuthorityAction::authorize`], so a
+     * market that has none, or renounced, says so rather than naming the signer.
      */
     taxAuthority: TAccountMetas[0];
     marketState: TAccountMetas[1];

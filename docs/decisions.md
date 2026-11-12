@@ -879,6 +879,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
 
+### BAR-38: Test programs in the workspace
+
+- Question: Where do test-only programs, such as the stand-in launchpad the seeding tickets share, live, and how are they kept off devnet?
+- Answer: In `programs/test-programs/`, as workspace members marked `test-program` in their manifests, which `scripts/workspace-programs.py` leaves out of the deployable programs, `scripts/build-programs.sh` builds into the gitignored `fixtures/test-programs`, and `scripts/local-validator.sh` loads frozen; no deploy script names one.
+- Alternatives: A separate Cargo workspace, which would repeat the pins; building them into `programs/target/deploy` beside the programs that are deployed.
+- Specified in: [`docs/toolchain.md`, Layout](toolchain.md#layout)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -2887,6 +2897,86 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
 
+### TAX-41: How metadata describes seeding from another program
+
+- Question: How does the strategy metadata tell a launcher how to fill in `pipeline_seed_liquidity`, which Pipeline's metadata standard has no field for?
+- Answer: A top-level `seed_liquidity` form shaped as `init` is, which the validator allows as an unknown key: the seeded market state as a `pda:` source keyed by `input:seeder` and both mints, `data` as init's arguments under the same IDL type with the seeder marked ignored, and the program's own accounts after Pipeline's fixed seed accounts, so the SDK's `resolveInit` resolves it as the demo does.
+- Alternatives: A prose description only, which no tool could resolve; a `create_market` custom action, which is called by a wallet, not by another program.
+- Specified in: [`docs/spec/tax-amm.md`, Custom actions and metadata](spec/tax-amm.md#custom-actions-and-metadata)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
+
+### TAX-42: How a seed request is checked
+
+- Question: What does `pipeline_seed_liquidity` check beyond the creation rules and mint rules, and what does it report?
+- Answer: Exactly one amount per mint (an error of its own otherwise), `data` exactly the creation parameters, escrows owned by the seeder as the `seed` action requires of the seeder's accounts, and `SeedResult.taken` as what it measured leaving each escrow, with every market created by the same code as a market created through the router.
+- Alternatives: Reporting the amounts requested as taken, as Pipeline's reference strategy does; a second copy of the creation checks for seeded markets.
+- Specified in: [`docs/spec/tax-amm.md`, The seed](spec/tax-amm.md#the-seed)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
+
+### TAX-43: Which tax slots `distribute` pays
+
+- Question: How does `distribute` name a slot, and which calls does it refuse or treat as nothing to do?
+- Answer: By the slot's number as the market state books it, 0 to 3 the tax recipients, 4 the burn and 5 the suite share; a number above 5 and a recipient slot the market does not use are refused with errors of their own, and a slot owed nothing moves nothing, creates no account and emits no event.
+- Alternatives: Paying every slot in one call, which one broken recipient account would block; treating an unused slot like a slot owed nothing.
+- Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
+### TAX-44: Where `distribute` pays
+
+- Question: Into which account is a slot paid, and which accounts are refused?
+- Answer: A tax recipient or the suite share only into its wallet's associated token account for the tax-side mint, created at the caller's expense when missing, and paid even when the wallet has handed that SPL Token account to another owner, since refusing would strand the slot's tax for good once the authority renounces; the burn names no wallet (the default key) and burns from the vault; any other wallet or token account is refused, including the wallet's account of the other mint.
+- Alternatives: Refusing an associated token account whose owner the wallet has handed away, which a review on 2026-11-12 showed strands that slot's tax after a renounce; paying any token account the wallet owns.
+- Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
+### TAX-45: The `distribute` action's inputs
+
+- Question: How does the metadata's `distribute` action find a market's tax-side mint and a slot's wallet, which no metadata account source can name?
+- Answer: As two address inputs, `tax_mint` and `recipient` (the default key for the burn), from which it derives the vault and the token account; whoever builds the call (Aviary's tax panel, the keeper runner, the demo script) reads both from the market state, and the program refuses any that are not the slot's.
+- Alternatives: One action per tax side with fixed indexes, which a terminal would have to choose between; passing both vaults and mints and leaving the recipient's token account to the caller.
+- Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
+### TAX-46: The suite treasury and the slot numbers in the IDL
+
+- Question: How do Aviary and the demo script learn the suite share's wallet and which slot is the burn's and which the suite share's, all of which `distribute` needs?
+- Answer: The program publishes `SUITE_TREASURY`, `BURN_SLOT` and `SUITE_SLOT` in its IDL with Anchor's `#[constant]`, beside the tax cap and the suite share, so the generated client carries them and the config module (and `MAX_RECIPIENTS`, from which the slots follow) stays their one place.
+- Alternatives: Each reader restating the address and the slot numbers.
+- Specified in: [`docs/spec/tax-amm.md`, Where its policy values live](spec/tax-amm.md#where-its-policy-values-live)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
+### TAX-47: The demo's two markets
+
+- Question: Which markets does the demo script create, trade and pay out?
+- Answer: Two: one taxed in wrapped SOL, Aviary's default tax side, whose recipients are paid wrapped SOL and which burns nothing, and one taxed in a token, whose burn lowers the token's supply.
+- Alternatives: One market taxed in a token, which never shows a payout in wrapped SOL.
+- Specified in: [`docs/toolchain.md`, Local demo run](toolchain.md#local-demo-run)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
+### TAX-48: The burn's own action
+
+- Question: How does `distribute` keep payouts from write-locking the tax-side mint, which only the burn changes?
+- Answer: The mint is read-only for a payout and writable only for the burn, which refuses a read-only mint; the metadata describes the one instruction as two actions, `distribute` with the mint read-only and `burn`, for the burn slot, with the mint writable, so payouts of SOL-taxed markets never write-lock the native mint.
+- Alternatives: One action with the mint always writable, which would serialize every payout against every transfer of the mint; a separate burn instruction.
+- Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
@@ -3393,6 +3483,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47)
 
+### POOL4-24: The vault authority in a swap
+
+- Question: How does a swap reach the vault authority that signs the transfer out of a vault, when a program can sign for a PDA only if its account is passed in and the router passes only its ten fixed accounts?
+- Answer: `pipeline_resolve_accounts` lists two accounts, the output vault and then the vault authority (read-only), and `pipeline_swap` checks the authority against the PDA from the market state's stored bump before signing with it, as the tax AMM does (`TAX-35`).
+- Alternatives: The earlier default, a swap resolving one account, the output vault, which the runtime cannot sign out of; vaults that own themselves, which keeps one account but changes creation, metadata and the spec's Addresses and leaves `authority_bump` unused.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Addresses](spec/pool4-for-solana.md#addresses)
+- Changes by: fixed on-chain once deployed
+- Status: changed 2026-11-12
+- Decided: 2026-11-12 in [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48)
+
+### POOL4-25: The fee shares in the IDL
+
+- Question: How does the demo script learn the designer share and the suite share to check a swap's fee split, without restating them?
+- Answer: The program publishes `DESIGNER_SHARE_BPS` and `SUITE_SHARE_BPS` in its IDL with Anchor's `#[constant]`, so the generated TypeScript client carries both and `config.rs` stays their one place, as the tax AMM does (`TAX-37`).
+- Alternatives: Restating them in the demo; publishing the price bounds too, which Codama 2.8 renders as invalid TypeScript for a u128 of 2^96.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Constants](spec/pool4-for-solana.md#constants)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48)
+
+### POOL4-26: Dividing by two square-root prices
+
+- Question: How does the pricing divide by a product of two square-root prices, which the spec's rule stages one price at a time where a product could overflow?
+- Answer: It divides once by the product, which fits in 256 bits because each price is below 2^128 and gives the same floor or ceiling as the staged divisions; with a sell computing its `need` only when it reaches its target, this took the costliest quote measured from 35,648 to 15,682 compute units of its 40,000 ceiling, and only numerators can overflow, which refuses the trade.
+- Alternatives: Dividing by one price at a time, as the rule first read.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Rules for both](spec/pool4-for-solana.md#rules-for-both)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48)
+
+### POOL4-27: Paying a swap's output to another wallet's account
+
+- Question: Does the strategy refuse a swap whose output account belongs to someone other than the trader?
+- Answer: No: the router lets a trader name the account its output goes to, and the strategy pays exactly that account exactly the quote, refusing only the output vault itself, which would book a payout that never moved.
+- Alternatives: Refusing any output account the trader does not own, which would break a router feature for nothing the market risks.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Bypass](spec/pool4-for-solana.md#bypass)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
@@ -3895,6 +4025,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-25` to `POOL4-27`: set by the session of [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-24` is the owner's answer to that session's question.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.

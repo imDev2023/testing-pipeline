@@ -9,9 +9,9 @@
 //! |-----------------------------|----------------------------------|--------------------------------------|
 //! | `pipeline_init_market`      | the router, from `create_market` | creates a market state and its vaults |
 //! | `pipeline_market_info`      | the router, at market creation   | reports mints, vaults, exact-out      |
-//! | `pipeline_resolve_accounts` | quoters and SDKs, in simulation  | lists the output vault                |
-//! | `pipeline_quote`            | quoters and SDKs, in simulation  | refuses every request in this build   |
-//! | `pipeline_swap`             | the router, from `swap`          | refuses every request in this build   |
+//! | `pipeline_resolve_accounts` | quoters and SDKs, in simulation  | lists the output vault, its authority |
+//! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices an exact-in trade             |
+//! | `pipeline_swap`             | the router, from `swap`          | settles an exact-in trade            |
 //! | `seed`                      | the market's seeder, directly    | seeds and opens the market, once      |
 //!
 //! Policy values live only in `config.rs` (build-time constants) and in each market's
@@ -19,11 +19,13 @@
 
 use anchor_lang::prelude::*;
 
+pub mod books;
 pub mod config;
 pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod interface;
+pub mod math;
 pub mod opening;
 pub mod params;
 pub mod pricing;
@@ -52,7 +54,8 @@ pub mod buy_wall_amm {
         instructions::market_info::handle_market_info(ctx)
     }
 
-    /// Lists the accounts a swap needs after the router's ten: the output vault.
+    /// Lists the accounts a swap needs after the router's ten: the output vault and the
+    /// vault authority.
     pub fn pipeline_resolve_accounts(
         ctx: Context<ReadTrade>,
         request: interface::ResolveRequest,
@@ -60,12 +63,13 @@ pub mod buy_wall_amm {
         instructions::read_trade::handle_resolve_accounts(ctx, request)
     }
 
-    /// Prices a trade without changing anything; refuses every request in this build.
+    /// Prices an exact-in trade without changing anything; refuses exact-out.
     pub fn pipeline_quote(ctx: Context<ReadTrade>, request: interface::TradeRequest) -> Result<()> {
         instructions::read_trade::handle_quote(ctx, request)
     }
 
-    /// Settles a trade the router sends; refuses every request in this build.
+    /// Settles an exact-in trade the router sends: pays the trader from the output vault
+    /// and books the fee, the ledgers, the price and the counters.
     pub fn pipeline_swap<'info>(
         ctx: Context<'info, SwapAccounts<'info>>,
         request: interface::SwapRequest,

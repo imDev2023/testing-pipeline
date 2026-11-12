@@ -58,6 +58,7 @@ Terms are as in `GLOSSARY.md`: inventory cap, cap floor, cap decay, trim, retire
 | `MARKET_STATE_SIZE` | 1,024 bytes | The size of every market state, for good |
 
 The constants are compiled into the program; changing one is a program upgrade, which ends when the program is frozen.
+`DESIGNER_SHARE_BPS` and `SUITE_SHARE_BPS` are also published in the program's IDL (Anchor's `#[constant]`), where the generated client and the demo script read them ([`POOL4-25`](../decisions.md#pool4-25-the-fee-shares-in-the-idl)).
 There is no admin and no settings account.
 
 Every decision here is a default that MetalLegBob may change (the map's standing rule of 2026-11-10), so each policy value lives in exactly one place:
@@ -82,6 +83,7 @@ The designer share builds up in each market from its first swap and waits there;
 
 - A market created through the router has a fresh keypair as its market state (metadata `init.market_state` is `new_keypair`), as in the tax AMM and for the same reason: a key derived from only some parameters could be taken first by a market with bad ones.
 - The vault authority is the PDA `["authority", market_state]` of the program; it signs every transfer and burn out of the vaults.
+  A program can sign for a PDA only if its account is passed in, so `pipeline_resolve_accounts` lists it, read-only, after the output vault, and `pipeline_swap` checks it against the stored bump ([`POOL4-24`](../decisions.md#pool4-24-the-vault-authority-in-a-swap), owner, 2026-11-12; the tax AMM does the same).
 - Each vault is a token account at the PDA `["vault", market_state, mint]`, owned by the vault authority.
 - So the vaults and the router's market and fee accounts can all be computed before `create_market` is sent, as for the tax AMM.
 - A market created through `pipeline_seed_liquidity` lives at the PDA `["seeded", seeder, token_mint, wsol_mint]`, with its vaults and authority derived from that address in the same way.
@@ -187,7 +189,8 @@ For `a` credited lamports:
 
 - A quote or swap is refused when the input is 0, when `out` is 0, when a buy leaves nothing after the fee, or when input is left over because a price bound was reached.
 - The trader always gets the worse side of every rounding: prices move no further than the input pays for, outputs round down and the fee rounds up.
-- Intermediate maths uses 256-bit integers with checked operations, staging divisions where a product could overflow (dividing by one square-root price at a time); an overflow refuses the instruction.
+- Intermediate maths uses 256-bit integers with checked operations; an overflow refuses the instruction.
+  A division by two square-root prices divides once by their product, which always fits in 256 bits and gives the same floor or ceiling as dividing by one price at a time ([`POOL4-26`](../decisions.md#pool4-26-dividing-by-two-square-root-prices)).
 - `pipeline_quote` and `pipeline_swap` call this one pricing function, so quotes include the fee and match swaps exactly, which `pipeline-check`'s `quote_matches_swap` verifies to the unit.
 - Pricing reads no clock: everything time-based below runs after the output is decided, so a quote never depends on when it is asked.
 
@@ -202,6 +205,7 @@ For `a` credited lamports:
 - Refused, as for every strategy of ours ([ADR 0001](../adr/0001-our-strategies-refuse-bypass.md)): `pipeline_swap` accepts only the router's market signer stored at creation.
 - So every trade pays Pipeline's fee, emits a swap event and counts in the market's counters.
 - No custom action moves the price.
+- The router lets a trader name the account its output goes to; the swap pays exactly that account exactly the quote, and refuses only the output vault itself as that account ([`POOL4-27`](../decisions.md#pool4-27-paying-a-swaps-output-to-another-wallets-account)).
 
 ## After pricing
 
@@ -540,7 +544,7 @@ A transfer hook's own compute is outside them.
 | `pipeline_quote` | 40,000 | Two pricing steps at most; well under the quoter's 200,000 cap |
 | `pipeline_swap`, one step | 45,000 | Pricing, one output transfer, the books and the guard |
 | `pipeline_swap`, crossing into the wall and trimming | 60,000 | Two pricing steps and the trim |
-| `pipeline_resolve_accounts` | 10,000 | One account, the output vault |
+| `pipeline_resolve_accounts` | 10,000 | Two accounts, the output vault and the vault authority |
 | `pipeline_market_info` | 10,000 | |
 | `pipeline_init_market` | 120,000 | Creating two vaults |
 | `seed` | 80,000 | Two transfers in and two square roots |
@@ -550,6 +554,9 @@ A transfer hook's own compute is outside them.
 | `pay_rewards` | 60,000 | One transfer, possibly creating the recipient's token account |
 | `sweep_fees` | 60,000 | One transfer, possibly creating the recipient's token account |
 | `set_fee_recipient`, `set_rewards_recipient` | 10,000 | |
+
+Measured on 2026-11-12 by [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48), on markets from 10^-7 to 10^9 lamports a unit and trades from dust to a third of a pool: `pipeline_quote` at most 15,682 units, a one-step `pipeline_swap` 14,837 to 27,630 (a hook's own compute left out), and `pipeline_resolve_accounts` 5,181 to 5,372.
+The ceilings stay as they are for the wall's second step and the trim.
 
 ### Invariants for test layer 3
 
@@ -565,7 +572,7 @@ Beyond the shared three (value conserved, every holder can exit, each quote equa
 
 None.
 Exact-out checks are skipped by design and need no reason.
-The checks that shape this design are `quote_matches_swap` (exact to the unit), `determinism` (the same quote twice, and for any trader), `round_trip` (a buy sold straight back never returns more), `dust_and_zero` (a zero input is refused) and `transaction_size` (a swap resolves one account, the output vault).
+The checks that shape this design are `quote_matches_swap` (exact to the unit), `determinism` (the same quote twice, and for any trader), `round_trip` (a buy sold straight back never returns more), `dust_and_zero` (a zero input is refused) and `transaction_size` (a swap resolves two accounts, the output vault and the vault authority).
 The checker sizes its trades from vault balances, which include the wall and the other ledgers; that needs no special handling.
 
 ## Where it differs from IMD's Pool4

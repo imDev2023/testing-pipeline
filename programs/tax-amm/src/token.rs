@@ -29,6 +29,12 @@ pub fn token_owner(account: &AccountInfo) -> Result<Pubkey> {
     Ok(Pubkey::new_from_array(owner))
 }
 
+/// The decimals of an SPL Token or Token-2022 mint, the byte after its supply.
+pub fn mint_decimals(mint: &AccountInfo) -> Result<u8> {
+    let data = mint.try_borrow_data()?;
+    Ok(*data.get(44).ok_or(StrategyError::NotAMint)?)
+}
+
 /// SPL Token's `TransferChecked` (tag 12), with `hook_accounts` appended so Token-2022
 /// mints with transfer hooks work: Token-2022 picks out the accounts its hook needs.
 #[allow(clippy::too_many_arguments)]

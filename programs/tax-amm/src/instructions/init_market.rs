@@ -64,83 +64,115 @@ pub fn init_market(ctx: Context<InitMarket>, data: Vec<u8>) -> Result<()> {
         StrategyError::NotPipeline
     );
 
-    let mints = [ctx.accounts.mint_0.key(), ctx.accounts.mint_1.key()];
-    require_keys_neq!(mints[0], mints[1], StrategyError::EqualMints);
-    check_mint(&ctx.accounts.mint_0, &ctx.accounts.token_program_0)?;
-    check_mint(&ctx.accounts.mint_1, &ctx.accounts.token_program_1)?;
-    params.validate(&mints)?;
-
     let accounts = &ctx.accounts;
-    let bumps = [ctx.bumps.vault_0, ctx.bumps.vault_1];
-    let vaults = [
-        (
-            &accounts.vault_0,
-            &accounts.mint_0,
-            &accounts.token_program_0,
-        ),
-        (
-            &accounts.vault_1,
-            &accounts.mint_1,
-            &accounts.token_program_1,
-        ),
-    ];
-    for (i, (vault, mint, token_program)) in vaults.into_iter().enumerate() {
-        let bump = [bumps[i]];
-        let seeds: &[&[u8]] = &[VAULT_SEED, market_state.as_ref(), mint.key.as_ref(), &bump];
-        create_vault(
-            &accounts.payer,
-            &accounts.system_program,
-            vault,
-            mint,
-            &accounts.authority,
-            token_program,
-            seeds,
-        )?;
-    }
-
-    let clock = Clock::get()?;
-    let vault_keys = [accounts.vault_0.key(), accounts.vault_1.key()];
-    let state = &mut ctx.accounts.market_state;
-    state.set_inner(TaxMarket {
-        version: STATE_VERSION,
-        status: MarketStatus::Created,
-        tax_side: params.tax_side,
-        virtual_side: params.virtual_side,
-        authority_bump: ctx.bumps.authority,
-        tax_authority_renounced: false,
-        mints,
-        vaults: vault_keys,
-        market_signer,
-        buy_tax_bps: params.buy_tax_bps,
-        sell_tax_bps: params.sell_tax_bps,
-        buy_tax_min_bps: params.buy_tax_min_bps,
-        buy_tax_max_bps: params.buy_tax_max_bps,
-        sell_tax_min_bps: params.sell_tax_min_bps,
-        sell_tax_max_bps: params.sell_tax_max_bps,
-        tax_authority: params.tax_authority,
-        seeder: params.seeder,
-        recipients: params.recipients,
-        shares: params.shares,
-        burn_share_bps: params.burn_share_bps,
-        virtual_reserve: params.virtual_reserve,
-        reserves: [0; 2],
-        owed: Default::default(),
-        tax_collected: 0,
-        volume: [0; 2],
-        swap_count: 0,
-        created_slot: clock.slot,
-        created_at: clock.unix_timestamp,
-        reserved: [0; RESERVED_LEN],
-    });
-    emit!(MarketCreated {
+    let market = NewMarket {
         market_state,
-        mints,
-        vaults: vault_keys,
-        params,
-        created_slot: clock.slot,
-        created_at: clock.unix_timestamp,
-    });
+        market_signer,
+        payer: &accounts.payer,
+        system_program: &accounts.system_program,
+        mints: [&accounts.mint_0, &accounts.mint_1],
+        token_programs: [&accounts.token_program_0, &accounts.token_program_1],
+        authority: &accounts.authority,
+        authority_bump: ctx.bumps.authority,
+        vaults: [&accounts.vault_0, &accounts.vault_1],
+        vault_bumps: [ctx.bumps.vault_0, ctx.bumps.vault_1],
+    }
+    .create(&params)?;
+    ctx.accounts.market_state.set_inner(market);
     Ok(())
+}
+
+/// What creating a tax market needs, whichever way it is created: through the router's
+/// `create_market` (`pipeline_init_market`) or by a launchpad (`pipeline_seed_liquidity`).
+/// Both create every market through [`NewMarket::create`], so one piece of code applies
+/// every creation rule and mint rule to both.
+pub(crate) struct NewMarket<'a, 'info> {
+    pub market_state: Pubkey,
+    /// The router's market PDA for `market_state`, the only caller allowed to swap.
+    pub market_signer: Pubkey,
+    pub payer: &'a Signer<'info>,
+    pub system_program: &'a Program<'info, System>,
+    pub mints: [&'a UncheckedAccount<'info>; 2],
+    pub token_programs: [&'a Interface<'info, TokenInterface>; 2],
+    pub authority: &'a UncheckedAccount<'info>,
+    pub authority_bump: u8,
+    pub vaults: [&'a UncheckedAccount<'info>; 2],
+    pub vault_bumps: [u8; 2],
+}
+
+impl NewMarket<'_, '_> {
+    /// Refuses a market that breaks a creation rule or a mint rule, then creates both vaults
+    /// and emits `MarketCreated`. Returns the new market state, created and not yet open,
+    /// for the caller to store.
+    pub(crate) fn create(self, params: &InitParams) -> Result<TaxMarket> {
+        let mints = self.mints.map(|mint| mint.key());
+        require_keys_neq!(mints[0], mints[1], StrategyError::EqualMints);
+        for i in 0..2 {
+            check_mint(self.mints[i], self.token_programs[i])?;
+        }
+        params.validate(&mints)?;
+
+        for i in 0..2 {
+            let bump = [self.vault_bumps[i]];
+            let seeds: &[&[u8]] = &[
+                VAULT_SEED,
+                self.market_state.as_ref(),
+                self.mints[i].key.as_ref(),
+                &bump,
+            ];
+            create_vault(
+                self.payer,
+                self.system_program,
+                self.vaults[i],
+                self.mints[i],
+                self.authority,
+                self.token_programs[i],
+                seeds,
+            )?;
+        }
+
+        let clock = Clock::get()?;
+        let vaults = self.vaults.map(|vault| vault.key());
+        emit!(MarketCreated {
+            market_state: self.market_state,
+            mints,
+            vaults,
+            params: *params,
+            created_slot: clock.slot,
+            created_at: clock.unix_timestamp,
+        });
+        Ok(TaxMarket {
+            version: STATE_VERSION,
+            status: MarketStatus::Created,
+            tax_side: params.tax_side,
+            virtual_side: params.virtual_side,
+            authority_bump: self.authority_bump,
+            tax_authority_renounced: false,
+            mints,
+            vaults,
+            market_signer: self.market_signer,
+            buy_tax_bps: params.buy_tax_bps,
+            sell_tax_bps: params.sell_tax_bps,
+            buy_tax_min_bps: params.buy_tax_min_bps,
+            buy_tax_max_bps: params.buy_tax_max_bps,
+            sell_tax_min_bps: params.sell_tax_min_bps,
+            sell_tax_max_bps: params.sell_tax_max_bps,
+            tax_authority: params.tax_authority,
+            seeder: params.seeder,
+            recipients: params.recipients,
+            shares: params.shares,
+            burn_share_bps: params.burn_share_bps,
+            virtual_reserve: params.virtual_reserve,
+            reserves: [0; 2],
+            owed: Default::default(),
+            tax_collected: 0,
+            volume: [0; 2],
+            swap_count: 0,
+            created_slot: clock.slot,
+            created_at: clock.unix_timestamp,
+            reserved: [0; RESERVED_LEN],
+        })
+    }
 }
 
 /// The router's market PDA for a market state of this program: `["market", program,

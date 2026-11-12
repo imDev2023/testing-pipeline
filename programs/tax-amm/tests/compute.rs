@@ -210,6 +210,32 @@ fn the_tax_authority_actions_stay_under_their_ceilings() {
 }
 
 #[test]
+fn pipeline_seed_liquidity_stays_under_its_ceiling() {
+    for (name, token_program) in [("SPL Token", TOKEN), ("Token-2022", TOKEN_2022)] {
+        let mut env = Env::new();
+        let mints = [
+            (env.create_mint(&token_program), token_program),
+            (env.create_mint(&token_program), token_program),
+        ];
+        let amounts = [100_000_000_000, 200_000_000_000];
+        let launch = env.launch(mints, amounts);
+        let graduated = env
+            .graduate(&launch, &valid_params(&Pubkey::new_unique()), amounts)
+            .unwrap();
+        // The launchpad calls pipeline_seed_liquidity, then register_existing_market calls
+        // pipeline_market_info.
+        let costs = strategy_compute(&graduated.market.created.logs);
+        assert_eq!(costs.len(), 2, "{:?}", graduated.market.created.logs);
+        println!("pipeline_seed_liquidity on {name} mints: {} CU", costs[0]);
+        assert!(
+            costs[0] <= ceilings::PIPELINE_SEED_LIQUIDITY,
+            "{name}: {}",
+            costs[0]
+        );
+    }
+}
+
+#[test]
 fn pipeline_quote_stays_under_its_ceiling() {
     for (name, env, market, _) in seeded_markets() {
         for (input, output) in [(0, 1), (1, 0)] {
@@ -315,6 +341,48 @@ fn a_swap_calls_a_transfer_hook_inside_it_as_the_input_and_as_the_output() {
                 borsh::from_slice(&meta.return_data.data).unwrap();
             assert_eq!(result.received, quote.amount_out);
         }
+    }
+}
+
+#[test]
+fn distribute_stays_under_its_ceiling_when_it_creates_the_token_account_and_when_it_burns() {
+    use tax_amm::state::{BURN_SLOT, SUITE_SLOT};
+    for (name, mut env, market, _) in seeded_markets() {
+        let trader = env.funded_wallet(&market, 1_000_000_000_000);
+        env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
+        env.swap(&market, &trader, (0, 1), 5_000_000_000).unwrap();
+        // `fund` writes balances without minting them; the burn needs a supply behind them.
+        let supply = 10_000_000_000_000;
+        env.set_supply(&market.mints[1], supply);
+        let caller = solana_keypair::Keypair::new();
+        env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
+        let cases = [
+            (0, "paying a tax recipient, creating its token account"),
+            (BURN_SLOT, "burning"),
+            (
+                SUITE_SLOT,
+                "paying the suite share, creating its token account",
+            ),
+        ];
+        for (slot, what) in cases {
+            let meta = env.distribute(&market, &caller, slot).unwrap();
+            let costs = strategy_compute(&meta.logs);
+            assert_eq!(costs.len(), 1);
+            println!("distribute {what} on {name} mints: {} CU", costs[0]);
+            assert!(
+                costs[0] <= ceilings::DISTRIBUTE,
+                "{name}, {what}: {}",
+                costs[0]
+            );
+        }
+        // Into a token account that already exists, after more tax is booked.
+        env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
+        let meta = env.distribute(&market, &caller, 0).unwrap();
+        let cost = strategy_compute(&meta.logs)[0];
+        println!(
+            "distribute paying a tax recipient's existing token account on {name} mints: {cost} CU"
+        );
+        assert!(cost <= ceilings::DISTRIBUTE, "{name}: {cost}");
     }
 }
 

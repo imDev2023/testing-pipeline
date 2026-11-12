@@ -72,7 +72,7 @@ fn the_four_constants_are_defined_once_in_the_config_module() {
     for (name, published) in [
         ("MAX_TAX_BPS", true),
         ("SUITE_SHARE_BPS", true),
-        ("SUITE_TREASURY", false),
+        ("SUITE_TREASURY", true),
         ("MAX_RECIPIENTS", false),
     ] {
         let mut defined: Vec<String> = files_containing(&format!("const {name}"))
@@ -86,12 +86,21 @@ fn the_four_constants_are_defined_once_in_the_config_module() {
         }
         assert_eq!(defined, expected, "{name}");
     }
-    // The treasury's address is written nowhere else.
-    let written: Vec<String> = files_containing(&SUITE_TREASURY.to_string())
+    // The treasury's address is written nowhere else but the IDL, which publishes it, and
+    // the client generated from the IDL.
+    let mut written: Vec<String> = files_containing(&SUITE_TREASURY.to_string())
         .into_iter()
         .filter(|path| tax_amm_or_shared(path))
         .collect();
-    assert_eq!(written, vec!["tax-amm/src/config.rs".to_string()]);
+    written.sort();
+    assert_eq!(
+        written,
+        [
+            "tax-amm/idl/tax_amm.json",
+            "tax-amm/scripts/client/constants/taxAmm.ts",
+            "tax-amm/src/config.rs"
+        ]
+    );
 }
 
 #[test]

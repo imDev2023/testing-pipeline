@@ -11,7 +11,7 @@ use common::*;
 use pipeline_client::interface::discriminator;
 use serde_json::Value;
 use tax_amm::events::{
-    MarketCreated, RecipientsChanged, Seeded, TaxAuthorityRenounced, TaxesChanged,
+    Distributed, MarketCreated, RecipientsChanged, Seeded, TaxAuthorityRenounced, TaxesChanged,
 };
 use tax_amm::state::layout;
 use tax_amm::TaxMarket;
@@ -88,6 +88,12 @@ fn its_instructions_are_pipelines_with_pipelines_discriminators_and_its_actions(
                 .unwrap(),
         ),
         (
+            "distribute",
+            tax_amm::instruction::Distribute::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
             "set_taxes",
             tax_amm::instruction::SetTaxes::DISCRIMINATOR
                 .try_into()
@@ -110,6 +116,7 @@ fn its_instructions_are_pipelines_with_pipelines_discriminators_and_its_actions(
         ("pipeline_quote", discriminator::QUOTE),
         ("pipeline_resolve_accounts", discriminator::RESOLVE_ACCOUNTS),
         ("pipeline_swap", discriminator::SWAP),
+        ("pipeline_seed_liquidity", discriminator::SEED_LIQUIDITY),
     ];
     let instructions = idl["instructions"].as_array().unwrap();
     assert_eq!(instructions.len(), expected.len());
@@ -151,6 +158,49 @@ fn its_init_accounts_are_the_metadatas() {
         .map(|a| a["name"].as_str().unwrap())
         .collect();
     assert_eq!(names[4..], listed[..]);
+}
+
+#[test]
+fn its_seed_liquidity_accounts_are_pipelines_then_the_metadatas() {
+    let idl = idl();
+    let seed = idl["instructions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "pipeline_seed_liquidity")
+        .unwrap();
+    let names: Vec<&str> = seed["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    // Pipeline's five fixed accounts (`seed_accounts`), mint, escrow and token program for
+    // each mint, then the metadata's `seed_liquidity` accounts, in order.
+    assert_eq!(
+        names[..11],
+        [
+            "seeder",
+            "market_state",
+            "payer",
+            "system_program",
+            "lp_recipient",
+            "mint_0",
+            "escrow_0",
+            "token_program_0",
+            "mint_1",
+            "escrow_1",
+            "token_program_1",
+        ]
+    );
+    let metadata = read_json("metadata.json");
+    let listed: Vec<&str> = metadata["seed_liquidity"]["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names[11..], listed[..]);
 }
 
 #[test]
@@ -205,7 +255,7 @@ fn its_market_state_has_the_programs_discriminator_and_layout() {
 }
 
 #[test]
-fn it_publishes_the_tax_cap_and_the_suite_share_from_the_config_module() {
+fn it_publishes_the_tax_cap_the_suite_share_the_suite_treasury_and_the_slot_numbers() {
     let idl = idl();
     let constants: Vec<(&str, &str, String)> = idl["constants"]
         .as_array()
@@ -219,21 +269,28 @@ fn it_publishes_the_tax_cap_and_the_suite_share_from_the_config_module() {
             )
         })
         .collect();
-    assert_eq!(
-        constants,
-        [
-            (
-                "MAX_TAX_BPS",
-                "u16",
-                tax_amm::config::MAX_TAX_BPS.to_string()
-            ),
-            (
-                "SUITE_SHARE_BPS",
-                "u16",
-                tax_amm::config::SUITE_SHARE_BPS.to_string()
-            ),
-        ]
-    );
+    // In the IDL's own order, by name.
+    let mut expected = vec![
+        (
+            "MAX_TAX_BPS",
+            "u16",
+            tax_amm::config::MAX_TAX_BPS.to_string(),
+        ),
+        (
+            "SUITE_SHARE_BPS",
+            "u16",
+            tax_amm::config::SUITE_SHARE_BPS.to_string(),
+        ),
+        (
+            "SUITE_TREASURY",
+            "pubkey",
+            tax_amm::config::SUITE_TREASURY.to_string(),
+        ),
+        ("BURN_SLOT", "u8", tax_amm::state::BURN_SLOT.to_string()),
+        ("SUITE_SLOT", "u8", tax_amm::state::SUITE_SLOT.to_string()),
+    ];
+    expected.sort();
+    assert_eq!(constants, expected);
 }
 
 #[test]
@@ -249,6 +306,7 @@ fn its_events_and_errors_are_the_programs() {
         events,
         [
             // In the IDL's order, by name.
+            ("Distributed", Distributed::DISCRIMINATOR.to_vec()),
             ("MarketCreated", MarketCreated::DISCRIMINATOR.to_vec()),
             (
                 "RecipientsChanged",
@@ -264,15 +322,80 @@ fn its_events_and_errors_are_the_programs() {
     );
 
     // Errors are numbered from 6000 in the enum's order, the last being
-    // `OwedSlotLeftEmpty`.
+    // `BurnNeedsWritableMint`.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "OwedSlotLeftEmpty");
+    assert_eq!(last["name"], "BurnNeedsWritableMint");
     assert_eq!(
         last["code"].as_u64().unwrap() as u32,
-        anchor_lang::error::ERROR_CODE_OFFSET + tax_amm::StrategyError::OwedSlotLeftEmpty as u32
+        anchor_lang::error::ERROR_CODE_OFFSET
+            + tax_amm::StrategyError::BurnNeedsWritableMint as u32
     );
+}
+
+#[test]
+fn its_actions_accounts_and_args_are_the_metadatas() {
+    let idl = idl();
+    let metadata = read_json("metadata.json");
+    let actions = metadata["actions"].as_array().unwrap();
+    for action in actions {
+        let name = action["name"].as_str().unwrap();
+        // `burn` is `distribute` for the burn slot, with the mint writable: its own action,
+        // so the recipients' payouts never write-lock the mint.
+        let instruction_name = if name == "burn" { "distribute" } else { name };
+        let instruction = idl["instructions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["name"] == instruction_name)
+            .unwrap_or_else(|| panic!("the IDL has no instruction {instruction_name}"));
+        let flags = |account: &Value, key: &str| account[key].as_bool().unwrap_or(false);
+        let theirs: Vec<(&str, bool, bool)> = instruction["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| {
+                let account = a["name"].as_str().unwrap();
+                let writable = flags(a, "writable") || (name == "burn" && account == "tax_mint");
+                (account, writable, flags(a, "signer"))
+            })
+            .collect();
+        let ours: Vec<(&str, bool, bool)> = action["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| {
+                (
+                    a["name"].as_str().unwrap(),
+                    flags(a, "writable"),
+                    flags(a, "signer"),
+                )
+            })
+            .collect();
+        assert_eq!(ours, theirs, "{name}");
+        let arg_names = |args: &Value| -> Vec<String> {
+            args.as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        // Metadata arguments have no arrays, so an action with an array argument flattens
+        // it (`set_recipients`), and tests/metadata.rs checks its encoding instead.
+        let has_array = instruction["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["type"].get("array").is_some());
+        if !has_array {
+            assert_eq!(
+                arg_names(&action["args"]),
+                arg_names(&instruction["args"]),
+                "{name}"
+            );
+        }
+    }
 }
