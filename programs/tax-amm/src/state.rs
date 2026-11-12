@@ -20,6 +20,9 @@ pub const STATE_VERSION: u8 = 1;
 pub const AUTHORITY_SEED: &[u8] = b"authority";
 /// Seeds of each vault PDA, `["vault", market_state, mint]`.
 pub const VAULT_SEED: &[u8] = b"vault";
+/// Seeds of the market state of a market a launchpad seeded through
+/// `pipeline_seed_liquidity`, `["seeded", seeder, mint_0, mint_1]`.
+pub const SEEDED_SEED: &[u8] = b"seeded";
 
 /// What each tax slot is owed, by index: the tax recipients, then the burn, then the suite
 /// share (docs/spec/tax-amm.md, "Payout").

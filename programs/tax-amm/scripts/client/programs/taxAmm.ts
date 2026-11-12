@@ -45,6 +45,7 @@ import {
   getPipelineMarketInfoInstruction,
   getPipelineQuoteInstruction,
   getPipelineResolveAccountsInstruction,
+  getPipelineSeedLiquidityInstructionAsync,
   getPipelineSwapInstruction,
   getRenounceTaxAuthorityInstruction,
   getSeedInstruction,
@@ -54,6 +55,7 @@ import {
   parsePipelineMarketInfoInstruction,
   parsePipelineQuoteInstruction,
   parsePipelineResolveAccountsInstruction,
+  parsePipelineSeedLiquidityInstruction,
   parsePipelineSwapInstruction,
   parseRenounceTaxAuthorityInstruction,
   parseSeedInstruction,
@@ -63,6 +65,7 @@ import {
   type ParsedPipelineMarketInfoInstruction,
   type ParsedPipelineQuoteInstruction,
   type ParsedPipelineResolveAccountsInstruction,
+  type ParsedPipelineSeedLiquidityInstruction,
   type ParsedPipelineSwapInstruction,
   type ParsedRenounceTaxAuthorityInstruction,
   type ParsedSeedInstruction,
@@ -72,6 +75,7 @@ import {
   type PipelineMarketInfoInput,
   type PipelineQuoteInput,
   type PipelineResolveAccountsInput,
+  type PipelineSeedLiquidityAsyncInput,
   type PipelineSwapInput,
   type RenounceTaxAuthorityInput,
   type SeedInput,
@@ -80,6 +84,7 @@ import {
 } from "../instructions/index.ts";
 import {
   findAuthorityPda,
+  findMarketStatePda,
   findVault0Pda,
   findVault1Pda,
 } from "../pdas/index.ts";
@@ -202,20 +207,22 @@ export const TaxAmmInstruction = {
   1: "PipelineMarketInfo",
   2: "PipelineQuote",
   3: "PipelineResolveAccounts",
-  4: "PipelineSwap",
-  5: "RenounceTaxAuthority",
-  6: "Seed",
-  7: "SetRecipients",
-  8: "SetTaxes",
+  4: "PipelineSeedLiquidity",
+  5: "PipelineSwap",
+  6: "RenounceTaxAuthority",
+  7: "Seed",
+  8: "SetRecipients",
+  9: "SetTaxes",
   PipelineInitMarket: 0,
   PipelineMarketInfo: 1,
   PipelineQuote: 2,
   PipelineResolveAccounts: 3,
-  PipelineSwap: 4,
-  RenounceTaxAuthority: 5,
-  Seed: 6,
-  SetRecipients: 7,
-  SetTaxes: 8,
+  PipelineSeedLiquidity: 4,
+  PipelineSwap: 5,
+  RenounceTaxAuthority: 6,
+  Seed: 7,
+  SetRecipients: 8,
+  SetTaxes: 9,
 } as const;
 
 export type TaxAmmInstruction = (typeof TaxAmmInstruction)[Exclude<
@@ -270,6 +277,17 @@ export function identifyTaxAmmInstruction(
     )
   ) {
     return TaxAmmInstruction.PipelineResolveAccounts;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([197, 81, 12, 118, 24, 65, 212, 81]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmInstruction.PipelineSeedLiquidity;
   }
   if (
     containsBytes(
@@ -348,6 +366,9 @@ export type ParsedTaxAmmInstruction<
       instructionType: typeof TaxAmmInstruction.PipelineResolveAccounts;
     } & ParsedPipelineResolveAccountsInstruction<TProgram>)
   | ({
+      instructionType: typeof TaxAmmInstruction.PipelineSeedLiquidity;
+    } & ParsedPipelineSeedLiquidityInstruction<TProgram>)
+  | ({
       instructionType: typeof TaxAmmInstruction.PipelineSwap;
     } & ParsedPipelineSwapInstruction<TProgram>)
   | ({
@@ -394,6 +415,13 @@ export function parseTaxAmmInstruction<TProgram extends string>(
       return {
         instructionType: TaxAmmInstruction.PipelineResolveAccounts,
         ...parsePipelineResolveAccountsInstruction(instruction),
+      };
+    }
+    case TaxAmmInstruction.PipelineSeedLiquidity: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: TaxAmmInstruction.PipelineSeedLiquidity,
+        ...parsePipelineSeedLiquidityInstruction(instruction),
       };
     }
     case TaxAmmInstruction.PipelineSwap: {
@@ -474,6 +502,11 @@ export type TaxAmmPluginInstructions = {
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getPipelineResolveAccountsInstruction> &
     SelfPlanAndSendFunctions;
+  pipelineSeedLiquidity: (
+    input: MakeOptional<PipelineSeedLiquidityAsyncInput, "payer">,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getPipelineSeedLiquidityInstructionAsync> &
+    SelfPlanAndSendFunctions;
   pipelineSwap: (
     input: PipelineSwapInput,
     config?: { programAddress?: Address | HasAddress },
@@ -502,6 +535,7 @@ export type TaxAmmPluginPdas = {
   authority: typeof findAuthorityPda;
   vault0: typeof findVault0Pda;
   vault1: typeof findVault1Pda;
+  marketState: typeof findMarketStatePda;
 };
 
 export type TaxAmmPluginRequirements = ClientWithRpc<
@@ -558,6 +592,17 @@ export function taxAmmProgram(
                   instructionConfig?.programAddress ?? config.programAddress,
               }),
             ),
+          pipelineSeedLiquidity: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getPipelineSeedLiquidityInstructionAsync(
+                { ...input, payer: input.payer ?? client.payer },
+                {
+                  programAddress:
+                    instructionConfig?.programAddress ?? config.programAddress,
+                },
+              ),
+            ),
           pipelineSwap: (input, instructionConfig) =>
             addSelfPlanAndSendFunctions(
               client,
@@ -612,6 +657,11 @@ export function taxAmmProgram(
             }),
           vault1: (seeds, pdaConfig) =>
             findVault1Pda(seeds, {
+              programAddress:
+                pdaConfig?.programAddress ?? config.programAddress,
+            }),
+          marketState: (seeds, pdaConfig) =>
+            findMarketStatePda(seeds, {
               programAddress:
                 pdaConfig?.programAddress ?? config.programAddress,
             }),
