@@ -7,13 +7,18 @@
 //   3. register the strategy, signed and paid for by the upgrade authority (once), or point
 //      it at a new metadata URI;
 //   4. create a test token with its mint authority removed (it has no freeze authority),
-//      and wrap the SOL for the seed;
+//      and wrap the SOL for the seed and the buy;
 //   5. in one transaction: create the market from the metadata's `init` form, add a fee
 //      account for each mint, and seed it through the metadata's `seed` action;
 //   6. read the market back: the router's record (token at index 0, wrapped SOL at index 1,
 //      no exact-out) and the market state, through the generated client (client/), opened at
 //      the price and liquidity the spec's maths gives, recomputed here independently;
-//   7. check a quote is refused: trading arrives in the next build.
+//   7. trade both ways through the router: a buy of 1 SOL and a sell of what it bought, each
+//      quoted and swapped with the SDK, the quote checked against the spec's formulas
+//      (recomputed here independently) and the worked example's numbers, and the trader paid
+//      exactly the quote;
+//   8. read the books back: the price, the pool and fee ledgers and the counters equal the
+//      spec's formulas to the unit, and each vault holds exactly the sum of its ledgers.
 //
 // On the pattern of the tax AMM's demo (programs/tax-amm/scripts/demo.ts). Deploy the
 // program first; docs/toolchain.md says how, on a local validator and on devnet.
@@ -82,7 +87,9 @@ import {
     findTokenVaultPda,
     findVaultAuthorityPda,
     getMarketStateSize,
+    DESIGNER_SHARE_BPS,
     MARKET_STATE_DISCRIMINATOR,
+    SUITE_SHARE_BPS,
 } from './client/index.ts';
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
@@ -104,13 +111,27 @@ const DEMO = {
     rewardShareBps: 1_500,
     capFloorBps: 2_000,
     capDecayBps: 2_000,
+    // Step 7's buy, and the tokens and SOL beyond the seed the payer keeps so that each
+    // trade can pay Pipeline's fee on top of its input.
+    buy: 1_000_000_000n,
+    spareTokens: 1_000_000_000n,
+    spareLamports: 100_000_000n,
+};
+
+// The worked example's two trades, which the demo market must reproduce exactly
+// (docs/spec/pool4-for-solana.md, "Worked example").
+const WORKED = {
+    buyOut: 90_081_892_629n,
+    buySqrtPrice: 2_027_297_173_702_505_949n,
+    sellOut: 980_099_999n,
+    sellSqrtPrice: 1_844_674_407_372_029_099n,
 };
 // The most SOL the strategy's setup may spend on rent; the router returns the rest.
 const MAX_CREATOR_LAMPORTS = 100_000_000n;
 // What a local run airdrops when a key holds less: the payer creates the token and the
 // market and brings the seed's SOL, and the upgrade authority pays the listing fee and the
 // strategy account's rent.
-const LOCAL_FUNDING = { payer: 20_000_000_000n, upgradeAuthority: 1_000_000_000n };
+const LOCAL_FUNDING = { payer: 25_000_000_000n, upgradeAuthority: 1_000_000_000n };
 // Solana's limit on a transaction's size on the wire.
 const TRANSACTION_SIZE_LIMIT = 1_232;
 
@@ -373,12 +394,48 @@ async function createTestToken(wallet: KeyPairSigner, decimals: number, amount: 
 /** Wraps `amount` lamports into the wallet's wrapped SOL account. */
 async function wrapSol(wallet: KeyPairSigner, amount: bigint) {
     const account = await walletTokenAccount(wallet.address, WSOL);
-    await send('wrap the seed SOL', wallet, [
+    await send('wrap SOL', wallet, [
         await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: wallet, owner: wallet.address, mint: WSOL }),
         getTransferSolInstruction({ source: wallet, destination: account, amount }),
         getSyncNativeInstruction({ account }),
     ]);
     return account;
+}
+
+/**
+ * The spec's pricing with no buy wall (docs/spec/pool4-for-solana.md, "A sell", "A buy" and
+ * "The fee"), written out here from the spec rather than taken from the program, so the
+ * demo checks the program against the spec. The demo's trades stay far from the price
+ * bounds, so the model leaves them out: a trade the program refused at a bound would fail
+ * the demo at its quote.
+ */
+const Q = 1n << 64n;
+const ceilDiv = (n: bigint, d: bigint) => (n + d - 1n) / d;
+const ceilBps = (amount: bigint, bps: bigint) => ceilDiv(amount * bps, 10_000n);
+
+type Curve = { sqrtPrice: bigint; liquidity: bigint };
+type Priced = { fee: bigint; out: bigint; sqrtPrice: bigint };
+
+function specBuy({ sqrtPrice: s, liquidity: l }: Curve, a: bigint, feeBps: bigint): Priced {
+    const fee = ceilBps(a, feeBps);
+    const next = s + ((a - fee) * Q) / l;
+    return { fee, out: (l * Q * (next - s)) / (next * s), sqrtPrice: next };
+}
+
+function specSell({ sqrtPrice: s, liquidity: l }: Curve, a: bigint, feeBps: bigint): Priced {
+    const next = ceilDiv(l * Q * s, l * Q + a * s);
+    const gross = (l * (s - next)) / Q;
+    const fee = ceilBps(gross, feeBps);
+    return { fee, out: gross - fee, sqrtPrice: next };
+}
+
+/** The fee split: designer, suite, wall and recipient, as "The fee" writes it. */
+function specSplit(fee: bigint, wallSplitBps: bigint) {
+    const designer = (fee * BigInt(DESIGNER_SHARE_BPS)) / 10_000n;
+    const suite = (fee * BigInt(SUITE_SHARE_BPS)) / 10_000n;
+    const rest = fee - designer - suite;
+    const wall = (rest * wallSplitBps) / 10_000n;
+    return { designer, suite, wall, recipient: rest - wall };
 }
 
 async function main() {
@@ -474,9 +531,9 @@ async function main() {
         info('already registered with this metadata URI');
     }
 
-    step('4. Creating a test token and wrapping the seed SOL');
-    const token = await createTestToken(payer, DEMO.decimals, DEMO.tokens);
-    await wrapSol(payer, DEMO.lamports);
+    step('4. Creating a test token and wrapping the SOL for the seed and the buy');
+    const token = await createTestToken(payer, DEMO.decimals, DEMO.tokens + DEMO.spareTokens);
+    await wrapSol(payer, DEMO.lamports + DEMO.buy + DEMO.spareLamports);
     const tokenPrograms = [TOKEN_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS];
 
     step("5. Creating the market from the metadata's init form, with its fee accounts and the seed, in one transaction");
@@ -602,30 +659,139 @@ async function main() {
     info(`the opening matches the spec's maths, and the vaults hold exactly the seed`);
     record.push(['sqrt_price', `${sqrtPrice}`], ['liquidity', `${liquidity}`], ['cap', `${cap}`]);
 
-    step('7. Checking a quote is refused (trading arrives in the next build)');
-    const trade = {
-        mode: pipeline.TradeMode.ExactIn,
-        inputIndex: 1,
-        outputIndex: 0,
-        amount: 1_000_000_000n,
-        trader: payer.address,
-        extra: new Uint8Array(),
+    step('7. Trading both ways through the router');
+    // The spec's own account of the market, from the seed and what each trade does.
+    const feeBps = BigInt(DEMO.feeBps);
+    const books = {
+        curve: { sqrtPrice, liquidity },
+        poolTokens: DEMO.tokens,
+        poolSol: DEMO.lamports,
+        idleSol: 0n,
+        feesRecipient: 0n,
+        feesDesigner: 0n,
+        feesSuite: 0n,
+        volume: [0n, 0n],
+        feesCollected: 0n,
+        swapCount: 0n,
     };
-    const simulation = { commitment: 'confirmed' } as const;
-    const strategyAccounts = await pipeline.resolveAccounts(rpc, recorded, trade, payer.address, simulation);
-    let answered: bigint | undefined;
-    try {
-        ({
-            quote: { amountOut: answered },
-        } = await pipeline.quoteStrategy(rpc, recorded, trade, strategyAccounts, payer.address, simulation));
-    } catch (error) {
-        // The program's own refusal, not any failure: its `TradingNotAvailable` error.
-        const logs = error instanceof pipeline.SimulationError ? error.logs : [];
-        const refusal = logs.find((line) => line.includes('Error Code: TradingNotAvailable'));
-        if (!refusal) fail(`the quote failed for another reason: ${String(error)}\n   ${logs.join('\n   ')}`);
-        info(`refused, as this build does: ${refusal.replace(/^Program log: /, '')}`);
+    const payerAccounts = await Promise.all([token, WSOL].map((mint) => walletTokenAccount(payer.address, mint)));
+    let bought = 0n;
+    for (const [input, output, label] of [
+        [1, 0, 'buy'],
+        [0, 1, 'sell'],
+    ] as const) {
+        const amount = input === 1 ? DEMO.buy : bought;
+        const trade = {
+            mode: pipeline.TradeMode.ExactIn,
+            inputIndex: input,
+            outputIndex: output,
+            amount,
+            trader: payer.address,
+            extra: new Uint8Array(),
+        };
+        // At the commitment the demo confirms at, so the quote sees the swap before it.
+        const simulation = { commitment: 'confirmed' } as const;
+        const strategyAccounts = await pipeline.resolveAccounts(rpc, recorded, trade, payer.address, simulation);
+        const listed = strategyAccounts.map((account) => account.address).join();
+        if (listed !== [view.vaults[output], vaultAuthority].join()) {
+            fail(`${label}: account resolution listed ${listed}, not the output vault and the vault authority`);
+        }
+        const { quote, unitsConsumed } = await pipeline.quoteStrategy(
+            rpc,
+            recorded,
+            trade,
+            strategyAccounts,
+            payer.address,
+            simulation,
+        );
+        const spec = input === 1 ? specBuy(books.curve, amount, feeBps) : specSell(books.curve, amount, feeBps);
+        const worked = input === 1 ? WORKED.buyOut : WORKED.sellOut;
+        if (quote.amountIn !== amount || quote.amountOut !== spec.out || spec.out !== worked) {
+            fail(`${label} of ${amount}: quoted ${quote.amountOut} for ${quote.amountIn}; the spec's formulas give ${spec.out}, the worked example ${worked}`);
+        }
+        info(`${label} of ${amount}: quoted ${quote.amountOut}, the spec's price and the worked example's, fee ${spec.fee} lamports (${unitsConsumed} CU)`);
+        const before = await tokenBalance(payerAccounts[output]!);
+        await send(`${label} through the router`, payer, [
+            await pipeline.swap(
+                {
+                    trader: payer.address,
+                    strategyProgram: programId,
+                    marketState: resolved.marketState,
+                    traderInput: payerAccounts[input]!,
+                    traderOutput: payerAccounts[output]!,
+                    inputVault: view.vaults[input]!,
+                    inputMint: view.mints[input]!,
+                    outputMint: view.mints[output]!,
+                    inputTokenProgram: view.tokenPrograms[input]!,
+                    outputTokenProgram: view.tokenPrograms[output]!,
+                    strategyAccounts,
+                },
+                {
+                    mode: pipeline.TradeMode.ExactIn,
+                    amountIn: amount,
+                    amountOut: 0n,
+                    minAmountOut: quote.amountOut,
+                    integratorFeeBps: 0,
+                    extra: new Uint8Array(),
+                },
+            ),
+        ]);
+        const received = (await tokenBalance(payerAccounts[output]!)) - before;
+        if (received !== quote.amountOut) fail(`${label}: received ${received}, quoted ${quote.amountOut}`);
+        info(`${label}: received exactly the quote`);
+        record.push([label, `${amount} in, ${received} out`]);
+
+        // What the trade does to the books ("After pricing" steps 2, 3 and 7).
+        const split = specSplit(spec.fee, BigInt(DEMO.wallSplitBps));
+        if (input === 1) {
+            books.poolSol += amount - spec.fee;
+            books.poolTokens -= spec.out;
+            bought = received;
+        } else {
+            books.poolTokens += amount;
+            books.poolSol -= spec.out + spec.fee;
+        }
+        books.curve = { sqrtPrice: spec.sqrtPrice, liquidity };
+        books.idleSol += split.wall;
+        books.feesRecipient += split.recipient;
+        books.feesDesigner += split.designer;
+        books.feesSuite += split.suite;
+        books.volume[input]! += amount;
+        books.volume[output]! += spec.out;
+        books.feesCollected += spec.fee;
+        books.swapCount += 1n;
+        const workedPrice = input === 1 ? WORKED.buySqrtPrice : WORKED.sellSqrtPrice;
+        if (spec.sqrtPrice !== workedPrice) fail(`${label}: the spec's formulas move the price to ${spec.sqrtPrice}, not ${workedPrice}`);
     }
-    if (answered !== undefined) fail(`the quote was answered: ${answered}`);
+
+    step("8. Reading the books back against the spec's formulas");
+    const { data: traded } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
+    const read = {
+        sqrtPrice: [le(traded.sqrtPrice), books.curve.sqrtPrice],
+        lastClose: [le(traded.lastClose), books.curve.sqrtPrice],
+        liquidity: [le(traded.liquidity), liquidity],
+        poolTokens: [le(traded.poolTokens), books.poolTokens],
+        poolSol: [le(traded.poolSol), books.poolSol],
+        idleSol: [le(traded.idleSol), books.idleSol],
+        feesRecipient: [le(traded.feesRecipient), books.feesRecipient],
+        feesDesigner: [le(traded.feesDesigner), books.feesDesigner],
+        feesSuite: [le(traded.feesSuite), books.feesSuite],
+        volume0: [le(traded.volume[0]!), books.volume[0]!],
+        volume1: [le(traded.volume[1]!), books.volume[1]!],
+        feesCollected: [le(traded.feesCollected), books.feesCollected],
+        swapCount: [le(traded.swapCount), books.swapCount],
+    };
+    for (const [key, [got, wanted]] of Object.entries(read)) {
+        if (got !== wanted) fail(`the market state's ${key} is ${got}, but the spec's formulas give ${wanted}`);
+        info(`${key.padEnd(14)} ${got}`);
+    }
+    const [vaultTokensAfter, vaultSolAfter] = await Promise.all(view.vaults.map((vault) => tokenBalance(vault!)));
+    const solLedgers = books.poolSol + books.idleSol + books.feesRecipient + books.feesDesigner + books.feesSuite;
+    if (vaultTokensAfter !== books.poolTokens || vaultSolAfter !== solLedgers) {
+        fail(`the vaults hold ${vaultTokensAfter} and ${vaultSolAfter}, not their ledgers' ${books.poolTokens} and ${solLedgers}`);
+    }
+    info("the price, ledgers and counters equal the spec's formulas to the unit; each vault holds exactly its ledgers");
+    record.push(['market state after trading', "equal to the spec's formulas"]);
 
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));

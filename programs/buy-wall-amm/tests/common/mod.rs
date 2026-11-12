@@ -150,6 +150,15 @@ impl Market {
         [self.token_vault, self.sol_vault]
     }
 
+    /// What `pipeline_resolve_accounts` lists for a trade paying out mint `output`: the
+    /// output vault, then the vault authority.
+    pub fn strategy_accounts(&self, output: usize) -> Vec<AccountMeta> {
+        vec![
+            AccountMeta::new(self.vaults()[output], false),
+            AccountMeta::new_readonly(self.vault_authority, false),
+        ]
+    }
+
     pub fn token_programs(&self) -> [Pubkey; 2] {
         [self.token_program, TOKEN]
     }
@@ -733,52 +742,74 @@ impl Env {
         borsh::from_slice(&data).map_err(|e| e.to_string())
     }
 
-    /// The strategy's `pipeline_quote`, simulated, with the output vault after the fixed
-    /// accounts.
+    /// The strategy's `pipeline_quote`, simulated, with the resolved accounts after the
+    /// fixed ones, as an integrator's quoter passes them.
     pub fn quote(&self, market: &Market, trade: &TradeRequest) -> Result<QuoteResult, String> {
-        let mut accounts = self.read_accounts(market, trade);
-        accounts.push(AccountMeta::new_readonly(
-            market.vaults()[trade.output_index as usize % 2],
-            false,
-        ));
-        let instruction = strategy_call(client::interface::discriminator::QUOTE, trade, accounts);
-        let data = self.simulate(instruction)?;
-        borsh::from_slice(&data).map_err(|e| e.to_string())
+        self.quote_logged(market, trade).map(|(quote, _)| quote)
     }
 
-    /// A swap through the router of `amount` of mint `input` by `trader`, from their
-    /// associated token accounts, with the output vault as the strategy account.
-    pub fn swap(
-        &mut self,
+    /// `quote`, also returning the logs.
+    pub fn quote_logged(
+        &self,
         market: &Market,
-        trader: &Keypair,
+        trade: &TradeRequest,
+    ) -> Result<(QuoteResult, Vec<String>), String> {
+        let mut accounts = self.read_accounts(market, trade);
+        accounts.extend(market.strategy_accounts(trade.output_index as usize % 2));
+        let instruction = strategy_call(client::interface::discriminator::QUOTE, trade, accounts);
+        let (data, logs) = self.simulate_logged(instruction)?;
+        Ok((borsh::from_slice(&data).map_err(|e| e.to_string())?, logs))
+    }
+
+    /// The router's `swap` instruction for `trader` trading `amount` of mint `input`, from
+    /// and to their associated token accounts, with the strategy accounts
+    /// `pipeline_resolve_accounts` lists and the transfer-hook accounts of each side.
+    pub fn swap_ix(
+        &self,
+        market: &Market,
+        trader: &Pubkey,
         (input, output): (usize, usize),
         mode: TradeMode,
         amount: u64,
-    ) -> Result<client::SwapResult, String> {
-        let owner = trader.pubkey();
+        min_amount_out: u64,
+    ) -> Instruction {
+        let trader_input = pda::associated_token(
+            trader,
+            &market.mints()[input],
+            &market.token_programs()[input],
+        );
+        let trader_output = pda::associated_token(
+            trader,
+            &market.mints()[output],
+            &market.token_programs()[output],
+        );
+        let mut strategy_accounts = market.strategy_accounts(output);
+        strategy_accounts.extend(self.hook_accounts(
+            &market.mints()[output],
+            market.vaults()[output],
+            trader_output,
+            market.vault_authority,
+        ));
+        let input_hook_accounts = self.hook_accounts(
+            &market.mints()[input],
+            trader_input,
+            market.vaults()[input],
+            *trader,
+        );
         let accounts = client::SwapAccounts {
-            trader: owner,
+            trader: *trader,
             strategy_program: strategy_id(),
             market_state: market.market_state,
-            trader_input: pda::associated_token(
-                &owner,
-                &market.mints()[input],
-                &market.token_programs()[input],
-            ),
-            trader_output: pda::associated_token(
-                &owner,
-                &market.mints()[output],
-                &market.token_programs()[output],
-            ),
+            trader_input,
+            trader_output,
             input_vault: market.vaults()[input],
             input_mint: market.mints()[input],
             output_mint: market.mints()[output],
             input_token_program: market.token_programs()[input],
             output_token_program: market.token_programs()[output],
             integrator_fee_account: None,
-            strategy_accounts: vec![AccountMeta::new(market.vaults()[output], false)],
-            input_hook_accounts: vec![],
+            strategy_accounts,
+            input_hook_accounts,
         };
         let (amount_in, amount_out) = match mode {
             TradeMode::ExactIn => (amount, 0),
@@ -788,13 +819,157 @@ impl Env {
             mode,
             amount_in,
             amount_out,
-            min_amount_out: 0,
+            min_amount_out,
             integrator_fee_bps: 0,
             input_hook_accounts: 0,
             extra: vec![],
         };
-        let data = self.send(&[client::swap(&accounts, &args)], &[trader])?;
-        borsh::from_slice(&data).map_err(|e| e.to_string())
+        client::swap(&accounts, &args)
+    }
+
+    /// A swap through the router of `amount` of mint `input` by `trader`, with no minimum.
+    pub fn swap(
+        &mut self,
+        market: &Market,
+        trader: &Keypair,
+        direction: (usize, usize),
+        mode: TradeMode,
+        amount: u64,
+    ) -> Result<client::SwapResult, String> {
+        self.swap_logged(market, trader, direction, mode, amount, 0)
+            .map(|(result, _)| result)
+    }
+
+    /// A swap with a minimum output, also returning the transaction's logs.
+    pub fn swap_logged(
+        &mut self,
+        market: &Market,
+        trader: &Keypair,
+        direction: (usize, usize),
+        mode: TradeMode,
+        amount: u64,
+        min_amount_out: u64,
+    ) -> Result<(client::SwapResult, Vec<String>), String> {
+        let ix = self.swap_ix(
+            market,
+            &trader.pubkey(),
+            direction,
+            mode,
+            amount,
+            min_amount_out,
+        );
+        let (data, logs) = self.send_logged(&[ix], &[trader])?;
+        Ok((borsh::from_slice(&data).map_err(|e| e.to_string())?, logs))
+    }
+
+    /// The transfer-hook accounts a transfer of `mint` needs, or none when it has no hook.
+    pub fn hook_accounts(
+        &self,
+        mint: &Pubkey,
+        source: Pubkey,
+        destination: Pubkey,
+        authority: Pubkey,
+    ) -> Vec<AccountMeta> {
+        let Some(hook_program) = self.hook_program(mint) else {
+            return vec![];
+        };
+        let transfer = pipeline_check::hooks::Transfer {
+            source,
+            mint: *mint,
+            destination,
+            authority,
+            amount: 0,
+        };
+        pipeline_check::hooks::resolve(&hook_program, &transfer, |key| {
+            self.svm.get_account(key).map(|account| account.data)
+        })
+        .expect("the hook's accounts")
+    }
+
+    /// The transfer-hook program of a Token-2022 mint, if it has one.
+    pub fn hook_program(&self, mint: &Pubkey) -> Option<Pubkey> {
+        use spl_token_2022_interface::extension::{transfer_hook, StateWithExtensions};
+        let account = self.svm.get_account(mint)?;
+        if account.owner != TOKEN_2022 {
+            return None;
+        }
+        let state =
+            StateWithExtensions::<spl_token_2022_interface::state::Mint>::unpack(&account.data)
+                .ok()?;
+        transfer_hook::get_program_id(&state).map(|id| Pubkey::new_from_array(id.to_bytes()))
+    }
+
+    /// Loads Pipeline's `test-hook` (built by `scripts/fetch-pipeline.sh`) at its own
+    /// address.
+    pub fn add_test_hook(&mut self) {
+        if self.svm.get_account(&TEST_HOOK_PROGRAM).is_none() {
+            let path =
+                crate_dir().join("../../fixtures/pipeline/programs/target/deploy/test_hook.so");
+            let bytes = read_program(path, "Run `scripts/fetch-pipeline.sh` first.");
+            self.svm.add_program(TEST_HOOK_PROGRAM, &bytes).unwrap();
+        }
+    }
+
+    /// A seedable Token-2022 token whose transfer hook is Pipeline's `test-hook`,
+    /// approving every transfer, with its mint and freeze authorities removed.
+    pub fn seedable_hooked_token(&mut self) -> Pubkey {
+        self.add_test_hook();
+        let mint = self.create_mint_with(
+            &TOKEN_2022,
+            6,
+            &[RealExtension::TransferHook {
+                program: TEST_HOOK_PROGRAM,
+            }],
+            false,
+        );
+        let validation = pipeline_check::hooks::validation_address(&TEST_HOOK_PROGRAM, &mint);
+        let whitelist =
+            Pubkey::find_program_address(&[b"whitelist", mint.as_ref()], &TEST_HOOK_PROGRAM).0;
+        let initialize = Instruction::new_with_bytes(
+            TEST_HOOK_PROGRAM,
+            b"tsthkini",
+            vec![
+                AccountMeta::new(self.admin.pubkey(), true),
+                AccountMeta::new(validation, false),
+                AccountMeta::new(whitelist, false),
+                AccountMeta::new_readonly(mint, false),
+                AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
+            ],
+        );
+        self.send(&[initialize], &[]).unwrap();
+        self.revoke_authorities(&mint, &TOKEN_2022);
+        mint
+    }
+
+    /// Creates and seeds a market of `token`, as `create_and_seed` does, with the token's
+    /// transfer-hook accounts after the seed's own.
+    pub fn create_and_seed_hooked(
+        &mut self,
+        token_mint: Pubkey,
+        params: &InitParams,
+        tokens: u64,
+        lamports: u64,
+    ) -> Result<Market, String> {
+        let admin = self.admin.pubkey();
+        self.fund(&admin, &token_mint, &TOKEN_2022, tokens, lamports);
+        let market_state = Keypair::new();
+        let (market, create) = self.create_market_ix(
+            &market_state,
+            token_mint,
+            TOKEN_2022,
+            borsh::to_vec(params).unwrap(),
+        );
+        let hooks = self.hook_accounts(
+            &token_mint,
+            pda::associated_token(&admin, &token_mint, &TOKEN_2022),
+            market.token_vault,
+            admin,
+        );
+        let mut instructions = vec![create];
+        instructions.extend(self.fee_account_ixs(&market));
+        instructions.push(seed_ix(&market, &admin, tokens, lamports, hooks));
+        self.send(&instructions, &[&market_state])?;
+        Ok(market)
     }
 
     /// A wallet holding `tokens` of the market's token and `lamports` of wrapped SOL.

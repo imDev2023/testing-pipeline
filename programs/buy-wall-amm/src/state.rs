@@ -33,6 +33,19 @@ pub const STATUS_CREATED: u8 = 1;
 /// `status`: seeded and open.
 pub const STATUS_OPEN: u8 = 2;
 
+/// The first seed of the vault authority, `["authority", market_state]`.
+pub const AUTHORITY_SEED: &[u8] = b"authority";
+
+/// The vault authority of `market_state` from its stored bump, or `None` if that bump does
+/// not give a PDA.
+pub fn vault_authority(market_state: &Pubkey, bump: u8) -> Option<Pubkey> {
+    Pubkey::create_program_address(
+        &[AUTHORITY_SEED, market_state.as_ref(), &[bump]],
+        &crate::ID,
+    )
+    .ok()
+}
+
 /// Bytes left zeroed and reserved after the last field.
 pub const RESERVE_LEN: usize = 305;
 
@@ -248,6 +261,67 @@ impl MarketState {
     pub fn set_volume(&mut self, index: usize, value: u128) -> Option<()> {
         *self.volume.get_mut(index)? = value.to_le_bytes();
         Some(())
+    }
+
+    /// The ledgers a swap changes.
+    pub fn books(&self) -> crate::books::Books {
+        crate::books::Books {
+            pool_tokens: self.pool_tokens(),
+            pool_sol: self.pool_sol(),
+            idle_sol: self.idle_sol(),
+            fees_recipient: self.fees_recipient(),
+            fees_designer: self.fees_designer(),
+            fees_suite: self.fees_suite(),
+        }
+    }
+
+    pub fn set_books(&mut self, books: &crate::books::Books) {
+        self.set_pool_tokens(books.pool_tokens);
+        self.set_pool_sol(books.pool_sol);
+        self.set_idle_sol(books.idle_sol);
+        self.set_fees_recipient(books.fees_recipient);
+        self.set_fees_designer(books.fees_designer);
+        self.set_fees_suite(books.fees_suite);
+    }
+
+    /// The counters a swap changes.
+    pub fn counters(&self) -> Option<crate::books::Counters> {
+        Some(crate::books::Counters {
+            volume: [self.volume(0)?, self.volume(1)?],
+            fees_collected: self.fees_collected(),
+            swap_count: self.swap_count(),
+        })
+    }
+
+    pub fn set_counters(&mut self, counters: &crate::books::Counters) -> Option<()> {
+        self.set_volume(0, *counters.volume.first()?)?;
+        self.set_volume(1, *counters.volume.get(1)?)?;
+        self.set_fees_collected(counters.fees_collected);
+        self.set_swap_count(counters.swap_count);
+        Some(())
+    }
+
+    /// What the market has recorded in the vault of mint `index`: the sum of every ledger
+    /// kept there (the spec's "Ledgers"), so input is credited only beyond all of them.
+    pub fn recorded(&self, index: u8) -> Option<u64> {
+        let ledgers: &[u64] = match index {
+            0 => &[
+                self.pool_tokens(),
+                self.retired_tokens(),
+                self.rewards_owed(),
+            ],
+            1 => &[
+                self.pool_sol(),
+                self.idle_sol(),
+                self.fees_recipient(),
+                self.fees_designer(),
+                self.fees_suite(),
+            ],
+            _ => return None,
+        };
+        ledgers
+            .iter()
+            .try_fold(0u64, |total, ledger| total.checked_add(*ledger))
     }
 
     /// The input and output vaults of a trade: mint index 0 is the token, 1 wrapped SOL.
