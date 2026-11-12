@@ -631,8 +631,36 @@ impl Env {
         for ((mint, token_program), amount) in
             market.mints.iter().zip(&market.token_programs).zip(amounts)
         {
-            write_token_account(&mut self.svm, mint, token_program, wallet, amount).unwrap();
+            self.write_token_account(mint, token_program, wallet, amount);
         }
+    }
+
+    /// `pipeline_check::write_token_account`, which writes the associated token account of
+    /// `owner` for `mint` holding `amount`, made right for Token-2022's native SOL mint too:
+    /// Pipeline's helper wraps only SPL Token's, so it would write a Token-2022 wrapped SOL
+    /// balance with no lamports behind it and not marked native.
+    pub fn write_token_account(
+        &mut self,
+        mint: &Pubkey,
+        token_program: &Pubkey,
+        owner: &Pubkey,
+        amount: u64,
+    ) -> Pubkey {
+        let address =
+            write_token_account(&mut self.svm, mint, token_program, owner, amount).unwrap();
+        let native_2022 = ck(&tax_amm::params::NATIVE_MINTS[1]);
+        if *mint == native_2022 && *token_program == TOKEN_2022 {
+            let mut account = self.svm.get_account(&address).unwrap();
+            let rent = self
+                .svm
+                .minimum_balance_for_rent_exemption(account.data.len());
+            // is_native: a COption<u64> holding the rent-exempt reserve.
+            account.data[109..113].copy_from_slice(&1u32.to_le_bytes());
+            account.data[113..121].copy_from_slice(&rent.to_le_bytes());
+            account.lamports = rent + amount;
+            self.svm.set_account(address, account).unwrap();
+        }
+        address
     }
 
     /// Sends the tax AMM's `seed` action, signed by `seeder` from their associated token
@@ -902,6 +930,58 @@ impl Env {
         self.send_meta(&[instruction], &[owner])
     }
 
+    /// Sends the tax AMM's `distribute` action for `slot`, signed and paid for by `caller`,
+    /// with the slot's wallet read from the market state and the transfer-hook accounts the
+    /// payout needs after its own.
+    pub fn distribute(
+        &mut self,
+        market: &Market,
+        caller: &Keypair,
+        slot: u8,
+    ) -> Result<TransactionMetadata, String> {
+        let state = self.tax_market(&market.market_state);
+        let tax_side = state.tax_side as usize;
+        let wallet = slot_wallet(&state, slot);
+        let token_account = pda::associated_token(
+            &wallet,
+            &market.mints[tax_side],
+            &market.token_programs[tax_side],
+        );
+        let hooks = self.hook_accounts(
+            &market.mints[tax_side],
+            market.vaults[tax_side],
+            token_account,
+            market.authority,
+        );
+        let instruction =
+            distribute_instruction(market, tax_side, &caller.pubkey(), slot, &wallet, hooks);
+        self.send_meta(&[instruction], &[caller])
+    }
+
+    /// A token account's balance, or 0 when it does not exist.
+    pub fn balance_or_zero(&self, account: &Pubkey) -> u64 {
+        match self.svm.get_account(account) {
+            Some(found) if found.data.len() >= 72 => {
+                u64::from_le_bytes(found.data[64..72].try_into().unwrap())
+            }
+            _ => 0,
+        }
+    }
+
+    /// Writes a mint's supply. [`Env::fund`] writes balances without minting them, so a test
+    /// that measures a burn by the supply first gives the mint one that covers them.
+    pub fn set_supply(&mut self, mint: &Pubkey, supply: u64) {
+        let mut account = self.svm.get_account(mint).expect("mint");
+        account.data[36..44].copy_from_slice(&supply.to_le_bytes());
+        self.svm.set_account(*mint, account).unwrap();
+    }
+
+    /// A mint's supply.
+    pub fn supply(&self, mint: &Pubkey) -> u64 {
+        let data = self.svm.get_account(mint).expect("mint").data;
+        u64::from_le_bytes(data[36..44].try_into().unwrap())
+    }
+
     /// A token account's balance.
     pub fn balance(&self, account: &Pubkey) -> u64 {
         let data = self.svm.get_account(account).expect("token account").data;
@@ -995,6 +1075,53 @@ pub fn seed_instruction(
         AccountMeta::new_readonly(market.mints[1], false),
         AccountMeta::new_readonly(market.token_programs[0], false),
         AccountMeta::new_readonly(market.token_programs[1], false),
+    ];
+    accounts.extend(hook_accounts);
+    Instruction::new_with_bytes(strategy_id(), &data, accounts)
+}
+
+/// The wallet a tax slot is paid to, as the program's `TaxMarket::slot_wallet` says
+/// (docs/spec/tax-amm.md, "Payout"), as the client's key type; the default key for the burn,
+/// an unused slot and a slot number out of range.
+pub fn slot_wallet(state: &TaxMarket, slot: u8) -> Pubkey {
+    state
+        .slot_wallet(slot as usize)
+        .map(|wallet| ck(&wallet))
+        .unwrap_or_default()
+}
+
+/// The tax AMM's `distribute` action, in the account order `metadata.json` lists: the
+/// caller, who pays for a missing token account, the market state, the vault authority,
+/// the tax-side vault and mint, the slot's wallet and its associated token account for the
+/// tax-side mint, the tax-side token program, the associated token program and the system
+/// program, then `hook_accounts`.
+pub fn distribute_instruction(
+    market: &Market,
+    tax_side: usize,
+    caller: &Pubkey,
+    slot: u8,
+    wallet: &Pubkey,
+    hook_accounts: Vec<AccountMeta>,
+) -> Instruction {
+    use anchor_lang::InstructionData;
+    let data = tax_amm::instruction::Distribute { slot }.data();
+    let (mint, token_program) = (market.mints[tax_side], market.token_programs[tax_side]);
+    let mut accounts = vec![
+        AccountMeta::new(*caller, true),
+        AccountMeta::new(market.market_state, false),
+        AccountMeta::new_readonly(market.authority, false),
+        AccountMeta::new(market.vaults[tax_side], false),
+        // Writable only for the burn, which changes the supply.
+        if slot == tax_amm::state::BURN_SLOT {
+            AccountMeta::new(mint, false)
+        } else {
+            AccountMeta::new_readonly(mint, false)
+        },
+        AccountMeta::new_readonly(*wallet, false),
+        AccountMeta::new(pda::associated_token(wallet, &mint, &token_program), false),
+        AccountMeta::new_readonly(token_program, false),
+        AccountMeta::new_readonly(client::ASSOCIATED_TOKEN_PROGRAM_ID, false),
+        AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
     ];
     accounts.extend(hook_accounts);
     Instruction::new_with_bytes(strategy_id(), &data, accounts)
