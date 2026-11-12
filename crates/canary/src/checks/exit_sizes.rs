@@ -113,6 +113,7 @@ fn size_numbers(m: &Measured, row: &RoundTrip) -> Value {
     json!({
         "amount": row.amount,
         "amount_words": m.amount(row.amount),
+        "wallet": row.wallet.to_string(),
         "share_of_money_vault_ppm": share_of_vault_ppm(row.amount, m.money_vault),
         "bought": row.bought(),
         "put_in": row.put_in(),
@@ -205,11 +206,12 @@ pub fn judge(m: &Measured, trading: &Trading) -> Verdict {
         .iter()
         .filter(|r| m.is_ordinary_size(r.amount))
         .collect();
+    ordinary.sort_by_key(|r| r.amount);
     if let Some(first) = ordinary.first() {
+        // The error shown is the first size named's own.
         let failure = first
             .sale_failure()
             .map_or_else(String::new, |f| format!(" ({f})"));
-        ordinary.sort_by_key(|r| r.amount);
         let mut amounts: Vec<String> = ordinary.iter().map(|r| m.amount(r.amount)).collect();
         amounts.dedup();
         return Verdict::new(

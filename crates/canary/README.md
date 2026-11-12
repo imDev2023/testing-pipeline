@@ -28,8 +28,11 @@ target/release/canary serve --listen 127.0.0.1:8080 &
 curl -s -X POST --data-binary @snapshot.json -H 'content-type: application/json' http://127.0.0.1:8080/run
 ```
 
-`POST /run` takes one market's snapshot (`src/source.rs`, `Snapshot`) and answers with `{"status": "results", "records": [...]}`, or with `{"status": "missing", "addresses": [...]}` when a trade named accounts the snapshot lacks.
-The `CanaryRun` Durable Object adds those accounts and posts again, at most `SNAPSHOT_ROUNDS` times; at the last round the checks that needed them are "not run", naming them.
+`POST /run` takes one market's snapshot (`src/source.rs`, `Snapshot`): the market, the round from 1, the cluster's clock, and every account read by address, `null` where the cluster has none, so an address absent from the snapshot is one it lacks (`CANARY-30`).
+It answers with `{"status": "results", "records": [...]}`, or with `{"status": "missing", "addresses": [...], "seed"}` when a trade named accounts the snapshot lacks.
+The `CanaryRun` Durable Object adds those accounts (`null` for any the cluster does not have) and posts again with the same `seed`, at most `SNAPSHOT_ROUNDS` times; at the last round the checks that needed them are "not run", naming them (`CANARY-31`).
+The seed is chosen at random once per run and every wallet of the run comes from it, so all rounds trade from the same wallets and accounts derived from them can be supplied, while no strategy can know the wallets in advance (`CANARY-36`).
+`canary snapshot` writes a complete snapshot with the seed it was recorded with, and refuses when any RPC read failed.
 
 ## How it is built
 

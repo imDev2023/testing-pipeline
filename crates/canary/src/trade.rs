@@ -11,13 +11,11 @@ use pipeline_quoter::{QuoteRequest, Quoter};
 use pipeline_strategy_interface::{self as psi, discriminator, fees, TradeMode};
 use serde::Serialize;
 use solana_clock::Clock;
-use solana_keypair::Keypair;
-use solana_signer::Signer;
 use solana_transaction::Transaction;
 
 use crate::config::QUOTE_COMPUTE_LIMIT;
 use crate::failure::{Failure, FailureClass, Stage};
-use crate::market::{fund_lamports, token_amount, Market, Session};
+use crate::market::{fund_lamports, program_elf, token_amount, Market, Session};
 use crate::swap::{compute_limit, SwapPath, SwapReceipt, SwapRequest};
 
 /// A quote in the trader's terms, as `pipeline-quoter` gives it.
@@ -297,6 +295,12 @@ impl Session<'_> {
             keys.extend(market.view.mints.iter());
             keys.extend(market.view.vaults.iter());
             keys.extend(resolved.iter().map(|m| m.pubkey));
+            // An integrator quoting for a trader also knows the trader's own token accounts,
+            // which the strategy is given and may read.
+            if let Some(trader) = request.trader.map(Pubkey::new_from_array) {
+                keys.push(market.ata(&trader, request.input_index as usize));
+                keys.push(market.ata(&trader, request.output_index as usize));
+            }
             for key in keys {
                 let Some(account) = svm.get_account(&key) else {
                     continue;
@@ -438,8 +442,8 @@ impl Session<'_> {
         }
     }
 
-    /// Buys `amount` of `token` with `money` from a new random wallet on a fresh copy, then
-    /// sells everything bought in the same slot.
+    /// Buys `amount` of `token` with `money` from the run's wallet for that size, on a fresh
+    /// copy, then sells everything bought in the same slot.
     pub fn round_trip(
         &mut self,
         path: &dyn SwapPath,
@@ -448,7 +452,10 @@ impl Session<'_> {
         amount: u64,
     ) -> RoundTrip {
         let mut svm = self.fresh();
-        let trader = Keypair::new().pubkey();
+        let trader = self.seed.wallet(
+            &self.market.address,
+            &format!("round trip {money} to {token}, {amount}"),
+        );
         fund_lamports(&mut svm, &trader);
         let budget = fees::max_total_spend(amount, 0).unwrap_or(u64::MAX);
         let funded = write_token_account(
@@ -480,7 +487,12 @@ impl Session<'_> {
             }
             _ => None,
         };
-        RoundTrip { amount, buy, sell }
+        RoundTrip {
+            amount,
+            wallet: trader,
+            buy,
+            sell,
+        }
     }
 }
 
@@ -488,6 +500,9 @@ impl Session<'_> {
 #[derive(Clone, Debug, Serialize)]
 pub struct RoundTrip {
     pub amount: u64,
+    /// The wallet that bought and sold.
+    #[serde(serialize_with = "address")]
+    pub wallet: Pubkey,
     pub buy: Leg,
     /// `None` when the buy failed or bought nothing that could be sold.
     pub sell: Option<Leg>,
@@ -526,15 +541,7 @@ impl RoundTrip {
     }
 }
 
-/// A program's executable bytes as the VM holds them.
-pub fn program_elf(svm: &LiteSVM, program: &Pubkey) -> Option<Vec<u8>> {
-    const PROGRAM_DATA_HEADER_LEN: usize = 45;
-    let account = svm.get_account(program)?;
-    if account.owner == pipeline_client::BPF_LOADER_UPGRADEABLE_ID {
-        let data = svm
-            .get_account(&pipeline_client::pda::program_data(program))?
-            .data;
-        return data.get(PROGRAM_DATA_HEADER_LEN..).map(|d| d.to_vec());
-    }
-    Some(account.data)
+/// Serializes an address as its base58 text.
+fn address<S: serde::Serializer>(key: &Pubkey, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&key.to_string())
 }

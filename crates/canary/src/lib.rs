@@ -22,6 +22,7 @@ pub mod sizes;
 pub mod source;
 pub mod swap;
 pub mod trade;
+pub mod wallets;
 pub mod words;
 
 pub use failure::{Failure, FailureClass, Stage};

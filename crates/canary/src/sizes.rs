@@ -71,9 +71,14 @@ pub fn ladder(is_wrapped_sol: bool, vault: u64, decimals: u8) -> Ladder {
         sizes
     };
     if vault < SMALL_VAULT_UNITS {
-        let one = 10u128.pow(decimals as u32);
-        let in_hundredths =
-            |h: u64| ((one * h as u128) / HUNDREDTHS as u128).clamp(1, u64::MAX as u128) as u64;
+        // A mint may claim up to 255 decimals; past what fits, a size saturates.
+        let in_hundredths = |h: u64| {
+            10u128
+                .checked_pow(decimals as u32)
+                .and_then(|one| one.checked_mul(h as u128))
+                .map_or(u128::MAX, |units| units / HUNDREDTHS as u128)
+                .clamp(1, u64::MAX as u128) as u64
+        };
         return Ladder {
             basis: Basis::WholeTokens,
             sizes: dedup(

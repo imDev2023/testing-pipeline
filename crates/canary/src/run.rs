@@ -14,8 +14,9 @@ use crate::checks::{self, conformance, cost, exit_sizes, quote_matches_swap, rea
 use crate::market::{token_amount, Copy, Session, Version};
 use crate::record::{Record, RecordContext, Verdict};
 use crate::sizes::{ladder, money_side, Side};
-use crate::source::Source;
+use crate::source::{ClockMemo, Source};
 use crate::swap::{SwapPath, ThroughRouter};
+use crate::wallets::Seed;
 
 /// How to run.
 pub struct RunOptions {
@@ -26,6 +27,9 @@ pub struct RunOptions {
     pub last_round: bool,
     /// The licence seam's swap function.
     pub swap: &'static dyn SwapPath,
+    /// The run's seed, from which every wallet comes; `None` picks a new random one. The
+    /// snapshot rounds of one run pass the seed the first round answered with.
+    pub seed: Option<Seed>,
 }
 
 impl Default for RunOptions {
@@ -34,6 +38,7 @@ impl Default for RunOptions {
             extra: vec![],
             last_round: true,
             swap: &ThroughRouter,
+            seed: None,
         }
     }
 }
@@ -44,6 +49,9 @@ pub struct MarketResults {
     pub records: Vec<Record>,
     /// What the copy or the run could not do, for the operator's information.
     pub notes: Vec<String>,
+    /// The seed the run's wallets came from.
+    #[serde(skip)]
+    pub seed: Seed,
 }
 
 impl MarketResults {
@@ -63,15 +71,19 @@ impl MarketResults {
 #[derive(Clone, Debug)]
 pub enum MarketRun {
     Results(MarketResults),
-    /// Addresses the snapshot lacks that a trade named, in the order first asked for.
-    Missing(Vec<Pubkey>),
+    /// Addresses the snapshot lacks that a trade named, in the order first asked for, and
+    /// the seed to post the next round with.
+    Missing {
+        addresses: Vec<Pubkey>,
+        seed: Seed,
+    },
 }
 
 impl MarketRun {
     pub fn into_results(self) -> Option<MarketResults> {
         match self {
             MarketRun::Results(results) => Some(results),
-            MarketRun::Missing(_) => None,
+            MarketRun::Missing { .. } => None,
         }
     }
 }
@@ -98,20 +110,25 @@ fn naming(accounts: &BTreeSet<Pubkey>) -> String {
 /// Runs every check on `market`, reading from `source`.
 pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions) -> MarketRun {
     let run_at = now();
-    let copy = Copy::build(source, market, &CheckOptions::default());
+    let seed = options.seed.unwrap_or_else(Seed::random);
+    let mut clock = ClockMemo::new(source);
+    let copy = Copy::build(&mut clock, market, &CheckOptions::default());
+    let cluster = clock.last.take();
     let copy_lacking: BTreeSet<Pubkey> = source.missing().into_iter().collect();
     let copy = match copy {
         Ok(copy) => copy,
         Err(error) => {
             if !copy_lacking.is_empty() && !options.last_round {
-                return MarketRun::Missing(source.missing());
+                return MarketRun::Missing {
+                    addresses: source.missing(),
+                    seed,
+                };
             }
             let reason = if copy_lacking.is_empty() {
                 format!("Not run: the market could not be copied ({error}).")
             } else {
                 naming(&copy_lacking)
             };
-            let cluster = source.cluster_info().ok();
             let context = RecordContext {
                 cluster: cluster
                     .as_ref()
@@ -131,6 +148,7 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
                     .map(|check| context.record(check, Verdict::not_run(&reason)))
                     .collect(),
                 notes: vec![error],
+                seed,
             });
         }
     };
@@ -148,7 +166,7 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         router_version: copy.router_version.clone(),
         market: market.to_string(),
     };
-    let mut session = Session::new(&copy, source, options.extra.clone());
+    let mut session = Session::new(&copy, source, options.extra.clone(), seed);
 
     let sides: Vec<Side> = session
         .market
@@ -197,7 +215,16 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
     lacking.extend(readable_lacking.iter().copied());
     lacking.extend(sizes_lacking.iter().copied());
     if !lacking.is_empty() && !options.last_round {
-        return MarketRun::Missing(source_order(&lacking, &session));
+        return MarketRun::Missing {
+            addresses: source_order(&lacking, &session),
+            seed,
+        };
+    }
+    // The trading checks rest on readable's verdict when it closed trading, so they also
+    // lack whatever readable's probes lacked.
+    let mut trading_lacking = sizes_lacking.clone();
+    if matches!(trading, readable::Trading::NotRun(_)) {
+        trading_lacking.extend(readable_lacking.iter().copied());
     }
     let gate = |own: &BTreeSet<Pubkey>, verdict: Verdict| {
         let mut needed = copy_lacking.clone();
@@ -219,23 +246,30 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         ),
         context.record(
             checks::EXIT_SIZES,
-            gate(&sizes_lacking, exit_sizes::judge(&sizes_measured, &trading)),
+            gate(
+                &trading_lacking,
+                exit_sizes::judge(&sizes_measured, &trading),
+            ),
         ),
         context.record(
             checks::QUOTE_MATCHES_SWAP,
             gate(
-                &sizes_lacking,
+                &trading_lacking,
                 quote_matches_swap::judge(&sizes_measured, &trading),
             ),
         ),
         context.record(
             checks::COST,
-            gate(&sizes_lacking, cost::judge(&sizes_measured, &trading)),
+            gate(&trading_lacking, cost::judge(&sizes_measured, &trading)),
         ),
     ];
     let mut notes = copy.notes.clone();
     notes.extend(session.notes.iter().cloned());
-    MarketRun::Results(MarketResults { records, notes })
+    MarketRun::Results(MarketResults {
+        records,
+        notes,
+        seed,
+    })
 }
 
 /// The lacking addresses in the order the source was first asked for them.
@@ -265,6 +299,7 @@ pub fn sweep(source: &mut dyn Source, markets: &[Pubkey], options: &RunOptions) 
         extra: options.extra.clone(),
         last_round: true,
         swap: options.swap,
+        seed: None,
     };
     let mut records = vec![];
     let mut notes = std::collections::BTreeMap::new();

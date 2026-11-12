@@ -4,9 +4,9 @@
 //! snapshot is everything the run reads.
 //!
 //! ```text
-//! POST /run   {"market", "round", "cluster", "accounts"}
+//! POST /run   {"market", "round", "cluster", "accounts", "seed"?}
 //!   200 {"status": "results", "harness", "records": [...], "notes": [...]}
-//!   200 {"status": "missing", "round", "addresses": [...]}
+//!   200 {"status": "missing", "round", "addresses": [...], "seed"}
 //!   400 {"error"}
 //! GET /health  200 {"harness"}
 //! ```
@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 use crate::config::{HARNESS, SNAPSHOT_MAX_BYTES, SNAPSHOT_ROUNDS};
 use crate::run::{run_market, MarketRun, RunOptions};
 use crate::source::{Snapshot, SnapshotSource};
+use crate::wallets::Seed;
 
 pub fn router() -> Router {
     Router::new()
@@ -44,9 +45,11 @@ pub fn answer(snapshot: &Snapshot) -> Result<Value, String> {
             snapshot.market
         )
     })?;
+    let seed = snapshot.seed.as_deref().map(Seed::from_hex).transpose()?;
     let mut source = SnapshotSource::new(snapshot)?;
     let options = RunOptions {
         last_round: snapshot.round >= SNAPSHOT_ROUNDS,
+        seed,
         ..RunOptions::default()
     };
     Ok(match run_market(&mut source, market, &options) {
@@ -56,10 +59,11 @@ pub fn answer(snapshot: &Snapshot) -> Result<Value, String> {
             "records": results.records,
             "notes": results.notes,
         }),
-        MarketRun::Missing(addresses) => json!({
+        MarketRun::Missing { addresses, seed } => json!({
             "status": "missing",
             "round": snapshot.round,
             "addresses": addresses.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            "seed": seed.to_hex(),
         }),
     })
 }

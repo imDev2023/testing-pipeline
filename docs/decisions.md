@@ -2203,6 +2203,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
 
+### CANARY-36: Wallets from a seed chosen per run
+
+- Question: How are a run's new random wallets made, so that a snapshot's later rounds can supply accounts derived from them?
+- Answer: Each wallet comes from a seed chosen at random once per run; the endpoint's first answer carries the seed and every later round of that run is posted with it, so the rounds trade from the same wallets while no strategy can know Canary's wallets in advance.
+- Alternatives: A new random key per trade, whose derived accounts no later round could supply; wallets derived from the market and the size, which a strategy could compute and treat differently.
+- Specified in: [`crates/canary/README.md`, Run it](../crates/canary/README.md#run-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
 ## Explainer (EXPLAINER)
 
 ### EXPLAINER-01: What the explainer may say

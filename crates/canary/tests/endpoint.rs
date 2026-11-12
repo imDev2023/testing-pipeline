@@ -67,6 +67,13 @@ async fn a_snapshot_lacking_an_account_gets_exactly_the_missing_addresses_until_
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(answer["status"], "missing");
     assert_eq!(answer["addresses"], serde_json::json!([vault.to_string()]));
+    // The run's seed comes back, to be posted with the next round.
+    let seed = answer["seed"]
+        .as_str()
+        .expect("the answer carries the run's seed")
+        .to_string();
+    assert_eq!(seed.len(), 64);
+    snapshot.seed = Some(seed);
 
     snapshot.round = SNAPSHOT_ROUNDS;
     let (_, answer) = post(serde_json::to_string(&snapshot).unwrap()).await;

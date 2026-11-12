@@ -5,14 +5,16 @@ use crate::sizes::Basis;
 
 /// `units` of a mint with `decimals`, as a decimal with trailing zeros cut.
 pub fn decimal(units: u64, decimals: u8) -> String {
-    let scale = 10u128.pow(decimals as u32);
-    let whole = units as u128 / scale;
-    let fraction = units as u128 % scale;
-    if fraction == 0 {
-        return whole.to_string();
+    // Placed by text, not by dividing by a power of ten, which a mint's 255 possible
+    // decimals would overflow.
+    let digits = format!("{units:0>width$}", width = decimals as usize + 1);
+    let (whole, fraction) = digits.split_at(digits.len() - decimals as usize);
+    let fraction = fraction.trim_end_matches('0');
+    if fraction.is_empty() {
+        whole.to_string()
+    } else {
+        format!("{whole}.{fraction}")
     }
-    let digits = format!("{fraction:0width$}", width = decimals as usize);
-    format!("{whole}.{}", digits.trim_end_matches('0'))
 }
 
 /// An amount on the money side: SOL for wrapped SOL, otherwise whole tokens.

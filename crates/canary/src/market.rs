@@ -48,27 +48,32 @@ pub struct Version {
 
 impl Version {
     pub fn of(svm: &LiteSVM, program: &Pubkey) -> Self {
-        let Some(account) = svm.get_account(program) else {
-            return Version::default();
-        };
-        if account.owner != client::BPF_LOADER_UPGRADEABLE_ID {
-            return Version {
-                deploy_slot: None,
-                executable_sha256: Some(executable_sha256(&account.data).0),
-            };
-        }
-        let Some(data) = svm.get_account(&pda::program_data(program)).map(|a| a.data) else {
-            return Version::default();
-        };
+        let upgradeable = svm
+            .get_account(program)
+            .is_some_and(|a| a.owner == client::BPF_LOADER_UPGRADEABLE_ID);
         Version {
-            deploy_slot: data
-                .get(PROGRAM_DATA_SLOT)
-                .map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes"))),
-            executable_sha256: data
-                .get(PROGRAM_DATA_HEADER_LEN..)
-                .map(|elf| executable_sha256(elf).0),
+            deploy_slot: upgradeable
+                .then(|| svm.get_account(&pda::program_data(program)))
+                .flatten()
+                .and_then(|a| {
+                    a.data
+                        .get(PROGRAM_DATA_SLOT)
+                        .map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")))
+                }),
+            executable_sha256: program_elf(svm, program).map(|elf| executable_sha256(&elf).0),
         }
     }
+}
+
+/// A program's executable bytes as the VM holds them: for the upgradeable loader, its
+/// ProgramData after the header; otherwise the program account's own data.
+pub fn program_elf(svm: &LiteSVM, program: &Pubkey) -> Option<Vec<u8>> {
+    let account = svm.get_account(program)?;
+    if account.owner == client::BPF_LOADER_UPGRADEABLE_ID {
+        let data = svm.get_account(&pda::program_data(program))?.data;
+        return data.get(PROGRAM_DATA_HEADER_LEN..).map(|d| d.to_vec());
+    }
+    Some(account.data)
 }
 
 /// What a run needs to know about one of the market's mints.
@@ -250,6 +255,8 @@ pub struct Session<'a> {
     pub payer: Pubkey,
     /// `TradeRequest::extra` on every quote and swap.
     pub extra: Vec<u8>,
+    /// The run's seed, from which every wallet comes.
+    pub seed: crate::wallets::Seed,
     pub notes: Vec<String>,
 }
 
@@ -257,7 +264,12 @@ impl<'a> Session<'a> {
     /// Turns the copy into a VM a trader can use: signature checks off and no transaction
     /// history, so any key can act and repeated trades are not refused as duplicates; and
     /// each mint's fee account created where it does not exist yet, as anyone may.
-    pub fn new(copy: &Copy, source: &'a mut dyn Source, extra: Vec<u8>) -> Self {
+    pub fn new(
+        copy: &Copy,
+        source: &'a mut dyn Source,
+        extra: Vec<u8>,
+        seed: crate::wallets::Seed,
+    ) -> Self {
         let mut base = copy
             .pristine
             .clone()
@@ -303,6 +315,7 @@ impl<'a> Session<'a> {
             touched: BTreeSet::new(),
             payer,
             extra,
+            seed,
             notes,
         }
     }

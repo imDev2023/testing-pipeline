@@ -74,7 +74,7 @@ fn a_snapshot_lacking_an_account_a_trade_names_answers_with_exactly_the_missing_
     for round in 1..SNAPSHOT_ROUNDS {
         snapshot.round = round;
         match run(&snapshot) {
-            MarketRun::Missing(addresses) => {
+            MarketRun::Missing { addresses, .. } => {
                 assert_eq!(addresses, vec![token_vault], "round {round}")
             }
             MarketRun::Results(_) => panic!("round {round} answered with results"),
@@ -120,7 +120,7 @@ fn an_account_marked_absent_on_the_cluster_completes_the_run() {
     snapshot.accounts.remove(&fee_account.to_string());
     snapshot.round = 1;
 
-    let MarketRun::Missing(addresses) = run(&snapshot) else {
+    let MarketRun::Missing { addresses, .. } = run(&snapshot) else {
         panic!("the cloner asks for the fee account");
     };
     assert_eq!(addresses, vec![fee_account]);

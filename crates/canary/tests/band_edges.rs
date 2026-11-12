@@ -75,6 +75,7 @@ fn sold(amount: u64, return_ppm: u64) -> RoundTrip {
     let back = (amount as u128 * return_ppm as u128 / PPM as u128) as u64;
     RoundTrip {
         amount,
+        wallet: Pubkey::new_unique(),
         buy: leg(amount, Ok(receipt(amount, amount))),
         sell: Some(leg(amount, Ok(receipt(amount, back)))),
     }
@@ -84,6 +85,7 @@ fn sold(amount: u64, return_ppm: u64) -> RoundTrip {
 fn stuck(amount: u64) -> RoundTrip {
     RoundTrip {
         amount,
+        wallet: Pubkey::new_unique(),
         buy: leg(amount, Ok(receipt(amount, amount))),
         sell: Some(leg(amount, Err(refused(Stage::Swap)))),
     }
@@ -93,6 +95,7 @@ fn stuck(amount: u64) -> RoundTrip {
 fn unbought(amount: u64) -> RoundTrip {
     RoundTrip {
         amount,
+        wallet: Pubkey::new_unique(),
         buy: leg(amount, Err(refused(Stage::Swap))),
         sell: None,
     }
@@ -280,6 +283,7 @@ fn a_crash_anywhere_is_at_least_a_warn() {
     let m = ladder_at(PASS_BAND_MIN_PPM, |a| {
         (a == SOL_SIZES[5]).then(|| RoundTrip {
             amount: a,
+            wallet: Pubkey::new_unique(),
             buy: leg(a, Err(crash.clone())),
             sell: None,
         })

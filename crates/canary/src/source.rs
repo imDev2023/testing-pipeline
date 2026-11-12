@@ -193,6 +193,11 @@ pub struct Snapshot {
     /// Every account read, by address; `null` for an address the cluster has no account at.
     /// An address absent from this map is one the snapshot lacks.
     pub accounts: BTreeMap<String, Option<SnapshotAccount>>,
+    /// The run's seed, 64 hex digits, from which its wallets come: absent in a run's first
+    /// round, then the seed that round answered with, so every round trades from the same
+    /// wallets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<String>,
 }
 
 /// A [`Snapshot`] as an account source.
@@ -263,6 +268,8 @@ pub struct Recorder<'a> {
     inner: &'a mut dyn Source,
     pub accounts: BTreeMap<Pubkey, Option<Account>>,
     pub cluster: Option<ClusterInfo>,
+    /// Reads that failed; a snapshot recorded with any is incomplete.
+    pub errors: Vec<String>,
 }
 
 impl<'a> Recorder<'a> {
@@ -271,13 +278,17 @@ impl<'a> Recorder<'a> {
             inner,
             accounts: BTreeMap::new(),
             cluster: None,
+            errors: vec![],
         }
     }
 }
 
 impl AccountSource for Recorder<'_> {
     fn get_accounts(&mut self, keys: &[Pubkey]) -> Result<Vec<Option<Account>>, String> {
-        let accounts = self.inner.get_accounts(keys)?;
+        let accounts = self
+            .inner
+            .get_accounts(keys)
+            .inspect_err(|e| self.errors.push(e.clone()))?;
         for (key, account) in keys.iter().zip(&accounts) {
             self.accounts.insert(*key, account.clone());
         }
@@ -285,7 +296,10 @@ impl AccountSource for Recorder<'_> {
     }
 
     fn cluster_info(&mut self) -> Result<ClusterInfo, String> {
-        let info = self.inner.cluster_info()?;
+        let info = self
+            .inner
+            .cluster_info()
+            .inspect_err(|e| self.errors.push(e.clone()))?;
         self.cluster.get_or_insert_with(|| info.clone());
         Ok(info)
     }
@@ -298,10 +312,23 @@ impl Source for Recorder<'_> {
 }
 
 /// The snapshot of `market` a full run reads from `source`: every account the copy and the
-/// trades asked for, as the `CanaryRun` Durable Object would post it after its rounds.
+/// trades asked for, as the `CanaryRun` Durable Object would post it after its rounds, with
+/// the seed the run's wallets came from. Refused when any read failed, because the snapshot
+/// would then lack accounts for a reason that is not the market's.
 pub fn record_snapshot(source: &mut dyn Source, market: Pubkey) -> Result<Snapshot, String> {
+    let seed = crate::wallets::Seed::random();
     let mut recorder = Recorder::new(source);
-    crate::run::run_market(&mut recorder, market, &crate::run::RunOptions::default());
+    let options = crate::run::RunOptions {
+        seed: Some(seed),
+        ..crate::run::RunOptions::default()
+    };
+    crate::run::run_market(&mut recorder, market, &options);
+    if let Some(error) = recorder.errors.first() {
+        return Err(format!(
+            "the snapshot would be incomplete: {} read(s) failed, the first with {error}",
+            recorder.errors.len()
+        ));
+    }
     let cluster = recorder
         .cluster
         .clone()
@@ -325,5 +352,37 @@ pub fn record_snapshot(source: &mut dyn Source, market: Pubkey) -> Result<Snapsh
                 )
             })
             .collect(),
+        seed: Some(seed.to_hex()),
     })
+}
+
+/// A source that remembers the last cluster clock read through it, so a run whose copy
+/// failed can still say when it was taken without reading the clock again.
+pub struct ClockMemo<'a> {
+    inner: &'a mut dyn Source,
+    pub last: Option<ClusterInfo>,
+}
+
+impl<'a> ClockMemo<'a> {
+    pub fn new(inner: &'a mut dyn Source) -> Self {
+        ClockMemo { inner, last: None }
+    }
+}
+
+impl AccountSource for ClockMemo<'_> {
+    fn get_accounts(&mut self, keys: &[Pubkey]) -> Result<Vec<Option<Account>>, String> {
+        self.inner.get_accounts(keys)
+    }
+
+    fn cluster_info(&mut self) -> Result<ClusterInfo, String> {
+        let info = self.inner.cluster_info()?;
+        self.last = Some(info.clone());
+        Ok(info)
+    }
+}
+
+impl Source for ClockMemo<'_> {
+    fn missing(&self) -> Vec<Pubkey> {
+        self.inner.missing()
+    }
 }
