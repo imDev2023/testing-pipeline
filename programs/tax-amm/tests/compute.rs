@@ -345,6 +345,48 @@ fn a_swap_calls_a_transfer_hook_inside_it_as_the_input_and_as_the_output() {
 }
 
 #[test]
+fn distribute_stays_under_its_ceiling_when_it_creates_the_token_account_and_when_it_burns() {
+    use tax_amm::state::{BURN_SLOT, SUITE_SLOT};
+    for (name, mut env, market, _) in seeded_markets() {
+        let trader = env.funded_wallet(&market, 1_000_000_000_000);
+        env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
+        env.swap(&market, &trader, (0, 1), 5_000_000_000).unwrap();
+        // `fund` writes balances without minting them; the burn needs a supply behind them.
+        let supply = 10_000_000_000_000;
+        env.set_supply(&market.mints[1], supply);
+        let caller = solana_keypair::Keypair::new();
+        env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
+        let cases = [
+            (0, "paying a tax recipient, creating its token account"),
+            (BURN_SLOT, "burning"),
+            (
+                SUITE_SLOT,
+                "paying the suite share, creating its token account",
+            ),
+        ];
+        for (slot, what) in cases {
+            let meta = env.distribute(&market, &caller, slot).unwrap();
+            let costs = strategy_compute(&meta.logs);
+            assert_eq!(costs.len(), 1);
+            println!("distribute {what} on {name} mints: {} CU", costs[0]);
+            assert!(
+                costs[0] <= ceilings::DISTRIBUTE,
+                "{name}, {what}: {}",
+                costs[0]
+            );
+        }
+        // Into a token account that already exists, after more tax is booked.
+        env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
+        let meta = env.distribute(&market, &caller, 0).unwrap();
+        let cost = strategy_compute(&meta.logs)[0];
+        println!(
+            "distribute paying a tax recipient's existing token account on {name} mints: {cost} CU"
+        );
+        assert!(cost <= ceilings::DISTRIBUTE, "{name}: {cost}");
+    }
+}
+
+#[test]
 fn the_table_mirrors_the_spec() {
     let spec = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/tax-amm.md"),

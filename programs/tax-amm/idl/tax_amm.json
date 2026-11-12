@@ -9,6 +9,80 @@
   },
   "instructions": [
     {
+      "name": "distribute",
+      "docs": [
+        "Custom action: anyone pays out what one tax slot is owed, a tax recipient or the",
+        "suite share to its wallet's associated token account for the tax-side mint (created",
+        "at the caller's expense when missing), the burn by burning from the vault.",
+        "Remaining accounts are the tax-side mint's transfer-hook accounts."
+      ],
+      "discriminator": [
+        191,
+        44,
+        223,
+        207,
+        164,
+        236,
+        126,
+        61
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Anyone; pays for the slot wallet's token account when it is missing."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "vault_authority"
+        },
+        {
+          "name": "tax_vault",
+          "writable": true
+        },
+        {
+          "name": "tax_mint",
+          "docs": [
+            "Read-only for a payout, so payouts never write-lock the mint (for wrapped SOL, the one",
+            "native mint every SOL transfer reads); writable for the burn, which lowers its supply."
+          ]
+        },
+        {
+          "name": "recipient"
+        },
+        {
+          "name": "recipient_token_account",
+          "docs": [
+            "and, when missing, created by the handler."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "slot",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "pipeline_init_market",
       "docs": [
         "Creates a tax market. `data` is the Borsh-encoded [`InitParams`]."
@@ -758,6 +832,19 @@
   ],
   "events": [
     {
+      "name": "Distributed",
+      "discriminator": [
+        10,
+        212,
+        24,
+        78,
+        35,
+        202,
+        182,
+        134
+      ]
+    },
+    {
       "name": "MarketCreated",
       "discriminator": [
         88,
@@ -983,9 +1070,67 @@
       "code": 6031,
       "name": "BadSeedAmounts",
       "msg": "A seed request gives one amount for each of the market's two mints"
+    },
+    {
+      "code": 6032,
+      "name": "NoSuchSlot",
+      "msg": "No such tax slot: there is one per tax recipient, then the burn's and the suite share's"
+    },
+    {
+      "code": 6033,
+      "name": "UnusedSlot",
+      "msg": "The tax recipient slot is unused: it has no wallet to pay"
+    },
+    {
+      "code": 6034,
+      "name": "NotSlotWallet",
+      "msg": "The wallet is not the tax slot's"
+    },
+    {
+      "code": 6035,
+      "name": "NotSlotTokenAccount",
+      "msg": "The token account is not the slot wallet's associated token account for the tax-side mint"
+    },
+    {
+      "code": 6036,
+      "name": "BurnNeedsWritableMint",
+      "msg": "The burn lowers the tax-side mint's supply, so it needs the mint writable"
     }
   ],
   "types": [
+    {
+      "name": "Distributed",
+      "docs": [
+        "One tax slot was paid out (docs/spec/tax-amm.md, \"Payout\"): `amount` of the tax-side",
+        "mint went to the associated token account of `recipient`, or was burned from the vault",
+        "for the burn slot, whose `recipient` is the default key. A slot with nothing owed pays",
+        "nothing and emits nothing."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "slot",
+            "docs": [
+              "0 to 3 a tax recipient, 4 the burn, 5 the suite share."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
     {
       "name": "InitParams",
       "docs": [
@@ -1622,6 +1767,15 @@
   ],
   "constants": [
     {
+      "name": "BURN_SLOT",
+      "docs": [
+        "The burn's slot. Published in the IDL (`#[constant]`), where the demo script and Aviary",
+        "read which `distribute` slot burns."
+      ],
+      "type": "u8",
+      "value": "4"
+    },
+    {
       "name": "MAX_TAX_BPS",
       "docs": [
         "The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so no",
@@ -1638,6 +1792,25 @@
       ],
       "type": "u16",
       "value": "1000"
+    },
+    {
+      "name": "SUITE_SLOT",
+      "docs": [
+        "The suite share's slot. Published in the IDL (`#[constant]`), like [`BURN_SLOT`]."
+      ],
+      "type": "u8",
+      "value": "5"
+    },
+    {
+      "name": "SUITE_TREASURY",
+      "docs": [
+        "The wallet the suite share is paid to. On devnet its key is",
+        "`~/.config/testing-pipeline/devnet/suite-treasury.json` (docs/toolchain.md, \"Keys\").",
+        "Published in the IDL (`#[constant]`), where the demo script and Aviary read the suite",
+        "share slot's wallet for `distribute`."
+      ],
+      "type": "pubkey",
+      "value": "CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF"
     }
   ]
 }

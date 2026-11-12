@@ -1,5 +1,6 @@
 //! One module per instruction, so parallel tickets rarely touch the same lines.
 
+pub mod distribute;
 pub mod init_market;
 pub mod market_info;
 pub mod quote;
@@ -13,6 +14,7 @@ pub mod swap;
 pub mod tax_authority;
 pub mod trade_accounts;
 
+pub use distribute::*;
 pub use init_market::*;
 pub use market_info::*;
 pub use quote::*;

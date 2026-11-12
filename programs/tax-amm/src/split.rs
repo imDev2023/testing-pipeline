@@ -36,8 +36,8 @@ pub fn split_tax(
     }
     let burn = rest * burn_share_bps as u128 / BPS;
     booked += burn;
-    slots[BURN_SLOT] = burn as u64;
-    slots[SUITE_SLOT] = suite as u64;
+    slots[BURN_SLOT as usize] = burn as u64;
+    slots[SUITE_SLOT as usize] = suite as u64;
     // Each part rounds down, so what is left over is under one unit per part.
     let remainder = rest.checked_sub(booked).ok_or(StrategyError::Overflow)?;
     slots[0] = slots[0]

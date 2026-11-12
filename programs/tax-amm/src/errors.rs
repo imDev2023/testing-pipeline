@@ -69,4 +69,18 @@ pub enum StrategyError {
     OwedSlotLeftEmpty,
     #[msg("A seed request gives one amount for each of the market's two mints")]
     BadSeedAmounts,
+    #[msg(
+        "No such tax slot: there is one per tax recipient, then the burn's and the suite share's"
+    )]
+    NoSuchSlot,
+    #[msg("The tax recipient slot is unused: it has no wallet to pay")]
+    UnusedSlot,
+    #[msg("The wallet is not the tax slot's")]
+    NotSlotWallet,
+    #[msg(
+        "The token account is not the slot wallet's associated token account for the tax-side mint"
+    )]
+    NotSlotTokenAccount,
+    #[msg("The burn lowers the tax-side mint's supply, so it needs the mint writable")]
+    BurnNeedsWritableMint,
 }
