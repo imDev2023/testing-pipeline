@@ -30,8 +30,10 @@
 //! 5. Its fuzz test calls [`fuzz`] with its product, and its regression tests call
 //!    [`replay`] with the minimal sequences [`fuzz`] printed.
 //!
-//! Shapes and steps refer to wallets and markets by index, never by key, so a printed
-//! sequence replays exactly.
+//! Shapes and steps refer to wallets and markets by index, never by key, and a product
+//! derives every key its world creates from its shape (the tax AMM's from `Shape::keys`), so
+//! a printed sequence replays exactly; the base VM's admin, who only pays and creates, is the
+//! one key that differs between runs.
 //!
 //! # Running it
 //!
@@ -186,8 +188,13 @@ pub fn run_sequence<P: Product>(
         },
         "at the start",
     )?;
-    let apply = |world: &mut P::World, index: usize, step: &P::Step, what: &str| {
-        let before = P::snapshot(world);
+    // Each step's snapshot after is the next one's before.
+    let apply = |world: &mut P::World,
+                 before: P::Snapshot,
+                 index: usize,
+                 step: &P::Step,
+                 what: &str|
+     -> Result<P::Snapshot, String> {
         let outcome = P::apply(world, step);
         let after = P::snapshot(world);
         check_all(
@@ -199,13 +206,15 @@ pub fn run_sequence<P: Product>(
                 outcome: &outcome,
             },
             &format!("after {what} {index}, {step:?}"),
-        )
+        )?;
+        Ok(after)
     };
+    let mut before = start;
     for (index, step) in steps.iter().enumerate() {
-        apply(&mut world, index, step, "step")?;
+        before = apply(&mut world, before, index, step, "step")?;
     }
     for (index, step) in P::closing_steps(&world).iter().enumerate() {
-        apply(&mut world, index, step, "closing step")?;
+        before = apply(&mut world, before, index, step, "closing step")?;
     }
     Ok(world)
 }

@@ -118,7 +118,7 @@ fn features(shape: &Shape) -> Vec<String> {
 fn regression_a_recipient_paid_in_one_mint_sells_it_for_the_other() {
     replay::<TaxAmm>(
         &Shape {
-            mints: [MintKind::SplToken, MintKind::SplToken],
+            mints: [SplToken, SplToken],
             tax_side: 0,
             ranges: [[0, 0], [0, 2]],
             rates: [0, 1],
@@ -129,31 +129,32 @@ fn regression_a_recipient_paid_in_one_mint_sells_it_for_the_other() {
             virtual_side: 0,
             virtual_reserve: 0,
             seed: [10_000, 1_000],
-            creation: Creation::CreateAndSeed,
+            creation: CreateAndSeed,
+            keys: 0,
         },
         &[
-            Step::Swap {
+            Swap {
                 wallet: 0,
                 input: 0,
-                size: Size::Part {
+                size: Part {
                     mantissa: 1,
                     exp: 7,
                 },
             },
-            Step::Swap {
+            Swap {
                 wallet: 0,
                 input: 0,
-                size: Size::Part {
+                size: Part {
                     mantissa: 5,
                     exp: 6,
                 },
             },
-            Step::Swap {
+            Swap {
                 wallet: 0,
                 input: 1,
-                size: Size::Dust(1),
+                size: Dust(1),
             },
-            Step::Distribute {
+            Distribute {
                 slot: 0,
                 caller: 0,
                 wrong_wallet: false,
@@ -169,7 +170,7 @@ fn regression_a_recipient_paid_in_one_mint_sells_it_for_the_other() {
 fn regression_a_market_created_without_its_seed() {
     replay::<TaxAmm>(
         &Shape {
-            mints: [MintKind::SplToken, MintKind::SplToken],
+            mints: [SplToken, SplToken],
             tax_side: 0,
             ranges: [[0, 0], [0, 0]],
             rates: [0, 0],
@@ -180,12 +181,13 @@ fn regression_a_market_created_without_its_seed() {
             virtual_side: 0,
             virtual_reserve: 0,
             seed: [1_000, 1_000],
-            creation: Creation::CreateOnly,
+            creation: CreateOnly,
+            keys: 0,
         },
-        &[Step::Swap {
+        &[Swap {
             wallet: 0,
             input: 0,
-            size: Size::Dust(1),
+            size: Dust(1),
         }],
     );
 }
@@ -236,8 +238,7 @@ fn each_further_bump_of_the_slot_wallets_address_costs_a_payout_the_same() {
     let near = |measured: u64, expected: u64| measured.abs_diff(expected) <= 100;
     assert!(near(creating[1] - creating[0], 5 * 3 * ceilings::BUMP_TRY));
     assert!(near(existing[1] - existing[0], 5 * ceilings::BUMP_TRY));
-    for (cost, wallet, creates) in [(creating[1], sixth, true), (existing[1], sixth, false)] {
-        let search = ceilings::distribute_bump_search(&wallet, &tax_mint, &TOKEN, creates);
-        assert!(cost - search <= ceilings::DISTRIBUTE);
-    }
+    // Within the ceiling once the search beyond the first bump is left out.
+    assert!(creating[1] - 5 * 3 * ceilings::BUMP_TRY <= ceilings::DISTRIBUTE);
+    assert!(existing[1] - 5 * ceilings::BUMP_TRY <= ceilings::DISTRIBUTE);
 }

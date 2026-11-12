@@ -871,9 +871,18 @@ impl Env {
     /// A Token-2022 mint whose transfer hook is Pipeline's `test-hook`, approving every
     /// transfer, with the admin as its hook authority.
     pub fn create_mint_with_test_hook(&mut self) -> Pubkey {
+        self.create_mint_with_test_hook_at(&Keypair::new())
+    }
+
+    /// [`Env::create_mint_with_test_hook`] at a given mint keypair's address.
+    pub fn create_mint_with_test_hook_at(&mut self, mint: &Keypair) -> Pubkey {
         let hook = self.add_test_hook();
-        let admin = self.admin.pubkey();
-        let mint = self.create_hooked_mint(&hook, |_| admin, MintOptions::default());
+        let options = MintOptions {
+            transfer_hook: Some(hook),
+            transfer_hook_authority: Some(self.admin.pubkey()),
+            ..MintOptions::default()
+        };
+        let mint = self.create_mint_at(mint, &TOKEN_2022, options);
         let validation = pipeline_check::hooks::validation_address(&hook, &mint);
         let whitelist = Pubkey::find_program_address(&[b"whitelist", mint.as_ref()], &hook).0;
         let initialize = Instruction::new_with_bytes(

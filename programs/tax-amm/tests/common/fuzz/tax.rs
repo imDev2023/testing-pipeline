@@ -33,7 +33,7 @@ use solana_keypair::Keypair;
 use solana_signer::Signer;
 use tax_amm::config::{MAX_RECIPIENTS, MAX_TAX_BPS, SUITE_TREASURY};
 use tax_amm::params::NATIVE_MINTS;
-use tax_amm::state::{MarketStatus, BURN_SLOT, OWED_SLOTS};
+use tax_amm::state::{MarketStatus, BURN_SLOT, OWED_SLOTS, SUITE_SLOT};
 use tax_amm::{InitParams, TaxMarket};
 
 use super::super::authority::{
@@ -114,6 +114,8 @@ pub struct Shape {
     /// What the seed brings, by mint; 0 on the virtual side for a single-sided launch.
     pub seed: [u64; 2],
     pub creation: Creation,
+    /// Every key the world creates derives from this, so a printed case replays exactly.
+    pub keys: u64,
 }
 
 /// Who signs an action.
@@ -139,6 +141,36 @@ pub enum Size {
     All,
 }
 
+/// A rate `set_taxes` sends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rate {
+    /// So many thousandths of the way through the rate's current range.
+    Within(u16),
+    /// Exactly these basis points, inside the range or not.
+    Exactly(u16),
+}
+
+/// How a `set_recipients` step breaks the split rules, if it does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flaw {
+    /// It keeps every rule.
+    Whole,
+    /// A used recipient slot left empty before another used one.
+    Gap,
+    /// A used recipient's share moved to the first recipient, leaving it 0.
+    ZeroShare,
+    /// One basis point of the first recipient's share given to the slot after the used ones.
+    StrayShare,
+    /// So many basis points added to the first recipient's share, past the whole.
+    Skew(u16),
+}
+
+// The variants by their bare names: the harness prints a minimal failing case with `{:#?}`,
+// which leaves enum paths out, so it pastes into a regression test under
+// `use common::fuzz::tax::*` as printed.
+#[allow(unused_imports)]
+pub use {Creation::*, Flaw::*, MintKind::*, Rate::*, Size::*, Step::*, Who::*};
+
 /// One thing anyone can do to a tax market.
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -161,20 +193,18 @@ pub enum Step {
     },
     SetTaxes {
         who: Who,
-        buy: u16,
-        sell: u16,
+        buy: Rate,
+        sell: Rate,
     },
     /// `set_recipients` with the first `used` of `picks` from the recipient wallets, shares
-    /// from `weights`, and a burn share when `burn`; `gap` leaves a hole in the recipients and
-    /// `skew` makes the shares sum past 10,000.
+    /// from `weights`, and a burn share when `burn`, broken as `flaw` says.
     SetRecipients {
         who: Who,
         used: u8,
         picks: [u8; MAX_RECIPIENTS],
         weights: [u16; 5],
         burn: bool,
-        gap: bool,
-        skew: u16,
+        flaw: Flaw,
     },
     Renounce {
         who: Who,
@@ -276,9 +306,7 @@ impl Outcome {
             Action::Swap { .. } => "swap",
             Action::Seed => "seed",
             Action::Distribute { slot } if slot == BURN_SLOT => "distribute to the burn",
-            Action::Distribute { slot } if slot as usize == OWED_SLOTS - 1 => {
-                "distribute to the suite share"
-            }
+            Action::Distribute { slot } if slot == SUITE_SLOT => "distribute to the suite share",
             Action::Distribute { .. } => "distribute",
             Action::SetTaxes => "set_taxes",
             Action::SetRecipients => "set_recipients",
@@ -310,6 +338,10 @@ pub struct Snapshot {
     /// accounts and the launchpad's escrows.
     pub held: [u128; 2],
     pub supply: [u64; 2],
+    /// What each of [`TaxWorld::wallets`] holds of each mint.
+    pub holdings: Vec<[u64; 2]>,
+    /// The market state account's bytes, to tell whether a step changed it.
+    pub state_data: Vec<u8>,
 }
 
 /// One fuzzed market and everyone around it.
@@ -369,6 +401,28 @@ fn fresh_env() -> Env {
     })
 }
 
+/// The keypair a world of `keys` gives the `index`th holder of `role`.
+fn key(keys: u64, role: u8, index: usize) -> Keypair {
+    let mut secret = [0u8; 32];
+    secret[..8].copy_from_slice(&keys.to_le_bytes());
+    secret[8] = role;
+    secret[9] = index as u8;
+    secret[31] = 1;
+    Keypair::new_from_array(secret)
+}
+
+/// The roles [`key`] derives keys for.
+mod role {
+    pub const TRADER: u8 = 0;
+    pub const STRANGER: u8 = 1;
+    pub const TAX_AUTHORITY: u8 = 2;
+    pub const RECIPIENT: u8 = 3;
+    pub const SEEDER: u8 = 4;
+    pub const MINT: u8 = 5;
+    pub const MARKET_STATE: u8 = 6;
+    pub const LAUNCH_CREATOR: u8 = 7;
+}
+
 /// `mantissa × 10^exp` for `exp` in the range, shrinking towards small numbers.
 fn amount(exps: std::ops::RangeInclusive<u32>) -> impl Strategy<Value = u64> {
     (1u64..10, exps).prop_map(|(mantissa, exp)| mantissa * 10u64.pow(exp))
@@ -387,6 +441,25 @@ fn who() -> impl Strategy<Value = Who> {
         6 => Just(Who::TaxAuthority),
         1 => Just(Who::Seeder),
         2 => any::<u8>().prop_map(Who::Wallet),
+    ]
+}
+
+/// A rate for `set_taxes`: mostly inside its range, sometimes anything up to past the cap.
+fn rate() -> impl Strategy<Value = Rate> {
+    prop_oneof![
+        4 => (0..=1_000u16).prop_map(Rate::Within),
+        1 => (0..=MAX_TAX_BPS + 100).prop_map(Rate::Exactly),
+    ]
+}
+
+/// Mostly a split that keeps every rule, sometimes one that breaks one.
+fn flaw() -> impl Strategy<Value = Flaw> {
+    prop_oneof![
+        12 => Just(Flaw::Whole),
+        1 => Just(Flaw::Gap),
+        1 => Just(Flaw::ZeroShare),
+        1 => Just(Flaw::StrayShare),
+        1 => (1..500u16).prop_map(Flaw::Skew),
     ]
 }
 
@@ -524,23 +597,35 @@ impl TaxWorld {
     /// Builds a world of `shape`.
     pub fn new(shape: &Shape) -> Result<TaxWorld, String> {
         let mut env = fresh_env();
-        let mints = shape.mints.map(|kind| match kind {
-            MintKind::SplToken => (env.create_mint(&TOKEN), TOKEN),
-            MintKind::Token2022 => (env.create_mint(&TOKEN_2022), TOKEN_2022),
-            MintKind::Hooked => (env.create_mint_with_test_hook(), TOKEN_2022),
-            MintKind::NativeSol => (env.write_native_mint(&NATIVE_MINTS[0], &TOKEN), TOKEN),
+        let keys = shape.keys;
+        let mut mint_index = 0;
+        let mints = shape.mints.map(|kind| {
+            let at = key(keys, role::MINT, mint_index);
+            mint_index += 1;
+            match kind {
+                MintKind::SplToken => (
+                    env.create_mint_at(&at, &TOKEN, MintOptions::default()),
+                    TOKEN,
+                ),
+                MintKind::Token2022 => (
+                    env.create_mint_at(&at, &TOKEN_2022, MintOptions::default()),
+                    TOKEN_2022,
+                ),
+                MintKind::Hooked => (env.create_mint_with_test_hook_at(&at), TOKEN_2022),
+                MintKind::NativeSol => (env.write_native_mint(&NATIVE_MINTS[0], &TOKEN), TOKEN),
+            }
         });
-        let traders: Vec<Keypair> = (0..TRADERS).map(|_| Keypair::new()).collect();
-        let stranger = Keypair::new();
-        let tax_authority = Keypair::new();
-        let pool: Vec<Keypair> = (0..POOL).map(|_| Keypair::new()).collect();
+        let traders: Vec<Keypair> = (0..TRADERS).map(|k| key(keys, role::TRADER, k)).collect();
+        let stranger = key(keys, role::STRANGER, 0);
+        let tax_authority = key(keys, role::TAX_AUTHORITY, 0);
+        let pool: Vec<Keypair> = (0..POOL).map(|k| key(keys, role::RECIPIENT, k)).collect();
         let used = shape.recipients as usize;
         let (shares, burn_share_bps) = shares_of(used, &shape.weights, shape.burn);
         let mut recipients = [Default::default(); MAX_RECIPIENTS];
         for (k, recipient) in recipients.iter_mut().take(used).enumerate() {
             *recipient = ak(&pool[k].pubkey());
         }
-        let mut seeder = Keypair::new();
+        let mut seeder = key(keys, role::SEEDER, 0);
         let mut params = InitParams {
             tax_side: shape.tax_side,
             buy_tax_bps: shape.rates[0],
@@ -567,7 +652,11 @@ impl TaxWorld {
         let mut launch_seeder = None;
         let market = match shape.creation {
             Creation::CreateAndSeed | Creation::CreateOnly => {
-                let market = env.create_tax_market(mints, &params)?;
+                let market = env.create_tax_market_with(
+                    &key(keys, role::MARKET_STATE, 0),
+                    mints,
+                    init_data(&params),
+                )?;
                 costs.extend(creation_costs(&market.created.logs, "pipeline_init_market"));
                 env.fund(&seeder.pubkey(), &market, shape.seed);
                 if shape.creation == Creation::CreateAndSeed {
@@ -581,7 +670,7 @@ impl TaxWorld {
                 market
             }
             Creation::Launchpad => {
-                let launch = env.launch(mints, shape.seed);
+                let launch = env.launch_by(key(keys, role::LAUNCH_CREATOR, 0), mints, shape.seed);
                 params.seeder = ak(&launch.seeder);
                 let graduated = env.graduate(&launch, &params, shape.seed)?;
                 costs.extend(creation_costs(
@@ -843,21 +932,16 @@ impl TaxWorld {
                     hooks,
                 );
                 let vault_before = self.env.balance(&self.market.vaults[tax_side]);
-                let creates_account = self.env.svm.get_account(&destination).is_none();
+                // What the slot wallet's address costs beyond its first bump, which the
+                // ceiling leaves out, from the accounts as they are before the payout.
+                let search =
+                    super::super::ceilings::distribute_bump_search(&self.env, &self.market, slot);
                 let sent = self.env.send_meta(&[instruction], &[&caller]);
                 let mut outcome = Outcome::of(Action::Distribute { slot }, expected, named(&sent));
                 if let Ok(meta) = &sent {
-                    // What the slot wallet's address costs beyond its first bump, which the
-                    // ceiling leaves out.
-                    let search = super::super::ceilings::distribute_bump_search(
-                        &wallet,
-                        &mint,
-                        &token_program,
-                        creates_account && slot != BURN_SLOT && state.owed[slot as usize] > 0,
-                    );
                     outcome.costs = costs_of(&meta.logs, "distribute")
                         .into_iter()
-                        .map(|(name, cost)| (name, cost - search))
+                        .map(|(name, cost)| (name, cost.saturating_sub(search)))
                         .collect();
                     outcome.bump_search = search;
                     let vault_after = self.env.balance(&self.market.vaults[tax_side]);
@@ -871,6 +955,13 @@ impl TaxWorld {
             Step::SetTaxes { who, buy, sell } => {
                 let signer = self.signer(who).insecure_clone();
                 let ranges = state.tax_ranges();
+                let bps = |rate: Rate, [min, max]: [u16; 2]| match rate {
+                    Rate::Within(thousandths) => {
+                        min + ((max - min) as u32 * thousandths.min(1_000) as u32 / 1_000) as u16
+                    }
+                    Rate::Exactly(bps) => bps,
+                };
+                let (buy, sell) = (bps(buy, ranges[0]), bps(sell, ranges[1]));
                 let expected = authorization(&state, &signer.pubkey()).and_then(|()| {
                     let outside = [buy, sell]
                         .iter()
@@ -897,8 +988,7 @@ impl TaxWorld {
                 picks,
                 weights,
                 burn,
-                gap,
-                skew,
+                flaw,
             } => {
                 let signer = self.signer(who).insecure_clone();
                 let used = used as usize % (MAX_RECIPIENTS + 1);
@@ -910,12 +1000,24 @@ impl TaxWorld {
                 if used == 0 {
                     shares = [0; MAX_RECIPIENTS];
                 }
-                let gap = gap && (1..MAX_RECIPIENTS).contains(&used);
-                if gap {
-                    recipients[used] = recipients[used - 1];
-                    recipients[used - 1] = Pubkey::default();
+                match flaw {
+                    Flaw::Whole => {}
+                    Flaw::Gap if (1..MAX_RECIPIENTS).contains(&used) => {
+                        recipients[used] = recipients[used - 1];
+                        recipients[used - 1] = Pubkey::default();
+                    }
+                    Flaw::ZeroShare if used >= 2 => {
+                        shares[0] += shares[used - 1];
+                        shares[used - 1] = 0;
+                    }
+                    Flaw::StrayShare if (1..MAX_RECIPIENTS).contains(&used) && shares[0] > 1 => {
+                        shares[0] -= 1;
+                        shares[used] = 1;
+                    }
+                    Flaw::Skew(extra) => shares[0] = shares[0].saturating_add(extra),
+                    // A flaw the number of recipients leaves no room for.
+                    _ => {}
                 }
-                shares[0] = shares[0].saturating_add(skew);
                 let tax_mint = self.market.mints[state.tax_side as usize];
                 let native = NATIVE_MINTS.iter().any(|native| ck(native) == tax_mint);
                 let burn_share_bps = if used == 0 { 10_000 } else { burn_share_bps };
@@ -1106,19 +1208,28 @@ impl TaxWorld {
     fn snapshot(&self) -> Snapshot {
         let env = &self.env;
         let market = &self.market;
-        let mut held = [0u128; 2];
-        for (i, total) in held.iter_mut().enumerate() {
-            *total += env.balance(&market.vaults[i]) as u128;
-            *total += env.balance_or_zero(&self.fee_account(i)) as u128;
-            for wallet in self.wallets() {
-                *total += self.holding(&wallet, i) as u128;
-            }
-        }
+        let holdings: Vec<[u64; 2]> = self
+            .wallets()
+            .iter()
+            .map(|wallet| [0, 1].map(|i| self.holding(wallet, i)))
+            .collect();
+        let vaults = [0, 1].map(|i| env.balance(&market.vaults[i]));
+        let held = [0, 1].map(|i| {
+            vaults[i] as u128
+                + env.balance_or_zero(&self.fee_account(i)) as u128
+                + holdings.iter().map(|h| h[i] as u128).sum::<u128>()
+        });
         Snapshot {
             state: self.state(),
-            vaults: [0, 1].map(|i| env.balance(&market.vaults[i])),
+            vaults,
             held,
             supply: [0, 1].map(|i| env.supply(&market.mints[i])),
+            holdings,
+            state_data: env
+                .svm
+                .get_account(&market.market_state)
+                .expect("market state")
+                .data,
         }
     }
 }
@@ -1194,10 +1305,11 @@ impl Product for TaxAmm {
             0..2u8,
             [range_and_rate(), range_and_rate()],
             split,
-            any::<bool>(),
+            // Most markets have a tax authority, so its actions run.
+            prop::bool::weighted(0.75),
             virtual_reserve,
             [amount(3..=15), amount(3..=15)],
-            creation,
+            (creation, any::<u64>()),
         )
             .prop_map(
                 |(
@@ -1208,7 +1320,7 @@ impl Product for TaxAmm {
                     tax_authority,
                     virtual_reserve,
                     mut seed,
-                    creation,
+                    (creation, keys),
                 )| {
                     if mints == [MintKind::NativeSol; 2] {
                         mints[1] = MintKind::SplToken;
@@ -1236,6 +1348,7 @@ impl Product for TaxAmm {
                         virtual_reserve,
                         seed,
                         creation,
+                        keys,
                     }
                 },
             )
@@ -1252,12 +1365,11 @@ impl Product for TaxAmm {
                 .prop_map(|(who, empty_side)| Step::Seed { who, empty_side }),
             4 => (0..=OWED_SLOTS as u8, any::<u8>(), prop::bool::weighted(0.1))
                 .prop_map(|(slot, caller, wrong_wallet)| Step::Distribute { slot, caller, wrong_wallet }),
-            2 => (who(), 0..=1_100u16, 0..=1_100u16)
+            2 => (who(), rate(), rate())
                 .prop_map(|(who, buy, sell)| Step::SetTaxes { who, buy, sell }),
             2 => (who(), 0..=MAX_RECIPIENTS as u8, [any::<u8>(), any::<u8>(), any::<u8>(), any::<u8>()],
-                  [1..=100u16, 1..=100, 1..=100, 1..=100, 1..=100], any::<bool>(),
-                  prop::bool::weighted(0.1), prop_oneof![9 => Just(0u16), 1 => 1..500u16])
-                .prop_map(|(who, used, picks, weights, burn, gap, skew)| Step::SetRecipients { who, used, picks, weights, burn, gap, skew }),
+                  [1..=100u16, 1..=100, 1..=100, 1..=100, 1..=100], any::<bool>(), flaw())
+                .prop_map(|(who, used, picks, weights, burn, flaw)| Step::SetRecipients { who, used, picks, weights, burn, flaw }),
             1 => who().prop_map(|who| Step::Renounce { who }),
             2 => (0..2u8, size()).prop_map(|(side, size)| Step::Donate { side, size }),
             1 => (0..1_000_000u32, 0..10_000_000u32).prop_map(|(slots, seconds)| Step::Warp { slots, seconds }),
@@ -1348,7 +1460,9 @@ macro_rules! ensure {
 fn value_is_conserved(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     let w = c.world;
     for i in 0..2 {
-        let left = w.created[i] - w.burned[i];
+        let left = w.created[i]
+            .checked_sub(w.burned[i])
+            .ok_or(format!("mint {i}: more was burned than was created"))?;
         ensure!(
             c.after.held[i] == left,
             "mint {i}: known accounts hold {} where {} were created and {} burned",
@@ -1386,6 +1500,13 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     if state.status != MarketStatus::Open {
         return Ok(());
     }
+    // What a holder can sell depends only on the market state and the holdings, so a step
+    // that changed neither leaves the last check standing.
+    let unchanged =
+        c.before.state_data == c.after.state_data && c.before.holdings == c.after.holdings;
+    if unchanged && c.outcome.action != Action::Start {
+        return Ok(());
+    }
     for wallet in w.wallets() {
         for input in 0..2 {
             let output = 1 - input;
@@ -1407,14 +1528,31 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
                     state.virtual_side as usize == output && state.virtual_reserve > 0,
                     "the real reserve refused a sale on a side without a virtual reserve"
                 );
-                let mut part = amount / 2;
-                while part > 0 && spec_price(state, input, output, part).is_err() {
-                    part /= 2;
+                // The largest sale the real reserve covers, by the spec: whether the curve pays
+                // out more than the real reserve only grows with the amount, so a binary search
+                // finds where it starts.
+                let beyond = |amount: u64| {
+                    spec_price(state, input, output, amount).err().as_deref()
+                        == Some("InsufficientLiquidity")
+                };
+                let (mut covered, mut refused) = (0u64, amount);
+                while refused - covered > 1 {
+                    let middle = covered + (refused - covered) / 2;
+                    if beyond(middle) {
+                        refused = middle;
+                    } else {
+                        covered = middle;
+                    }
                 }
-                if part > 0 {
+                let at_edge = refusal(&w.quote(input, refused).0.err().unwrap_or_default());
+                ensure!(
+                    at_edge == "InsufficientLiquidity",
+                    "the spec refuses a sale of {refused} beyond the real reserve, the program gives {at_edge:?}"
+                );
+                if spec_price(state, input, output, covered).is_ok() {
                     ensure!(
-                        w.quote(input, part).0.is_ok(),
-                        "{wallet} can't sell even {part} of mint {input}, which the real reserve covers"
+                        w.quote(input, covered).0.is_ok(),
+                        "{wallet} can't sell {covered} of mint {input}, the most the real reserve covers"
                     );
                 }
             }
@@ -1478,7 +1616,9 @@ fn swaps_keep_the_curve(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
             before.reserves,
             after.reserves
         );
-        let paid = c.before.vaults[output] - c.after.vaults[output];
+        let paid = c.before.vaults[output]
+            .checked_sub(c.after.vaults[output])
+            .ok_or("the output vault grew in a swap")?;
         ensure!(
             paid <= before.reserves[output],
             "paid out {paid} of side {output}, whose real reserve was {}",
@@ -1493,8 +1633,13 @@ fn swaps_keep_the_curve(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
 fn every_tax_is_split_exactly(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     let (before, after) = (&c.before.state, &c.after.state);
     if c.outcome.swapped() {
-        let tax = after.tax_collected - before.tax_collected;
-        let booked = total_owed(after) - total_owed(before);
+        let tax = after
+            .tax_collected
+            .checked_sub(before.tax_collected)
+            .ok_or("tax_collected fell in a swap")?;
+        let booked = total_owed(after)
+            .checked_sub(total_owed(before))
+            .ok_or("what is owed fell in a swap")?;
         ensure!(booked == tax, "a tax of {tax} booked {booked} to the slots");
     }
     let accounted = c.world.paid_out + total_owed(after);
@@ -1568,11 +1713,17 @@ fn only_swaps_move_reserves_and_counters(c: &Checked<'_, TaxAmm>) -> Result<(), 
     if let (Action::Distribute { slot }, Ok(())) = (c.outcome.action, &c.outcome.result) {
         let slot = slot as usize;
         let tax_side = before.tax_side as usize;
-        let moved = c.before.vaults[tax_side] - c.after.vaults[tax_side];
+        let moved = c.before.vaults[tax_side]
+            .checked_sub(c.after.vaults[tax_side])
+            .ok_or("the tax-side vault grew in a payout")?;
+        let (Some(&owed), Some(&left)) = (before.owed.get(slot), after.owed.get(slot)) else {
+            return Err(format!(
+                "distribute settled for slot {slot}, which does not exist"
+            ));
+        };
         ensure!(
-            moved == before.owed[slot] && after.owed[slot] == 0,
-            "distribute moved {moved} for slot {slot}, which was owed {}",
-            before.owed[slot]
+            moved == owed && left == 0,
+            "distribute moved {moved} for slot {slot}, which was owed {owed}"
         );
         for other in (0..OWED_SLOTS).filter(|&other| other != slot) {
             ensure!(

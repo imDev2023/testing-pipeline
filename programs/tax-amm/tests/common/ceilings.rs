@@ -26,23 +26,28 @@ pub const RENOUNCE_TAX_AUTHORITY: u64 = 20_000;
 /// `create_program_address`.
 pub const BUMP_TRY: u64 = 1_500;
 
-/// The compute `distribute` spends searching for the slot wallet's associated token account
-/// beyond its first bump, which the ceilings leave out (docs/spec/tax-amm.md, "Compute
-/// ceilings"): how many bumps after the first the address takes depends on the wallet, and
-/// the program derives it once, and the associated token program twice more when it creates
-/// the account (measured on 2026-11-12 by the invariant fuzzer, within the few units that
-/// comparing keys costs).
-pub fn distribute_bump_search(
-    wallet: &pipeline_client::Pubkey,
-    mint: &pipeline_client::Pubkey,
-    token_program: &pipeline_client::Pubkey,
-    creates_account: bool,
-) -> u64 {
+/// The compute `distribute` for `slot` will spend searching for the slot wallet's associated
+/// token account beyond its first bump, which the ceilings leave out (docs/spec/tax-amm.md,
+/// "Compute ceilings"), read from the market as it is before the payout. How many bumps
+/// after the first the address takes depends on the wallet; the program derives it once, and
+/// the associated token program twice more when the payout creates the account, which it
+/// does for a tax recipient or the suite share owed something whose account is missing
+/// (measured on 2026-11-12 by the invariant fuzzer, within the few units that comparing keys
+/// costs).
+pub fn distribute_bump_search(env: &super::Env, market: &super::Market, slot: u8) -> u64 {
+    let state = env.tax_market(&market.market_state);
+    let side = state.tax_side as usize;
+    let (mint, token_program) = (market.mints[side], market.token_programs[side]);
+    let wallet = super::slot_wallet(&state, slot);
+    let account = pipeline_client::pda::associated_token(&wallet, &mint, &token_program);
+    let owed = state.owed.get(slot as usize).copied().unwrap_or(0);
+    let creates =
+        env.svm.get_account(&account).is_none() && slot != tax_amm::state::BURN_SLOT && owed > 0;
     let (_, bump) = pipeline_client::Pubkey::find_program_address(
         &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
         &pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
     );
-    let derivations = if creates_account { 3 } else { 1 };
+    let derivations = if creates { 3 } else { 1 };
     (255 - bump as u64) * BUMP_TRY * derivations
 }
 

@@ -376,18 +376,11 @@ fn distribute_cost(
     caller: &solana_keypair::Keypair,
     slot: u8,
 ) -> u64 {
-    let state = env.tax_market(&market.market_state);
-    let side = state.tax_side as usize;
-    let (mint, token_program) = (market.mints[side], market.token_programs[side]);
-    let wallet = slot_wallet(&state, slot);
-    let account = pipeline_client::pda::associated_token(&wallet, &mint, &token_program);
-    let creates = env.svm.get_account(&account).is_none()
-        && slot != tax_amm::state::BURN_SLOT
-        && state.owed[slot as usize] > 0;
+    let search = ceilings::distribute_bump_search(env, market, slot);
     let meta = env.distribute(market, caller, slot).unwrap();
     let costs = strategy_compute(&meta.logs);
     assert_eq!(costs.len(), 1);
-    costs[0] - ceilings::distribute_bump_search(&wallet, &mint, &token_program, creates)
+    costs[0] - search
 }
 
 #[test]
