@@ -10,7 +10,7 @@
 # local demo: docs/toolchain.md.
 [workspace]
 resolver = "2"
-members = ["mint-rules", "tax-amm", "buy-wall-amm"]
+members = ["mint-rules", "tax-amm", "buy-wall-amm", "lending-amm"]
 
 [workspace.package]
 edition = "2021"
