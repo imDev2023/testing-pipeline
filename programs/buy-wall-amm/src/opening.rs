@@ -4,133 +4,19 @@
 //! A seed of `x` token units and `y` lamports opens the market at
 //! `sqrt_price = floor(sqrt(y × 2^128 / x))` with
 //! `liquidity = min(floor(x × sqrt_price / 2^64), floor(y × 2^64 / sqrt_price))`.
-//! `y × 2^128` needs 192 bits, so the maths runs on a small unsigned 256-bit type with only
-//! the operations it needs, every one checked: an overflow returns `None` (which the
-//! program turns into an error), never a panic or a wrapped value.
+//! `y × 2^128` needs 192 bits, so the maths runs on the program's checked 256-bit type
+//! (`math.rs`): an overflow returns `None` (which the program turns into an error), never a
+//! panic or a wrapped value.
 
 use crate::config::{
     MAX_OPENING_SQRT_PRICE, MIN_LIQUIDITY, MIN_OPENING_SQRT_PRICE, MIN_SEED_LAMPORTS,
 };
 use crate::errors::StrategyError;
+use crate::math::U256;
 use crate::params::BPS;
 
 #[cfg(test)]
 use crate::config::{MAX_CAP_DECAY_BPS, MIN_CAP_FLOOR_BPS};
-
-const LOW_64: u128 = u64::MAX as u128;
-
-/// An unsigned 256-bit integer, `hi × 2^128 + lo`. Field order makes the derived ordering
-/// numeric.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct U256 {
-    pub hi: u128,
-    pub lo: u128,
-}
-
-impl From<u128> for U256 {
-    fn from(lo: u128) -> Self {
-        U256 { hi: 0, lo }
-    }
-}
-
-impl U256 {
-    pub const ZERO: U256 = U256 { hi: 0, lo: 0 };
-
-    /// `a × b`, which always fits in 256 bits.
-    pub fn mul(a: u128, b: u128) -> Option<U256> {
-        let (a1, a0) = (a >> 64, a & LOW_64);
-        let (b1, b0) = (b >> 64, b & LOW_64);
-        let p00 = a0.checked_mul(b0)?;
-        let p01 = a0.checked_mul(b1)?;
-        let p10 = a1.checked_mul(b0)?;
-        let p11 = a1.checked_mul(b1)?;
-        let mid = (p00 >> 64)
-            .checked_add(p01 & LOW_64)?
-            .checked_add(p10 & LOW_64)?;
-        let lo = ((mid & LOW_64) << 64) | (p00 & LOW_64);
-        let hi = p11
-            .checked_add(p01 >> 64)?
-            .checked_add(p10 >> 64)?
-            .checked_add(mid >> 64)?;
-        Some(U256 { hi, lo })
-    }
-
-    /// `s²`.
-    pub fn square(s: u128) -> U256 {
-        // A product of two u128s always fits in 256 bits.
-        U256::mul(s, s).unwrap_or(U256 {
-            hi: u128::MAX,
-            lo: u128::MAX,
-        })
-    }
-
-    /// `self × x`, or `None` past 256 bits.
-    pub fn mul_u64(self, x: u64) -> Option<U256> {
-        let x = x as u128;
-        let r0 = (self.lo & LOW_64).checked_mul(x)?;
-        let r1 = (self.lo >> 64).checked_mul(x)?.checked_add(r0 >> 64)?;
-        let lo = ((r1 & LOW_64) << 64) | (r0 & LOW_64);
-        let hi = self.hi.checked_mul(x)?.checked_add(r1 >> 64)?;
-        Some(U256 { hi, lo })
-    }
-
-    pub fn checked_add(self, other: U256) -> Option<U256> {
-        let (lo, carry) = self.lo.overflowing_add(other.lo);
-        let hi = self.hi.checked_add(other.hi)?.checked_add(carry as u128)?;
-        Some(U256 { hi, lo })
-    }
-
-    pub fn checked_sub(self, other: U256) -> Option<U256> {
-        let (lo, borrow) = self.lo.overflowing_sub(other.lo);
-        let hi = self.hi.checked_sub(other.hi)?.checked_sub(borrow as u128)?;
-        Some(U256 { hi, lo })
-    }
-
-    /// `self >> n` for `n` from 1 to 127; `None` otherwise.
-    fn shr(self, n: u32) -> Option<U256> {
-        let back = 128u32.checked_sub(n).filter(|back| *back < 128)?;
-        Some(U256 {
-            hi: self.hi.checked_shr(n)?,
-            lo: self.lo.checked_shr(n)? | self.hi.checked_shl(back)?,
-        })
-    }
-
-    /// `floor(self / 2^64)`, or `None` if it does not fit in 128 bits.
-    pub fn checked_shr64(self) -> Option<u128> {
-        if self.hi >> 64 != 0 {
-            return None;
-        }
-        Some((self.hi << 64) | (self.lo >> 64))
-    }
-
-    fn is_zero(self) -> bool {
-        self == U256::ZERO
-    }
-
-    /// The highest power of four at or below `self` (0 for 0).
-    fn highest_power_of_four(self) -> Option<U256> {
-        let bits = if self.hi != 0 {
-            256u32.checked_sub(self.hi.leading_zeros())?
-        } else {
-            128u32.checked_sub(self.lo.leading_zeros())?
-        };
-        if bits == 0 {
-            return Some(U256::ZERO);
-        }
-        let exponent = bits.checked_sub(1)? & !1;
-        Some(if exponent >= 128 {
-            U256 {
-                hi: 1u128.checked_shl(exponent.checked_sub(128)?)?,
-                lo: 0,
-            }
-        } else {
-            U256 {
-                hi: 0,
-                lo: 1 << exponent,
-            }
-        })
-    }
-}
 
 /// `floor(y × 2^128 / x)`, by long division in 64-bit digits; `None` when `x` is 0.
 pub fn ratio_q128(y: u64, x: u64) -> Option<U256> {
@@ -388,37 +274,6 @@ mod proofs {
                     lo: 0
                 }
         );
-    }
-
-    /// 256-bit multiplication is exact: it agrees with u128 multiplication wherever that
-    /// does not overflow, for operands below 2^10 in each 64-bit half (so every partial
-    /// product and carry path runs). Proving a 128-bit multiplier equivalent for every pair
-    /// takes SAT solvers hours, so Z3 proves `mul` and `mul_u64` for every input
-    /// (`proofs/opening_z3.py`), and the full domain runs here only in the full tier.
-    #[kani::proof]
-    fn mul_agrees_with_u128_bounded() {
-        let (a, b): (u128, u128) = (kani::any(), kani::any());
-        let half = |v: u128| (v >> 64) < 1 << 10 && (v & LOW_64) < 1 << 10;
-        kani::assume(half(a) && half(b));
-        let product = U256::mul(a, b).unwrap();
-        if let Some(expected) = a.checked_mul(b) {
-            assert_eq!(product, U256::from(expected));
-        } else {
-            assert!(product.hi > 0);
-        }
-    }
-
-    /// The same for every pair.
-    #[cfg(kani_full)]
-    #[kani::proof]
-    fn mul_agrees_with_u128() {
-        let (a, b): (u128, u128) = (kani::any(), kani::any());
-        let product = U256::mul(a, b).unwrap();
-        if let Some(expected) = a.checked_mul(b) {
-            assert_eq!(product, U256::from(expected));
-        } else {
-            assert!(product.hi > 0);
-        }
     }
 }
 

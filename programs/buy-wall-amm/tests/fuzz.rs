@@ -17,7 +17,7 @@
 
 mod common;
 
-use buy_wall_amm::opening::U256;
+use buy_wall_amm::math::U256;
 use buy_wall_amm::state::{MarketState, STATUS_CREATED, STATUS_OPEN};
 use common::*;
 use pipeline_client::{pda, Pubkey, TradeMode};

@@ -57,7 +57,11 @@ pub fn handle_quote(
     request: crate::interface::TradeRequest,
 ) -> Result<()> {
     let state = ctx.accounts.market_state.load()?;
-    let quote = crate::pricing::quote(&state, &request)?;
+    let priced = crate::pricing::quote(&state, &request)?;
+    let quote = psi::QuoteResult {
+        amount_in: priced.amount_in,
+        amount_out: priced.amount_out,
+    };
     set_return_data(&crate::borsh_encode(&quote)?);
     Ok(())
 }

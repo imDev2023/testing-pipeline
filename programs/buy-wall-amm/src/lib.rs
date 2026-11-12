@@ -19,11 +19,13 @@
 
 use anchor_lang::prelude::*;
 
+pub mod books;
 pub mod config;
 pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod interface;
+pub mod math;
 pub mod opening;
 pub mod params;
 pub mod pricing;
