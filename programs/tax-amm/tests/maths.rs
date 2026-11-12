@@ -5,15 +5,16 @@
 //! proofs of the same statements, is docs/security/tax-amm/maths-properties.md.
 
 use proptest::prelude::*;
+use proptest::test_runner::{Config, TestRunner};
 use tax_amm::config::{MAX_TAX_BPS, SUITE_SHARE_BPS};
-use tax_amm::pricing::{curve_out, exact_in, tax_of, Fill, Sides, Tax};
+use tax_amm::pricing::{curve_out, exact_in, tax_of, Fill, MarketView, Sides, Tax};
 use tax_amm::split::split_tax;
 use tax_amm::StrategyError;
 
 const CASES: u32 = 10_000;
-/// For properties of trades that must both succeed: about a quarter to a half of random
-/// cases price every trade they compare, so four times the cases gives each property at
-/// least 10,000 that do (counted on 2026-11-12).
+/// For properties of trades that must succeed for the property to say anything: about a
+/// quarter to a half of random cases price every trade they compare, so four times the
+/// cases, and `run_paired` fails the test unless at least `CASES` of them did.
 const PAIRED_CASES: u32 = 4 * CASES;
 const BPS: u128 = 10_000;
 
@@ -121,70 +122,65 @@ fn after(sides: Sides, fill: &Fill) -> Sides {
     }
 }
 
-/// A whole market, as the pricing sees it: both real reserves, the virtual reserve on its
-/// side, the tax side and both rates.
-#[derive(Clone, Copy, Debug)]
-struct Market {
-    reserves: [u64; 2],
-    virtual_side: usize,
-    virtual_reserve: u64,
-    tax_side: usize,
-    buy_bps: u16,
-    sell_bps: u16,
+/// Trades `amount` of side `from` for the other side of `market`, priced through the same
+/// `MarketView::terms` as `pricing::fill`, and moves the reserves as a swap does.
+fn trade(market: &mut MarketView, from: usize, amount: u64) -> Result<Fill, StrategyError> {
+    let (i, o) = (from, 1 - from);
+    let (sides, tax) = market.terms(i, o);
+    let fill = exact_in(sides, tax, amount)?;
+    market.reserves[i] = fill.reserve_in;
+    market.reserves[o] = fill.reserve_out;
+    Ok(fill)
 }
 
-impl Market {
-    /// Trades `amount` of side `from` for the other side, as `pricing::fill` does, and
-    /// moves the reserves.
-    fn trade(&mut self, from: usize, amount: u64) -> Result<Fill, StrategyError> {
-        let (i, o) = (from, 1 - from);
-        let virtual_of = |side| {
-            if self.virtual_side == side {
-                self.virtual_reserve
-            } else {
-                0
-            }
-        };
-        let sides = Sides {
-            reserve_in: self.reserves[i],
-            reserve_out: self.reserves[o],
-            virtual_in: virtual_of(i),
-            virtual_out: virtual_of(o),
-        };
-        let tax = if self.tax_side == i {
-            Tax::Buy(self.buy_bps)
-        } else {
-            Tax::Sell(self.sell_bps)
-        };
-        let fill = exact_in(sides, tax, amount)?;
-        self.reserves[i] = fill.reserve_in;
-        self.reserves[o] = fill.reserve_out;
-        Ok(fill)
-    }
-}
-
-fn market() -> impl Strategy<Value = Market> {
+fn market() -> impl Strategy<Value = MarketView> {
     let reserve = prop_oneof![1u64..1_000, 1u64..1_000_000_000, any::<u64>()];
     let virtual_reserve = prop_oneof![Just(0u64), 0u64..1_000_000_000, any::<u64>()];
     (
         reserve.clone(),
         reserve,
-        0usize..2,
+        0u8..2,
         virtual_reserve,
-        0usize..2,
+        0u8..2,
         rate(),
         rate(),
     )
         .prop_map(
-            |(r0, r1, virtual_side, virtual_reserve, tax_side, buy_bps, sell_bps)| Market {
-                reserves: [r0, r1],
-                virtual_side,
-                virtual_reserve,
-                tax_side,
-                buy_bps,
-                sell_bps,
+            |(r0, r1, virtual_side, virtual_reserve, tax_side, buy_tax_bps, sell_tax_bps)| {
+                MarketView {
+                    reserves: [r0, r1],
+                    virtual_side,
+                    virtual_reserve,
+                    tax_side,
+                    buy_tax_bps,
+                    sell_tax_bps,
+                }
             },
         )
+}
+
+/// Runs a property of trades that must succeed for it to say anything: `property` returns
+/// whether the case exercised it (every trade it compares priced) or fails the test, and
+/// the run fails unless at least `CASES` cases exercised it.
+fn run_paired<S: Strategy>(strategy: S, property: impl Fn(S::Value) -> Result<bool, TestCaseError>)
+where
+    S::Value: std::fmt::Debug,
+{
+    let exercised = std::sync::atomic::AtomicU32::new(0);
+    let mut runner = TestRunner::new(Config::with_cases(PAIRED_CASES));
+    runner
+        .run(&strategy, |value| {
+            if property(value)? {
+                exercised.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            Ok(())
+        })
+        .unwrap();
+    let exercised = exercised.into_inner();
+    assert!(
+        exercised >= CASES,
+        "only {exercised} of {PAIRED_CASES} cases exercised the property"
+    );
 }
 
 /// The effective reserves before and after a fill.
@@ -325,6 +321,13 @@ proptest! {
     }
 
     #[test]
+    fn two_taxes_are_never_less_than_one_on_the_sum(first in amount(), second in amount(), bps in rate()) {
+        if let Some(whole) = first.checked_add(second) {
+            prop_assert!(tax_of(first, bps).unwrap() + tax_of(second, bps).unwrap() >= tax_of(whole, bps).unwrap());
+        }
+    }
+
+    #[test]
     fn the_tax_is_exactly_the_rate_rounded_up(amount in amount(), bps in rate()) {
         let tax = tax_of(amount, bps).unwrap() as u128;
         let exact = amount as u128 * bps as u128;
@@ -340,6 +343,8 @@ proptest! {
     ) {
         prop_assert!(tax_of(low, slow).unwrap() <= tax_of(high, slow).unwrap());
         prop_assert!(tax_of(low, slow).unwrap() <= tax_of(low, fast).unwrap());
+        // What a buy tax leaves for the curve never falls as the amount rises.
+        prop_assert!(low - tax_of(low, slow).unwrap() <= high - tax_of(high, slow).unwrap());
     }
 
     #[test]
@@ -367,54 +372,93 @@ proptest! {
     }
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(PAIRED_CASES))]
-
-    #[test]
-    fn the_output_never_rises_when_the_input_falls_or_the_tax_rises(
-        sides in sides(),
-        tax in tax(),
-        (low, high) in (amount(), amount()).prop_map(|(a, b)| (a.min(b), a.max(b))),
-        other_rate in rate(),
-    ) {
-        if let (Ok(small), Ok(large)) = (exact_in(sides, tax, low), exact_in(sides, tax, high)) {
+#[test]
+fn the_output_never_rises_when_the_input_falls() {
+    run_paired(
+        (
+            sides(),
+            tax(),
+            (amount(), amount()).prop_map(|(a, b)| (a.min(b), a.max(b))),
+        ),
+        |(sides, tax, (low, high))| {
+            let (Ok(small), Ok(large)) = (exact_in(sides, tax, low), exact_in(sides, tax, high))
+            else {
+                return Ok(false);
+            };
             prop_assert!(small.amount_out <= large.amount_out, "less input, more out");
-        }
-        let bps = match tax { Tax::Buy(bps) | Tax::Sell(bps) => bps };
-        let (cheap, dear) = (at_rate(tax, bps.min(other_rate)), at_rate(tax, bps.max(other_rate)));
-        if let (Ok(cheap), Ok(dear)) = (exact_in(sides, cheap, high), exact_in(sides, dear, high)) {
+            Ok(true)
+        },
+    );
+}
+
+#[test]
+fn the_output_never_rises_when_the_tax_rises() {
+    run_paired(
+        (sides(), tax(), amount(), rate()),
+        |(sides, tax, amount, other_rate)| {
+            let bps = match tax {
+                Tax::Buy(bps) | Tax::Sell(bps) => bps,
+            };
+            let (cheap, dear) = (
+                at_rate(tax, bps.min(other_rate)),
+                at_rate(tax, bps.max(other_rate)),
+            );
+            let (Ok(cheap), Ok(dear)) = (
+                exact_in(sides, cheap, amount),
+                exact_in(sides, dear, amount),
+            ) else {
+                return Ok(false);
+            };
             prop_assert!(dear.amount_out <= cheap.amount_out, "more tax, more out");
-        }
-    }
+            Ok(true)
+        },
+    );
+}
 
-    #[test]
-    fn splitting_a_trade_in_two_never_returns_more(
-        sides in sides(), tax in tax(), first in amount(), second in amount(),
-    ) {
-        let Some(whole) = first.checked_add(second) else { return Ok(()) };
-        let Ok(one) = exact_in(sides, tax, first) else { return Ok(()) };
-        let Ok(two) = exact_in(after(sides, &one), tax, second) else { return Ok(()) };
-        let split = one.amount_out as u128 + two.amount_out as u128;
-        match exact_in(sides, tax, whole) {
-            Ok(single) => prop_assert!(split <= single.amount_out as u128),
-            // The single trade is refused only where the split's legs could not have been
-            // larger either: its curve output is past the real reserve, or its input reserve
-            // past a u64.
-            Err(error) => prop_assert!(
-                matches!(error, StrategyError::InsufficientLiquidity | StrategyError::Overflow),
-                "{error:?}"
-            ),
-        }
-    }
+#[test]
+fn splitting_a_trade_in_two_never_returns_more() {
+    run_paired(
+        (sides(), tax(), amount(), amount()),
+        |(sides, tax, first, second)| {
+            let Some(whole) = first.checked_add(second) else {
+                return Ok(false);
+            };
+            let Ok(one) = exact_in(sides, tax, first) else {
+                return Ok(false);
+            };
+            let Ok(two) = exact_in(after(sides, &one), tax, second) else {
+                return Ok(false);
+            };
+            let split = one.amount_out as u128 + two.amount_out as u128;
+            match exact_in(sides, tax, whole) {
+                Ok(single) => prop_assert!(split <= single.amount_out as u128),
+                // The single trade is refused only where the split's legs could not have been
+                // larger either: its curve output is past the real reserve, or its input reserve
+                // past a u64.
+                Err(error) => prop_assert!(
+                    matches!(
+                        error,
+                        StrategyError::InsufficientLiquidity | StrategyError::Overflow
+                    ),
+                    "{error:?}"
+                ),
+            }
+            Ok(true)
+        },
+    );
+}
 
-    #[test]
-    fn buying_and_selling_straight_back_never_returns_more_than_was_put_in(
-        market in market(), from in 0usize..2, amount in amount(),
-    ) {
+#[test]
+fn buying_and_selling_straight_back_never_returns_more_than_was_put_in() {
+    run_paired((market(), 0usize..2, amount()), |(market, from, amount)| {
         let mut market = market;
-        let Ok(there) = market.trade(from, amount) else { return Ok(()) };
-        if let Ok(back) = market.trade(1 - from, there.amount_out) {
-            prop_assert!(back.amount_out <= amount);
-        }
-    }
+        let Ok(there) = trade(&mut market, from, amount) else {
+            return Ok(false);
+        };
+        let Ok(back) = trade(&mut market, 1 - from, there.amount_out) else {
+            return Ok(false);
+        };
+        prop_assert!(back.amount_out <= amount);
+        Ok(true)
+    });
 }

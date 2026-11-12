@@ -2770,7 +2770,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-42: How the tax AMM's maths is proven
 
 - Question: Which properties of the pricing, tax and split maths are proven, and how is each established?
-- Answer: The property list in `docs/security/tax-amm/maths-properties.md`, chosen with Book of Knowledge: Kani proves for every input what needs no quotient and the rest for small inputs, Z3 proves every quotient claim for every input from lemmas proven on their own, and Proptest checks every property on at least 10,000 cases that exercise it.
+- Answer: The property list in `docs/security/tax-amm/maths-properties.md`, chosen with Book of Knowledge: Kani proves for every input what needs no quotient and the rest for small inputs, Z3 proves every quotient claim for every input from lemmas proven on their own, and Proptest checks each property of the tax, a swap, the split and the curve on the compiled code, on at least 10,000 cases that exercise it.
 - Alternatives: Kani alone, whose full-domain proofs about quotients do not finish; Z3 on whole trades directly, which does not finish either.
 - Specified in: [`docs/spec/tax-amm.md`, Maths proofs](spec/tax-amm.md#maths-proofs)
 - Changes by: spec only

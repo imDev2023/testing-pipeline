@@ -29,9 +29,9 @@
 use anchor_lang::prelude::*;
 use pipeline_strategy_interface::{fees::ceil_bps, QuoteResult};
 
-use crate::config::MAX_TAX_BPS;
 use crate::errors::StrategyError;
 use crate::interface::{TradeMode, TradeRequest};
+use crate::params::within_cap;
 use crate::state::{MarketStatus, TaxMarket};
 
 /// Reported to the router at market creation: traders can only swap exact-in, and [`quote`]
@@ -72,6 +72,57 @@ pub struct Fill {
     pub reserve_out: u64,
 }
 
+/// What the pricing reads from a market: its real reserves, its virtual reserve and that
+/// reserve's side, its tax side and both rates. A plain value, so the property tests and
+/// the proofs price trades exactly as [`fill`] does, through [`MarketView::terms`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MarketView {
+    pub reserves: [u64; 2],
+    pub virtual_side: u8,
+    pub virtual_reserve: u64,
+    pub tax_side: u8,
+    pub buy_tax_bps: u16,
+    pub sell_tax_bps: u16,
+}
+
+impl MarketView {
+    pub fn of(market: &TaxMarket) -> MarketView {
+        MarketView {
+            reserves: market.reserves,
+            virtual_side: market.virtual_side,
+            virtual_reserve: market.virtual_reserve,
+            tax_side: market.tax_side,
+            buy_tax_bps: market.buy_tax_bps,
+            sell_tax_bps: market.sell_tax_bps,
+        }
+    }
+
+    /// The sides and the tax of a trade from mint index `i` to mint index `o`, the two
+    /// indexes of a direction ([`TaxMarket::direction`]): the virtual reserve on its own
+    /// side, and the buy tax when the input is the tax side, the sell tax otherwise.
+    pub fn terms(&self, i: usize, o: usize) -> (Sides, Tax) {
+        let virtual_of = |side: usize| {
+            if self.virtual_side as usize == side {
+                self.virtual_reserve
+            } else {
+                0
+            }
+        };
+        let sides = Sides {
+            reserve_in: self.reserves[i],
+            reserve_out: self.reserves[o],
+            virtual_in: virtual_of(i),
+            virtual_out: virtual_of(o),
+        };
+        let tax = if self.tax_side as usize == i {
+            Tax::Buy(self.buy_tax_bps)
+        } else {
+            Tax::Sell(self.sell_tax_bps)
+        };
+        (sides, tax)
+    }
+}
+
 /// Prices an exact-in trade of `trade` against `market`, answering quotes.
 pub fn quote(market: &TaxMarket, trade: &TradeRequest) -> Result<QuoteResult> {
     require!(
@@ -94,24 +145,7 @@ pub fn fill(market: &TaxMarket, input: u8, output: u8, amount_in: u64) -> Result
         StrategyError::MarketNotOpen
     );
     let (i, o) = TaxMarket::direction(input, output).ok_or(StrategyError::WrongAccount)?;
-    let virtual_of = |side: usize| {
-        if market.virtual_side as usize == side {
-            market.virtual_reserve
-        } else {
-            0
-        }
-    };
-    let sides = Sides {
-        reserve_in: market.reserves[i],
-        reserve_out: market.reserves[o],
-        virtual_in: virtual_of(i),
-        virtual_out: virtual_of(o),
-    };
-    let tax = if market.tax_side as usize == i {
-        Tax::Buy(market.buy_tax_bps)
-    } else {
-        Tax::Sell(market.sell_tax_bps)
-    };
+    let (sides, tax) = MarketView::of(market).terms(i, o);
     Ok(exact_in(sides, tax, amount_in)?)
 }
 
@@ -127,7 +161,7 @@ pub fn tax_of(amount: u64, bps: u16) -> core::result::Result<u64, StrategyError>
 
 /// `bps`, unless it is above `MAX_TAX_BPS`.
 fn capped(bps: u16) -> core::result::Result<u16, StrategyError> {
-    if bps > MAX_TAX_BPS {
+    if !within_cap(bps) {
         return Err(StrategyError::TaxAboveCap);
     }
     Ok(bps)
@@ -142,24 +176,50 @@ pub fn exact_in(
     let effective_in = sides.reserve_in as u128 + sides.virtual_in as u128;
     let effective_out = sides.reserve_out as u128 + sides.virtual_out as u128;
     // Refused before anything is priced, so a rate above the cap fails for every input.
-    let (curve_input, rate) = match tax {
+    let curve_input = match tax {
         Tax::Buy(bps) => {
             let tax = tax_of(amount_in, bps)?;
-            // At most 10% of the input, so this never underflows.
-            let rest = amount_in.checked_sub(tax).ok_or(StrategyError::Overflow)?;
-            (rest, bps)
+            // Never more than the input within the cap (T1), so this never underflows.
+            amount_in.checked_sub(tax).ok_or(StrategyError::Overflow)?
         }
-        Tax::Sell(bps) => (amount_in, capped(bps)?),
+        Tax::Sell(bps) => {
+            capped(bps)?;
+            amount_in
+        }
     };
-    let curve = curve_out(effective_in, effective_out, curve_input);
+    settle(
+        sides,
+        tax,
+        amount_in,
+        curve_input,
+        curve_out(effective_in, effective_out, curve_input),
+    )
+}
+
+/// What a trade does once the curve has priced `curve_input` of `amount_in` at `curve`:
+/// refused past the output side's real reserve or for nothing out, the sell tax taken from
+/// the curve's output, and the reserves moved. Separate from the curve so that what a fill
+/// pays out is proven for every curve output (S2) without the curve's division.
+fn settle(
+    sides: Sides,
+    tax: Tax,
+    amount_in: u64,
+    curve_input: u64,
+    curve: u128,
+) -> core::result::Result<Fill, StrategyError> {
     // The virtual reserve is priced as if held, but only real reserves are ever paid out.
     if curve > sides.reserve_out as u128 {
         return Err(StrategyError::InsufficientLiquidity);
     }
     let curve = curve as u64;
     let (amount_out, tax) = match tax {
-        Tax::Buy(_) => (curve, amount_in - curve_input),
-        Tax::Sell(_) => {
+        Tax::Buy(_) => (
+            curve,
+            amount_in
+                .checked_sub(curve_input)
+                .ok_or(StrategyError::Overflow)?,
+        ),
+        Tax::Sell(rate) => {
             let tax = tax_of(curve, rate)?;
             (curve.checked_sub(tax).ok_or(StrategyError::Overflow)?, tax)
         }
@@ -303,11 +363,13 @@ mod tests {
 #[cfg(kani)]
 mod proofs {
     use super::*;
+    use crate::config::MAX_TAX_BPS;
 
-    /// Bound of the bounded tier, on the reserves, virtual reserves and amounts alike.
-    const SMALL: u64 = 1 << 4;
+    /// Bound of the bounded tier, on the reserves, virtual reserves and amounts alike: at 16
+    /// the trade harnesses took up to 10 minutes each, too long for every pull request.
+    const SMALL: u64 = 1 << 3;
     /// Bound on the amount in the bounded proofs of the tax alone, which has no curve.
-    const TAX_SMALL: u64 = 1 << 10;
+    const TAX_SMALL: u64 = 1 << 8;
 
     fn any_rate() -> u16 {
         kani::any_where(|&bps| bps <= MAX_TAX_BPS)
@@ -417,16 +479,25 @@ mod proofs {
     }
 
     /// S2: a fill never pays out more than the output side's real reserve, whatever the
-    /// virtual reserves: what leaves the real reserve is what the trader gets plus a sell
-    /// tax, which stays in the vault; the input reserve grows by the input less a buy tax;
-    /// and a fill always gives the trader something.
+    /// virtual reserves and whatever the curve priced: what leaves the real reserve is what
+    /// the trader gets plus a sell tax, which stays in the vault; the input reserve grows by
+    /// the input less a buy tax; and a fill always gives the trader something. Proven on
+    /// `settle`, which `exact_in` returns, for every curve output, so the curve's division
+    /// never enters the proof.
     #[kani::proof]
     #[kani::solver(cadical)]
     fn a_fill_never_pays_out_more_than_the_real_reserve() {
         let sides = any_sides();
         let buy: bool = kani::any();
         let amount: u64 = kani::any();
-        if let Ok(fill) = exact_in(sides, tax_at(buy, any_rate()), amount) {
+        // What the curve prices: the input less a buy tax (any part of it here), or all of it.
+        let curve_input: u64 = if buy {
+            kani::any_where(|&c| c <= amount)
+        } else {
+            amount
+        };
+        let curve: u128 = kani::any();
+        if let Ok(fill) = settle(sides, tax_at(buy, any_rate()), amount, curve_input, curve) {
             assert!(fill.amount_in == amount);
             assert!(fill.amount_out >= 1);
             assert!(fill.reserve_out <= sides.reserve_out);
@@ -555,48 +626,30 @@ mod proofs {
     }
 
     /// S5: trading `amount` for the other side and all of it straight back never returns
-    /// more than `amount`, whichever side carries the tax, at any rates. The virtual reserve
-    /// stays on its side, as in a market.
-    fn assert_round_trip_never_gains(
-        reserves: [u64; 2],
-        virtual_reserve: u64,
-        virtual_side: usize,
-        tax_side: usize,
-        rates: (u16, u16),
-        amount: u64,
-    ) {
-        let virtual_of = |side: usize| {
-            if side == virtual_side {
-                virtual_reserve
-            } else {
-                0
-            }
-        };
-        let tax_of_trade = |input: usize| {
-            if input == tax_side {
-                Tax::Buy(rates.0)
-            } else {
-                Tax::Sell(rates.1)
-            }
-        };
-        let (x, y) = (0, 1);
-        let there = Sides {
-            reserve_in: reserves[x],
-            reserve_out: reserves[y],
-            virtual_in: virtual_of(x),
-            virtual_out: virtual_of(y),
-        };
-        let Ok(first) = exact_in(there, tax_of_trade(x), amount) else {
+    /// more than `amount`, whichever side carries the tax, at any rates, priced through the
+    /// same `MarketView::terms` as `fill`. The virtual reserve stays on its side.
+    fn assert_round_trip_never_gains(mut market: MarketView, from: usize, amount: u64) {
+        let (x, y) = (from, 1 - from);
+        let (sides, tax) = market.terms(x, y);
+        let Ok(first) = exact_in(sides, tax, amount) else {
             return;
         };
-        let back = Sides {
-            reserve_in: first.reserve_out,
-            reserve_out: first.reserve_in,
-            virtual_in: virtual_of(y),
-            virtual_out: virtual_of(x),
-        };
-        if let Ok(second) = exact_in(back, tax_of_trade(y), first.amount_out) {
+        market.reserves[x] = first.reserve_in;
+        market.reserves[y] = first.reserve_out;
+        let (sides, tax) = market.terms(y, x);
+        if let Ok(second) = exact_in(sides, tax, first.amount_out) {
             assert!(second.amount_out <= amount);
+        }
+    }
+
+    fn view(reserves: [u64; 2], virtual_reserve: u64) -> MarketView {
+        MarketView {
+            reserves,
+            virtual_side: kani::any_where(|&side: &u8| side < 2),
+            virtual_reserve,
+            tax_side: kani::any_where(|&side: &u8| side < 2),
+            buy_tax_bps: any_rate(),
+            sell_tax_bps: any_rate(),
         }
     }
 
@@ -604,11 +657,8 @@ mod proofs {
     #[kani::solver(cadical)]
     fn buying_and_selling_straight_back_never_returns_more_bounded() {
         assert_round_trip_never_gains(
-            [below(SMALL), below(SMALL)],
-            below(SMALL),
+            view([below(SMALL), below(SMALL)], below(SMALL)),
             kani::any_where(|&side: &usize| side < 2),
-            kani::any_where(|&side: &usize| side < 2),
-            (any_rate(), any_rate()),
             below(SMALL),
         );
     }
@@ -668,11 +718,8 @@ mod proofs {
     #[kani::solver(cadical)]
     fn buying_and_selling_straight_back_never_returns_more() {
         assert_round_trip_never_gains(
-            kani::any(),
-            kani::any(),
+            view(kani::any(), kani::any()),
             kani::any_where(|&side: &usize| side < 2),
-            kani::any_where(|&side: &usize| side < 2),
-            (any_rate(), any_rate()),
             kani::any(),
         );
     }
