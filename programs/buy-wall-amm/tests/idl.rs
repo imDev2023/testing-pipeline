@@ -181,13 +181,25 @@ fn its_events_and_errors_are_the_programs() {
     let seeded = named(&idl["events"], "MarketSeeded");
     assert_eq!(bytes(&seeded["discriminator"]), MarketSeeded::DISCRIMINATOR);
 
-    // Errors are numbered from 6000 in the enum's order, the last being `Overflow`.
+    // Errors are numbered from 6000 in the enum's order, the last being `PriceBoundReached`.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "Overflow");
-    let overflow: u32 = buy_wall_amm::errors::StrategyError::Overflow.into();
-    assert_eq!(last["code"].as_u64().unwrap() as u32, overflow);
+    assert_eq!(last["name"], "PriceBoundReached");
+    let last_code: u32 = buy_wall_amm::errors::StrategyError::PriceBoundReached.into();
+    assert_eq!(last["code"].as_u64().unwrap() as u32, last_code);
+    // The four trading refusals follow `Overflow`, so every earlier error keeps its number.
+    let names: Vec<_> = errors.iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert_eq!(
+        names[names.len() - 5..],
+        [
+            "Overflow",
+            "ZeroInput",
+            "ZeroOutput",
+            "NothingAfterFee",
+            "PriceBoundReached"
+        ]
+    );
 }
