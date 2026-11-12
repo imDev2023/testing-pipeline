@@ -13,6 +13,7 @@
 //! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices a trade, read-only             |
 //! | `pipeline_swap`             | the router, from `swap`          | settles a trade, booking its tax      |
 //! | `seed`                      | the market's seeder, directly    | funds the market once and opens it    |
+//! | `distribute`                | anyone, directly                 | pays out what one tax slot is owed    |
 //! | `set_taxes`                 | the tax authority, directly      | moves the rates inside their ranges   |
 //! | `set_recipients`            | the tax authority, directly      | changes the recipients and the burn   |
 //! | `renounce_tax_authority`    | the tax authority, directly      | gives up its powers for good          |
@@ -99,6 +100,14 @@ pub mod tax_amm {
         amount_1: u64,
     ) -> Result<()> {
         instructions::seed_market(ctx, amount_0, amount_1)
+    }
+
+    /// Custom action: anyone pays out what one tax slot is owed, a tax recipient or the
+    /// suite share to its wallet's associated token account for the tax-side mint (created
+    /// at the caller's expense when missing), the burn by burning from the vault.
+    /// Remaining accounts are the tax-side mint's transfer-hook accounts.
+    pub fn distribute<'info>(ctx: Context<'info, Distribute<'info>>, slot: u8) -> Result<()> {
+        instructions::distribute_slot(ctx, slot)
     }
 
     /// Custom action: the tax authority moves the buy and sell tax, each inside the range

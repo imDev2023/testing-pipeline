@@ -9,7 +9,7 @@
 
 use anchor_lang::prelude::*;
 
-use crate::config::MAX_RECIPIENTS;
+use crate::config::{MAX_RECIPIENTS, SUITE_TREASURY};
 use crate::errors::StrategyError;
 use crate::params::InitParams;
 
@@ -27,8 +27,13 @@ pub const SEEDED_SEED: &[u8] = b"seeded";
 /// What each tax slot is owed, by index: the tax recipients, then the burn, then the suite
 /// share (docs/spec/tax-amm.md, "Payout").
 pub const OWED_SLOTS: usize = MAX_RECIPIENTS + 2;
-pub const BURN_SLOT: usize = MAX_RECIPIENTS;
-pub const SUITE_SLOT: usize = MAX_RECIPIENTS + 1;
+/// The burn's slot. Published in the IDL (`#[constant]`), where the demo script and Aviary
+/// read which `distribute` slot burns.
+#[constant]
+pub const BURN_SLOT: u8 = MAX_RECIPIENTS as u8;
+/// The suite share's slot. Published in the IDL (`#[constant]`), like [`BURN_SLOT`].
+#[constant]
+pub const SUITE_SLOT: u8 = MAX_RECIPIENTS as u8 + 1;
 
 /// Room kept at the end of the account, all zeros, so a later version can add a field
 /// without moving any and without reallocating existing markets.
@@ -162,6 +167,18 @@ impl TaxMarket {
             (0, 1) => Some((0, 1)),
             (1, 0) => Some((1, 0)),
             _ => None,
+        }
+    }
+
+    /// The wallet tax slot `slot` is paid to (docs/spec/tax-amm.md, "Payout"): its tax
+    /// recipient for slots 0 to 3 (the default key when the slot is unused), none (the
+    /// default key) for the burn, which is burned from the vault, and [`SUITE_TREASURY`]
+    /// for the suite share; `None` for a slot number out of range.
+    pub fn slot_wallet(&self, slot: usize) -> Option<Pubkey> {
+        match slot {
+            slot if slot == BURN_SLOT as usize => Some(Pubkey::default()),
+            slot if slot == SUITE_SLOT as usize => Some(SUITE_TREASURY),
+            recipient => self.recipients.get(recipient).copied(),
         }
     }
 

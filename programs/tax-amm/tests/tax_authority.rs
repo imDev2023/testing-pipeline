@@ -709,7 +709,7 @@ fn set_recipients_refuses_to_empty_a_slot_that_is_still_owed() {
     // Once recipient 1 is owed something, its slot can't be emptied: nobody could be paid.
     trade_both_ways(&mut env, &market);
     let owed = env.tax_market(&market.market_state).owed;
-    assert!(owed[1] > 0 && owed[tax_amm::state::BURN_SLOT] > 0);
+    assert!(owed[1] > 0 && owed[tax_amm::state::BURN_SLOT as usize] > 0);
     assert_refused(
         env.send_signed(
             set_recipients_instruction(&market.market_state, &authority.pubkey(), &only_first),

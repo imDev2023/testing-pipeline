@@ -29,7 +29,17 @@
 //      `seed_liquidity` form, and the same transaction records the market with
 //      `register_existing_market` and both fee accounts; then check the escrows lost exactly
 //      the seed, `SeedResult.taken` says so, the market state is open with the launchpad's
-//      PDA as its seeder, and trade it both ways as in steps 8 and 9.
+//      PDA as its seeder, and trade it both ways as in steps 8 and 9;
+//  14. pay out every slot of the market with the metadata's `distribute` action, and its burn
+//      slot with the `burn` action (the same instruction, with the mint writable): each tax
+//      recipient and the suite treasury must receive exactly what the market state said it
+//      was owed, a recipient with no token account must get one (the wallet given slot 1 in
+//      step 11 has none), the burn must lower the mint's supply by exactly its owed amount,
+//      and every owed amount must be 0 afterwards, with the tax-side vault holding exactly the
+//      real reserve;
+//  15. create, seed and trade a second market, taxed in wrapped SOL (Aviary's default tax
+//      side), from the metadata as in steps 5 to 9, and pay it out as in step 14: its
+//      recipients are paid wrapped SOL, and its burn slot is owed nothing.
 //
 // Grown from Pipeline's strategy template (scripts/deploy-devnet.ts at 5ad130d). Deploy the
 // program first; docs/toolchain.md says how, on a local validator and on devnet.
@@ -78,13 +88,14 @@ import {
     type KeyPairSigner,
     type Signature,
 } from '@solana/kit';
-import { getCreateAccountInstruction } from '@solana-program/system';
+import { getCreateAccountInstruction, getTransferSolInstruction } from '@solana-program/system';
 import {
     findAssociatedTokenPda,
     getCreateAssociatedTokenIdempotentInstructionAsync,
     getInitializeMint2Instruction,
     getMintSize,
     getMintToInstruction,
+    getSyncNativeInstruction,
     getTransferCheckedInstruction,
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
@@ -97,8 +108,11 @@ import {
     findVault0Pda,
     findVault1Pda,
     getTaxAmmErrorMessage,
+    BURN_SLOT,
     MarketStatus,
     SUITE_SHARE_BPS,
+    SUITE_SLOT,
+    SUITE_TREASURY,
     TAX_AMM_ERROR__ALREADY_RENOUNCED,
     type TaxAmmError,
 } from './client/index.ts';
@@ -151,6 +165,21 @@ const LAUNCH = {
     escrowed: [150_000_000_000n, 300_000_000_000n],
     maxPayerLamports: 50_000_000n,
 } as const;
+// The second market, in step 15: token A against wrapped SOL, taxed in SOL, Aviary's default
+// tax side, so it burns nothing; its other parameters are the demo market's. The payer is
+// its tax authority, seeder and first tax recipient, and the second recipient a fresh wallet
+// with no token account. It buys token A with 0.05 SOL, then sells 1,000 A back.
+const SOL_MARKET = {
+    shares: [6_000, 4_000, 0, 0],
+    burnShareBps: 0,
+    seed: [100_000_000_000n, 500_000_000n],
+    trades: [
+        [1, 0, 50_000_000n],
+        [0, 1, 1_000_000_000n],
+    ],
+} as const;
+// SPL Token's native SOL mint: wrapped SOL, the same address on every cluster.
+const WRAPPED_SOL = address('So11111111111111111111111111111111111111112');
 // The most SOL the strategy's setup may spend on rent; the router returns the rest.
 const MAX_CREATOR_LAMPORTS = 100_000_000n;
 // What a local run airdrops when a key holds less: the payer creates tokens and a market,
@@ -365,8 +394,8 @@ async function swapEvent(signature: Signature) {
     return event.data;
 }
 
-async function walletTokenAccount(owner: Address, mint: Address): Promise<Address> {
-    const [account] = await findAssociatedTokenPda({ owner, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+async function walletTokenAccount(owner: Address, mint: Address, tokenProgram: Address = TOKEN_PROGRAM_ADDRESS): Promise<Address> {
+    const [account] = await findAssociatedTokenPda({ owner, mint, tokenProgram });
     return account;
 }
 
@@ -760,6 +789,175 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
     record.push(['seeded market, traded', 'graduated, recorded, traded at the spec\'s prices']);
 }
 
+/** A mint's supply. */
+async function mintSupply(mint: Address): Promise<bigint> {
+    const { value } = await rpc.getTokenSupply(mint, { commitment: 'confirmed' }).send();
+    return BigInt(value.amount);
+}
+
+/**
+ * Step 14, and the end of step 15: pays out every slot `view`'s market uses, a tax recipient
+ * or the suite share through the metadata's `distribute` action and the burn slot through
+ * its `burn` action (the same instruction with the mint writable, so payouts never
+ * write-lock the mint), giving the actions' `tax_mint` and `recipient` inputs from the market
+ * state. Stops unless each wallet's account grew by exactly what its slot was owed, a fresh
+ * recipient got its token account from the payout, the burn lowered the supply by exactly
+ * its owed amount, and afterwards nothing is owed and the tax-side vault holds exactly the
+ * real reserve.
+ */
+async function payOut(
+    payer: KeyPairSigner,
+    metadata: pipeline.StrategyMetadata,
+    view: pipeline.MarketView,
+    spec: SpecMarket,
+    label: string,
+    taxedIn: string,
+) {
+    const actionNamed = (name: string) =>
+        metadata.actions?.find((candidate) => candidate.name === name) ?? fail(`metadata.json has no ${name} action`);
+    const [distribute, burn] = [actionNamed('distribute'), actionNamed('burn')];
+    const { data: before } = await fetchTaxMarket(rpc, view.marketState, { commitment: 'confirmed' });
+    const taxSide = before.taxSide;
+    const [taxMint, taxTokenProgram] = [view.mints[taxSide]!, view.tokenPrograms[taxSide]!];
+    if (show(before.owed) !== show(spec.owed)) fail(`the market owes ${show(before.owed)}, but the spec's formulas give ${show(spec.owed)}`);
+    // Each slot the market uses, with the wallet the market state names for it: the tax
+    // recipients, the burn (no wallet: the default key), and the suite treasury; the client
+    // carries the treasury and the slot numbers from the program's IDL.
+    const slots: [number, string, Address][] = [
+        ...before.recipients.flatMap((wallet, slot): [number, string, Address][] =>
+            wallet === DEFAULT_ADDRESS ? [] : [[slot, `tax recipient ${slot + 1}`, wallet]],
+        ),
+        [BURN_SLOT, 'burn', DEFAULT_ADDRESS],
+        [SUITE_SLOT, 'suite share', SUITE_TREASURY],
+    ];
+    for (const [slot, slotLabel, wallet] of slots) {
+        const owed = before.owed[slot]!;
+        const account = await walletTokenAccount(wallet, taxMint, taxTokenProgram);
+        const existed = (await accountData(account)) !== null;
+        const balance = existed ? await tokenBalance(account) : 0n;
+        const supply = slot === BURN_SLOT ? await mintSupply(taxMint) : 0n;
+        const instruction = await pipeline.buildActionInstruction({
+            action: slot === BURN_SLOT ? burn : distribute,
+            market: view,
+            wallet: payer.address,
+            args: { slot },
+            inputs: { tax_mint: taxMint, recipient: wallet },
+        });
+        await send(`${label}: ${slot === BURN_SLOT ? 'burn' : 'distribute'} slot ${slot} (${slotLabel})`, payer, [instruction]);
+        if (slot === BURN_SLOT) {
+            const burned = supply - (await mintSupply(taxMint));
+            if (burned !== owed) fail(`the burn lowered the supply by ${burned}, but the slot was owed ${owed}`);
+            info(
+                owed === 0n
+                    ? `${slotLabel}: owed nothing, so nothing was burned (a market taxed in SOL burns nothing)`
+                    : `${slotLabel}: the supply of ${taxedIn} fell by exactly the ${owed} owed`,
+            );
+            continue;
+        }
+        const exists = (await accountData(account)) !== null;
+        const received = exists ? (await tokenBalance(account)) - balance : 0n;
+        if (received !== owed) fail(`${slotLabel} ${wallet} received ${received}, but was owed ${owed}`);
+        // The tax recipients other than the payer are fresh wallets: a payout made their account.
+        const fresh = slot < BURN_SLOT && wallet !== payer.address && owed > 0n;
+        if (fresh && (existed || !exists)) fail(`${slotLabel} ${wallet} had a token account before, or has none now`);
+        info(`${slotLabel}: ${wallet} received exactly the ${owed} owed${existed ? '' : ', in a token account created for it'}`);
+        if (fresh) record.push([`${label}: ${slotLabel}`, `had no token account and got one, ${account}`]);
+    }
+    const { data: after } = await fetchTaxMarket(rpc, view.marketState, { commitment: 'confirmed' });
+    if (after.owed.some((owed) => owed !== 0n)) fail(`after the payouts the market still owes ${show(after.owed)}`);
+    const vault = await tokenBalance(view.vaults[taxSide]!);
+    if (vault !== after.reserves[taxSide]) fail(`the tax-side vault holds ${vault}, but the real reserve is ${after.reserves[taxSide]}`);
+    info(`every owed amount is 0, and the tax-side vault holds exactly the real reserve, ${vault}`);
+    record.push([`${label}: payouts`, 'every slot paid exactly what it was owed']);
+}
+
+/**
+ * Step 15: a market of token A against wrapped SOL, taxed in SOL, created and seeded from the
+ * metadata in one transaction as in steps 5 and 6, its parameters and seed read back as in
+ * step 7, traded both ways and its books checked as in steps 8 and 9, then paid out.
+ */
+async function solTaxedMarket(payer: KeyPairSigner, programId: Address, metadata: pipeline.StrategyMetadata, tokenA: Address) {
+    const init = metadata.init ?? fail('metadata.json needs `init` for this demo');
+    const label = 'SOL market';
+    // Wrap the seed and the buys, with Pipeline's fee on each.
+    const buys = SOL_MARKET.trades.filter(([input]) => input === DEMO_MARKET.taxSide).map(([, , amount]) => amount);
+    const spend = (amount: bigint) => pipeline.maxTotalSpend(amount, 0) ?? fail(`a buy of ${amount} overflows`);
+    const wrap = buys.reduce<bigint>((sum, amount) => sum + spend(amount), SOL_MARKET.seed[DEMO_MARKET.taxSide]);
+    const holder = await walletTokenAccount(payer.address, WRAPPED_SOL);
+    await send(`wrap ${Number(wrap) / 1e9} SOL`, payer, [
+        await getCreateAssociatedTokenIdempotentInstructionAsync({ payer, owner: payer.address, mint: WRAPPED_SOL }),
+        getTransferSolInstruction({ source: payer, destination: holder, amount: wrap }),
+        getSyncNativeInstruction({ account: holder }),
+    ]);
+
+    const mints = [tokenA, WRAPPED_SOL];
+    const tokenPrograms = mints.map(() => TOKEN_PROGRAM_ADDRESS);
+    const marketStateKey = await generateKeyPairSigner();
+    const marketState = marketStateKey.address;
+    const recipients = [payer.address, (await generateKeyPairSigner()).address, DEFAULT_ADDRESS, DEFAULT_ADDRESS];
+    const sent: SentParams = {
+        ...demoParams(payer.address, payer.address, recipients),
+        shares: [...SOL_MARKET.shares],
+        burnShareBps: SOL_MARKET.burnShareBps,
+    };
+    const { instruction: createMarket } = await pipeline.buildCreateMarketFromMetadata({
+        init,
+        strategyProgram: programId,
+        creator: payer.address,
+        marketState,
+        args: metadataArgs(sent),
+        inputs: { mint_0: mints[0]!, mint_1: mints[1]! },
+        tokenPrograms: Object.fromEntries(mints.map((mint, i) => [mint, tokenPrograms[i]!])),
+        maxCreatorLamports: MAX_CREATOR_LAMPORTS,
+        rpc,
+    });
+    const market = await pipeline.marketPda(programId, marketState);
+    const [vault0] = await findVault0Pda({ marketState, mint0: mints[0]! }, { programAddress: programId });
+    const [vault1] = await findVault1Pda({ marketState, mint1: mints[1]! }, { programAddress: programId });
+    const view: pipeline.MarketView = {
+        market,
+        strategyProgram: programId,
+        marketState,
+        mints,
+        vaults: [vault0, vault1],
+        tokenPrograms,
+        supportsExactOut: false,
+    };
+    const seedAction = metadata.actions?.find((action) => action.name === 'seed') ?? fail('metadata.json has no seed action');
+    await send(
+        `${label}: create_market + init_fee_account x2 + seed`,
+        payer,
+        [
+            createMarket,
+            ...(await Promise.all(
+                mints.map((mint, i) => pipeline.initFeeAccount({ payer: payer.address, market, mint, tokenProgram: tokenPrograms[i]! })),
+            )),
+            await pipeline.buildActionInstruction({
+                action: seedAction,
+                market: view,
+                wallet: payer.address,
+                args: { amount_0: SOL_MARKET.seed[0], amount_1: SOL_MARKET.seed[1] },
+            }),
+        ],
+        [marketStateKey],
+    );
+    record.push([`${label}: market`, market]);
+    const { data: state } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
+    if (show(paramsOf(state)) !== show(sent)) fail(`the ${label}'s state holds ${show(paramsOf(state))}, but ${show(sent)} was sent`);
+    if (state.status !== MarketStatus.Open || show(state.reserves) !== show(SOL_MARKET.seed)) {
+        fail(`the ${label} is ${state.status}, holding ${show(state.reserves)}`);
+    }
+    info(`market ${market}: the parameters sent, open, holding the seed ${show(state.reserves)}`);
+
+    const spec = freshSpec(sent, SOL_MARKET.seed);
+    for (const [input, output, amount] of SOL_MARKET.trades) {
+        await tradeChecked(payer, programId, view, spec, ['token A', 'wrapped SOL'], input, output, amount);
+    }
+    await checkBooksAgainst(marketState, spec, sent.virtualReserve);
+    record.push([`${label}: swaps`, "both delivered their quotes, the spec's prices"]);
+    await payOut(payer, metadata, view, spec, label, 'wrapped SOL');
+}
+
 async function main() {
     const payer = await loadKey(payerPath);
     const upgradeAuthority = await loadKey(upgradeAuthorityPath);
@@ -1106,6 +1304,12 @@ async function main() {
     } else {
         info('skipped: the stand-in launchpad is a test program, never deployed to devnet');
     }
+
+    step("14. Paying out every slot of the market with the metadata's distribute and burn actions");
+    await payOut(payer, metadata, view, spec, 'market', 'token B');
+
+    step('15. A second market, taxed in wrapped SOL: created, seeded, traded and paid out');
+    await solTaxedMarket(payer, programId, metadata, mintA);
 
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));
