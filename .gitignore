@@ -11,3 +11,13 @@ target/
 dist/
 *-keypair.json
 .claude/worktrees/
+
+# Fixtures are fetched or built by scripts/fetch-*.sh and never committed; only the pins are.
+/fixtures/*
+!/fixtures/pins.env
+
+# Solana build outputs and local ledgers; keypairs never belong in the repo (docs/toolchain.md).
+*.so
+test-ledger/
+*keypair*.json
+id.json

@@ -6,7 +6,7 @@ The public names were settled on 2026-11-10 (`docs/spec/README.md`, Names) and a
 
 ## Where things stand
 
-Planning: no code yet.
+Building: the on-chain workspace is `programs/`, starting with the tax AMM from Pipeline's strategy template, and CI is `.github/workflows/ci.yml`; `docs/toolchain.md` says how to build, test and run the local demo.
 The wayfinder map is charted (2026-11-09): [Map: a build-ready spec for the Pipeline suite on devnet](https://github.com/imDev2023/testing-pipeline/issues/1), built from `docs/charting-brief.md`.
 The owner wants it done as soon as possible in parallel sessions: one ticket per session (research tickets excepted), each claimed by assigning yourself before any work.
 Auto mode refuses `gh repo create` and similar outward GitHub writes: write the commands to a script and hand the owner one `! bash <script>` line (`scripts/create-github-repo.sh` is the repo's).

@@ -1,0 +1,23 @@
+{
+    "name": "tax-amm-scripts",
+    "private": true,
+    "type": "module",
+    "description": "The tax AMM's demo: registers the strategy on a Pipeline router, creates a market from its metadata and trades it",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "scripts": {
+        "demo": "node demo.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@pipeline-placeholder/sdk": "link:../../../fixtures/pipeline/sdk/ts",
+        "@solana-program/system": "0.16.0",
+        "@solana-program/token": "0.18.0",
+        "@solana/kit": "8.6.0"
+    },
+    "devDependencies": {
+        "@types/node": "24.19.2",
+        "typescript": "7.0.2"
+    }
+}

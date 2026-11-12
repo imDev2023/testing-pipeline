@@ -1,0 +1,44 @@
+[package]
+name = "tax-amm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A Pipeline strategy whose markets take their tax in one chosen mint"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "tax_amm"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+custom-heap = []
+custom-panic = []
+anchor-debug = []
+no-log-ix-name = []
+
+[dependencies]
+anchor-lang = { workspace = true, features = ["init-if-needed"] }
+anchor-spl.workspace = true
+pipeline-strategy-interface.workspace = true
+solana-security-txt.workspace = true
+
+# Anchor's macros check `target_os = "solana"`, which host builds don't know about, and
+# Kani sets `kani`; `kani_full` turns on the full-domain proofs, as in Pipeline.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))', 'cfg(kani)', 'cfg(kani_full)'] }
+
+# For the LiteSVM tests in `tests/` only. `cargo build-sbf` never builds these.
+[dev-dependencies]
+borsh.workspace = true
+litesvm.workspace = true
+pipeline-check.workspace = true
+pipeline-client.workspace = true
+solana-keypair.workspace = true
+solana-signer.workspace = true
+solana-transaction.workspace = true
+spl-token-2022-interface.workspace = true
