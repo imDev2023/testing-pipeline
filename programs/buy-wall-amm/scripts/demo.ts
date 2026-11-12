@@ -251,9 +251,15 @@ async function sign(feePayer: KeyPairSigner, instructions: Instruction[], extra:
     return { signed, size };
 }
 
-/** Sends a transaction and waits for confirmation by polling (public RPCs often refuse WebSockets). */
+/**
+ * Sends a transaction and waits for confirmation by polling (public RPCs often refuse
+ * WebSockets). Stops before sending if the transaction is over Solana's size limit.
+ */
 async function send(label: string, feePayer: KeyPairSigner, instructions: Instruction[], extra: KeyPairSigner[] = []) {
     const { signed, size } = await sign(feePayer, instructions, extra);
+    if (size > TRANSACTION_SIZE_LIMIT) {
+        fail(`${label} is ${size} bytes, over the ${TRANSACTION_SIZE_LIMIT}-byte limit; nothing was sent`);
+    }
     const signature = getSignatureFromTransaction(signed);
     await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64' }).send();
     await waitFor(label, signature);
@@ -545,7 +551,6 @@ async function main() {
         [marketStateKey],
     );
     info(`one transaction of ${size} bytes (limit ${TRANSACTION_SIZE_LIMIT})`);
-    if (size > TRANSACTION_SIZE_LIMIT) fail(`the transaction is over the size limit`);
     info(`market       ${explorer('address', resolved.market)}`);
     info(`market state ${resolved.marketState}`);
     record.push(['market', resolved.market], ['market state', resolved.marketState], ['transaction size', `${size} bytes`]);

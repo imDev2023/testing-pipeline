@@ -148,14 +148,22 @@ jobs:
             ~/.kani
             ~/.rustup/toolchains/nightly-*
           key: ${{ runner.os }}-kani-${{ hashFiles('scripts/install-toolchain.sh', 'scripts/toolchain-env.sh') }}
+      - name: Cache Z3
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/testing-pipeline/z3
+          key: ${{ runner.os }}-z3-solver-5.4.1.0
       - name: Z3 proofs (every program's proofs/*_z3.py, for the maths Kani cannot finish)
         run: |
           shopt -s nullglob
-          python3 -m venv "$RUNNER_TEMP/z3"
-          "$RUNNER_TEMP/z3/bin/pip" install --quiet z3-solver==5.4.1.0
+          venv="$HOME/.cache/testing-pipeline/z3"
+          if ! "$venv/bin/python" -c 'import z3' 2>/dev/null; then
+            python3 -m venv "$venv"
+            "$venv/bin/pip" install --quiet z3-solver==5.4.1.0
+          fi
           for proof in programs/*/proofs/*_z3.py; do
             echo "== $proof"
-            "$RUNNER_TEMP/z3/bin/python" "$proof"
+            "$venv/bin/python" "$proof"
           done
       - name: Install Kani
         run: scripts/install-toolchain.sh kani

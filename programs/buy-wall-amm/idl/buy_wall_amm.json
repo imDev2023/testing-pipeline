@@ -561,7 +561,7 @@
     {
       "code": 6012,
       "name": "SameMint",
-      "msg": "The token must not be wrapped SOL"
+      "msg": "The token must not be wrapped SOL, SPL Token's or Token-2022's"
     },
     {
       "code": 6013,

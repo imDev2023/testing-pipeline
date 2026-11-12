@@ -377,7 +377,7 @@ mod proofs {
     #[cfg(kani_full)]
     #[kani::proof]
     #[kani::unwind(130)]
-    fn the_opening_price_never_exceeds_the_seeded_price_bounded() {
+    fn the_opening_price_never_exceeds_the_seeded_price_for_small_amounts() {
         let (x, y): (u64, u64) = (kani::any(), kani::any());
         kani::assume(x > 0 && x < 1 << 3 && y < 1 << 3);
         let s = opening_sqrt_price(x, y).unwrap();

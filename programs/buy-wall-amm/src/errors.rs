@@ -29,7 +29,7 @@ pub enum StrategyError {
     CapDecayOutOfRange,
     #[msg("The seeder must not be the default key")]
     SeederRequired,
-    #[msg("The token must not be wrapped SOL")]
+    #[msg("The token must not be wrapped SOL, SPL Token's or Token-2022's")]
     SameMint,
     #[msg("The token carries a Token-2022 extension outside the allowlist")]
     MintExtensionNotAllowed,

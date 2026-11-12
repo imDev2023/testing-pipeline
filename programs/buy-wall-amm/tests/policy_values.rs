@@ -99,6 +99,20 @@ fn every_constant_is_defined_once_in_config() {
 }
 
 #[test]
+fn the_suite_treasury_is_the_tax_amms() {
+    // The same wallet the tax AMM pays its suite share to (`TAX-07`), kept in each program's
+    // own config so neither program depends on the other; read here as text for the same
+    // reason. A change to one must change the other.
+    let tax_config =
+        std::fs::read_to_string(program_dir().join("../tax-amm/src/config.rs")).unwrap();
+    let key = SUITE_TREASURY.to_string();
+    assert!(
+        tax_config.contains(&format!("pubkey!(\"{key}\")")),
+        "tax-amm/src/config.rs names another SUITE_TREASURY than {key}"
+    );
+}
+
+#[test]
 fn the_mint_extension_allowlist_is_the_shared_crates() {
     assert!(files_containing("ALLOWED_MINT_EXTENSIONS").is_empty());
     let init =

@@ -36,7 +36,7 @@ pub struct InitMarket<'info> {
     /// vaults are created.
     #[account(
         mint::token_program = token_program,
-        constraint = token_mint.key() != native_mint::ID @ StrategyError::SameMint,
+        constraint = !is_wrapped_sol(&token_mint.key()) @ StrategyError::SameMint,
     )]
     pub token_mint: Box<InterfaceAccount<'info, Mint>>,
     /// Wrapped SOL, index 1.
@@ -155,6 +155,12 @@ pub fn pipeline_market_signer(market_state: &Pubkey) -> Pubkey {
         &Pubkey::new_from_array(psi::PIPELINE_PROGRAM_ID),
     )
     .0
+}
+
+/// Whether `mint` is wrapped SOL, SPL Token's or Token-2022's: either would pair SOL with
+/// SOL.
+fn is_wrapped_sol(mint: &Pubkey) -> bool {
+    *mint == native_mint::ID || *mint == anchor_spl::token_2022::spl_token_2022::native_mint::ID
 }
 
 /// The suite's mint rules (the shared `mint-rules` crate, `POOL4-17`): a Token-2022 token

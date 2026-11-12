@@ -169,3 +169,23 @@ fn lamports_sent_ahead_to_the_vaults_never_block_a_market() {
     }
     env.market_info(&market.market_state).unwrap();
 }
+
+#[test]
+fn token_2022s_wrapped_sol_is_refused_as_the_token() {
+    // Token-2022's native mint is wrapped SOL too: a market of it against SPL Token's
+    // wrapped SOL would pair SOL with SOL.
+    let mut env = Env::new();
+    let native_2022 = client::pubkey!("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP");
+    let mut data = vec![0u8; 82];
+    data[44] = 9;
+    data[45] = 1;
+    let lamports = env.svm.minimum_balance_for_rent_exemption(82);
+    env.svm
+        .set_account(native_2022, solana_account(lamports, data, TOKEN_2022))
+        .unwrap();
+    let params = launch_params(env.admin.pubkey());
+    assert_refused(
+        env.create_market(native_2022, TOKEN_2022, &params),
+        SameMint,
+    );
+}

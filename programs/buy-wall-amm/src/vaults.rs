@@ -133,8 +133,11 @@ fn token_account_len(mint: &AccountInfo, token_program: &Pubkey) -> Result<usize
         .map_err(|_| error!(StrategyError::WrongAccount))
 }
 
-/// An existing vault is accepted only if it is a token account of `mint` owned by
-/// `authority`.
+/// An existing vault is accepted only if it is an initialized token account of `mint`
+/// owned by `authority`, with no delegate and no close authority, so nobody but the vault
+/// authority can ever move or close what it holds. (Only this program can sign for a
+/// vault's address, so no such account can exist before its market; the check holds
+/// regardless.)
 fn check_existing(vault: &AccountInfo, mint: &Pubkey, authority: &Pubkey) -> Result<()> {
     let data = vault.try_borrow_data()?;
     let field = |range: core::ops::Range<usize>| data.get(range).ok_or(StrategyError::WrongAccount);
@@ -143,5 +146,10 @@ fn check_existing(vault: &AccountInfo, mint: &Pubkey, authority: &Pubkey) -> Res
         field(32..64)? == authority.as_ref(),
         StrategyError::WrongAccount
     );
+    // SPL Token's account layout: the delegate's COption tag at 72, the state at 108 (1 is
+    // initialized, 2 frozen), the close authority's COption tag at 129.
+    require!(field(72..76)? == [0; 4], StrategyError::WrongAccount);
+    require!(field(108..109)? == [1], StrategyError::WrongAccount);
+    require!(field(129..133)? == [0; 4], StrategyError::WrongAccount);
     Ok(())
 }

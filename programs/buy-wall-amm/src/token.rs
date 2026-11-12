@@ -91,7 +91,9 @@ pub fn transfer_measured(accounts: Transfer, amount: u64, decimals: u8) -> Resul
         &[],
     )?;
     let after = token_balance(to)?;
+    // A balance that fell while receiving means `to` is not the account it should be (the
+    // source itself, say), not an arithmetic fault.
     after
         .checked_sub(before)
-        .ok_or_else(|| error!(StrategyError::Overflow))
+        .ok_or_else(|| error!(StrategyError::WrongAccount))
 }

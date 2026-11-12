@@ -39,7 +39,7 @@ export const BUY_WALL_AMM_ERROR__CAP_FLOOR_OUT_OF_RANGE = 0x1779; // 6009
 export const BUY_WALL_AMM_ERROR__CAP_DECAY_OUT_OF_RANGE = 0x177a; // 6010
 /** SeederRequired: The seeder must not be the default key */
 export const BUY_WALL_AMM_ERROR__SEEDER_REQUIRED = 0x177b; // 6011
-/** SameMint: The token must not be wrapped SOL */
+/** SameMint: The token must not be wrapped SOL, SPL Token's or Token-2022's */
 export const BUY_WALL_AMM_ERROR__SAME_MINT = 0x177c; // 6012
 /** MintExtensionNotAllowed: The token carries a Token-2022 extension outside the allowlist */
 export const BUY_WALL_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED = 0x177d; // 6013
@@ -119,7 +119,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [BUY_WALL_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
     [BUY_WALL_AMM_ERROR__REWARD_SHARE_OUT_OF_RANGE]: `The reward share must be at most MAX_REWARD_SHARE_BPS`,
     [BUY_WALL_AMM_ERROR__REWARDS_RECIPIENT_MISMATCH]: `A rewards recipient is required exactly when the reward share is above 0`,
-    [BUY_WALL_AMM_ERROR__SAME_MINT]: `The token must not be wrapped SOL`,
+    [BUY_WALL_AMM_ERROR__SAME_MINT]: `The token must not be wrapped SOL, SPL Token's or Token-2022's`,
     [BUY_WALL_AMM_ERROR__SEEDER_REQUIRED]: `The seeder must not be the default key`,
     [BUY_WALL_AMM_ERROR__SEED_TOO_SMALL]: `The seed must bring at least MIN_SEED_LAMPORTS`,
     [BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE]: `Trading is not available in this build`,
