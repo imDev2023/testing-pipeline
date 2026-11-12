@@ -277,3 +277,58 @@ fn trailing_space_after_the_last_extension_ends_the_list_as_token_2022_reads_it(
         assert_eq!(check_mint(&TOKEN_2022, &data), Ok(()));
     }
 }
+
+#[test]
+fn find_extension_returns_the_value_token_2022_reads() {
+    use spl_token_2022_interface::extension::transfer_hook::TransferHook;
+    // A transfer hook after other allowed entries, with a recognisable value.
+    let hook = ExtensionType::TransferHook;
+    let mut data = mint_bytes(&[
+        (
+            ExtensionType::MetadataPointer as u16,
+            value_len(ExtensionType::MetadataPointer),
+        ),
+        (hook as u16, value_len(hook)),
+        (
+            ExtensionType::GroupPointer as u16,
+            value_len(ExtensionType::GroupPointer),
+        ),
+    ]);
+    let value_at = ACCOUNT_LEN + 1 + 4 + value_len(ExtensionType::MetadataPointer) + 4;
+    data[value_at..value_at + 32].copy_from_slice(&[3; 32]);
+    data[value_at + 32..value_at + 64].copy_from_slice(&[4; 32]);
+    let state = StateWithExtensions::<Mint>::unpack(&data).unwrap();
+    let theirs = state.get_extension::<TransferHook>().unwrap();
+    let value = mint_rules::find_extension(&data, extension::TRANSFER_HOOK).unwrap();
+    assert_eq!(value, bytemuck_bytes(theirs));
+    assert_eq!(value[..32], [3; 32]);
+    assert_eq!(value[32..], [4; 32]);
+}
+
+#[test]
+fn find_extension_finds_nothing_where_there_is_nothing_to_find() {
+    let hook = extension::TRANSFER_HOOK;
+    // No extensions at all, an SPL Token mint's length.
+    assert_eq!(mint_rules::find_extension(&mint_bytes(&[]), hook), None);
+    // Other extensions only.
+    let data = mint_with(ExtensionType::MetadataPointer);
+    assert_eq!(mint_rules::find_extension(&data, hook), None);
+    // The entry after a malformed one, or after the end of the list, is never read.
+    let mut malformed = mint_bytes(&[(ExtensionType::MetadataPointer as u16, 64), (hook, 64)]);
+    let len_at = ACCOUNT_LEN + 1 + 2;
+    malformed[len_at..len_at + 2].copy_from_slice(&1_000u16.to_le_bytes());
+    assert_eq!(mint_rules::find_extension(&malformed, hook), None);
+    let mut ended = mint_bytes(&[(0, 0)]);
+    ended.extend_from_slice(&hook.to_le_bytes());
+    ended.extend_from_slice(&64u16.to_le_bytes());
+    ended.extend_from_slice(&[9; 64]);
+    assert_eq!(mint_rules::find_extension(&ended, hook), None);
+}
+
+/// A Token-2022 extension's bytes as it lays them out.
+fn bytemuck_bytes(
+    hook: &spl_token_2022_interface::extension::transfer_hook::TransferHook,
+) -> Vec<u8> {
+    let key = |k: Option<_>| k.map(|k: &_| AsRef::<[u8]>::as_ref(k).to_vec()).unwrap();
+    [key(hook.authority.as_ref()), key(hook.program_id.as_ref())].concat()
+}

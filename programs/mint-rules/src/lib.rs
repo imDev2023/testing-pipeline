@@ -64,7 +64,7 @@ pub enum MintRefusal {
 }
 
 /// An SPL Token mint, and a Token-2022 mint's base, before any extension.
-const MINT_LEN: usize = 82;
+pub const MINT_LEN: usize = 82;
 const IS_INITIALIZED: usize = 45;
 /// Token-2022 pads an extended mint to a token account's length, then writes the account
 /// type, then its type-length-value extension entries.
@@ -106,23 +106,62 @@ pub fn check_mint(owner: &[u8; 32], data: &[u8]) -> Result<(), MintRefusal> {
 /// Walks the type-length-value entries as Token-2022 does: an `Uninitialized` type, or too
 /// few bytes left for a type, ends the list; an entry whose length runs past the account
 /// is malformed.
-fn check_extensions(mut entries: &[u8]) -> Result<(), MintRefusal> {
-    while let Some(&[low, high]) = entries.get(0..2) {
-        let extension_type = u16::from_le_bytes([low, high]);
-        if extension_type == UNINITIALIZED {
-            return Ok(());
-        }
-        let len = match entries.get(2..4) {
-            Some(&[low, high]) => u16::from_le_bytes([low, high]) as usize,
-            _ => return Err(MintRefusal::NotAMint),
-        };
-        let rest = entries.get(4..).unwrap_or(&[]);
-        // An entry whose length runs past the account is malformed.
-        let after = rest.get(len..).ok_or(MintRefusal::NotAMint)?;
+fn check_extensions(entries: &[u8]) -> Result<(), MintRefusal> {
+    for entry in ExtensionEntries(entries) {
+        let (extension_type, _) = entry?;
         if !ALLOWED_MINT_EXTENSIONS.contains(&extension_type) {
             return Err(MintRefusal::ExtensionNotAllowed(extension_type));
         }
-        entries = after;
     }
     Ok(())
+}
+
+/// The value of the first extension entry of `extension_type` in a Token-2022 mint's
+/// `data`, read the way [`check_mint`] walks the entries; `None` for a mint without
+/// extensions, without that entry, or whose entries are malformed before it. Programs that
+/// read an extension (the containment hook reads the transfer hook's) call this after
+/// [`check_mint`], so the layout is walked by one piece of code.
+pub fn find_extension(data: &[u8], extension_type: u16) -> Option<&[u8]> {
+    let entries = data.get(ACCOUNT_LEN + 1..)?;
+    for entry in ExtensionEntries(entries) {
+        match entry {
+            Ok((found, value)) if found == extension_type => return Some(value),
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+/// The type-length-value entries after a mint's account type, as Token-2022 walks them: an
+/// `Uninitialized` type, or too few bytes left for a type, ends the list; an entry whose
+/// length runs past the account is malformed, and ends the walk with an error.
+struct ExtensionEntries<'a>(&'a [u8]);
+
+impl<'a> Iterator for ExtensionEntries<'a> {
+    type Item = Result<(u16, &'a [u8]), MintRefusal>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let entries = self.0;
+        let &[low, high] = entries.get(0..2)? else {
+            return None;
+        };
+        let extension_type = u16::from_le_bytes([low, high]);
+        if extension_type == UNINITIALIZED {
+            self.0 = &[];
+            return None;
+        }
+        // A malformed entry ends the walk after its error.
+        self.0 = &[];
+        let len = match entries.get(2..4) {
+            Some(&[low, high]) => u16::from_le_bytes([low, high]) as usize,
+            _ => return Some(Err(MintRefusal::NotAMint)),
+        };
+        let rest = entries.get(4..).unwrap_or(&[]);
+        let (Some(value), Some(after)) = (rest.get(..len), rest.get(len..)) else {
+            return Some(Err(MintRefusal::NotAMint));
+        };
+        self.0 = after;
+        Some(Ok((extension_type, value)))
+    }
 }

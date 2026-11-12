@@ -4,13 +4,14 @@
 # Build each program on its own, by its manifest:
 #
 #   cargo build-sbf --manifest-path tax-amm/Cargo.toml    # target/deploy/tax_amm.so
+#   cargo build-sbf --manifest-path containment-hook/Cargo.toml    # target/deploy/containment_hook.so
 #
 # A whole-workspace build unifies dependency features across programs, which changes a
 # program's bytes, so it is never how a program is built. How to build, test and run the
 # local demo: docs/toolchain.md.
 [workspace]
 resolver = "2"
-members = ["mint-rules", "tax-amm", "buy-wall-amm"]
+members = ["mint-rules", "tax-amm", "buy-wall-amm", "containment-hook"]
 
 [workspace.package]
 edition = "2021"
@@ -31,6 +32,8 @@ solana-security-txt = "=1.1.3"
 mint-rules = { path = "mint-rules" }
 # The buy wall AMM's zero-copy market state (Anchor's `zero_copy` derives through it).
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
+# The containment hook reads the tax AMM's program id and market state layout from its crate.
+tax-amm = { path = "tax-amm", features = ["no-entrypoint"] }
 # Test-only crates, at the versions Pipeline's template uses at 5ad130d, and the versions
 # LiteSVM uses for the ones the template does not.
 base64 = "0.22"
@@ -43,7 +46,9 @@ solana-keypair = "=3.1.2"
 solana-message = "=4.6.0"
 solana-signer = "=3.0.1"
 solana-transaction = "=4.3.0"
+spl-tlv-account-resolution = "0.11.4"
 spl-token-2022-interface = "3.1.2"
+spl-transfer-hook-interface = "2.1.0"
 toml = "0.9"
 # Property tests of the maths (docs/spec/README.md, "Test layers" 2 and 3).
 proptest = "1.7"
