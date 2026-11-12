@@ -2153,6 +2153,76 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
 
+### CANARY-30: The endpoint's snapshot and answer
+
+- Question: What does the container's endpoint take and answer, and how does the binary know a round is the last?
+- Answer: `POST /run` takes one market's snapshot (the market, the round from 1, the cluster's clock and every account read by address, `null` where the cluster has none, so an address absent from the snapshot is one it lacks) and answers with one record per check or with exactly the addresses a trade named that the snapshot lacks; at round `SNAPSHOT_ROUNDS` it answers with records whatever it lacks.
+- Alternatives: The Durable Object counting rounds and sending a separate "last" flag; a second endpoint for the last round.
+- Specified in: [`crates/canary/README.md`, Run it](../crates/canary/README.md#run-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-31: Which checks an account the snapshot lacks affects
+
+- Question: When a snapshot lacks accounts at the last round, which checks are "not run"?
+- Answer: Every check when the copy itself lacked them; otherwise only the checks whose trades named them: `readable` for its probes, and `exit_sizes`, `quote_matches_swap` and `cost`, which share the size ladder's trades; each such record names the accounts.
+- Alternatives: Every check whenever anything is lacking.
+- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-32: Readability's probes in every direction
+
+- Question: What does `readable` quote in a direction whose input is not the money side?
+- Answer: What the smallest buy of that mint would deliver, so the probe only sells what a buy produced, or one unit when that buy quotes nothing.
+- Alternatives: A share of that mint's vault, as the prototype did.
+- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-33: A market that refuses every trade
+
+- Question: When are a market's trading checks "not run" because it refuses every trade?
+- Answer: When every direction's probe is refused cleanly; when a probe crashes or runs out of compute the trading checks still run, because a swap that works without a quote is itself a finding.
+- Alternatives: "Not run" whenever no direction quotes.
+- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-34: Where `cost` reads Pipeline's fee
+
+- Question: Where does `cost` take Pipeline's fee from, given that the router's config account holds no fee?
+- Answer: From what the router charged in the copy, the `pipeline_fee` of each swap's return data, with the sale's fee (charged in the token) valued at the sale's own price; no fee rate is written in Canary.
+- Alternatives: The fee rate of `pipeline-strategy-interface` (`PIPELINE_FEE_BPS`), which would hide a router that charged differently.
+- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-35: Compute limit of the read-only calls
+
+- Question: What compute limit do `pipeline_market_info` and account resolution run under?
+- Answer: The quote's limit, `QUOTE_COMPUTE_LIMIT` (200,000 units), as an integrator's quoter runs them; running out of it is "out of compute".
+- Alternatives: The swap's limit, 1,400,000 units, as `pipeline-check`'s cloner resolves accounts.
+- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-36: Wallets from a seed chosen per run
+
+- Question: How are a run's new random wallets made, so that a snapshot's later rounds can supply accounts derived from them?
+- Answer: Each wallet comes from a seed chosen at random once per run; the endpoint's first answer carries the seed and every later round of that run is posted with it, so the rounds trade from the same wallets while no strategy can know Canary's wallets in advance.
+- Alternatives: A new random key per trade, whose derived accounts no later round could supply; wallets derived from the market and the size, which a strategy could compute and treat differently.
+- Specified in: [`crates/canary/README.md`, Run it](../crates/canary/README.md#run-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
 ## Explainer (EXPLAINER)
 
 ### EXPLAINER-01: What the explainer may say

@@ -83,6 +83,9 @@ Set up by [Tax AMM: Pipeline's strategy template in our repo, with CI and a loca
 - `programs/test-programs/` holds test-only programs, never deployed to devnet: `stand-in-launchpad` (crate `stand-in-launchpad`, program id `StandinLaunchpad111111111111111111111111111`, whose keypair nobody holds), a launchpad that graduates two escrowed mints into any strategy through `pipeline_seed_liquidity` with its seeder PDA `["seeder", creator]` signing and a payer PDA it funds with a bounded amount of SOL, built by [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63) for every strategy's seeding tests.
   Each is a workspace member marked `[package.metadata.testing-pipeline] test-program = true`, so fmt, clippy and the pins cover it, while `scripts/workspace-programs.py` leaves it out of the deployable programs (`--test-programs` lists only these), `scripts/build-programs.sh` builds it into `fixtures/test-programs`, and no deploy script names it.
   The tax AMM's test support drives it from Rust (`tax-amm/tests/common/launchpad.rs`), and the demo from TypeScript (`tax-amm/scripts/launchpad.ts`).
+- `crates/` is Aviary's native Rust, a Cargo workspace of its own apart from `programs/` (Rust 1.97.1 by its own `rust-toolchain.toml`), so nothing in it can change a program's bytes.
+  Its one crate, `crates/canary`, is the Canary checks' binary, on Pipeline's crates from crates.io at exact versions; how to build, run and test it is `crates/canary/README.md`.
+  Its tests load the same fixtures as the programs' (`fetch-router.sh`, `fetch-pipeline.sh programs`).
 - `fixtures/` holds what scripts fetch or build; only `fixtures/pins.env` is committed.
 - TypeScript is one pnpm workspace at the repo root (`package.json`, `pnpm-workspace.yaml`): each program's `scripts/` now, Aviary's apps and packages when they are built.
 
@@ -229,7 +232,8 @@ Without `--goal` or `--deadline`, or with a goal too large for a `u64`, it stops
 | `rust` | on-chain changes | The toolchain from `scripts/install-toolchain.sh solana`, the router fixture's test and fetch, Pipeline's test programs from `scripts/fetch-pipeline.sh programs` (its clone cached by the pinned `rev`), `cargo fmt --check`, each program's SBF build by its manifest, clippy with `-D warnings`, the tests, and the lending AMM's `mainnet` build with its clippy and unit tests |
 | `typescript` | on-chain changes | Pipeline's SDK from `scripts/fetch-pipeline.sh sdk`, `pnpm install --frozen-lockfile`, `pnpm typecheck` |
 | `kani` | on-chain changes | Every program's Z3 proofs (`programs/*/proofs/*_z3.py`, with `z3-solver` 5.4.1.0), then Kani from `scripts/install-toolchain.sh kani` and `cargo kani --workspace -j --output-format=terse` |
-| `gate` | always | Passes only if `changes` and `no keypairs` passed and, when on-chain code changed, every heavy job passed too; when none changed, they must have been skipped |
+| `canary` | changes to `crates/`, the fixtures' pins or scripts, or the workflow | The toolchain, the router fixture and Pipeline's test programs as `rust` gets them, then `cargo fmt --check`, clippy with `-D warnings` and the tests in `crates/` |
+| `gate` | always | Passes only if `changes` and `no keypairs` passed and, when on-chain code changed, every heavy job passed too, and `canary` likewise when Canary changed; when none changed, they must have been skipped |
 
 `gate` is the one check `main` requires, so a pull request that touches no on-chain code still gets a passing result in a minute.
 `scripts/github-settings.sh` makes it required, through a repository ruleset that admins may bypass (so a history rewrite can still be force-pushed), and switches on private vulnerability reporting, which every program's `security.txt` names as its contact.
