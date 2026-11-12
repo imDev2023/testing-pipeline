@@ -11,7 +11,7 @@ use anchor_spl::token_interface::{Mint, TokenInterface};
 use crate::errors::StrategyError;
 use crate::events::Seeded;
 use crate::state::{MarketStatus, TaxMarket};
-use crate::token::{token_balance, transfer_checked};
+use crate::token::{token_balance, token_owner, transfer_checked};
 
 /// The order is `metadata.json`'s `seed` action; keep them in step. Transfer-hook
 /// accounts follow, for either mint.
@@ -20,8 +20,8 @@ pub struct Seed<'info> {
     pub seeder: Signer<'info>,
     #[account(mut, has_one = seeder @ StrategyError::NotSeeder)]
     pub market_state: Account<'info, TaxMarket>,
-    /// CHECK: the seeder's token account of mint 0; the token program checks it and the
-    /// seeder's authority over it.
+    /// CHECK: the seeder's own token account of mint 0: the handler checks its owner, and
+    /// the token program the rest.
     #[account(mut)]
     pub seeder_token_0: UncheckedAccount<'info>,
     /// CHECK: the seeder's token account of mint 1, checked by the token program.
@@ -79,6 +79,12 @@ pub fn seed_market<'info>(
     let mut arrived = [0u64; 2];
     for (i, (from, vault, mint, token_program)) in sides.into_iter().enumerate() {
         if amounts[i] > 0 {
+            // From token accounts the seeder owns, never one it is only a delegate of.
+            require_keys_eq!(
+                token_owner(&from.to_account_info())?,
+                accounts.seeder.key(),
+                StrategyError::WrongAccount
+            );
             let before = token_balance(&vault.to_account_info())?;
             transfer_checked(
                 &token_program.to_account_info(),

@@ -12,16 +12,43 @@ use tax_amm::split::split_tax;
 const CASES: u32 = 10_000;
 const BPS: u128 = 10_000;
 
-/// `a × b` as a 256-bit (high, low) pair, so products of effective reserves, which can
-/// pass 2^128, compare exactly.
-fn wide_mul(a: u128, b: u128) -> (u128, u128) {
-    let mask = u64::MAX as u128;
-    let (a1, a0) = (a >> 64, a & mask);
-    let (b1, b0) = (b >> 64, b & mask);
-    let (mid, mid_carry) = (a1 * b0).overflowing_add(a0 * b1);
-    let (lo, lo_carry) = (a0 * b0).overflowing_add(mid << 64);
-    let hi = a1 * b1 + (mid >> 64) + ((mid_carry as u128) << 64) + lo_carry as u128;
-    (hi, lo)
+/// `a × b` exactly, as eight 32-bit digits, most significant first, so products of
+/// effective reserves, which can pass 2^128, compare exactly. Schoolbook multiplication on
+/// small digits: deliberately not the program's own 256-bit product, so a mistake there
+/// can't hide behind the same mistake here.
+fn wide_mul(a: u128, b: u128) -> [u64; 8] {
+    let digits = |x: u128| -> [u64; 4] { std::array::from_fn(|i| ((x >> (32 * i)) as u32) as u64) };
+    let (a, b) = (digits(a), digits(b));
+    let mut product = [0u64; 8];
+    for i in 0..4 {
+        let mut carry = 0u64;
+        for j in 0..4 {
+            let column = product[i + j] + a[i] * b[j] + carry;
+            product[i + j] = column & 0xffff_ffff;
+            carry = column >> 32;
+        }
+        product[i + 4] += carry;
+    }
+    product.reverse();
+    product
+}
+
+#[test]
+fn the_reference_product_is_exact() {
+    // (2^128 - 1)^2 = 2^256 - 2^129 + 1.
+    let max = 0xffff_ffff;
+    assert_eq!(
+        wide_mul(u128::MAX, u128::MAX),
+        [max, max, max, max - 1, 0, 0, 0, 1]
+    );
+    assert_eq!(wide_mul(1 << 64, 1 << 64), [0, 0, 0, 1, 0, 0, 0, 0]);
+    // Where the product fits in a u128, it is the u128 product.
+    let (a, b) = (123_456_789_012_345_u128, 987_654_321_098_765_u128);
+    let low: u128 = wide_mul(a, b)[4..]
+        .iter()
+        .fold(0, |total, &digit| (total << 32) | digit as u128);
+    assert_eq!(wide_mul(a, b)[..4], [0, 0, 0, 0]);
+    assert_eq!(low, a * b);
 }
 
 /// Any reserves and virtual reserves a market can hold: the virtual reserve on at most one

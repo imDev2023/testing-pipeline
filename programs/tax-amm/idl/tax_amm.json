@@ -387,7 +387,7 @@
         {
           "name": "seeder_token_0",
           "docs": [
-            "seeder's authority over it."
+            "the token program the rest."
           ],
           "writable": true
         },

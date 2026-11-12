@@ -18,6 +18,17 @@ pub fn token_balance(account: &AccountInfo) -> Result<u64> {
     Ok(u64::from_le_bytes(amount))
 }
 
+/// The owner field of an SPL Token or Token-2022 account.
+pub fn token_owner(account: &AccountInfo) -> Result<Pubkey> {
+    let data = account.try_borrow_data()?;
+    let owner: [u8; 32] = data
+        .get(32..64)
+        .ok_or(StrategyError::WrongAccount)?
+        .try_into()
+        .map_err(|_| StrategyError::WrongAccount)?;
+    Ok(Pubkey::new_from_array(owner))
+}
+
 /// SPL Token's `TransferChecked` (tag 12), with `hook_accounts` appended so Token-2022
 /// mints with transfer hooks work: Token-2022 picks out the accounts its hook needs.
 #[allow(clippy::too_many_arguments)]

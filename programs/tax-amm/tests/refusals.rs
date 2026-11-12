@@ -184,3 +184,40 @@ fn bypass_is_refused_with_the_real_market_signer_not_signing() {
         );
     });
 }
+
+#[test]
+fn a_swap_paying_out_to_the_output_vault_itself_is_refused() {
+    // A transfer from the vault to itself moves nothing, so the trader would receive 0
+    // while the market booked a payout: its real reserve and volume would no longer match
+    // what left the vault, or the swap event's `received`.
+    let (mut env, market) = seeded(1, 300, 500);
+    let trader = env.funded_wallet(&market, 10_000_000_000);
+    for (i, o) in [(0, 1), (1, 0)] {
+        let mut swap = env
+            .swap_instruction(
+                &market,
+                &trader.pubkey(),
+                (i, o),
+                1_000_000_000,
+                &SwapOptions::default(),
+            )
+            .unwrap();
+        // The router's trade accounts follow its own: the trader's output is the fifth.
+        let position = swap
+            .accounts
+            .iter()
+            .position(|meta| {
+                meta.pubkey
+                    == pda::associated_token(
+                        &trader.pubkey(),
+                        &market.mints[o],
+                        &market.token_programs[o],
+                    )
+            })
+            .unwrap();
+        swap.accounts[position].pubkey = market.vaults[o];
+        unchanged(&mut env, &market, |env| {
+            assert_refused(env.send(&[swap], &[&trader]), StrategyError::WrongAccount);
+        });
+    }
+}

@@ -248,3 +248,39 @@ fn the_creation_transaction_seeds_the_market_it_creates() {
         assert_eq!(state.reserves, [600_000, 1_500_000]);
     }
 }
+
+#[test]
+fn the_seed_is_refused_from_a_token_account_the_seeder_only_holds_a_delegation_on() {
+    // docs/spec/tax-amm.md, "The seed": from token accounts the seeder owns. A wallet that
+    // once approved the seeder as its delegate must not find its tokens locked in a market.
+    let (mut env, market, seeder) = unseeded(|_| {});
+    let other = Keypair::new();
+    env.fund(&other.pubkey(), &market, [1_000_000, 2_000_000]);
+    let theirs = |i: usize| {
+        pda::associated_token(&other.pubkey(), &market.mints[i], &market.token_programs[i])
+    };
+    for i in 0..2 {
+        // SPL Token's and Token-2022's `Approve`: tag 4, then the amount.
+        let mut data = vec![4u8];
+        data.extend_from_slice(&u64::MAX.to_le_bytes());
+        let approve = pipeline_client::Instruction::new_with_bytes(
+            market.token_programs[i],
+            &data,
+            vec![
+                pipeline_client::AccountMeta::new(theirs(i), false),
+                pipeline_client::AccountMeta::new_readonly(seeder.pubkey(), false),
+                pipeline_client::AccountMeta::new_readonly(other.pubkey(), true),
+            ],
+        );
+        env.send(&[approve], &[&other]).unwrap();
+    }
+    let mut seed = seed_instruction(&market, &seeder.pubkey(), [600_000, 1_500_000], vec![]);
+    seed.accounts[2].pubkey = theirs(0);
+    seed.accounts[3].pubkey = theirs(1);
+    assert_refused(env.send(&[seed], &[&seeder]), StrategyError::WrongAccount);
+    assert_eq!(
+        env.tax_market(&market.market_state).status,
+        MarketStatus::Created
+    );
+    assert_eq!(env.balance(&theirs(0)), 1_000_000);
+}

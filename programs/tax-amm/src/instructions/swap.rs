@@ -21,7 +21,7 @@ use crate::instructions::SwapAccounts;
 use crate::interface::{SwapRequest, TradeMode};
 use crate::pricing;
 use crate::split::split_tax;
-use crate::state::AUTHORITY_SEED;
+use crate::state::{vault_authority, TaxMarket, AUTHORITY_SEED};
 use crate::token::{token_balance, transfer_checked};
 
 pub fn swap<'info>(ctx: Context<'info, SwapAccounts<'info>>, request: SwapRequest) -> Result<()> {
@@ -36,10 +36,9 @@ pub fn swap<'info>(ctx: Context<'info, SwapAccounts<'info>>, request: SwapReques
         trade.mode == TradeMode::ExactIn,
         StrategyError::ExactOutNotSupported
     );
-    let (input_vault, output_vault) = market
-        .trade_vaults(trade.input_index, trade.output_index)
+    let (input, output) = TaxMarket::direction(trade.input_index, trade.output_index)
         .ok_or(StrategyError::WrongAccount)?;
-    let (input, output) = (trade.input_index as usize, trade.output_index as usize);
+    let (input_vault, output_vault) = (market.vaults[input], market.vaults[output]);
     require_keys_eq!(
         ctx.accounts.input_vault.key(),
         input_vault,
@@ -63,12 +62,21 @@ pub fn swap<'info>(ctx: Context<'info, SwapAccounts<'info>>, request: SwapReques
         output_vault,
         StrategyError::WrongAccount
     );
+    // Paying the vault itself would move nothing while the market booked a payout, so the
+    // trader would get 0 and the reserves and counters would drift from the vault.
+    require_keys_neq!(
+        ctx.accounts.trader_output.key(),
+        output_vault,
+        StrategyError::WrongAccount
+    );
+    // Signing with the wrong account would fail in the token program anyway; checking it
+    // here costs a PDA derivation and names the mistake.
     let market_state = market.key();
+    let authority_key =
+        vault_authority(&market_state, market.authority_bump).ok_or(StrategyError::WrongAccount)?;
+    require_keys_eq!(authority.key(), authority_key, StrategyError::WrongAccount);
     let bump = [market.authority_bump];
     let authority_seeds: &[&[u8]] = &[AUTHORITY_SEED, market_state.as_ref(), &bump];
-    let authority_key = Pubkey::create_program_address(authority_seeds, &crate::ID)
-        .map_err(|_| StrategyError::WrongAccount)?;
-    require_keys_eq!(authority.key(), authority_key, StrategyError::WrongAccount);
 
     // Credit what arrived beyond what the market has recorded in the input vault, capped
     // at what the router sent in this call, so tokens sent to the vault outside a swap are

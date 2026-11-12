@@ -161,7 +161,7 @@ export type SeedInput<
 > = {
   seeder: TAccountSeeder;
   marketState: TAccountMarketState;
-  /** seeder's authority over it. */
+  /** the token program the rest. */
   seederToken0: TAccountSeederToken0;
   seederToken1: TAccountSeederToken1;
   vault0: TAccountVault0;
@@ -366,7 +366,7 @@ export type ParsedSeedInstruction<
   accounts: {
     seeder: TAccountMetas[0];
     marketState: TAccountMetas[1];
-    /** seeder's authority over it. */
+    /** the token program the rest. */
     seederToken0: TAccountMetas[2];
     seederToken1: TAccountMetas[3];
     vault0: TAccountMetas[4];

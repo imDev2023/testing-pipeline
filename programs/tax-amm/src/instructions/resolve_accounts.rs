@@ -9,22 +9,15 @@ use pipeline_strategy_interface as psi;
 use crate::errors::StrategyError;
 use crate::instructions::ReadTrade;
 use crate::interface::ResolveRequest;
-use crate::state::AUTHORITY_SEED;
+use crate::state::vault_authority;
 
 pub fn resolve_accounts(ctx: Context<ReadTrade>, request: ResolveRequest) -> Result<()> {
     let market = &ctx.accounts.market_state;
     let (_, output_vault) = market
         .trade_vaults(request.trade.input_index, request.trade.output_index)
         .ok_or(StrategyError::WrongAccount)?;
-    let authority = Pubkey::create_program_address(
-        &[
-            AUTHORITY_SEED,
-            market.key().as_ref(),
-            &[market.authority_bump],
-        ],
-        &crate::ID,
-    )
-    .map_err(|_| StrategyError::WrongAccount)?;
+    let authority =
+        vault_authority(&market.key(), market.authority_bump).ok_or(StrategyError::WrongAccount)?;
     let result = psi::ResolveResult {
         accounts: vec![
             psi::AccountRef {

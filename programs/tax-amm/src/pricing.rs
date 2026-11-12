@@ -92,11 +92,7 @@ pub fn fill(market: &TaxMarket, input: u8, output: u8, amount_in: u64) -> Result
         market.status == MarketStatus::Open,
         StrategyError::MarketNotOpen
     );
-    let (i, o) = match (input, output) {
-        (0, 1) => (0, 1),
-        (1, 0) => (1, 0),
-        _ => return err!(StrategyError::WrongAccount),
-    };
+    let (i, o) = TaxMarket::direction(input, output).ok_or(StrategyError::WrongAccount)?;
     let virtual_of = |side: usize| {
         if market.virtual_side as usize == side {
             market.virtual_reserve

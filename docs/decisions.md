@@ -2551,7 +2551,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 
 - Question: How does a swap reach the vault authority that signs the transfer out of a vault?
 - Answer: `pipeline_resolve_accounts` lists it, read-only, after the output vault, and `pipeline_swap` checks it against the PDA from the market state's stored bump before signing with it.
-- Alternatives: Vaults owned by the market state itself, which a fresh keypair's account can't sign for; the authority's address stored in the market state, which would need a field the fixed layout does not have.
+- Alternatives: Vaults owned by the market state itself, which a fresh keypair's account can't sign for; the authority's address stored in the market state, which would spend 32 of its 64 reserved bytes on what the stored bump already gives.
 - Specified in: [`docs/spec/tax-amm.md`, Addresses](spec/tax-amm.md#addresses)
 - Changes by: fixed on-chain once deployed
 - Status: default

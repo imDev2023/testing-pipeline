@@ -123,12 +123,30 @@ impl TaxMarket {
         }
     }
 
-    /// The input and output vaults of a trade from mint index `input` to `output`.
-    pub fn trade_vaults(&self, input: u8, output: u8) -> Option<(Pubkey, Pubkey)> {
+    /// The input and output mint indexes of a trade from `input` to `output`, if it is one
+    /// of the market's two directions. Every instruction that trades asks this, so there is
+    /// one rule for a valid direction.
+    pub fn direction(input: u8, output: u8) -> Option<(usize, usize)> {
         match (input, output) {
-            (0, 1) => Some((self.vaults[0], self.vaults[1])),
-            (1, 0) => Some((self.vaults[1], self.vaults[0])),
+            (0, 1) => Some((0, 1)),
+            (1, 0) => Some((1, 0)),
             _ => None,
         }
     }
+
+    /// The input and output vaults of a trade from mint index `input` to `output`.
+    pub fn trade_vaults(&self, input: u8, output: u8) -> Option<(Pubkey, Pubkey)> {
+        let (i, o) = Self::direction(input, output)?;
+        Some((self.vaults[i], self.vaults[o]))
+    }
+}
+
+/// The vault authority of a market state, `["authority", market_state]` with the bump the
+/// market state stores, or `None` if that bump does not make a PDA.
+pub fn vault_authority(market_state: &Pubkey, bump: u8) -> Option<Pubkey> {
+    Pubkey::create_program_address(
+        &[AUTHORITY_SEED, market_state.as_ref(), &[bump]],
+        &crate::ID,
+    )
+    .ok()
 }
