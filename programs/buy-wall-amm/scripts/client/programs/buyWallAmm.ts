@@ -104,10 +104,14 @@ export function identifyBuyWallAmmAccount(
 }
 
 export const BuyWallAmmEvent = {
-  0: "MarketCreated",
-  1: "MarketSeeded",
-  MarketCreated: 0,
-  MarketSeeded: 1,
+  0: "CapLowered",
+  1: "MarketCreated",
+  2: "MarketSeeded",
+  3: "Trimmed",
+  CapLowered: 0,
+  MarketCreated: 1,
+  MarketSeeded: 2,
+  Trimmed: 3,
 } as const;
 
 export type BuyWallAmmEvent = (typeof BuyWallAmmEvent)[Exclude<
@@ -119,6 +123,17 @@ export function identifyBuyWallAmmEvent(
   event: { data: ReadonlyUint8Array } | ReadonlyUint8Array,
 ): BuyWallAmmEvent {
   const data = "data" in event ? event.data : event;
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([84, 216, 235, 182, 122, 219, 239, 207]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmEvent.CapLowered;
+  }
   if (
     containsBytes(
       data,
@@ -140,6 +155,17 @@ export function identifyBuyWallAmmEvent(
     )
   ) {
     return BuyWallAmmEvent.MarketSeeded;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([211, 230, 3, 6, 82, 98, 212, 110]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmEvent.Trimmed;
   }
   throw new Error(
     "The provided event could not be identified as a buyWallAmm event.",

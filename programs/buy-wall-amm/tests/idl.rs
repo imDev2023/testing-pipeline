@@ -8,7 +8,7 @@
 mod common;
 
 use anchor_lang::Discriminator;
-use buy_wall_amm::events::{MarketCreated, MarketSeeded};
+use buy_wall_amm::events::{CapLowered, MarketCreated, MarketSeeded, Trimmed};
 use buy_wall_amm::state::MarketState;
 use common::*;
 use pipeline_client::interface::discriminator;
@@ -180,6 +180,16 @@ fn its_events_and_errors_are_the_programs() {
     );
     let seeded = named(&idl["events"], "MarketSeeded");
     assert_eq!(bytes(&seeded["discriminator"]), MarketSeeded::DISCRIMINATOR);
+    // A swap that lowers the cap or trims emits one (the spec's "Custom actions and
+    // metadata").
+    let lowered = named(&idl["events"], "CapLowered");
+    assert_eq!(bytes(&lowered["discriminator"]), CapLowered::DISCRIMINATOR);
+    let trimmed = named(&idl["events"], "Trimmed");
+    assert_eq!(bytes(&trimmed["discriminator"]), Trimmed::DISCRIMINATOR);
+    assert_eq!(
+        names(&idl["events"]),
+        ["CapLowered", "MarketCreated", "MarketSeeded", "Trimmed"]
+    );
 
     // Errors are numbered from 6000 in the enum's order, the last being `PriceBoundReached`.
     let errors = idl["errors"].as_array().unwrap();
@@ -202,4 +212,25 @@ fn its_events_and_errors_are_the_programs() {
             "PriceBoundReached"
         ]
     );
+}
+
+#[test]
+fn it_publishes_the_constants_the_demo_reads() {
+    // The demo reads these from the generated client rather than repeating them
+    // (`POOL4-25`, `POOL4-28`): the fee shares, and what its model of the cap needs.
+    let idl = idl();
+    let value = |name: &str| -> String {
+        named(&idl["constants"], name)["value"]
+            .as_str()
+            .unwrap()
+            .replace('_', "")
+    };
+    use buy_wall_amm::config::*;
+    assert_eq!(value("DESIGNER_SHARE_BPS"), DESIGNER_SHARE_BPS.to_string());
+    assert_eq!(value("SUITE_SHARE_BPS"), SUITE_SHARE_BPS.to_string());
+    assert_eq!(
+        value("DECAY_CREDIT_WINDOW"),
+        DECAY_CREDIT_WINDOW.to_string()
+    );
+    assert_eq!(value("MIN_LIQUIDITY"), MIN_LIQUIDITY.to_string());
 }

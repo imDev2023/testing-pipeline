@@ -6,5 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from "./capLowered.ts";
 export * from "./marketCreated.ts";
 export * from "./marketSeeded.ts";
+export * from "./trimmed.ts";

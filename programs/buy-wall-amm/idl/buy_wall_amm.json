@@ -316,8 +316,9 @@
     {
       "name": "pipeline_swap",
       "docs": [
-        "Settles an exact-in trade the router sends: pays the trader from the output vault",
-        "and books the fee, the ledgers, the price and the counters."
+        "Settles an exact-in trade the router sends: pays the trader from the output vault,",
+        "books the fee, the ledgers, the price and the counters, then lowers the inventory",
+        "cap or trims the curve, emitting `CapLowered` or `Trimmed`."
       ],
       "discriminator": [
         161,
@@ -477,6 +478,19 @@
   ],
   "events": [
     {
+      "name": "CapLowered",
+      "discriminator": [
+        84,
+        216,
+        235,
+        182,
+        122,
+        219,
+        239,
+        207
+      ]
+    },
+    {
       "name": "MarketCreated",
       "discriminator": [
         88,
@@ -500,6 +514,19 @@
         63,
         25,
         185
+      ]
+    },
+    {
+      "name": "Trimmed",
+      "discriminator": [
+        211,
+        230,
+        3,
+        6,
+        82,
+        98,
+        212,
+        110
       ]
     }
   ],
@@ -656,6 +683,50 @@
     }
   ],
   "types": [
+    {
+      "name": "CapLowered",
+      "docs": [
+        "A swap left the curve holding less than the inventory cap and the ratchet lowered the",
+        "cap (docs/spec/pool4-for-solana.md, \"After pricing\" step 6)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "cap",
+            "docs": [
+              "The new inventory cap, in token units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "lowered_by",
+            "docs": [
+              "How far the cap fell, in token units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "held",
+            "docs": [
+              "What the curve holds at the swap's price, in token units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "decay_credit",
+            "docs": [
+              "The decay credit left, in token-seconds."
+            ],
+            "type": "u128"
+          }
+        ]
+      }
+    },
     {
       "name": "InitParams",
       "docs": [
@@ -1552,9 +1623,63 @@
           }
         ]
       }
+    },
+    {
+      "name": "Trimmed",
+      "docs": [
+        "A swap left the curve holding more than the inventory cap and the trim took the excess",
+        "out of it without moving the price (docs/spec/pool4-for-solana.md, \"After pricing\" step",
+        "6)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "tokens",
+            "docs": [
+              "Token units moved from the pool to the retired tokens."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "sol",
+            "docs": [
+              "Lamports moved from the pool to idle SOL."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "liquidity",
+            "docs": [
+              "The curve's liquidity after the trim."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "cap",
+            "docs": [
+              "The inventory cap, unchanged by a trim."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
     }
   ],
   "constants": [
+    {
+      "name": "DECAY_CREDIT_WINDOW",
+      "docs": [
+        "The most cap decay allowance that builds up while a market is idle, in seconds.",
+        "Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-28`)."
+      ],
+      "type": "i64",
+      "value": "86400"
+    },
     {
       "name": "DESIGNER_SHARE_BPS",
       "docs": [
@@ -1563,6 +1688,15 @@
       ],
       "type": "u16",
       "value": "1000"
+    },
+    {
+      "name": "MIN_LIQUIDITY",
+      "docs": [
+        "The least liquidity the curve may ever hold.",
+        "Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-28`)."
+      ],
+      "type": "u128",
+      "value": "1000000"
     },
     {
       "name": "SUITE_SHARE_BPS",

@@ -46,6 +46,8 @@ pub const REF_STEP_BPS: u64 = 200;
 /// See `REF_STEP_BPS`, in seconds.
 pub const REF_STEP_WINDOW: i64 = 12;
 /// The most cap decay allowance that builds up while a market is idle, in seconds.
+/// Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-28`).
+#[constant]
 pub const DECAY_CREDIT_WINDOW: i64 = 86_400;
 /// The lowest square-root price (Q64.64) a trade may reach: 2^32.
 pub const MIN_SQRT_PRICE: u128 = 1 << 32;
@@ -58,6 +60,8 @@ pub const MIN_OPENING_SQRT_PRICE: u128 = 1 << 40;
 /// The highest square-root price (Q64.64) a market may open at: 2^88.
 pub const MAX_OPENING_SQRT_PRICE: u128 = 1 << 88;
 /// The least liquidity the curve may ever hold.
+/// Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-28`).
+#[constant]
 pub const MIN_LIQUIDITY: u128 = 1_000_000;
 /// The size of every market state, in bytes, for good (docs/spec/pool4-for-solana.md,
 /// "Market state").

@@ -1,5 +1,6 @@
 //! `pipeline_swap`: settles a trade the router sends (docs/spec/pool4-for-solana.md,
-//! "Pricing", "After pricing", "The fee" and "Counters").
+//! "Pricing", "After pricing", "The fee" and "Counters"), then brings the inventory cap up
+//! to date ("After pricing" steps 5 and 6, `cap.rs`).
 //!
 //! Only this market's router market may call it, so every trade pays Pipeline's fee, emits a
 //! swap event and counts in the market's counters (bypass is refused: ADR 0001). The router
@@ -16,7 +17,9 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::TokenInterface;
 use pipeline_strategy_interface as psi;
 
+use crate::cap::Moved;
 use crate::errors::StrategyError;
+use crate::events::{CapLowered, Trimmed};
 use crate::pricing::{self, Side};
 use crate::state::{is_market_state, vault_authority, MarketState, AUTHORITY_SEED};
 use crate::token::{token_balance, transfer_checked, Transfer};
@@ -151,11 +154,39 @@ pub fn handle_swap<'info>(
         &[authority_seeds],
     )?;
 
-    // Steps 2, 3 and 7 of "After pricing": the books, the price and the counters.
+    // "After pricing", in its order: steps 2 and 3, the books and the price.
     let mut state = ctx.accounts.market_state.load_mut()?;
     state.set_books(&settled.books);
     state.set_sqrt_price(settled.priced.sqrt_price);
     state.set_last_close(settled.priced.sqrt_price);
+
+    // Steps 5 and 6: the decay credit, then the ratchet or the trim, at the price just set,
+    // with the trimmed totals. They change neither the trade nor the price.
+    let now = Clock::get()?.unix_timestamp;
+    let (inventory, moved) = state
+        .inventory()
+        .after_swap(state.cap_rules(), now)
+        .ok_or(StrategyError::Overflow)?;
+    state.set_inventory(&inventory);
+    match moved {
+        Moved::Nothing => {}
+        Moved::Lowered { by, held } => emit!(CapLowered {
+            market_state,
+            cap: inventory.cap,
+            lowered_by: by,
+            held,
+            decay_credit: inventory.decay_credit,
+        }),
+        Moved::Trimmed(trim) => emit!(Trimmed {
+            market_state,
+            tokens: trim.tokens,
+            sol: trim.sol,
+            liquidity: trim.liquidity,
+            cap: inventory.cap,
+        }),
+    }
+
+    // Step 7: the counters.
     state
         .set_counters(&settled.counters)
         .ok_or(StrategyError::Overflow)?;

@@ -13,12 +13,16 @@
 //   6. read the market back: the router's record (token at index 0, wrapped SOL at index 1,
 //      no exact-out) and the market state, through the generated client (client/), opened at
 //      the price and liquidity the spec's maths gives, recomputed here independently;
-//   7. trade both ways through the router: a buy of 1 SOL and a sell of what it bought, each
-//      quoted and swapped with the SDK, the quote checked against the spec's formulas
-//      (recomputed here independently) and the worked example's numbers, and the trader paid
-//      exactly the quote;
-//   8. read the books back: the price, the pool and fee ledgers and the counters equal the
-//      spec's formulas to the unit, and each vault holds exactly the sum of its ledgers.
+//   7. trade both ways through the router: a buy of 1 SOL, a few seconds after the seed so
+//      some cap decay credit has built up, and a sell of what it bought, each quoted and
+//      swapped with the SDK, the quote checked against the spec's formulas (recomputed here
+//      independently) and the worked example's numbers, and the trader paid exactly the
+//      quote; after each, the inventory cap's steps recomputed from the spec: the buy lowers
+//      the cap by the credit the seconds since the seed built up, and the sell, leaving the
+//      curve above the lowered cap, is trimmed, each swap emitting the event that says so;
+//   8. read the books back: the price, the pool, retired and fee ledgers, the cap, the decay
+//      credit, the trimmed totals and the counters equal the spec's formulas to the unit, and
+//      each vault holds exactly the sum of its ledgers.
 //
 // On the pattern of the tax AMM's demo (programs/tax-amm/scripts/demo.ts). Deploy the
 // program first; docs/toolchain.md says how, on a local validator and on devnet.
@@ -87,9 +91,17 @@ import {
     findTokenVaultPda,
     findVaultAuthorityPda,
     getMarketStateSize,
+    identifyBuyWallAmmEvent,
+    parseCapLoweredEvent,
+    parseTrimmedEvent,
+    BuyWallAmmEvent,
+    DECAY_CREDIT_WINDOW,
     DESIGNER_SHARE_BPS,
     MARKET_STATE_DISCRIMINATOR,
+    MIN_LIQUIDITY,
     SUITE_SHARE_BPS,
+    type CapLoweredEvent,
+    type TrimmedEvent,
 } from './client/index.ts';
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
@@ -126,6 +138,9 @@ const WORKED = {
     sellOut: 980_099_999n,
     sellSqrtPrice: 1_844_674_407_372_029_099n,
 };
+// How many seconds after the seed the buy waits at least, so the cap decay credit it finds
+// lowers the cap (each second of the demo market's cap decay is 2,314,814 token units).
+const DECAY_WAIT_SECONDS = 3n;
 // The most SOL the strategy's setup may spend on rent; the router returns the rest.
 const MAX_CREATOR_LAMPORTS = 100_000_000n;
 // What a local run airdrops when a key holds less: the payer creates the token and the
@@ -429,6 +444,93 @@ function specSell({ sqrtPrice: s, liquidity: l }: Curve, a: bigint, feeBps: bigi
     return { fee, out: gross - fee, sqrtPrice: next };
 }
 
+/**
+ * The inventory cap's steps after a swap (docs/spec/pool4-for-solana.md, "After pricing"
+ * steps 5 and 6), written out here from the spec rather than taken from the program: the
+ * decay credit builds up to one day's allowance, then a curve holding less than the cap
+ * lowers it (the ratchet) and one holding more gives up its excess (the trim). `now` is the
+ * Clock's time the swap ran at, which the market state records as its `decay_time`.
+ */
+type Cap = { cap: bigint; decayCredit: bigint; decayTime: bigint; capFloor: bigint; capDecayPerDay: bigint };
+type CapMoved =
+    | { kind: 'nothing' }
+    | { kind: 'lowered'; by: bigint; held: bigint }
+    | { kind: 'trimmed'; liquidity: bigint; tokens: bigint; sol: bigint };
+const SECONDS_PER_DAY = 86_400n;
+
+function specCap(cap: Cap, curve: Curve, now: bigint): { cap: Cap; moved: CapMoved } {
+    const elapsed = now > cap.decayTime ? now - cap.decayTime : 0n;
+    const limit = cap.capDecayPerDay * DECAY_CREDIT_WINDOW;
+    let credit = cap.decayCredit + cap.capDecayPerDay * elapsed;
+    if (credit > limit) credit = limit;
+    const next = { ...cap, decayCredit: credit, decayTime: now };
+    const { sqrtPrice: s, liquidity: l } = curve;
+    const held = (l * Q) / s;
+    if (held < cap.cap) {
+        const allowance = credit / SECONDS_PER_DAY;
+        const decayed = cap.cap > allowance ? cap.cap - allowance : 0n;
+        const lowered = [held, decayed, cap.capFloor].reduce((a, b) => (a > b ? a : b));
+        const by = cap.cap - lowered;
+        next.cap = lowered;
+        next.decayCredit = credit - by * SECONDS_PER_DAY;
+        return { cap: next, moved: by > 0n ? { kind: 'lowered', by, held } : { kind: 'nothing' } };
+    }
+    if (held > cap.cap) {
+        const atCap = (cap.cap * s) / Q;
+        const newL = atCap > MIN_LIQUIDITY ? atCap : MIN_LIQUIDITY;
+        if (newL < l) {
+            const tokens = held - ceilDiv(newL * Q, s);
+            const sol = (l * s) / Q - ceilDiv(newL * s, Q);
+            return {
+                cap: next,
+                moved: { kind: 'trimmed', liquidity: newL, tokens: tokens > 0n ? tokens : 0n, sol: sol > 0n ? sol : 0n },
+            };
+        }
+    }
+    return { cap: next, moved: { kind: 'nothing' } };
+}
+
+/** The buy wall AMM's events in a confirmed transaction's logs. */
+async function strategyEvents(signature: Signature) {
+    // An RPC node can answer null for a transaction it has confirmed but not indexed yet.
+    let transaction = null;
+    for (let i = 0; transaction === null; i++) {
+        transaction = await rpc
+            .getTransaction(signature, { commitment: 'confirmed', encoding: 'json', maxSupportedTransactionVersion: 0 })
+            .send();
+        if (transaction === null) {
+            if (i > 60) fail(`the RPC node has no transaction ${signature} 30 s after it confirmed`);
+            await sleep(500);
+        }
+    }
+    const lowered: CapLoweredEvent[] = [];
+    const trimmed: TrimmedEvent[] = [];
+    for (const line of transaction.meta?.logMessages ?? []) {
+        if (!line.startsWith('Program data: ')) continue;
+        const data = new Uint8Array(Buffer.from(line.slice('Program data: '.length), 'base64'));
+        let kind: BuyWallAmmEvent;
+        try {
+            kind = identifyBuyWallAmmEvent(data);
+        } catch {
+            continue; // the router's own events
+        }
+        if (kind === BuyWallAmmEvent.CapLowered) lowered.push(parseCapLoweredEvent(data));
+        if (kind === BuyWallAmmEvent.Trimmed) trimmed.push(parseTrimmedEvent(data));
+    }
+    return { lowered, trimmed };
+}
+
+/** Waits until the cluster's clock reads at least `time`, in Unix seconds. */
+async function waitForClock(time: bigint) {
+    for (let i = 0; ; i++) {
+        const slot = await rpc.getSlot({ commitment: 'confirmed' }).send();
+        const blockTime = await rpc.getBlockTime(slot).send().catch(() => null);
+        if (blockTime !== null && BigInt(blockTime) >= time) return;
+        if (i > 120) fail(`the cluster's clock did not reach ${time} within 60 s`);
+        await sleep(500);
+    }
+}
+
 /** The fee split: designer, suite, wall and recipient, as "The fee" writes it. */
 function specSplit(fee: bigint, wallSplitBps: bigint) {
     const designer = (fee * BigInt(DESIGNER_SHARE_BPS)) / 10_000n;
@@ -670,10 +772,24 @@ async function main() {
         feesRecipient: 0n,
         feesDesigner: 0n,
         feesSuite: 0n,
+        retiredTokens: 0n,
+        cap: {
+            cap,
+            decayCredit: le(state.decayCredit),
+            decayTime: le(state.decayTime),
+            capFloor: le(state.capFloor),
+            capDecayPerDay: le(state.capDecayPerDay),
+        } as Cap,
+        tokensTrimmed: 0n,
+        solTrimmed: 0n,
         volume: [0n, 0n],
         feesCollected: 0n,
         swapCount: 0n,
     };
+    // A buy that finds no decay credit leaves the cap alone, and its sell-back then finds the
+    // curve within the cap; waiting a few seconds lets the demo show both of the cap's steps.
+    await waitForClock(books.cap.decayTime + DECAY_WAIT_SECONDS);
+    info(`waited until ${DECAY_WAIT_SECONDS} seconds after the seed, so the buy finds cap decay credit`);
     const payerAccounts = await Promise.all([token, WSOL].map((mint) => walletTokenAccount(payer.address, mint)));
     let bought = 0n;
     for (const [input, output, label] of [
@@ -711,7 +827,7 @@ async function main() {
         }
         info(`${label} of ${amount}: quoted ${quote.amountOut}, the spec's price and the worked example's, fee ${spec.fee} lamports (${unitsConsumed} CU)`);
         const before = await tokenBalance(payerAccounts[output]!);
-        await send(`${label} through the router`, payer, [
+        const { signature } = await send(`${label} through the router`, payer, [
             await pipeline.swap(
                 {
                     trader: payer.address,
@@ -751,7 +867,7 @@ async function main() {
             books.poolTokens += amount;
             books.poolSol -= spec.out + spec.fee;
         }
-        books.curve = { sqrtPrice: spec.sqrtPrice, liquidity };
+        books.curve = { sqrtPrice: spec.sqrtPrice, liquidity: books.curve.liquidity };
         books.idleSol += split.wall;
         books.feesRecipient += split.recipient;
         books.feesDesigner += split.designer;
@@ -762,6 +878,57 @@ async function main() {
         books.swapCount += 1n;
         const workedPrice = input === 1 ? WORKED.buySqrtPrice : WORKED.sellSqrtPrice;
         if (spec.sqrtPrice !== workedPrice) fail(`${label}: the spec's formulas move the price to ${spec.sqrtPrice}, not ${workedPrice}`);
+
+        // Steps 5 and 6, at the time the swap ran: the market state records it as its
+        // decay_time, the only value the demo takes from the program here.
+        const { data: afterSwap } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
+        const ranAt = le(afterSwap.decayTime);
+        const since = ranAt - books.cap.decayTime;
+        const { cap: nextCap, moved } = specCap(books.cap, books.curve, ranAt);
+        books.cap = nextCap;
+        const events = await strategyEvents(signature);
+        if (moved.kind === 'trimmed') {
+            books.curve = { sqrtPrice: spec.sqrtPrice, liquidity: moved.liquidity };
+            books.poolTokens -= moved.tokens;
+            books.retiredTokens += moved.tokens;
+            books.poolSol -= moved.sol;
+            books.idleSol += moved.sol;
+            books.tokensTrimmed += moved.tokens;
+            books.solTrimmed += moved.sol;
+        }
+        const wanted = input === 1 ? 'lowered' : 'trimmed';
+        if (moved.kind !== wanted) {
+            fail(`${label}: the spec's formulas give "${moved.kind}" for the cap ${since} s after the last swap, not "${wanted}"`);
+        }
+        if (moved.kind === 'lowered') {
+            const [event] = events.lowered;
+            if (
+                events.lowered.length !== 1 ||
+                events.trimmed.length !== 0 ||
+                event!.cap !== books.cap.cap ||
+                event!.loweredBy !== moved.by ||
+                event!.held !== moved.held ||
+                event!.decayCredit !== books.cap.decayCredit
+            ) {
+                fail(`${label}: expected one CapLowered event (cap ${books.cap.cap}, by ${moved.by}), got ${JSON.stringify(events, (_, v) => (typeof v === 'bigint' ? `${v}` : v))}`);
+            }
+            info(`${label}: the cap fell by ${moved.by} to ${books.cap.cap}, as the spec's ratchet gives for the credit built up; CapLowered emitted`);
+            record.push([`${label}: cap lowered`, `by ${moved.by} to ${books.cap.cap}`]);
+        } else if (moved.kind === 'trimmed') {
+            const [event] = events.trimmed;
+            if (
+                events.trimmed.length !== 1 ||
+                events.lowered.length !== 0 ||
+                event!.tokens !== moved.tokens ||
+                event!.sol !== moved.sol ||
+                event!.liquidity !== moved.liquidity ||
+                event!.cap !== books.cap.cap
+            ) {
+                fail(`${label}: expected one Trimmed event (${moved.tokens} units, ${moved.sol} lamports), got ${JSON.stringify(events, (_, v) => (typeof v === 'bigint' ? `${v}` : v))}`);
+            }
+            info(`${label}: trimmed ${moved.tokens} units to the retired tokens and ${moved.sol} lamports to idle SOL, liquidity now ${moved.liquidity}, the price unchanged; Trimmed emitted`);
+            record.push([`${label}: trimmed`, `${moved.tokens} units, ${moved.sol} lamports`]);
+        }
     }
 
     step("8. Reading the books back against the spec's formulas");
@@ -769,10 +936,15 @@ async function main() {
     const read = {
         sqrtPrice: [le(traded.sqrtPrice), books.curve.sqrtPrice],
         lastClose: [le(traded.lastClose), books.curve.sqrtPrice],
-        liquidity: [le(traded.liquidity), liquidity],
+        liquidity: [le(traded.liquidity), books.curve.liquidity],
         poolTokens: [le(traded.poolTokens), books.poolTokens],
         poolSol: [le(traded.poolSol), books.poolSol],
+        retiredTokens: [le(traded.retiredTokens), books.retiredTokens],
         idleSol: [le(traded.idleSol), books.idleSol],
+        cap: [le(traded.cap), books.cap.cap],
+        decayCredit: [le(traded.decayCredit), books.cap.decayCredit],
+        tokensTrimmed: [le(traded.tokensTrimmed), books.tokensTrimmed],
+        solTrimmed: [le(traded.solTrimmed), books.solTrimmed],
         feesRecipient: [le(traded.feesRecipient), books.feesRecipient],
         feesDesigner: [le(traded.feesDesigner), books.feesDesigner],
         feesSuite: [le(traded.feesSuite), books.feesSuite],
@@ -787,10 +959,11 @@ async function main() {
     }
     const [vaultTokensAfter, vaultSolAfter] = await Promise.all(view.vaults.map((vault) => tokenBalance(vault!)));
     const solLedgers = books.poolSol + books.idleSol + books.feesRecipient + books.feesDesigner + books.feesSuite;
-    if (vaultTokensAfter !== books.poolTokens || vaultSolAfter !== solLedgers) {
-        fail(`the vaults hold ${vaultTokensAfter} and ${vaultSolAfter}, not their ledgers' ${books.poolTokens} and ${solLedgers}`);
+    const tokenLedgers = books.poolTokens + books.retiredTokens;
+    if (vaultTokensAfter !== tokenLedgers || vaultSolAfter !== solLedgers) {
+        fail(`the vaults hold ${vaultTokensAfter} and ${vaultSolAfter}, not their ledgers' ${tokenLedgers} and ${solLedgers}`);
     }
-    info("the price, ledgers and counters equal the spec's formulas to the unit; each vault holds exactly its ledgers");
+    info("the price, ledgers, cap and counters equal the spec's formulas to the unit; each vault holds exactly its ledgers");
     record.push(['market state after trading', "equal to the spec's formulas"]);
 
     step(`Done on ${cluster.url}`);

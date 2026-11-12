@@ -22,12 +22,20 @@ type Change = Box<dyn Fn(&mut Vec<u8>)>;
 /// `owner`, and returns the market's addresses with the copy as its market state.
 fn plant(env: &mut Env, market: &Market, owner: Pubkey, change: impl Fn(&mut Vec<u8>)) -> Market {
     let mut account = env.svm.get_account(&market.market_state).unwrap();
+    let address = Pubkey::new_unique();
+    // The vault authority's bump (byte 10) is the one the program would store at the new
+    // address: the original's gives no PDA there for about half of all addresses, which
+    // made the copy fail resolution for a reason other than its shape.
+    let (_, bump) = Pubkey::find_program_address(
+        &[buy_wall_amm::state::AUTHORITY_SEED, address.as_ref()],
+        &strategy_id(),
+    );
+    account.data[10] = bump;
     change(&mut account.data);
     account.owner = owner;
     account.lamports = env
         .svm
         .minimum_balance_for_rent_exemption(account.data.len());
-    let address = Pubkey::new_unique();
     env.svm.set_account(address, account).unwrap();
     Market {
         market_state: address,

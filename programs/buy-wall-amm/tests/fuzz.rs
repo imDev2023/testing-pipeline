@@ -1,8 +1,9 @@
 //! Stateful invariant fuzzing (docs/spec/README.md, "Test layers" 3): Proptest generates
 //! sequences of the instructions built so far (creation with any parameters, the seed by
 //! the seeder or anyone else with any amounts, donations to the vaults, buys and sells
-//! through the router) and clock jumps, several trades often landing in one slot, sends
-//! each through the router in LiteSVM, and checks after every step:
+//! through the router, and a buy sold straight back) and clock jumps, from seconds to
+//! across the cap's decay window, several trades often landing in one slot, sends each
+//! through the router in LiteSVM, and checks after every step:
 //!
 //! - value is conserved: no token unit or lamport of wrapped SOL is created or lost, across
 //!   every wallet, every vault and the router's fee accounts;
@@ -11,16 +12,26 @@
 //! - each quote equals its swap, to the unit, and a refused quote is a refused swap;
 //! - the invariants of docs/spec/pool4-for-solana.md, "Ledgers", that apply so far: each
 //!   vault holds at least the sum of its ledgers, the pool ledgers cover what the curve
-//!   could pay out, and the cap never rises and never falls below the cap floor (the cap's
-//!   bound on the curve and the wall's floor arrive with their tickets);
-//! - no instruction other than `pipeline_swap` changes `sqrt_price` or the counters, and a
-//!   swap changes them by exactly the trade it made.
+//!   could pay out, the curve holds no more tokens than the cap after a swap except where
+//!   `MIN_LIQUIDITY` stopped a trim, and the cap never rises and never falls below the cap
+//!   floor (the wall's floor arrives with its ticket);
+//! - the decay credit never exceeds one day's allowance;
+//! - a trim never changes `sqrt_price`: after a swap the price is exactly where the pricing
+//!   function, run on the market as it was, put it;
+//! - a swap's trades move the pool and retired token ledgers together by exactly their
+//!   token flow, and the SOL ledgers by exactly their SOL flow, so a trim only moves value
+//!   between ledgers, and its totals count exactly what it moved;
+//! - a buy sold straight back never returns more than it cost;
+//! - no instruction other than `pipeline_swap` changes `sqrt_price`, the counters, the
+//!   cap or the curve's liquidity, and a swap changes the counters by exactly the trade it
+//!   made.
 //!
 //! Later tickets add their instructions and invariants here. `PROPTEST_CASES` sets how many
 //! sequences run (64 by default).
 
 mod common;
 
+use buy_wall_amm::config::{DECAY_CREDIT_WINDOW, MIN_LIQUIDITY};
 use buy_wall_amm::math::U256;
 use buy_wall_amm::state::{MarketState, STATUS_CREATED, STATUS_OPEN};
 use common::*;
@@ -61,6 +72,8 @@ enum Step {
         buy: bool,
         amount: u64,
     },
+    /// Buy with `amount` lamports and sell everything bought straight back, in one slot.
+    RoundTrip { market: usize, amount: u64 },
     /// Move the clock forward.
     Warp { seconds: i64, slots: u64 },
 }
@@ -77,7 +90,21 @@ fn step() -> impl Strategy<Value = Step> {
             .prop_map(|(market, sol, amount)| Step::Donate { market, sol, amount }),
         5 => (any::<usize>(), any::<bool>(), trade_amount())
             .prop_map(|(market, buy, amount)| Step::Trade { market, buy, amount }),
-        1 => (0..200_000i64, 0..1_000u64).prop_map(|(seconds, slots)| Step::Warp { seconds, slots }),
+        1 => (any::<usize>(), trade_amount())
+            .prop_map(|(market, amount)| Step::RoundTrip { market, amount }),
+        2 => (clock_jump(), 0..1_000u64).prop_map(|(seconds, slots)| Step::Warp { seconds, slots }),
+    ]
+}
+
+/// Clock jumps from a second to several days, many of them around the cap's decay window,
+/// where the decay credit stops building up.
+fn clock_jump() -> impl Strategy<Value = i64> {
+    let window = DECAY_CREDIT_WINDOW;
+    prop_oneof![
+        0..120i64,
+        120..window,
+        window - 60..window + 60,
+        window..4 * window,
     ]
 }
 
@@ -116,16 +143,26 @@ struct World {
     holders: std::collections::HashMap<Pubkey, Vec<Pubkey>>,
     /// Traders who bought a market's token: (market, wallet).
     buyers: Vec<(usize, Pubkey)>,
-    /// The swap the last step made: (market, priced trade), checked against the counters.
-    swapped: Option<(usize, Swapped)>,
+    /// The swaps the last step made, in order: (market, trade), checked against the
+    /// counters, the ledgers and the price.
+    swapped: Vec<(usize, Swapped)>,
 }
 
-/// What a successful swap did, from the trader's side.
+/// What a successful swap did, from the trader's side, and the price the pricing function
+/// gave it on the market as it was before it.
 #[derive(Clone, Copy, Debug)]
 struct Swapped {
     buy: bool,
     amount_in: u64,
     amount_out: u64,
+    fee: u64,
+    sqrt_price: u128,
+}
+
+/// What the curve holds at its price, `floor(L × Q / s)`, with the program's own function.
+fn held(state: &MarketState) -> u128 {
+    buy_wall_amm::cap::held(state.liquidity(), state.sqrt_price())
+        .expect("a seeded market's price is above 0")
 }
 
 impl World {
@@ -136,7 +173,7 @@ impl World {
             minted: Default::default(),
             holders: Default::default(),
             buyers: vec![],
-            swapped: None,
+            swapped: vec![],
         }
     }
 
@@ -290,43 +327,20 @@ impl World {
                 amount,
             } => {
                 let Some(i) = self.pick(market) else { return };
-                let m = self.markets[i].market.clone();
-                let (input, output) = if buy { (1, 0) } else { (0, 1) };
-                let quote = self
-                    .env
-                    .quote(&m, &trade(TradeMode::ExactIn, input, output, amount));
+                self.trade(i, buy, amount, Keypair::new());
+            }
+            Step::RoundTrip { market, amount } => {
+                let Some(i) = self.pick(market) else { return };
                 let trader = Keypair::new();
-                self.env.svm.airdrop(&trader.pubkey(), SOL).unwrap();
-                // Enough for the trade and Pipeline's 0.25% on top, and an output account.
-                let funding = amount.saturating_add(amount / 300 + 1);
-                let (input_mint, input_program) = (m.mints()[input], m.token_programs()[input]);
-                let (output_mint, output_program) = (m.mints()[output], m.token_programs()[output]);
-                self.give(&trader.pubkey(), &input_mint, &input_program, funding);
-                self.give(&trader.pubkey(), &output_mint, &output_program, 0);
-                let swap = self
-                    .env
-                    .swap(&m, &trader, (input, output), TradeMode::ExactIn, amount);
-                match (&quote, &swap) {
-                    (Ok(quote), Ok(swap)) => {
-                        assert_eq!(
-                            swap.received, quote.amount_out,
-                            "quote {quote:?}, swap {swap:?}"
-                        );
-                        assert_eq!(swap.net_sent, amount);
-                        self.swapped = Some((
-                            i,
-                            Swapped {
-                                buy,
-                                amount_in: amount,
-                                amount_out: swap.received,
-                            },
-                        ));
-                        if buy {
-                            self.buyers.push((i, trader.pubkey()));
-                        }
-                    }
-                    (Err(_), Err(_)) => {}
-                    _ => panic!("{amount} ({input}->{output}): quote {quote:?}, swap {swap:?}"),
+                let Some(bought) = self.trade(i, true, amount, trader.insecure_clone()) else {
+                    return;
+                };
+                // Sold straight back, in the same slot: never more than the buy cost.
+                if let Some(sold) = self.trade(i, false, bought, trader) {
+                    assert!(
+                        sold <= amount,
+                        "a buy of {amount} lamports sold straight back returned {sold}"
+                    );
                 }
             }
             Step::Warp { seconds, slots } => {
@@ -334,6 +348,67 @@ impl World {
                 self.env
                     .set_clock(clock.slot + slots + 1, clock.unix_timestamp + seconds);
             }
+        }
+    }
+
+    /// Quotes and swaps `amount` of market `i` through the router, as `trader` (funded here
+    /// with the input, Pipeline's fee on top, and on top of what they hold already), and
+    /// checks the swap paid exactly the quote; returns what it paid.
+    fn trade(&mut self, i: usize, buy: bool, amount: u64, trader: Keypair) -> Option<u64> {
+        let m = self.markets[i].market.clone();
+        let (input, output) = if buy { (1, 0) } else { (0, 1) };
+        let request = trade(TradeMode::ExactIn, input, output, amount);
+        let quote = self.env.quote(&m, &request);
+        let before = self.env.state(&m);
+        let priced = buy_wall_amm::pricing::quote(
+            &before,
+            &buy_wall_amm::interface::TradeRequest {
+                mode: buy_wall_amm::interface::TradeMode::ExactIn,
+                input_index: input as u8,
+                output_index: output as u8,
+                amount,
+                trader: None,
+                extra: vec![],
+            },
+        );
+        if self.env.svm.get_account(&trader.pubkey()).is_none() {
+            self.env.svm.airdrop(&trader.pubkey(), SOL).unwrap();
+        }
+        // Enough for the trade and Pipeline's 0.25% on top, and an output account.
+        let funding = amount.saturating_add(amount / 300 + 1);
+        let (input_mint, input_program) = (m.mints()[input], m.token_programs()[input]);
+        let (output_mint, output_program) = (m.mints()[output], m.token_programs()[output]);
+        self.give(&trader.pubkey(), &input_mint, &input_program, funding);
+        self.give(&trader.pubkey(), &output_mint, &output_program, 0);
+        let swap = self
+            .env
+            .swap(&m, &trader, (input, output), TradeMode::ExactIn, amount);
+        match (&quote, &swap) {
+            (Ok(quote), Ok(swap)) => {
+                assert_eq!(
+                    swap.received, quote.amount_out,
+                    "quote {quote:?}, swap {swap:?}"
+                );
+                assert_eq!(swap.net_sent, amount);
+                let priced = priced.expect("the program quoted it");
+                assert_eq!(priced.amount_out, quote.amount_out);
+                self.swapped.push((
+                    i,
+                    Swapped {
+                        buy,
+                        amount_in: amount,
+                        amount_out: swap.received,
+                        fee: priced.fee,
+                        sqrt_price: priced.sqrt_price,
+                    },
+                ));
+                if buy {
+                    self.buyers.push((i, trader.pubkey()));
+                }
+                Some(swap.received)
+            }
+            (Err(_), Err(_)) => None,
+            _ => panic!("{amount} ({input}->{output}): quote {quote:?}, swap {swap:?}"),
         }
     }
 
@@ -366,7 +441,7 @@ impl World {
             }
             assert_eq!(total, *minted, "units of {mint} created or lost");
         }
-        let swapped = self.swapped.take();
+        let swapped = std::mem::take(&mut self.swapped);
         for (index, tracked) in self.markets.iter_mut().enumerate() {
             let m = &tracked.market;
             let state = self.env.state(m);
@@ -386,40 +461,101 @@ impl World {
                 "token vault below its ledgers"
             );
             assert!(sol_vault >= sol_ledgers, "SOL vault below its ledgers");
-            // No instruction but `pipeline_swap` moves the price or the counters (the seed
-            // sets the price once), and a swap moves the counters by exactly its trade.
-            match swapped.filter(|(market, _)| *market == index) {
-                None => {
+            // No instruction but `pipeline_swap` moves the price, the counters, the cap or the
+            // curve's liquidity (the seed sets them once), and a swap moves the counters by
+            // exactly its trades.
+            let trades: Vec<Swapped> = swapped
+                .iter()
+                .filter(|(market, _)| *market == index)
+                .map(|(_, trade)| *trade)
+                .collect();
+            let token_ledgers_before = last.pool_tokens() as u128 + last.retired_tokens() as u128;
+            let sol_ledgers_before = last.pool_sol() as u128
+                + last.idle_sol() as u128
+                + last.fees_recipient() as u128
+                + last.fees_designer() as u128
+                + last.fees_suite() as u128;
+            if last.status == STATUS_OPEN {
+                assert!(state.tokens_trimmed() >= last.tokens_trimmed());
+                assert!(state.sol_trimmed() >= last.sol_trimmed());
+            }
+            match trades.as_slice() {
+                [] => {
                     if last.status == STATUS_OPEN {
                         assert_eq!(state.sqrt_price(), last.sqrt_price());
+                        assert_eq!(state.liquidity(), last.liquidity());
+                        assert_eq!(state.cap(), last.cap());
+                        assert_eq!(state.decay_credit(), last.decay_credit());
+                        assert_eq!(
+                            (token_ledgers, sol_ledgers),
+                            (
+                                token_ledgers_before + last.rewards_owed() as u128,
+                                sol_ledgers_before
+                            )
+                        );
+                        assert_eq!(
+                            (state.tokens_trimmed(), state.sol_trimmed()),
+                            (last.tokens_trimmed(), last.sol_trimmed())
+                        );
                     }
                     assert_eq!(state.counters(), last.counters());
                 }
-                Some((_, trade)) => {
-                    let (input, output) = if trade.buy { (1, 0) } else { (0, 1) };
-                    let fee = state.fees_collected() - last.fees_collected();
-                    assert_eq!(state.swap_count(), last.swap_count() + 1);
-                    assert_eq!(
-                        state.volume(input).unwrap() - last.volume(input).unwrap(),
-                        trade.amount_in as u128
-                    );
-                    assert_eq!(
-                        state.volume(output).unwrap() - last.volume(output).unwrap(),
-                        trade.amount_out as u128
-                    );
-                    let fee_bps = state.fee_bps() as u128;
-                    let charged_on = if trade.buy {
-                        trade.amount_in as u128
-                    } else {
-                        trade.amount_out as u128 + fee
-                    };
-                    assert_eq!(fee, (charged_on * fee_bps).div_ceil(10_000));
-                    if trade.buy {
-                        assert!(state.sqrt_price() > last.sqrt_price());
-                    } else {
-                        assert!(state.sqrt_price() < last.sqrt_price());
+                [.., final_trade] => {
+                    let (mut tokens_in, mut sol_in) = (0i128, 0i128);
+                    let (mut volume_in, mut volume_out) = ([0u128; 2], [0u128; 2]);
+                    for trade in &trades {
+                        let (input, output) = if trade.buy { (1, 0) } else { (0, 1) };
+                        volume_in[input] += trade.amount_in as u128;
+                        volume_out[output] += trade.amount_out as u128;
+                        if trade.buy {
+                            tokens_in -= trade.amount_out as i128;
+                            sol_in += trade.amount_in as i128;
+                        } else {
+                            tokens_in += trade.amount_in as i128;
+                            sol_in -= trade.amount_out as i128;
+                        }
                     }
+                    // Each trade's fee is the spec's, charged on its SOL side and rounded up,
+                    // and the counter adds them all.
+                    let fee_bps = state.fee_bps() as u128;
+                    for trade in &trades {
+                        let charged_on = if trade.buy {
+                            trade.amount_in as u128
+                        } else {
+                            trade.amount_out as u128 + trade.fee as u128
+                        };
+                        assert_eq!(trade.fee as u128, (charged_on * fee_bps).div_ceil(10_000));
+                    }
+                    let fee = state.fees_collected() - last.fees_collected();
+                    assert_eq!(fee, trades.iter().map(|t| t.fee as u128).sum::<u128>());
+                    assert_eq!(state.swap_count(), last.swap_count() + trades.len() as u64);
+                    for mint in 0..2 {
+                        assert_eq!(
+                            state.volume(mint).unwrap() - last.volume(mint).unwrap(),
+                            volume_in[mint] + volume_out[mint]
+                        );
+                    }
+                    if let [trade] = trades.as_slice() {
+                        if trade.buy {
+                            assert!(state.sqrt_price() > last.sqrt_price());
+                        } else {
+                            assert!(state.sqrt_price() < last.sqrt_price());
+                        }
+                    }
+                    // A trim never moves the price: it is exactly where the last swap's
+                    // pricing put it.
+                    assert_eq!(state.sqrt_price(), final_trade.sqrt_price);
                     assert_eq!(state.last_close(), state.sqrt_price());
+                    // The trades' token flow moves the pool and retired ledgers together,
+                    // and their SOL flow the SOL ledgers (the fee stays in the vault): a
+                    // trim only moves value from the pool to the retired tokens and idle SOL.
+                    assert_eq!(
+                        (state.pool_tokens() as u128 + state.retired_tokens() as u128) as i128
+                            - token_ledgers_before as i128,
+                        tokens_in
+                    );
+                    assert_eq!(sol_ledgers as i128 - sol_ledgers_before as i128, sol_in);
+                    assert!(state.liquidity() <= last.liquidity());
                 }
             }
             // Parameters never change.
@@ -460,18 +596,32 @@ impl World {
                     assert!(
                         U256::mul(l, s).unwrap() <= U256::mul(state.pool_sol() as u128, q).unwrap()
                     );
-                    // The cap never rises and never falls below the floor. (Its bound on
-                    // what the curve holds arrives with the trim, and the wall's floor with
-                    // the wall: tickets #49 and #50.)
+                    // The cap never rises and never falls below the floor. (The wall's floor
+                    // arrives with the wall, ticket #50.)
                     if last.status == STATUS_OPEN {
                         assert!(state.cap() <= last.cap());
                     }
                     assert!(state.cap() >= state.cap_floor() && state.cap_floor() >= 1);
                     assert!(state.cap_floor() <= state.seeded_tokens());
-                    // No wall is placed yet, and nothing has been trimmed or retired.
+                    // The curve holds no more than the cap, except where MIN_LIQUIDITY
+                    // stopped a trim.
+                    assert!(
+                        held(&state) <= state.cap() as u128 || l == MIN_LIQUIDITY,
+                        "the curve holds {} over a cap of {} at liquidity {l}",
+                        held(&state),
+                        state.cap()
+                    );
+                    // The decay credit never exceeds one day's allowance.
+                    assert!(
+                        state.decay_credit()
+                            <= state.cap_decay_per_day() as u128 * DECAY_CREDIT_WINDOW as u128
+                    );
+                    // No wall is placed and nothing is settled yet: every retired token is
+                    // one the trims moved there, and the totals count every trim.
                     assert_eq!(state.wall_liquidity(), 0);
-                    assert_eq!((state.retired_tokens(), state.rewards_owed()), (0, 0));
-                    assert!(l >= buy_wall_amm::config::MIN_LIQUIDITY);
+                    assert_eq!(state.rewards_owed(), 0);
+                    assert_eq!(state.retired_tokens() as u128, state.tokens_trimmed());
+                    assert!(l >= MIN_LIQUIDITY);
                 }
                 other => panic!("status {other}"),
             }
@@ -515,8 +665,10 @@ proptest! {
     #[test]
     fn invariants_hold_after_every_step(steps in prop::collection::vec(step(), 1..16)) {
         let mut world = World::new();
-        // Always start with a market, so the other steps have something to act on.
+        // Always start with a seeded market, so the other steps have something to trade.
         world.apply(&Step::Create { token_2022: false, valid: true, fee_bps: 75, wall_split_bps: 5_000, reward_share_bps: 1_499, cap_floor_bps: 1_990, cap_decay_bps: 2_000 });
+        world.check();
+        world.apply(&Step::Seed { market: 0, tokens: 1_000_000_000_000, lamports: 10 * SOL, by_seeder: true });
         world.check();
         for step in &steps {
             world.apply(step);
