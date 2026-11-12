@@ -175,12 +175,15 @@ export type PipelineSwapInput<
   marketState: TAccountMarketState;
   trader: TAccountTrader;
   traderInput: TAccountTraderInput;
-  /** output vault. */
   traderOutput: TAccountTraderOutput;
   inputVault: TAccountInputVault;
   inputMint: TAccountInputMint;
   outputMint: TAccountOutputMint;
   inputTokenProgram: TAccountInputTokenProgram;
+  /**
+   * SPL Token or Token-2022, and the owner of the output vault: the swap lends it the
+   * vault authority's signature, so it must be the vault's own program.
+   */
   outputTokenProgram: TAccountOutputTokenProgram;
   trade: PipelineSwapInstructionDataArgs["trade"];
   amountSent: PipelineSwapInstructionDataArgs["amountSent"];
@@ -399,12 +402,15 @@ export type ParsedPipelineSwapInstruction<
     marketState: TAccountMetas[1];
     trader: TAccountMetas[2];
     traderInput: TAccountMetas[3];
-    /** output vault. */
     traderOutput: TAccountMetas[4];
     inputVault: TAccountMetas[5];
     inputMint: TAccountMetas[6];
     outputMint: TAccountMetas[7];
     inputTokenProgram: TAccountMetas[8];
+    /**
+     * SPL Token or Token-2022, and the owner of the output vault: the swap lends it the
+     * vault authority's signature, so it must be the vault's own program.
+     */
     outputTokenProgram: TAccountMetas[9];
   };
   data: PipelineSwapInstructionData;

@@ -13,11 +13,12 @@
 #     (programs/lending-amm/scripts/fetch-accounts.sh).
 #
 #   scripts/local-validator.sh [ledger directory] [solana-test-validator options...]
+#   scripts/local-validator.sh [solana-test-validator options...]
 #
 # The ledger defaults to fixtures/test-ledger. Options after it go to solana-test-validator
 # as they are, so a second validator can run beside another session's on other ports:
 #   scripts/local-validator.sh fixtures/test-ledger-2 --rpc-port 8999 --faucet-port 9990 \
-#     --gossip-port 8990 --dynamic-port-range 8100-8200
+#     --gossip-port 8990 --dynamic-port-range 8300-8400
 #
 # Environment: UPGRADE_AUTHORITY, the upgrade authority's keypair (default
 # ~/.config/testing-pipeline/devnet/upgrade-authority.json); only its public key is read.
@@ -26,8 +27,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIXTURES_DIR="${FIXTURES_DIR:-$ROOT/fixtures}"
-LEDGER="${1:-$FIXTURES_DIR/test-ledger}"
-shift || true
+# The ledger directory comes first when given; an option in its place means none was given.
+LEDGER="$FIXTURES_DIR/test-ledger"
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
+  LEDGER="$1"
+  shift
+fi
 UPGRADE_AUTHORITY="${UPGRADE_AUTHORITY:-$HOME/.config/testing-pipeline/devnet/upgrade-authority.json}"
 # SIMD-0268's deeper call limit: test validators turn it on, devnet and mainnet don't have it.
 SIMD_0268=6TkHkRmP7JZy1fdM6fg5uXn76wChQBWGokHBJzrLB3mj

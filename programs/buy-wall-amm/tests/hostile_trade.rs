@@ -237,6 +237,44 @@ fn substituted_input_vaults_and_mints_are_refused() {
 }
 
 #[test]
+fn a_substituted_output_token_program_is_refused() {
+    // The swap signs the output transfer as the vault authority, so it must only ever lend
+    // that signature to the output vault's own token program. The router refuses a token
+    // program that does not own the mint (`WrongTokenProgram`) before the strategy runs;
+    // the strategy checks again (an SPL Token or Token-2022 program that owns the output
+    // vault), so neither layer alone keeps the vault safe.
+    let Setup {
+        mut env,
+        market,
+        trader,
+        ..
+    } = setup();
+    let before = snapshot(&env, &market);
+    for direction in [BUY, SELL] {
+        // Router account 11 is the output token program.
+        for substitute in [
+            TOKEN_2022,
+            TEST_HOOK_PROGRAM,
+            strategy_id(),
+            client::SYSTEM_PROGRAM_ID,
+        ] {
+            let mut ix = env.swap_ix(
+                &market,
+                &trader.pubkey(),
+                direction,
+                TradeMode::ExactIn,
+                SOL / 10,
+                0,
+            );
+            assert_eq!(ix.accounts[11].pubkey, TOKEN);
+            ix.accounts[11].pubkey = substitute;
+            assert_fails(env.send(&[ix], &[&trader]));
+        }
+    }
+    assert_eq!(snapshot(&env, &market), before);
+}
+
+#[test]
 fn a_swap_whose_output_account_is_not_the_traders_pays_nothing_wrong() {
     let Setup {
         mut env,

@@ -13,6 +13,7 @@
 //! which a buy's output transfer forwards.
 
 use anchor_lang::prelude::*;
+use anchor_spl::token_interface::TokenInterface;
 use pipeline_strategy_interface as psi;
 
 use crate::errors::StrategyError;
@@ -32,8 +33,7 @@ pub struct SwapAccounts<'info> {
     /// CHECK: the router's; this strategy never refunds, so it is not used.
     #[account(mut)]
     pub trader_input: UncheckedAccount<'info>,
-    /// CHECK: receives the output; the token program checks it, and it may not be the
-    /// output vault.
+    /// CHECK: receives the output; the token program checks it. Never the output vault.
     #[account(mut)]
     pub trader_output: UncheckedAccount<'info>,
     /// CHECK: compared with the market's vault for the input mint.
@@ -43,10 +43,11 @@ pub struct SwapAccounts<'info> {
     pub input_mint: UncheckedAccount<'info>,
     /// CHECK: compared with the market's mint at the output index.
     pub output_mint: UncheckedAccount<'info>,
-    /// CHECK: checked by the runtime when invoked.
+    /// CHECK: the router's; the input transfer is the router's own.
     pub input_token_program: UncheckedAccount<'info>,
-    /// CHECK: the output transfer invokes it; the vault's owner must be it.
-    pub output_token_program: UncheckedAccount<'info>,
+    /// SPL Token or Token-2022, and the owner of the output vault: the swap lends it the
+    /// vault authority's signature, so it must be the vault's own program.
+    pub output_token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn handle_swap<'info>(
@@ -54,86 +55,85 @@ pub fn handle_swap<'info>(
     request: crate::interface::SwapRequest,
 ) -> Result<()> {
     let market_state = ctx.accounts.market_state.key();
-    let (priced, authority_bump, output_vault_info, authority, hook_accounts, decimals) = {
-        let state = ctx.accounts.market_state.load()?;
-        require_keys_eq!(
-            ctx.accounts.market_signer.key(),
-            state.market_signer,
-            StrategyError::NotPipeline
-        );
-        let trade = &request.trade;
-        let (input_vault, output_vault) = state.vaults(trade.input_index, trade.output_index)?;
-        let mints = [state.token_mint, state.wsol_mint];
-        let mint = |index: u8| {
-            mints
-                .get(index as usize)
-                .copied()
-                .ok_or(StrategyError::WrongAccount)
-        };
-        require_keys_eq!(
-            ctx.accounts.input_vault.key(),
-            input_vault,
-            StrategyError::WrongAccount
-        );
-        require_keys_eq!(
-            ctx.accounts.input_mint.key(),
-            mint(trade.input_index)?,
-            StrategyError::WrongAccount
-        );
-        require_keys_eq!(
-            ctx.accounts.output_mint.key(),
-            mint(trade.output_index)?,
-            StrategyError::WrongAccount
-        );
-        let [output_vault_info, authority, hook_accounts @ ..] = ctx.remaining_accounts else {
-            return err!(StrategyError::WrongAccount);
-        };
-        require_keys_eq!(
-            output_vault_info.key(),
-            output_vault,
-            StrategyError::WrongAccount
-        );
-        // Paying the vault itself would move nothing while the market booked a payout.
-        require_keys_neq!(
-            ctx.accounts.trader_output.key(),
-            output_vault,
-            StrategyError::WrongAccount
-        );
-        // Signing with the wrong account would fail in the token program anyway; checking
-        // it here names the mistake (`POOL4-24`).
-        let authority_key = vault_authority(&market_state, state.authority_bump)
-            .ok_or(StrategyError::WrongAccount)?;
-        require_keys_eq!(authority.key(), authority_key, StrategyError::WrongAccount);
-
-        // Credit what arrived beyond every ledger kept in the input vault, capped at what
-        // the router sent in this call, so a donation to either vault is never credited.
-        let recorded = state
-            .recorded(trade.input_index)
-            .ok_or(StrategyError::Overflow)?;
-        let vault_balance = token_balance(&ctx.accounts.input_vault.to_account_info())?;
-        let credited = psi::credited_input(vault_balance, recorded, request.amount_sent);
-        let priced = pricing::quote(
-            &state,
-            &crate::interface::TradeRequest {
-                amount: credited,
-                ..trade.clone()
-            },
-        )?;
-        // The token is the only mint a transfer hook can be on; wrapped SOL has none.
-        let hook_accounts = match priced.side {
-            Side::Buy => hook_accounts,
-            Side::Sell => &[],
-        };
-        let decimals = mint_decimals(&ctx.accounts.output_mint.to_account_info())?;
-        (
-            priced,
-            state.authority_bump,
-            output_vault_info,
-            authority,
-            hook_accounts,
-            decimals,
-        )
+    let state = ctx.accounts.market_state.load()?;
+    require_keys_eq!(
+        ctx.accounts.market_signer.key(),
+        state.market_signer,
+        StrategyError::NotPipeline
+    );
+    let trade = &request.trade;
+    let (input_vault, output_vault) = state.vaults(trade.input_index, trade.output_index)?;
+    let mints = [state.token_mint, state.wsol_mint];
+    let mint = |index: u8| {
+        mints
+            .get(index as usize)
+            .copied()
+            .ok_or(StrategyError::WrongAccount)
     };
+    require_keys_eq!(
+        ctx.accounts.input_vault.key(),
+        input_vault,
+        StrategyError::WrongAccount
+    );
+    require_keys_eq!(
+        ctx.accounts.input_mint.key(),
+        mint(trade.input_index)?,
+        StrategyError::WrongAccount
+    );
+    require_keys_eq!(
+        ctx.accounts.output_mint.key(),
+        mint(trade.output_index)?,
+        StrategyError::WrongAccount
+    );
+    let [output_vault_info, authority, hook_accounts @ ..] = ctx.remaining_accounts else {
+        return err!(StrategyError::WrongAccount);
+    };
+    require_keys_eq!(
+        output_vault_info.key(),
+        output_vault,
+        StrategyError::WrongAccount
+    );
+    require_keys_eq!(
+        *output_vault_info.owner,
+        ctx.accounts.output_token_program.key(),
+        StrategyError::WrongAccount
+    );
+    // Paying the vault itself would move nothing while the market booked a payout.
+    require_keys_neq!(
+        ctx.accounts.trader_output.key(),
+        output_vault,
+        StrategyError::WrongAccount
+    );
+    // Signing with the wrong account would fail in the token program anyway; checking it
+    // here names the mistake, as the tax AMM does (`POOL4-24`, `TAX-35`).
+    let authority_bump = state.authority_bump;
+    let authority_key =
+        vault_authority(&market_state, authority_bump).ok_or(StrategyError::WrongAccount)?;
+    require_keys_eq!(authority.key(), authority_key, StrategyError::WrongAccount);
+
+    // Credit what arrived beyond every ledger kept in the input vault, capped at what the
+    // router sent in this call, so a donation to either vault is never credited.
+    let recorded = state
+        .recorded(trade.input_index)
+        .ok_or(StrategyError::Overflow)?;
+    let vault_balance = token_balance(&ctx.accounts.input_vault.to_account_info())?;
+    let credited = psi::credited_input(vault_balance, recorded, request.amount_sent);
+    // The same function as `pipeline_quote`, books and counters included, so quotes and
+    // swaps agree.
+    let settled = pricing::settle(
+        &state,
+        &crate::interface::TradeRequest {
+            amount: credited,
+            ..trade.clone()
+        },
+    )?;
+    // The token is the only mint a transfer hook can be on; wrapped SOL has none.
+    let hook_accounts = match settled.priced.side {
+        Side::Buy => hook_accounts,
+        Side::Sell => &[],
+    };
+    let decimals = mint_decimals(&ctx.accounts.output_mint.to_account_info())?;
+    drop(state);
 
     let bump = [authority_bump];
     let authority_seeds: &[&[u8]] = &[AUTHORITY_SEED, market_state.as_ref(), &bump];
@@ -146,31 +146,24 @@ pub fn handle_swap<'info>(
             authority,
             hook_accounts,
         },
-        priced.amount_out,
+        settled.priced.amount_out,
         decimals,
         &[authority_seeds],
     )?;
 
     // Steps 2, 3 and 7 of "After pricing": the books, the price and the counters.
     let mut state = ctx.accounts.market_state.load_mut()?;
-    let books = state
-        .books()
-        .after(&priced, state.wall_split_bps())
-        .ok_or(StrategyError::Overflow)?;
-    let counters = state
-        .counters()
-        .and_then(|counters| counters.after(&priced))
-        .ok_or(StrategyError::Overflow)?;
-    state.set_books(&books);
-    state.set_sqrt_price(priced.sqrt_price);
-    state.set_last_close(priced.sqrt_price);
+    state.set_books(&settled.books);
+    state.set_sqrt_price(settled.priced.sqrt_price);
+    state.set_last_close(settled.priced.sqrt_price);
     state
-        .set_counters(&counters)
+        .set_counters(&settled.counters)
         .ok_or(StrategyError::Overflow)?;
     Ok(())
 }
 
-/// The decimals of an SPL Token or Token-2022 mint (byte 44 of both layouts).
+/// The decimals of the output mint, byte 44 of both token programs' mint layouts. The
+/// account's key is the market's stored mint, so its data is that mint's.
 fn mint_decimals(mint: &AccountInfo) -> Result<u8> {
     let data = mint.try_borrow_data()?;
     data.get(44)

@@ -350,9 +350,6 @@
         },
         {
           "name": "trader_output",
-          "docs": [
-            "output vault."
-          ],
           "writable": true
         },
         {
@@ -369,7 +366,11 @@
           "name": "input_token_program"
         },
         {
-          "name": "output_token_program"
+          "name": "output_token_program",
+          "docs": [
+            "SPL Token or Token-2022, and the owner of the output vault: the swap lends it the",
+            "vault authority's signature, so it must be the vault's own program."
+          ]
         }
       ],
       "args": [

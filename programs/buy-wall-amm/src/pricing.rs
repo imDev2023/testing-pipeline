@@ -209,6 +209,34 @@ pub fn buy(curve: Curve, a: u64, fee_bps: u16) -> core::result::Result<Priced, R
     })
 }
 
+/// A priced trade and what it leaves the market's books and counters at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Settled {
+    pub priced: Priced,
+    pub books: crate::books::Books,
+    pub counters: crate::books::Counters,
+}
+
+/// Prices `request` on `state` and books it, without changing anything: what
+/// `pipeline_quote` answers and `pipeline_swap` writes, so a trade the books could not take
+/// is refused by both alike.
+pub fn settle(state: &MarketState, request: &TradeRequest) -> Result<Settled> {
+    let priced = quote(state, request)?;
+    let books = state
+        .books()
+        .after(&priced, state.wall_split_bps())
+        .ok_or(StrategyError::Overflow)?;
+    let counters = state
+        .counters()
+        .and_then(|counters| counters.after(&priced))
+        .ok_or(StrategyError::Overflow)?;
+    Ok(Settled {
+        priced,
+        books,
+        counters,
+    })
+}
+
 /// Prices `request` on `state`, with `request.amount` as the credited input. Reads no
 /// clock, so a quote never depends on when it is asked.
 pub fn quote(state: &MarketState, request: &TradeRequest) -> Result<Priced> {
@@ -238,7 +266,7 @@ pub fn quote(state: &MarketState, request: &TradeRequest) -> Result<Priced> {
 // for every input over the integers (`proofs/pricing_z3.py`), from the exactness of
 // `div_rem`, which Kani proves in the default tier (`math.rs`); Proptest checks the steps
 // themselves on 10,000 random markets each (below). The fee's rounding needs no division
-// loop and is proved here for every input in the default tier.
+// loop and is proved here in Pipeline's two tiers, as its own `ceil_bps` is.
 #[cfg(kani)]
 mod proofs {
     use super::*;
@@ -291,10 +319,23 @@ mod proofs {
     }
 
     /// The fee rounds up and the output down: a sell's fee is `ceil(gross × bps / 10,000)`
-    /// and its output `gross - fee`, for every gross and every fee a market may charge.
+    /// and its output `gross - fee`, for gross amounts below 2^12 (as Pipeline bounds its
+    /// own `ceil_bps`) and every fee a market may charge.
     #[kani::proof]
-    fn a_sells_fee_rounds_up() {
+    fn a_sells_fee_rounds_up_bounded() {
         let gross: u64 = kani::any();
+        kani::assume(gross < 1 << 12);
+        a_sells_fee_rounds_up(gross);
+    }
+
+    /// The same for every gross amount.
+    #[cfg(kani_full)]
+    #[kani::proof]
+    fn a_sells_fee_rounds_up_for_every_amount() {
+        a_sells_fee_rounds_up(kani::any());
+    }
+
+    fn a_sells_fee_rounds_up(gross: u64) {
         let fee_bps: u16 = kani::any();
         kani::assume((crate::config::MIN_FEE_BPS..=crate::config::MAX_FEE_BPS).contains(&fee_bps));
         let fee = fees::ceil_bps(gross, fee_bps as u64).unwrap();
