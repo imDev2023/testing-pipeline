@@ -3443,6 +3443,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47)
 
+### POOL4-24: The vault authority in a swap
+
+- Question: How does a swap reach the vault authority that signs the transfer out of a vault, when a program can sign for a PDA only if its account is passed in and the router passes only its ten fixed accounts?
+- Answer: `pipeline_resolve_accounts` lists two accounts, the output vault and then the vault authority (read-only), and `pipeline_swap` checks the authority against the PDA from the market state's stored bump before signing with it, as the tax AMM does (`TAX-35`).
+- Alternatives: The earlier default, a swap resolving one account, the output vault, which the runtime cannot sign out of; vaults that own themselves, which keeps one account but changes creation, metadata and the spec's Addresses and leaves `authority_bump` unused.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Addresses](spec/pool4-for-solana.md#addresses)
+- Changes by: fixed on-chain once deployed
+- Status: changed 2026-11-12
+- Decided: 2026-11-12 in [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48)
+
+### POOL4-25: The fee shares in the IDL
+
+- Question: How does the demo script learn the designer share and the suite share to check a swap's fee split, without restating them?
+- Answer: The program publishes `DESIGNER_SHARE_BPS` and `SUITE_SHARE_BPS` in its IDL with Anchor's `#[constant]`, so the generated TypeScript client carries both and `config.rs` stays their one place, as the tax AMM does (`TAX-37`).
+- Alternatives: Restating them in the demo; publishing the price bounds too, which Codama 2.8 renders as invalid TypeScript for a u128 of 2^96.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Constants](spec/pool4-for-solana.md#constants)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48)
+
+### POOL4-26: Dividing by two square-root prices
+
+- Question: How does the pricing divide by a product of two square-root prices, which the spec's rule stages one price at a time where a product could overflow?
+- Answer: It divides once by the product, which fits in 256 bits because each price is below 2^128 and gives the same floor or ceiling as the staged divisions; with a sell computing its `need` only when it reaches its target, this took the costliest quote measured from 35,648 to 15,682 compute units of its 40,000 ceiling, and only numerators can overflow, which refuses the trade.
+- Alternatives: Dividing by one price at a time, as the rule first read.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Rules for both](spec/pool4-for-solana.md#rules-for-both)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48)
+
+### POOL4-27: Paying a swap's output to another wallet's account
+
+- Question: Does the strategy refuse a swap whose output account belongs to someone other than the trader?
+- Answer: No: the router lets a trader name the account its output goes to, and the strategy pays exactly that account exactly the quote, refusing only the output vault itself, which would book a payout that never moved.
+- Alternatives: Refusing any output account the trader does not own, which would break a router feature for nothing the market risks.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Bypass](spec/pool4-for-solana.md#bypass)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
@@ -3945,6 +3985,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-25` to `POOL4-27`: set by the session of [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-24` is the owner's answer to that session's question.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.

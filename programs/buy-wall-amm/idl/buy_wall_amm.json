@@ -199,7 +199,7 @@
     {
       "name": "pipeline_quote",
       "docs": [
-        "Prices a trade without changing anything; refuses every request in this build."
+        "Prices an exact-in trade without changing anything; refuses exact-out."
       ],
       "discriminator": [
         134,
@@ -257,7 +257,8 @@
     {
       "name": "pipeline_resolve_accounts",
       "docs": [
-        "Lists the accounts a swap needs after the router's ten: the output vault."
+        "Lists the accounts a swap needs after the router's ten: the output vault and the",
+        "vault authority."
       ],
       "discriminator": [
         12,
@@ -315,7 +316,8 @@
     {
       "name": "pipeline_swap",
       "docs": [
-        "Settles a trade the router sends; refuses every request in this build."
+        "Settles an exact-in trade the router sends: pays the trader from the output vault",
+        "and books the fee, the ledgers, the price and the counters."
       ],
       "discriminator": [
         161,
@@ -364,7 +366,11 @@
           "name": "input_token_program"
         },
         {
-          "name": "output_token_program"
+          "name": "output_token_program",
+          "docs": [
+            "SPL Token or Token-2022, and the owner of the output vault: the swap lends it the",
+            "vault authority's signature, so it must be the vault's own program."
+          ]
         }
       ],
       "args": [
@@ -627,6 +633,26 @@
       "code": 6025,
       "name": "Overflow",
       "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6026,
+      "name": "ZeroInput",
+      "msg": "The input is zero"
+    },
+    {
+      "code": 6027,
+      "name": "ZeroOutput",
+      "msg": "The trade would pay out nothing"
+    },
+    {
+      "code": 6028,
+      "name": "NothingAfterFee",
+      "msg": "Nothing is left of the input after the fee"
+    },
+    {
+      "code": 6029,
+      "name": "PriceBoundReached",
+      "msg": "The trade reaches a price bound with input left over"
     }
   ],
   "types": [
@@ -1526,6 +1552,26 @@
           }
         ]
       }
+    }
+  ],
+  "constants": [
+    {
+      "name": "DESIGNER_SHARE_BPS",
+      "docs": [
+        "The designer share, owed to IMD and Adam, in basis points of the fee (10%).",
+        "Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-25`)."
+      ],
+      "type": "u16",
+      "value": "1000"
+    },
+    {
+      "name": "SUITE_SHARE_BPS",
+      "docs": [
+        "The suite share, in basis points of the fee (10%).",
+        "Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-25`)."
+      ],
+      "type": "u16",
+      "value": "1000"
     }
   ]
 }

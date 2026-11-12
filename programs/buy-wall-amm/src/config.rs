@@ -15,8 +15,12 @@ pub const MIN_FEE_BPS: u16 = 25;
 /// The highest fee a market may choose, in basis points of each swap (3%).
 pub const MAX_FEE_BPS: u16 = 300;
 /// The designer share, owed to IMD and Adam, in basis points of the fee (10%).
+/// Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-25`).
+#[constant]
 pub const DESIGNER_SHARE_BPS: u16 = 1_000;
 /// The suite share, in basis points of the fee (10%).
+/// Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-25`).
+#[constant]
 pub const SUITE_SHARE_BPS: u16 = 1_000;
 /// The wallet the designer share is paid to. Unset (the all-zero key) while IMD and Adam
 /// have no known Solana address; an upgrade sets it before the program is frozen.
