@@ -59,4 +59,6 @@ pub enum StrategyError {
     ZeroOutput,
     #[msg("The trade would pay out more than the market's real reserve")]
     InsufficientLiquidity,
+    #[msg("A seed request gives one amount for each of the market's two mints")]
+    BadSeedAmounts,
 }

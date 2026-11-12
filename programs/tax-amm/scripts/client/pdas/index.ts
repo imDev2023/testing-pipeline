@@ -7,5 +7,6 @@
  */
 
 export * from "./authority.ts";
+export * from "./marketState.ts";
 export * from "./vault0.ts";
 export * from "./vault1.ts";

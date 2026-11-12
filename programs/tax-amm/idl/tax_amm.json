@@ -290,6 +290,191 @@
       ]
     },
     {
+      "name": "pipeline_seed_liquidity",
+      "docs": [
+        "Pipeline's optional extension, for a launchpad graduating a token: creates a tax",
+        "market at the PDA `[\"seeded\", seeder, mint_0, mint_1]` with the creation parameters",
+        "in `request.data` (whose seeder is ignored: the calling program's PDA is the",
+        "seeder), takes `request.amounts` from the seeder's escrows and opens it. Returns",
+        "`SeedResult`. Remaining accounts are transfer-hook accounts, for either mint."
+      ],
+      "discriminator": [
+        197,
+        81,
+        12,
+        118,
+        24,
+        65,
+        212,
+        81
+      ],
+      "accounts": [
+        {
+          "name": "seeder",
+          "docs": [
+            "A PDA of the calling program, signing; it owns the escrows and becomes the seeder."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  101,
+                  100,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "seeder"
+              },
+              {
+                "kind": "account",
+                "path": "mint_0"
+              },
+              {
+                "kind": "account",
+                "path": "mint_1"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "A system account holding the SOL the caller allows for rent."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "lp_recipient"
+        },
+        {
+          "name": "mint_0"
+        },
+        {
+          "name": "escrow_0",
+          "docs": [
+            "program the rest."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program_0"
+        },
+        {
+          "name": "mint_1"
+        },
+        {
+          "name": "escrow_1",
+          "writable": true
+        },
+        {
+          "name": "token_program_1"
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_0",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "mint_0"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_1",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "mint_1"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "SeedRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "pipeline_swap",
       "docs": [
         "Settles a trade the router sends. Remaining accounts: the output vault and the",
@@ -606,6 +791,11 @@
       "code": 6026,
       "name": "InsufficientLiquidity",
       "msg": "The trade would pay out more than the market's real reserve"
+    },
+    {
+      "code": 6027,
+      "name": "BadSeedAmounts",
+      "msg": "A seed request gives one amount for each of the market's two mints"
     }
   ],
   "types": [
@@ -801,6 +991,28 @@
           {
             "name": "round",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SeedRequest",
+      "docs": [
+        "`pipeline_strategy_interface::SeedRequest`: the most to take from each escrow, in mint",
+        "order, and the creation parameters, Borsh-encoded as [`crate::InitParams`]."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "amounts",
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "data",
+            "type": "bytes"
           }
         ]
       }

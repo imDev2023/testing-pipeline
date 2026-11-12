@@ -57,61 +57,108 @@ pub fn seed_market<'info>(
         market.status == MarketStatus::Created,
         StrategyError::AlreadySeeded
     );
-    let amounts = [amount_0, amount_1];
-    // A side may be seeded with nothing only when its virtual reserve prices it.
-    let may_be_empty = |i: usize| market.virtual_side as usize == i && market.virtual_reserve > 0;
-
     let accounts = &ctx.accounts;
     let sides = [
-        (
-            &accounts.seeder_token_0,
-            &accounts.vault_0,
-            &accounts.mint_0,
-            &accounts.token_program_0,
-        ),
-        (
-            &accounts.seeder_token_1,
-            &accounts.vault_1,
-            &accounts.mint_1,
-            &accounts.token_program_1,
-        ),
+        SeedSide {
+            from: accounts.seeder_token_0.to_account_info(),
+            vault: accounts.vault_0.to_account_info(),
+            mint: accounts.mint_0.to_account_info(),
+            decimals: accounts.mint_0.decimals,
+            token_program: accounts.token_program_0.to_account_info(),
+        },
+        SeedSide {
+            from: accounts.seeder_token_1.to_account_info(),
+            vault: accounts.vault_1.to_account_info(),
+            mint: accounts.mint_1.to_account_info(),
+            decimals: accounts.mint_1.decimals,
+            token_program: accounts.token_program_1.to_account_info(),
+        },
     ];
-    let mut arrived = [0u64; 2];
-    for (i, (from, vault, mint, token_program)) in sides.into_iter().enumerate() {
-        if amounts[i] > 0 {
-            // From token accounts the seeder owns, never one it is only a delegate of.
-            require_keys_eq!(
-                token_owner(&from.to_account_info())?,
-                accounts.seeder.key(),
-                StrategyError::WrongAccount
-            );
-            let before = token_balance(&vault.to_account_info())?;
-            transfer_checked(
-                &token_program.to_account_info(),
-                &from.to_account_info(),
-                &mint.to_account_info(),
-                &vault.to_account_info(),
-                &accounts.seeder.to_account_info(),
-                ctx.remaining_accounts,
-                amounts[i],
-                mint.decimals,
-                &[],
-            )?;
-            arrived[i] = token_balance(&vault.to_account_info())?
-                .checked_sub(before)
-                .ok_or(StrategyError::Overflow)?;
-        }
-        require!(arrived[i] > 0 || may_be_empty(i), StrategyError::ZeroSeed);
-    }
+    let taken = take_seed(
+        market,
+        &accounts.seeder.to_account_info(),
+        sides,
+        [amount_0, amount_1],
+        ctx.remaining_accounts,
+    )?;
 
     let market_state = ctx.accounts.market_state.key();
     let state = &mut ctx.accounts.market_state;
-    state.reserves = arrived;
+    state.reserves = taken.arrived;
     state.status = MarketStatus::Open;
     emit!(Seeded {
         market_state,
         seeder: state.seeder,
-        amounts: arrived,
+        amounts: taken.arrived,
     });
     Ok(())
+}
+
+/// One side of a seed: the seeder's token account it comes from and the vault it goes to.
+pub(crate) struct SeedSide<'info> {
+    pub from: AccountInfo<'info>,
+    pub vault: AccountInfo<'info>,
+    pub mint: AccountInfo<'info>,
+    pub decimals: u8,
+    pub token_program: AccountInfo<'info>,
+}
+
+/// What a seed moved, per side, in mint order.
+pub(crate) struct SeedTaken {
+    /// What left the seeder's token account.
+    pub left: [u64; 2],
+    /// What arrived in the vault, which the market records as its real reserve.
+    pub arrived: [u64; 2],
+}
+
+/// Moves each side's amount from a token account the seeder owns into the market's vault, as
+/// the `seed` action and `pipeline_seed_liquidity` both do. Each side's real amount must be
+/// above 0, except the virtual side's when the market has a virtual reserve.
+pub(crate) fn take_seed<'info>(
+    market: &TaxMarket,
+    seeder: &AccountInfo<'info>,
+    sides: [SeedSide<'info>; 2],
+    amounts: [u64; 2],
+    hook_accounts: &[AccountInfo<'info>],
+) -> Result<SeedTaken> {
+    // A side may be seeded with nothing only when its virtual reserve prices it.
+    let may_be_empty = |i: usize| market.virtual_side as usize == i && market.virtual_reserve > 0;
+    let mut taken = SeedTaken {
+        left: [0; 2],
+        arrived: [0; 2],
+    };
+    for (i, side) in sides.into_iter().enumerate() {
+        if amounts[i] > 0 {
+            // From token accounts the seeder owns, never one it is only a delegate of.
+            require_keys_eq!(
+                token_owner(&side.from)?,
+                seeder.key(),
+                StrategyError::WrongAccount
+            );
+            let from_before = token_balance(&side.from)?;
+            let vault_before = token_balance(&side.vault)?;
+            transfer_checked(
+                &side.token_program,
+                &side.from,
+                &side.mint,
+                &side.vault,
+                seeder,
+                hook_accounts,
+                amounts[i],
+                side.decimals,
+                &[],
+            )?;
+            taken.left[i] = from_before
+                .checked_sub(token_balance(&side.from)?)
+                .ok_or(StrategyError::Overflow)?;
+            taken.arrived[i] = token_balance(&side.vault)?
+                .checked_sub(vault_before)
+                .ok_or(StrategyError::Overflow)?;
+        }
+        require!(
+            taken.arrived[i] > 0 || may_be_empty(i),
+            StrategyError::ZeroSeed
+        );
+    }
+    Ok(taken)
 }

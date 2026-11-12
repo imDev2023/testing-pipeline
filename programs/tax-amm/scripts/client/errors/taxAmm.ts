@@ -69,10 +69,13 @@ export const TAX_AMM_ERROR__ZERO_SEED = 0x1788; // 6024
 export const TAX_AMM_ERROR__ZERO_OUTPUT = 0x1789; // 6025
 /** InsufficientLiquidity: The trade would pay out more than the market's real reserve */
 export const TAX_AMM_ERROR__INSUFFICIENT_LIQUIDITY = 0x178a; // 6026
+/** BadSeedAmounts: A seed request gives one amount for each of the market's two mints */
+export const TAX_AMM_ERROR__BAD_SEED_AMOUNTS = 0x178b; // 6027
 
 export type TaxAmmError =
   | typeof TAX_AMM_ERROR__ALREADY_SEEDED
   | typeof TAX_AMM_ERROR__BAD_INIT_DATA
+  | typeof TAX_AMM_ERROR__BAD_SEED_AMOUNTS
   | typeof TAX_AMM_ERROR__BAD_TAX_SIDE
   | typeof TAX_AMM_ERROR__BAD_VIRTUAL_SIDE
   | typeof TAX_AMM_ERROR__BURN_ON_NATIVE_SOL
@@ -104,6 +107,7 @@ if (process.env["NODE_ENV"] !== "production") {
   taxAmmErrorMessages = {
     [TAX_AMM_ERROR__ALREADY_SEEDED]: `The market has already been seeded`,
     [TAX_AMM_ERROR__BAD_INIT_DATA]: `Init data is not valid creation parameters`,
+    [TAX_AMM_ERROR__BAD_SEED_AMOUNTS]: `A seed request gives one amount for each of the market's two mints`,
     [TAX_AMM_ERROR__BAD_TAX_SIDE]: `The tax side must be 0 or 1`,
     [TAX_AMM_ERROR__BAD_VIRTUAL_SIDE]: `The virtual side must be 0 or 1`,
     [TAX_AMM_ERROR__BURN_ON_NATIVE_SOL]: `Native SOL can't be burned, so its tax side has no burn share`,

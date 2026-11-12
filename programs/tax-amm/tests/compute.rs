@@ -131,6 +131,32 @@ fn seed_stays_under_its_ceiling() {
 }
 
 #[test]
+fn pipeline_seed_liquidity_stays_under_its_ceiling() {
+    for (name, token_program) in [("SPL Token", TOKEN), ("Token-2022", TOKEN_2022)] {
+        let mut env = Env::new();
+        let mints = [
+            (env.create_mint(&token_program), token_program),
+            (env.create_mint(&token_program), token_program),
+        ];
+        let amounts = [100_000_000_000, 200_000_000_000];
+        let launch = env.launch(mints, amounts);
+        let graduated = env
+            .graduate(&launch, &valid_params(&Pubkey::new_unique()), amounts)
+            .unwrap();
+        // The launchpad calls pipeline_seed_liquidity, then register_existing_market calls
+        // pipeline_market_info.
+        let costs = strategy_compute(&graduated.market.created.logs);
+        assert_eq!(costs.len(), 2, "{:?}", graduated.market.created.logs);
+        println!("pipeline_seed_liquidity on {name} mints: {} CU", costs[0]);
+        assert!(
+            costs[0] <= ceilings::PIPELINE_SEED_LIQUIDITY,
+            "{name}: {}",
+            costs[0]
+        );
+    }
+}
+
+#[test]
 fn pipeline_quote_stays_under_its_ceiling() {
     for (name, env, market, _) in seeded_markets() {
         for (input, output) in [(0, 1), (1, 0)] {

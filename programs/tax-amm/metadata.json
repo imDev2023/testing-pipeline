@@ -175,6 +175,149 @@
             }
         ]
     },
+    "seed_liquidity": {
+        "description": "For a launchpad graduating a token: its program calls pipeline_seed_liquidity, which creates a tax market, takes the seed from the launchpad's escrows and opens it, all in one call. SeedRequest.amounts is the most to take from each escrow, in mint order: each above 0, except the virtual side's when the market has a virtual reserve. SeedRequest.data is these arguments, Borsh-encoded in order, exactly as init's: the same creation parameters under the same rules, except the seeder, which is the calling program's PDA that signs. Accounts: Pipeline's fixed seed accounts (the seeder, the market state below, the payer, the system program and an LP recipient, which is ignored since a tax market issues no LP shares), then mint, escrow and token program for each mint, then the accounts below, then any transfer-hook accounts. Returns SeedResult with lp_amount 0. Follow it in the same transaction with the router's register_existing_market (no info accounts after the market state) and init_fee_account for each mint. A seeder seeds a pair of mints once.",
+        "idl_type": "InitParams",
+        "market_state": "pda:strategy:str:seeded,key:input:seeder,key:input:mint_0,key:input:mint_1",
+        "args": [
+            {
+                "name": "tax_side",
+                "type": "u8",
+                "label": "Tax side",
+                "description": "The mint index, 0 or 1, every tax is taken in, whichever way a trade goes. Fixed for the market's life."
+            },
+            {
+                "name": "buy_tax_bps",
+                "type": "u16",
+                "label": "Buy tax (basis points)",
+                "description": "Taken from the input when the tax side is sold into the market. Inside its range."
+            },
+            {
+                "name": "sell_tax_bps",
+                "type": "u16",
+                "label": "Sell tax (basis points)",
+                "description": "Taken from the output when the tax side is bought from the market. Inside its range."
+            },
+            {
+                "name": "buy_tax_min_bps",
+                "type": "u16",
+                "label": "Lowest buy tax (basis points)",
+                "description": "The buy tax can never go below this. Fixed for the market's life."
+            },
+            {
+                "name": "buy_tax_max_bps",
+                "type": "u16",
+                "label": "Highest buy tax (basis points)",
+                "description": "The buy tax can never go above this, and never above the program's cap. Fixed for the market's life."
+            },
+            {
+                "name": "sell_tax_min_bps",
+                "type": "u16",
+                "label": "Lowest sell tax (basis points)",
+                "description": "The sell tax can never go below this. Fixed for the market's life."
+            },
+            {
+                "name": "sell_tax_max_bps",
+                "type": "u16",
+                "label": "Highest sell tax (basis points)",
+                "description": "The sell tax can never go above this, and never above the program's cap. Fixed for the market's life."
+            },
+            {
+                "name": "tax_authority",
+                "type": "pubkey",
+                "label": "Tax authority",
+                "description": "May change the taxes inside their ranges and the tax recipients, or renounce. The default (all-zero) key means none, so nothing can ever change."
+            },
+            {
+                "name": "seeder",
+                "type": "pubkey",
+                "label": "Seeder",
+                "description": "Ignored: the calling program's PDA that signs the seed is the market's seeder. Any key will do, the default (all-zero) key included."
+            },
+            {
+                "name": "recipient_0",
+                "type": "pubkey",
+                "label": "Tax recipient 1",
+                "description": "A wallet paid its share of the creator's part of the tax. Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "recipient_1",
+                "type": "pubkey",
+                "label": "Tax recipient 2",
+                "description": "Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "recipient_2",
+                "type": "pubkey",
+                "label": "Tax recipient 3",
+                "description": "Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "recipient_3",
+                "type": "pubkey",
+                "label": "Tax recipient 4",
+                "description": "Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "share_0",
+                "type": "u16",
+                "label": "Tax recipient 1's share (basis points)",
+                "description": "Of the creator's part, what is left after the suite share. Above 0 for a used slot, 0 for an unused one; the shares and the burn share sum to 10,000."
+            },
+            {
+                "name": "share_1",
+                "type": "u16",
+                "label": "Tax recipient 2's share (basis points)",
+                "description": "Above 0 for a used slot, 0 for an unused one."
+            },
+            {
+                "name": "share_2",
+                "type": "u16",
+                "label": "Tax recipient 3's share (basis points)",
+                "description": "Above 0 for a used slot, 0 for an unused one."
+            },
+            {
+                "name": "share_3",
+                "type": "u16",
+                "label": "Tax recipient 4's share (basis points)",
+                "description": "Above 0 for a used slot, 0 for an unused one."
+            },
+            {
+                "name": "burn_share_bps",
+                "type": "u16",
+                "label": "Burn share (basis points)",
+                "description": "Of the creator's part, burned. 0 when the tax side is native SOL."
+            },
+            {
+                "name": "virtual_side",
+                "type": "u8",
+                "label": "Virtual side",
+                "description": "The mint index, 0 or 1, whose reserve the virtual reserve adds to in pricing."
+            },
+            {
+                "name": "virtual_reserve",
+                "type": "u64",
+                "label": "Virtual reserve",
+                "description": "Added to the virtual side's real reserve in pricing, never paid out; 0 for none. Lets a token launch single-sided."
+            }
+        ],
+        "accounts": [
+            {
+                "name": "authority",
+                "source": "pda:strategy:str:authority,key:market_state"
+            },
+            {
+                "name": "vault_0",
+                "source": "pda:strategy:str:vault,key:market_state,key:input:mint_0",
+                "writable": true
+            },
+            {
+                "name": "vault_1",
+                "source": "pda:strategy:str:vault,key:market_state,key:input:mint_1",
+                "writable": true
+            }
+        ]
+    },
     "actions": [
         {
             "name": "seed",
