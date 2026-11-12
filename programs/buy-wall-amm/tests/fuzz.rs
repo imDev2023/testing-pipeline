@@ -1,23 +1,27 @@
 //! Stateful invariant fuzzing (docs/spec/README.md, "Test layers" 3): Proptest generates
 //! sequences of the instructions built so far (creation with any parameters, the seed by
-//! the seeder or anyone else with any amounts, donations to the vaults, quotes and swaps)
-//! and clock jumps, sends each through the router in LiteSVM, and checks after every step:
+//! the seeder or anyone else with any amounts, donations to the vaults, buys and sells
+//! through the router) and clock jumps, several trades often landing in one slot, sends
+//! each through the router in LiteSVM, and checks after every step:
 //!
-//! - value is conserved: no token unit or lamport of wrapped SOL is created or lost, and
-//!   what left the seeder is exactly what the market recorded;
-//! - every invariant of docs/spec/pool4-for-solana.md, "Ledgers": each vault holds at least
-//!   the sum of its ledgers, the pool ledgers cover the curve, the curve holds no more than
-//!   the cap, the cap never rises and never falls below the cap floor, and the wall's floor
-//!   is never above the price;
-//! - no instruction other than `pipeline_swap` changes `sqrt_price` or the counters;
-//! - each quote equals its swap (in this build, both are refused for every request).
+//! - value is conserved: no token unit or lamport of wrapped SOL is created or lost, across
+//!   every wallet, every vault and the router's fee accounts;
+//! - every holder can exit: each trader holding a market's token can sell all of it, unless
+//!   it is worth less than one lamport;
+//! - each quote equals its swap, to the unit, and a refused quote is a refused swap;
+//! - the invariants of docs/spec/pool4-for-solana.md, "Ledgers", that apply so far: each
+//!   vault holds at least the sum of its ledgers, the pool ledgers cover what the curve
+//!   could pay out, and the cap never rises and never falls below the cap floor (the cap's
+//!   bound on the curve and the wall's floor arrive with their tickets);
+//! - no instruction other than `pipeline_swap` changes `sqrt_price` or the counters, and a
+//!   swap changes them by exactly the trade it made.
 //!
 //! Later tickets add their instructions and invariants here. `PROPTEST_CASES` sets how many
 //! sequences run (64 by default).
 
 mod common;
 
-use buy_wall_amm::opening::U256;
+use buy_wall_amm::math::U256;
 use buy_wall_amm::state::{MarketState, STATUS_CREATED, STATUS_OPEN};
 use common::*;
 use pipeline_client::{pda, Pubkey, TradeMode};
@@ -71,10 +75,15 @@ fn step() -> impl Strategy<Value = Step> {
             .prop_map(|(market, tokens, lamports, by_seeder)| Step::Seed { market, tokens, lamports, by_seeder }),
         1 => (any::<usize>(), any::<bool>(), 1..1_000_000_000u64)
             .prop_map(|(market, sol, amount)| Step::Donate { market, sol, amount }),
-        1 => (any::<usize>(), any::<bool>(), 0..10 * SOL)
+        5 => (any::<usize>(), any::<bool>(), trade_amount())
             .prop_map(|(market, buy, amount)| Step::Trade { market, buy, amount }),
         1 => (0..200_000i64, 0..1_000u64).prop_map(|(seconds, slots)| Step::Warp { seconds, slots }),
     ]
+}
+
+/// Trade sizes from zero and dust to more than a whole pool.
+fn trade_amount() -> impl Strategy<Value = u64> {
+    prop_oneof![0..1_000u64, 1_000..10 * SOL, 10 * SOL..u64::MAX / 8]
 }
 
 /// Seed sizes around every bound: tiny, typical and huge.
@@ -105,6 +114,18 @@ struct World {
     minted: std::collections::HashMap<Pubkey, u128>,
     /// Every token account the test ever funded, per mint.
     holders: std::collections::HashMap<Pubkey, Vec<Pubkey>>,
+    /// Traders who bought a market's token: (market, wallet).
+    buyers: Vec<(usize, Pubkey)>,
+    /// The swap the last step made: (market, priced trade), checked against the counters.
+    swapped: Option<(usize, Swapped)>,
+}
+
+/// What a successful swap did, from the trader's side.
+#[derive(Clone, Copy, Debug)]
+struct Swapped {
+    buy: bool,
+    amount_in: u64,
+    amount_out: u64,
 }
 
 impl World {
@@ -114,6 +135,8 @@ impl World {
             markets: vec![],
             minted: Default::default(),
             holders: Default::default(),
+            buyers: vec![],
+            swapped: None,
         }
     }
 
@@ -274,20 +297,37 @@ impl World {
                     .quote(&m, &trade(TradeMode::ExactIn, input, output, amount));
                 let trader = Keypair::new();
                 self.env.svm.airdrop(&trader.pubkey(), SOL).unwrap();
-                self.give(&trader.pubkey(), &m.token_mint, &m.token_program, amount);
-                self.give(&trader.pubkey(), &WSOL, &TOKEN, amount);
-                let swap = self.env.swap(
-                    &m,
-                    &trader,
-                    (input, output),
-                    TradeMode::ExactIn,
-                    amount.max(1),
-                );
-                // Each quote equals its swap: in this build both are refused.
-                assert!(
-                    quote.is_err() && swap.is_err(),
-                    "quote {quote:?}, swap {swap:?}"
-                );
+                // Enough for the trade and Pipeline's 0.25% on top, and an output account.
+                let funding = amount.saturating_add(amount / 300 + 1);
+                let (input_mint, input_program) = (m.mints()[input], m.token_programs()[input]);
+                let (output_mint, output_program) = (m.mints()[output], m.token_programs()[output]);
+                self.give(&trader.pubkey(), &input_mint, &input_program, funding);
+                self.give(&trader.pubkey(), &output_mint, &output_program, 0);
+                let swap = self
+                    .env
+                    .swap(&m, &trader, (input, output), TradeMode::ExactIn, amount);
+                match (&quote, &swap) {
+                    (Ok(quote), Ok(swap)) => {
+                        assert_eq!(
+                            swap.received, quote.amount_out,
+                            "quote {quote:?}, swap {swap:?}"
+                        );
+                        assert_eq!(swap.net_sent, amount);
+                        self.swapped = Some((
+                            i,
+                            Swapped {
+                                buy,
+                                amount_in: amount,
+                                amount_out: swap.received,
+                            },
+                        ));
+                        if buy {
+                            self.buyers.push((i, trader.pubkey()));
+                        }
+                    }
+                    (Err(_), Err(_)) => {}
+                    _ => panic!("{amount} ({input}->{output}): quote {quote:?}, swap {swap:?}"),
+                }
             }
             Step::Warp { seconds, slots } => {
                 let clock = self.env.svm.get_sysvar::<anchor_lang::prelude::Clock>();
@@ -314,10 +354,20 @@ impl World {
                 if *mint == WSOL {
                     total += self.env.balance(&m.sol_vault) as u128;
                 }
+                // Pipeline's fee on each trade waits in the router's fee account.
+                for (market_mint, program) in m.mints().iter().zip(m.token_programs()) {
+                    if market_mint == mint {
+                        let fees = pda::fee_account(&m.market, mint, &program);
+                        if self.env.svm.get_account(&fees).is_some() {
+                            total += self.env.balance(&fees) as u128;
+                        }
+                    }
+                }
             }
             assert_eq!(total, *minted, "units of {mint} created or lost");
         }
-        for tracked in &mut self.markets {
+        let swapped = self.swapped.take();
+        for (index, tracked) in self.markets.iter_mut().enumerate() {
             let m = &tracked.market;
             let state = self.env.state(m);
             let last = &tracked.last;
@@ -337,18 +387,41 @@ impl World {
             );
             assert!(sol_vault >= sol_ledgers, "SOL vault below its ledgers");
             // No instruction but `pipeline_swap` moves the price or the counters (the seed
-            // sets the price once).
-            if last.status == STATUS_OPEN {
-                assert_eq!(state.sqrt_price(), last.sqrt_price());
+            // sets the price once), and a swap moves the counters by exactly its trade.
+            match swapped.filter(|(market, _)| *market == index) {
+                None => {
+                    if last.status == STATUS_OPEN {
+                        assert_eq!(state.sqrt_price(), last.sqrt_price());
+                    }
+                    assert_eq!(state.counters(), last.counters());
+                }
+                Some((_, trade)) => {
+                    let (input, output) = if trade.buy { (1, 0) } else { (0, 1) };
+                    let fee = state.fees_collected() - last.fees_collected();
+                    assert_eq!(state.swap_count(), last.swap_count() + 1);
+                    assert_eq!(
+                        state.volume(input).unwrap() - last.volume(input).unwrap(),
+                        trade.amount_in as u128
+                    );
+                    assert_eq!(
+                        state.volume(output).unwrap() - last.volume(output).unwrap(),
+                        trade.amount_out as u128
+                    );
+                    let fee_bps = state.fee_bps() as u128;
+                    let charged_on = if trade.buy {
+                        trade.amount_in as u128
+                    } else {
+                        trade.amount_out as u128 + fee
+                    };
+                    assert_eq!(fee, (charged_on * fee_bps).div_ceil(10_000));
+                    if trade.buy {
+                        assert!(state.sqrt_price() > last.sqrt_price());
+                    } else {
+                        assert!(state.sqrt_price() < last.sqrt_price());
+                    }
+                    assert_eq!(state.last_close(), state.sqrt_price());
+                }
             }
-            assert_eq!(
-                (state.volume(0), state.volume(1)),
-                (last.volume(0), last.volume(1))
-            );
-            assert_eq!(
-                (state.fees_collected(), state.swap_count()),
-                (last.fees_collected(), last.swap_count())
-            );
             // Parameters never change.
             assert_eq!(
                 (
@@ -387,21 +460,17 @@ impl World {
                     assert!(
                         U256::mul(l, s).unwrap() <= U256::mul(state.pool_sol() as u128, q).unwrap()
                     );
-                    // The curve holds no more than the cap; the cap never rises and never
-                    // falls below the floor.
-                    let held = U256::mul(l, q).unwrap();
-                    assert!(
-                        held <= U256::mul(state.cap() as u128, s).unwrap()
-                            || l == buy_wall_amm::config::MIN_LIQUIDITY
-                    );
+                    // The cap never rises and never falls below the floor. (Its bound on
+                    // what the curve holds arrives with the trim, and the wall's floor with
+                    // the wall: tickets #49 and #50.)
                     if last.status == STATUS_OPEN {
                         assert!(state.cap() <= last.cap());
                     }
                     assert!(state.cap() >= state.cap_floor() && state.cap_floor() >= 1);
                     assert!(state.cap_floor() <= state.seeded_tokens());
-                    // The wall's floor is never above the price; no wall is placed yet.
-                    assert!(state.floor() <= s);
+                    // No wall is placed yet, and nothing has been trimmed or retired.
                     assert_eq!(state.wall_liquidity(), 0);
+                    assert_eq!((state.retired_tokens(), state.rewards_owed()), (0, 0));
                     assert!(l >= buy_wall_amm::config::MIN_LIQUIDITY);
                 }
                 other => panic!("status {other}"),
@@ -411,6 +480,24 @@ impl World {
                 "the reserve stays zeroed"
             );
             tracked.last = state;
+        }
+        // Every holder can exit: a buyer's whole token balance sells, unless it is worth
+        // less than one lamport (and every quote equals its swap, checked on each trade).
+        for &(market, buyer) in &self.buyers {
+            let m = &self.markets[market].market;
+            let account = pda::associated_token(&buyer, &m.token_mint, &m.token_program);
+            let held = self.env.balance(&account);
+            if held == 0 {
+                continue;
+            }
+            let quote = self.env.quote(m, &trade(TradeMode::ExactIn, 0, 1, held));
+            if let Err(error) = &quote {
+                let dust: u32 = buy_wall_amm::errors::StrategyError::ZeroOutput.into();
+                assert!(
+                    error.contains(&format!("Custom({dust})")),
+                    "a holder of {held} cannot exit: {error}"
+                );
+            }
         }
     }
 }

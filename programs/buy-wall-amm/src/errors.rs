@@ -53,8 +53,18 @@ pub enum StrategyError {
     MarketNotOpen,
     #[msg("Exact-out trades are not supported")]
     ExactOutNotSupported,
+    /// Returned by no instruction since plain trading landed; kept so later errors keep
+    /// their numbers.
     #[msg("Trading is not available in this build")]
     TradingNotAvailable,
     #[msg("Arithmetic overflow")]
     Overflow,
+    #[msg("The input is zero")]
+    ZeroInput,
+    #[msg("The trade would pay out nothing")]
+    ZeroOutput,
+    #[msg("Nothing is left of the input after the fee")]
+    NothingAfterFee,
+    #[msg("The trade reaches a price bound with input left over")]
+    PriceBoundReached,
 }
