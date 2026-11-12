@@ -67,6 +67,14 @@ export const BUY_WALL_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED = 0x1787; // 6023
 export const BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE = 0x1788; // 6024
 /** Overflow: Arithmetic overflow */
 export const BUY_WALL_AMM_ERROR__OVERFLOW = 0x1789; // 6025
+/** ZeroInput: The input is zero */
+export const BUY_WALL_AMM_ERROR__ZERO_INPUT = 0x178a; // 6026
+/** ZeroOutput: The trade would pay out nothing */
+export const BUY_WALL_AMM_ERROR__ZERO_OUTPUT = 0x178b; // 6027
+/** NothingAfterFee: Nothing is left of the input after the fee */
+export const BUY_WALL_AMM_ERROR__NOTHING_AFTER_FEE = 0x178c; // 6028
+/** PriceBoundReached: The trade reaches a price bound with input left over */
+export const BUY_WALL_AMM_ERROR__PRICE_BOUND_REACHED = 0x178d; // 6029
 
 export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__ALREADY_SEEDED
@@ -83,10 +91,12 @@ export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__MINT_AUTHORITY_LIVE
   | typeof BUY_WALL_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED
   | typeof BUY_WALL_AMM_ERROR__NOT_A_MARKET
+  | typeof BUY_WALL_AMM_ERROR__NOTHING_AFTER_FEE
   | typeof BUY_WALL_AMM_ERROR__NOT_PIPELINE
   | typeof BUY_WALL_AMM_ERROR__NOT_SEEDER
   | typeof BUY_WALL_AMM_ERROR__OPENING_PRICE_OUT_OF_BOUNDS
   | typeof BUY_WALL_AMM_ERROR__OVERFLOW
+  | typeof BUY_WALL_AMM_ERROR__PRICE_BOUND_REACHED
   | typeof BUY_WALL_AMM_ERROR__REWARD_SHARE_OUT_OF_RANGE
   | typeof BUY_WALL_AMM_ERROR__REWARDS_RECIPIENT_MISMATCH
   | typeof BUY_WALL_AMM_ERROR__SAME_MINT
@@ -94,7 +104,9 @@ export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__SEED_TOO_SMALL
   | typeof BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE
   | typeof BUY_WALL_AMM_ERROR__WALL_SPLIT_OUT_OF_RANGE
-  | typeof BUY_WALL_AMM_ERROR__WRONG_ACCOUNT;
+  | typeof BUY_WALL_AMM_ERROR__WRONG_ACCOUNT
+  | typeof BUY_WALL_AMM_ERROR__ZERO_INPUT
+  | typeof BUY_WALL_AMM_ERROR__ZERO_OUTPUT;
 
 let buyWallAmmErrorMessages: Record<BuyWallAmmError, string> | undefined;
 if (process.env["NODE_ENV"] !== "production") {
@@ -113,10 +125,12 @@ if (process.env["NODE_ENV"] !== "production") {
     [BUY_WALL_AMM_ERROR__MINT_AUTHORITY_LIVE]: `The token's mint authority must be removed before the seed`,
     [BUY_WALL_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED]: `The token carries a Token-2022 extension outside the allowlist`,
     [BUY_WALL_AMM_ERROR__NOT_A_MARKET]: `Not a buy wall market state of a deployed layout`,
+    [BUY_WALL_AMM_ERROR__NOTHING_AFTER_FEE]: `Nothing is left of the input after the fee`,
     [BUY_WALL_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
     [BUY_WALL_AMM_ERROR__NOT_SEEDER]: `Only the market's seeder may seed it`,
     [BUY_WALL_AMM_ERROR__OPENING_PRICE_OUT_OF_BOUNDS]: `The opening price is outside the opening bounds`,
     [BUY_WALL_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
+    [BUY_WALL_AMM_ERROR__PRICE_BOUND_REACHED]: `The trade reaches a price bound with input left over`,
     [BUY_WALL_AMM_ERROR__REWARD_SHARE_OUT_OF_RANGE]: `The reward share must be at most MAX_REWARD_SHARE_BPS`,
     [BUY_WALL_AMM_ERROR__REWARDS_RECIPIENT_MISMATCH]: `A rewards recipient is required exactly when the reward share is above 0`,
     [BUY_WALL_AMM_ERROR__SAME_MINT]: `The token must not be wrapped SOL, SPL Token's or Token-2022's`,
@@ -125,6 +139,8 @@ if (process.env["NODE_ENV"] !== "production") {
     [BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE]: `Trading is not available in this build`,
     [BUY_WALL_AMM_ERROR__WALL_SPLIT_OUT_OF_RANGE]: `The wall split must be at most 10,000 basis points`,
     [BUY_WALL_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,
+    [BUY_WALL_AMM_ERROR__ZERO_INPUT]: `The input is zero`,
+    [BUY_WALL_AMM_ERROR__ZERO_OUTPUT]: `The trade would pay out nothing`,
   };
 }
 

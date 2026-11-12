@@ -120,3 +120,23 @@ fn a_market_launched_single_sided_on_a_virtual_reserve_passes_every_check_given_
     };
     check(&env, &market, &options, "single-sided on a virtual reserve");
 }
+
+#[test]
+fn a_market_a_launchpad_seeded_passes_every_check() {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN_2022), TOKEN_2022),
+    ];
+    let amounts = [100_000_000_000, 200_000_000_000];
+    let launch = env.launch(mints, amounts);
+    let graduated = env
+        .graduate(&launch, &params(1, 300, 500), amounts)
+        .unwrap();
+    check(
+        &env,
+        &graduated.market,
+        &CheckOptions::default(),
+        "seeded by the stand-in launchpad through pipeline_seed_liquidity",
+    );
+}

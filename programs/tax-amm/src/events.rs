@@ -56,3 +56,17 @@ pub struct TaxAuthorityRenounced {
     pub market_state: Pubkey,
     pub tax_authority: Pubkey,
 }
+
+/// One tax slot was paid out (docs/spec/tax-amm.md, "Payout"): `amount` of the tax-side
+/// mint went to the associated token account of `recipient`, or was burned from the vault
+/// for the burn slot, whose `recipient` is the default key. A slot with nothing owed pays
+/// nothing and emits nothing.
+#[event]
+#[derive(Debug, PartialEq, Eq)]
+pub struct Distributed {
+    pub market_state: Pubkey,
+    /// 0 to 3 a tax recipient, 4 the burn, 5 the suite share.
+    pub slot: u8,
+    pub recipient: Pubkey,
+    pub amount: u64,
+}

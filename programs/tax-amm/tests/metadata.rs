@@ -58,6 +58,8 @@ fn the_metadata_describes_a_tax_amm() {
         actions,
         [
             "seed",
+            "distribute",
+            "burn",
             "set_taxes",
             "set_recipients",
             "renounce_tax_authority"
@@ -191,6 +193,63 @@ fn the_init_accounts_are_exactly_the_accounts_the_program_takes() {
     }
 }
 
+#[test]
+fn the_seed_liquidity_form_describes_exactly_what_the_program_takes() {
+    // Pipeline's metadata standard has no field for pipeline_seed_liquidity, so the tax AMM
+    // describes it in a `seed_liquidity` form shaped as `init` is (the validator allows
+    // unknown keys), which the SDK's `resolveInit` resolves for a launcher.
+    let m = metadata();
+    let form = &m["seed_liquidity"];
+    assert_eq!(form["idl_type"], "InitParams");
+    // `data` is the creation parameters: init's arguments, word for word, in order, except
+    // the seeder's description, which says it is ignored.
+    let init_args = m["init"]["args"].as_array().unwrap();
+    let form_args = form["args"].as_array().unwrap();
+    assert_eq!(form_args.len(), init_args.len());
+    for (ours, init) in form_args.iter().zip(init_args) {
+        let (mut ours, mut init) = (ours.clone(), init.clone());
+        if init["name"] == "seeder" {
+            let description = ours["description"].as_str().unwrap();
+            assert!(description.starts_with("Ignored"), "{description}");
+            ours.as_object_mut().unwrap().remove("description");
+            init.as_object_mut().unwrap().remove("description");
+        }
+        assert_eq!(ours, init);
+    }
+
+    // The market state is the seeded PDA of the seeder and the mints, and the accounts after
+    // Pipeline's fixed ones and the three per mint are the program's own.
+    let seeder = Pubkey::new_unique();
+    let mints = [Pubkey::new_unique(), Pubkey::new_unique()];
+    let token_programs = [TOKEN, TOKEN_2022];
+    let inputs = HashMap::from([
+        ("seeder", (seeder, Pubkey::default())),
+        ("mint_0", (mints[0], token_programs[0])),
+        ("mint_1", (mints[1], token_programs[1])),
+    ]);
+    let source = parse_account_source(form["market_state"].as_str().unwrap()).unwrap();
+    let state = resolve(&source, &Pubkey::default(), &inputs);
+    assert_eq!(
+        state,
+        common::launchpad::seeded_market_state(&seeder, mints)
+    );
+    let (authority, vaults) = tax_market_addresses(&state, mints);
+    let expected = [(authority, false), (vaults[0], true), (vaults[1], true)];
+    let accounts = form["accounts"].as_array().unwrap();
+    assert_eq!(accounts.len(), expected.len());
+    for (account, (key, writable)) in accounts.iter().zip(expected) {
+        let name = account["name"].as_str().unwrap();
+        let source = parse_account_source(account["source"].as_str().unwrap()).unwrap();
+        assert_eq!(resolve(&source, &state, &inputs), key, "{name}");
+        assert_eq!(
+            account["writable"].as_bool().unwrap_or(false),
+            writable,
+            "{name}"
+        );
+        assert!(!account["signer"].as_bool().unwrap_or(false), "{name}");
+    }
+}
+
 fn action(name: &str) -> Value {
     metadata()["actions"]
         .as_array()
@@ -203,7 +262,47 @@ fn action(name: &str) -> Value {
 
 /// Resolves an action's account source against a market, as the SDK does.
 fn resolve_action(source: &AccountSource, market: &Market, wallet: &Pubkey) -> Pubkey {
+    resolve_action_with(source, market, wallet, &HashMap::new())
+}
+
+/// [`resolve_action`] with values for `input:` sources.
+fn resolve_action_with(
+    source: &AccountSource,
+    market: &Market,
+    wallet: &Pubkey,
+    inputs: &HashMap<&str, Pubkey>,
+) -> Pubkey {
+    let token_program_of = |mint: &Pubkey| {
+        let i = market
+            .mints
+            .iter()
+            .position(|m| m == mint)
+            .expect("a market mint");
+        market.token_programs[i]
+    };
+    let nested = |source: &AccountSource| resolve_action_with(source, market, wallet, inputs);
     match source {
+        AccountSource::Input(name) => inputs[name.as_str()],
+        AccountSource::SystemProgram => pipeline_client::SYSTEM_PROGRAM_ID,
+        AccountSource::AssociatedTokenProgram => pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
+        AccountSource::TokenProgramOf(mint) => token_program_of(&nested(mint)),
+        AccountSource::Ata { owner, mint } => {
+            let mint = nested(mint);
+            pipeline_client::pda::associated_token(&nested(owner), &mint, &token_program_of(&mint))
+        }
+        AccountSource::Pda { program, seeds } => {
+            assert!(program.is_none(), "the tax AMM's PDAs are its own");
+            let bytes: Vec<Vec<u8>> = seeds
+                .iter()
+                .map(|seed| match seed {
+                    PdaSeed::Str(text) => text.as_bytes().to_vec(),
+                    PdaSeed::Key(source) => nested(source).to_bytes().to_vec(),
+                    other => panic!("unexpected seed {other:?}"),
+                })
+                .collect();
+            let refs: Vec<&[u8]> = bytes.iter().map(Vec::as_slice).collect();
+            Pubkey::find_program_address(&refs, &strategy_id()).0
+        }
         AccountSource::Wallet => *wallet,
         AccountSource::MarketState => market.market_state,
         AccountSource::Mint(i) => market.mints[*i as usize],
@@ -359,4 +458,80 @@ fn the_tax_authority_actions_are_exactly_the_programs() {
         &market,
         &wallet,
     );
+}
+
+#[test]
+fn the_distribute_and_burn_actions_are_exactly_the_programs_distribute_for_every_slot() {
+    use anchor_lang::Discriminator;
+    use tax_amm::state::{BURN_SLOT, SUITE_SLOT};
+    let distribute = action("distribute");
+    let burn = action("burn");
+    assert_eq!(distribute["kind"], "claim");
+    assert_eq!(burn["kind"], "claim");
+    // `distribute` uses Anchor's default discriminator; `burn` is the same instruction for
+    // the burn slot, so it names that discriminator.
+    assert!(distribute.get("discriminator").is_none());
+    let hex: String = tax_amm::instruction::Distribute::DISCRIMINATOR
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(burn["discriminator"], hex);
+    // The slot numbers the descriptions give are the program's.
+    let slot_text = |a: &Value| a["args"][0]["description"].as_str().unwrap().to_string();
+    assert!(slot_text(&distribute).contains(&format!("{SUITE_SLOT} the suite share")));
+    assert!(slot_text(&burn).contains(&format!("Always {BURN_SLOT}, the burn slot")));
+
+    // Taxed on side 1, a Token-2022 mint, so a wrong mint or token program would show.
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN_2022), TOKEN_2022),
+    ];
+    let market = env
+        .create_tax_market(mints, &valid_params(&Keypair::new().pubkey()))
+        .unwrap();
+    let state = env.tax_market(&market.market_state);
+    let caller = Keypair::new().pubkey();
+    for slot in [0u8, 1, BURN_SLOT, SUITE_SLOT] {
+        let action = if slot == BURN_SLOT {
+            &burn
+        } else {
+            &distribute
+        };
+        let wallet = slot_wallet(&state, slot);
+        let expected = distribute_instruction(&market, 1, &caller, slot, &wallet, vec![]);
+        // What a terminal reads from the market state for the action's two inputs.
+        let inputs = HashMap::from([("tax_mint", market.mints[1]), ("recipient", wallet)]);
+
+        let args = action["args"].as_array().unwrap();
+        assert_eq!(args.len(), 1);
+        let mut data = expected.data[..8].to_vec();
+        data.extend(encode_arg(
+            args[0]["type"].as_str().unwrap(),
+            &Value::from(slot),
+        ));
+        assert_eq!(data, expected.data, "slot {slot}");
+
+        let accounts = action["accounts"].as_array().unwrap();
+        assert_eq!(accounts.len(), expected.accounts.len());
+        for (account, meta) in accounts.iter().zip(&expected.accounts) {
+            let name = account["name"].as_str().unwrap();
+            let source = parse_account_source(account["source"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                resolve_action_with(&source, &market, &caller, &inputs),
+                meta.pubkey,
+                "slot {slot}, {name}"
+            );
+            assert_eq!(
+                account["signer"].as_bool().unwrap_or(false),
+                meta.is_signer,
+                "slot {slot}, {name}"
+            );
+            assert_eq!(
+                account["writable"].as_bool().unwrap_or(false),
+                meta.is_writable,
+                "slot {slot}, {name}"
+            );
+        }
+    }
 }

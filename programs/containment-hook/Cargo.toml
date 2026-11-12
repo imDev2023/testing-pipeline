@@ -56,4 +56,6 @@ solana-transaction.workspace = true
 spl-tlv-account-resolution.workspace = true
 spl-token-2022-interface.workspace = true
 spl-transfer-hook-interface.workspace = true
+# The shared test support's launchpad helpers (`tax-amm/tests/common/launchpad.rs`).
+stand-in-launchpad.workspace = true
 toml.workspace = true

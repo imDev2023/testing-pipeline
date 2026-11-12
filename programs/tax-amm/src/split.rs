@@ -41,8 +41,8 @@ pub fn split_tax(
     }
     let burn = rest * burn_share_bps as u128 / BPS;
     booked += burn;
-    slots[BURN_SLOT] = burn as u64;
-    slots[SUITE_SLOT] = suite as u64;
+    slots[BURN_SLOT as usize] = burn as u64;
+    slots[SUITE_SLOT as usize] = suite as u64;
     // Each part rounds down, so what is left over is under one unit per part; with whole
     // shares this never fails (proofs/pricing_z3.py, P1).
     let remainder = rest.checked_sub(booked).ok_or(StrategyError::Overflow)?;
@@ -149,9 +149,9 @@ mod proofs {
         let (shares, burn) = whole_shares();
         let slots = split_tax(tax, &shares, burn).unwrap();
         let suite = tax as u128 * SUITE_SHARE_BPS as u128 / BPS;
-        assert!(slots[SUITE_SLOT] as u128 == suite);
+        assert!(slots[SUITE_SLOT as usize] as u128 == suite);
         let rest = tax as u128 - suite;
-        assert!(slots[BURN_SLOT] as u128 == rest * burn as u128 / BPS);
+        assert!(slots[BURN_SLOT as usize] as u128 == rest * burn as u128 / BPS);
         for i in 1..MAX_RECIPIENTS {
             assert!(slots[i] as u128 == rest * shares[i] as u128 / BPS);
         }
