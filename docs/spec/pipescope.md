@@ -3,7 +3,7 @@
 Decided with the owner in [Pipescope v1 scope](https://github.com/imDev2023/testing-pipeline/issues/3) on 2026-11-09 and 2026-11-10.
 MetalLegBob confirmed the scope stands and asked for nothing more for a start ([Record MetalLegBob's answers to the outreach](https://github.com/imDev2023/testing-pipeline/issues/5)).
 Pipeline was read at commit `5ad130d` (its integrator guide, metadata standard and trust facts).
-The explainer has its own file, [`pipescope-explainer.md`](pipescope-explainer.md); [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) merges the Aviary files.
+The explainer has its own file, [`pipescope-explainer.md`](pipescope-explainer.md); [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) reconciled the Aviary files on 2026-11-12 and cut the build tickets listed in [`pipescope-architecture.md`](pipescope-architecture.md#build-tickets).
 What each page shows and how it behaves is in [`pipescope-screens.md`](pipescope-screens.md).
 
 ## What the first version is
@@ -46,7 +46,7 @@ Not in the first version:
 - One market, one hop, exact-in only: the trader picks any two of the market's two to four mints as input and output.
 - SOL is wrapped and unwrapped for the trader.
 - The market's `init_fee_account` is added to the transaction when a sell needs it.
-- Default slippage is 1%, and the trader can change it.
+- A default slippage, which the trader can change; its value (`PIPESCOPE-08`) lives in the screens' config module ([`pipescope-screens.md`](pipescope-screens.md), One place for every value), and this file does not repeat it.
 
 ### Simulate before every signature
 
@@ -55,8 +55,9 @@ Not in the first version:
 
 ## The integrator fee
 
-- **Rate**: 0.5% (50 basis points), one rate for every market, set in config.
-  With Pipeline's 0.25%, a trader pays 0.75% in all, under the 1% usual among terminals.
+- **Rate**: 0.5% (50 basis points), one rate for every market (`PIPESCOPE-10`).
+  This line is the only place in the spec that states it; in code it is a var of `terminal-api` ([`pipescope-architecture.md`](pipescope-architecture.md), The integrator fee's configuration), and every page and the Telegram bot read it from the API.
+  With Pipeline's own fee, which was 0.25% on devnet in November 2026, a trader pays 0.75% in all, under the 1% usual among terminals.
 - **Fee mints**: the router takes an integrator fee in the mint the trader pays with, so Aviary charges it only when the input mint is a fee mint: SOL (as wrapped SOL) or USDC.
   A swap paying with any other mint passes no integrator fee account and a rate of 0.
   The reasons: a fee account in every mint would cost about 0.002 SOL of rent each, paid by the trader's transaction; the fees would pile up in tokens that are hard to sell; and a hooked token, our own containment hook included, may refuse transfers into our account and so make sells fail.
@@ -69,8 +70,8 @@ Not in the first version:
 ### How the fee is shown before signing
 
 - The trade box always shows the fee breakdown, never collapsed, in token amounts and percentages:
-  - Pipeline fee: 0.25%;
-  - Aviary fee: 0.5%, or "none on this swap" when the input is not a fee mint;
+  - Pipeline fee, at the rate the router's config holds, which `terminal-api` reads from the chain and returns, so no page writes it;
+  - Aviary fee, at the rate the API built the swap with, or "none on this swap" when the input is not a fee mint;
   - the strategy's own fees and taxes: "included in the quote", since strategy metadata has no field for them;
   - the expected output and the minimum received after slippage.
 - The swap is built from exactly the rate on screen.
@@ -102,7 +103,7 @@ Not in the first version:
 ### When a strategy is upgraded
 
 - Pages show results only for the newest strategy version.
-- Until the new version has been tested and explained, the strategy page and each of its market pages show: "Upgraded on <date>; tests and explanation for this version are pending."
+- Until the new version has been tested and explained, the strategy page and each of its market pages show: `Upgraded on <date>; tests and explanation for this version are pending.`
 - Results for older versions stay in the version history, labelled as such.
 
 ## The explainer
