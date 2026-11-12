@@ -56,6 +56,10 @@ fn files_containing(needle: &str) -> Vec<String> {
             !path.starts_with("lending-amm/idl/")
                 && !path.starts_with("lending-amm/scripts/client/")
         })
+        // The Kamino accounts dumped from each cluster are data read from the chain, never
+        // written by hand; `tests/kamino.rs` checks they are the reserves the config module
+        // names.
+        .filter(|path| !path.starts_with("lending-amm/tests/fixtures/"))
         .collect()
 }
 

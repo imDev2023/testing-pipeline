@@ -5,7 +5,6 @@
 
 import { getAddressDecoder, type Address } from '@solana/kit';
 
-export const KLEND_PROGRAM = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD' as Address;
 export const RESERVE_SIZE = 8624;
 /** Anchor's discriminator of klend's Reserve, `sha256("account:Reserve")[..8]`. */
 export const RESERVE_DISCRIMINATOR = [43, 242, 204, 202, 26, 247, 59, 127];

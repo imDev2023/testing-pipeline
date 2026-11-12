@@ -103,7 +103,7 @@ import {
     findVault0Pda,
     findVault1Pda,
 } from './client/index.ts';
-import { decodeReserve, KLEND_PROGRAM, lentValue, rate, type ReserveView } from './kamino.ts';
+import { decodeReserve, lentValue, rate, type ReserveView } from './kamino.ts';
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
 const DEFAULT_PROGRAM_ID = 'Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG';
@@ -415,6 +415,7 @@ function laterDeposit(max: [bigint, bigint], reserves: [bigint, bigint], shareCo
 
 /** Kamino's devnet lending market, which the devnet build lends to. */
 type KaminoDevnet = {
+    klendProgram: string;
     lendingMarket: { address: string };
     reserves: { wsol: { address: string; collateralMint: string } };
 };
@@ -424,6 +425,8 @@ const KAMINO = JSON.parse(
 
 /** The WSOL reserve of our devnet lending market, which the demo market lends to. */
 const RESERVE = address(KAMINO.reserves.wsol.address);
+/** Kamino Lend, the same address on every cluster. */
+const KLEND = address(KAMINO.klendProgram);
 
 /**
  * Reads the reserve and decodes it at the spec's offsets, stopping unless it is the reserve
@@ -433,7 +436,7 @@ const RESERVE = address(KAMINO.reserves.wsol.address);
 async function readReserve(): Promise<ReserveView> {
     const found = await accountInfo(RESERVE);
     if (!found) fail(`the Kamino reserve ${RESERVE} does not exist on ${cluster.url}${cluster.local ? ': run programs/lending-amm/scripts/fetch-accounts.sh, then restart the validator' : ''}`);
-    if (found.owner !== KLEND_PROGRAM) fail(`the Kamino reserve ${RESERVE} is owned by ${found.owner}, not Kamino Lend`);
+    if (found.owner !== KLEND) fail(`the Kamino reserve ${RESERVE} is owned by ${found.owner}, not Kamino Lend`);
     const view = decodeReserve(found.data);
     if (typeof view === 'string') fail(`the Kamino reserve ${RESERVE}: ${view}`);
     if (
@@ -476,11 +479,11 @@ async function main() {
         );
     }
     info(`deployed (${program.loader} loader), upgrade authority ${program.upgradeAuthority}`);
-    const klend = (await rpc.getAccountInfo(KLEND_PROGRAM, { encoding: 'base64', commitment: 'confirmed' }).send()).value;
+    const klend = (await rpc.getAccountInfo(KLEND, { encoding: 'base64', commitment: 'confirmed' }).send()).value;
     if (!klend?.executable) {
-        fail(`Kamino Lend is not deployed at ${KLEND_PROGRAM}${cluster.local ? ': start the validator after programs/lending-amm/scripts/fetch-klend.sh (docs/toolchain.md)' : ''}`);
+        fail(`Kamino Lend is not deployed at ${KLEND}${cluster.local ? ': start the validator after programs/lending-amm/scripts/fetch-klend.sh (docs/toolchain.md)' : ''}`);
     }
-    info(`Kamino Lend is deployed at ${KLEND_PROGRAM}`);
+    info(`Kamino Lend is deployed at ${KLEND}`);
     const reserveView = await readReserve();
     const slot = await rpc.getSlot({ commitment: 'confirmed' }).send();
     info(
