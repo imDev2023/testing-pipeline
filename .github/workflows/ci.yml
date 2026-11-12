@@ -1,6 +1,7 @@
 # The one CI workflow (docs/spec/README.md, "CI"). Every pull request gets a result from the
 # `gate` job, the check `main` requires; the heavy jobs run only when on-chain code changed,
-# and the gate fails unless each job that ran passed.
+# the `canary` job only when Canary's binary or what it builds on changed, and the gate
+# fails unless each job that ran passed.
 name: ci
 
 on:
@@ -22,11 +23,12 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       onchain: ${{ steps.paths.outputs.onchain }}
+      canary: ${{ steps.paths.outputs.canary }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Did on-chain code change?
+      - name: Did on-chain code or Canary change?
         id: paths
         env:
           EVENT: ${{ github.event_name }}
@@ -36,6 +38,11 @@ jobs:
           # The programs, everything that builds, tests or runs them, and this workflow.
           ONCHAIN_PATHS: >-
             ^programs/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator)\.sh$|^scripts/workspace-programs\.py$
+          # Canary's crates, the fixtures its tests load (the router's pin, and Pipeline's test
+          # programs at the rev programs/Cargo.toml pins), the scripts that fetch them, and this
+          # workflow.
+          CANARY_PATHS: >-
+            ^crates/|^fixtures/pins\.env$|^programs/Cargo\.toml$|^\.github/workflows/ci\.yml$|^scripts/(fetch-router|fetch-pipeline|install-toolchain|toolchain-env)\.sh$
         run: |
           case "$EVENT" in
             pull_request) range="$PR_BASE...$PR_HEAD" ;;
@@ -45,6 +52,7 @@ jobs:
           if [ -z "$range" ] || ! changed="$(git diff --name-only "$range" 2>/dev/null)"; then
             echo "No diff to compare against; running everything."
             echo "onchain=true" >> "$GITHUB_OUTPUT"
+            echo "canary=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Changed files:"; echo "$changed" | sed 's/^/  /'
@@ -53,6 +61,12 @@ jobs:
           else
             echo "No on-chain code changed; the heavy jobs are skipped."
             echo "onchain=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$changed" | grep -Eq "$CANARY_PATHS"; then
+            echo "canary=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Canary did not change; its job is skipped."
+            echo "canary=false" >> "$GITHUB_OUTPUT"
           fi
 
   no-keypairs:
@@ -172,15 +186,57 @@ jobs:
       - name: Kani proofs (the default tiers; harnesses in parallel)
         run: source scripts/toolchain-env.sh && cd programs && cargo kani --workspace -j --output-format=terse
 
+  canary:
+    name: canary (fmt, clippy, tests)
+    needs: changes
+    if: needs.changes.outputs.canary == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cache the Solana toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.local/share/testing-pipeline/toolchain/cargo-build-sbf-*
+            ~/.local/share/testing-pipeline/toolchain/agave-*
+            ~/.cache/solana
+          key: ${{ runner.os }}-solana-${{ hashFiles('scripts/install-toolchain.sh', 'scripts/toolchain-env.sh') }}
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/target
+          key: ${{ runner.os }}-canary-cargo-${{ hashFiles('crates/Cargo.lock', 'crates/rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-canary-cargo-
+      - name: Install the toolchain (the Solana CLI fetches the router; cargo-build-sbf builds Pipeline's test programs)
+        run: scripts/install-toolchain.sh solana
+      - name: Fetch devnet's router, checked against its pinned hash
+        run: source scripts/toolchain-env.sh && scripts/fetch-router.sh
+      - name: Build Pipeline's test programs (test-strategy-cp and test-strategy-evil)
+        run: source scripts/toolchain-env.sh && scripts/fetch-pipeline.sh programs
+      - name: Formatting
+        run: cd crates && cargo fmt --all -- --check
+      - name: Clippy
+        run: cd crates && cargo clippy --all-targets -- -D warnings
+      - name: Tests (LiteSVM through devnet's router)
+        run: cd crates && cargo test
+
   gate:
     name: gate
     if: always()
-    needs: [changes, no-keypairs, rust, typescript, kani]
+    needs: [changes, no-keypairs, rust, typescript, kani, canary]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job that had to run passed
         env:
           ONCHAIN: ${{ needs.changes.outputs.onchain }}
+          CANARY: ${{ needs.changes.outputs.canary }}
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"' | {
@@ -188,6 +244,7 @@ jobs:
             while IFS== read -r job result; do
               case "$job" in
                 changes | no-keypairs) expected=success ;;
+                canary) if [ "$CANARY" = true ]; then expected=success; else expected=skipped; fi ;;
                 *) if [ "$ONCHAIN" = true ]; then expected=success; else expected=skipped; fi ;;
               esac
               echo "$job: $result (expected $expected)"
