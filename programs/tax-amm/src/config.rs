@@ -22,6 +22,9 @@ pub const SUITE_SHARE_BPS: u16 = 1_000;
 
 /// The wallet the suite share is paid to. On devnet its key is
 /// `~/.config/testing-pipeline/devnet/suite-treasury.json` (docs/toolchain.md, "Keys").
+/// Published in the IDL (`#[constant]`), where the demo script and Aviary read the suite
+/// share slot's wallet for `distribute`.
+#[constant]
 pub const SUITE_TREASURY: Pubkey = pubkey!("CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF");
 
 /// Tax recipients per market.

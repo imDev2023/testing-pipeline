@@ -175,6 +175,149 @@
             }
         ]
     },
+    "seed_liquidity": {
+        "description": "For a launchpad graduating a token: its program calls pipeline_seed_liquidity, which creates a tax market, takes the seed from the launchpad's escrows and opens it, all in one call. SeedRequest.amounts is the most to take from each escrow, in mint order: each above 0, except the virtual side's when the market has a virtual reserve. SeedRequest.data is these arguments, Borsh-encoded in order, exactly as init's: the same creation parameters under the same rules, except the seeder, which is the calling program's PDA that signs. Accounts: Pipeline's fixed seed accounts (the seeder, the market state below, the payer, the system program and an LP recipient, which is ignored since a tax market issues no LP shares), then mint, escrow and token program for each mint, then the accounts below, then any transfer-hook accounts. Returns SeedResult with lp_amount 0. Follow it in the same transaction with the router's register_existing_market (no info accounts after the market state) and init_fee_account for each mint. The market state is keyed by the seeder and the mints in the order given, so a seeder seeds each ordered pair of mints once; the same mints in the other order would make another market.",
+        "idl_type": "InitParams",
+        "market_state": "pda:strategy:str:seeded,key:input:seeder,key:input:mint_0,key:input:mint_1",
+        "args": [
+            {
+                "name": "tax_side",
+                "type": "u8",
+                "label": "Tax side",
+                "description": "The mint index, 0 or 1, every tax is taken in, whichever way a trade goes. Fixed for the market's life."
+            },
+            {
+                "name": "buy_tax_bps",
+                "type": "u16",
+                "label": "Buy tax (basis points)",
+                "description": "Taken from the input when the tax side is sold into the market. Inside its range."
+            },
+            {
+                "name": "sell_tax_bps",
+                "type": "u16",
+                "label": "Sell tax (basis points)",
+                "description": "Taken from the output when the tax side is bought from the market. Inside its range."
+            },
+            {
+                "name": "buy_tax_min_bps",
+                "type": "u16",
+                "label": "Lowest buy tax (basis points)",
+                "description": "The buy tax can never go below this. Fixed for the market's life."
+            },
+            {
+                "name": "buy_tax_max_bps",
+                "type": "u16",
+                "label": "Highest buy tax (basis points)",
+                "description": "The buy tax can never go above this, and never above the program's cap. Fixed for the market's life."
+            },
+            {
+                "name": "sell_tax_min_bps",
+                "type": "u16",
+                "label": "Lowest sell tax (basis points)",
+                "description": "The sell tax can never go below this. Fixed for the market's life."
+            },
+            {
+                "name": "sell_tax_max_bps",
+                "type": "u16",
+                "label": "Highest sell tax (basis points)",
+                "description": "The sell tax can never go above this, and never above the program's cap. Fixed for the market's life."
+            },
+            {
+                "name": "tax_authority",
+                "type": "pubkey",
+                "label": "Tax authority",
+                "description": "May change the taxes inside their ranges and the tax recipients, or renounce. The default (all-zero) key means none, so nothing can ever change."
+            },
+            {
+                "name": "seeder",
+                "type": "pubkey",
+                "label": "Seeder",
+                "description": "Ignored: the calling program's PDA that signs the seed is the market's seeder. Any key will do, the default (all-zero) key included."
+            },
+            {
+                "name": "recipient_0",
+                "type": "pubkey",
+                "label": "Tax recipient 1",
+                "description": "A wallet paid its share of the creator's part of the tax. Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "recipient_1",
+                "type": "pubkey",
+                "label": "Tax recipient 2",
+                "description": "Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "recipient_2",
+                "type": "pubkey",
+                "label": "Tax recipient 3",
+                "description": "Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "recipient_3",
+                "type": "pubkey",
+                "label": "Tax recipient 4",
+                "description": "Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "share_0",
+                "type": "u16",
+                "label": "Tax recipient 1's share (basis points)",
+                "description": "Of the creator's part, what is left after the suite share. Above 0 for a used slot, 0 for an unused one; the shares and the burn share sum to 10,000."
+            },
+            {
+                "name": "share_1",
+                "type": "u16",
+                "label": "Tax recipient 2's share (basis points)",
+                "description": "Above 0 for a used slot, 0 for an unused one."
+            },
+            {
+                "name": "share_2",
+                "type": "u16",
+                "label": "Tax recipient 3's share (basis points)",
+                "description": "Above 0 for a used slot, 0 for an unused one."
+            },
+            {
+                "name": "share_3",
+                "type": "u16",
+                "label": "Tax recipient 4's share (basis points)",
+                "description": "Above 0 for a used slot, 0 for an unused one."
+            },
+            {
+                "name": "burn_share_bps",
+                "type": "u16",
+                "label": "Burn share (basis points)",
+                "description": "Of the creator's part, burned. 0 when the tax side is native SOL."
+            },
+            {
+                "name": "virtual_side",
+                "type": "u8",
+                "label": "Virtual side",
+                "description": "The mint index, 0 or 1, whose reserve the virtual reserve adds to in pricing."
+            },
+            {
+                "name": "virtual_reserve",
+                "type": "u64",
+                "label": "Virtual reserve",
+                "description": "Added to the virtual side's real reserve in pricing, never paid out; 0 for none. Lets a token launch single-sided."
+            }
+        ],
+        "accounts": [
+            {
+                "name": "authority",
+                "source": "pda:strategy:str:authority,key:market_state"
+            },
+            {
+                "name": "vault_0",
+                "source": "pda:strategy:str:vault,key:market_state,key:input:mint_0",
+                "writable": true
+            },
+            {
+                "name": "vault_1",
+                "source": "pda:strategy:str:vault,key:market_state,key:input:mint_1",
+                "writable": true
+            }
+        ]
+    },
     "actions": [
         {
             "name": "seed",
@@ -243,6 +386,130 @@
                     "source": "token_program:1"
                 }
             ]
+        },
+        {
+            "name": "distribute",
+            "label": "Pay out a tax slot",
+            "kind": "claim",
+            "description": "Anyone pays out everything one tax recipient (slots 0 to 3) or the suite share (slot 5) is owed, in the market's tax-side mint, to the associated token account of the slot's wallet, which is created at the caller's expense when it is missing; a tax side of native SOL is paid as wrapped SOL. Inputs: tax_mint is the market's tax-side mint, and recipient the slot's wallet, read from the market state (the suite treasury's for slot 5). A slot owed nothing moves nothing. The burn slot is paid out with the burn action. Add the tax-side mint's transfer-hook accounts after these.",
+            "args": [
+                {
+                    "name": "slot",
+                    "type": "u8",
+                    "label": "Slot",
+                    "description": "0 to 3 a tax recipient, 5 the suite share. An unused recipient slot is refused."
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "payer",
+                    "source": "wallet",
+                    "signer": true,
+                    "writable": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                },
+                {
+                    "name": "vault_authority",
+                    "source": "pda:strategy:str:authority,key:market_state"
+                },
+                {
+                    "name": "tax_vault",
+                    "source": "pda:strategy:str:vault,key:market_state,key:input:tax_mint",
+                    "writable": true
+                },
+                {
+                    "name": "tax_mint",
+                    "source": "input:tax_mint"
+                },
+                {
+                    "name": "recipient",
+                    "source": "input:recipient"
+                },
+                {
+                    "name": "recipient_token_account",
+                    "source": "ata:input:recipient,input:tax_mint",
+                    "writable": true
+                },
+                {
+                    "name": "token_program",
+                    "source": "token_program_of:input:tax_mint"
+                },
+                {
+                    "name": "associated_token_program",
+                    "source": "associated_token_program"
+                },
+                {
+                    "name": "system_program",
+                    "source": "system_program"
+                }
+            ]
+        },
+        {
+            "name": "burn",
+            "label": "Burn the burn slot's tax",
+            "kind": "claim",
+            "description": "Anyone burns everything the burn slot (slot 4) is owed from the market's vault, lowering the tax-side mint's supply. This is the distribute instruction for slot 4, with the mint writable, which only the burn needs, so the tax recipients' payouts never write-lock the mint. Inputs: tax_mint is the market's tax-side mint, and recipient the default (all-zero) key, 11111111111111111111111111111111, since the burn pays no wallet. A burn slot owed nothing burns nothing.",
+            "args": [
+                {
+                    "name": "slot",
+                    "type": "u8",
+                    "label": "Slot",
+                    "description": "Always 4, the burn slot."
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "payer",
+                    "source": "wallet",
+                    "signer": true,
+                    "writable": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                },
+                {
+                    "name": "vault_authority",
+                    "source": "pda:strategy:str:authority,key:market_state"
+                },
+                {
+                    "name": "tax_vault",
+                    "source": "pda:strategy:str:vault,key:market_state,key:input:tax_mint",
+                    "writable": true
+                },
+                {
+                    "name": "tax_mint",
+                    "source": "input:tax_mint",
+                    "writable": true
+                },
+                {
+                    "name": "recipient",
+                    "source": "input:recipient"
+                },
+                {
+                    "name": "recipient_token_account",
+                    "source": "ata:input:recipient,input:tax_mint",
+                    "writable": true
+                },
+                {
+                    "name": "token_program",
+                    "source": "token_program_of:input:tax_mint"
+                },
+                {
+                    "name": "associated_token_program",
+                    "source": "associated_token_program"
+                },
+                {
+                    "name": "system_program",
+                    "source": "system_program"
+                }
+            ],
+            "discriminator": "bf2cdfcfa4ec7e3d"
         },
         {
             "name": "set_taxes",

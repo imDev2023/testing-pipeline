@@ -13,15 +13,20 @@
 //! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices a trade, read-only             |
 //! | `pipeline_swap`             | the router, from `swap`          | settles a trade, booking its tax      |
 //! | `seed`                      | the market's seeder, directly    | funds the market once and opens it    |
+//! | `distribute`                | anyone, directly                 | pays out what one tax slot is owed    |
 //! | `set_taxes`                 | the tax authority, directly      | moves the rates inside their ranges   |
 //! | `set_recipients`            | the tax authority, directly      | changes the recipients and the burn   |
 //! | `renounce_tax_authority`    | the tax authority, directly      | gives up its powers for good          |
+//! | `pipeline_seed_liquidity`   | a launchpad's program, by CPI    | creates, seeds and opens a market     |
 //!
 //! A market is created through the router and opens with its seed, usually in the same
-//! transaction; until then every quote and swap is refused. From then on its liquidity is
-//! locked for good, and every trade's tax is booked as owed to its slots in the tax-side
-//! vault. Its optional tax authority may move the rates inside the ranges fixed at
-//! creation, change the tax recipients, and renounce; nobody else can change a market.
+//! transaction; until then every quote and swap is refused. A launchpad graduating a token
+//! instead creates, seeds and opens a market in one call to `pipeline_seed_liquidity`, and
+//! records it with the router's `register_existing_market` in the same transaction. From then
+//! on its liquidity is locked for good, and every trade's tax is booked as owed to its slots
+//! in the tax-side vault. Its optional tax authority may move the rates inside the ranges
+//! fixed at creation, change the tax recipients, and renounce; nobody else can change a
+//! market.
 //!
 //! Where things live: the build-time policy values in [`config`], the creation parameters
 //! and their rules in [`params`], the market state and its fixed layout in [`state`], the
@@ -97,6 +102,14 @@ pub mod tax_amm {
         instructions::seed_market(ctx, amount_0, amount_1)
     }
 
+    /// Custom action: anyone pays out what one tax slot is owed, a tax recipient or the
+    /// suite share to its wallet's associated token account for the tax-side mint (created
+    /// at the caller's expense when missing), the burn by burning from the vault.
+    /// Remaining accounts are the tax-side mint's transfer-hook accounts.
+    pub fn distribute<'info>(ctx: Context<'info, Distribute<'info>>, slot: u8) -> Result<()> {
+        instructions::distribute_slot(ctx, slot)
+    }
+
     /// Custom action: the tax authority moves the buy and sell tax, each inside the range
     /// fixed at creation. The next swap pays the new rates.
     pub fn set_taxes(
@@ -122,6 +135,18 @@ pub mod tax_amm {
     /// recipients never change again.
     pub fn renounce_tax_authority(ctx: Context<TaxAuthorityAction>) -> Result<()> {
         instructions::renounce(ctx)
+    }
+
+    /// Pipeline's optional extension, for a launchpad graduating a token: creates a tax
+    /// market at the PDA `["seeded", seeder, mint_0, mint_1]` with the creation parameters
+    /// in `request.data` (whose seeder is ignored: the calling program's PDA is the
+    /// seeder), takes `request.amounts` from the seeder's escrows and opens it. Returns
+    /// `SeedResult`. Remaining accounts are transfer-hook accounts, for either mint.
+    pub fn pipeline_seed_liquidity<'info>(
+        ctx: Context<'info, SeedLiquidity<'info>>,
+        request: interface::SeedRequest,
+    ) -> Result<()> {
+        instructions::seed_liquidity(ctx, request)
     }
 }
 

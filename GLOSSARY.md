@@ -160,6 +160,10 @@ _Avoid_: beneficiary, fee receiver
 Our fixed tenth of every tax market's tax and of every buy wall market's fee, paid to the suite's treasury before the rest is split.
 _Avoid_: protocol fee (Meteora's term), platform fee
 
+**Tax slot**:
+One of the six places a tax market books the tax it owes until `distribute` pays it out: one per tax recipient (slots 0 to 3), the burn (slot 4) and the suite share (slot 5).
+_Avoid_: bucket, claim
+
 **Virtual reserve**:
 An amount a market prices as if it held on one side, so a token can launch without the other side; it is never paid out.
 _Avoid_: fake liquidity, virtual liquidity

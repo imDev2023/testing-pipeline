@@ -77,13 +77,27 @@ export const TAX_AMM_ERROR__ALREADY_RENOUNCED = 0x178c; // 6028
 export const TAX_AMM_ERROR__NOT_TAX_AUTHORITY = 0x178d; // 6029
 /** OwedSlotLeftEmpty: A recipient slot still owed tax can't be emptied; pay it out or name another wallet */
 export const TAX_AMM_ERROR__OWED_SLOT_LEFT_EMPTY = 0x178e; // 6030
+/** BadSeedAmounts: A seed request gives one amount for each of the market's two mints */
+export const TAX_AMM_ERROR__BAD_SEED_AMOUNTS = 0x178f; // 6031
+/** NoSuchSlot: No such tax slot: there is one per tax recipient, then the burn's and the suite share's */
+export const TAX_AMM_ERROR__NO_SUCH_SLOT = 0x1790; // 6032
+/** UnusedSlot: The tax recipient slot is unused: it has no wallet to pay */
+export const TAX_AMM_ERROR__UNUSED_SLOT = 0x1791; // 6033
+/** NotSlotWallet: The wallet is not the tax slot's */
+export const TAX_AMM_ERROR__NOT_SLOT_WALLET = 0x1792; // 6034
+/** NotSlotTokenAccount: The token account is not the slot wallet's associated token account for the tax-side mint */
+export const TAX_AMM_ERROR__NOT_SLOT_TOKEN_ACCOUNT = 0x1793; // 6035
+/** BurnNeedsWritableMint: The burn lowers the tax-side mint's supply, so it needs the mint writable */
+export const TAX_AMM_ERROR__BURN_NEEDS_WRITABLE_MINT = 0x1794; // 6036
 
 export type TaxAmmError =
   | typeof TAX_AMM_ERROR__ALREADY_RENOUNCED
   | typeof TAX_AMM_ERROR__ALREADY_SEEDED
   | typeof TAX_AMM_ERROR__BAD_INIT_DATA
+  | typeof TAX_AMM_ERROR__BAD_SEED_AMOUNTS
   | typeof TAX_AMM_ERROR__BAD_TAX_SIDE
   | typeof TAX_AMM_ERROR__BAD_VIRTUAL_SIDE
+  | typeof TAX_AMM_ERROR__BURN_NEEDS_WRITABLE_MINT
   | typeof TAX_AMM_ERROR__BURN_ON_NATIVE_SOL
   | typeof TAX_AMM_ERROR__EQUAL_MINTS
   | typeof TAX_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED
@@ -92,10 +106,13 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED
   | typeof TAX_AMM_ERROR__NO_RECIPIENT
   | typeof TAX_AMM_ERROR__NO_SEEDER
+  | typeof TAX_AMM_ERROR__NO_SUCH_SLOT
   | typeof TAX_AMM_ERROR__NOT_A_MINT
   | typeof TAX_AMM_ERROR__NO_TAX_AUTHORITY
   | typeof TAX_AMM_ERROR__NOT_PIPELINE
   | typeof TAX_AMM_ERROR__NOT_SEEDER
+  | typeof TAX_AMM_ERROR__NOT_SLOT_TOKEN_ACCOUNT
+  | typeof TAX_AMM_ERROR__NOT_SLOT_WALLET
   | typeof TAX_AMM_ERROR__NOT_TAX_AUTHORITY
   | typeof TAX_AMM_ERROR__OVERFLOW
   | typeof TAX_AMM_ERROR__OWED_SLOT_LEFT_EMPTY
@@ -105,6 +122,7 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__SHARES_NOT_WHOLE
   | typeof TAX_AMM_ERROR__SHARE_WITHOUT_RECIPIENT
   | typeof TAX_AMM_ERROR__TAX_ABOVE_CAP
+  | typeof TAX_AMM_ERROR__UNUSED_SLOT
   | typeof TAX_AMM_ERROR__WRONG_ACCOUNT
   | typeof TAX_AMM_ERROR__WRONG_TOKEN_PROGRAM
   | typeof TAX_AMM_ERROR__ZERO_OUTPUT
@@ -117,8 +135,10 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__ALREADY_RENOUNCED]: `The tax authority renounced, so the market's taxes and recipients never change again`,
     [TAX_AMM_ERROR__ALREADY_SEEDED]: `The market has already been seeded`,
     [TAX_AMM_ERROR__BAD_INIT_DATA]: `Init data is not valid creation parameters`,
+    [TAX_AMM_ERROR__BAD_SEED_AMOUNTS]: `A seed request gives one amount for each of the market's two mints`,
     [TAX_AMM_ERROR__BAD_TAX_SIDE]: `The tax side must be 0 or 1`,
     [TAX_AMM_ERROR__BAD_VIRTUAL_SIDE]: `The virtual side must be 0 or 1`,
+    [TAX_AMM_ERROR__BURN_NEEDS_WRITABLE_MINT]: `The burn lowers the tax-side mint's supply, so it needs the mint writable`,
     [TAX_AMM_ERROR__BURN_ON_NATIVE_SOL]: `Native SOL can't be burned, so its tax side has no burn share`,
     [TAX_AMM_ERROR__EQUAL_MINTS]: `A market's two mints must differ`,
     [TAX_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED]: `Exact-out swaps are not supported`,
@@ -127,10 +147,13 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED]: `The mint carries an extension the mint rules refuse`,
     [TAX_AMM_ERROR__NO_RECIPIENT]: `A market needs at least one tax recipient`,
     [TAX_AMM_ERROR__NO_SEEDER]: `The seeder must not be the default key`,
+    [TAX_AMM_ERROR__NO_SUCH_SLOT]: `No such tax slot: there is one per tax recipient, then the burn's and the suite share's`,
     [TAX_AMM_ERROR__NOT_A_MINT]: `A market's mints must be SPL Token or Token-2022 mints`,
     [TAX_AMM_ERROR__NO_TAX_AUTHORITY]: `The market has no tax authority, so its taxes and recipients never change`,
     [TAX_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
     [TAX_AMM_ERROR__NOT_SEEDER]: `Only the market's seeder can seed it`,
+    [TAX_AMM_ERROR__NOT_SLOT_TOKEN_ACCOUNT]: `The token account is not the slot wallet's associated token account for the tax-side mint`,
+    [TAX_AMM_ERROR__NOT_SLOT_WALLET]: `The wallet is not the tax slot's`,
     [TAX_AMM_ERROR__NOT_TAX_AUTHORITY]: `Only the market's tax authority can change its taxes and recipients`,
     [TAX_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
     [TAX_AMM_ERROR__OWED_SLOT_LEFT_EMPTY]: `A recipient slot still owed tax can't be emptied; pay it out or name another wallet`,
@@ -140,6 +163,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__SHARES_NOT_WHOLE]: `The recipients' shares and the burn share must sum to 10,000`,
     [TAX_AMM_ERROR__SHARE_WITHOUT_RECIPIENT]: `An unused recipient slot must have no share`,
     [TAX_AMM_ERROR__TAX_ABOVE_CAP]: `A tax range may not go above MAX_TAX_BPS`,
+    [TAX_AMM_ERROR__UNUSED_SLOT]: `The tax recipient slot is unused: it has no wallet to pay`,
     [TAX_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,
     [TAX_AMM_ERROR__WRONG_TOKEN_PROGRAM]: `The token program is not the mint's`,
     [TAX_AMM_ERROR__ZERO_OUTPUT]: `The trade's output would be 0`,
