@@ -134,13 +134,14 @@ impl MintFacts {
             let state = StateWithExtensions::<Mint>::unpack(data)
                 .map_err(|e| format!("mint {address} does not unpack: {e}"))?;
             facts.transfer_fee = state.get_extension::<TransferFeeConfig>().ok().copied();
-            facts.transfer_hook = state
-                .get_extension::<TransferHook>()
-                .ok()
-                .map(|hook| HookExtension {
-                    program: Option::<Pubkey>::from(hook.program_id),
-                    authority: Option::<Pubkey>::from(hook.authority),
-                });
+            facts.transfer_hook =
+                state
+                    .get_extension::<TransferHook>()
+                    .ok()
+                    .map(|hook| HookExtension {
+                        program: Option::<Pubkey>::from(hook.program_id),
+                        authority: Option::<Pubkey>::from(hook.authority),
+                    });
             facts.permanent_delegate = state
                 .get_extension::<PermanentDelegate>()
                 .ok()
@@ -305,6 +306,8 @@ pub struct Session<'a> {
     pub extra: Vec<u8>,
     /// The run's seed, from which every wallet comes.
     pub seed: crate::wallets::Seed,
+    /// Every account the strategy listed in the run's completed account resolutions.
+    pub resolutions: crate::checks::transaction_accounts::Resolutions,
     pub notes: Vec<String>,
 }
 
@@ -364,6 +367,7 @@ impl<'a> Session<'a> {
             payer,
             extra,
             seed,
+            resolutions: Default::default(),
             notes,
         }
     }

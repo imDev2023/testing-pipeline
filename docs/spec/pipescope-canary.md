@@ -176,6 +176,8 @@ What `token_authorities` does with each authority, when the authority is a walle
 - **Permanent delegate**: after a buy, moves the buyer's tokens away.
 - **Pause authority**: pauses the mint, then tries the sale.
 - An authority that is a program's address is "not run" and named with the program that owns it, because only that program's own instructions can use it.
+- An authority is a wallet when its address is on the curve and holds no account or a system-owned one; any other address, a program-derived address or an account a program owns (a market's own state, an SPL multisig), is a program's address (`CANARY-37`).
+- An authority of the money side's mint acts in the same round trip: freezing the buyer's account of it or pausing it between the buy and the sale, setting its transfer fee before the buy, and, as permanent delegate, taking what the sale returned once the buyer holds it; a mint authority sells what it minted into each other mint, each sale from the same state (`CANARY-38`).
 
 The prototype ran the first and third on devnet and built the second; no devnet mint has a freeze authority, a permanent delegate or a pause authority.
 
@@ -183,6 +185,7 @@ The prototype ran the first and third on devnet and built the second; no devnet 
 
 - Instruction names come from the strategy's code: each "Instruction: Name" string Anchor compiles in is kept only when the discriminator of that name is also in the code, which also cuts names that run on into the next string.
 - That list is worked out once per strategy version, by `terminal-api` when the indexer records the version, and stored with it; the facts panel, the forms' instruction check and the explainer read it from there, and the `CanaryRun` Durable Object posts it in the snapshot, so one implementation serves all four.
+- The snapshot carries it in an optional `instructions` field, whether the program is built with Anchor and each instruction's name, call count and signers; Canary drops Pipeline's six by name and notes the rest, and a run given no list records `custom_instructions` as "not run" (`CANARY-40`).
 - A program that is not built with Anchor gets "none found", worded as such and not as "none".
 - Who has called each instruction, and how often, comes from the indexer's history of the strategy program.
 - Canary v1 does not call custom instructions: the prototype can name them and cannot build their arguments without each strategy's own layout (owner, 2026-11-10).
@@ -288,6 +291,7 @@ A change to any of them changes the `harness` version that every Canary result c
 - Pipeline's Apache-2.0 crates, from crates.io at exact versions (published 2026-11-10 at Pipeline's `5ac3121`; see [`pipescope-architecture.md`](pipescope-architecture.md#pipelines-packages)): `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
 - The router's program is loaded from the cluster's own bytes, never built or copied into this repo; `pipeline-check` does the same.
 - Every trade in the checks goes through one swap function, so the architecture's licence seam holds: on devnet it calls the router, and it can be replaced by a direct call to the strategy plus Pipeline's Apache-2.0 settlement code if running the router's bytes in production is not allowed.
+  The direct implementation refuses what the router's own rules refuse a trader (a paused router, an account that is not a token account of its mint, and every refusal of the settlement code, named in that code's words), undoes the swap on any refusal, and is chosen in one place, Canary's config module; the strategy then runs one call level higher than under the router, the one difference (`CANARY-39`).
   `conformance` is the exception, because `pipeline-check` itself runs the router; without the router it is "not run".
 
 ## A correction to earlier research

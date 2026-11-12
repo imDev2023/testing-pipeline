@@ -29,10 +29,16 @@ fn a_strategy_that_checks_its_market_signer_refuses_both_calls_and_passes() {
     assert_eq!(record.outcome, Outcome::Pass, "{}", record.reason);
     let attempts = record.numbers["attempts"].as_array().unwrap();
     assert_eq!(attempts.len(), 2, "{}", record.numbers);
-    assert!(attempts.iter().all(|a| a["accepted"] == false), "{}", record.numbers);
+    assert!(
+        attempts.iter().all(|a| a["accepted"] == false),
+        "{}",
+        record.numbers
+    );
     // Each refusal is the strategy's own, named.
     assert!(
-        attempts.iter().all(|a| a["failure"]["class"] == "strategy_refused"),
+        attempts
+            .iter()
+            .all(|a| a["failure"]["class"] == "strategy_refused"),
         "{}",
         record.numbers
     );
@@ -48,7 +54,11 @@ fn a_strategy_that_trusts_any_caller_warns() {
     assert_eq!(record.outcome, Outcome::Warn, "{}", record.reason);
     assert!(record.reason.contains("Pipeline fee"), "{}", record.reason);
     let attempts = record.numbers["attempts"].as_array().unwrap();
-    assert!(attempts.iter().all(|a| a["accepted"] == true), "{}", record.numbers);
+    assert!(
+        attempts.iter().all(|a| a["accepted"] == true),
+        "{}",
+        record.numbers
+    );
 }
 
 #[test]

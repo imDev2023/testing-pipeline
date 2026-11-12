@@ -11,7 +11,8 @@ use pipeline_client::Pubkey;
 use serde::Serialize;
 
 use crate::checks::{
-    self, conformance, cost, direct_call, exit_sizes, quote_matches_swap, readable,
+    self, conformance, contained_mint, cost, direct_call, exit_sizes, quote_matches_swap, readable,
+    token_authorities, transaction_accounts,
 };
 use crate::market::{token_amount, Copy, Session, Version};
 use crate::record::{Record, RecordContext, Verdict};
@@ -32,6 +33,8 @@ pub struct RunOptions {
     /// The run's seed, from which every wallet comes; `None` picks a new random one. The
     /// snapshot rounds of one run pass the seed the first round answered with.
     pub seed: Option<Seed>,
+    /// The strategy version's instruction list, from the snapshot (`PIPESCOPE-92`).
+    pub instructions: Option<checks::custom_instructions::StrategyInstructions>,
 }
 
 impl Default for RunOptions {
@@ -41,6 +44,7 @@ impl Default for RunOptions {
             last_round: true,
             swap: crate::config::SWAP_PATH,
             seed: None,
+            instructions: None,
         }
     }
 }
@@ -147,7 +151,14 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
             return MarketRun::Results(MarketResults {
                 records: checks::CHECKS
                     .iter()
-                    .map(|check| context.record(check, Verdict::not_run(&reason)))
+                    .map(|check| match *check {
+                        // Read from the instruction list alone, never the copy.
+                        checks::CUSTOM_INSTRUCTIONS => context.record(
+                            check,
+                            checks::custom_instructions::judge(options.instructions.as_ref()),
+                        ),
+                        _ => context.record(check, Verdict::not_run(&reason)),
+                    })
                     .collect(),
                 notes: vec![error],
                 seed,
@@ -226,11 +237,28 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         _ => None,
     };
     let direct_lacking = session.lacking_since_begin();
+    session.begin_measurement();
+    let authorities_measured = match trading {
+        readable::Trading::Open => Some(token_authorities::measure(
+            &mut session,
+            options.swap,
+            money,
+            sizes.reference,
+            sizes_measured.amount(sizes.reference),
+        )),
+        readable::Trading::NotRun(_) => None,
+    };
+    let authorities_lacking = session.lacking_since_begin();
+    session.begin_measurement();
+    let hooked_mints = contained_mint::measure(&mut session);
+    let hooks_lacking = session.lacking_since_begin();
 
     let mut lacking = copy_lacking.clone();
     lacking.extend(readable_lacking.iter().copied());
     lacking.extend(sizes_lacking.iter().copied());
     lacking.extend(direct_lacking.iter().copied());
+    lacking.extend(authorities_lacking.iter().copied());
+    lacking.extend(hooks_lacking.iter().copied());
     if !lacking.is_empty() && !options.last_round {
         return MarketRun::Missing {
             addresses: source_order(&lacking, &session),
@@ -241,10 +269,13 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
     // lack whatever readable's probes lacked.
     let mut trading_lacking = sizes_lacking.clone();
     let mut direct_needed = direct_lacking.clone();
+    let mut authorities_needed = authorities_lacking.clone();
     if matches!(trading, readable::Trading::NotRun(_)) {
         trading_lacking.extend(readable_lacking.iter().copied());
         direct_needed.extend(readable_lacking.iter().copied());
+        authorities_needed.extend(readable_lacking.iter().copied());
     }
+    let money_words = |amount: u64| sizes_measured.amount(amount);
     let gate = |own: &BTreeSet<Pubkey>, verdict: Verdict| {
         let mut needed = copy_lacking.clone();
         needed.extend(own.iter().copied());
@@ -293,6 +324,29 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
                 ),
             ),
         ),
+        context.record(
+            checks::TOKEN_AUTHORITIES,
+            gate(
+                &authorities_needed,
+                token_authorities::judge(authorities_measured.as_ref(), &trading, &money_words),
+            ),
+        ),
+        // Every resolution of the run, so it comes after every other measurement.
+        context.record(
+            checks::TRANSACTION_ACCOUNTS,
+            gate(
+                &BTreeSet::new(),
+                transaction_accounts::judge(&session.resolutions),
+            ),
+        ),
+        context.record(
+            checks::CONTAINED_MINT,
+            gate(&hooks_lacking, contained_mint::judge(&hooked_mints)),
+        ),
+        context.record(
+            checks::CUSTOM_INSTRUCTIONS,
+            checks::custom_instructions::judge(options.instructions.as_ref()),
+        ),
     ];
     let mut notes = copy.notes.clone();
     notes.extend(session.notes.iter().cloned());
@@ -331,6 +385,7 @@ pub fn sweep(source: &mut dyn Source, markets: &[Pubkey], options: &RunOptions) 
         last_round: true,
         swap: options.swap,
         seed: None,
+        instructions: options.instructions.clone(),
     };
     let mut records = vec![];
     let mut notes = std::collections::BTreeMap::new();

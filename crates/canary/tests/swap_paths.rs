@@ -17,7 +17,12 @@ use serde_json::Value;
 /// The evil strategy's behaviour byte for a quote that claims twice what the swap pays.
 const QUOTE_LIES: u8 = 7;
 
-fn run(cluster: &Cluster, market: Pubkey, path: &'static dyn SwapPath, extra: Vec<u8>) -> MarketResults {
+fn run(
+    cluster: &Cluster,
+    market: Pubkey,
+    path: &'static dyn SwapPath,
+    extra: Vec<u8>,
+) -> MarketResults {
     run_market(
         &mut SvmSource::new(cluster.svm.clone()),
         market,
@@ -38,7 +43,12 @@ fn comparable(value: &Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
-                .filter(|(k, _)| !matches!(k.as_str(), "compute_units" | "strategy_compute_units" | "error"))
+                .filter(|(k, _)| {
+                    !matches!(
+                        k.as_str(),
+                        "compute_units" | "strategy_compute_units" | "error"
+                    )
+                })
                 .map(|(k, v)| (k.clone(), comparable(v)))
                 .collect(),
         ),
@@ -56,8 +66,18 @@ fn assert_same_results(router: &MarketResults, direct: &MarketResults) {
             assert!(d.reason.contains("router"), "{}", d.reason);
             continue;
         }
-        assert_eq!((r.outcome, &r.reason), (d.outcome, &d.reason), "{}", r.check);
-        assert_eq!(comparable(&r.numbers), comparable(&d.numbers), "{}", r.check);
+        assert_eq!(
+            (r.outcome, &r.reason),
+            (d.outcome, &d.reason),
+            "{}",
+            r.check
+        );
+        assert_eq!(
+            comparable(&r.numbers),
+            comparable(&d.numbers),
+            "{}",
+            r.check
+        );
         assert_eq!(r.inputs, d.inputs, "{}", r.check);
     }
 }
@@ -110,7 +130,10 @@ fn a_swap_that_pays_less_than_its_quote_fails_the_same_way_on_both_paths() {
     let router = run(&cluster, market.market, &ThroughRouter, vec![QUOTE_LIES]);
     let direct = run(&cluster, market.market, &DirectToStrategy, vec![QUOTE_LIES]);
 
-    assert_eq!(outcome(&direct, "quote_matches_swap").outcome, Outcome::Fail);
+    assert_eq!(
+        outcome(&direct, "quote_matches_swap").outcome,
+        Outcome::Fail
+    );
     assert_same_results(&router, &direct);
 }
 
@@ -126,5 +149,8 @@ fn a_paused_router_refuses_every_swap_on_the_direct_path_too() {
     assert_eq!(record.outcome, Outcome::Fail, "{}", record.reason);
     let failure = &record.numbers["disagreements"][0]["swap_failure"];
     assert_eq!(failure["class"], "router_refused", "{failure}");
-    assert!(failure["error"].as_str().unwrap().contains("Paused"), "{failure}");
+    assert!(
+        failure["error"].as_str().unwrap().contains("Paused"),
+        "{failure}"
+    );
 }

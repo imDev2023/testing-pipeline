@@ -198,6 +198,10 @@ pub struct Snapshot {
     /// wallets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<String>,
+    /// The strategy version's instructions and their callers, as `terminal-api` stores them
+    /// (`PIPESCOPE-92`), for `custom_instructions`; absent, that check is "not run".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<crate::checks::custom_instructions::StrategyInstructions>,
 }
 
 /// A [`Snapshot`] as an account source.
@@ -353,6 +357,7 @@ pub fn record_snapshot(source: &mut dyn Source, market: Pubkey) -> Result<Snapsh
             })
             .collect(),
         seed: Some(seed.to_hex()),
+        instructions: None,
     })
 }
 

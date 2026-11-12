@@ -14,7 +14,6 @@ use pipeline_client::{self as client, pda, AccountMeta, Instruction, Pubkey, Tra
 use pipeline_strategy_interface::settlement::{self, SettleError};
 use pipeline_strategy_interface::{self as psi, discriminator};
 use serde::Serialize;
-use solana_account::ReadableAccount;
 use solana_transaction::Transaction;
 
 use crate::config::SWAP_COMPUTE_LIMIT;
@@ -192,24 +191,26 @@ fn router_refused(words: impl Into<String>) -> Failure {
 }
 
 /// A token account's balance, refused as the router refuses an account that is not a
-/// token account of `mint` under `token_program`.
+/// token account of `mint` under `token_program`. `read` gives the account as it stands.
 fn checked_balance(
-    svm: &LiteSVM,
+    read: &dyn Fn(&Pubkey) -> Option<solana_account::Account>,
     account: &Pubkey,
     mint: &Pubkey,
     token_program: &Pubkey,
 ) -> Result<u64, Failure> {
-    let data = svm
-        .get_account(account)
-        .filter(|a| a.owner == *token_program)
-        .map(|a| a.data)
-        .filter(|d| d.get(..32) == Some(mint.as_ref()));
-    match data {
-        Some(_) => Ok(token_amount(svm, account).unwrap_or(0)),
-        None => Err(router_refused(format!(
-            "InvalidTokenAccount: {account} is not a token account of mint {mint}"
-        ))),
-    }
+    const AMOUNT: std::ops::Range<usize> = 64..72;
+    read(account)
+        .filter(|a| a.owner == *token_program && a.data.get(..32) == Some(mint.as_ref()))
+        .and_then(|a| {
+            a.data
+                .get(AMOUNT)
+                .map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")))
+        })
+        .ok_or_else(|| {
+            router_refused(format!(
+                "InvalidTokenAccount: {account} is not a token account of mint {mint}"
+            ))
+        })
 }
 
 /// The token program's `transfer_checked`, with a hook's accounts after its own.
@@ -259,14 +260,29 @@ impl SwapPath for DirectToStrategy {
         let trader_input = market.ata(&trader, input);
         let trader_output = market.ata(&trader, output);
         let vault = market.vault(input);
-        let balances = |svm: &LiteSVM| -> Result<[u64; 3], Failure> {
+        let balances = |read: &dyn Fn(&Pubkey) -> Option<solana_account::Account>| -> Result<[u64; 3], Failure> {
             Ok([
-                checked_balance(svm, &trader_input, &market.mint(input), &market.token_program(input))?,
-                checked_balance(svm, &trader_output, &market.mint(output), &market.token_program(output))?,
-                checked_balance(svm, &vault, &market.mint(input), &market.token_program(input))?,
+                checked_balance(
+                    read,
+                    &trader_input,
+                    &market.mint(input),
+                    &market.token_program(input),
+                )?,
+                checked_balance(
+                    read,
+                    &trader_output,
+                    &market.mint(output),
+                    &market.token_program(output),
+                )?,
+                checked_balance(
+                    read,
+                    &vault,
+                    &market.mint(input),
+                    &market.token_program(input),
+                )?,
             ])
         };
-        let [input_before, output_before, vault_before] = balances(svm)?;
+        let [input_before, output_before, vault_before] = balances(&|key| svm.get_account(key))?;
 
         let instructions = direct_swap(
             market,
@@ -286,12 +302,14 @@ impl SwapPath for DirectToStrategy {
         let simulated = svm
             .simulate_transaction(transaction(&instructions, svm))
             .map_err(|failed| fail(&failed))?;
-        let mut after = svm.clone();
-        for (key, account) in &simulated.post_accounts {
-            if account.owner() == &market.token_program(input) || account.owner() == &market.token_program(output) {
-                let _ = after.set_account(*key, account.clone().into());
-            }
-        }
+        let after = |key: &Pubkey| {
+            simulated
+                .post_accounts
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, a)| solana_account::Account::from(a.clone()))
+                .or_else(|| svm.get_account(key))
+        };
         let [input_after, output_after, vault_after] = balances(&after)?;
         let settled = settlement::settle(
             &settlement::Measured {
@@ -310,7 +328,11 @@ impl SwapPath for DirectToStrategy {
 
         let mut instructions = instructions;
         if settled.pipeline_fee > 0 {
-            let fee_account = pda::fee_account(&market.address, &market.mint(input), &market.token_program(input));
+            let fee_account = pda::fee_account(
+                &market.address,
+                &market.mint(input),
+                &market.token_program(input),
+            );
             instructions.push(transfer_checked(
                 market,
                 input,
@@ -326,7 +348,8 @@ impl SwapPath for DirectToStrategy {
             .map_err(|failed| fail(&failed))?;
         let strategy_line = format!("Program {} consumed ", market.strategy());
         Ok(SwapReceipt {
-            trader_spent: input_before.saturating_sub(token_amount(svm, &trader_input).unwrap_or(0)),
+            trader_spent: input_before
+                .saturating_sub(token_amount(svm, &trader_input).unwrap_or(0)),
             trader_received: token_amount(svm, &trader_output)
                 .unwrap_or(0)
                 .saturating_sub(output_before),

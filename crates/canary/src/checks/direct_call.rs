@@ -74,11 +74,16 @@ pub fn measure(session: &mut Session, money: usize, token: usize, amount: u64) -
         extra: &extra,
         hooks: &prepared.hooks,
     };
-    let impostor = session.seed.wallet(&session.market.address, "direct call impostor");
+    let impostor = session
+        .seed
+        .wallet(&session.market.address, "direct call impostor");
     let market_address = session.market.address;
     for (how, signer) in [
         (ANOTHER_KEY, AccountMeta::new_readonly(impostor, true)),
-        (NOT_SIGNING, AccountMeta::new_readonly(market_address, false)),
+        (
+            NOT_SIGNING,
+            AccountMeta::new_readonly(market_address, false),
+        ),
     ] {
         let mut attempt = svm.clone();
         let mut tx = Transaction::new_with_payer(
@@ -86,10 +91,9 @@ pub fn measure(session: &mut Session, money: usize, token: usize, amount: u64) -
             Some(&trader),
         );
         tx.message.recent_blockhash = attempt.latest_blockhash();
-        let failure = attempt
-            .send_transaction(tx)
-            .err()
-            .map(|failed| Failure::from_transaction(Stage::Swap, &session.market.strategy(), &failed));
+        let failure = attempt.send_transaction(tx).err().map(|failed| {
+            Failure::from_transaction(Stage::Swap, &session.market.strategy(), &failed)
+        });
         measured.attempts.push(Attempt {
             how,
             market_signer: signer.pubkey.to_string(),
@@ -103,7 +107,12 @@ pub fn measure(session: &mut Session, money: usize, token: usize, amount: u64) -
 
 /// Judges `direct_call`; `m` is `None` when the market refuses every trade, and
 /// `amount_words` says the amount sent as the record's reader reads it.
-pub fn judge(m: Option<&Measured>, trading: &Trading, market: &Pubkey, amount_words: String) -> Verdict {
+pub fn judge(
+    m: Option<&Measured>,
+    trading: &Trading,
+    market: &Pubkey,
+    amount_words: String,
+) -> Verdict {
     let m = match (trading, m) {
         (Trading::NotRun(why), _) => return Verdict::not_run(format!("Not run: {why}.")),
         (Trading::Open, None) => {
@@ -125,7 +134,12 @@ pub fn judge(m: Option<&Measured>, trading: &Trading, market: &Pubkey, amount_wo
         "calls": [ANOTHER_KEY, NOT_SIGNING],
     });
     let numbers = json!({ "attempts": m.attempts });
-    let accepted: Vec<&str> = m.attempts.iter().filter(|a| a.accepted).map(|a| a.how).collect();
+    let accepted: Vec<&str> = m
+        .attempts
+        .iter()
+        .filter(|a| a.accepted)
+        .map(|a| a.how)
+        .collect();
     if !accepted.is_empty() {
         return Verdict::new(
             Outcome::Warn,
@@ -144,7 +158,9 @@ pub fn judge(m: Option<&Measured>, trading: &Trading, market: &Pubkey, amount_wo
             format!(
                 "with {} ({})",
                 a.how,
-                a.failure.as_ref().map_or_else(String::new, |f| f.to_string())
+                a.failure
+                    .as_ref()
+                    .map_or_else(String::new, |f| f.to_string())
             )
         })
         .collect();

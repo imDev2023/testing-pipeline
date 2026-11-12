@@ -256,6 +256,8 @@ impl Session<'_> {
             let keys: Vec<Pubkey> = known.iter().map(|m| m.pubkey).collect();
             self.load(svm, &keys);
             if result.complete {
+                self.resolutions.count += 1;
+                self.resolutions.accounts.extend(keys);
                 return Ok(known);
             }
         }

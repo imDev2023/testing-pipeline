@@ -38,7 +38,7 @@ const RESOLVE_ROUNDS: usize = 3;
 
 impl Session<'_> {
     /// The hook accounts for one transfer of `mint`'s, when it has a hook.
-    fn transfer_hook_accounts(
+    pub(crate) fn transfer_hook_accounts(
         &mut self,
         svm: &mut LiteSVM,
         mint: usize,

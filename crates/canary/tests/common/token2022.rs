@@ -27,6 +27,9 @@ pub struct Extensions {
     pub transfer_fee: Option<(u16, u64)>,
     /// The hook program and the hook authority.
     pub transfer_hook: Option<(Pubkey, Option<Pubkey>)>,
+    /// A transfer hook extension with both its program and its authority unset, as a
+    /// contained token's is after its unlock.
+    pub emptied_transfer_hook: bool,
     pub freeze_authority: bool,
     pub permanent_delegate: bool,
     pub pausable: bool,
@@ -54,9 +57,7 @@ impl Cluster {
     /// A new Token-2022 mint with `extensions`, the admin its mint authority and every
     /// authority its extensions have.
     pub fn create_mint_2022(&mut self, decimals: u8, extensions: &Extensions) -> Pubkey {
-        use spl_token_2022_interface::extension::{
-            pausable, transfer_fee, transfer_hook,
-        };
+        use spl_token_2022_interface::extension::{pausable, transfer_fee, transfer_hook};
         use spl_token_2022_interface::instruction as token;
         let mint = Keypair::new();
         let authority = self.admin.pubkey();
@@ -64,7 +65,7 @@ impl Cluster {
         if extensions.transfer_fee.is_some() {
             types.push(ExtensionType::TransferFeeConfig);
         }
-        if extensions.transfer_hook.is_some() {
+        if extensions.transfer_hook.is_some() || extensions.emptied_transfer_hook {
             types.push(ExtensionType::TransferHook);
         }
         if extensions.permanent_delegate {
@@ -109,6 +110,19 @@ impl Cluster {
                 .unwrap(),
             );
         }
+        if extensions.emptied_transfer_hook {
+            // Token-2022 refuses an empty extension at creation; the unlock empties it later,
+            // and so does this, below.
+            ixs.push(
+                transfer_hook::instruction::initialize(
+                    &TOKEN_2022,
+                    &mint.pubkey(),
+                    Some(authority),
+                    None,
+                )
+                .unwrap(),
+            );
+        }
         if extensions.permanent_delegate {
             ixs.push(
                 token::initialize_permanent_delegate(&TOKEN_2022, &mint.pubkey(), &authority)
@@ -116,7 +130,9 @@ impl Cluster {
             );
         }
         if extensions.pausable {
-            ixs.push(pausable::instruction::initialize(&TOKEN_2022, &mint.pubkey(), &authority).unwrap());
+            ixs.push(
+                pausable::instruction::initialize(&TOKEN_2022, &mint.pubkey(), &authority).unwrap(),
+            );
         }
         ixs.push(
             token::initialize_mint2(
@@ -128,6 +144,19 @@ impl Cluster {
             )
             .unwrap(),
         );
+        if extensions.emptied_transfer_hook {
+            ixs.push(
+                token::set_authority(
+                    &TOKEN_2022,
+                    &mint.pubkey(),
+                    None,
+                    token::AuthorityType::TransferHookProgramId,
+                    &authority,
+                    &[],
+                )
+                .unwrap(),
+            );
+        }
         self.send(&ixs, &[&mint]);
         mint.pubkey()
     }
@@ -239,7 +268,12 @@ impl Cluster {
     /// The pool `test-strategy-cp` keeps for `mint_a`, `mint_b` and `fee_bps`.
     pub fn cp_pool(mint_a: &Pubkey, mint_b: &Pubkey, fee_bps: u16) -> Pubkey {
         Pubkey::find_program_address(
-            &[b"pool", mint_a.as_ref(), mint_b.as_ref(), &fee_bps.to_le_bytes()],
+            &[
+                b"pool",
+                mint_a.as_ref(),
+                mint_b.as_ref(),
+                &fee_bps.to_le_bytes(),
+            ],
             &CP,
         )
         .0
@@ -360,4 +394,87 @@ pub fn whitelist_hooked_market(cluster: &mut Cluster) -> Market {
     let whitelist = cluster.sol_market_accounts(&token);
     cluster.init_test_hook(&TEST_HOOK, &token, &whitelist);
     cluster.sol_market_of(token)
+}
+
+impl Cluster {
+    /// Removes a mint's mint authority, as a launcher who renounces it does.
+    pub fn renounce_mint_authority(&mut self, mint: &Pubkey, token_program: &Pubkey) {
+        let ix = spl_token_2022_interface::instruction::set_authority(
+            token_program,
+            mint,
+            None,
+            spl_token_2022_interface::instruction::AuthorityType::MintTokens,
+            &self.admin.pubkey(),
+            &[],
+        )
+        .unwrap();
+        self.send(&[ix], &[]);
+    }
+}
+
+impl Cluster {
+    /// A new SPL Token mint with the admin as both its mint and its freeze authority.
+    pub fn create_mint_with_freeze_authority(&mut self, decimals: u8) -> Pubkey {
+        let mint = Keypair::new();
+        let admin = self.admin.pubkey();
+        let create = create_account(
+            &admin,
+            &mint.pubkey(),
+            self.svm.minimum_balance_for_rent_exemption(82),
+            82,
+            &TOKEN,
+        );
+        let init = spl_token_2022_interface::instruction::initialize_mint2(
+            &TOKEN,
+            &mint.pubkey(),
+            &admin,
+            Some(&admin),
+            decimals,
+        )
+        .unwrap();
+        self.send(&[create, init], &[&mint]);
+        mint.pubkey()
+    }
+
+    /// A market on `test-strategy-evil` between wrapped SOL and the SPL Token `token`, 1:1
+    /// with `reserve` of each in its vaults, as [`Cluster::evil_market`] makes with a token
+    /// of its own.
+    pub fn evil_market_of(&mut self, token: Pubkey, reserve: u64) -> Market {
+        self.register(&super::EVIL, "test_strategy_evil");
+        let sol = self.wrapped_sol();
+        let state =
+            Pubkey::find_program_address(&[b"evil", sol.as_ref(), token.as_ref()], &super::EVIL).0;
+        let vault_a = self.give(&sol, &state, reserve);
+        let vault_b = self.give(&token, &state, reserve);
+        let creator = self.admin.pubkey();
+        let ix = client::create_market(&client::CreateMarket {
+            creator,
+            strategy_program: super::EVIL,
+            market_state: state,
+            market_state_signs: false,
+            init_data: vec![0],
+            max_creator_lamports: SOL,
+            strategy_accounts: vec![
+                AccountMeta::new_readonly(sol, false),
+                AccountMeta::new_readonly(token, false),
+                AccountMeta::new(vault_a, false),
+                AccountMeta::new(vault_b, false),
+            ],
+        });
+        self.send(&[ix], &[]);
+        let market = pda::market(&super::EVIL, &state);
+        self.send(
+            &[
+                client::init_fee_account(&creator, &market, &sol, &TOKEN),
+                client::init_fee_account(&creator, &market, &token, &TOKEN),
+            ],
+            &[],
+        );
+        Market {
+            market,
+            state,
+            mint_a: sol,
+            mint_b: token,
+        }
+    }
 }

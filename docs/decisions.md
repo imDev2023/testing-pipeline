@@ -2213,6 +2213,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
 
+### CANARY-37: Which token authority is a wallet
+
+- Question: When does `token_authorities` act as an authority, and when is it a program's address that is "not run"?
+- Answer: It acts when the authority's address is on the curve and holds no account or a system-owned one; a program-derived address, or an account a program owns such as a market's own state or an SPL multisig, is "not run", naming the owner program.
+- Alternatives: Acting as every authority, which the copy's switched-off signature checks would allow even for addresses only a program can sign for; signing as an SPL multisig's members.
+- Specified in: [`docs/spec/pipescope-canary.md`, Control](spec/pipescope-canary.md#control)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
+
+### CANARY-38: Authorities of the money side's mint
+
+- Question: How does `token_authorities` act as an authority of the money side's mint, which the trader spends rather than holds?
+- Answer: In the same round trip as for a token: freezing the buyer's account or pausing the mint between the buy and the sale, setting the transfer fee before the buy, and, as permanent delegate, taking what the sale returned; a mint authority sells what it minted into each other mint, each sale from the same state.
+- Alternatives: Acting only as the authorities of the mints a trader buys.
+- Specified in: [`docs/spec/pipescope-canary.md`, Control](spec/pipescope-canary.md#control)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
+
+### CANARY-39: What the direct swap refuses
+
+- Question: Which of the router's rules does the swap implementation that calls the strategy directly keep?
+- Answer: Those a trader can meet: a paused router, a trader account that is not a token account of its mint, and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router.
+- Alternatives: Settling without the router's rules, so a paused router would look tradable.
+- Specified in: [`docs/spec/pipescope-canary.md`, Built on](spec/pipescope-canary.md#built-on)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
+
+### CANARY-40: The instruction list in the snapshot
+
+- Question: How does `custom_instructions` get the list `terminal-api` works out, and what does it do without one?
+- Answer: The snapshot's optional `instructions` field carries whether the program is built with Anchor and each instruction's name, call count and signers; Canary drops Pipeline's six by name, notes the rest, and records "not run" when the field is absent.
+- Alternatives: The binary working the list out from the program's bytes, which `PIPESCOPE-92` rules out.
+- Specified in: [`docs/spec/pipescope-canary.md`, Custom instructions are listed, not called](spec/pipescope-canary.md#custom-instructions-are-listed-not-called)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
+
 ## Explainer (EXPLAINER)
 
 ### EXPLAINER-01: What the explainer may say

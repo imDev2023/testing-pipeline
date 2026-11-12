@@ -9,7 +9,7 @@
 //! change in one PR.
 
 /// The Canary version that produced a result (`harness` on every record).
-pub const HARNESS: &str = "canary/0.1.0";
+pub const HARNESS: &str = "canary/0.2.0";
 
 // ---------------------------------------------------------------------------------------
 // Units (not policy, but written only here so the policy grep has no false friends)
@@ -139,6 +139,19 @@ pub const SNAPSHOT_ROUNDS: u32 = 4;
 /// The largest snapshot the endpoint accepts, in bytes: room for the router's and a large
 /// strategy's ProgramData, base64, with every account a market's trades touch.
 pub const SNAPSHOT_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------------------
+// Our containment hook, as `contained_mint` recognises a contained token
+// (`docs/spec/containment-hook.md`, "Accounts"; `programs/containment-hook/src/lib.rs`)
+// ---------------------------------------------------------------------------------------
+
+/// Our containment hook's program id. `crates/` cannot depend on the on-chain workspace, so
+/// it is written here once; `tests/contained_mint.rs` checks it against the hook's own
+/// `declare_id!`.
+pub const CONTAINMENT_HOOK_PROGRAM: pipeline_client::Pubkey =
+    pipeline_client::pubkey!("aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv");
+/// The seed of a contained mint's unlock PDA, `["unlock", mint]`, its hook authority.
+pub const CONTAINMENT_HOOK_UNLOCK_SEED: &[u8] = b"unlock";
 
 // ---------------------------------------------------------------------------------------
 // The licence seam (`CANARY-26`)

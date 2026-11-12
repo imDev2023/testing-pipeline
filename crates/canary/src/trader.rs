@@ -22,7 +22,13 @@ pub struct Prepared {
 impl Session<'_> {
     /// The run's wallet for `role`, holding SOL for fees, enough of mint `money` to send
     /// `amount` with Pipeline's fee, and an empty account of every other mint.
-    pub fn funded_trader(&mut self, svm: &mut LiteSVM, role: &str, money: usize, amount: u64) -> Pubkey {
+    pub fn funded_trader(
+        &mut self,
+        svm: &mut LiteSVM,
+        role: &str,
+        money: usize,
+        amount: u64,
+    ) -> Pubkey {
         let trader = self.seed.wallet(&self.market.address, role);
         fund_lamports(svm, &trader);
         for i in 0..self.market.len() {

@@ -20,6 +20,8 @@ pub enum Stage {
     ResolveAccounts,
     Quote,
     Swap,
+    /// A token authority's own instruction, in `token_authorities`.
+    AuthorityAction,
 }
 
 impl Stage {
@@ -29,6 +31,7 @@ impl Stage {
             Stage::ResolveAccounts => "resolving the trade's accounts",
             Stage::Quote => "quoting",
             Stage::Swap => "the swap",
+            Stage::AuthorityAction => "the authority's own instruction",
         }
     }
 }
@@ -142,6 +145,13 @@ impl Failure {
             return panic.clone();
         }
         match self.code {
+            // The classic token program's error codes are the first of Token-2022's.
+            Some(code) if self.class == FailureClass::TokenProgramRefused => {
+                match spl_token_2022_interface::error::TokenError::try_from(code) {
+                    Ok(error) => format!("{error:?}: {error}"),
+                    Err(_) => format!("error {code}"),
+                }
+            }
             Some(code) => format!("error {code}"),
             None => self.error.clone(),
         }
