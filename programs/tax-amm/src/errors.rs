@@ -59,4 +59,12 @@ pub enum StrategyError {
     ZeroOutput,
     #[msg("The trade would pay out more than the market's real reserve")]
     InsufficientLiquidity,
+    #[msg("The market has no tax authority, so its taxes and recipients never change")]
+    NoTaxAuthority,
+    #[msg("The tax authority renounced, so the market's taxes and recipients never change again")]
+    AlreadyRenounced,
+    #[msg("Only the market's tax authority can change its taxes and recipients")]
+    NotTaxAuthority,
+    #[msg("A recipient slot still owed tax can't be emptied; pay it out or name another wallet")]
+    OwedSlotLeftEmpty,
 }
