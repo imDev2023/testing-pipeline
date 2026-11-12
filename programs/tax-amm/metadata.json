@@ -1,20 +1,15 @@
 {
     "schema": "pipeline-strategy-metadata/1",
-    "name": "My strategy",
-    "description": "A constant-product pool with a fee chosen per pool. Replace this with what your strategy does and how it prices.",
-    "image": "https://example.com/logo.png",
+    "name": "Aviary Tax AMM",
+    "description": "Will be a tax AMM whose markets take a buy and sell tax in one chosen mint. For now it is Pipeline's constant-product strategy template: a pool for two tokens with a fee chosen per pool, kept in the pool.",
     "category": "amm",
     "tags": ["cpmm"],
     "links": {
-        "website": "https://example.com",
-        "source": "https://github.com/example/tax-amm",
-        "twitter": "https://x.com/example",
-        "github": "https://github.com/example",
-        "discord": "https://discord.gg/example",
-        "telegram": "https://t.me/example"
+        "source": "https://github.com/imDev2023/testing-pipeline/tree/main/programs/tax-amm",
+        "github": "https://github.com/imDev2023/testing-pipeline"
     },
     "source": {
-        "repository": "https://github.com/example/tax-amm",
+        "repository": "https://github.com/imDev2023/testing-pipeline",
         "path": "programs/tax-amm"
     },
     "init": {
@@ -57,6 +52,7 @@
         }
     ],
     "security": {
-        "contact": "security@example.com"
+        "contact": "https://github.com/imDev2023/testing-pipeline/security/advisories/new",
+        "policy": "https://github.com/imDev2023/testing-pipeline/security/policy"
     }
 }

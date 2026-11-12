@@ -68,6 +68,7 @@ External audits belong to the mainnet launch effort, which is out of scope.
 - Each strategy starts from Pipeline's Apache-2.0 strategy template (`templates/strategy`, generated with `scripts/new-strategy.sh` from a scratchpad clone), copied into this repo and owned here; the PR that adds it notes the Pipeline commit.
 - The containment hook, which is a transfer-hook program and not a strategy, starts from Pipeline's Apache-2.0 `test-hook` allowlist hook (`programs/test-hook`).
 - Pipeline's crates (`pipeline-strategy-interface`, `pipeline-client`, `pipeline-check`) are git dependencies pinned by `rev`, never by `branch` as the template ships them.
+  That `rev`, in the on-chain workspace's `programs/Cargo.toml`, is the one place in code where Pipeline's commit is pinned.
 - The router's source (BSL 1.1 until 2028-11-08) is never copied in.
 
 ### Strategy rules

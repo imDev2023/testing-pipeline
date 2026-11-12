@@ -7,7 +7,7 @@
 //! against your devnet market, so passing here means passing there.
 //!
 //! Build first: `scripts/fetch-router.sh` and
-//! `cargo build-sbf --manifest-path programs/tax-amm/Cargo.toml`.
+//! `cargo build-sbf --manifest-path programs/tax-amm/Cargo.toml` (docs/toolchain.md).
 
 mod common;
 
@@ -18,18 +18,22 @@ use solana_signer::Signer;
 
 const POOL_FEE_BPS: u16 = 30;
 
-/// Runs every check on `market` and fails the test if any check fails. Warnings are
-/// printed; decide for yourself whether they matter for your strategy.
+/// Runs every check on `market` and fails the test on any Fail or Warn: our strategies
+/// accept no `pipeline-check` warning without a written reason in their spec file
+/// (docs/spec/README.md, "Test layers" 4).
 fn assert_passes_pipeline_check(env: &Env, market: &Market) {
     let report = check_market(&env.svm, market.market, &CheckOptions::default());
     println!("{}", report.to_text());
-    let failed: Vec<_> = report
+    let not_passed: Vec<_> = report
         .checks
         .iter()
-        .filter(|check| check.status == Status::Fail)
-        .map(|check| check.id.as_str())
+        .filter(|check| matches!(check.status, Status::Fail | Status::Warn))
+        .map(|check| format!("{} ({:?})", check.id, check.status))
         .collect();
-    assert!(failed.is_empty(), "failed checks: {failed:?}");
+    assert!(
+        not_passed.is_empty(),
+        "checks that failed or warned: {not_passed:?}"
+    );
 }
 
 #[test]

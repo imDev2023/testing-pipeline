@@ -3,12 +3,27 @@
 # Solana CLI the machine already uses. Nothing goes into ~/.cargo/bin or into agave-install's
 # active_release, so other projects keep their own versions. Safe to run again.
 # What it installs and why: docs/toolchain.md.
+#
+#   scripts/install-toolchain.sh [solana] [kani]    # default: both
+#
+# `solana` is Rust, cargo-build-sbf, the platform tools and the Agave CLI; `kani` is Rust and
+# the Kani model checker for the maths proofs. CI installs each part in the job that needs it.
 set -euo pipefail
 
 ROOT="${TESTING_PIPELINE_TOOLCHAIN:-$HOME/.local/share/testing-pipeline/toolchain}"
 RUST_VERSION=1.97.1
 CARGO_BUILD_SBF_VERSION=4.6.0
 AGAVE_VERSION=v4.4.1
+KANI_VERSION=0.67.0
+
+PARTS="${*:-solana kani}"
+for part in $PARTS; do
+  case "$part" in
+    solana | kani) ;;
+    *) echo "unknown part: $part (expected solana or kani)" >&2; exit 2 ;;
+  esac
+done
+want() { [[ " $PARTS " == *" $1 "* ]]; }
 
 case "$(uname -sm)" in
   "Darwin x86_64")
@@ -42,28 +57,32 @@ solana_link_before="$(rustup toolchain list -v | awk '$1 == "solana" { print $NF
 echo "== Rust $RUST_VERSION (Pipeline's rust-toolchain.toml)"
 rustup toolchain list | grep -q "^$RUST_VERSION-" || rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt,clippy
 
-echo "== cargo-build-sbf $CARGO_BUILD_SBF_VERSION"
 CBS="$ROOT/cargo-build-sbf-$CARGO_BUILD_SBF_VERSION"
-if ! "$CBS/bin/cargo-build-sbf" --version 2>/dev/null | grep -q "^cargo-build-sbf $CARGO_BUILD_SBF_VERSION$"; then
-  build_dir="$(mktemp -d)"
-  CARGO_TARGET_DIR="$build_dir" cargo "+$RUST_VERSION" install cargo-build-sbf \
-    --version "$CARGO_BUILD_SBF_VERSION" --locked --root "$CBS"
-  rm -rf "$build_dir"
-fi
+AGAVE="$ROOT/agave-$AGAVE_VERSION"
+KANI="$ROOT/kani-$KANI_VERSION"
 
-echo "== platform tools $SBF_TOOLS_VERSION"
-if [ ! -x "$HOME/.cache/solana/$SBF_TOOLS_VERSION/platform-tools/rust/bin/rustc" ]; then
-  (cd "$ROOT" && "$CBS/bin/cargo-build-sbf" --install-only --tools-version "$SBF_TOOLS_VERSION")
-fi
+install_solana() {
+  echo "== cargo-build-sbf $CARGO_BUILD_SBF_VERSION"
+  if ! "$CBS/bin/cargo-build-sbf" --version 2>/dev/null | grep -q "^cargo-build-sbf $CARGO_BUILD_SBF_VERSION$"; then
+    build_dir="$(mktemp -d)"
+    CARGO_TARGET_DIR="$build_dir" cargo "+$RUST_VERSION" install cargo-build-sbf \
+      --version "$CARGO_BUILD_SBF_VERSION" --locked --root "$CBS"
+    rm -rf "$build_dir"
+  fi
 
-# cargo-build-sbf reads the platform tools version only from --tools-version, and Pipeline's
-# own scripts and strategy template call a bare `cargo build-sbf`. Where 4.6.0's default
-# has no build for this host, toolchain-env.sh puts this wrapper first on PATH; it adds
-# --tools-version unless the caller passed one.
-if [ "$SBF_TOOLS_VERSION" != v1.58 ]; then
-  echo "== cargo-build-sbf wrapper (platform tools $SBF_TOOLS_VERSION by default)"
-  mkdir -p "$ROOT/shims"
-  cat > "$ROOT/shims/cargo-build-sbf" <<EOF
+  echo "== platform tools $SBF_TOOLS_VERSION"
+  if [ ! -x "$HOME/.cache/solana/$SBF_TOOLS_VERSION/platform-tools/rust/bin/rustc" ]; then
+    (cd "$ROOT" && "$CBS/bin/cargo-build-sbf" --install-only --tools-version "$SBF_TOOLS_VERSION")
+  fi
+
+  # cargo-build-sbf reads the platform tools version only from --tools-version, and Pipeline's
+  # own scripts and strategy template call a bare `cargo build-sbf`. Where 4.6.0's default
+  # has no build for this host, toolchain-env.sh puts this wrapper first on PATH; it adds
+  # --tools-version unless the caller passed one.
+  if [ "$SBF_TOOLS_VERSION" != v1.58 ]; then
+    echo "== cargo-build-sbf wrapper (platform tools $SBF_TOOLS_VERSION by default)"
+    mkdir -p "$ROOT/shims"
+    cat > "$ROOT/shims/cargo-build-sbf" <<EOF
 #!/usr/bin/env bash
 # Written by testing-pipeline's scripts/install-toolchain.sh: runs cargo-build-sbf
 # $CARGO_BUILD_SBF_VERSION with platform tools $SBF_TOOLS_VERSION unless --tools-version is given.
@@ -78,34 +97,60 @@ if [ "\${1:-}" = build-sbf ]; then
 fi
 exec "\$real" --tools-version "$SBF_TOOLS_VERSION" "\$@"
 EOF
-  chmod +x "$ROOT/shims/cargo-build-sbf"
-fi
+    chmod +x "$ROOT/shims/cargo-build-sbf"
+  fi
 
-echo "== Agave $AGAVE_VERSION CLI ($AGAVE_TARGET)"
-AGAVE="$ROOT/agave-$AGAVE_VERSION"
-if ! "$AGAVE/bin/solana" --version 2>/dev/null | grep -q "^solana-cli ${AGAVE_VERSION#v} "; then
-  download_dir="$(mktemp -d)"
-  tarball="$download_dir/solana-release.tar.bz2"
-  curl -sSfL --retry 3 -o "$tarball" \
-    "https://github.com/anza-xyz/agave/releases/download/$AGAVE_VERSION/solana-release-$AGAVE_TARGET.tar.bz2"
-  echo "$AGAVE_SHA256  $tarball" | shasum -a 256 -c -
-  tar -xjf "$tarball" -C "$download_dir"
-  rm -rf "$AGAVE"
-  mv "$download_dir/solana-release" "$AGAVE"
-  rm -rf "$download_dir"
-fi
+  echo "== Agave $AGAVE_VERSION CLI ($AGAVE_TARGET)"
+  if ! "$AGAVE/bin/solana" --version 2>/dev/null | grep -q "^solana-cli ${AGAVE_VERSION#v} "; then
+    download_dir="$(mktemp -d)"
+    tarball="$download_dir/solana-release.tar.bz2"
+    curl -sSfL --retry 3 -o "$tarball" \
+      "https://github.com/anza-xyz/agave/releases/download/$AGAVE_VERSION/solana-release-$AGAVE_TARGET.tar.bz2"
+    echo "$AGAVE_SHA256  $tarball" | shasum -a 256 -c -
+    tar -xjf "$tarball" -C "$download_dir"
+    rm -rf "$AGAVE"
+    mv "$download_dir/solana-release" "$AGAVE"
+    rm -rf "$download_dir"
+  fi
 
-solana_link_after="$(rustup toolchain list -v | awk '$1 == "solana" { print $NF }')"
-if [ -n "$solana_link_before" ] && [ "$solana_link_after" != "$solana_link_before" ]; then
-  echo "== restoring rustup's solana toolchain link"
-  if [ -n "$solana_link_after" ]; then rustup toolchain uninstall solana; fi
-  rustup toolchain link solana "$solana_link_before"
-fi
+  solana_link_after="$(rustup toolchain list -v | awk '$1 == "solana" { print $NF }')"
+  if [ -n "$solana_link_before" ] && [ "$solana_link_after" != "$solana_link_before" ]; then
+    echo "== restoring rustup's solana toolchain link"
+    if [ -n "$solana_link_after" ]; then rustup toolchain uninstall solana; fi
+    rustup toolchain link solana "$solana_link_before"
+  fi
+}
+
+# Kani's own files go to ~/.kani/kani-$KANI_VERSION, and `cargo kani setup` adds the nightly
+# Rust it compiles with as a rustup toolchain of its own; neither changes a default.
+install_kani() {
+  echo "== Kani $KANI_VERSION"
+  if ! "$KANI/bin/cargo-kani" --version 2>/dev/null | grep -q " $KANI_VERSION$"; then
+    build_dir="$(mktemp -d)"
+    CARGO_TARGET_DIR="$build_dir" cargo "+$RUST_VERSION" install kani-verifier \
+      --version "$KANI_VERSION" --locked --root "$KANI"
+    rm -rf "$build_dir"
+  fi
+  # The setup's last step links its rustup toolchain; an interrupted setup (GitHub downloads
+  # are flaky on the owner's network), or a cache that restored ~/.kani without the toolchain
+  # it links to, leaves no working compiler there, and running the setup again finishes it.
+  if [ ! -x "$HOME/.kani/kani-$KANI_VERSION/toolchain/bin/rustc" ]; then
+    PATH="$KANI/bin:$PATH" cargo kani setup
+  fi
+}
+
+if want solana; then install_solana; fi
+if want kani; then install_kani; fi
 
 echo
 echo "Installed in $ROOT:"
-"$CBS/bin/cargo-build-sbf" --version | head -1
-"$AGAVE/bin/solana" --version
-"$AGAVE/bin/solana-test-validator" --version
-echo "Platform tools: $SBF_TOOLS_VERSION"
+if want solana; then
+  "$CBS/bin/cargo-build-sbf" --version | head -1
+  "$AGAVE/bin/solana" --version
+  "$AGAVE/bin/solana-test-validator" --version
+  echo "Platform tools: $SBF_TOOLS_VERSION"
+fi
+if want kani; then
+  PATH="$KANI/bin:$PATH" cargo kani --version
+fi
 echo "Use it in a shell with: source scripts/toolchain-env.sh"

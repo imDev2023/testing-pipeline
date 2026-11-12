@@ -2,7 +2,9 @@
 name = "tax-amm"
 version = "0.1.0"
 edition.workspace = true
-description = "A Pipeline strategy"
+license.workspace = true
+repository.workspace = true
+description = "A Pipeline strategy whose markets take their tax in one chosen mint"
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -20,21 +22,23 @@ anchor-debug = []
 no-log-ix-name = []
 
 [dependencies]
-anchor-lang = { version = "=1.2.2", features = ["init-if-needed"] }
-anchor-spl = "=1.2.2"
+anchor-lang = { workspace = true, features = ["init-if-needed"] }
+anchor-spl.workspace = true
 pipeline-strategy-interface.workspace = true
+solana-security-txt.workspace = true
 
-# Anchor's macros check `target_os = "solana"`, which host builds don't know about.
+# Anchor's macros check `target_os = "solana"`, which host builds don't know about, and
+# Kani sets `kani`; `kani_full` turns on the full-domain proofs, as in Pipeline.
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))', 'cfg(kani)', 'cfg(kani_full)'] }
 
 # For the LiteSVM tests in `tests/` only. `cargo build-sbf` never builds these.
 [dev-dependencies]
-borsh = { version = "1.5", features = ["derive"] }
-litesvm = "=0.18.2"
+borsh.workspace = true
+litesvm.workspace = true
 pipeline-check.workspace = true
 pipeline-client.workspace = true
-solana-keypair = "=3.1.2"
-solana-signer = "=3.0.1"
-solana-transaction = "=4.3.0"
-spl-token-2022-interface = "3.1.2"
+solana-keypair.workspace = true
+solana-signer.workspace = true
+solana-transaction.workspace = true
+spl-token-2022-interface.workspace = true

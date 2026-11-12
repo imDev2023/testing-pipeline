@@ -146,3 +146,99 @@ mod tests {
         assert!(out_given_in(1, 2_000_000, u64::MAX, 30) < 2_000_000);
     }
 }
+
+// Kani proofs of the pricing maths (`cargo kani`, docs/toolchain.md), in the tiers Book of
+// Knowledge uses in Pipeline. CBMC turns a division into a fresh quotient tied to its
+// operands by a multiplier, and SAT solvers find relating that quotient back to its inputs
+// very hard, so:
+// - full domain, default: properties that need no such relation, such as the maths never
+//   panicking or overflowing for any reserves and amount;
+// - bounded, default: properties about the quotient, with the reserves and the amount all
+//   below `SMALL`;
+// - full domain behind `RUSTFLAGS="--cfg kani_full"`: those same properties for every u64
+//   amount, which may not finish (Z3 proves division where Kani cannot, docs/spec/README.md,
+//   "Test layers" 2).
+// A symbolic fee makes even the bounded tier time out, so each fee is a constant per arm.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// Bound of the bounded tier, on the reserves and the amount alike.
+    const SMALL: u64 = 1 << 4;
+
+    /// Runs `$body` with `$fee` bound to an edge of the fee domain `[0, 10,000)` that
+    /// `pipeline_init_market` accepts: 0, 1, 30 (the template's pool fee) and 9,999.
+    macro_rules! with_edge_fee {
+        ($fee:ident => $body:expr) => {{
+            match kani::any::<u8>() % 4 {
+                0 => {
+                    let $fee: u16 = 0;
+                    $body
+                }
+                1 => {
+                    let $fee: u16 = 1;
+                    $body
+                }
+                2 => {
+                    let $fee: u16 = 30;
+                    $body
+                }
+                _ => {
+                    let $fee: u16 = 9_999;
+                    $body
+                }
+            }
+        }};
+    }
+
+    // CI proves the exact-in maths only. This build still prices exact-out swaps with the
+    // template's `in_given_out`, but the tax AMM refuses exact-out (docs/spec/tax-amm.md,
+    // "Pricing and the tax"), so `in_given_out` leaves with the template's pricing; its
+    // no-panic proof below took 14.5 minutes, so it runs only with `--cfg kani_full`.
+
+    /// For any reserves and amount, the exact-in price is computed without panicking: no
+    /// overflow, no division by zero, no shift out of range.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn out_given_in_never_panics() {
+        let (reserve_in, reserve_out, amount_in): (u64, u64, u64) = kani::any();
+        with_edge_fee!(fee => out_given_in(reserve_in, reserve_out, amount_in, fee));
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn in_given_out_never_panics() {
+        let (reserve_in, reserve_out, amount_out): (u64, u64, u64) = kani::any();
+        with_edge_fee!(fee => in_given_out(reserve_in, reserve_out, amount_out, fee));
+    }
+
+    /// The pool's output never reaches its whole output reserve while its input side holds
+    /// anything, so no trade can empty a pool, and zero input buys nothing.
+    fn assert_out_given_in_is_safe(reserve_in: u64, reserve_out: u64, amount_in: u64, fee: u16) {
+        let out = out_given_in(reserve_in, reserve_out, amount_in, fee);
+        assert!(out <= reserve_out);
+        if reserve_in > 0 && reserve_out > 0 {
+            assert!(out < reserve_out);
+        }
+        if amount_in == 0 {
+            assert!(out == 0);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn out_given_in_never_empties_the_pool_bounded() {
+        let reserve_in: u64 = kani::any_where(|&r| r < SMALL);
+        let reserve_out: u64 = kani::any_where(|&r| r < SMALL);
+        let amount_in: u64 = kani::any_where(|&a| a < SMALL);
+        with_edge_fee!(fee => assert_out_given_in_is_safe(reserve_in, reserve_out, amount_in, fee));
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn out_given_in_never_empties_the_pool() {
+        with_edge_fee!(fee => assert_out_given_in_is_safe(kani::any(), kani::any(), kani::any(), fee));
+    }
+}

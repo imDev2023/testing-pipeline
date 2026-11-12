@@ -34,6 +34,7 @@ use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use pipeline_strategy_interface::{self as psi, TradeMode};
 
+pub mod config;
 pub mod pricing;
 
 // Replaced with your program's address by `scripts/new-strategy.sh`.

@@ -799,6 +799,86 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
 
+### BAR-30: The on-chain workspace's layout
+
+- Question: Where do our programs, their fixtures and their scripts live in the repo?
+- Answer: One Cargo workspace at `programs/`, laid out as Pipeline lays out its own, with each program in `programs/<crate>` beside its metadata and demo script, fetched fixtures in a gitignored `fixtures/` at the root, and all TypeScript in one pnpm workspace at the root.
+- Alternatives: A Cargo workspace at the repo root; demo scripts in a TypeScript folder away from their programs.
+- Specified in: [`docs/toolchain.md`, Layout](toolchain.md#layout)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
+
+### BAR-31: Where Pipeline's commit is pinned
+
+- Question: Where is the Pipeline commit our code builds against pinned?
+- Answer: Once, as the `rev` of Pipeline's crates in `programs/Cargo.toml`, which the script that clones Pipeline for its SDK and test programs reads.
+- Alternatives: A second pin in that script.
+- Specified in: [`docs/toolchain.md`, Layout](toolchain.md#layout)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
+
+### BAR-32: When the devnet router changes
+
+- Question: What happens to the tests and to CI when the devnet router is upgraded?
+- Answer: The fixture script refuses any dump whose SHA-256 differs from `ROUTER_SHA256` in `fixtures/pins.env` and keeps the pinned copy, and CI dumps the router on every run, so an upgrade fails the on-chain jobs until a PR of its own re-pins it after the tests pass against the new bytes.
+- Alternatives: CI caching the fixture, which would leave an upgrade unnoticed; the hash written in the script itself.
+- Specified in: [`docs/toolchain.md`, Fixtures](toolchain.md#fixtures)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
+
+### BAR-33: The local validator
+
+- Question: What does the local validator for demo runs hold?
+- Answer: Devnet's router from the pinned fixture bytes, with its config account as devnet has it and nobody able to upgrade it, and every program of the workspace at its `declare_id!` address, upgradeable by the project upgrade authority, from an empty ledger each time and with SIMD-0268 off as on devnet.
+- Alternatives: Cloning the router from devnet at start-up, whose bytes the pin would not check; building the router in a scratchpad clone and initialising a config of our own.
+- Specified in: [`docs/toolchain.md`, Local demo run](toolchain.md#local-demo-run)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
+
+### BAR-34: CI's required check
+
+- Question: How can CI be a required check when most pull requests touch no on-chain code?
+- Answer: One `gate` job is the only required check: it always runs, and passes only if the no-keypair check passed and, when on-chain code changed, the Rust, TypeScript and Kani jobs passed, which are skipped otherwise.
+- Alternatives: Every job required, which a pull request without on-chain changes could never satisfy; a `paths` filter on the whole workflow, which would give such a pull request no result at all.
+- Specified in: [`docs/toolchain.md`, CI](toolchain.md#ci)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
+
+### BAR-35: Who may bypass the required check
+
+- Question: Can anyone merge or push to `main` without the gate passing?
+- Answer: Only repository admins, through the ruleset's bypass, so that a history rewrite can still be force-pushed; sessions never use it to merge a pull request whose CI is red.
+- Alternatives: No bypass, with the ruleset switched off for a rewrite; classic branch protection, which blocks force-pushes for admins too.
+- Specified in: [`docs/toolchain.md`, CI](toolchain.md#ci)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
+
+### BAR-36: How the review skills are installed
+
+- Question: How are Stronghold of Security and Book of Knowledge installed and kept at their pin?
+- Answer: Copied into `.claude/` at commit `969c43d` by `scripts/install-review-skills.sh`, exactly as the kit's own installers copy them but without running the kit's code or keeping the file that has the skills offer updates; the pin moves only through that script, in a PR of its own.
+- Alternatives: Running the kit's install scripts, which leave a file pointing at a temporary clone and have the skills offer updates.
+- Specified in: [`docs/toolchain.md`, Review skills](toolchain.md#review-skills)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
+
+### BAR-37: The security policy page
+
+- Question: What do our programs' `security.txt` and metadata name as their security policy?
+- Answer: `SECURITY.md` at the repo root, which GitHub shows as the repository's security policy: reports go through private vulnerability reporting, and it says that no program has had an external audit.
+- Alternatives: No policy page, which `security.txt` does not allow.
+- Specified in: [`SECURITY.md`, Security policy](../SECURITY.md#security-policy)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -2197,6 +2277,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
 
+### TAX-29: Program id
+
+- Question: At which address does the tax AMM live?
+- Answer: `J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t`, the address of the program keypair Pipeline's generator was given, kept in `~/.config/testing-pipeline/devnet/tax-amm.json`.
+- Alternatives: A vanity address.
+- Specified in: [`docs/toolchain.md`, Keys](toolchain.md#keys)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
@@ -3081,7 +3171,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `CANARY-22`, `CANARY-23`: the schedule is written in `pipescope-canary.md` and three times in `pipescope-architecture.md` (the crons, the indexer's new markets, the Canary runner).
 - `EXPLAINER-11`, `EXPLAINER-12`: the banned terms and the length limits are written in the prompt's text and again in the validator's rules; both should come from one constant, so a change cannot leave them disagreeing.
 - `EXPLAINER-18`: the model's id is written in `pipescope-explainer.md` and twice in `pipescope-architecture.md`.
-- `SUITE-16`, `BAR-02`: Pipeline's pinned commit is written in the "Building it" section of all four program specs; it should be pinned once, in the on-chain workspace's manifest, with `README.md` naming that place.
+- `SUITE-16`, `BAR-02`, `BAR-31`: Pipeline's commit is now pinned once in code, as the `rev` in `programs/Cargo.toml`, and `README.md` (Starting point) names that place; the "Building it" sections of the four program specs still write the commit out.
 - `PIPESCOPE-08`, `PIPESCOPE-28`, `PIPESCOPE-30`, `PIPESCOPE-31`, `PIPESCOPE-36`: only the integrator fee has a named home, `terminal-api`'s vars; default slippage, the indexer's timings, candle retention, live-room batching and the metadata fetcher's limits have none, and the public API's rate limit has no number at all.
 - `TAX-02`, `LENDING-09`: the launch forms' defaults are stated in the product specs (the tax side's in two sections of `tax-amm.md`) but live in Aviary's forms; `pool4-for-solana.md` says its pre-filled values are kept in one place in the form, and the other two should say the same.
 - `TAX-06`, `POOL4-04`: `GLOSSARY.md` gives the suite share and the designer share as fixed tenths, so a change to either constant also has to edit the glossary; it should name the constant, not the number.
@@ -3089,4 +3179,5 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-29` to `SUITE-31`: the owner answered these on a ticket that is still open, so "Specified in" names the ticket; the session that closes it points them at wherever the site's own docs record them.
 - `POOL4-20`, `POOL4-21`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI, One fixed-size layout) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
+- `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.

@@ -3,11 +3,11 @@
 //! Programs are loaded from files, so build first:
 //!
 //! - this strategy: `cargo build-sbf --manifest-path programs/tax-amm/Cargo.toml`
-//!   writes `target/deploy/tax_amm.so`
-//!   (set `SBF_OUT_DIR` to read it from somewhere else);
+//!   writes `programs/target/deploy/tax_amm.so`, or `$CARGO_TARGET_DIR/deploy` when that is
+//!   set (set `SBF_OUT_DIR` to read it from somewhere else);
 //! - the router: `scripts/fetch-router.sh` copies the devnet build to
-//!   `programs/tax-amm/tests/fixtures/pipeline.so` (set `PIPELINE_ROUTER_SO` to use
-//!   another file).
+//!   `fixtures/router/pipeline.so`, checked against the hash pinned in
+//!   `fixtures/pins.env` (set `PIPELINE_ROUTER_SO` to use another file).
 //!
 //! Every helper sends real transactions through the router, the same instructions a
 //! front end or desk would send on devnet.
@@ -49,7 +49,8 @@ fn read_program(path: PathBuf, hint: &str) -> Vec<u8> {
 pub fn strategy_so() -> Vec<u8> {
     let dir = std::env::var("SBF_OUT_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| crate_dir().join("../../target/deploy"));
+        .or_else(|_| std::env::var("CARGO_TARGET_DIR").map(|dir| PathBuf::from(dir).join("deploy")))
+        .unwrap_or_else(|_| crate_dir().join("../target/deploy"));
     read_program(
         dir.join("tax_amm.so"),
         "Build it first: cargo build-sbf --manifest-path programs/tax-amm/Cargo.toml",
@@ -60,7 +61,7 @@ pub fn strategy_so() -> Vec<u8> {
 pub fn router_so() -> Vec<u8> {
     let path = std::env::var("PIPELINE_ROUTER_SO")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| crate_dir().join("tests/fixtures/pipeline.so"));
+        .unwrap_or_else(|_| crate_dir().join("../../fixtures/router/pipeline.so"));
     read_program(path, "Run `scripts/fetch-router.sh` first.")
 }
 

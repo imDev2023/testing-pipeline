@@ -2,22 +2,22 @@
     "name": "tax-amm-scripts",
     "private": true,
     "type": "module",
-    "description": "Lists the strategy on Pipeline's devnet router and trades it once",
+    "description": "The tax AMM's demo: registers the strategy on a Pipeline router, creates a market from its metadata and trades it",
     "engines": {
-        "node": ">=22.18"
+        "node": ">=24 <25"
     },
     "scripts": {
-        "deploy-devnet": "node deploy-devnet.ts",
+        "demo": "node demo.ts",
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {
-        "@pipeline-placeholder/sdk": "file:/private/tmp/claude-501/-Users-fisd-orca-workspaces-testing-pipeline-build-58/c730a01f-5e91-4b94-89b7-f005cca7b349/scratchpad/pipeline/sdk/ts",
-        "@solana-program/system": "^0.16.0",
-        "@solana-program/token": "^0.18.0",
-        "@solana/kit": "^8.4.0"
+        "@pipeline-placeholder/sdk": "link:../../../fixtures/pipeline/sdk/ts",
+        "@solana-program/system": "0.16.0",
+        "@solana-program/token": "0.18.0",
+        "@solana/kit": "8.6.0"
     },
     "devDependencies": {
-        "@types/node": "^24.19.2",
-        "typescript": "^7.0.2"
+        "@types/node": "24.19.2",
+        "typescript": "7.0.2"
     }
 }
