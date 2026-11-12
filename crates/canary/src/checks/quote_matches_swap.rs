@@ -54,7 +54,11 @@ fn legs<'a>(m: &'a Measured, others: &'a [Committed]) -> Vec<Compared<'a>> {
     out.extend(others.iter().map(|c| Compared {
         leg: &c.leg,
         ordinary: c.ordinary,
-        role: "swap",
+        role: if c.leg.input == m.money {
+            "buy"
+        } else {
+            "sale"
+        },
         context: Some(&c.context),
     }));
     out
@@ -62,7 +66,8 @@ fn legs<'a>(m: &'a Measured, others: &'a [Committed]) -> Vec<Compared<'a>> {
 
 fn describe(m: &Measured, c: &Compared, disagreement: &Disagreement) -> String {
     let size = match (c.context, c.role) {
-        (Some(context), _) => format!("{context} ({} units in)", c.leg.amount_in),
+        (Some(context), "buy") => format!("{context} of {}", m.amount(c.leg.amount_in)),
+        (Some(context), _) => format!("{context} of {} units bought", c.leg.amount_in),
         (None, "buy") => format!("the buy of {}", m.amount(c.leg.amount_in)),
         (None, _) => format!("the sale of {} units bought", c.leg.amount_in),
     };

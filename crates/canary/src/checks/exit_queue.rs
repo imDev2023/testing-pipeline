@@ -120,7 +120,7 @@ impl Measured {
 fn totals(pair: &QueuePair) -> (u64, u64) {
     pair.buyers
         .iter()
-        .filter(|b| b.buy.swap.is_ok())
+        .filter(|b| b.bought())
         .fold((0u64, 0u64), |(put_in, got_back), b| {
             (
                 put_in.saturating_add(b.put_in().unwrap_or(0)),
@@ -147,7 +147,7 @@ fn judge_pair(pair: &QueuePair, money: &Money) -> PairVerdict {
         .buyers
         .iter()
         .enumerate()
-        .filter(|(_, b)| b.buy.swap.is_err())
+        .filter(|(_, b)| !b.bought())
         .map(|(i, b)| {
             format!(
                 "buyer {} ({})",
@@ -172,7 +172,7 @@ fn judge_pair(pair: &QueuePair, money: &Money) -> PairVerdict {
         .buyers
         .iter()
         .enumerate()
-        .find(|(_, b)| b.buy.swap.is_ok() && b.sold().is_none())
+        .find(|(_, b)| could_not_sell_back(b))
     {
         return verdict(
             Outcome::Fail,

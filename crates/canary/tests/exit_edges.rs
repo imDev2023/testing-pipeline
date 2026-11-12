@@ -449,3 +449,70 @@ fn every_exit_check_is_not_run_when_trading_is_not_run() {
         assert!(verdict.reason.contains("WrongStatus"), "{}", verdict.reason);
     }
 }
+
+/// A round trip whose buy worked and delivered nothing to sell.
+fn bought_nothing() -> RoundTrip {
+    RoundTrip {
+        sell: None,
+        ..sold(AMOUNT, NOW)
+    }
+}
+
+#[test]
+fn exit_wallets_fails_when_no_fresh_wallet_can_sell_and_says_so() {
+    let verdict = exit_wallets::judge(
+        &wallets(vec![stuck(AMOUNT); 5], Some(stuck(AMOUNT))),
+        &sizes(),
+        &Trading::Open,
+    );
+    assert_eq!(verdict.outcome, Outcome::Fail, "{}", verdict.reason);
+    assert!(
+        verdict.reason.contains("could not sell"),
+        "{}",
+        verdict.reason
+    );
+    assert!(counts(&verdict));
+}
+
+#[test]
+fn a_buy_that_delivers_nothing_is_never_a_failed_sale() {
+    // In the queue, a buyer who got nothing could not buy; the others are judged on their total.
+    let mut m = queue(NOW, 0);
+    m.pairs[0].buyers[2] = bought_nothing();
+    let verdict = exit_queue::judge(&m, &sizes(), &Trading::Open);
+    assert_eq!(verdict.outcome, Outcome::Pass, "{}", verdict.reason);
+    assert!(
+        verdict.reason.contains("Could not buy: buyer 3"),
+        "{}",
+        verdict.reason
+    );
+    assert!(!counts(&verdict));
+    // Holding: nothing bought is nothing to hold.
+    let mut held = timed(None, vec![("after 1 day", sold(AMOUNT, NOW))]);
+    held.pairs[0].rows[0].row = bought_nothing();
+    let verdict = exit_hold::judge(&held, &sizes(), &Trading::Open);
+    assert_eq!(verdict.outcome, Outcome::NotRun, "{}", verdict.reason);
+    assert!(!counts(&verdict));
+}
+
+#[test]
+fn tokens_that_arrive_as_nothing_after_a_transfer_fail_and_count_as_could_not_sell_back() {
+    let verdict = exit_transferred::judge(&transferred(NOW, Ok(0), None), &sizes(), &Trading::Open);
+    assert_eq!(verdict.outcome, Outcome::Fail, "{}", verdict.reason);
+    assert!(counts(&verdict));
+}
+
+#[test]
+fn the_launch_clock_counts_the_positions_of_every_pair() {
+    let mut m = timed(None, vec![("at the market's creation", sold(AMOUNT, NOW))]);
+    // A first pair that could not trade, then one that traded at the present and one position.
+    let traded = m.pairs.remove(0);
+    m.pairs.push(TimedPair {
+        token: 1,
+        reference: None,
+        rows: vec![],
+    });
+    m.pairs.push(TimedPair { token: 2, ..traded });
+    let verdict = exit_launch_clock::judge(&m, &sizes(), &Trading::Open);
+    assert!(verdict.reason.contains("(1 of 6)"), "{}", verdict.reason);
+}

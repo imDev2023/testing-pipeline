@@ -38,17 +38,32 @@ fn every_wait_moves_slot_epoch_and_time_together_at_the_configured_rates() {
             start.unix_timestamp + seconds as i64,
             "{label}"
         );
-        assert_eq!(
-            after.epoch,
-            start.epoch + (after.slot / SLOTS_PER_EPOCH - start.slot / SLOTS_PER_EPOCH),
-            "{label}"
-        );
         assert_eq!(after.leader_schedule_epoch, after.epoch + 1, "{label}");
     }
     // 30 days is 6,480,000 slots, fifteen epochs on.
     let month = clock::after(&start, WAITS[8].1);
     assert_eq!(month.slot - start.slot, 6_480_000);
     assert_eq!(month.epoch - start.epoch, 15);
+}
+
+#[test]
+fn epochs_follow_the_cluster_schedule_with_its_warmup_not_multiples_of_the_epoch_length() {
+    // With warmup, as devnet and mainnet were started, epochs of 432,000 slots begin at
+    // slot 524,256: slot 520,000,000 is 211,744 slots into an epoch that ends at 520,220,256.
+    assert_eq!(SLOTS_PER_EPOCH, 432_000);
+    let start = now();
+    let day = clock::after(&start, Wait::Seconds(86_400));
+    assert_eq!(day.slot, 520_216_000);
+    assert_eq!(day.epoch, start.epoch, "a day on is still the same epoch");
+    assert_eq!(day.epoch_start_timestamp, start.epoch_start_timestamp);
+    let two_days = clock::after(&start, Wait::Seconds(2 * 86_400));
+    assert_eq!(two_days.epoch, start.epoch + 1);
+    // The new epoch began at slot 520,220,256, 211,744 slots (84,697 seconds) before the new
+    // clock's slot, 520,432,000.
+    assert_eq!(
+        two_days.epoch_start_timestamp,
+        two_days.unix_timestamp - 211_744 * 2 / 5
+    );
 }
 
 #[test]

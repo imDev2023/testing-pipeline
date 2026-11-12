@@ -14,8 +14,6 @@ use serde::Serialize;
 use solana_transaction::Transaction;
 
 use crate::config::SWAP_COMPUTE_LIMIT;
-use pipeline_check::hooks;
-
 use crate::failure::{Failure, FailureClass, Stage};
 use crate::market::{token_amount, Market};
 
@@ -29,9 +27,13 @@ pub struct SwapRequest<'a> {
     pub strategy_accounts: &'a [AccountMeta],
     /// `TradeRequest::extra`.
     pub extra: &'a [u8],
-    /// What the quote said the strategy would send, for an output transfer hook that derives
-    /// its accounts from the amount; 0 when the quote failed.
-    pub expected_output: u64,
+    /// The input mint's transfer-hook accounts for the trader-to-vault transfer, and the
+    /// output mint's for the vault-to-trader transfer, as [`Session::hook_accounts`] found
+    /// them; empty for a mint without a hook.
+    ///
+    /// [`Session::hook_accounts`]: crate::market::Session::hook_accounts
+    pub input_hook_accounts: &'a [AccountMeta],
+    pub output_hook_accounts: &'a [AccountMeta],
 }
 
 /// What a committed swap did.
@@ -80,7 +82,10 @@ impl SwapPath for ThroughRouter {
         request: &SwapRequest,
     ) -> Result<SwapReceipt, Failure> {
         let (input, output, trader) = (request.input, request.output, request.trader);
-        let (strategy_accounts, input_hook_accounts) = hook_accounts(svm, market, request);
+        // The strategy pays out of its vault itself, so it is handed the output mint's hook
+        // accounts after its own; the router moves the input and takes the input's.
+        let mut strategy_accounts = request.strategy_accounts.to_vec();
+        strategy_accounts.extend_from_slice(request.output_hook_accounts);
         let accounts = client::SwapAccounts {
             trader,
             strategy_program: market.strategy(),
@@ -94,7 +99,7 @@ impl SwapPath for ThroughRouter {
             output_token_program: market.token_program(output),
             integrator_fee_account: None,
             strategy_accounts,
-            input_hook_accounts,
+            input_hook_accounts: request.input_hook_accounts.to_vec(),
         };
         let args = client::SwapArgs {
             mode: TradeMode::ExactIn,
@@ -148,54 +153,6 @@ impl SwapPath for ThroughRouter {
                 .and_then(|n| n.parse().ok()),
         })
     }
-}
-
-/// The strategy's accounts with the output mint's transfer-hook accounts after them, and the
-/// input mint's transfer-hook accounts, resolved as `pipeline-check` resolves them for its own
-/// swaps: the input transfer runs from the trader to the vault, the output transfer from the
-/// vault to the trader. Unresolvable hook accounts are left out; the swap then fails and says
-/// why.
-fn hook_accounts(
-    svm: &LiteSVM,
-    market: &Market,
-    request: &SwapRequest,
-) -> (Vec<AccountMeta>, Vec<AccountMeta>) {
-    let (input, output, trader) = (request.input, request.output, request.trader);
-    let data = |key: &Pubkey| svm.get_account(key).map(|a| a.data);
-    let mut strategy_accounts = request.strategy_accounts.to_vec();
-    let mut input_hook_accounts = vec![];
-    if let Some(hook) = market.mints[input].transfer_hook {
-        let transfer = hooks::Transfer {
-            source: market.ata(&trader, input),
-            mint: market.mint(input),
-            destination: market.vault(input),
-            authority: trader,
-            amount: request.amount_in,
-        };
-        input_hook_accounts = hooks::resolve(&hook, &transfer, data).unwrap_or_default();
-    }
-    if let Some(hook) = market.mints[output].transfer_hook {
-        let vault = market.vault(output);
-        let transfer = hooks::Transfer {
-            source: vault,
-            mint: market.mint(output),
-            destination: market.ata(&trader, output),
-            authority: token_owner(svm, &vault).unwrap_or_default(),
-            amount: request.expected_output,
-        };
-        strategy_accounts.extend(hooks::resolve(&hook, &transfer, data).unwrap_or_default());
-    }
-    (strategy_accounts, input_hook_accounts)
-}
-
-/// A token account's owner.
-fn token_owner(svm: &LiteSVM, account: &Pubkey) -> Option<Pubkey> {
-    const OWNER: std::ops::Range<usize> = 32..64;
-    svm.get_account(account).and_then(|a| {
-        a.data
-            .get(OWNER)
-            .map(|b| Pubkey::new_from_array(b.try_into().expect("32 bytes")))
-    })
 }
 
 /// The compute budget program's "set compute unit limit".

@@ -15,7 +15,7 @@ use solana_transaction::Transaction;
 
 use crate::config::QUOTE_COMPUTE_LIMIT;
 use crate::failure::{Failure, FailureClass, Stage};
-use crate::market::{fund_lamports, program_elf, token_amount, Market, Session};
+use crate::market::{fund_lamports, program_elf, token_amount, token_owner, Market, Session};
 use crate::swap::{compute_limit, SwapPath, SwapReceipt, SwapRequest};
 
 /// A quote in the trader's terms, as `pipeline-quoter` gives it.
@@ -420,6 +420,14 @@ impl Session<'_> {
             }
         };
         let quote = self.quote(svm, &request, &resolved);
+        let (source, vault) = (self.market.ata(trader, input), self.market.vault(input));
+        let input_hooks = self.hook_accounts(svm, input, &source, &vault, trader, amount_in);
+        let (vault, destination) = (self.market.vault(output), self.market.ata(trader, output));
+        let vault_owner = token_owner(svm, &vault).unwrap_or_default();
+        // A hook may derive its accounts from the amount; the strategy pays what it quoted.
+        let paid = quote.as_ref().map_or(0, |q| q.strategy_amount_out);
+        let output_hooks =
+            self.hook_accounts(svm, output, &vault, &destination, &vault_owner, paid);
         let swap = path.swap(
             svm,
             &self.market,
@@ -430,7 +438,8 @@ impl Session<'_> {
                 amount_in,
                 strategy_accounts: &resolved,
                 extra: &extra,
-                expected_output: quote.as_ref().map_or(0, |q| q.strategy_amount_out),
+                input_hook_accounts: &input_hooks,
+                output_hook_accounts: &output_hooks,
             },
         );
         Leg {
@@ -578,20 +587,7 @@ impl Session<'_> {
             AccountMeta::new(destination, false),
             AccountMeta::new_readonly(*from, true),
         ];
-        if let Some(hook) = mint.transfer_hook {
-            let transfer = hooks::Transfer {
-                source,
-                mint: mint.address,
-                destination,
-                authority: *from,
-                amount,
-            };
-            // Unresolvable hook accounts are left out; the transfer then fails and says why.
-            accounts.extend(
-                hooks::resolve(&hook, &transfer, |key| svm.get_account(key).map(|a| a.data))
-                    .unwrap_or_default(),
-            );
-        }
+        accounts.extend(self.hook_accounts(svm, token, &source, &destination, from, amount));
         let mut data = vec![TRANSFER_CHECKED];
         data.extend_from_slice(&amount.to_le_bytes());
         data.push(mint.decimals);
@@ -606,6 +602,55 @@ impl Session<'_> {
         Ok(token_amount(svm, &destination)
             .unwrap_or(0)
             .saturating_sub(before))
+    }
+}
+
+impl Session<'_> {
+    /// The accounts mint `i`'s transfer hook needs to move `amount` from `source` to
+    /// `destination` under `authority`: the hook's extra accounts in its list's order, then the
+    /// hook program and the list itself, as Token-2022 is handed them. Each account the list
+    /// names is read from the source before the next pass, because an entry can be derived
+    /// from another account's data, so an account the copy lacks is fetched or, from a
+    /// snapshot, noted as lacking. Empty for a mint without a hook; when the list cannot be
+    /// read, also empty, and the transfer then fails with the token program's own words.
+    pub fn hook_accounts(
+        &mut self,
+        svm: &mut LiteSVM,
+        i: usize,
+        source: &Pubkey,
+        destination: &Pubkey,
+        authority: &Pubkey,
+        amount: u64,
+    ) -> Vec<AccountMeta> {
+        let Some(hook) = self.market.mints[i].transfer_hook else {
+            return vec![];
+        };
+        let transfer = hooks::Transfer {
+            source: *source,
+            mint: self.market.mint(i),
+            destination: *destination,
+            authority: *authority,
+            amount,
+        };
+        self.load(
+            svm,
+            &[hook, hooks::validation_address(&hook, &transfer.mint)],
+        );
+        let mut found: Vec<AccountMeta> = vec![];
+        for _ in 0..psi::MAX_RESOLVE_ROUNDS {
+            let Ok(metas) =
+                hooks::resolve(&hook, &transfer, |key| svm.get_account(key).map(|a| a.data))
+            else {
+                return vec![];
+            };
+            let keys: Vec<Pubkey> = metas.iter().map(|m| m.pubkey).collect();
+            self.load(svm, &keys);
+            if metas == found {
+                break;
+            }
+            found = metas;
+        }
+        found
     }
 }
 
@@ -658,6 +703,6 @@ impl RoundTrip {
 }
 
 /// Serializes an address as its base58 text.
-fn address<S: serde::Serializer>(key: &Pubkey, serializer: S) -> Result<S::Ok, S::Error> {
+pub fn address<S: serde::Serializer>(key: &Pubkey, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(&key.to_string())
 }

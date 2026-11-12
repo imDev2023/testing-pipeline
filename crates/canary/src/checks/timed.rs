@@ -162,13 +162,23 @@ fn judge_pair(pair: &TimedPair, money: &Money, words: &Words, measured: &Measure
             ),
         );
     }
-    // The ordinary trade's failures fail; when the present cannot sell and its failures
+    if !base.row.bought() {
+        return verdict(
+            Outcome::NotRun,
+            format!(
+                "Not run: the buy of {} {} delivered nothing to sell.",
+                money.amount(reference.amount),
+                words.base
+            ),
+        );
+    }
+    // The ordinary trade's failed sales fail; when the present cannot sell and its failures
     // cannot fail the check, there is nothing to measure against.
     let ordinary_stuck = pair
         .rows
         .iter()
         .filter(|_| words.ordinary_fails)
-        .find(|t| t.ordinary && round_trip_failure(&t.row).is_some());
+        .find(|t| t.ordinary && could_not_sell_back(&t.row));
     if let Some(stuck) = ordinary_stuck {
         let why = round_trip_failure(&stuck.row).unwrap_or_default();
         return verdict(

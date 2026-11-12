@@ -32,7 +32,7 @@ use crate::trade::RoundTrip;
 pub struct Insider {
     /// Its roles, in words: "the market creator", "the mint authority of mint 1".
     pub roles: Vec<String>,
-    #[serde(serialize_with = "address")]
+    #[serde(serialize_with = "crate::trade::address")]
     pub key: Pubkey,
     /// Why it was skipped, when it is a program's address and not a wallet.
     pub skipped: Option<String>,
@@ -60,10 +60,6 @@ fn join_and(items: &[String]) -> String {
         [one] => one.clone(),
         [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
-}
-
-fn address<S: serde::Serializer>(key: &Pubkey, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(&key.to_string())
 }
 
 /// One wallet's round trip.
@@ -325,6 +321,16 @@ fn judge_pair(pair: &WalletPair, skipped: &str, money: &Money) -> PairVerdict {
                 "Fresh wallets got different results from the same state: one got back {}, another {}.{stand_in}",
                 got(money, &first.row),
                 got(money, &other.row)
+            ),
+        );
+    }
+    if first.row.sold().is_none() {
+        return verdict(
+            Outcome::Fail,
+            format!(
+                "No fresh wallet could sell back: each bought {} and could not sell it ({}).{stand_in}",
+                money.amount(reference.amount),
+                round_trip_failure(&first.row).unwrap_or_default()
             ),
         );
     }

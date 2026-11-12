@@ -34,7 +34,7 @@ pub struct TransferPair {
     pub reference: Option<Reference>,
     /// The buyer's buy, and the buyer's own sale when the transfer was refused.
     pub buyer: Option<RoundTrip>,
-    #[serde(serialize_with = "address")]
+    #[serde(serialize_with = "crate::trade::address")]
     pub receiver: Pubkey,
     /// The mint's transfer hook program, when it has one.
     #[serde(skip)]
@@ -45,10 +45,6 @@ pub struct TransferPair {
     pub transfer: Option<Result<u64, Failure>>,
     /// The second wallet's sale of what arrived.
     pub receiver_sale: Option<Leg>,
-}
-
-fn address<S: serde::Serializer>(key: &Pubkey, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(&key.to_string())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -157,13 +153,18 @@ impl Measured {
         out
     }
 
-    /// "A buyer could not sell back": the second wallet's sale failed, or, after a refused
-    /// transfer, the buyer's own sale failed. The refusal itself never counts (`CANARY-27`).
+    /// "A buyer could not sell back": the tokens were sent and the second wallet could not
+    /// sell them (or nothing arrived to sell), or, after a refused transfer, the buyer's own
+    /// sale failed. The refusal itself never counts (`CANARY-27`).
     pub fn could_not_sell_back(&self) -> bool {
         self.pairs.iter().any(|pair| {
-            pair.receiver_sale
-                .as_ref()
-                .is_some_and(|leg| leg.swap.is_err())
+            let sent = matches!(pair.transfer, Some(Ok(_)));
+            // Sent and then not sold, or sent and arrived as nothing to sell.
+            (sent
+                && pair
+                    .receiver_sale
+                    .as_ref()
+                    .is_none_or(|leg| leg.swap.is_err()))
                 || pair.buyer.as_ref().is_some_and(could_not_sell_back)
         })
     }

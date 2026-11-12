@@ -37,8 +37,10 @@ pub const WORDS: Words = Words {
     pass: |tolerance, base, m| {
         let positions = m
             .pairs
-            .first()
-            .map_or(0, |p| p.rows.len().saturating_sub(1));
+            .iter()
+            .map(|p| p.rows.len().saturating_sub(1))
+            .max()
+            .unwrap_or(0);
         format!("returns {tolerance} of now's {base} at every launch-clock position already past ({positions} of {})", LAUNCH_CLOCK_SECONDS.len())
     },
     note: " The state is today's; only the clock was set back.",

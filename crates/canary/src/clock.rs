@@ -5,6 +5,7 @@
 
 use litesvm::LiteSVM;
 use solana_clock::Clock;
+use solana_epoch_schedule::EpochSchedule;
 
 use crate::config::{
     Wait, SLOTS_PER_EPOCH, SLOTS_PER_SECOND_DENOMINATOR, SLOTS_PER_SECOND_NUMERATOR,
@@ -15,20 +16,36 @@ fn slots_in(seconds: u64) -> u64 {
     seconds.saturating_mul(SLOTS_PER_SECOND_NUMERATOR) / SLOTS_PER_SECOND_DENOMINATOR
 }
 
-/// `now` moved to `slot`, its epoch moved by the epoch boundaries crossed.
+/// The cluster's epoch schedule: epochs of `SLOTS_PER_EPOCH` slots after a warmup of shorter
+/// ones, as devnet and mainnet were started, so the first full epoch begins at slot 524,256.
+fn schedule() -> EpochSchedule {
+    EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, true)
+}
+
+/// `now` moved to `slot`: its epoch moved by the epoch boundaries crossed, and, when the epoch
+/// changes, the epoch's start time set to when its first slot was, at the configured rate.
 fn at_slot(now: &Clock, slot: u64, unix_timestamp: i64) -> Clock {
-    let (from, to) = (now.slot / SLOTS_PER_EPOCH, slot / SLOTS_PER_EPOCH);
+    let schedule = schedule();
+    let (from, to) = (schedule.get_epoch(now.slot), schedule.get_epoch(slot));
     let epoch = if to >= from {
         now.epoch.saturating_add(to - from)
     } else {
         now.epoch.saturating_sub(from - to)
+    };
+    let epoch_start_timestamp = if to == from {
+        now.epoch_start_timestamp
+    } else {
+        let into = slot.saturating_sub(schedule.get_first_slot_in_epoch(to));
+        let seconds =
+            into.saturating_mul(SLOTS_PER_SECOND_DENOMINATOR) / SLOTS_PER_SECOND_NUMERATOR;
+        unix_timestamp.saturating_sub_unsigned(seconds)
     };
     Clock {
         slot,
         epoch,
         leader_schedule_epoch: epoch.saturating_add(1),
         unix_timestamp,
-        epoch_start_timestamp: now.epoch_start_timestamp,
+        epoch_start_timestamp,
     }
 }
 
