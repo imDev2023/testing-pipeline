@@ -7,8 +7,9 @@
 //! own bytes. Every trade goes through one swap function behind the licence seam
 //! ([`swap::SwapPath`]), with a `pipeline-quoter` quote taken just before it.
 //!
-//! The checks here are `readable`, `conformance`, `exit_sizes`, `quote_matches_swap` and
-//! `cost`; every policy value they use is in [`config`].
+//! The checks here are `readable`, `conformance`, the exit test (`exit_sizes`, `exit_hold`,
+//! `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred` and `exit_queue`),
+//! `quote_matches_swap` and `cost`; every policy value they use is in [`config`].
 
 pub mod bands;
 pub mod checks;
