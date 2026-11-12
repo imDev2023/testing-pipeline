@@ -116,6 +116,7 @@ fn its_instructions_are_pipelines_with_pipelines_discriminators_and_its_actions(
         ("pipeline_quote", discriminator::QUOTE),
         ("pipeline_resolve_accounts", discriminator::RESOLVE_ACCOUNTS),
         ("pipeline_swap", discriminator::SWAP),
+        ("pipeline_seed_liquidity", discriminator::SEED_LIQUIDITY),
     ];
     let instructions = idl["instructions"].as_array().unwrap();
     assert_eq!(instructions.len(), expected.len());
@@ -157,6 +158,49 @@ fn its_init_accounts_are_the_metadatas() {
         .map(|a| a["name"].as_str().unwrap())
         .collect();
     assert_eq!(names[4..], listed[..]);
+}
+
+#[test]
+fn its_seed_liquidity_accounts_are_pipelines_then_the_metadatas() {
+    let idl = idl();
+    let seed = idl["instructions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "pipeline_seed_liquidity")
+        .unwrap();
+    let names: Vec<&str> = seed["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    // Pipeline's five fixed accounts (`seed_accounts`), mint, escrow and token program for
+    // each mint, then the metadata's `seed_liquidity` accounts, in order.
+    assert_eq!(
+        names[..11],
+        [
+            "seeder",
+            "market_state",
+            "payer",
+            "system_program",
+            "lp_recipient",
+            "mint_0",
+            "escrow_0",
+            "token_program_0",
+            "mint_1",
+            "escrow_1",
+            "token_program_1",
+        ]
+    );
+    let metadata = read_json("metadata.json");
+    let listed: Vec<&str> = metadata["seed_liquidity"]["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names[11..], listed[..]);
 }
 
 #[test]

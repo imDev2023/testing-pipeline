@@ -67,6 +67,8 @@ pub enum StrategyError {
     NotTaxAuthority,
     #[msg("A recipient slot still owed tax can't be emptied; pay it out or name another wallet")]
     OwedSlotLeftEmpty,
+    #[msg("A seed request gives one amount for each of the market's two mints")]
+    BadSeedAmounts,
     #[msg(
         "No such tax slot: there is one per tax recipient, then the burn's and the suite share's"
     )]

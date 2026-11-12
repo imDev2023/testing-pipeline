@@ -879,6 +879,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
 
+### BAR-38: Test programs in the workspace
+
+- Question: Where do test-only programs, such as the stand-in launchpad the seeding tickets share, live, and how are they kept off devnet?
+- Answer: In `programs/test-programs/`, as workspace members marked `test-program` in their manifests, which `scripts/workspace-programs.py` leaves out of the deployable programs, `scripts/build-programs.sh` builds into the gitignored `fixtures/test-programs`, and `scripts/local-validator.sh` loads frozen; no deploy script names one.
+- Alternatives: A separate Cargo workspace, which would repeat the pins; building them into `programs/target/deploy` beside the programs that are deployed.
+- Specified in: [`docs/toolchain.md`, Layout](toolchain.md#layout)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -2143,6 +2153,76 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
 
+### CANARY-30: The endpoint's snapshot and answer
+
+- Question: What does the container's endpoint take and answer, and how does the binary know a round is the last?
+- Answer: `POST /run` takes one market's snapshot (the market, the round from 1, the cluster's clock and every account read by address, `null` where the cluster has none, so an address absent from the snapshot is one it lacks) and answers with one record per check or with exactly the addresses a trade named that the snapshot lacks; at round `SNAPSHOT_ROUNDS` it answers with records whatever it lacks.
+- Alternatives: The Durable Object counting rounds and sending a separate "last" flag; a second endpoint for the last round.
+- Specified in: [`crates/canary/README.md`, Run it](../crates/canary/README.md#run-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-31: Which checks an account the snapshot lacks affects
+
+- Question: When a snapshot lacks accounts at the last round, which checks are "not run"?
+- Answer: Every check when the copy itself lacked them; otherwise only the checks whose trades named them: `readable` for its probes, and `exit_sizes`, `quote_matches_swap` and `cost`, which share the size ladder's trades; each such record names the accounts.
+- Alternatives: Every check whenever anything is lacking.
+- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-32: Readability's probes in every direction
+
+- Question: What does `readable` quote in a direction whose input is not the money side?
+- Answer: What the smallest buy of that mint would deliver, so the probe only sells what a buy produced, or one unit when that buy quotes nothing.
+- Alternatives: A share of that mint's vault, as the prototype did.
+- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-33: A market that refuses every trade
+
+- Question: When are a market's trading checks "not run" because it refuses every trade?
+- Answer: When every direction's probe is refused cleanly; when a probe crashes or runs out of compute the trading checks still run, because a swap that works without a quote is itself a finding.
+- Alternatives: "Not run" whenever no direction quotes.
+- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-34: Where `cost` reads Pipeline's fee
+
+- Question: Where does `cost` take Pipeline's fee from, given that the router's config account holds no fee?
+- Answer: From what the router charged in the copy, the `pipeline_fee` of each swap's return data, with the sale's fee (charged in the token) valued at the sale's own price; no fee rate is written in Canary.
+- Alternatives: The fee rate of `pipeline-strategy-interface` (`PIPELINE_FEE_BPS`), which would hide a router that charged differently.
+- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-35: Compute limit of the read-only calls
+
+- Question: What compute limit do `pipeline_market_info` and account resolution run under?
+- Answer: The quote's limit, `QUOTE_COMPUTE_LIMIT` (200,000 units), as an integrator's quoter runs them; running out of it is "out of compute".
+- Alternatives: The swap's limit, 1,400,000 units, as `pipeline-check`'s cloner resolves accounts.
+- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
+### CANARY-36: Wallets from a seed chosen per run
+
+- Question: How are a run's new random wallets made, so that a snapshot's later rounds can supply accounts derived from them?
+- Answer: Each wallet comes from a seed chosen at random once per run; the endpoint's first answer carries the seed and every later round of that run is posted with it, so the rounds trade from the same wallets while no strategy can know Canary's wallets in advance.
+- Alternatives: A new random key per trade, whose derived accounts no later round could supply; wallets derived from the market and the size, which a strategy could compute and treat differently.
+- Specified in: [`crates/canary/README.md`, Run it](../crates/canary/README.md#run-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+
 ## Explainer (EXPLAINER)
 
 ### EXPLAINER-01: What the explainer may say
@@ -2757,7 +2837,27 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
 
-### TAX-41: Which tax slots `distribute` pays
+### TAX-41: How metadata describes seeding from another program
+
+- Question: How does the strategy metadata tell a launcher how to fill in `pipeline_seed_liquidity`, which Pipeline's metadata standard has no field for?
+- Answer: A top-level `seed_liquidity` form shaped as `init` is, which the validator allows as an unknown key: the seeded market state as a `pda:` source keyed by `input:seeder` and both mints, `data` as init's arguments under the same IDL type with the seeder marked ignored, and the program's own accounts after Pipeline's fixed seed accounts, so the SDK's `resolveInit` resolves it as the demo does.
+- Alternatives: A prose description only, which no tool could resolve; a `create_market` custom action, which is called by a wallet, not by another program.
+- Specified in: [`docs/spec/tax-amm.md`, Custom actions and metadata](spec/tax-amm.md#custom-actions-and-metadata)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
+
+### TAX-42: How a seed request is checked
+
+- Question: What does `pipeline_seed_liquidity` check beyond the creation rules and mint rules, and what does it report?
+- Answer: Exactly one amount per mint (an error of its own otherwise), `data` exactly the creation parameters, escrows owned by the seeder as the `seed` action requires of the seeder's accounts, and `SeedResult.taken` as what it measured leaving each escrow, with every market created by the same code as a market created through the router.
+- Alternatives: Reporting the amounts requested as taken, as Pipeline's reference strategy does; a second copy of the creation checks for seeded markets.
+- Specified in: [`docs/spec/tax-amm.md`, The seed](spec/tax-amm.md#the-seed)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
+
+### TAX-43: Which tax slots `distribute` pays
 
 - Question: How does `distribute` name a slot, and which calls does it refuse or treat as nothing to do?
 - Answer: By the slot's number as the market state books it, 0 to 3 the tax recipients, 4 the burn and 5 the suite share; a number above 5 and a recipient slot the market does not use are refused with errors of their own, and a slot owed nothing moves nothing, creates no account and emits no event.
@@ -2767,7 +2867,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
 
-### TAX-42: Where `distribute` pays
+### TAX-44: Where `distribute` pays
 
 - Question: Into which account is a slot paid, and which accounts are refused?
 - Answer: A tax recipient or the suite share only into its wallet's associated token account for the tax-side mint, created at the caller's expense when missing, and paid even when the wallet has handed that SPL Token account to another owner, since refusing would strand the slot's tax for good once the authority renounces; the burn names no wallet (the default key) and burns from the vault; any other wallet or token account is refused, including the wallet's account of the other mint.
@@ -2777,7 +2877,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
 
-### TAX-43: The `distribute` action's inputs
+### TAX-45: The `distribute` action's inputs
 
 - Question: How does the metadata's `distribute` action find a market's tax-side mint and a slot's wallet, which no metadata account source can name?
 - Answer: As two address inputs, `tax_mint` and `recipient` (the default key for the burn), from which it derives the vault and the token account; whoever builds the call (Aviary's tax panel, the keeper runner, the demo script) reads both from the market state, and the program refuses any that are not the slot's.
@@ -2787,7 +2887,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
 
-### TAX-44: The suite treasury and the slot numbers in the IDL
+### TAX-46: The suite treasury and the slot numbers in the IDL
 
 - Question: How do Aviary and the demo script learn the suite share's wallet and which slot is the burn's and which the suite share's, all of which `distribute` needs?
 - Answer: The program publishes `SUITE_TREASURY`, `BURN_SLOT` and `SUITE_SLOT` in its IDL with Anchor's `#[constant]`, beside the tax cap and the suite share, so the generated client carries them and the config module (and `MAX_RECIPIENTS`, from which the slots follow) stays their one place.
@@ -2797,7 +2897,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
 
-### TAX-45: The demo's two markets
+### TAX-47: The demo's two markets
 
 - Question: Which markets does the demo script create, trade and pay out?
 - Answer: Two: one taxed in wrapped SOL, Aviary's default tax side, whose recipients are paid wrapped SOL and which burns nothing, and one taxed in a token, whose burn lowers the token's supply.
@@ -2807,7 +2907,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
 
-### TAX-46: The burn's own action
+### TAX-48: The burn's own action
 
 - Question: How does `distribute` keep payouts from write-locking the tax-side mint, which only the burn changes?
 - Answer: The mint is read-only for a payout and writable only for the burn, which refuses a read-only mint; the metadata describes the one instruction as two actions, `distribute` with the mint read-only and `burn`, for the burn slot, with the mint writable, so payouts of SOL-taxed markets never write-lock the native mint.

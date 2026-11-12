@@ -193,6 +193,63 @@ fn the_init_accounts_are_exactly_the_accounts_the_program_takes() {
     }
 }
 
+#[test]
+fn the_seed_liquidity_form_describes_exactly_what_the_program_takes() {
+    // Pipeline's metadata standard has no field for pipeline_seed_liquidity, so the tax AMM
+    // describes it in a `seed_liquidity` form shaped as `init` is (the validator allows
+    // unknown keys), which the SDK's `resolveInit` resolves for a launcher.
+    let m = metadata();
+    let form = &m["seed_liquidity"];
+    assert_eq!(form["idl_type"], "InitParams");
+    // `data` is the creation parameters: init's arguments, word for word, in order, except
+    // the seeder's description, which says it is ignored.
+    let init_args = m["init"]["args"].as_array().unwrap();
+    let form_args = form["args"].as_array().unwrap();
+    assert_eq!(form_args.len(), init_args.len());
+    for (ours, init) in form_args.iter().zip(init_args) {
+        let (mut ours, mut init) = (ours.clone(), init.clone());
+        if init["name"] == "seeder" {
+            let description = ours["description"].as_str().unwrap();
+            assert!(description.starts_with("Ignored"), "{description}");
+            ours.as_object_mut().unwrap().remove("description");
+            init.as_object_mut().unwrap().remove("description");
+        }
+        assert_eq!(ours, init);
+    }
+
+    // The market state is the seeded PDA of the seeder and the mints, and the accounts after
+    // Pipeline's fixed ones and the three per mint are the program's own.
+    let seeder = Pubkey::new_unique();
+    let mints = [Pubkey::new_unique(), Pubkey::new_unique()];
+    let token_programs = [TOKEN, TOKEN_2022];
+    let inputs = HashMap::from([
+        ("seeder", (seeder, Pubkey::default())),
+        ("mint_0", (mints[0], token_programs[0])),
+        ("mint_1", (mints[1], token_programs[1])),
+    ]);
+    let source = parse_account_source(form["market_state"].as_str().unwrap()).unwrap();
+    let state = resolve(&source, &Pubkey::default(), &inputs);
+    assert_eq!(
+        state,
+        common::launchpad::seeded_market_state(&seeder, mints)
+    );
+    let (authority, vaults) = tax_market_addresses(&state, mints);
+    let expected = [(authority, false), (vaults[0], true), (vaults[1], true)];
+    let accounts = form["accounts"].as_array().unwrap();
+    assert_eq!(accounts.len(), expected.len());
+    for (account, (key, writable)) in accounts.iter().zip(expected) {
+        let name = account["name"].as_str().unwrap();
+        let source = parse_account_source(account["source"].as_str().unwrap()).unwrap();
+        assert_eq!(resolve(&source, &state, &inputs), key, "{name}");
+        assert_eq!(
+            account["writable"].as_bool().unwrap_or(false),
+            writable,
+            "{name}"
+        );
+        assert!(!account["signer"].as_bool().unwrap_or(false), "{name}");
+    }
+}
+
 fn action(name: &str) -> Value {
     metadata()["actions"]
         .as_array()
