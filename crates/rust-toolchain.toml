@@ -1,0 +1,5 @@
+# The Rust docs/toolchain.md names; Pipeline's crates need 1.97.
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

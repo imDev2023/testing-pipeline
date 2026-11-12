@@ -46,14 +46,23 @@ fn the_metadata_describes_a_tax_amm() {
         m["security"]["contact"],
         "https://github.com/imDev2023/testing-pipeline/security/advisories/new"
     );
-    // The template's deposit action is gone: a tax market's liquidity is seeded once.
+    // The template's deposit action is gone: a tax market's liquidity is seeded once. The
+    // tax authority's three actions follow.
     let actions: Vec<&str> = m["actions"]
         .as_array()
         .unwrap()
         .iter()
         .map(|a| a["name"].as_str().unwrap())
         .collect();
-    assert_eq!(actions, ["seed"]);
+    assert_eq!(
+        actions,
+        [
+            "seed",
+            "set_taxes",
+            "set_recipients",
+            "renounce_tax_authority"
+        ]
+    );
     assert_eq!(m["init"]["market_state"], "new_keypair");
     assert_eq!(m["init"]["idl_type"], "InitParams");
 }
@@ -182,6 +191,63 @@ fn the_init_accounts_are_exactly_the_accounts_the_program_takes() {
     }
 }
 
+#[test]
+fn the_seed_liquidity_form_describes_exactly_what_the_program_takes() {
+    // Pipeline's metadata standard has no field for pipeline_seed_liquidity, so the tax AMM
+    // describes it in a `seed_liquidity` form shaped as `init` is (the validator allows
+    // unknown keys), which the SDK's `resolveInit` resolves for a launcher.
+    let m = metadata();
+    let form = &m["seed_liquidity"];
+    assert_eq!(form["idl_type"], "InitParams");
+    // `data` is the creation parameters: init's arguments, word for word, in order, except
+    // the seeder's description, which says it is ignored.
+    let init_args = m["init"]["args"].as_array().unwrap();
+    let form_args = form["args"].as_array().unwrap();
+    assert_eq!(form_args.len(), init_args.len());
+    for (ours, init) in form_args.iter().zip(init_args) {
+        let (mut ours, mut init) = (ours.clone(), init.clone());
+        if init["name"] == "seeder" {
+            let description = ours["description"].as_str().unwrap();
+            assert!(description.starts_with("Ignored"), "{description}");
+            ours.as_object_mut().unwrap().remove("description");
+            init.as_object_mut().unwrap().remove("description");
+        }
+        assert_eq!(ours, init);
+    }
+
+    // The market state is the seeded PDA of the seeder and the mints, and the accounts after
+    // Pipeline's fixed ones and the three per mint are the program's own.
+    let seeder = Pubkey::new_unique();
+    let mints = [Pubkey::new_unique(), Pubkey::new_unique()];
+    let token_programs = [TOKEN, TOKEN_2022];
+    let inputs = HashMap::from([
+        ("seeder", (seeder, Pubkey::default())),
+        ("mint_0", (mints[0], token_programs[0])),
+        ("mint_1", (mints[1], token_programs[1])),
+    ]);
+    let source = parse_account_source(form["market_state"].as_str().unwrap()).unwrap();
+    let state = resolve(&source, &Pubkey::default(), &inputs);
+    assert_eq!(
+        state,
+        common::launchpad::seeded_market_state(&seeder, mints)
+    );
+    let (authority, vaults) = tax_market_addresses(&state, mints);
+    let expected = [(authority, false), (vaults[0], true), (vaults[1], true)];
+    let accounts = form["accounts"].as_array().unwrap();
+    assert_eq!(accounts.len(), expected.len());
+    for (account, (key, writable)) in accounts.iter().zip(expected) {
+        let name = account["name"].as_str().unwrap();
+        let source = parse_account_source(account["source"].as_str().unwrap()).unwrap();
+        assert_eq!(resolve(&source, &state, &inputs), key, "{name}");
+        assert_eq!(
+            account["writable"].as_bool().unwrap_or(false),
+            writable,
+            "{name}"
+        );
+        assert!(!account["signer"].as_bool().unwrap_or(false), "{name}");
+    }
+}
+
 fn action(name: &str) -> Value {
     metadata()["actions"]
         .as_array()
@@ -216,8 +282,6 @@ fn resolve_action(source: &AccountSource, market: &Market, wallet: &Pubkey) -> P
 fn the_seed_action_is_exactly_the_programs_seed() {
     let seed = action("seed");
     assert_eq!(seed["kind"], "add_liquidity");
-    // Anchor's default discriminator, so the metadata needs none of its own.
-    assert!(seed.get("discriminator").is_none());
 
     let mut env = Env::new();
     let mints = [
@@ -231,38 +295,125 @@ fn the_seed_action_is_exactly_the_programs_seed() {
     let amounts = [123_456_789, 987_654_321];
     let expected = seed_instruction(&market, &seeder, amounts, vec![]);
 
-    // The arguments encode, after the discriminator, exactly the instruction's data.
     let values = [Value::from(amounts[0]), Value::from(amounts[1])];
+    assert_action_is(&seed, &values, &expected, &market, &seeder);
     let args = seed["args"].as_array().unwrap();
-    assert_eq!(args.len(), values.len());
-    let mut data = expected.data[..8].to_vec();
-    for (arg, value) in args.iter().zip(&values) {
-        data.extend(encode_arg(arg["type"].as_str().unwrap(), value));
-    }
-    assert_eq!(data, expected.data);
     assert_eq!(args[0]["decimals_of"], "mint:0");
     assert_eq!(args[1]["decimals_of"], "mint:1");
+}
 
-    // The accounts resolve to exactly the program's, signer and writable alike.
-    let accounts = seed["accounts"].as_array().unwrap();
-    assert_eq!(accounts.len(), expected.accounts.len());
+/// Checks a metadata action against the program's instruction `expected`, built for
+/// `market` and `wallet`: `values` encode, in the action's argument order, exactly the
+/// instruction's data after its discriminator, and the accounts resolve to exactly the
+/// instruction's, signer and writable alike.
+fn assert_action_is(
+    action: &Value,
+    values: &[Value],
+    expected: &pipeline_client::Instruction,
+    market: &Market,
+    wallet: &Pubkey,
+) {
+    let name = action["name"].as_str().unwrap();
+    // Anchor's default discriminator, so the metadata needs none of its own.
+    assert!(action.get("discriminator").is_none(), "{name}");
+    let args = action["args"].as_array().unwrap();
+    assert_eq!(args.len(), values.len(), "{name}");
+    let mut data = expected.data[..8].to_vec();
+    for (arg, value) in args.iter().zip(values) {
+        data.extend(encode_arg(arg["type"].as_str().unwrap(), value));
+    }
+    assert_eq!(data, expected.data, "{name}");
+    let accounts = action["accounts"].as_array().unwrap();
+    assert_eq!(accounts.len(), expected.accounts.len(), "{name}");
     for (account, meta) in accounts.iter().zip(&expected.accounts) {
-        let name = account["name"].as_str().unwrap();
+        let account_name = account["name"].as_str().unwrap();
         let source = parse_account_source(account["source"].as_str().unwrap()).unwrap();
         assert_eq!(
-            resolve_action(&source, &market, &seeder),
+            resolve_action(&source, market, wallet),
             meta.pubkey,
-            "{name}"
+            "{name}.{account_name}"
         );
         assert_eq!(
             account["signer"].as_bool().unwrap_or(false),
             meta.is_signer,
-            "{name}"
+            "{name}.{account_name}"
         );
         assert_eq!(
             account["writable"].as_bool().unwrap_or(false),
             meta.is_writable,
-            "{name}"
+            "{name}.{account_name}"
         );
     }
+}
+
+#[test]
+fn the_tax_authority_actions_are_exactly_the_programs() {
+    use common::authority::*;
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN_2022), TOKEN_2022),
+    ];
+    let market = env
+        .create_tax_market(mints, &valid_params(&Pubkey::new_unique()))
+        .unwrap();
+    let wallet = Pubkey::new_unique();
+    for name in ["set_taxes", "set_recipients", "renounce_tax_authority"] {
+        assert_eq!(action(name)["kind"], "other", "{name}");
+    }
+
+    let set_taxes = set_taxes_instruction(&market.market_state, &wallet, 123, 456);
+    assert_action_is(
+        &action("set_taxes"),
+        &[Value::from(123), Value::from(456)],
+        &set_taxes,
+        &market,
+        &wallet,
+    );
+
+    // Every field different, so a swapped pair of arguments would show.
+    let split = Split {
+        recipients: [(); MAX_RECIPIENTS].map(|_| Pubkey::new_unique()),
+        shares: [4_000, 3_000, 1_500, 500],
+        burn_share_bps: 1_000,
+    };
+    let set_recipients = set_recipients_instruction(&market.market_state, &wallet, &split);
+    let mut values: Vec<Value> = split
+        .recipients
+        .iter()
+        .map(|r| Value::from(r.to_string()))
+        .collect();
+    values.extend(split.shares.iter().map(|&s| Value::from(s)));
+    values.push(Value::from(split.burn_share_bps));
+    let recipients = action("set_recipients");
+    let arg_names: Vec<&str> = recipients["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        arg_names,
+        [
+            "recipient_0",
+            "recipient_1",
+            "recipient_2",
+            "recipient_3",
+            "share_0",
+            "share_1",
+            "share_2",
+            "share_3",
+            "burn_share_bps"
+        ]
+    );
+    assert_action_is(&recipients, &values, &set_recipients, &market, &wallet);
+
+    let renounce = renounce_instruction(&market.market_state, &wallet);
+    assert_action_is(
+        &action("renounce_tax_authority"),
+        &[],
+        &renounce,
+        &market,
+        &wallet,
+    );
 }

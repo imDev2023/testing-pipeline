@@ -109,6 +109,9 @@ How big that transaction is, against a transaction's 1,232 bytes without an addr
 - 1,242 bytes for one of each, and 1,308 with a hooked mint (Pipeline's `test-hook`, which adds the fewest accounts a hook can); a seeder other than the creator adds 96 bytes.
 - So a market pairing a Token-2022 token with SOL or USDC, and every contained token's home market, needs an address lookup table for its creation transaction, or sends the seed as a second transaction (the market refuses every swap until then); that choice belongs to [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75).
 
+A launchpad's graduation transaction is about as big, measured on 2026-11-12 by [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63) with the stand-in launchpad, paid for by the creator (`programs/tax-amm/tests/seed_liquidity.rs`, as a legacy transaction): 1,212 bytes for two SPL Token mints or two Token-2022 mints, 1,244 for one of each and 1,310 with a hooked mint.
+A real launchpad's own accounts change these numbers, and a pair across token programs or with a hook needs an address lookup table there too.
+
 ## Liquidity
 
 ### The seed
@@ -118,6 +121,10 @@ How big that transaction is, against a transaction's 1,232 bytes without an addr
 - The market records each side's real reserve from what actually arrived in its vault, and opens for swaps.
 - Until the seed, quotes and swaps are refused (`pipeline-check` reports this as a warning, as it does for any market not yet open).
 - `pipeline_seed_liquidity` seeds and opens the market in the same call, taking at most `amounts[i]` from each escrow, and returns `SeedResult { taken, lp_amount: 0 }`.
+  - It creates the market with the same code as `pipeline_init_market`, under every creation rule and mint rule, and takes the seed as the `seed` action does, from escrows the seeder owns, with the same rule for a side left empty.
+  - `amounts` holds exactly one amount per mint, and `data` exactly the creation parameters; anything else is refused, the first with an error of its own.
+  - `taken` is what the program measured leaving each escrow, which a caller can check against its own measurement.
+  - A seeder seeds a pair of mints, in that order, once: its market state's address exists afterwards. The `seed` action on a seeded market is refused, even signed by the launchpad's seeder.
 
 ### Locked for good
 
@@ -173,6 +180,14 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
   - `renounce_tax_authority`, after which the market's taxes and recipients never change again.
 - Changes take effect immediately.
 - Nobody else can change anything about a market, us included; the program has no admin.
+- Built by [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62) on 2026-11-12, with these rules besides:
+  - `set_taxes` and creation share one rate rule, and `set_recipients` and creation share one split rule (`programs/tax-amm/src/params.rs`), so a change can never pass a rule creation would refuse.
+  - Renouncing turns the market state's tax authority into the default key, as on a market created without one, and sets the renounced flag, so Aviary can tell the two apart and both refuse every action for good.
+  - A refused action says why: `AlreadyRenounced` on a market whose authority renounced, `NoTaxAuthority` on one created without an authority, and `NotTaxAuthority` for any other signer, checked in that order.
+  - `set_recipients` refuses to empty a recipient slot that is still owed tax (`OwedSlotLeftEmpty`), since nobody could then be paid what the slot holds; the slot can be handed to another wallet instead, or paid out first with `distribute`, in the same transaction if need be.
+    The burn slot needs no wallet, so the burn share may drop to 0 whatever the burn is owed.
+  - `set_recipients` takes the recipients and the shares as arrays of `MAX_RECIPIENTS`, which encode exactly as the metadata's flattened `recipient_0` to `recipient_3` and `share_0` to `share_3`, as the creation parameters do.
+  - Each action writes only the market state: no reserve, owed amount, counter, vault balance or value fixed at creation changes (`programs/tax-amm/tests/tax_authority.rs`).
 
 ### Where the tax goes
 
@@ -192,6 +207,8 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
   - The burn slot burns its owed amount from the vault.
   - Each slot is paid separately, so one broken recipient account never holds up the others.
 - Owed amounts belong to slots: if the tax authority changes a slot's recipient, what the slot is owed goes to the new recipient, so a recipient leaving should be paid out first (anyone can call `distribute`).
+  So until a slot is paid out, the tax authority decides which wallet receives what it is owed, its own included; a recipient protects what it is owed by calling `distribute`, and Aviary's tax panel shows each slot's owed amount beside its wallet.
+  A recipient slot still owed tax can't be emptied, so every owed amount always has a wallet or the burn to go to (see "Tax authority"); `distribute` therefore pays a recipient slot whatever its share, and burns the burn slot's owed amount whatever the burn share.
 - Owed amounts fit in u64, because together with the real reserve they never exceed the vault's balance.
 - Pipeline's API reports raw vault balances, so tax not yet paid out shows there as liquidity; Aviary reads the real reserves from the market state instead.
 
@@ -226,6 +243,8 @@ Containment hook policy chose `tax_collected`: the unlock reads it, a home marke
 - Each instruction emits an event (market created, seeded, taxes changed, recipients changed, authority renounced, distributed) so Aviary's indexer can show a market's history; Aviary reads current values from the market state, not from events.
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, description, category `amm`, tags including `tax`, links including `source` and the IDL, `init` as above with `market_state: new_keypair`, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256.
 - `security.contact`, and the contact in the program's `security.txt`, is this repo's private vulnerability reporting page on GitHub, never a personal address.
+- Pipeline's metadata standard has no field for `pipeline_seed_liquidity`, so the metadata describes it in a top-level `seed_liquidity` form shaped as `init` is, which the standard's validator allows as an unknown key and the SDK's `resolveInit` resolves: the market state `pda:strategy:str:seeded,key:input:seeder,key:input:mint_0,key:input:mint_1`, `data` as `init`'s arguments under the same `idl_type` with the seeder marked ignored, and the authority and vaults after Pipeline's fixed seed accounts and the three per mint.
+  Tests fail when the form disagrees with the program or with `init`.
 - The Anchor IDL is committed at `programs/tax-amm/idl/tax_amm.json`, which `links.idl` names, and the TypeScript client in `programs/tax-amm/scripts/client/` is generated from it with Codama; tests fail when the IDL disagrees with the program or the metadata, and `pnpm typecheck` fails when the client disagrees with the IDL.
   Pipeline's interface crate types don't derive Anchor's traits, which the IDL needs, so the program declares the same Borsh types for its instruction arguments (`interface.rs`), tested to encode exactly as Pipeline's.
 
@@ -373,3 +392,6 @@ The buy wall AMM and the containment hook start from what ticket 1 sets up.
   Measured on 2026-11-12 by [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59), on mints without a transfer hook: `pipeline_init_market` 37,909 units on SPL Token mints and 37,345 on Token-2022 mints, `pipeline_market_info` 4,249 inside `create_market` and 2,531 called directly, `pipeline_resolve_accounts` 4,484.
 - Measured on 2026-11-12 by [Tax AMM: seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60), on mints without a transfer hook: `pipeline_quote` 5,429 to 5,439 units, `pipeline_swap` 14,110 to 14,163 on SPL Token mints and 15,804 to 15,857 on Token-2022 mints (a whole router swap 39,805 to 46,442), and `seed` 13,040 on SPL Token mints and 16,420 on Token-2022 mints.
   A swap of a mint with Pipeline's allow-all `test-hook` took 51,347 to 63,250 units in all, the hook called at depth 4 inside the tax AMM's transfer when the hooked mint is the output.
+- Measured on 2026-11-12 by [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62), on a market that has traded, the same on SPL Token and Token-2022 mints: `set_taxes` 5,043 units, `set_recipients` 5,587 from one recipient to four and 5,637 back to one (three emptied slots checked for owed tax), and `renounce_tax_authority` 5,005, each against its ceiling of 20,000.
+- Measured on 2026-11-12 by [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63), called by the stand-in launchpad on mints without a transfer hook: `pipeline_seed_liquidity` 45,845 to 51,845 units on SPL Token mints and 48,677 to 51,677 on Token-2022 mints over six LiteSVM runs, and 41,357 and 51,597 on SPL Token mints in two local demo runs.
+  The cost moves in steps of 1,500 units, one `create_program_address` try each, with how long the PDA bump searches take for each run's fresh addresses.

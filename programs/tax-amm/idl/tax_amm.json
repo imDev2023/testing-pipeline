@@ -290,6 +290,191 @@
       ]
     },
     {
+      "name": "pipeline_seed_liquidity",
+      "docs": [
+        "Pipeline's optional extension, for a launchpad graduating a token: creates a tax",
+        "market at the PDA `[\"seeded\", seeder, mint_0, mint_1]` with the creation parameters",
+        "in `request.data` (whose seeder is ignored: the calling program's PDA is the",
+        "seeder), takes `request.amounts` from the seeder's escrows and opens it. Returns",
+        "`SeedResult`. Remaining accounts are transfer-hook accounts, for either mint."
+      ],
+      "discriminator": [
+        197,
+        81,
+        12,
+        118,
+        24,
+        65,
+        212,
+        81
+      ],
+      "accounts": [
+        {
+          "name": "seeder",
+          "docs": [
+            "A PDA of the calling program, signing; it owns the escrows and becomes the seeder."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  101,
+                  100,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "seeder"
+              },
+              {
+                "kind": "account",
+                "path": "mint_0"
+              },
+              {
+                "kind": "account",
+                "path": "mint_1"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "A system account holding the SOL the caller allows for rent."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "lp_recipient"
+        },
+        {
+          "name": "mint_0"
+        },
+        {
+          "name": "escrow_0",
+          "docs": [
+            "program the rest."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program_0"
+        },
+        {
+          "name": "mint_1"
+        },
+        {
+          "name": "escrow_1",
+          "writable": true
+        },
+        {
+          "name": "token_program_1"
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_0",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "mint_0"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_1",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "mint_1"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "SeedRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "pipeline_swap",
       "docs": [
         "Settles a trade the router sends. Remaining accounts: the output vault and the",
@@ -355,6 +540,38 @@
           }
         }
       ]
+    },
+    {
+      "name": "renounce_tax_authority",
+      "docs": [
+        "Custom action: the tax authority renounces, after which the market's taxes and",
+        "recipients never change again."
+      ],
+      "discriminator": [
+        46,
+        141,
+        56,
+        157,
+        134,
+        91,
+        105,
+        75
+      ],
+      "accounts": [
+        {
+          "name": "tax_authority",
+          "docs": [
+            "Checked against the market's tax authority by [`TaxAuthorityAction::authorize`], so a",
+            "market that has none, or renounced, says so rather than naming the signer."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        }
+      ],
+      "args": []
     },
     {
       "name": "seed",
@@ -426,6 +643,102 @@
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "set_recipients",
+      "docs": [
+        "Custom action: the tax authority replaces the tax recipients, their shares and the",
+        "burn share, under the rules of creation. What each slot is owed stays with the slot."
+      ],
+      "discriminator": [
+        232,
+        87,
+        98,
+        47,
+        60,
+        65,
+        199,
+        169
+      ],
+      "accounts": [
+        {
+          "name": "tax_authority",
+          "docs": [
+            "Checked against the market's tax authority by [`TaxAuthorityAction::authorize`], so a",
+            "market that has none, or renounced, says so rather than naming the signer."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "recipients",
+          "type": {
+            "array": [
+              "pubkey",
+              4
+            ]
+          }
+        },
+        {
+          "name": "shares",
+          "type": {
+            "array": [
+              "u16",
+              4
+            ]
+          }
+        },
+        {
+          "name": "burn_share_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "set_taxes",
+      "docs": [
+        "Custom action: the tax authority moves the buy and sell tax, each inside the range",
+        "fixed at creation. The next swap pays the new rates."
+      ],
+      "discriminator": [
+        86,
+        41,
+        237,
+        64,
+        40,
+        120,
+        61,
+        194
+      ],
+      "accounts": [
+        {
+          "name": "tax_authority",
+          "docs": [
+            "Checked against the market's tax authority by [`TaxAuthorityAction::authorize`], so a",
+            "market that has none, or renounced, says so rather than naming the signer."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "buy_tax_bps",
+          "type": "u16"
+        },
+        {
+          "name": "sell_tax_bps",
+          "type": "u16"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -458,6 +771,19 @@
       ]
     },
     {
+      "name": "RecipientsChanged",
+      "discriminator": [
+        215,
+        155,
+        152,
+        43,
+        202,
+        57,
+        245,
+        7
+      ]
+    },
+    {
       "name": "Seeded",
       "discriminator": [
         95,
@@ -468,6 +794,32 @@
         157,
         251,
         224
+      ]
+    },
+    {
+      "name": "TaxAuthorityRenounced",
+      "discriminator": [
+        208,
+        127,
+        220,
+        168,
+        80,
+        164,
+        208,
+        100
+      ]
+    },
+    {
+      "name": "TaxesChanged",
+      "discriminator": [
+        127,
+        34,
+        114,
+        126,
+        1,
+        90,
+        131,
+        58
       ]
     }
   ],
@@ -606,6 +958,31 @@
       "code": 6026,
       "name": "InsufficientLiquidity",
       "msg": "The trade would pay out more than the market's real reserve"
+    },
+    {
+      "code": 6027,
+      "name": "NoTaxAuthority",
+      "msg": "The market has no tax authority, so its taxes and recipients never change"
+    },
+    {
+      "code": 6028,
+      "name": "AlreadyRenounced",
+      "msg": "The tax authority renounced, so the market's taxes and recipients never change again"
+    },
+    {
+      "code": 6029,
+      "name": "NotTaxAuthority",
+      "msg": "Only the market's tax authority can change its taxes and recipients"
+    },
+    {
+      "code": 6030,
+      "name": "OwedSlotLeftEmpty",
+      "msg": "A recipient slot still owed tax can't be emptied; pay it out or name another wallet"
+    },
+    {
+      "code": 6031,
+      "name": "BadSeedAmounts",
+      "msg": "A seed request gives one amount for each of the market's two mints"
     }
   ],
   "types": [
@@ -783,6 +1160,48 @@
       }
     },
     {
+      "name": "RecipientsChanged",
+      "docs": [
+        "The tax authority changed the market's tax recipients, their shares or the burn share.",
+        "What each slot is already owed stays with the slot."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "tax_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                4
+              ]
+            }
+          },
+          {
+            "name": "shares",
+            "type": {
+              "array": [
+                "u16",
+                4
+              ]
+            }
+          },
+          {
+            "name": "burn_share_bps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
       "name": "ResolveRequest",
       "docs": [
         "`pipeline_strategy_interface::ResolveRequest`."
@@ -801,6 +1220,28 @@
           {
             "name": "round",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SeedRequest",
+      "docs": [
+        "`pipeline_strategy_interface::SeedRequest`: the most to take from each escrow, in mint",
+        "order, and the creation parameters, Borsh-encoded as [`crate::InitParams`]."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "amounts",
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "data",
+            "type": "bytes"
           }
         ]
       }
@@ -857,6 +1298,25 @@
           {
             "name": "min_amount_out",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TaxAuthorityRenounced",
+      "docs": [
+        "The tax authority renounced: the market's taxes and recipients never change again."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "tax_authority",
+            "type": "pubkey"
           }
         ]
       }
@@ -1068,6 +1528,33 @@
                 64
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "TaxesChanged",
+      "docs": [
+        "The tax authority changed the market's rates; the next swap pays them."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "tax_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "buy_tax_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_tax_bps",
+            "type": "u16"
           }
         ]
       }

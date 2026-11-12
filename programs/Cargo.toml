@@ -11,7 +11,7 @@
 # local demo: docs/toolchain.md.
 [workspace]
 resolver = "2"
-members = ["mint-rules", "tax-amm", "buy-wall-amm", "containment-hook", "lending-amm"]
+members = ["mint-rules", "tax-amm", "buy-wall-amm", "containment-hook", "lending-amm", "test-programs/stand-in-launchpad"]
 
 [workspace.package]
 edition = "2021"
@@ -35,6 +35,8 @@ mint-rules = { path = "mint-rules" }
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
 # The containment hook reads the tax AMM's program id and market state layout from its crate.
 tax-amm = { path = "tax-amm", features = ["no-entrypoint"] }
+# Test only: the stand-in launchpad every strategy's seeding tests share (never deployed).
+stand-in-launchpad = { path = "test-programs/stand-in-launchpad", features = ["no-entrypoint"] }
 # Test-only crates, at the versions Pipeline's template uses at 5ad130d, and the versions
 # LiteSVM uses for the ones the template does not.
 base64 = "0.22"

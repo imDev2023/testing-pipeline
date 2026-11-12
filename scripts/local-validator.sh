@@ -8,17 +8,21 @@
 #   - every program of programs/Cargo.toml's workspace, from programs/target/deploy (or
 #     $CARGO_TARGET_DIR/deploy, where scripts/build-programs.sh writes them then), at its
 #     declare_id! address and upgradeable by the project upgrade authority, as on devnet;
+#   - the workspace's test programs (the stand-in launchpad), from $TEST_PROGRAMS_DIR
+#     (default fixtures/test-programs), at their declare_id! addresses and frozen; they never
+#     go to devnet;
 #   - every account copied from devnet into fixtures/accounts/*.json (`solana account --output
 #     json`), at its address, such as the Kamino accounts the lending AMM's demo needs
 #     (programs/lending-amm/scripts/fetch-accounts.sh).
 #
-#   scripts/local-validator.sh [ledger directory] [solana-test-validator options...]
-#   scripts/local-validator.sh [solana-test-validator options...]
+#   scripts/local-validator.sh [ledger directory] [solana-test-validator flags ...]
 #
-# The ledger defaults to fixtures/test-ledger. Options after it go to solana-test-validator
-# as they are, so a second validator can run beside another session's on other ports:
-#   scripts/local-validator.sh fixtures/test-ledger-2 --rpc-port 8999 --faucet-port 9990 \
-#     --gossip-port 8990 --dynamic-port-range 8300-8400
+# The ledger defaults to fixtures/test-ledger. Flags (the arguments from the first that
+# starts with "-") go to solana-test-validator, such as other ports when another project's
+# validator holds the defaults:
+#
+#   scripts/local-validator.sh --rpc-port 8999 --faucet-port 9910 \
+#     --gossip-port 8100 --dynamic-port-range 8101-8130
 #
 # Environment: UPGRADE_AUTHORITY, the upgrade authority's keypair (default
 # ~/.config/testing-pipeline/devnet/upgrade-authority.json); only its public key is read.
@@ -27,12 +31,13 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIXTURES_DIR="${FIXTURES_DIR:-$ROOT/fixtures}"
-# The ledger directory comes first when given; an option in its place means none was given.
+TEST_PROGRAMS_DIR="${TEST_PROGRAMS_DIR:-$FIXTURES_DIR/test-programs}"
 LEDGER="$FIXTURES_DIR/test-ledger"
-if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
+if [ "$#" -gt 0 ] && [ "${1#-}" = "$1" ]; then
   LEDGER="$1"
   shift
 fi
+EXTRA_FLAGS=("$@")
 UPGRADE_AUTHORITY="${UPGRADE_AUTHORITY:-$HOME/.config/testing-pipeline/devnet/upgrade-authority.json}"
 # SIMD-0268's deeper call limit: test validators turn it on, devnet and mainnet don't have it.
 SIMD_0268=6TkHkRmP7JZy1fdM6fg5uXn76wChQBWGokHBJzrLB3mj
@@ -73,6 +78,25 @@ while IFS= read -r member; do
   args+=(--upgradeable-program "$id" "$so" "$AUTHORITY")
 done < <(python3 "$ROOT/scripts/workspace-programs.py")
 
+# Test programs (the stand-in launchpad), from $TEST_PROGRAMS_DIR where
+# scripts/build-programs.sh builds them, frozen: they exist only on local validators.
+while IFS= read -r member; do
+  lib="$(basename "$member")"
+  lib="${lib//-/_}"
+  so="$TEST_PROGRAMS_DIR/$lib.so"
+  id="$(sed -n 's/^declare_id!("\([1-9A-HJ-NP-Za-km-z]*\)");$/\1/p' "$ROOT/programs/$member/src/lib.rs")"
+  if [ ! -f "$so" ]; then
+    echo "No $so: build it with scripts/build-programs.sh $member" >&2
+    exit 1
+  fi
+  if [ -z "$id" ]; then
+    echo "No declare_id! address in programs/$member/src/lib.rs" >&2
+    exit 1
+  fi
+  echo "test program $member at $id"
+  args+=(--upgradeable-program "$id" "$so" none)
+done < <(python3 "$ROOT/scripts/workspace-programs.py" --test-programs)
+
 shopt -s nullglob
 for account in "$FIXTURES_DIR"/accounts/*.json; do
   address="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["pubkey"])' "$account")"
@@ -82,4 +106,4 @@ done
 
 echo "Router $ROUTER_PROGRAM from $ROUTER_SO (pinned), config $ROUTER_CONFIG as on devnet"
 echo "Ledger $LEDGER; RPC http://127.0.0.1:8899 unless --rpc-port says otherwise"
-exec solana-test-validator "${args[@]}" "$@"
+exec solana-test-validator "${args[@]}" ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"}
