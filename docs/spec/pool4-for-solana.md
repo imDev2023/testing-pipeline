@@ -112,7 +112,7 @@ The designer share builds up in each market from its first swap and waits there;
 - Its mint authority and its freeze authority must both be removed by the time the market is seeded.
   A live mint authority could mint and sell into the curve and the buy wall, and would make the burns meaningless; a live freeze authority could freeze the market's vault.
   The tax AMM allows both because USDC has them; a token on the buy wall AMM has no such need.
-- A Token-2022 token may carry only the tax AMM's allowlist of mint extensions: transfer hook (any hook program), metadata pointer, token metadata, group pointer, group member pointer, token group and token group member.
+- A Token-2022 token may carry only the suite's allowlist of mint extensions, the tax AMM's ([`tax-amm.md`](tax-amm.md), "Mint rules"), which lives in the shared `programs/mint-rules` crate; the buy wall AMM calls that crate and keeps no copy of the list.
   Every other extension is refused at creation, including any the program does not recognise.
 - In Pipeline's trust flags a seeded market's token can therefore only ever show `token-2022`, `transfer-hook` and `transfer-hook-authority`.
 
@@ -373,7 +373,7 @@ Fields, in order:
 | --- | --- |
 | Identity | discriminator, layout version, status (created or open), bumps, market signer, token mint, wrapped SOL mint, token vault, SOL vault, seeder, creation slot, creation time, seed time |
 | Counters | `volume[0]`, `volume[1]`, `fees_collected`, `swap_count` |
-| Parameters | `fee_bps`, `wall_split_bps`, `reward_share_bps`, fee recipient, rewards recipient, `cap_floor`, `cap_decay_per_day`, `seeded_tokens` |
+| Parameters | `fee_bps`, `wall_split_bps`, `reward_share_bps`, fee recipient, rewards recipient, `cap_floor_bps`, `cap_decay_bps`, `cap_floor`, `cap_decay_per_day`, `seeded_tokens` |
 | Pricing | `sqrt_price`, `liquidity`, `wall_liquidity`, `wall_top`, `wall_sol_placed` |
 | Ledgers | `pool_tokens`, `pool_sol`, `retired_tokens`, `rewards_owed`, `idle_sol`, `fees_recipient`, `fees_designer`, `fees_suite` |
 | Cap | inventory cap, `decay_credit`, `decay_time` |
@@ -381,7 +381,79 @@ Fields, in order:
 | Totals | tokens trimmed, SOL trimmed, tokens the wall bought, tokens burned, rewards paid, tips paid |
 | Reserve | zeroed to the end of the account |
 
-The first build ticket ([Buy wall AMM: a market opens](https://github.com/imDev2023/testing-pipeline/issues/47)) fixes the byte offsets and writes them into this file; they are frozen from the first devnet deployment ([Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56)) and published in the IDL.
+The first build ticket ([Buy wall AMM: a market opens](https://github.com/imDev2023/testing-pipeline/issues/47)) fixed the byte offsets below; they are frozen from the first devnet deployment ([Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56)) and published in the IDL.
+The creation parameters `cap_floor_bps` and `cap_decay_bps` are kept as well, because `cap_floor` and `cap_decay_per_day` can only be computed at the seed, from what the seed brings.
+
+### Byte offsets
+
+Layout version 1.
+Offsets are from the start of the account, every integer is little-endian, and nothing is padded.
+The discriminator is the ASCII bytes `BWMARKET` (`42 57 4d 41 52 4b 45 54`), written in the code as fixed bytes ([`POOL4-21`, `POOL4-22`](../decisions.md#pool4-22-the-market-states-discriminator-and-layout-version)).
+`status` is 1 once created and 2 once seeded.
+The program's `state.rs` holds the same layout, and `tests/layout.rs` reads this table and checks every row against it.
+
+| Field | Offset | Size | Type |
+| --- | --- | --- | --- |
+| `discriminator` | 0 | 8 | bytes |
+| `layout_version` | 8 | 1 | u8 |
+| `status` | 9 | 1 | u8 |
+| `authority_bump` | 10 | 1 | u8 |
+| `token_vault_bump` | 11 | 1 | u8 |
+| `sol_vault_bump` | 12 | 1 | u8 |
+| `market_signer` | 13 | 32 | pubkey |
+| `token_mint` | 45 | 32 | pubkey |
+| `wsol_mint` | 77 | 32 | pubkey |
+| `token_vault` | 109 | 32 | pubkey |
+| `sol_vault` | 141 | 32 | pubkey |
+| `seeder` | 173 | 32 | pubkey |
+| `creation_slot` | 205 | 8 | u64 |
+| `creation_time` | 213 | 8 | i64 |
+| `seed_time` | 221 | 8 | i64 |
+| `volume[0]` | 229 | 16 | u128 |
+| `volume[1]` | 245 | 16 | u128 |
+| `fees_collected` | 261 | 16 | u128 |
+| `swap_count` | 277 | 8 | u64 |
+| `fee_bps` | 285 | 2 | u16 |
+| `wall_split_bps` | 287 | 2 | u16 |
+| `reward_share_bps` | 289 | 2 | u16 |
+| `fee_recipient` | 291 | 32 | pubkey |
+| `rewards_recipient` | 323 | 32 | pubkey |
+| `cap_floor_bps` | 355 | 2 | u16 |
+| `cap_decay_bps` | 357 | 2 | u16 |
+| `cap_floor` | 359 | 8 | u64 |
+| `cap_decay_per_day` | 367 | 8 | u64 |
+| `seeded_tokens` | 375 | 8 | u64 |
+| `sqrt_price` | 383 | 16 | u128 |
+| `liquidity` | 399 | 16 | u128 |
+| `wall_liquidity` | 415 | 16 | u128 |
+| `wall_top` | 431 | 16 | u128 |
+| `wall_sol_placed` | 447 | 8 | u64 |
+| `pool_tokens` | 455 | 8 | u64 |
+| `pool_sol` | 463 | 8 | u64 |
+| `retired_tokens` | 471 | 8 | u64 |
+| `rewards_owed` | 479 | 8 | u64 |
+| `idle_sol` | 487 | 8 | u64 |
+| `fees_recipient` | 495 | 8 | u64 |
+| `fees_designer` | 503 | 8 | u64 |
+| `fees_suite` | 511 | 8 | u64 |
+| `cap` | 519 | 8 | u64 |
+| `decay_credit` | 527 | 16 | u128 |
+| `decay_time` | 543 | 8 | i64 |
+| `ref` | 551 | 16 | u128 |
+| `ref_time` | 567 | 8 | i64 |
+| `floor` | 575 | 16 | u128 |
+| `floor_time` | 591 | 8 | i64 |
+| `last_slot` | 599 | 8 | u64 |
+| `last_close` | 607 | 16 | u128 |
+| `tokens_trimmed` | 623 | 16 | u128 |
+| `sol_trimmed` | 639 | 16 | u128 |
+| `wall_tokens_bought` | 655 | 16 | u128 |
+| `tokens_burned` | 671 | 16 | u128 |
+| `rewards_paid` | 687 | 16 | u128 |
+| `tips_paid` | 703 | 16 | u128 |
+| `reserve` | 719 | 305 | bytes |
+
+Square-root prices (`sqrt_price`, `wall_top`, `ref`, `floor`, `last_close`) are Q64.64; times are Unix seconds; `cap` is the inventory cap and `ref` is the wall's reference; `decay_credit` is in token-seconds.
 
 ### A release gate
 

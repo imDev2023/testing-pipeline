@@ -275,7 +275,7 @@ The owner's standing rule of 2026-11-10 keeps every decision cheap to change, si
 
 - The four values of "Constants" are build-time constants in one config module of the program, and no other file repeats them.
 - The mint extension allowlist of "Mint rules", and the check that applies it, live in one small library crate of the on-chain workspace.
-  The tax AMM, the containment hook and the lending AMM all depend on that crate, so there is one list and never a second copy; a product with a stricter rule adds it on top.
+  The tax AMM, the containment hook, the buy wall AMM and the lending AMM all depend on that crate, so there is one list and never a second copy; a product with a stricter rule adds it on top.
   The crate is `programs/mint-rules`; it depends on nothing and reads a mint's extension entries itself, the way Token-2022 lays them out, so an extension Token-2022 adds after the crate was written is refused by its number rather than misread.
 - Both are fixed on-chain because traders rely on them, so they can change until a program is frozen and not after.
 - Every other policy value is a creation parameter, chosen per market and held in its market state: the rates, their ranges, the tax authority, the tax recipients and their shares, the burn share and the virtual reserve.

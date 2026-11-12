@@ -4,6 +4,11 @@
 //! depends on nothing, so another program can use it without pulling in the tax AMM. No
 //! other file of the on-chain workspace, the strategy metadata or the demo script repeats
 //! them; every other policy value is a creation parameter.
+//!
+//! One named place per product: another program of the workspace keeps its own config (the
+//! buy wall AMM has its own suite share and names the same suite treasury, with no
+//! dependency on the tax AMM), so the constants are checked among the tax AMM's own files
+//! and the workspace's shared ones.
 
 use std::path::{Path, PathBuf};
 
@@ -37,6 +42,12 @@ fn source_files() -> Vec<PathBuf> {
     files
 }
 
+/// Whether `path` (relative to the workspace) is the tax AMM's, a shared crate's or the
+/// workspace's own, rather than another program's.
+fn tax_amm_or_shared(path: &str) -> bool {
+    path.starts_with("tax-amm/") || path.starts_with("mint-rules/") || !path.contains('/')
+}
+
 fn files_containing(needle: &str) -> Vec<String> {
     let programs = programs_dir().canonicalize().unwrap();
     source_files()
@@ -62,17 +73,18 @@ fn the_four_constants_are_defined_once_in_the_config_module() {
         "SUITE_TREASURY",
         "MAX_RECIPIENTS",
     ] {
-        assert_eq!(
-            files_containing(&format!("const {name}")),
-            vec!["tax-amm/src/config.rs".to_string()],
-            "{name}"
-        );
+        let defined: Vec<String> = files_containing(&format!("const {name}"))
+            .into_iter()
+            .filter(|path| tax_amm_or_shared(path))
+            .collect();
+        assert_eq!(defined, vec!["tax-amm/src/config.rs".to_string()], "{name}");
     }
     // The treasury's address is written nowhere else.
-    assert_eq!(
-        files_containing(&SUITE_TREASURY.to_string()),
-        vec!["tax-amm/src/config.rs".to_string()]
-    );
+    let written: Vec<String> = files_containing(&SUITE_TREASURY.to_string())
+        .into_iter()
+        .filter(|path| tax_amm_or_shared(path))
+        .collect();
+    assert_eq!(written, vec!["tax-amm/src/config.rs".to_string()]);
 }
 
 #[test]

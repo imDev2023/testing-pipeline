@@ -3028,10 +3028,30 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: How is the market state's account discriminator chosen?
 - Answer: It is written as fixed bytes in the code, never derived from the type's name, so a rename can never strand a market.
 - Alternatives: Anchor's default discriminator, derived from the type's name.
-- Specified in: [the ticket, Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47)
+- Specified in: [`docs/spec/pool4-for-solana.md`, Byte offsets](spec/pool4-for-solana.md#byte-offsets)
 - Changes by: fixed on-chain once deployed
 - Status: default
 - Decided: 2026-11-10 in [Cut Pool4 for Solana's build tickets](https://github.com/imDev2023/testing-pipeline/issues/24)
+
+### POOL4-22: The market state's discriminator and layout version
+
+- Question: Which bytes are the market state's account discriminator, and how are its layout version and status numbered?
+- Answer: The discriminator is the ASCII bytes `BWMARKET`, the first layout is version 1 and the only one every instruction accepts until another is deployed, and `status` is 1 once created and 2 once seeded, so a zeroed account never reads as a market.
+- Alternatives: Anchor's derived discriminator frozen as fixed bytes; status 0 for a created market.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Byte offsets](spec/pool4-for-solana.md#byte-offsets)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47)
+
+### POOL4-23: What the market state keeps beyond the spec's field list
+
+- Question: Which fields does the fixed layout hold that the spec's field list did not name, and how wide is each kind of field?
+- Answer: It also keeps the creation parameters `cap_floor_bps` and `cap_decay_bps` (the cap floor and cap decay can only be computed at the seed) and the bumps of the vault authority and both vaults; ledgers, the cap and other amounts of one token are 64-bit, while square-root prices, liquidity, the counters, the decay credit and the lifetime totals are 128-bit, and 305 zeroed bytes are reserved.
+- Alternatives: Computing the cap floor and decay at creation from an intended seed; 64-bit lifetime totals.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Byte offsets](spec/pool4-for-solana.md#byte-offsets)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47)
 
 ## Lending AMM (LENDING)
 
@@ -3474,7 +3494,6 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-06`: the map's Notes still give the order set while charting, with the terminal first; `tax-amm.md` says the tax AMM is built first.
 - `PIPESCOPE-10`: the rate is written in `pipescope.md` (The integrator fee, and again in the trade box's breakdown) and as 50 basis points in `pipescope-architecture.md`; it should be stated once and referred to.
 - Pipeline's own fee of 0.25% is written as a fixed number in the trade box's breakdown, in Canary's cost split, in three program specs and in the glossary; it is the router's setting, not ours, so Aviary should read it from the router's config.
-- `TAX-26`, `POOL4-17`: the allowlist of mint extensions now has one home in code, a shared crate that the tax AMM, the containment hook and the lending AMM depend on; `pool4-for-solana.md` still writes the list out and does not say the buy wall AMM uses that crate.
 - `CANARY-06` to `CANARY-09`, `CANARY-12`, `CANARY-13`, `CANARY-16`, `CANARY-17`: Canary's policy values are spread through `pipescope-canary.md` (the bands are repeated in the rows of `exit_transferred`, `exit_queue` and `cost`, the 1-point tolerance in three rows), and the spec names no config module for them in `crates/canary`.
 - `CANARY-22`, `CANARY-23`: the schedule is written in `pipescope-canary.md` and three times in `pipescope-architecture.md` (the crons, the indexer's new markets, the Canary runner).
 - `EXPLAINER-11`, `EXPLAINER-12`: the banned terms and the length limits are written in the prompt's text and again in the validator's rules; both should come from one constant, so a change cannot leave them disagreeing.
@@ -3485,7 +3504,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `TAX-06`, `POOL4-04`: `GLOSSARY.md` gives the suite share and the designer share as fixed tenths, so a change to either constant also has to edit the glossary; it should name the constant, not the number.
 - `SUITE-04`, `SUITE-05`, `SUITE-07`, `SUITE-12` to `SUITE-14`: these live only in the map's body; when the map closes they need a home in `docs/spec/README.md`.
 - `SUITE-29` to `SUITE-31`: the owner answered these on a ticket that is still open, so "Specified in" names the ticket; the session that closes it points them at wherever the site's own docs record them.
-- `POOL4-20`, `POOL4-21`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI, One fixed-size layout) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
+- `POOL4-20`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
 - `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
@@ -3494,3 +3513,5 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-08`: `pipescope-screens.md` (One place for every value) now names the screens' config module as the home of the default slippage; `pipescope.md` (Trading) still writes the number.
 - `PIPESCOPE-82`: `pipescope-screens.md` has `terminal-api` keep its own copies of token images, and `pipescope-architecture.md` (Data) names no store for files; the session that cuts the terminal's build tickets says where they are kept.
+- `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
