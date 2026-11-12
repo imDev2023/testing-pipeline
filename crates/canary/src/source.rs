@@ -14,7 +14,7 @@ use pipeline_check::{AccountSource, ClusterInfo, SvmSource};
 use pipeline_client::{self as client, Pubkey};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{RPC_READ_ATTEMPTS, RPC_READ_RETRY_MS};
+use crate::config::{RPC_ACCOUNTS_PER_CALL, RPC_READ_ATTEMPTS, RPC_READ_RETRY_MS};
 use solana_account::Account;
 
 /// An account source Canary can run on.
@@ -33,6 +33,7 @@ impl Source for SvmSource {}
 pub struct RpcAccounts {
     rpc: RpcSource,
     programs: HashMap<Pubkey, Account>,
+    calls: usize,
 }
 
 impl RpcAccounts {
@@ -40,20 +41,32 @@ impl RpcAccounts {
         Ok(RpcAccounts {
             rpc: RpcSource::new(url)?,
             programs: HashMap::new(),
+            calls: 0,
         })
     }
 
-    /// RPC requests made so far, retries included.
+    /// RPC requests sent so far, every retry included.
     pub fn requests(&self) -> usize {
         self.rpc.requests
     }
 
+    /// RPC calls the run asked for so far, not counting retries: the cluster's clock is four
+    /// (`getSlot`, `getEpochInfo`, `getBlockTime`, `getGenesisHash`), and each read of up to
+    /// 100 accounts is one `getMultipleAccounts`.
+    pub fn calls(&self) -> usize {
+        self.calls
+    }
+
     /// Every market registered with the router.
     pub fn markets(&mut self) -> Result<Vec<(Pubkey, client::Market)>, String> {
+        self.calls += 1;
         let rpc = &mut self.rpc;
         with_retries(|| rpc.markets())
     }
 }
+
+/// The calls `pipeline-check`'s `cluster_info` makes.
+const CLUSTER_INFO_CALLS: usize = 4;
 
 /// Runs `read` up to [`RPC_READ_ATTEMPTS`] times, waiting longer before each retry.
 fn with_retries<T>(mut read: impl FnMut() -> Result<T, String>) -> Result<T, String> {
@@ -90,6 +103,7 @@ impl AccountSource for RpcAccounts {
             .collect();
         let mut fetched: HashMap<Pubkey, Option<Account>> = HashMap::new();
         if !unknown.is_empty() {
+            self.calls += unknown.len().div_ceil(RPC_ACCOUNTS_PER_CALL);
             let rpc = &mut self.rpc;
             let accounts = with_retries(|| rpc.get_accounts(&unknown))?;
             fetched = unknown.into_iter().zip(accounts).collect();
@@ -110,6 +124,7 @@ impl AccountSource for RpcAccounts {
     }
 
     fn cluster_info(&mut self) -> Result<ClusterInfo, String> {
+        self.calls += CLUSTER_INFO_CALLS;
         let rpc = &mut self.rpc;
         with_retries(|| rpc.cluster_info())
     }

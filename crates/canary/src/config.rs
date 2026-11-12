@@ -148,5 +148,8 @@ pub const SNAPSHOT_MAX_BYTES: usize = 64 * 1024 * 1024;
 /// `pipeline-check`'s RPC client makes itself: public devnet sometimes sends a body that
 /// cannot be read, or drops the connection, which that client does not retry.
 pub const RPC_READ_ATTEMPTS: u32 = 3;
+/// Accounts in one `getMultipleAccounts`, as `pipeline-check`'s RPC client sends them; used
+/// only to count the calls a run makes.
+pub const RPC_ACCOUNTS_PER_CALL: usize = 100;
 /// The wait before the first retry of a read, doubled before each later one.
 pub const RPC_READ_RETRY_MS: u64 = 2_000;

@@ -94,6 +94,7 @@ fn run(args: RunArgs) -> Result<(), String> {
     let output = json!({
         "harness": result.harness,
         "markets": markets.len(),
+        "rpc_calls": source.calls(),
         "rpc_requests": source.requests(),
         "wall_seconds": elapsed.as_secs_f64(),
         "rollups": result.rollups,
@@ -105,9 +106,10 @@ fn run(args: RunArgs) -> Result<(), String> {
         serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?
     );
     eprintln!(
-        "canary: {} markets, {} records, {} RPC requests, {:.1} s",
+        "canary: {} markets, {} records, {} RPC calls ({} requests with retries), {:.1} s",
         markets.len(),
         result.records.len(),
+        source.calls(),
         source.requests(),
         elapsed.as_secs_f64()
     );

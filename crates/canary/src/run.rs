@@ -85,7 +85,7 @@ fn now() -> u64 {
 fn naming(accounts: &BTreeSet<Pubkey>) -> String {
     let list: Vec<String> = accounts.iter().map(|k| k.to_string()).collect();
     format!(
-        "the snapshot lacks {} the trades name: {}",
+        "Not run: the snapshot lacks {} the trades name: {}.",
         if list.len() == 1 {
             "an account"
         } else {
@@ -107,7 +107,7 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
                 return MarketRun::Missing(source.missing());
             }
             let reason = if copy_lacking.is_empty() {
-                format!("the market could not be copied: {error}")
+                format!("Not run: the market could not be copied ({error}).")
             } else {
                 naming(&copy_lacking)
             };
