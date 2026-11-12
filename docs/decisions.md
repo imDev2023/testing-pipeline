@@ -1521,6 +1521,216 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32)
 
+### PIPESCOPE-65: Screens: who is speaking
+
+- Question: How does a reader tell a chain fact from an AI's sentence from an author's claim?
+- Answer: By how the text is set: plainly for what Aviary read or measured, in a serif for AI-written text, and in purple italic for an author's words (a strategy's name and description, form labels, a token's symbol and name), a name always with its short address beside it.
+- Alternatives: One style for everything with small source labels; an icon for each source.
+- Specified in: [`docs/spec/pipescope-screens.md`, Who is speaking](spec/pipescope-screens.md#who-is-speaking)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-66: Screens: Canary outcomes without colour
+
+- Question: How is a Canary outcome shown when there is no score, no badge and no green or red?
+- Answer: As its word (pass, warn, fail, not run or noted) beside one of five ink shapes that get heavier the more a trader needs to look, never coloured and never added up into a count for a market.
+- Alternatives: Coloured dots; the words alone.
+- Specified in: [`docs/spec/pipescope-screens.md`, Canary outcomes](spec/pipescope-screens.md#canary-outcomes)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-67: Screens: where colour is used
+
+- Question: Where do the pages use colour?
+- Answer: Ink on a pale paper with one accent, canary yellow, only on Canary's mark and on the trade-box notice, and purple only on an author's words; the values are tokens in the theme stylesheet.
+- Alternatives: Colour by meaning, such as green and red for good and bad or for buys and sells.
+- Specified in: [`docs/spec/pipescope-screens.md`, Colour and theme](spec/pipescope-screens.md#colour-and-theme)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-68: Screens: light and dark themes
+
+- Question: Is Aviary light, dark or both?
+- Answer: Both: the page follows the device's setting, a control in the footer overrides it, and the light theme is the one the design was drawn in.
+- Alternatives: Dark only, as most terminals are.
+- Specified in: [`docs/spec/pipescope-screens.md`, Colour and theme](spec/pipescope-screens.md#colour-and-theme)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-69: Screens: candles
+
+- Question: How are up and down candles drawn?
+- Answer: An up candle is hollow and a down candle is solid, both in ink, so the page keeps one rule about colour.
+- Alternatives: Green and red, the convention on other terminals, which the prototype drew behind a switch.
+- Specified in: [`docs/spec/pipescope-screens.md`, Chart](spec/pipescope-screens.md#chart)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-70: Screens: the feed's layout
+
+- Question: Is the feed a table of markets, markets grouped by strategy, or a log of events?
+- Answer: One table of markets, newest first, with strategies on a second tab.
+- Alternatives: Markets grouped under their strategy with that version's Canary results above them; one time-ordered log of registrations, new markets, upgrades and swaps.
+- Specified in: [`docs/spec/pipescope-screens.md`, Feed](spec/pipescope-screens.md#feed)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-71: Screens: what a row says about Canary
+
+- Question: What does a list show of Canary for each market?
+- Answer: The round-trip return of Canary's ordinary trade as a number and at most one result, the one a trader most needs, as an outcome and a short phrase.
+- Alternatives: A count of passes and warns, which reads as a score; nothing about Canary in lists.
+- Specified in: [`docs/spec/pipescope-screens.md`, What a row says about Canary](spec/pipescope-screens.md#what-a-row-says-about-canary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-72: Screens: the feed's filter steps
+
+- Question: Which steps do the feed's filters offer, and in what are liquidity and volume measured?
+- Answer: Liquidity of at least 0.1, 1 or 10 SOL, volume in 24 hours of at least 0.01, 0.1 or 1 SOL and creation within the last hour, 24 hours or 7 days, with liquidity and volume measured on a market's SOL side, so a market with no SOL side is left out while either is on.
+- Alternatives: Steps for each quote mint; a minimum the reader types.
+- Specified in: [`docs/spec/pipescope-screens.md`, Filters](spec/pipescope-screens.md#filters)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-73: Screens: the market page's layout
+
+- Question: What comes first on a market page?
+- Answer: The chart with the trades beneath it and the trade box beside them, then the explanation and the strategy's forms beside the facts panel.
+- Alternatives: Canary's results and the explanation first, with the chart and the trade box in a side column.
+- Specified in: [`docs/spec/pipescope-screens.md`, Market page](spec/pipescope-screens.md#market-page)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-74: Screens: price direction
+
+- Question: Which mint is a price quoted in?
+- Answer: Wrapped SOL if the pair has it, else USDC, else the later mint of the pair, worked out by `terminal-api` and returned as `quote_mint` so the pages and the Telegram bot agree, with a Flip control to turn a chart round.
+- Alternatives: Always the market's first mint, as Pipeline's hosted API does.
+- Specified in: [`docs/spec/pipescope-screens.md`, Price direction](spec/pipescope-screens.md#price-direction)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-75: Screens: candle lengths on the chart
+
+- Question: Which candle lengths does the chart offer, and which opens first?
+- Answer: 1 m, 5 m, 15 m, 1 h, 4 h and 1 d, opening at 15 m; the 1 s and 15 s candles the indexer keeps are not on the chart in the first version.
+- Alternatives: Opening at 1 m or at 1 h; offering every length the indexer keeps.
+- Specified in: [`docs/spec/pipescope-screens.md`, Chart](spec/pipescope-screens.md#chart)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-76: Screens: the amount typed in the trade box
+
+- Question: Is the amount in the trade box what goes into the market, or everything that leaves the wallet?
+- Answer: Everything that leaves the wallet, fees included: the amount sent into the market is worked back from it, and the breakdown shows both.
+- Alternatives: The amount sent into the market with the fees added on top, which is Pipeline's own exact-in meaning.
+- Specified in: [`docs/spec/pipescope-screens.md`, The amount typed](spec/pipescope-screens.md#the-amount-typed)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-77: Screens: slippage choices
+
+- Question: Which slippage values are one tap away?
+- Answer: 0.5%, 1% (the default) and 3%, with a box for another value up to 50%, all in the screens' config module.
+- Alternatives: Other presets; a slider.
+- Specified in: [`docs/spec/pipescope-screens.md`, One place for every value](spec/pipescope-screens.md#one-place-for-every-value)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-78: Screens: review before signing
+
+- Question: What does a trader see between asking to swap and their wallet opening?
+- Answer: A review step that builds and simulates the swap, shows what signing would change in the wallet, and only then turns on "Sign in wallet"; a failed simulation shows the decoded error and keeps the button off.
+- Alternatives: One button that simulates and opens the wallet in a single step.
+- Specified in: [`docs/spec/pipescope-screens.md`, Review and sign](spec/pipescope-screens.md#review-and-sign)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-79: Screens: markets that cannot trade
+
+- Question: What does the page of a market that cannot trade show?
+- Answer: A stranded market has a plain statement in place of the trade box, with what its vaults still hold; a market that refuses every trade by its own rules keeps its trade box, where a quote returns the strategy's own error, decoded.
+- Alternatives: Hiding such markets, which the listing rule forbids; no trade box on either.
+- Specified in: [`docs/spec/pipescope-screens.md`, Markets that cannot trade](spec/pipescope-screens.md#markets-that-cannot-trade)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-80: Screens: Canary on the strategy page
+
+- Question: How are a strategy version's Canary results across its markets shown?
+- Answer: One line for each check with how many of the version's markets got each outcome, opening to the markets that warn or fail.
+- Alternatives: A grid of markets against checks, which needs a pointer to read and does not fit a phone.
+- Specified in: [`docs/spec/pipescope-screens.md`, Strategy page](spec/pipescope-screens.md#strategy-page)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-81: Screens: how search matches
+
+- Question: How does search match what is typed?
+- Answer: Names match anywhere and in any case, and addresses match exactly as typed from their start or their end; results are grouped as strategies, markets and mints.
+- Alternatives: Matching addresses anywhere and in any case, which returns look-alikes for a case-sensitive address.
+- Specified in: [`docs/spec/pipescope-screens.md`, Search](spec/pipescope-screens.md#search)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-82: Screens: token images
+
+- Question: Are tokens' images shown?
+- Answer: Yes, 20 px square beside the symbol and the short address, served only from `terminal-api`'s own copy (PNG, JPEG or WebP, at most 1 MB), so a reader's browser never asks an author's server for anything.
+- Alternatives: Leaving images out; linking to the author's file, which tells the author who looked and lets them change the picture for each viewer.
+- Specified in: [`docs/spec/pipescope-screens.md`, Token names and images](spec/pipescope-screens.md#token-names-and-images)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-83: Screens: phones
+
+- Question: How do the pages fold on a phone?
+- Answer: Nothing scrolls sideways down to 360 px: each table row becomes a small labelled block, and the market page stacks as chart, trade box, trades, explanation, actions and facts.
+- Alternatives: Tables that scroll sideways; a Trade bar fixed to the bottom of the screen.
+- Specified in: [`docs/spec/pipescope-screens.md`, Phones and narrow windows](spec/pipescope-screens.md#phones-and-narrow-windows)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-84: Screens: Telegram on the pages
+
+- Question: Where do the pages carry what the Telegram bot needs of them?
+- Answer: A trade link fills the trade box from the page's address, a phone with no wallet gets links that reopen the page in Phantom, Solflare or Backpack in place of "Connect wallet", "Get alerts in Telegram" sits in the head of market and strategy pages, and the footer names the official bot and channel once the API returns their handles.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-screens.md`, Arriving from Telegram](spec/pipescope-screens.md#arriving-from-telegram)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
+### PIPESCOPE-85: Screens: where the screens' values live
+
+- Question: Where do the numbers, lists, colours and typefaces of the pages live?
+- Answer: Numbers and lists in the screens' config module `apps/terminal-web/src/config.ts`, colours and typefaces as tokens in `apps/terminal-web/src/theme.css`, and nothing in a component.
+- Alternatives: Values written in the components that use them.
+- Specified in: [`docs/spec/pipescope-screens.md`, One place for every value](spec/pipescope-screens.md#one-place-for-every-value)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
@@ -3199,7 +3409,6 @@ Each field is one line, and each value is one sentence of inline Markdown.
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
 
-- [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16): what the terminal's pages look like and how they behave.
 - [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22): it merges the terminal's spec files and adds a block only if it settles something new.
 - Not yet specified on the map: single-use AMMs, Canary results published on-chain as attestations, and Canary calling a strategy's custom instructions.
 
@@ -3232,3 +3441,6 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.
+- `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
+- `PIPESCOPE-08`: `pipescope-screens.md` (One place for every value) now names the screens' config module as the home of the default slippage; `pipescope.md` (Trading) still writes the number.
+- `PIPESCOPE-82`: `pipescope-screens.md` has `terminal-api` keep its own copies of token images, and `pipescope-architecture.md` (Data) names no store for files; the session that cuts the terminal's build tickets says where they are kept.

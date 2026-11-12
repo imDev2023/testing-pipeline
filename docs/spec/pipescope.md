@@ -4,6 +4,7 @@ Decided with the owner in [Pipescope v1 scope](https://github.com/imDev2023/test
 MetalLegBob confirmed the scope stands and asked for nothing more for a start ([Record MetalLegBob's answers to the outreach](https://github.com/imDev2023/testing-pipeline/issues/5)).
 Pipeline was read at commit `5ad130d` (its integrator guide, metadata standard and trust facts).
 The explainer has its own file, [`pipescope-explainer.md`](pipescope-explainer.md); [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) merges the Aviary files.
+What each page shows and how it behaves is in [`pipescope-screens.md`](pipescope-screens.md).
 
 ## What the first version is
 

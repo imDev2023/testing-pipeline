@@ -10,6 +10,7 @@ Terms are as in `GLOSSARY.md`, and the toolchain and its install steps are in `d
 - `pipescope-architecture.md`: where each part of Aviary runs and keeps its data.
 - `pipescope-canary.md`: Aviary's Canary checks.
 - `pipescope-explainer.md`: Aviary's explainer.
+- `pipescope-screens.md`: what each of Aviary's pages shows and how it behaves.
 - `pipescope-telegram.md`: Aviary's Telegram bot.
 - `tax-amm.md`: the tax AMM.
 - `containment-hook.md`: the containment hook.
