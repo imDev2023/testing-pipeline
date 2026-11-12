@@ -404,6 +404,28 @@ impl Env {
         mint
     }
 
+    /// SPL Token's or Token-2022's native SOL mint as it exists on every cluster, written into
+    /// the VM: initialized, no authorities, 9 decimals.
+    pub fn write_native_mint(
+        &mut self,
+        mint: &anchor_lang::prelude::Pubkey,
+        token_program: &Pubkey,
+    ) -> Pubkey {
+        let mut data = vec![0u8; MINT_LEN];
+        data[44] = 9;
+        data[45] = 1;
+        let mint = ck(mint);
+        let account = solana_account::Account {
+            lamports: self.svm.minimum_balance_for_rent_exemption(data.len()),
+            data,
+            owner: *token_program,
+            executable: false,
+            rent_epoch: 0,
+        };
+        self.svm.set_account(mint, account).unwrap();
+        mint
+    }
+
     /// Creates a tax market through the router's `create_market`, signed by a fresh market
     /// state keypair, and makes both mints sellable with `init_fee_account`, in one
     /// transaction, exactly as `metadata.json`'s `init` describes it.

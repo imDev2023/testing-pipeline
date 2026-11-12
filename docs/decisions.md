@@ -2320,8 +2320,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-33: Creating the vaults
 
 - Question: When and how are a market's vaults created?
-- Answer: By `pipeline_init_market` itself, only after every rule has passed, each sized by its mint's token program, and with lamports already at a vault's address kept rather than blocking the creation.
-- Alternatives: Anchor's `init` constraints, which create the vaults before the program can check the mints.
+- Answer: By `pipeline_init_market` itself, after every rule has passed, so a refused mint gets the error of the rule it breaks, each vault sized by its mint's token program, and with lamports already at a vault's address kept as a donation rather than blocking the creation.
+- Alternatives: Anchor's `init` constraints, which read the mints before the program can check them and fail with a generic error on an extension they don't know.
 - Specified in: [`docs/spec/tax-amm.md`, Addresses](spec/tax-amm.md#addresses)
 - Changes by: fixed on-chain once deployed
 - Status: default

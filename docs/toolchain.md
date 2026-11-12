@@ -119,7 +119,7 @@ On 2026-11-10 on the owner's Mac, from warm caches, everything above but Kani to
 From cold, the SBF build took 53 seconds, the test build 60 seconds and `fetch-pipeline.sh` 2 minutes 22 seconds.
 `cargo kani --workspace -j --output-format=terse` proves the template's pricing in two harnesses run in parallel (`programs/tax-amm/src/pricing.rs`): `out_given_in` never panics or overflows for any reserves and amount at the edge fees 0, 1, 30 and 9,999 (64 checks, 85 seconds), and it never pays out a whole output reserve while the input side holds anything, and buys nothing with zero input, with both reserves and the amount below 16 (85 checks, 108 seconds); 112 seconds in all on this Mac.
 Each proof fails when its property is broken: with the zero-denominator guard removed, or the `reserve_in > 0` condition dropped from the assertion, Kani finds the counterexample.
-`in_given_out`, the exact-out maths, is not proved in CI: this build still prices exact-out swaps with it, but the tax AMM refuses exact-out and it leaves with the template's pricing ([seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60)), and its no-panic proof, which passed, took 14.5 minutes, so it runs only with `RUSTFLAGS="--cfg kani_full"`.
+`in_given_out`, the template's exact-out maths, left with [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) on 2026-11-12, because the tax AMM refuses exact-out; its no-panic proof, which passed before it left, took 14.5 minutes.
 
 ### Local demo run
 

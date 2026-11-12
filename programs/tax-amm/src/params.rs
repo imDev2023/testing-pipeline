@@ -13,9 +13,6 @@ pub const NATIVE_MINTS: [Pubkey; 2] = [
     pubkey!("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP"),
 ];
 
-/// Every share is in basis points of the creator's part of the tax.
-pub const BPS: u32 = 10_000;
-
 /// `create_market`'s `init_data`: these fields, Borsh-encoded in this order.
 ///
 /// `metadata.json`'s `init.args` lists the same fields, with the arrays flattened into
@@ -101,7 +98,8 @@ impl InitParams {
         }
         let total: u32 =
             self.shares.iter().map(|&share| share as u32).sum::<u32>() + self.burn_share_bps as u32;
-        if total != BPS {
+        // Every share is in basis points of the creator's part of the tax.
+        if total as u64 != pipeline_strategy_interface::BPS_DENOMINATOR {
             return Err(StrategyError::SharesNotWhole);
         }
         if self.burn_share_bps > 0 && NATIVE_MINTS.contains(&mints[self.tax_side as usize]) {

@@ -512,17 +512,24 @@ async function main() {
         fail(`the router recorded mints ${view.mints.join(', ')} and vaults ${view.vaults.join(', ')}`);
     }
     info('router market: the mints in the creator\'s order, with the vaults computed in step 5');
+    // One round trip for the fee accounts and the vaults: each must be a token account of
+    // its mint's program; a vault also of its mint, owned by the vault authority.
+    const { value: created } = await rpc
+        .getMultipleAccounts([...feeAccounts, ...vaults], { encoding: 'base64', commitment: 'confirmed' })
+        .send();
+    const tokenAccount = (i: number) => {
+        const account = created[i];
+        return account && { owner: account.owner, data: new Uint8Array(Buffer.from(account.data[0], 'base64')) };
+    };
     for (const [i, feeAccount] of feeAccounts.entries()) {
-        const { value } = await rpc.getAccountInfo(feeAccount, { encoding: 'base64', commitment: 'confirmed' }).send();
-        if (value?.owner !== mints[i]!.tokenProgram) fail(`fee account ${feeAccount} is not a token account`);
+        if (tokenAccount(i)?.owner !== mints[i]!.tokenProgram) fail(`fee account ${feeAccount} is not a token account`);
     }
     info('fee accounts: both exist at the computed addresses');
     for (const [i, vault] of vaults.entries()) {
-        const data = await accountData(vault);
-        const { value } = await rpc.getAccountInfo(vault, { encoding: 'base64', commitment: 'confirmed' }).send();
-        const mint = data && getAddressDecoder().decode(data.subarray(0, 32));
-        const owner = data && getAddressDecoder().decode(data.subarray(32, 64));
-        if (value?.owner !== mints[i]!.tokenProgram || mint !== mints[i]!.mint || owner !== authority) {
+        const account = tokenAccount(feeAccounts.length + i);
+        const mint = account && getAddressDecoder().decode(account.data.subarray(0, 32));
+        const owner = account && getAddressDecoder().decode(account.data.subarray(32, 64));
+        if (account?.owner !== mints[i]!.tokenProgram || mint !== mints[i]!.mint || owner !== authority) {
             fail(`vault ${vault} is not a token account of ${mints[i]!.mint} owned by the vault authority`);
         }
     }

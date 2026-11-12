@@ -239,3 +239,35 @@ fn a_pre_funded_vault_does_not_block_the_creation() {
         assert_eq!(s.env.balance(&vault), 0);
     }
 }
+
+#[test]
+fn a_pre_funded_native_sol_vault_opens_with_a_donation_the_market_never_counts() {
+    // Lamports sent to a native SOL vault's address become wrapped SOL when the token program
+    // initializes the vault. Like any token sent to a vault outside a swap or the seed, they
+    // are a donation (docs/spec/tax-amm.md, "Locked for good"): the market records nothing.
+    for (native, token_program) in [
+        (tax_amm::params::NATIVE_MINTS[0], TOKEN),
+        (tax_amm::params::NATIVE_MINTS[1], TOKEN_2022),
+    ] {
+        let mut env = Env::new();
+        let sol = env.write_native_mint(&native, &token_program);
+        let token = env.create_mint(&TOKEN);
+        let mut params = valid_params(&Pubkey::new_unique());
+        params.tax_side = 0;
+        let state = Keypair::new();
+        let (_, vaults) = tax_market_addresses(&state.pubkey(), [token, sol]);
+        env.svm.airdrop(&vaults[1], 5 * SOL).unwrap();
+        let market = env
+            .create_tax_market_with(
+                &state,
+                [(token, TOKEN), (sol, token_program)],
+                init_data(&params),
+            )
+            .unwrap();
+        let vault = env.svm.get_account(&market.vaults[1]).unwrap();
+        let rent = env.svm.minimum_balance_for_rent_exemption(vault.data.len());
+        assert_eq!(vault.lamports, 5 * SOL);
+        assert_eq!(env.balance(&market.vaults[1]), 5 * SOL - rent);
+        assert_eq!(env.tax_market(&market.market_state).reserves, [0, 0]);
+    }
+}
