@@ -103,7 +103,7 @@ impl U256 {
     }
 
     /// `self >> n` for `n` from 1 to 127; `None` otherwise.
-    pub fn shr(self, n: u32) -> Option<U256> {
+    pub fn checked_shr(self, n: u32) -> Option<U256> {
         let back = 128u32.checked_sub(n).filter(|back| *back < 128)?;
         Some(U256 {
             hi: self.hi.checked_shr(n)?,
@@ -112,7 +112,7 @@ impl U256 {
     }
 
     /// `self << n` for `n` from 0 to 255, or `None` if a set bit would be shifted out.
-    pub fn shl(self, n: u32) -> Option<U256> {
+    pub fn checked_shl(self, n: u32) -> Option<U256> {
         if n == 0 {
             return Some(self);
         }
@@ -184,7 +184,7 @@ impl U256 {
         }
         // `self >= d > 0`, so the shift is between 0 and 255 and loses no bit of `d`.
         let shift = d.leading_zeros().checked_sub(self.leading_zeros())?;
-        let mut divisor = d.shl(shift)?;
+        let mut divisor = d.checked_shl(shift)?;
         let mut rem = self;
         let mut quotient = U256::ZERO;
         let mut bit = shift;
@@ -197,7 +197,7 @@ impl U256 {
                 break;
             }
             bit = bit.checked_sub(1)?;
-            divisor = divisor.shr(1)?;
+            divisor = divisor.checked_shr(1)?;
         }
         Some((quotient, rem))
     }
@@ -224,7 +224,7 @@ impl U256 {
             return Some(U256::ZERO);
         }
         let exponent = bits.checked_sub(1)? & !1;
-        U256::ONE.shl(exponent)
+        U256::ONE.checked_shl(exponent)
     }
 
     /// `self` with bit `n` (0 to 255) set.
@@ -342,7 +342,7 @@ mod tests {
             let value = U256 { hi, lo };
             match 256u32.checked_sub(bits) {
                 Some(0) => value,
-                Some(drop) if drop < 128 => value.shr(drop).unwrap(),
+                Some(drop) if drop < 128 => value.checked_shr(drop).unwrap(),
                 Some(drop) if drop < 256 => U256 {
                     hi: 0,
                     lo: hi >> (drop - 128),
@@ -401,9 +401,9 @@ mod tests {
         /// `shl` is multiplication by a power of two, refusing to lose a bit.
         #[test]
         fn shl_is_exact(n in u256(), shift in 0u32..256) {
-            match n.shl(shift) {
+            match n.checked_shl(shift) {
                 Some(shifted) => {
-                    let back = (0..shift).try_fold(shifted, |v, _| v.shr(1));
+                    let back = (0..shift).try_fold(shifted, |v, _| v.checked_shr(1));
                     prop_assert_eq!(back, Some(n));
                 }
                 None => prop_assert!(shift > n.leading_zeros()),
@@ -428,11 +428,29 @@ mod tests {
         assert_eq!(max.div_rem(U256::ONE), Some((max, U256::ZERO)));
         assert_eq!(max.div_rem(max), Some((U256::ONE, U256::ZERO)));
         assert_eq!(U256::ONE.div_rem(max), Some((U256::ZERO, U256::ONE)));
-        assert_eq!(U256::ZERO.div_rem(U256::ONE), Some((U256::ZERO, U256::ZERO)));
+        assert_eq!(
+            U256::ZERO.div_rem(U256::ONE),
+            Some((U256::ZERO, U256::ZERO))
+        );
         assert_eq!(max.div_rem(U256::ZERO), None);
-        assert_eq!(U256::from(7u128).div_ceil(U256::from(2u128)), Some(U256::from(4u128)));
-        assert_eq!(max.div_ceil(U256::from(2u128)), Some(U256 { hi: 1 << 127, lo: 0 }));
-        assert_eq!(U256::ONE.shl(255), Some(U256 { hi: 1 << 127, lo: 0 }));
-        assert_eq!(U256::from(2u128).shl(255), None);
+        assert_eq!(
+            U256::from(7u128).div_ceil(U256::from(2u128)),
+            Some(U256::from(4u128))
+        );
+        assert_eq!(
+            max.div_ceil(U256::from(2u128)),
+            Some(U256 {
+                hi: 1 << 127,
+                lo: 0
+            })
+        );
+        assert_eq!(
+            U256::ONE.checked_shl(255),
+            Some(U256 {
+                hi: 1 << 127,
+                lo: 0
+            })
+        );
+        assert_eq!(U256::from(2u128).checked_shl(255), None);
     }
 }

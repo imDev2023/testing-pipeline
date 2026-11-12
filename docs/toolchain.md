@@ -159,6 +159,8 @@ source scripts/toolchain-env.sh
 scripts/local-validator.sh               # stays in the foreground; agents start it with run_in_background and stop it with TaskStop
 ```
 
+Options after the ledger directory go to `solana-test-validator` as they are, so a session can run its own validator beside another session's: `scripts/local-validator.sh fixtures/test-ledger-2 --rpc-port 8999 --faucet-port 9990 --gossip-port 8990 --dynamic-port-range 8300-8400`, then `--cluster http://127.0.0.1:8999` for the demo.
+
 Then, in another shell:
 
 ```sh
@@ -189,8 +191,9 @@ pnpm demo --cluster localnet \
   --upgrade-authority ~/.config/testing-pipeline/devnet/upgrade-authority.json
 ```
 
-It registers the strategy, creates a test token with its mint authority removed and wraps the seed's SOL, then in one transaction creates the market from the metadata's `init` form, adds both fee accounts and seeds it through the metadata's `seed` action; it reads the market back through the router's record and the generated client, and checks a quote is refused, as it is until trading is built.
-Passed on 2026-11-12 from a fresh validator in 5 seconds: the transaction was 1,091 bytes of the 1,232 allowed, and the worked example's seed opened at `sqrt_price` 1,844,674,407,370,955,161, `liquidity` 99,999,999,999 and cap 1,000,000,000,000, the token at index 0 and wrapped SOL at index 1, with the quote refused with `TradingNotAvailable`.
+It registers the strategy, creates a test token with its mint authority removed and wraps the SOL for the seed and a buy, then in one transaction creates the market from the metadata's `init` form, adds both fee accounts and seeds it through the metadata's `seed` action; it reads the market back through the router's record and the generated client.
+Since [plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48), it then buys with 1 SOL and sells what it bought, each quoted and swapped through the router with the SDK, checks each quote against the spec's formulas (recomputed in the script) and the worked example's numbers, and reads the price, ledgers and counters back against the same formulas.
+Passed on 2026-11-12 from a fresh validator in 7 seconds: the seed opened at `sqrt_price` 1,844,674,407,370,955,161, `liquidity` 99,999,999,999 and cap 1,000,000,000,000 in a 1,091-byte transaction; the buy paid 90,081,892,629 units and the sell back 980,099,999 lamports, exactly the quotes and the worked example's numbers; and the market state ended at `sqrt_price` 1,844,674,407,372,029,099, with every ledger and counter equal to the spec's formulas and each vault holding exactly its ledgers.
 ### Containment hook
 
 The launch script, `programs/containment-hook/scripts/launch.ts`, launches a contained token on a cluster where both programs are deployed and the tax AMM is registered with the router; on a local validator, `scripts/local-validator.sh` deploys both and the tax AMM's demo registers it.

@@ -21,15 +21,18 @@ pub struct FeeSplit {
     pub recipient: u64,
 }
 
-/// `floor(amount × bps / 10,000)`, for `bps` up to 10,000.
+/// `floor(amount × bps / 10,000)`, for `bps` up to 10,000, in 64 bits: with `amount = q ×
+/// 10,000 + r`, it is `q × bps + floor(r × bps / 10,000)` exactly, where `q × bps <= amount`
+/// and `r × bps < 10,000²` both fit. As in Pipeline's `fees::ceil_bps`, avoiding 128-bit
+/// division keeps it provable by Kani for every input.
 fn share(amount: u64, bps: u16) -> Option<u64> {
     if bps > BPS {
         return None;
     }
-    let scaled = (amount as u128)
-        .checked_mul(bps as u128)?
-        .checked_div(BPS as u128)?;
-    u64::try_from(scaled).ok()
+    let (denominator, bps) = (BPS as u64, bps as u64);
+    let (q, r) = (amount / denominator, amount % denominator);
+    q.checked_mul(bps)?
+        .checked_add(r.checked_mul(bps)? / denominator)
 }
 
 impl FeeSplit {
@@ -121,6 +124,73 @@ impl Counters {
             fees_collected: self.fees_collected.checked_add(priced.fee as u128)?,
             swap_count: self.swap_count.checked_add(1)?,
         })
+    }
+}
+
+// Kani proofs of the books, for every input, in the default tier (see `opening.rs` for the
+// tiers): the split and the ledger updates divide only by the constant 10,000, which CBMC
+// handles for the whole range.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// For every fee and every wall split a market may choose, the split never fails, its
+    /// four parts add up to the fee, and the market's part is what the two shares leave.
+    #[kani::proof]
+    fn the_split_adds_up_for_every_fee() {
+        let fee: u64 = kani::any();
+        let wall_split_bps: u16 = kani::any();
+        kani::assume(wall_split_bps <= BPS);
+        let split = FeeSplit::of(fee, wall_split_bps).unwrap();
+        let total = split.designer as u128
+            + split.suite as u128
+            + split.wall as u128
+            + split.recipient as u128;
+        assert_eq!(total, fee as u128);
+        assert!(split.designer as u128 * 10_000 <= fee as u128 * DESIGNER_SHARE_BPS as u128);
+        assert!(split.suite as u128 * 10_000 <= fee as u128 * SUITE_SHARE_BPS as u128);
+    }
+
+    /// A swap's book update moves value between ledgers without creating or losing any,
+    /// or refuses: the token ledger changes by exactly the trade's token flow and the SOL
+    /// ledgers together by exactly its SOL flow.
+    #[kani::proof]
+    fn a_swap_conserves_the_ledgers() {
+        let books = Books {
+            pool_tokens: kani::any(),
+            pool_sol: kani::any(),
+            idle_sol: kani::any(),
+            fees_recipient: kani::any(),
+            fees_designer: kani::any(),
+            fees_suite: kani::any(),
+        };
+        let priced = Priced {
+            side: if kani::any() { Side::Sell } else { Side::Buy },
+            amount_in: kani::any(),
+            fee: kani::any(),
+            amount_out: kani::any(),
+            sqrt_price: 0,
+        };
+        let wall_split_bps: u16 = kani::any();
+        kani::assume(wall_split_bps <= BPS);
+        if let Some(after) = books.after(&priced, wall_split_bps) {
+            let sol = |b: &Books| {
+                b.pool_sol as i128
+                    + b.idle_sol as i128
+                    + b.fees_recipient as i128
+                    + b.fees_designer as i128
+                    + b.fees_suite as i128
+            };
+            let (tokens_in, sol_in) = match priced.side {
+                Side::Sell => (priced.amount_in as i128, -(priced.amount_out as i128)),
+                Side::Buy => (-(priced.amount_out as i128), priced.amount_in as i128),
+            };
+            assert_eq!(
+                after.pool_tokens as i128 - books.pool_tokens as i128,
+                tokens_in
+            );
+            assert_eq!(sol(&after) - sol(&books), sol_in);
+        }
     }
 }
 

@@ -67,15 +67,23 @@ impl From<Refusal> for StrategyError {
 }
 
 /// One step of a sell along liquidity `liq` from `s` toward `target` (below `s`) with
-/// `remaining` token units: `(next, used, gross)`, where
+/// `remaining` token units: `(next, used, gross)`, exactly as the spec's "A sell" writes it:
 ///
 /// - `need = ceil(liq × Q × (s - target) / (s × target))`, the units that reach `target`;
 /// - with `remaining >= need`, `next = target` and `used = need`; otherwise
 ///   `next = ceil(liq × Q × s / (liq × Q + remaining × s))` and `used = remaining`;
 /// - `gross = floor(liq × (s - next) / Q)`, the lamports the step frees.
 ///
-/// Divisions by two square-root prices are staged one price at a time, which is exact for
-/// both floors and ceilings (`ceil(ceil(n / a) / b) = ceil(n / (a × b))`).
+/// `remaining >= need` holds exactly when that `next` is at or below `target` (both say
+/// `remaining × s × target >= liq × Q × (s - target)`, and `target` is whole), so `need`,
+/// two divisions, is computed only for a step that reaches `target`; a test checks this
+/// against the spec's order of operations.
+///
+/// The spec stages divisions where a product could overflow; a product of two square-root
+/// prices never does (each is below 2^128, so it fits in 256 bits), so a division by two
+/// prices divides once by their product, which takes the loop in `U256::div_rem` about as
+/// many passes as the quotient has bits instead of as many as the first stage's quotient
+/// has. Only numerators can overflow, and an overflow refuses the trade.
 pub fn sell_step(
     liq: u128,
     s: u128,
@@ -84,24 +92,22 @@ pub fn sell_step(
 ) -> core::result::Result<(u128, u64, u64), Refusal> {
     let liq_q = U256::times_q(liq);
     let drop = s.checked_sub(target).ok_or(Refusal::Overflow)?;
-    let need = liq_q
-        .mul_u128(drop)
-        .and_then(|n| n.div_ceil(U256::from(s)))
-        .and_then(|n| n.div_ceil(U256::from(target)))
+    let denominator = U256::mul(remaining as u128, s)
+        .and_then(|added| liq_q.checked_add(added))
         .ok_or(Refusal::Overflow)?;
-    let (next, used) = if U256::from(remaining) >= need {
-        // `need <= remaining` fits in 64 bits.
-        (target, need.to_u64().ok_or(Refusal::Overflow)?)
+    let free_next = liq_q
+        .mul_u128(s)
+        .and_then(|n| n.div_ceil(denominator))
+        .ok_or(Refusal::Overflow)?;
+    let (next, used) = if free_next <= U256::from(target) {
+        let need = U256::mul(s, target)
+            .and_then(|prices| liq_q.mul_u128(drop)?.div_ceil(prices))
+            .and_then(U256::to_u64)
+            .ok_or(Refusal::Overflow)?;
+        (target, need)
     } else {
-        let denominator = U256::mul(remaining as u128, s)
-            .and_then(|added| liq_q.checked_add(added))
-            .ok_or(Refusal::Overflow)?;
-        let next = liq_q
-            .mul_u128(s)
-            .and_then(|n| n.div_ceil(denominator))
-            .and_then(U256::to_u128)
-            .ok_or(Refusal::Overflow)?;
-        (next, remaining)
+        // Above `target`, which is a u128.
+        (free_next.to_u128().ok_or(Refusal::Overflow)?, remaining)
     };
     let gross = s
         .checked_sub(next)
@@ -119,7 +125,7 @@ pub fn sell_step(
 /// - with `remaining >= need`, `next = target` and `used = need`; otherwise
 ///   `next = s + floor(remaining × Q / liq)` and `used = remaining`;
 /// - `out = floor(liq × Q × (next - s) / (next × s))`, the token units the step frees,
-///   staged one square-root price at a time.
+///   divided once by the product of the two prices (see `sell_step`).
 pub fn buy_step(
     liq: u128,
     s: u128,
@@ -144,8 +150,8 @@ pub fn buy_step(
     let out = next
         .checked_sub(s)
         .and_then(|rise| U256::times_q(liq).mul_u128(rise))
-        .and_then(|n| n.div_floor(U256::from(next)))
-        .and_then(|n| n.div_floor(U256::from(s)))
+        .zip(U256::mul(next, s))
+        .and_then(|(n, prices)| n.div_floor(prices))
         .and_then(U256::to_u64)
         .ok_or(Refusal::Overflow)?;
     Ok((next, used, out))
@@ -221,6 +227,107 @@ pub fn quote(state: &MarketState, request: &TradeRequest) -> Result<Priced> {
         _ => buy(curve, request.amount, state.fee_bps()),
     };
     priced.map_err(|refusal| error!(StrategyError::from(refusal)))
+}
+
+// Kani proofs of the pricing, in the tiers Pipeline uses (see `opening.rs`). A step divides
+// with a quotient of about 64 bits whatever its inputs are bounded to (it is a square-root
+// price, or `liq × Q` over one), and `U256::div_rem` loops once per quotient bit, so CBMC
+// unrolls some 70 passes of 256-bit arithmetic per division: a step harness bounded to
+// inputs below 2^5 ran over 18 minutes without finishing on the owner's Mac (2026-11-12).
+// The step proofs therefore run in the full tier only, and Z3 proves the same properties
+// for every input over the integers (`proofs/pricing_z3.py`), from the exactness of
+// `div_rem`, which Kani proves in the default tier (`math.rs`); Proptest checks the steps
+// themselves on 10,000 random markets each (below). The fee's rounding needs no division
+// loop and is proved here for every input in the default tier.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// Bound of the step harnesses, for liquidities, prices and amounts.
+    #[cfg(kani_full)]
+    const SMALL: u128 = 1 << 5;
+
+    /// A buy step never panics; it moves the price no further than the input it uses pays
+    /// for (`(next - s) × liq <= used × Q`), never past its target, and pays out no more
+    /// than the curve frees between the two prices (`out × next × s <= liq × Q × (next -
+    /// s)`).
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(75)]
+    fn a_buy_step_rounds_against_the_trader_bounded() {
+        let (liq, s, target): (u128, u128, u128) = (kani::any(), kani::any(), kani::any());
+        let remaining: u64 = kani::any();
+        kani::assume(liq > 0 && liq < SMALL && s > 0 && s < target && target <= SMALL);
+        kani::assume((remaining as u128) < SMALL);
+        if let Ok((next, used, out)) = buy_step(liq, s, target, remaining) {
+            assert!(next >= s && next <= target && used <= remaining);
+            assert!(U256::mul(next - s, liq).unwrap() <= U256::times_q(used as u128));
+            let paid = U256::mul(next, s).unwrap().mul_u64(out).unwrap();
+            assert!(paid <= U256::times_q(liq).mul_u128(next - s).unwrap());
+        }
+    }
+
+    /// A sell step never panics; it moves the price down no further than its input pays for
+    /// (`next × (liq × Q + used × s) >= liq × Q × s`), never past its target, and frees no
+    /// more SOL than the curve holds between the two prices (`gross × Q <= liq × (s -
+    /// next)`).
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(75)]
+    fn a_sell_step_rounds_against_the_trader_bounded() {
+        let (liq, s, target): (u128, u128, u128) = (kani::any(), kani::any(), kani::any());
+        let remaining: u64 = kani::any();
+        kani::assume(liq > 0 && liq < SMALL && target > 0 && target < s && s <= SMALL);
+        kani::assume((remaining as u128) < SMALL);
+        if let Ok((next, used, gross)) = sell_step(liq, s, target, remaining) {
+            assert!(next >= target && next <= s && used <= remaining);
+            let liq_q = U256::times_q(liq);
+            let moved = liq_q
+                .checked_add(U256::mul(used as u128, s).unwrap())
+                .unwrap();
+            assert!(moved.mul_u128(next).unwrap() >= liq_q.mul_u128(s).unwrap());
+            assert!(U256::times_q(gross as u128) <= U256::mul(liq, s - next).unwrap());
+        }
+    }
+
+    /// The fee rounds up and the output down: a sell's fee is `ceil(gross × bps / 10,000)`
+    /// and its output `gross - fee`, for every gross and every fee a market may charge.
+    #[kani::proof]
+    fn a_sells_fee_rounds_up() {
+        let gross: u64 = kani::any();
+        let fee_bps: u16 = kani::any();
+        kani::assume((crate::config::MIN_FEE_BPS..=crate::config::MAX_FEE_BPS).contains(&fee_bps));
+        let fee = fees::ceil_bps(gross, fee_bps as u64).unwrap();
+        // fee × 10,000 >= gross × bps > (fee - 1) × 10,000, and the fee never exceeds gross.
+        let exact = gross as u128 * fee_bps as u128;
+        assert!(fee as u128 * 10_000 >= exact);
+        assert!(fee == 0 || (fee as u128 - 1) * 10_000 < exact);
+        assert!(fee <= gross);
+    }
+
+    /// Every step, for every input, in the full tier.
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(260)]
+    fn every_trade_rounds_against_the_trader() {
+        let curve = Curve {
+            sqrt_price: kani::any(),
+            liquidity: kani::any(),
+        };
+        let a: u64 = kani::any();
+        let fee_bps: u16 = kani::any();
+        kani::assume((crate::config::MIN_FEE_BPS..=crate::config::MAX_FEE_BPS).contains(&fee_bps));
+        if let Ok(bought) = buy(curve, a, fee_bps) {
+            assert!(bought.sqrt_price > curve.sqrt_price && bought.sqrt_price <= MAX_SQRT_PRICE);
+            let after = Curve {
+                sqrt_price: bought.sqrt_price,
+                ..curve
+            };
+            if let Ok(sold) = sell(after, bought.amount_out, fee_bps) {
+                assert!(sold.amount_out < a);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -325,7 +432,10 @@ mod tests {
             .unwrap();
         assert!(input - estimate.saturating_sub(10) < 100);
         if after_fee(input) == need {
-            assert_eq!(buy(thin, input, FEE_BPS).unwrap().sqrt_price, MAX_SQRT_PRICE);
+            assert_eq!(
+                buy(thin, input, FEE_BPS).unwrap().sqrt_price,
+                MAX_SQRT_PRICE
+            );
         }
         assert_eq!(
             buy(thin, input + 200, FEE_BPS),
@@ -367,6 +477,39 @@ mod tests {
         }
     }
 
+    /// The spec's "A sell" step in its own order: `need` first, then the comparison.
+    fn sell_step_as_written(
+        liq: u128,
+        s: u128,
+        target: u128,
+        remaining: u64,
+    ) -> core::result::Result<(u128, u64, u64), Refusal> {
+        let liq_q = U256::times_q(liq);
+        let need = liq_q
+            .mul_u128(s - target)
+            .and_then(|n| n.div_ceil(U256::mul(s, target).unwrap()))
+            .ok_or(Refusal::Overflow)?;
+        let (next, used) = if U256::from(remaining) >= need {
+            (target, need.to_u64().unwrap())
+        } else {
+            let denominator = liq_q
+                .checked_add(U256::mul(remaining as u128, s).unwrap())
+                .unwrap();
+            let next = liq_q
+                .mul_u128(s)
+                .ok_or(Refusal::Overflow)?
+                .div_ceil(denominator)
+                .unwrap();
+            (next.to_u128().unwrap(), remaining)
+        };
+        let gross = U256::mul(liq, s - next).unwrap().checked_shr64().unwrap();
+        Ok((
+            next,
+            used,
+            u64::try_from(gross).map_err(|_| Refusal::Overflow)?,
+        ))
+    }
+
     /// A market of any size a seed can open, at any price trading can reach.
     fn curve() -> impl Strategy<Value = Curve> {
         (MIN_SQRT_PRICE..=MAX_SQRT_PRICE, MIN_LIQUIDITY..1u128 << 96).prop_map(
@@ -383,7 +526,11 @@ mod tests {
     }
 
     fn fee_bps() -> impl Strategy<Value = u16> {
-        prop_oneof![Just(MIN_FEE_BPS), Just(MAX_FEE_BPS), MIN_FEE_BPS..=MAX_FEE_BPS]
+        prop_oneof![
+            Just(MIN_FEE_BPS),
+            Just(MAX_FEE_BPS),
+            MIN_FEE_BPS..=MAX_FEE_BPS
+        ]
     }
 
     /// What the curve holds at `curve`, exactly: `L × Q / s` token units and `L × s / Q`
@@ -478,6 +625,27 @@ mod tests {
                     prop_assert!(sold.sqrt_price >= c.sqrt_price);
                 }
             }
+        }
+
+        /// `sell_step` gives what the spec's order of operations gives: `need` first, then
+        /// the comparison.
+        #[test]
+        fn the_sell_step_is_the_spec_as_written(
+            liq in MIN_LIQUIDITY..1u128 << 96,
+            s in MIN_SQRT_PRICE..=MAX_SQRT_PRICE,
+            target_below in 0u128..1 << 96,
+            remaining in amount(),
+        ) {
+            let target = (s - target_below.min(s - 1)).max(1);
+            prop_assert_eq!(
+                sell_step(liq, s, target, remaining),
+                sell_step_as_written(liq, s, target, remaining)
+            );
+            // And at the bound every sell steps toward.
+            prop_assert_eq!(
+                sell_step(liq, s, MIN_SQRT_PRICE, remaining),
+                sell_step_as_written(liq, s, MIN_SQRT_PRICE, remaining)
+            );
         }
 
         /// The quote never depends on anything but the curve, the amount and the fee, and

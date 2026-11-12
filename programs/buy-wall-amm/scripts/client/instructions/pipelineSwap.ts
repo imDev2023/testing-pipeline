@@ -175,6 +175,7 @@ export type PipelineSwapInput<
   marketState: TAccountMarketState;
   trader: TAccountTrader;
   traderInput: TAccountTraderInput;
+  /** output vault. */
   traderOutput: TAccountTraderOutput;
   inputVault: TAccountInputVault;
   inputMint: TAccountInputMint;
@@ -398,6 +399,7 @@ export type ParsedPipelineSwapInstruction<
     marketState: TAccountMetas[1];
     trader: TAccountMetas[2];
     traderInput: TAccountMetas[3];
+    /** output vault. */
     traderOutput: TAccountMetas[4];
     inputVault: TAccountMetas[5];
     inputMint: TAccountMetas[6];

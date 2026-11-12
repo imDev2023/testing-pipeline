@@ -47,11 +47,11 @@ pub fn isqrt(n: U256) -> Option<u128> {
         let trial = root.checked_add(bit)?;
         if rem >= trial {
             rem = rem.checked_sub(trial)?;
-            root = root.shr(1)?.checked_add(bit)?;
+            root = root.checked_shr(1)?.checked_add(bit)?;
         } else {
-            root = root.shr(1)?;
+            root = root.checked_shr(1)?;
         }
-        bit = bit.shr(2)?;
+        bit = bit.checked_shr(2)?;
     }
     if root.hi != 0 {
         return None;
