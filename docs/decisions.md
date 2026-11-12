@@ -889,6 +889,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
 
+### BAR-39: Test builds optimize their dependencies
+
+- Question: How do the stateful invariant fuzzers send enough transactions for their runs in CI and on a laptop?
+- Answer: Host test builds optimize every dependency, LiteSVM and the SBF VM among them, and none of our own crates (`[profile.dev.package."*"] opt-level = 3`), which makes a fuzzed sequence about fifty times faster; CI's cargo cache is keyed on the workspace manifest too, so the profile is built once.
+- Alternatives: Running the fuzzers in a release build, which fat LTO makes slow to compile; a separate CI job with its own profile flags, which a plain `cargo test` would not match; fewer sequences than the tickets ask.
+- Specified in: [`docs/toolchain.md`, Build and test](toolchain.md#build-and-test)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -2917,6 +2927,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
 
+### TAX-49: Bump searches and the compute ceilings
+
+- Question: How is `distribute` held to its compute ceiling when its cost depends on how many bumps the slot wallet's associated token account needs?
+- Answer: The ceilings leave out what a bump search spends beyond an address's first bump, 1,500 units a try, which for `distribute` is 4,500 units for each further bump when it creates the account (the associated token program derives it twice more) and 1,500 when it does not; the spec states that rule so a caller can size a payout's compute limit, and the tests subtract exactly that.
+- Alternatives: A higher ceiling, which no ceiling can make safe since the search has no fixed bound; asserting the raw cost, which fails at random for about one wallet in a few thousand; changing `distribute` to take the bump as an argument, which the metadata's account sources cannot supply.
+- Specified in: [`docs/spec/tax-amm.md`, Compute ceilings](spec/tax-amm.md#compute-ceilings)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
+
+### TAX-50: What every holder can exit means on a tax market
+
+- Question: How does the fuzzer check the bar's shared invariant that every holder can still exit, given that a tax market never pays out its virtual reserve?
+- Answer: Every wallet's whole holding of either mint quotes, or is refused as dust or, only on a market with a virtual reserve, because the curve would pay out more than the real reserve, in which case the largest sale the real reserve covers must quote; every sequence ends with every wallet selling all it holds, and each sale settles unless the spec refuses it.
+- Alternatives: Requiring every whole holding to sell, which a single-sided launch refuses by design; checking quotes only, which would miss a swap that fails after its quote.
+- Specified in: [`docs/spec/tax-amm.md`, Invariants](spec/tax-amm.md#invariants)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
@@ -3929,3 +3959,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.
 - `BAR-04`, `BAR-29`, `PIPESCOPE-87`: Pipeline's crates are on crates.io and its SDK on npm since 2026-11-10; the terminal uses the published packages, while the bar still pins the on-chain workspace's crates by git `rev` and the programs' demo scripts link a local SDK build from `scripts/fetch-pipeline.sh`; whether they move to the published packages is for the bar's owner.
+- `BAR-39`, `TAX-49`, `TAX-50`: set by the session of [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.

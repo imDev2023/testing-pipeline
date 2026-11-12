@@ -326,6 +326,10 @@ The owner's standing rule of 2026-11-10 keeps every decision cheap to change, si
 
 Tests assert the measured cost of each instruction with headroom, never above these ceilings.
 A cost is what the tax AMM's own invocation consumes, its token program calls included, measured on mints without a transfer hook; a hook's cost is the hook's own to bound.
+A cost also leaves out what a bump search spends beyond an address's first bump, which depends on the address and not on the program: 1,500 units for each further bump tried.
+That matters for `distribute`, which derives the slot wallet's associated token account for the tax-side mint, and when it creates that account the associated token program derives it twice more, so each bump the wallet's address needs after the first adds 4,500 units to a payout that creates the account and 1,500 to one that does not (measured by [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65), 2026-11-12).
+Half of all wallets need a second bump and one in 128 needs eight, which adds 31,500 units to such a payout, so a caller sizing a payout's compute limit, as the keeper runner does, adds 4,500 units for each bump after the first that the wallet's address needs.
+The other instructions' bump searches (the vaults, the vault authority and a seeded market's state) sit far enough under their ceilings that no address realistically reaches them, so the tests leave those in.
 
 | Instruction | Ceiling (CU) | Why |
 | --- | --- | --- |
@@ -349,6 +353,14 @@ For the bar's stateful fuzzing layer, beyond its shared three:
 5. After the seed, only router swaps change the real reserves, and only router swaps ever change the counters; `distribute` moves at most what its slot is owed.
 6. The counters never fall.
 7. Once the tax authority has renounced, or on a market created without one, the rates and the tax recipients never change.
+
+How the fuzzer checks them, built by [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) on 2026-11-12 (`programs/tax-amm/tests/fuzz.rs`, the harness in `programs/tax-amm/tests/common/fuzz/`):
+
+- Value is conserved: every token the test wrote into accounts is still held by a known account (the wallets, the vaults, Pipeline's fee accounts and a launchpad's escrows), but for what the burn slot was owed each time it was burned, and each mint's supply fell by exactly those burns.
+- Every holder can exit: every wallet's whole holding of either mint, Pipeline's fee on top, quotes, or is refused for a reason this file gives, as dust (`ZeroOutput`) or because the curve would pay out more than the output side's real reserve (`InsufficientLiquidity`); the second happens only on a market with a virtual reserve, whose virtual side is priced but never paid out, and then the largest sale the real reserve covers must quote.
+  Every sequence ends with every wallet the test holds the keys of selling all it holds, one after another, and each such sale settles unless this file refuses it.
+- Invariant 1 is checked exactly: each vault holds its real reserve, everything owed if it is the tax-side vault, and every donation to it, no more and no less.
+- Besides the ten, every step must do exactly what this file says: pass or fail with the error it names, and a swap must quote this file's price and leave the market state exactly as its formulas do (`programs/tax-amm/tests/common/model.rs`); and every instruction a step runs must stay under its compute ceiling.
 
 ### `pipeline-check` warns
 

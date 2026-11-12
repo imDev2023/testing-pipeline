@@ -15,6 +15,8 @@
 #![allow(dead_code)]
 
 pub mod authority;
+pub mod ceilings;
+pub mod fuzz;
 pub mod launchpad;
 pub mod model;
 
