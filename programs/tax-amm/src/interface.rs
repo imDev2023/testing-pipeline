@@ -40,6 +40,14 @@ pub struct ResolveRequest {
     pub round: u8,
 }
 
+/// `pipeline_strategy_interface::SeedRequest`: the most to take from each escrow, in mint
+/// order, and the creation parameters, Borsh-encoded as [`crate::InitParams`].
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SeedRequest {
+    pub amounts: Vec<u64>,
+    pub data: Vec<u8>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +116,19 @@ mod tests {
                 round: 3,
             };
             assert_eq!(encode(&resolve), borsh::to_vec(&psi_resolve).unwrap());
+        }
+    }
+
+    #[test]
+    fn the_seed_request_encodes_exactly_as_pipelines() {
+        for (amounts, data) in [(vec![], vec![]), (vec![1, u64::MAX], vec![7u8; 98])] {
+            let ours = SeedRequest {
+                amounts: amounts.clone(),
+                data: data.clone(),
+            };
+            let theirs = borsh::to_vec(&psi::SeedRequest { amounts, data }).unwrap();
+            assert_eq!(encode(&ours), theirs);
+            assert_eq!(SeedRequest::try_from_slice(&theirs).unwrap(), ours);
         }
     }
 }

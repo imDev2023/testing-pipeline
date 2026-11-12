@@ -879,6 +879,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
 
+### BAR-38: Test programs in the workspace
+
+- Question: Where do test-only programs, such as the stand-in launchpad the seeding tickets share, live, and how are they kept off devnet?
+- Answer: In `programs/test-programs/`, as workspace members marked `test-program` in their manifests, which `scripts/workspace-programs.py` leaves out of the deployable programs, `scripts/build-programs.sh` builds into the gitignored `fixtures/test-programs`, and `scripts/local-validator.sh` loads frozen; no deploy script names one.
+- Alternatives: A separate Cargo workspace, which would repeat the pins; building them into `programs/target/deploy` beside the programs that are deployed.
+- Specified in: [`docs/toolchain.md`, Layout](toolchain.md#layout)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -2826,6 +2836,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: fixed on-chain once deployed
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
+
+### TAX-41: How metadata describes seeding from another program
+
+- Question: How does the strategy metadata tell a launcher how to fill in `pipeline_seed_liquidity`, which Pipeline's metadata standard has no field for?
+- Answer: A top-level `seed_liquidity` form shaped as `init` is, which the validator allows as an unknown key: the seeded market state as a `pda:` source keyed by `input:seeder` and both mints, `data` as init's arguments under the same IDL type with the seeder marked ignored, and the program's own accounts after Pipeline's fixed seed accounts, so the SDK's `resolveInit` resolves it as the demo does.
+- Alternatives: A prose description only, which no tool could resolve; a `create_market` custom action, which is called by a wallet, not by another program.
+- Specified in: [`docs/spec/tax-amm.md`, Custom actions and metadata](spec/tax-amm.md#custom-actions-and-metadata)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
+
+### TAX-42: How a seed request is checked
+
+- Question: What does `pipeline_seed_liquidity` check beyond the creation rules and mint rules, and what does it report?
+- Answer: Exactly one amount per mint (an error of its own otherwise), `data` exactly the creation parameters, escrows owned by the seeder as the `seed` action requires of the seeder's accounts, and `SeedResult.taken` as what it measured leaving each escrow, with every market created by the same code as a market created through the router.
+- Alternatives: Reporting the amounts requested as taken, as Pipeline's reference strategy does; a second copy of the creation checks for seeded markets.
+- Specified in: [`docs/spec/tax-amm.md`, The seed](spec/tax-amm.md#the-seed)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
 
 ## Containment hook (HOOK)
 
