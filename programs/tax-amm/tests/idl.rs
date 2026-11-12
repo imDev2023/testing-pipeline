@@ -10,7 +10,9 @@ use anchor_lang::Discriminator;
 use common::*;
 use pipeline_client::interface::discriminator;
 use serde_json::Value;
-use tax_amm::events::{MarketCreated, Seeded};
+use tax_amm::events::{
+    MarketCreated, RecipientsChanged, Seeded, TaxAuthorityRenounced, TaxesChanged,
+};
 use tax_amm::state::layout;
 use tax_amm::TaxMarket;
 
@@ -82,6 +84,24 @@ fn its_instructions_are_pipelines_with_pipelines_discriminators_and_its_actions(
         (
             "seed",
             tax_amm::instruction::Seed::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
+            "set_taxes",
+            tax_amm::instruction::SetTaxes::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
+            "set_recipients",
+            tax_amm::instruction::SetRecipients::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
+            "renounce_tax_authority",
+            tax_amm::instruction::RenounceTaxAuthority::DISCRIMINATOR
                 .try_into()
                 .unwrap(),
         ),
@@ -272,8 +292,18 @@ fn its_events_and_errors_are_the_programs() {
     assert_eq!(
         events,
         [
+            // In the IDL's order, by name.
             ("MarketCreated", MarketCreated::DISCRIMINATOR.to_vec()),
+            (
+                "RecipientsChanged",
+                RecipientsChanged::DISCRIMINATOR.to_vec()
+            ),
             ("Seeded", Seeded::DISCRIMINATOR.to_vec()),
+            (
+                "TaxAuthorityRenounced",
+                TaxAuthorityRenounced::DISCRIMINATOR.to_vec()
+            ),
+            ("TaxesChanged", TaxesChanged::DISCRIMINATOR.to_vec()),
         ]
     );
 

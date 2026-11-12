@@ -542,6 +542,38 @@
       ]
     },
     {
+      "name": "renounce_tax_authority",
+      "docs": [
+        "Custom action: the tax authority renounces, after which the market's taxes and",
+        "recipients never change again."
+      ],
+      "discriminator": [
+        46,
+        141,
+        56,
+        157,
+        134,
+        91,
+        105,
+        75
+      ],
+      "accounts": [
+        {
+          "name": "tax_authority",
+          "docs": [
+            "Checked against the market's tax authority by [`TaxAuthorityAction::authorize`], so a",
+            "market that has none, or renounced, says so rather than naming the signer."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "seed",
       "docs": [
         "Custom action: the seeder funds the market once, before any swap, and opens it.",
@@ -611,6 +643,102 @@
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "set_recipients",
+      "docs": [
+        "Custom action: the tax authority replaces the tax recipients, their shares and the",
+        "burn share, under the rules of creation. What each slot is owed stays with the slot."
+      ],
+      "discriminator": [
+        232,
+        87,
+        98,
+        47,
+        60,
+        65,
+        199,
+        169
+      ],
+      "accounts": [
+        {
+          "name": "tax_authority",
+          "docs": [
+            "Checked against the market's tax authority by [`TaxAuthorityAction::authorize`], so a",
+            "market that has none, or renounced, says so rather than naming the signer."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "recipients",
+          "type": {
+            "array": [
+              "pubkey",
+              4
+            ]
+          }
+        },
+        {
+          "name": "shares",
+          "type": {
+            "array": [
+              "u16",
+              4
+            ]
+          }
+        },
+        {
+          "name": "burn_share_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "set_taxes",
+      "docs": [
+        "Custom action: the tax authority moves the buy and sell tax, each inside the range",
+        "fixed at creation. The next swap pays the new rates."
+      ],
+      "discriminator": [
+        86,
+        41,
+        237,
+        64,
+        40,
+        120,
+        61,
+        194
+      ],
+      "accounts": [
+        {
+          "name": "tax_authority",
+          "docs": [
+            "Checked against the market's tax authority by [`TaxAuthorityAction::authorize`], so a",
+            "market that has none, or renounced, says so rather than naming the signer."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "buy_tax_bps",
+          "type": "u16"
+        },
+        {
+          "name": "sell_tax_bps",
+          "type": "u16"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -643,6 +771,19 @@
       ]
     },
     {
+      "name": "RecipientsChanged",
+      "discriminator": [
+        215,
+        155,
+        152,
+        43,
+        202,
+        57,
+        245,
+        7
+      ]
+    },
+    {
       "name": "Seeded",
       "discriminator": [
         95,
@@ -653,6 +794,32 @@
         157,
         251,
         224
+      ]
+    },
+    {
+      "name": "TaxAuthorityRenounced",
+      "discriminator": [
+        208,
+        127,
+        220,
+        168,
+        80,
+        164,
+        208,
+        100
+      ]
+    },
+    {
+      "name": "TaxesChanged",
+      "discriminator": [
+        127,
+        34,
+        114,
+        126,
+        1,
+        90,
+        131,
+        58
       ]
     }
   ],
@@ -794,6 +961,26 @@
     },
     {
       "code": 6027,
+      "name": "NoTaxAuthority",
+      "msg": "The market has no tax authority, so its taxes and recipients never change"
+    },
+    {
+      "code": 6028,
+      "name": "AlreadyRenounced",
+      "msg": "The tax authority renounced, so the market's taxes and recipients never change again"
+    },
+    {
+      "code": 6029,
+      "name": "NotTaxAuthority",
+      "msg": "Only the market's tax authority can change its taxes and recipients"
+    },
+    {
+      "code": 6030,
+      "name": "OwedSlotLeftEmpty",
+      "msg": "A recipient slot still owed tax can't be emptied; pay it out or name another wallet"
+    },
+    {
+      "code": 6031,
       "name": "BadSeedAmounts",
       "msg": "A seed request gives one amount for each of the market's two mints"
     }
@@ -973,6 +1160,48 @@
       }
     },
     {
+      "name": "RecipientsChanged",
+      "docs": [
+        "The tax authority changed the market's tax recipients, their shares or the burn share.",
+        "What each slot is already owed stays with the slot."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "tax_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                4
+              ]
+            }
+          },
+          {
+            "name": "shares",
+            "type": {
+              "array": [
+                "u16",
+                4
+              ]
+            }
+          },
+          {
+            "name": "burn_share_bps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
       "name": "ResolveRequest",
       "docs": [
         "`pipeline_strategy_interface::ResolveRequest`."
@@ -1069,6 +1298,25 @@
           {
             "name": "min_amount_out",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TaxAuthorityRenounced",
+      "docs": [
+        "The tax authority renounced: the market's taxes and recipients never change again."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "tax_authority",
+            "type": "pubkey"
           }
         ]
       }
@@ -1280,6 +1528,33 @@
                 64
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "TaxesChanged",
+      "docs": [
+        "The tax authority changed the market's rates; the next swap pays them."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "tax_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "buy_tax_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_tax_bps",
+            "type": "u16"
           }
         ]
       }

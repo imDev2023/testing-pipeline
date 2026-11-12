@@ -9,8 +9,11 @@
 #     $CARGO_TARGET_DIR/deploy, where scripts/build-programs.sh writes them then), at its
 #     declare_id! address and upgradeable by the project upgrade authority, as on devnet;
 #   - the workspace's test programs (the stand-in launchpad), from $TEST_PROGRAMS_DIR
-#     (default fixtures/test-programs),
-#     at their declare_id! addresses and frozen; they never go to devnet.
+#     (default fixtures/test-programs), at their declare_id! addresses and frozen; they never
+#     go to devnet;
+#   - every account copied from devnet into fixtures/accounts/*.json (`solana account --output
+#     json`), at its address, such as the Kamino accounts the lending AMM's demo needs
+#     (programs/lending-amm/scripts/fetch-accounts.sh).
 #
 #   scripts/local-validator.sh [ledger directory] [solana-test-validator flags ...]
 #
@@ -75,7 +78,7 @@ while IFS= read -r member; do
   args+=(--upgradeable-program "$id" "$so" "$AUTHORITY")
 done < <(python3 "$ROOT/scripts/workspace-programs.py")
 
-# Test programs (the stand-in launchpad), from fixtures/test-programs where
+# Test programs (the stand-in launchpad), from $TEST_PROGRAMS_DIR where
 # scripts/build-programs.sh builds them, frozen: they exist only on local validators.
 while IFS= read -r member; do
   lib="$(basename "$member")"
@@ -93,6 +96,13 @@ while IFS= read -r member; do
   echo "test program $member at $id"
   args+=(--upgradeable-program "$id" "$so" none)
 done < <(python3 "$ROOT/scripts/workspace-programs.py" --test-programs)
+
+shopt -s nullglob
+for account in "$FIXTURES_DIR"/accounts/*.json; do
+  address="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["pubkey"])' "$account")"
+  echo "account $address from $account"
+  args+=(--account "$address" "$account")
+done
 
 echo "Router $ROUTER_PROGRAM from $ROUTER_SO (pinned), config $ROUTER_CONFIG as on devnet"
 echo "Ledger $LEDGER; RPC http://127.0.0.1:8899 unless --rpc-port says otherwise"

@@ -12,4 +12,7 @@ export * from "./pipelineQuote.ts";
 export * from "./pipelineResolveAccounts.ts";
 export * from "./pipelineSeedLiquidity.ts";
 export * from "./pipelineSwap.ts";
+export * from "./renounceTaxAuthority.ts";
 export * from "./seed.ts";
+export * from "./setRecipients.ts";
+export * from "./setTaxes.ts";

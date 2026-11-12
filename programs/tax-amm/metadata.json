@@ -386,6 +386,131 @@
                     "source": "token_program:1"
                 }
             ]
+        },
+        {
+            "name": "set_taxes",
+            "label": "Change the taxes",
+            "kind": "other",
+            "description": "The market's tax authority sets the buy and sell tax, each inside the range fixed at creation, which no tax can ever leave. The next swap pays the new rates; a trade quoted before the change is protected by its minimum output.",
+            "args": [
+                {
+                    "name": "buy_tax_bps",
+                    "type": "u16",
+                    "label": "Buy tax (basis points)",
+                    "description": "Taken from the input when the tax side is sold into the market. Inside its range."
+                },
+                {
+                    "name": "sell_tax_bps",
+                    "type": "u16",
+                    "label": "Sell tax (basis points)",
+                    "description": "Taken from the output when the tax side is bought from the market. Inside its range."
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "tax_authority",
+                    "source": "wallet",
+                    "signer": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                }
+            ]
+        },
+        {
+            "name": "set_recipients",
+            "label": "Change the tax recipients",
+            "kind": "other",
+            "description": "The market's tax authority replaces the tax recipients, their shares and the burn share, under the same rules as at creation. What each slot is already owed stays with the slot and goes to the wallet it names when paid out, so pay a leaving recipient out first.",
+            "args": [
+                {
+                    "name": "recipient_0",
+                    "type": "pubkey",
+                    "label": "Tax recipient 1",
+                    "description": "A wallet paid its share of the creator's part of the tax, and whatever its slot is already owed. Used slots first; an unused slot is the default (all-zero) key."
+                },
+                {
+                    "name": "recipient_1",
+                    "type": "pubkey",
+                    "label": "Tax recipient 2",
+                    "description": "Used slots first; an unused slot is the default (all-zero) key. A slot still owed tax can't be emptied."
+                },
+                {
+                    "name": "recipient_2",
+                    "type": "pubkey",
+                    "label": "Tax recipient 3",
+                    "description": "Used slots first; an unused slot is the default (all-zero) key. A slot still owed tax can't be emptied."
+                },
+                {
+                    "name": "recipient_3",
+                    "type": "pubkey",
+                    "label": "Tax recipient 4",
+                    "description": "Used slots first; an unused slot is the default (all-zero) key. A slot still owed tax can't be emptied."
+                },
+                {
+                    "name": "share_0",
+                    "type": "u16",
+                    "label": "Tax recipient 1's share (basis points)",
+                    "description": "Of the creator's part, what is left after the suite share. Above 0 for a used slot, 0 for an unused one; the shares and the burn share sum to 10,000."
+                },
+                {
+                    "name": "share_1",
+                    "type": "u16",
+                    "label": "Tax recipient 2's share (basis points)",
+                    "description": "Above 0 for a used slot, 0 for an unused one."
+                },
+                {
+                    "name": "share_2",
+                    "type": "u16",
+                    "label": "Tax recipient 3's share (basis points)",
+                    "description": "Above 0 for a used slot, 0 for an unused one."
+                },
+                {
+                    "name": "share_3",
+                    "type": "u16",
+                    "label": "Tax recipient 4's share (basis points)",
+                    "description": "Above 0 for a used slot, 0 for an unused one."
+                },
+                {
+                    "name": "burn_share_bps",
+                    "type": "u16",
+                    "label": "Burn share (basis points)",
+                    "description": "Of the creator's part, burned. 0 when the tax side is native SOL."
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "tax_authority",
+                    "source": "wallet",
+                    "signer": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                }
+            ]
+        },
+        {
+            "name": "renounce_tax_authority",
+            "label": "Renounce the tax authority",
+            "kind": "other",
+            "description": "The market's tax authority gives up its powers for good: the taxes and the tax recipients never change again.",
+            "args": [],
+            "accounts": [
+                {
+                    "name": "tax_authority",
+                    "source": "wallet",
+                    "signer": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                }
+            ]
         }
     ],
     "security": {

@@ -130,6 +130,85 @@ fn seed_stays_under_its_ceiling() {
     }
 }
 
+/// The tax authority's three actions on a market that has traded, each measured as the tax
+/// authority sends it: `set_taxes`; `set_recipients` from one recipient to four (the most
+/// shares checked), then back to one (the most emptied slots checked for owed tax); and
+/// `renounce_tax_authority`.
+#[test]
+fn the_tax_authority_actions_stay_under_their_ceilings() {
+    use common::authority::*;
+    use solana_keypair::Keypair;
+    for (mints_name, token_program) in [("SPL Token", TOKEN), ("Token-2022", TOKEN_2022)] {
+        let mut env = Env::new();
+        let authority = Keypair::new();
+        let mints = [
+            (env.create_mint(&token_program), token_program),
+            (env.create_mint(&token_program), token_program),
+        ];
+        // One tax recipient, so only slot 0, the burn and the suite share are owed tax.
+        let mut params = tax_amm::InitParams {
+            tax_authority: ak(&authority.pubkey()),
+            ..valid_params(&Pubkey::new_unique())
+        };
+        params.recipients[1] = anchor_lang::prelude::Pubkey::default();
+        params.shares = [9_000, 0, 0, 0];
+        let market = env.seeded_market(mints, &params, [100_000_000_000, 200_000_000_000]);
+        let trader = env.funded_wallet(&market, 10_000_000_000_000);
+        env.swap(&market, &trader, (1, 0), 1_000_000_000).unwrap();
+        let state = &market.market_state;
+        let first = ck(&params.recipients[0]);
+        let four = Split {
+            recipients: [
+                first,
+                Pubkey::new_unique(),
+                Pubkey::new_unique(),
+                Pubkey::new_unique(),
+            ],
+            shares: [2_500, 2_500, 2_000, 2_000],
+            burn_share_bps: 1_000,
+        };
+        let one = Split {
+            recipients: [
+                first,
+                Pubkey::default(),
+                Pubkey::default(),
+                Pubkey::default(),
+            ],
+            shares: [10_000, 0, 0, 0],
+            burn_share_bps: 0,
+        };
+        let actions = [
+            (
+                "set_taxes",
+                set_taxes_instruction(state, &authority.pubkey(), 800, 0),
+                ceilings::SET_TAXES,
+            ),
+            (
+                "set_recipients to four",
+                set_recipients_instruction(state, &authority.pubkey(), &four),
+                ceilings::SET_RECIPIENTS,
+            ),
+            (
+                "set_recipients back to one",
+                set_recipients_instruction(state, &authority.pubkey(), &one),
+                ceilings::SET_RECIPIENTS,
+            ),
+            (
+                "renounce_tax_authority",
+                renounce_instruction(state, &authority.pubkey()),
+                ceilings::RENOUNCE_TAX_AUTHORITY,
+            ),
+        ];
+        for (name, instruction, ceiling) in actions {
+            let meta = env.send_signed(instruction, &authority).unwrap();
+            let costs = strategy_compute(&meta.logs);
+            assert_eq!(costs.len(), 1);
+            println!("{name} on a market of {mints_name} mints: {} CU", costs[0]);
+            assert!(costs[0] <= ceiling, "{name}: {}", costs[0]);
+        }
+    }
+}
+
 #[test]
 fn pipeline_seed_liquidity_stays_under_its_ceiling() {
     for (name, token_program) in [("SPL Token", TOKEN), ("Token-2022", TOKEN_2022)] {

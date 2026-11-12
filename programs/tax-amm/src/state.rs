@@ -10,6 +10,7 @@
 use anchor_lang::prelude::*;
 
 use crate::config::MAX_RECIPIENTS;
+use crate::errors::StrategyError;
 use crate::params::InitParams;
 
 /// The market state's layout version, its byte after the discriminator.
@@ -124,6 +125,33 @@ impl TaxMarket {
             virtual_side: self.virtual_side,
             virtual_reserve: self.virtual_reserve,
         }
+    }
+
+    /// Fails unless `signer` is the market's tax authority, the one key that may change its
+    /// taxes and recipients (docs/spec/tax-amm.md, "Tax authority"). A market that renounced,
+    /// or was created with the default key as its tax authority, refuses everyone for good.
+    pub fn authorize_tax_authority(
+        &self,
+        signer: &Pubkey,
+    ) -> core::result::Result<(), StrategyError> {
+        if self.tax_authority_renounced {
+            return Err(StrategyError::AlreadyRenounced);
+        }
+        if self.tax_authority == Pubkey::default() {
+            return Err(StrategyError::NoTaxAuthority);
+        }
+        if *signer != self.tax_authority {
+            return Err(StrategyError::NotTaxAuthority);
+        }
+        Ok(())
+    }
+
+    /// The fixed `[min, max]` range of the buy tax, then of the sell tax.
+    pub fn tax_ranges(&self) -> [[u16; 2]; 2] {
+        [
+            [self.buy_tax_min_bps, self.buy_tax_max_bps],
+            [self.sell_tax_min_bps, self.sell_tax_max_bps],
+        ]
     }
 
     /// The input and output mint indexes of a trade from `input` to `output`, if it is one
