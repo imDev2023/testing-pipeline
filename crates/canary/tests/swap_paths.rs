@@ -154,3 +154,18 @@ fn a_paused_router_refuses_every_swap_on_the_direct_path_too() {
         "{failure}"
     );
 }
+
+#[test]
+fn a_strategy_that_tries_to_pull_more_from_the_trader_fails_the_same_way_on_both_paths() {
+    // Under the router the strategy never holds the trader's signature, so the direct path
+    // must not give it one either.
+    const TAKE_MORE: u8 = 1;
+    let mut cluster = Cluster::new();
+    let market = cluster.evil_market(1_000 * SOL);
+
+    let router = run(&cluster, market.market, &ThroughRouter, vec![TAKE_MORE]);
+    let direct = run(&cluster, market.market, &DirectToStrategy, vec![TAKE_MORE]);
+
+    assert_eq!(outcome(&direct, "exit_sizes").outcome, Outcome::NotRun);
+    assert_same_results(&router, &direct);
+}

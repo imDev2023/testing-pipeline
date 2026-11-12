@@ -477,6 +477,17 @@ impl Cluster {
     }
 }
 
+/// The system program's create-account instruction, for tests that build their own accounts.
+pub fn create_account_ix(
+    from: &Pubkey,
+    to: &Pubkey,
+    lamports: u64,
+    space: u64,
+    owner: &Pubkey,
+) -> Instruction {
+    create_account(from, to, lamports, space, owner)
+}
+
 fn create_account(
     from: &Pubkey,
     to: &Pubkey,

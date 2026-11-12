@@ -214,8 +214,59 @@ fn an_action_on_a_market_whose_round_trip_fails_anyway_is_not_run() {
     let frozen = action(&record, "freeze_authority");
     assert_eq!(frozen["outcome"], "not run", "{frozen}");
     assert!(
-        frozen["reason"].as_str().unwrap().contains("without the authority acting"),
+        frozen["reason"]
+            .as_str()
+            .unwrap()
+            .contains("without the authority acting"),
         "{frozen}"
     );
+    assert_eq!(record.outcome, Outcome::NotRun, "{}", record.reason);
+}
+
+#[test]
+fn an_spl_multisig_authority_is_not_run_and_names_the_token_program() {
+    let mut cluster = Cluster::new();
+    let market = cluster.sol_cp_market(30);
+    // A multisig is a keypair's address, on the curve, but an account the token program owns.
+    let multisig = solana_keypair::Keypair::new();
+    let members = [
+        pipeline_client::Pubkey::new_unique(),
+        pipeline_client::Pubkey::new_unique(),
+    ];
+    let admin = cluster.admin_key();
+    let space = 355u64;
+    let create = common::create_account_ix(
+        &admin,
+        &solana_signer::Signer::pubkey(&multisig),
+        cluster
+            .svm
+            .minimum_balance_for_rent_exemption(space as usize),
+        space,
+        &TOKEN,
+    );
+    let init = spl_token_2022_interface::instruction::initialize_multisig2(
+        &TOKEN,
+        &solana_signer::Signer::pubkey(&multisig),
+        &[&members[0], &members[1]],
+        1,
+    )
+    .unwrap();
+    cluster.send(&[create, init], &[&multisig]);
+    let set = spl_token_2022_interface::instruction::set_authority(
+        &TOKEN,
+        &market.mint_b,
+        Some(&solana_signer::Signer::pubkey(&multisig)),
+        spl_token_2022_interface::instruction::AuthorityType::MintTokens,
+        &admin,
+        &[],
+    )
+    .unwrap();
+    cluster.send(&[set], &[]);
+
+    let record = record(&cluster, &market);
+
+    let minted = action(&record, "mint_authority");
+    assert_eq!(minted["outcome"], "not run", "{minted}");
+    assert_eq!(minted["owner"], TOKEN.to_string(), "{minted}");
     assert_eq!(record.outcome, Outcome::NotRun, "{}", record.reason);
 }

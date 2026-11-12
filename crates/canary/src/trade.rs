@@ -5,7 +5,6 @@
 
 use borsh::BorshDeserialize;
 use litesvm::LiteSVM;
-use pipeline_check::write_token_account;
 use pipeline_client::{AccountMeta, Instruction, Pubkey};
 use pipeline_quoter::{QuoteRequest, Quoter};
 use pipeline_strategy_interface::{self as psi, discriminator, fees, TradeMode};
@@ -15,7 +14,7 @@ use solana_transaction::Transaction;
 
 use crate::config::QUOTE_COMPUTE_LIMIT;
 use crate::failure::{Failure, FailureClass, Stage};
-use crate::market::{fund_lamports, program_elf, token_amount, Market, Session};
+use crate::market::{program_elf, token_amount, Market, Session};
 use crate::swap::{compute_limit, SwapPath, SwapReceipt, SwapRequest};
 
 /// A quote in the trader's terms, as `pipeline-quoter` gives it.
@@ -405,11 +404,9 @@ impl Session<'_> {
         output: usize,
         amount_in: u64,
     ) -> Leg {
-        let extra = self.extra.clone();
-        let request = trade_request(input, output, amount_in, Some(*trader), &extra);
         let clock = clock_position(svm);
-        let resolved = match self.resolve(svm, &request) {
-            Ok(resolved) => resolved,
+        let prepared = match self.prepare(svm, trader, input, output, amount_in) {
+            Ok(prepared) => prepared,
             Err(failure) => {
                 return Leg {
                     input,
@@ -421,9 +418,7 @@ impl Session<'_> {
                 }
             }
         };
-        let quote = self.quote(svm, &request, &resolved);
-        let expected_out = quote.as_ref().map_or(0, |q| q.strategy_amount_out);
-        let hooks = self.hook_accounts(svm, trader, input, output, amount_in, expected_out);
+        let extra = self.extra.clone();
         let swap = path.swap(
             svm,
             &self.market,
@@ -432,11 +427,12 @@ impl Session<'_> {
                 input,
                 output,
                 amount_in,
-                strategy_accounts: &resolved,
+                strategy_accounts: &prepared.resolved,
                 extra: &extra,
-                hooks: &hooks,
+                hooks: &prepared.hooks,
             },
         );
+        let quote = prepared.quote;
         Leg {
             input,
             output,
@@ -457,32 +453,12 @@ impl Session<'_> {
         amount: u64,
     ) -> RoundTrip {
         let mut svm = self.fresh();
-        let trader = self.seed.wallet(
-            &self.market.address,
-            &format!("round trip {money} to {token}, {amount}"),
-        );
-        fund_lamports(&mut svm, &trader);
-        let budget = fees::max_total_spend(amount, 0).unwrap_or(u64::MAX);
-        let funded = write_token_account(
+        let trader = self.funded_trader(
             &mut svm,
-            &self.market.mint(money),
-            &self.market.token_program(money),
-            &trader,
-            budget,
-        )
-        .and_then(|_| {
-            write_token_account(
-                &mut svm,
-                &self.market.mint(token),
-                &self.market.token_program(token),
-                &trader,
-                0,
-            )
-        });
-        if let Err(error) = funded {
-            self.notes
-                .push(format!("could not fund a trader for {amount}: {error}"));
-        }
+            &format!("round trip {money} to {token}, {amount}"),
+            money,
+            amount,
+        );
         let buy = self.leg(&mut svm, path, &trader, money, token, amount);
         let held = token_amount(&svm, &self.market.ata(&trader, token)).unwrap_or(0);
         let sell_amount = fees::amount_for_budget(held, 0);

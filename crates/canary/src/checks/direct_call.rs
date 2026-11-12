@@ -10,13 +10,12 @@
 use pipeline_client::{AccountMeta, Pubkey};
 use serde::Serialize;
 use serde_json::json;
-use solana_transaction::Transaction;
 
 use crate::checks::readable::Trading;
-use crate::failure::{Failure, Stage};
+use crate::failure::Failure;
 use crate::market::Session;
 use crate::record::{Outcome, Verdict};
-use crate::swap::{direct_swap, SwapRequest};
+use crate::swap::{call_directly, SwapRequest};
 
 /// One call without the router.
 #[derive(Clone, Debug, Serialize)]
@@ -39,11 +38,15 @@ pub struct Measured {
     pub amount: u64,
     /// The trade could not be prepared, so nothing was called.
     pub unprepared: Option<Failure>,
+    /// The same call with the market signer signing, as the router passes it: unless it is
+    /// accepted, a refusal of the two calls below says nothing about the market signer.
+    pub control: Option<Attempt>,
     pub attempts: Vec<Attempt>,
 }
 
 const ANOTHER_KEY: &str = "another key signing as the market signer";
 const NOT_SIGNING: &str = "the market signer not signing";
+const AS_THE_ROUTER: &str = "the market signer signing, as the router passes it";
 
 /// Calls `pipeline_swap` directly, buying `amount` of `token` with `money`, each call from
 /// the same fresh copy.
@@ -55,6 +58,7 @@ pub fn measure(session: &mut Session, money: usize, token: usize, amount: u64) -
         output: token,
         amount,
         unprepared: None,
+        control: None,
         attempts: vec![],
     };
     let prepared = match session.prepare(&mut svm, &trader, money, token, amount) {
@@ -79,6 +83,10 @@ pub fn measure(session: &mut Session, money: usize, token: usize, amount: u64) -
         .wallet(&session.market.address, "direct call impostor");
     let market_address = session.market.address;
     for (how, signer) in [
+        (
+            AS_THE_ROUTER,
+            AccountMeta::new_readonly(market_address, true),
+        ),
         (ANOTHER_KEY, AccountMeta::new_readonly(impostor, true)),
         (
             NOT_SIGNING,
@@ -86,21 +94,19 @@ pub fn measure(session: &mut Session, money: usize, token: usize, amount: u64) -
         ),
     ] {
         let mut attempt = svm.clone();
-        let mut tx = Transaction::new_with_payer(
-            &direct_swap(&session.market, &request, signer.clone()),
-            Some(&trader),
-        );
-        tx.message.recent_blockhash = attempt.latest_blockhash();
-        let failure = attempt.send_transaction(tx).err().map(|failed| {
-            Failure::from_transaction(Stage::Swap, &session.market.strategy(), &failed)
-        });
-        measured.attempts.push(Attempt {
+        let failure = call_directly(&mut attempt, &session.market, &request, signer.clone()).err();
+        let attempt = Attempt {
             how,
             market_signer: signer.pubkey.to_string(),
             market_signer_signs: signer.is_signer,
             accepted: failure.is_none(),
             failure,
-        });
+        };
+        if how == AS_THE_ROUTER {
+            measured.control = Some(attempt);
+        } else {
+            measured.attempts.push(attempt);
+        }
     }
     measured
 }
@@ -133,7 +139,19 @@ pub fn judge(
         "real_market_signer": market.to_string(),
         "calls": [ANOTHER_KEY, NOT_SIGNING],
     });
-    let numbers = json!({ "attempts": m.attempts });
+    let numbers = json!({ "control": m.control, "attempts": m.attempts });
+    if let Some(control) = m.control.as_ref().filter(|c| !c.accepted) {
+        return Verdict::new(
+            Outcome::NotRun,
+            format!(
+                "Not run: the strategy refused even the call with {} ({}), so refusals of the calls without the router would say nothing about its market signer.",
+                control.how,
+                control.failure.as_ref().map_or_else(String::new, |f| f.to_string())
+            ),
+            inputs,
+            numbers,
+        );
+    }
     let accepted: Vec<&str> = m
         .attempts
         .iter()

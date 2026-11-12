@@ -90,7 +90,12 @@ impl Session<'_> {
         amount_in: u64,
         expected_out: u64,
     ) -> HookAccounts {
-        let market = self.market.clone();
+        let market = &self.market;
+        if market.mints[input].transfer_hook_program().is_none()
+            && market.mints[output].transfer_hook_program().is_none()
+        {
+            return HookAccounts::default();
+        }
         let input_transfer = Transfer {
             source: market.ata(trader, input),
             mint: market.mint(input),

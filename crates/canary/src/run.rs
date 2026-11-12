@@ -334,10 +334,7 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         // Every resolution of the run, so it comes after every other measurement.
         context.record(
             checks::TRANSACTION_ACCOUNTS,
-            gate(
-                &BTreeSet::new(),
-                transaction_accounts::judge(&session.resolutions),
-            ),
+            gate(&lacking, transaction_accounts::judge(&session.resolutions)),
         ),
         context.record(
             checks::CONTAINED_MINT,
@@ -385,7 +382,8 @@ pub fn sweep(source: &mut dyn Source, markets: &[Pubkey], options: &RunOptions) 
         last_round: true,
         swap: options.swap,
         seed: None,
-        instructions: options.instructions.clone(),
+        // One strategy version's list must never be judged as another's.
+        instructions: None,
     };
     let mut records = vec![];
     let mut notes = std::collections::BTreeMap::new();

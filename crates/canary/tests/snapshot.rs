@@ -32,6 +32,8 @@ fn run(snapshot: &Snapshot) -> MarketRun {
 fn a_snapshot_recorded_from_a_full_run_answers_with_results_identical_in_outcome() {
     let mut cluster = Cluster::new();
     let market = cluster.sol_cp_market(30);
+    // No authority left to act as, so every check that can pass does.
+    cluster.renounce_mint_authority(&market.mint_b, &common::TOKEN);
     let snapshot =
         record_snapshot(&mut SvmSource::new(cluster.svm.clone()), market.market).unwrap();
     assert!(snapshot.accounts.len() > 10, "{}", snapshot.accounts.len());
@@ -52,9 +54,14 @@ fn a_snapshot_recorded_from_a_full_run_answers_with_results_identical_in_outcome
             direct.record(check).outcome,
             "{check}"
         );
+        // No mint has a hook, and the snapshot carries no instruction list.
+        let expected = match check {
+            "contained_mint" | "custom_instructions" => Outcome::NotRun,
+            _ => Outcome::Pass,
+        };
         assert_eq!(
             from_snapshot.record(check).outcome,
-            Outcome::Pass,
+            expected,
             "{check}: {}",
             from_snapshot.record(check).reason
         );
@@ -96,7 +103,8 @@ fn after_the_last_round_the_affected_checks_are_not_run_naming_the_accounts() {
         panic!("the last round always answers with results");
     };
 
-    for check in CHECKS {
+    // Every check that reads accounts; custom_instructions reads only the instruction list.
+    for check in CHECKS.into_iter().filter(|c| *c != "custom_instructions") {
         let record = results.record(check);
         assert_eq!(record.outcome, Outcome::NotRun, "{check}");
         assert!(

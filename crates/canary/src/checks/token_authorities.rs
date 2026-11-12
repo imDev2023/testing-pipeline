@@ -230,7 +230,10 @@ pub fn measure(
     for (i, mint) in mints.iter().enumerate() {
         for (power, authority) in authorities(mint) {
             let action = Action::new(mint, i, power, authority);
-            if let Err(owner) = wallet_or_owner(session.base(), &authority) {
+            // The authority's own account may not be in the copy yet; an SPL multisig, say.
+            let mut probe = session.fresh();
+            session.load(&mut probe, &[authority]);
+            if let Err(owner) = wallet_or_owner(&probe, &authority) {
                 let whose = match owner {
                     Some(owner) => format!("an address owned by the program {owner}"),
                     None => "a program-derived address".to_string(),
@@ -340,10 +343,11 @@ fn instruction(
     authority: &Pubkey,
     i: usize,
     buyer: &Pubkey,
-) -> (Instruction, Option<u64>) {
+    amount: Option<u64>,
+) -> Result<(Instruction, Option<u64>), String> {
     let mint = session.market.mints[i].clone();
     let account = session.market.ata(buyer, i);
-    match power {
+    Ok(match power {
         Power::FreezeAuthority => (
             token::freeze_account(&mint.token_program, &account, &mint.address, authority, &[])
                 .expect("both token programs freeze"),
@@ -367,12 +371,12 @@ fn instruction(
             None,
         ),
         Power::PermanentDelegate => {
-            let held = token_amount(svm, &account).unwrap_or(0);
+            let held = amount.unwrap_or_else(|| token_amount(svm, &account).unwrap_or(0));
             let destination = session
                 .seed
                 .wallet(&session.market.address, "permanent delegate's own account");
             let to = write_token_account(svm, &mint.address, &mint.token_program, &destination, 0)
-                .unwrap_or_default();
+                .map_err(|e| format!("the delegate's own account could not be opened: {e}"))?;
             let hooks = session.transfer_hook_accounts(
                 svm,
                 i,
@@ -399,7 +403,7 @@ fn instruction(
             (ix, Some(held))
         }
         Power::MintAuthority => unreachable!("the mint authority mints and sells instead"),
-    }
+    })
 }
 
 fn act_in_round_trip(
@@ -431,30 +435,42 @@ fn act_in_round_trip(
         money,
         reference,
     );
-    let acted = |session: &mut Session, svm: &mut LiteSVM, action: &mut Action| -> bool {
-        let (ix, moved) = instruction(session, svm, power, authority, i, &buyer);
+    // Acts as the authority; `amount` is what a permanent delegate moves (all the buyer
+    // holds when `None`). Errs with why the action is "not run".
+    let acted = |session: &mut Session,
+                 svm: &mut LiteSVM,
+                 action: &mut Action,
+                 amount: Option<u64>|
+     -> Result<(), String> {
+        let (ix, moved) =
+            instruction(session, svm, power, authority, i, &buyer, amount).map_err(|error| {
+                session
+                    .notes
+                    .push(format!("token_authorities could not act: {error}"));
+                format!("Canary could not set up the action ({error})")
+            })?;
         match act(svm, session, authority, ix) {
             Ok(()) => {
                 action.moved = moved;
                 if power == Power::TransferFeeAuthority {
                     move_epochs(svm, TRANSFER_FEE_EPOCHS_ON);
                 }
-                true
+                Ok(())
             }
             Err(failure) => {
+                let why = format!("the authority's instruction was refused ({failure})");
                 action.refused = Some(failure);
-                false
+                Err(why)
             }
         }
     };
     // The same round trip without the authority acting, from the state it would act in, so
     // an outcome the market gives anyway is never laid at the authority's door.
     let mut baseline_from = matches!(moment, Moment::BeforeBuy).then(|| svm.clone());
-    if matches!(moment, Moment::BeforeBuy) && !acted(session, &mut svm, &mut action) {
-        let failure = action.refused.clone().expect("refused");
-        return action.not_run(format!(
-            "the authority's instruction was refused ({failure})"
-        ));
+    if matches!(moment, Moment::BeforeBuy) {
+        if let Err(why) = acted(session, &mut svm, &mut action, None) {
+            return action.not_run(why);
+        }
     }
     let buy = session.leg(&mut svm, path, &buyer, money, token, reference);
     let bought = buy.swap.as_ref().ok().map_or(0, |r| r.trader_received);
@@ -468,11 +484,8 @@ fn act_in_round_trip(
     }
     if matches!(moment, Moment::AfterBuy) {
         baseline_from = Some(svm.clone());
-        if !acted(session, &mut svm, &mut action) {
-            let failure = action.refused.clone().expect("refused");
-            return action.not_run(format!(
-                "the authority's instruction was refused ({failure})"
-            ));
+        if let Err(why) = acted(session, &mut svm, &mut action, None) {
+            return action.not_run(why);
         }
     }
     let sell = sell_all(session, &mut svm, path, &buyer, token, money, bought);
@@ -489,11 +502,9 @@ fn act_in_round_trip(
                     .map_or_else(String::new, |f| format!(" ({f})"))
             ));
         }
-        if !acted(session, &mut svm, &mut action) {
-            let failure = action.refused.clone().expect("refused");
-            return action.not_run(format!(
-                "the authority's instruction was refused ({failure})"
-            ));
+        // Only what the sale returned, not what the buyer held before it.
+        if let Err(why) = acted(session, &mut svm, &mut action, sold) {
+            return action.not_run(why);
         }
     }
     let put_in = buy.swap.as_ref().ok().map(|r| r.trader_spent);
@@ -507,6 +518,10 @@ fn act_in_round_trip(
         || action.return_ppm.is_none_or(|r| band(r) != Band::Pass);
     if harmed {
         if let Some(mut baseline) = baseline_from {
+            // At the same time as the action's round trip: a transfer fee moved the clock.
+            if power == Power::TransferFeeAuthority {
+                move_epochs(&mut baseline, TRANSFER_FEE_EPOCHS_ON);
+            }
             let base_buy = match moment {
                 Moment::BeforeBuy => {
                     Some(session.leg(&mut baseline, path, &buyer, money, token, reference))

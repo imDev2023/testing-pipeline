@@ -150,18 +150,20 @@ impl SwapPath for ThroughRouter {
 ///
 /// 1. The router's own refusals that a trade can meet: a paused router, and a trader
 ///    account that is not a token account of its mint.
-/// 2. In one transaction, the trader's transfer of `amount_in` into the input vault (with
-///    the input mint's hook accounts), then the strategy's `pipeline_swap`, its fixed
+/// 2. The trader's transfer of `amount_in` into the input vault, with the input mint's hook
+///    accounts, signed by the trader.
+/// 3. The strategy's `pipeline_swap` in a transaction the trader does not sign, its fixed
 ///    accounts as the router passes them and the market PDA marked as signing (signature
-///    checks are off in the copy), followed by the strategy's accounts and the input
-///    mint's hook accounts, none signing.
-/// 3. `settlement::settle` on the balances the router measures; a refusal undoes the
-///    whole swap, as the router's would.
-/// 4. Pipeline's fee from the trader's input account to the market's fee account for that
-///    mint, in the same transaction as the swap, so a refused fee transfer undoes it too.
+///    checks are off in the copy), followed by the strategy's accounts and the input mint's
+///    hook accounts, none signing ([`call_directly`]).
+/// 4. `settlement::settle` on the balances the router measures.
+/// 5. Pipeline's fee from the trader's input account to the market's fee account for that
+///    mint.
 ///
-/// The strategy runs one call level higher than under the router, so a strategy that
-/// depends on its call depth can behave differently; nothing else differs.
+/// Any refusal puts the copy back as it was, as the router's refusal undoes its whole
+/// transaction. The strategy runs one call level higher than under the router, and in a
+/// transaction of its own, so a strategy that depends on its call depth or reads the
+/// Instructions sysvar can behave differently; nothing else differs.
 pub struct DirectToStrategy;
 
 /// Why the router's own rules refuse a swap, in the words of Pipeline's settlement code.
@@ -260,58 +262,52 @@ impl SwapPath for DirectToStrategy {
         let trader_input = market.ata(&trader, input);
         let trader_output = market.ata(&trader, output);
         let vault = market.vault(input);
-        let balances = |read: &dyn Fn(&Pubkey) -> Option<solana_account::Account>| -> Result<[u64; 3], Failure> {
+        let balances = |svm: &LiteSVM| -> Result<[u64; 3], Failure> {
+            let read = |key: &Pubkey| svm.get_account(key);
             Ok([
                 checked_balance(
-                    read,
+                    &read,
                     &trader_input,
                     &market.mint(input),
                     &market.token_program(input),
                 )?,
                 checked_balance(
-                    read,
+                    &read,
                     &trader_output,
                     &market.mint(output),
                     &market.token_program(output),
                 )?,
                 checked_balance(
-                    read,
+                    &read,
                     &vault,
                     &market.mint(input),
                     &market.token_program(input),
                 )?,
             ])
         };
-        let [input_before, output_before, vault_before] = balances(&|key| svm.get_account(key))?;
+        let [input_before, output_before, vault_before] = balances(svm)?;
 
-        let instructions = direct_swap(
+        // Every step commits; a refusal at any of them puts the copy back, as the router's
+        // refusal undoes its whole transaction.
+        let before = svm.clone();
+        let undo = |svm: &mut LiteSVM, failure: Failure| {
+            *svm = before.clone();
+            Err(failure)
+        };
+        let called = match call_directly(
+            svm,
             market,
             request,
             AccountMeta::new_readonly(market.address, true),
-        );
-        let transaction = |instructions: &[Instruction], svm: &LiteSVM| {
-            let mut tx = Transaction::new_with_payer(instructions, Some(&trader));
-            tx.message.recent_blockhash = svm.latest_blockhash();
-            tx
+        ) {
+            Ok(called) => called,
+            Err(failure) => return undo(svm, failure),
         };
-        let fail = |failed: &litesvm::types::FailedTransactionMetadata| {
-            Failure::from_transaction(Stage::Swap, &market.strategy(), failed)
+        let [input_after, output_after, vault_after] = match balances(svm) {
+            Ok(balances) => balances,
+            Err(failure) => return undo(svm, failure),
         };
-
-        // The swap as the router would measure it, before anything is committed.
-        let simulated = svm
-            .simulate_transaction(transaction(&instructions, svm))
-            .map_err(|failed| fail(&failed))?;
-        let after = |key: &Pubkey| {
-            simulated
-                .post_accounts
-                .iter()
-                .find(|(k, _)| k == key)
-                .map(|(_, a)| solana_account::Account::from(a.clone()))
-                .or_else(|| svm.get_account(key))
-        };
-        let [input_after, output_after, vault_after] = balances(&after)?;
-        let settled = settlement::settle(
+        let settled = match settlement::settle(
             &settlement::Measured {
                 input_before,
                 input_after,
@@ -323,17 +319,18 @@ impl SwapPath for DirectToStrategy {
             request.amount_in,
             0,
             0,
-        )
-        .map_err(|e| router_refused(settle_words(e)))?;
-
-        let mut instructions = instructions;
+        ) {
+            Ok(settled) => settled,
+            Err(error) => return undo(svm, router_refused(settle_words(error))),
+        };
+        let mut compute_units = called.compute_units;
         if settled.pipeline_fee > 0 {
             let fee_account = pda::fee_account(
                 &market.address,
                 &market.mint(input),
                 &market.token_program(input),
             );
-            instructions.push(transfer_checked(
+            let fee = transfer_checked(
                 market,
                 input,
                 &trader_input,
@@ -341,12 +338,12 @@ impl SwapPath for DirectToStrategy {
                 &trader,
                 settled.pipeline_fee,
                 &request.hooks.input,
-            ));
+            );
+            match send(svm, &[fee], &trader, &market.strategy()) {
+                Ok(meta) => compute_units += meta.compute_units_consumed,
+                Err(failure) => return undo(svm, failure),
+            }
         }
-        let meta = svm
-            .send_transaction(transaction(&instructions, svm))
-            .map_err(|failed| fail(&failed))?;
-        let strategy_line = format!("Program {} consumed ", market.strategy());
         Ok(SwapReceipt {
             trader_spent: input_before
                 .saturating_sub(token_amount(svm, &trader_input).unwrap_or(0)),
@@ -356,21 +353,64 @@ impl SwapPath for DirectToStrategy {
             net_sent: settled.net_sent,
             received: settled.received,
             pipeline_fee: settled.pipeline_fee,
-            compute_units: meta.compute_units_consumed,
-            strategy_compute_units: strategy_units(&meta.logs, &strategy_line),
+            compute_units,
+            strategy_compute_units: called.strategy_compute_units,
         })
     }
 }
 
-/// The input's transfer into the vault and the strategy's `pipeline_swap` after it, as one
-/// transaction's instructions, with `market_signer` as the call's first account: the market
-/// PDA signing, as the router passes it, or anything else `direct_call` tries.
-pub fn direct_swap(
+/// Pays for the strategy's call in the direct path, so the trader, who signs only its own
+/// transfer, is never a signer of the transaction the strategy runs in: in a transaction the
+/// fee payer signs every instruction, and under the router the strategy never gets the
+/// trader's signature.
+const DIRECT_CALL_PAYER: Pubkey = Pubkey::new_from_array([0xca; 32]);
+
+/// What a direct call to the strategy cost.
+pub struct DirectCall {
+    pub compute_units: u64,
+    pub strategy_compute_units: Option<u64>,
+}
+
+fn send(
+    svm: &mut LiteSVM,
+    instructions: &[Instruction],
+    payer: &Pubkey,
+    strategy: &Pubkey,
+) -> Result<litesvm::types::TransactionMetadata, Failure> {
+    let mut all = vec![compute_limit(SWAP_COMPUTE_LIMIT)];
+    all.extend_from_slice(instructions);
+    let mut tx = Transaction::new_with_payer(&all, Some(payer));
+    tx.message.recent_blockhash = svm.latest_blockhash();
+    svm.send_transaction(tx)
+        .map_err(|failed| Failure::from_transaction(Stage::Swap, strategy, &failed))
+}
+
+/// Sends the input into the vault as the router would, signed by the trader, then calls the
+/// strategy's `pipeline_swap` in a transaction of its own with `market_signer` as its first
+/// account: the market PDA signing, as the router passes it, or anything else `direct_call`
+/// tries. Both commit; the caller undoes them if it must.
+pub fn call_directly(
+    svm: &mut LiteSVM,
     market: &Market,
     request: &SwapRequest,
     market_signer: AccountMeta,
-) -> Vec<Instruction> {
+) -> Result<DirectCall, Failure> {
     let (input, output, trader) = (request.input, request.output, request.trader);
+    let strategy = market.strategy();
+    let transferred = send(
+        svm,
+        &[transfer_checked(
+            market,
+            input,
+            &market.ata(&trader, input),
+            &market.vault(input),
+            &trader,
+            request.amount_in,
+            &request.hooks.input,
+        )],
+        &trader,
+        &strategy,
+    )?;
     let swap_request = psi::SwapRequest {
         trade: psi::TradeRequest {
             mode: TradeMode::ExactIn,
@@ -394,23 +434,24 @@ pub fn direct_swap(
                 ..m
             }),
     );
-    vec![
-        compute_limit(SWAP_COMPUTE_LIMIT),
-        transfer_checked(
-            market,
-            input,
-            &market.ata(&trader, input),
-            &market.vault(input),
-            &trader,
-            request.amount_in,
-            &request.hooks.input,
-        ),
-        Instruction::new_with_bytes(
-            market.strategy(),
+    crate::market::fund_lamports(svm, &DIRECT_CALL_PAYER);
+    let called = send(
+        svm,
+        &[Instruction::new_with_bytes(
+            strategy,
             &psi::instruction_data(discriminator::SWAP, &swap_request),
             accounts,
+        )],
+        &DIRECT_CALL_PAYER,
+        &strategy,
+    )?;
+    Ok(DirectCall {
+        compute_units: transferred.compute_units_consumed + called.compute_units_consumed,
+        strategy_compute_units: strategy_units(
+            &called.logs,
+            &format!("Program {strategy} consumed "),
         ),
-    ]
+    })
 }
 
 /// The fixed accounts of `pipeline_swap` as the router passes them

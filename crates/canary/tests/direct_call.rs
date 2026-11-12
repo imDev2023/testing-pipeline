@@ -72,3 +72,37 @@ fn a_market_that_refuses_every_trade_is_not_run() {
 
     assert_eq!(record.outcome, Outcome::NotRun, "{}", record.reason);
 }
+
+#[test]
+fn a_strategy_that_refuses_even_the_call_as_the_router_makes_it_is_not_run() {
+    // The evil strategy's "take more" tries to pull extra input from the trader, which no
+    // call can let it do, so every direct call fails whoever signs.
+    const TAKE_MORE: u8 = 1;
+    let mut cluster = Cluster::new();
+    let market = cluster.evil_market(1_000 * SOL);
+
+    let record = run_market(
+        &mut SvmSource::new(cluster.svm.clone()),
+        market.market,
+        &RunOptions {
+            extra: vec![TAKE_MORE],
+            ..RunOptions::default()
+        },
+    )
+    .into_results()
+    .unwrap()
+    .record("direct_call")
+    .clone();
+
+    assert_eq!(record.outcome, Outcome::NotRun, "{}", record.reason);
+    assert!(
+        record.reason.contains("as the router passes it"),
+        "{}",
+        record.reason
+    );
+    assert_eq!(
+        record.numbers["control"]["accepted"], false,
+        "{}",
+        record.numbers
+    );
+}
