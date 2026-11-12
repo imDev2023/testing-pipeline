@@ -47,9 +47,13 @@ fn the_metadata_describes_a_tax_amm() {
         "https://github.com/imDev2023/testing-pipeline/security/advisories/new"
     );
     // The template's deposit action is gone: a tax market's liquidity is seeded once.
-    assert!(m
-        .get("actions")
-        .is_none_or(|a| a.as_array().unwrap().is_empty()));
+    let actions: Vec<&str> = m["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(actions, ["seed"]);
     assert_eq!(m["init"]["market_state"], "new_keypair");
     assert_eq!(m["init"]["idl_type"], "InitParams");
 }
@@ -67,7 +71,7 @@ fn encode_arg(kind: &str, value: &Value) -> Vec<u8> {
             .unwrap()
             .to_bytes()
             .to_vec(),
-        other => panic!("no creation parameter has type {other}"),
+        other => panic!("no argument has type {other}"),
     }
 }
 
@@ -175,5 +179,90 @@ fn the_init_accounts_are_exactly_the_accounts_the_program_takes() {
             "{name}"
         );
         assert!(!account["signer"].as_bool().unwrap_or(false), "{name}");
+    }
+}
+
+fn action(name: &str) -> Value {
+    metadata()["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == name)
+        .unwrap_or_else(|| panic!("no action {name}"))
+        .clone()
+}
+
+/// Resolves an action's account source against a market, as the SDK does.
+fn resolve_action(source: &AccountSource, market: &Market, wallet: &Pubkey) -> Pubkey {
+    match source {
+        AccountSource::Wallet => *wallet,
+        AccountSource::MarketState => market.market_state,
+        AccountSource::Mint(i) => market.mints[*i as usize],
+        AccountSource::Vault(i) => market.vaults[*i as usize],
+        AccountSource::TokenProgram(i) => market.token_programs[*i as usize],
+        AccountSource::WalletTokenAccount(i) => {
+            let i = *i as usize;
+            pipeline_client::pda::associated_token(
+                wallet,
+                &market.mints[i],
+                &market.token_programs[i],
+            )
+        }
+        other => panic!("unexpected action source {other:?}"),
+    }
+}
+
+#[test]
+fn the_seed_action_is_exactly_the_programs_seed() {
+    let seed = action("seed");
+    assert_eq!(seed["kind"], "add_liquidity");
+    // Anchor's default discriminator, so the metadata needs none of its own.
+    assert!(seed.get("discriminator").is_none());
+
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN_2022), TOKEN_2022),
+    ];
+    let seeder = Keypair::new().pubkey();
+    let market = env
+        .create_tax_market(mints, &valid_params(&seeder))
+        .unwrap();
+    let amounts = [123_456_789, 987_654_321];
+    let expected = seed_instruction(&market, &seeder, amounts, vec![]);
+
+    // The arguments encode, after the discriminator, exactly the instruction's data.
+    let values = [Value::from(amounts[0]), Value::from(amounts[1])];
+    let args = seed["args"].as_array().unwrap();
+    assert_eq!(args.len(), values.len());
+    let mut data = expected.data[..8].to_vec();
+    for (arg, value) in args.iter().zip(&values) {
+        data.extend(encode_arg(arg["type"].as_str().unwrap(), value));
+    }
+    assert_eq!(data, expected.data);
+    assert_eq!(args[0]["decimals_of"], "mint:0");
+    assert_eq!(args[1]["decimals_of"], "mint:1");
+
+    // The accounts resolve to exactly the program's, signer and writable alike.
+    let accounts = seed["accounts"].as_array().unwrap();
+    assert_eq!(accounts.len(), expected.accounts.len());
+    for (account, meta) in accounts.iter().zip(&expected.accounts) {
+        let name = account["name"].as_str().unwrap();
+        let source = parse_account_source(account["source"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            resolve_action(&source, &market, &seeder),
+            meta.pubkey,
+            "{name}"
+        );
+        assert_eq!(
+            account["signer"].as_bool().unwrap_or(false),
+            meta.is_signer,
+            "{name}"
+        );
+        assert_eq!(
+            account["writable"].as_bool().unwrap_or(false),
+            meta.is_writable,
+            "{name}"
+        );
     }
 }

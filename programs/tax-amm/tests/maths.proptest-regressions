@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3a3d7a2cad68771fc9356091c0d21194ba9781ba99ed4d05152ecbb817ff1533 # shrinks to sides = Sides { reserve_in: 11826696384286001765, reserve_out: 8, virtual_in: 0, virtual_out: 0 }, tax = Sell(0), amount = 6620047689423549851

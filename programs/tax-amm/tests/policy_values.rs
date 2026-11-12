@@ -3,7 +3,9 @@
 //! config module, and the mint extension allowlist once, in the mint-rules crate, which
 //! depends on nothing, so another program can use it without pulling in the tax AMM. No
 //! other file of the on-chain workspace, the strategy metadata or the demo script repeats
-//! them; every other policy value is a creation parameter.
+//! them; every other policy value is a creation parameter. The two the program publishes in
+//! its IDL with `#[constant]` also appear in the TypeScript client generated from it, which
+//! `pnpm typecheck` keeps equal to the IDL.
 //!
 //! One named place per product: another program of the workspace keeps its own config (the
 //! buy wall AMM has its own suite share and names the same suite treasury, with no
@@ -67,17 +69,22 @@ fn files_containing(needle: &str) -> Vec<String> {
 
 #[test]
 fn the_four_constants_are_defined_once_in_the_config_module() {
-    for name in [
-        "MAX_TAX_BPS",
-        "SUITE_SHARE_BPS",
-        "SUITE_TREASURY",
-        "MAX_RECIPIENTS",
+    for (name, published) in [
+        ("MAX_TAX_BPS", true),
+        ("SUITE_SHARE_BPS", true),
+        ("SUITE_TREASURY", false),
+        ("MAX_RECIPIENTS", false),
     ] {
-        let defined: Vec<String> = files_containing(&format!("const {name}"))
+        let mut defined: Vec<String> = files_containing(&format!("const {name}"))
             .into_iter()
             .filter(|path| tax_amm_or_shared(path))
             .collect();
-        assert_eq!(defined, vec!["tax-amm/src/config.rs".to_string()], "{name}");
+        defined.sort();
+        let mut expected = vec!["tax-amm/src/config.rs".to_string()];
+        if published {
+            expected.insert(0, "tax-amm/scripts/client/constants/taxAmm.ts".to_string());
+        }
+        assert_eq!(defined, expected, "{name}");
     }
     // The treasury's address is written nowhere else.
     let written: Vec<String> = files_containing(&SUITE_TREASURY.to_string())
