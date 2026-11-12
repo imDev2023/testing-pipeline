@@ -167,9 +167,13 @@ mod proofs {
         assert!(split.suite as u128 * 10_000 <= fee as u128 * SUITE_SHARE_BPS as u128);
     }
 
-    /// A swap's book update, for every ledger and trade with a fee below `SMALL`, moves
-    /// value between ledgers without creating or losing any, or refuses: the token ledger changes by exactly the trade's token flow and the SOL
-    /// ledgers together by exactly its SOL flow.
+    /// A swap's book update moves value between ledgers without creating or losing any,
+    /// or refuses: the token ledger changes by exactly the trade's token flow and the SOL
+    /// ledgers together by exactly its SOL flow. In the full tier only: even bounded to
+    /// ledgers below 2^20 it ran over 10 minutes on the owner's Mac (2026-11-12), the split
+    /// inside it being proved in the default tier above; Proptest checks the same on 10,000
+    /// cases (below), and the invariant fuzzer after every swap through the router.
+    #[cfg(kani_full)]
     #[kani::proof]
     fn a_swap_conserves_the_ledgers() {
         let books = Books {
@@ -187,7 +191,7 @@ mod proofs {
             amount_out: kani::any(),
             sqrt_price: 0,
         };
-        kani::assume(priced.fee < SMALL);
+
         let wall_split_bps: u16 = kani::any();
         kani::assume(wall_split_bps <= BPS);
         if let Some(after) = books.after(&priced, wall_split_bps) {
