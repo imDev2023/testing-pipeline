@@ -12,6 +12,7 @@
 
 pub mod bands;
 pub mod checks;
+pub mod clock;
 pub mod config;
 pub mod failure;
 pub mod http;

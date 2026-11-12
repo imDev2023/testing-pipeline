@@ -1,6 +1,6 @@
 [package]
 name = "canary"
-version = "0.1.0"
+version = "0.2.0"
 description = "Canary checks: trade a private copy of one Pipeline market as a trader would, and record what happened"
 edition.workspace = true
 license.workspace = true

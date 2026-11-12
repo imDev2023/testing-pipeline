@@ -17,6 +17,7 @@ use pipeline_quoter::MarketView;
 use serde::Serialize;
 use solana_account::Account;
 use spl_token_2022_interface::extension::transfer_fee::TransferFeeConfig;
+use spl_token_2022_interface::extension::transfer_hook::TransferHook;
 use spl_token_2022_interface::extension::{BaseStateWithExtensions, StateWithExtensions};
 use spl_token_2022_interface::state::Mint;
 
@@ -84,6 +85,8 @@ pub struct MintFacts {
     pub decimals: u8,
     pub supply: u64,
     pub transfer_fee: Option<TransferFeeConfig>,
+    /// The Token-2022 transfer hook program, when the mint names one.
+    pub transfer_hook: Option<Pubkey>,
 }
 
 impl MintFacts {
@@ -92,14 +95,18 @@ impl MintFacts {
         if data.len() <= MINT_DECIMALS {
             return Err(format!("mint {address} is too short to be a mint"));
         }
-        let transfer_fee = if account.owner == client::TOKEN_2022_PROGRAM_ID {
-            StateWithExtensions::<Mint>::unpack(data)
-                .map_err(|e| format!("mint {address} does not unpack: {e}"))?
-                .get_extension::<TransferFeeConfig>()
-                .ok()
-                .copied()
+        let (transfer_fee, transfer_hook) = if account.owner == client::TOKEN_2022_PROGRAM_ID {
+            let state = StateWithExtensions::<Mint>::unpack(data)
+                .map_err(|e| format!("mint {address} does not unpack: {e}"))?;
+            (
+                state.get_extension::<TransferFeeConfig>().ok().copied(),
+                state
+                    .get_extension::<TransferHook>()
+                    .ok()
+                    .and_then(|hook| Option::<Pubkey>::from(hook.program_id)),
+            )
         } else {
-            None
+            (None, None)
         };
         Ok(MintFacts {
             address,
@@ -107,6 +114,7 @@ impl MintFacts {
             decimals: data[MINT_DECIMALS],
             supply: u64::from_le_bytes(data[MINT_SUPPLY].try_into().expect("8 bytes")),
             transfer_fee,
+            transfer_hook,
         })
     }
 

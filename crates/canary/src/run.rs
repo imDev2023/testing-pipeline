@@ -10,7 +10,10 @@ use pipeline_check::{clone::cluster_name, CheckOptions};
 use pipeline_client::Pubkey;
 use serde::Serialize;
 
-use crate::checks::{self, conformance, cost, exit_sizes, quote_matches_swap, readable};
+use crate::checks::{
+    self, conformance, cost, exit_hold, exit_late, exit_launch_clock, exit_queue, exit_sizes,
+    exit_transferred, exit_wallets, quote_matches_swap, readable, timed,
+};
 use crate::market::{token_amount, Copy, Session, Version};
 use crate::record::{Record, RecordContext, Verdict};
 use crate::sizes::{ladder, money_side, Side};
@@ -211,9 +214,49 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
     };
     let sizes_lacking = session.lacking_since_begin();
 
+    // The checks over time and across wallets trade the reference size `exit_sizes` found,
+    // each in fresh copies of its own, and each notes the accounts it lacked.
+    let open = matches!(trading, readable::Trading::Open);
+    let path = options.swap;
+    let none = || timed::Measured { pairs: vec![] };
+    let (hold, hold_lacking) = measuring(&mut session, open, none(), |s| {
+        exit_hold::measure(s, path, &sizes_measured)
+    });
+    let (late, late_lacking) = measuring(&mut session, open, none(), |s| {
+        exit_late::measure(s, path, &sizes_measured)
+    });
+    let (launch, launch_lacking) = measuring(&mut session, open, none(), |s| {
+        exit_launch_clock::measure(s, path, &sizes_measured)
+    });
+    let no_wallets = exit_wallets::Measured {
+        insiders: vec![],
+        pairs: vec![],
+    };
+    let (wallets, wallets_lacking) = measuring(&mut session, open, no_wallets, |s| {
+        exit_wallets::measure(s, path, &sizes_measured)
+    });
+    let no_transfers = exit_transferred::Measured { pairs: vec![] };
+    let (transferred, transferred_lacking) = measuring(&mut session, open, no_transfers, |s| {
+        exit_transferred::measure(s, path, &sizes_measured)
+    });
+    let no_queue = exit_queue::Measured { pairs: vec![] };
+    let (queue, queue_lacking) = measuring(&mut session, open, no_queue, |s| {
+        exit_queue::measure(s, path, &sizes_measured)
+    });
+
     let mut lacking = copy_lacking.clone();
-    lacking.extend(readable_lacking.iter().copied());
-    lacking.extend(sizes_lacking.iter().copied());
+    for own in [
+        &readable_lacking,
+        &sizes_lacking,
+        &hold_lacking,
+        &late_lacking,
+        &launch_lacking,
+        &wallets_lacking,
+        &transferred_lacking,
+        &queue_lacking,
+    ] {
+        lacking.extend(own.iter().copied());
+    }
     if !lacking.is_empty() && !options.last_round {
         return MarketRun::Missing {
             addresses: source_order(&lacking, &session),
@@ -221,10 +264,30 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         };
     }
     // The trading checks rest on readable's verdict when it closed trading, so they also
-    // lack whatever readable's probes lacked.
-    let mut trading_lacking = sizes_lacking.clone();
-    if matches!(trading, readable::Trading::NotRun(_)) {
-        trading_lacking.extend(readable_lacking.iter().copied());
+    // lack whatever readable's probes lacked; and every check over time and across wallets
+    // rests on the size ladder's reference amount.
+    let closed_lacking: BTreeSet<Pubkey> = if open {
+        BTreeSet::new()
+    } else {
+        readable_lacking.clone()
+    };
+    let with = |own: &BTreeSet<Pubkey>, also: &BTreeSet<Pubkey>| {
+        let mut all = closed_lacking.clone();
+        all.extend(own.iter().copied());
+        all.extend(also.iter().copied());
+        all
+    };
+    let trading_lacking = with(&sizes_lacking, &BTreeSet::new());
+    let mut every_swap_lacking = trading_lacking.clone();
+    for own in [
+        &hold_lacking,
+        &late_lacking,
+        &launch_lacking,
+        &wallets_lacking,
+        &transferred_lacking,
+        &queue_lacking,
+    ] {
+        every_swap_lacking.extend(own.iter().copied());
     }
     let gate = |own: &BTreeSet<Pubkey>, verdict: Verdict| {
         let mut needed = copy_lacking.clone();
@@ -235,6 +298,12 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
             Verdict::not_run(naming(&needed))
         }
     };
+    let mut committed = hold.committed(&exit_hold::WORDS);
+    committed.extend(late.committed(&exit_late::WORDS));
+    committed.extend(launch.committed(&exit_launch_clock::WORDS));
+    committed.extend(wallets.committed());
+    committed.extend(transferred.committed());
+    committed.extend(queue.committed());
     let records = vec![
         context.record(checks::READABLE, gate(&readable_lacking, readable_verdict)),
         context.record(
@@ -252,10 +321,52 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
             ),
         ),
         context.record(
+            checks::EXIT_HOLD,
+            gate(
+                &with(&sizes_lacking, &hold_lacking),
+                exit_hold::judge(&hold, &sizes_measured, &trading),
+            ),
+        ),
+        context.record(
+            checks::EXIT_LATE,
+            gate(
+                &with(&sizes_lacking, &late_lacking),
+                exit_late::judge(&late, &sizes_measured, &trading),
+            ),
+        ),
+        context.record(
+            checks::EXIT_LAUNCH_CLOCK,
+            gate(
+                &with(&sizes_lacking, &launch_lacking),
+                exit_launch_clock::judge(&launch, &sizes_measured, &trading),
+            ),
+        ),
+        context.record(
+            checks::EXIT_WALLETS,
+            gate(
+                &with(&sizes_lacking, &wallets_lacking),
+                exit_wallets::judge(&wallets, &sizes_measured, &trading),
+            ),
+        ),
+        context.record(
+            checks::EXIT_TRANSFERRED,
+            gate(
+                &with(&sizes_lacking, &transferred_lacking),
+                exit_transferred::judge(&transferred, &sizes_measured, &trading),
+            ),
+        ),
+        context.record(
+            checks::EXIT_QUEUE,
+            gate(
+                &with(&sizes_lacking, &queue_lacking),
+                exit_queue::judge(&queue, &sizes_measured, &trading),
+            ),
+        ),
+        context.record(
             checks::QUOTE_MATCHES_SWAP,
             gate(
-                &trading_lacking,
-                quote_matches_swap::judge(&sizes_measured, &trading),
+                &every_swap_lacking,
+                quote_matches_swap::judge(&sizes_measured, &trading, &committed),
             ),
         ),
         context.record(
@@ -270,6 +381,19 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         notes,
         seed,
     })
+}
+
+/// Runs one check's measurement when trading is open, otherwise takes `empty`, and returns
+/// it with the accounts the snapshot lacked that the measurement asked for.
+fn measuring<T>(
+    session: &mut Session,
+    open: bool,
+    empty: T,
+    measure: impl FnOnce(&mut Session) -> T,
+) -> (T, BTreeSet<Pubkey>) {
+    session.begin_measurement();
+    let measured = if open { measure(session) } else { empty };
+    (measured, session.lacking_since_begin())
 }
 
 /// The lacking addresses in the order the source was first asked for them.
