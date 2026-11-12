@@ -10,7 +10,7 @@ use anchor_lang::Discriminator;
 use common::*;
 use pipeline_client::interface::discriminator;
 use serde_json::Value;
-use tax_amm::events::{MarketCreated, Seeded};
+use tax_amm::events::{Distributed, MarketCreated, Seeded};
 use tax_amm::state::layout;
 use tax_amm::TaxMarket;
 
@@ -82,6 +82,12 @@ fn its_instructions_are_pipelines_with_pipelines_discriminators_and_its_actions(
         (
             "seed",
             tax_amm::instruction::Seed::DISCRIMINATOR
+                .try_into()
+                .unwrap(),
+        ),
+        (
+            "distribute",
+            tax_amm::instruction::Distribute::DISCRIMINATOR
                 .try_into()
                 .unwrap(),
         ),
@@ -227,23 +233,67 @@ fn its_events_and_errors_are_the_programs() {
         .collect();
     assert_eq!(
         events,
+        // In the IDL's own order, by name.
         [
+            ("Distributed", Distributed::DISCRIMINATOR.to_vec()),
             ("MarketCreated", MarketCreated::DISCRIMINATOR.to_vec()),
             ("Seeded", Seeded::DISCRIMINATOR.to_vec()),
         ]
     );
 
     // Errors are numbered from 6000 in the enum's order, the last being
-    // `InsufficientLiquidity`.
+    // `NotSlotTokenAccount`.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "InsufficientLiquidity");
+    assert_eq!(last["name"], "NotSlotTokenAccount");
     assert_eq!(
         last["code"].as_u64().unwrap() as u32,
         anchor_lang::error::ERROR_CODE_OFFSET
-            + tax_amm::StrategyError::InsufficientLiquidity as u32
+            + tax_amm::StrategyError::NotSlotTokenAccount as u32
     );
+}
+
+#[test]
+fn its_actions_accounts_and_args_are_the_metadatas() {
+    let idl = idl();
+    let metadata = read_json("metadata.json");
+    let actions = metadata["actions"].as_array().unwrap();
+    for action in actions {
+        let name = action["name"].as_str().unwrap();
+        let instruction = idl["instructions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["name"] == name)
+            .unwrap_or_else(|| panic!("the IDL has no instruction {name}"));
+        let flags = |account: &Value, key: &str| account[key].as_bool().unwrap_or(false);
+        let theirs: Vec<(&str, bool, bool)> = instruction["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| (a["name"].as_str().unwrap(), flags(a, "writable"), flags(a, "signer")))
+            .collect();
+        let ours: Vec<(&str, bool, bool)> = action["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| (a["name"].as_str().unwrap(), flags(a, "writable"), flags(a, "signer")))
+            .collect();
+        assert_eq!(ours, theirs, "{name}");
+        let arg_names = |args: &Value| -> Vec<String> {
+            args.as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(
+            arg_names(&action["args"]),
+            arg_names(&instruction["args"]),
+            "{name}"
+        );
+    }
 }

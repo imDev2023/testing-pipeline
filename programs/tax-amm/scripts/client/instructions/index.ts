@@ -6,6 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from "./distribute.ts";
 export * from "./pipelineInitMarket.ts";
 export * from "./pipelineMarketInfo.ts";
 export * from "./pipelineQuote.ts";

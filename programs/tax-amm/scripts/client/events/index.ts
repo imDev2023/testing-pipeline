@@ -6,5 +6,6 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from "./distributed.ts";
 export * from "./marketCreated.ts";
 export * from "./seeded.ts";

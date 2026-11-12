@@ -9,7 +9,7 @@
 
 use anchor_lang::prelude::*;
 
-use crate::config::MAX_RECIPIENTS;
+use crate::config::{MAX_RECIPIENTS, SUITE_TREASURY};
 use crate::params::InitParams;
 
 /// The market state's layout version, its byte after the discriminator.
@@ -131,6 +131,18 @@ impl TaxMarket {
             (0, 1) => Some((0, 1)),
             (1, 0) => Some((1, 0)),
             _ => None,
+        }
+    }
+
+    /// The wallet tax slot `slot` is paid to (docs/spec/tax-amm.md, "Payout"): its tax
+    /// recipient for slots 0 to 3 (the default key when the slot is unused), none (the
+    /// default key) for the burn, which is burned from the vault, and [`SUITE_TREASURY`]
+    /// for the suite share; `None` for a slot number out of range.
+    pub fn slot_wallet(&self, slot: usize) -> Option<Pubkey> {
+        match slot {
+            BURN_SLOT => Some(Pubkey::default()),
+            SUITE_SLOT => Some(SUITE_TREASURY),
+            recipient => self.recipients.get(recipient).copied(),
         }
     }
 

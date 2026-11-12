@@ -41,18 +41,22 @@ import {
   type TaxMarketArgs,
 } from "../accounts/index.ts";
 import {
+  getDistributeInstruction,
   getPipelineInitMarketInstructionAsync,
   getPipelineMarketInfoInstruction,
   getPipelineQuoteInstruction,
   getPipelineResolveAccountsInstruction,
   getPipelineSwapInstruction,
   getSeedInstruction,
+  parseDistributeInstruction,
   parsePipelineInitMarketInstruction,
   parsePipelineMarketInfoInstruction,
   parsePipelineQuoteInstruction,
   parsePipelineResolveAccountsInstruction,
   parsePipelineSwapInstruction,
   parseSeedInstruction,
+  type DistributeInput,
+  type ParsedDistributeInstruction,
   type ParsedPipelineInitMarketInstruction,
   type ParsedPipelineMarketInfoInstruction,
   type ParsedPipelineQuoteInstruction,
@@ -104,10 +108,12 @@ export function identifyTaxAmmAccount(
 }
 
 export const TaxAmmEvent = {
-  0: "MarketCreated",
-  1: "Seeded",
-  MarketCreated: 0,
-  Seeded: 1,
+  0: "Distributed",
+  1: "MarketCreated",
+  2: "Seeded",
+  Distributed: 0,
+  MarketCreated: 1,
+  Seeded: 2,
 } as const;
 
 export type TaxAmmEvent = (typeof TaxAmmEvent)[Exclude<
@@ -119,6 +125,17 @@ export function identifyTaxAmmEvent(
   event: { data: ReadonlyUint8Array } | ReadonlyUint8Array,
 ): TaxAmmEvent {
   const data = "data" in event ? event.data : event;
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([10, 212, 24, 78, 35, 202, 182, 134]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmEvent.Distributed;
+  }
   if (
     containsBytes(
       data,
@@ -147,18 +164,20 @@ export function identifyTaxAmmEvent(
 }
 
 export const TaxAmmInstruction = {
-  0: "PipelineInitMarket",
-  1: "PipelineMarketInfo",
-  2: "PipelineQuote",
-  3: "PipelineResolveAccounts",
-  4: "PipelineSwap",
-  5: "Seed",
-  PipelineInitMarket: 0,
-  PipelineMarketInfo: 1,
-  PipelineQuote: 2,
-  PipelineResolveAccounts: 3,
-  PipelineSwap: 4,
-  Seed: 5,
+  0: "Distribute",
+  1: "PipelineInitMarket",
+  2: "PipelineMarketInfo",
+  3: "PipelineQuote",
+  4: "PipelineResolveAccounts",
+  5: "PipelineSwap",
+  6: "Seed",
+  Distribute: 0,
+  PipelineInitMarket: 1,
+  PipelineMarketInfo: 2,
+  PipelineQuote: 3,
+  PipelineResolveAccounts: 4,
+  PipelineSwap: 5,
+  Seed: 6,
 } as const;
 
 export type TaxAmmInstruction = (typeof TaxAmmInstruction)[Exclude<
@@ -170,6 +189,17 @@ export function identifyTaxAmmInstruction(
   instruction: { data: ReadonlyUint8Array } | ReadonlyUint8Array,
 ): TaxAmmInstruction {
   const data = "data" in instruction ? instruction.data : instruction;
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([191, 44, 223, 207, 164, 236, 126, 61]),
+      ),
+      0,
+    )
+  ) {
+    return TaxAmmInstruction.Distribute;
+  }
   if (
     containsBytes(
       data,
@@ -246,6 +276,9 @@ export type ParsedTaxAmmInstruction<
   TProgram extends string = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t",
 > =
   | ({
+      instructionType: typeof TaxAmmInstruction.Distribute;
+    } & ParsedDistributeInstruction<TProgram>)
+  | ({
       instructionType: typeof TaxAmmInstruction.PipelineInitMarket;
     } & ParsedPipelineInitMarketInstruction<TProgram>)
   | ({
@@ -269,6 +302,13 @@ export function parseTaxAmmInstruction<TProgram extends string>(
 ): ParsedTaxAmmInstruction<TProgram> {
   const instructionType = identifyTaxAmmInstruction(instruction);
   switch (instructionType) {
+    case TaxAmmInstruction.Distribute: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: TaxAmmInstruction.Distribute,
+        ...parseDistributeInstruction(instruction),
+      };
+    }
     case TaxAmmInstruction.PipelineInitMarket: {
       assertIsInstructionWithAccounts(instruction);
       return {
@@ -334,6 +374,10 @@ export type TaxAmmPluginAccounts = {
 };
 
 export type TaxAmmPluginInstructions = {
+  distribute: (
+    input: MakeOptional<DistributeInput, "payer">,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getDistributeInstruction> & SelfPlanAndSendFunctions;
   pipelineInitMarket: (
     input: MakeOptional<PipelineInitMarketAsyncInput, "payer">,
     config?: { programAddress?: Address | HasAddress },
@@ -389,6 +433,17 @@ export function taxAmmProgram(
           taxMarket: addSelfFetchFunctions(client, getTaxMarketCodec()),
         },
         instructions: {
+          distribute: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getDistributeInstruction(
+                { ...input, payer: input.payer ?? client.payer },
+                {
+                  programAddress:
+                    instructionConfig?.programAddress ?? config.programAddress,
+                },
+              ),
+            ),
           pipelineInitMarket: (input, instructionConfig) =>
             addSelfPlanAndSendFunctions(
               client,

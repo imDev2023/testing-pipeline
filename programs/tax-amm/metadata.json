@@ -243,6 +243,68 @@
                     "source": "token_program:1"
                 }
             ]
+        },
+        {
+            "name": "distribute",
+            "label": "Pay out a tax slot",
+            "kind": "claim",
+            "description": "Anyone pays out everything one tax slot is owed, in the market's tax-side mint: slots 0 to 3 are the tax recipients, 4 the burn and 5 the suite share. A recipient or the suite share is paid to the associated token account of its wallet, which is created at the caller's expense when it is missing; a tax side of native SOL is paid as wrapped SOL. The burn is burned from the market's vault. Inputs: tax_mint is the market's tax-side mint, and recipient the slot's wallet, read from the market state (the tax recipient's, the suite treasury's for slot 5, and the default (all-zero) key, 11111111111111111111111111111111, for the burn). A slot owed nothing moves nothing. Add the tax-side mint's transfer-hook accounts after these.",
+            "args": [
+                {
+                    "name": "slot",
+                    "type": "u8",
+                    "label": "Slot",
+                    "description": "0 to 3 a tax recipient, 4 the burn, 5 the suite share. An unused recipient slot is refused."
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "payer",
+                    "source": "wallet",
+                    "signer": true,
+                    "writable": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                },
+                {
+                    "name": "vault_authority",
+                    "source": "pda:strategy:str:authority,key:market_state"
+                },
+                {
+                    "name": "tax_vault",
+                    "source": "pda:strategy:str:vault,key:market_state,key:input:tax_mint",
+                    "writable": true
+                },
+                {
+                    "name": "tax_mint",
+                    "source": "input:tax_mint",
+                    "writable": true
+                },
+                {
+                    "name": "recipient",
+                    "source": "input:recipient"
+                },
+                {
+                    "name": "recipient_token_account",
+                    "source": "ata:input:recipient,input:tax_mint",
+                    "writable": true
+                },
+                {
+                    "name": "token_program",
+                    "source": "token_program_of:input:tax_mint"
+                },
+                {
+                    "name": "associated_token_program",
+                    "source": "associated_token_program"
+                },
+                {
+                    "name": "system_program",
+                    "source": "system_program"
+                }
+            ]
         }
     ],
     "security": {
