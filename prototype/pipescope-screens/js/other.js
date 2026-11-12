@@ -141,7 +141,7 @@
       <h2>Point your wallet at devnet</h2>
       <p>In Phantom: Settings, Developer Settings, Testnet Mode, then choose Solana Devnet. In Solflare: Settings, General, Network, Devnet. In Backpack: Settings, Solana, RPC Connection, Devnet. A wallet left on mainnet shows a mismatch when it connects, and Pipescope will not build a transaction for it.</p>
       <h2>Get devnet SOL</h2>
-      <ol><li>Copy your wallet's address.</li><li>Ask a faucet for SOL. Solana's own is at <span class="url">faucet.solana.com</span>, and from a terminal <code>solana airdrop 1 YOUR_ADDRESS --url devnet</code> does the same.</li><li>Faucets limit how much each address gets a day. If one refuses, wait or try another.</li></ol>
+      <ol><li>Copy your wallet's address.</li><li>Ask a faucet for SOL. Solana's own is at <span class="url">faucet.solana.com</span>. The <code>solana airdrop</code> command no longer works against the public devnet RPC, whose faucet is closed.</li><li>Faucets limit how much each address gets a day. If one refuses, wait or try another.</li></ol>
       <p>Pipescope has no faucet of its own. One SOL is plenty: a swap costs about 0.000005 SOL in network fees.</p>
       <h2>Get devnet USDC</h2>
       <p>Circle's faucet at <span class="url">faucet.circle.com</span> sends devnet USDC, mint <span class="addr">4zMM...ncDU</span>.</p>

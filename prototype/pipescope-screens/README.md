@@ -55,4 +55,17 @@ The pill's Options menu also switches the theme, the candle colours and whether 
 
 ## Verdict
 
-To be written once the owner has reacted.
+Settled on 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16).
+The session put six questions to the owner with a recommended answer for each, and the owner told it to go ahead with them, changing none and without reacting to the screens one by one.
+So each answer is a default, recorded in the decision register on `main` as `PIPESCOPE-65` to `PIPESCOPE-85`, and open to change.
+
+- Feed: layout A, one table of markets with strategies on a second tab.
+- Market page: layout A, the chart and the trade box first.
+- Canary on the strategy page: layout A, one line for each check with how many markets got each outcome.
+- The amount typed in the trade box is everything that leaves the wallet, fees included.
+- The look stays: three styles of text for three speakers, Canary outcomes as ink shapes with their word, canary yellow only on Canary's mark and the trade-box notice, hollow and solid candles, light and dark themes.
+- Token images are shown small, served from the product's own copy; this prototype shows none.
+
+Layouts B and C stay in this branch as the record of what was weighed.
+The product is called Aviary; this prototype was built under the working name Pipescope and keeps it.
+The spec that came out of it is `docs/spec/pipescope-screens.md` on `main`.
