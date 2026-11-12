@@ -16,7 +16,12 @@ import {
 } from "@solana/kit";
 
 /** Where a market is in its life. New states are only ever added after the last. */
-export const MarketStatus = { 0: "Created", Created: 0 } as const;
+export const MarketStatus = {
+  0: "Created",
+  1: "Open",
+  Created: 0,
+  Open: 1,
+} as const;
 
 /** Where a market is in its life. New states are only ever added after the last. */
 export type MarketStatus = (typeof MarketStatus)[Exclude<

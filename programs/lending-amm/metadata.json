@@ -1,0 +1,192 @@
+{
+    "schema": "pipeline-strategy-metadata/1",
+    "name": "Aviary Lending AMM",
+    "description": "Constant-product markets with open LP shares, one side of which, WSOL or USDC, is lent to a fixed Kamino Lend reserve through its cToken instructions while a buffer stays in the market's own vault for swaps. Prices come from the market's total reserves. The LP fee and all the lending yield go to LPs through the value of their shares, and LPs bear Kamino's losses. The program has no admin. In this build nothing is lent yet: the whole lent side sits in the buffer, and a swap that would pay out more of it than the buffer holds is refused.",
+    "category": "amm",
+    "tags": [
+        "lending",
+        "kamino",
+        "cpmm"
+    ],
+    "links": {
+        "source": "https://github.com/imDev2023/testing-pipeline/tree/main/programs/lending-amm",
+        "idl": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/lending-amm/idl/lending_amm.json",
+        "github": "https://github.com/imDev2023/testing-pipeline"
+    },
+    "source": {
+        "repository": "https://github.com/imDev2023/testing-pipeline",
+        "path": "programs/lending-amm"
+    },
+    "init": {
+        "description": "Creates a market for a token and a lent mint. There is one market per pair, lent side and LP fee, at a PDA of all three. Add the router's init_fee_account for each mint and the market's add_liquidity, which makes the first deposit and sets the price, in the same transaction.",
+        "idl_type": "InitParams",
+        "market_state": "pda:strategy:str:market,key:input:other_mint,key:input:lent_mint,arg:lp_fee_bps",
+        "args": [
+            {
+                "name": "lent_index",
+                "type": "u8",
+                "label": "Lent mint's index (1 on this form)",
+                "description": "Which of the two mints is lent to Kamino. This form takes the other mint first and the lent mint second, so it is 1; a caller that orders the mints the other way passes 0."
+            },
+            {
+                "name": "lp_fee_bps",
+                "type": "u16",
+                "label": "LP fee (basis points)",
+                "description": "Taken from every swap's input and kept in the market for its LPs. At most the program's cap."
+            }
+        ],
+        "accounts": [
+            {
+                "name": "mint_0",
+                "source": "input:other_mint"
+            },
+            {
+                "name": "mint_1",
+                "source": "input:lent_mint"
+            },
+            {
+                "name": "authority",
+                "source": "pda:strategy:str:authority,key:market_state"
+            },
+            {
+                "name": "vault_0",
+                "source": "pda:strategy:str:vault,key:market_state,key:input:other_mint",
+                "writable": true
+            },
+            {
+                "name": "vault_1",
+                "source": "pda:strategy:str:vault,key:market_state,key:input:lent_mint",
+                "writable": true
+            },
+            {
+                "name": "collateral_mint",
+                "source": "input:collateral_mint"
+            },
+            {
+                "name": "ctoken_account",
+                "source": "pda:strategy:str:ctoken,key:market_state",
+                "writable": true
+            },
+            {
+                "name": "lp_mint",
+                "source": "pda:strategy:str:lp_mint,key:market_state",
+                "writable": true
+            },
+            {
+                "name": "token_program_0",
+                "source": "token_program_of:input:other_mint"
+            },
+            {
+                "name": "token_program_1",
+                "source": "token_program_of:input:lent_mint"
+            },
+            {
+                "name": "token_program",
+                "source": "fixed:TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            }
+        ]
+    },
+    "actions": [
+        {
+            "name": "add_liquidity",
+            "label": "Add liquidity",
+            "kind": "add_liquidity",
+            "description": "Adds both tokens for LP shares. The first deposit takes both amounts in full and sets the price; later deposits take both tokens at the market's ratio, only as much as the shares minted are worth. Shares go to your LP shares account for this market, a token account you own, created if missing.",
+            "args": [
+                {
+                    "name": "max_0",
+                    "type": "u64",
+                    "label": "Most of token 1 to add",
+                    "decimals_of": "mint:0"
+                },
+                {
+                    "name": "max_1",
+                    "type": "u64",
+                    "label": "Most of token 2 to add",
+                    "decimals_of": "mint:1"
+                },
+                {
+                    "name": "min_lp",
+                    "type": "u64",
+                    "label": "Fewest LP shares to accept",
+                    "description": "The deposit fails if it would mint fewer, which protects against the price moving first."
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "lp",
+                    "source": "wallet",
+                    "signer": true,
+                    "writable": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                },
+                {
+                    "name": "lp_token_0",
+                    "source": "wallet_token_account:0",
+                    "writable": true
+                },
+                {
+                    "name": "lp_token_1",
+                    "source": "wallet_token_account:1",
+                    "writable": true
+                },
+                {
+                    "name": "vault_0",
+                    "source": "vault:0",
+                    "writable": true
+                },
+                {
+                    "name": "vault_1",
+                    "source": "vault:1",
+                    "writable": true
+                },
+                {
+                    "name": "mint_0",
+                    "source": "mint:0"
+                },
+                {
+                    "name": "mint_1",
+                    "source": "mint:1"
+                },
+                {
+                    "name": "lp_mint",
+                    "source": "pda:strategy:str:lp_mint,key:market_state",
+                    "writable": true
+                },
+                {
+                    "name": "lp_shares",
+                    "source": "pda:strategy:str:lp_shares,key:market_state,key:wallet",
+                    "writable": true
+                },
+                {
+                    "name": "authority",
+                    "source": "pda:strategy:str:authority,key:market_state"
+                },
+                {
+                    "name": "token_program_0",
+                    "source": "token_program:0"
+                },
+                {
+                    "name": "token_program_1",
+                    "source": "token_program:1"
+                },
+                {
+                    "name": "token_program",
+                    "source": "fixed:TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "system_program",
+                    "source": "system_program"
+                }
+            ]
+        }
+    ],
+    "security": {
+        "contact": "https://github.com/imDev2023/testing-pipeline/security/advisories/new",
+        "policy": "https://github.com/imDev2023/testing-pipeline/security/policy"
+    }
+}

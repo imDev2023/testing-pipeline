@@ -3,7 +3,7 @@
 Decided in [Canary checks on the four devnet strategies](https://github.com/imDev2023/testing-pipeline/issues/14) on 2026-11-10, from a rough harness run on every devnet market and the owner's reaction to its results.
 The harness, its output for all 61 markets and a summary table are on the throwaway branch [`prototype/canary-checks`](https://github.com/imDev2023/testing-pipeline/tree/prototype/canary-checks/prototype/canary-checks); that branch is never merged.
 It builds on [Prior art for behavioural testing of Solana programs](https://github.com/imDev2023/testing-pipeline/issues/8) ([findings](https://github.com/imDev2023/testing-pipeline/blob/research/behavioural-testing-prior-art/research/behavioural-testing-prior-art.md)) and [Where the quoter runs for Canary checks](https://github.com/imDev2023/testing-pipeline/issues/7) ([findings](https://github.com/imDev2023/testing-pipeline/blob/research/quoter-hosting/research/quoter-hosting.md)).
-[Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) merges this file with the other Aviary spec files.
+[Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) reconciled this file with the other Aviary spec files on 2026-11-12 and cut its build tickets, listed in [`pipescope-architecture.md`](pipescope-architecture.md#build-tickets).
 
 ## What Canary is
 
@@ -93,6 +93,7 @@ What came back clean is evidence too:
 - **Not run** always carries its reason, such as "the market refuses every trade (`WrongStatus`: Not allowed in the curve's current status)".
 - **Noted** is for facts Canary reads and does not judge.
 - The round-trip return bands are the owner's (2026-11-10): **95% or more back is a pass, 50% up to 95% is a warn, under 50% is a fail**.
+  The rows below call these the **pass band** and the **fail band**; their values live only in Canary's config module ([One place for every value](#one-place-for-every-value)), with the 1-point tolerance and the other policy values.
   On devnet today the ordinary trade returns 97.0% to 99.5% on seven strategies and 48.8% to 49.4% on the outside builder's AMM, so the bands sit in a wide gap.
 - These words follow `pipeline-check`'s (pass, warn, fail, skip) so one page can show both.
 - An outcome belongs to one check on one market.
@@ -130,12 +131,12 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | Id | What it does | Fail | Warn | Pass |
 | --- | --- | --- | --- | --- |
 | `exit_sizes` | Buys each size and sells everything bought in the same slot | At the reference size or the smallest size, the tokens cannot be sold back | At a larger size, the tokens cannot be sold back | Every size that could be bought was sold back; sizes that could not be bought are listed and are not a finding |
-| `exit_hold` | Buys the reference size, then sells after each wait, each wait from the same bought state | The sale fails in the same slot or the next | After a longer wait the sale fails, or returns over 1 point less than in the same slot | Every wait sells within 1 point of the same slot |
-| `exit_late` | Moves the clock forward by each wait, then buys and sells the reference size | Never: it is not the present | A later round trip fails, or returns over 1 point less than now | Every later round trip is within 1 point of now |
-| `exit_launch_clock` | Sets the clock to each launch-clock position, then buys and sells the reference size | Never: it is not the present | A launch-clock round trip fails, or returns over 1 point less than now | Every one is within 1 point of now |
+| `exit_hold` | Buys the reference size, then sells after each wait, each wait from the same bought state | The sale fails in the same slot or the next | After a longer wait the sale fails, or returns more than the tolerance less than in the same slot | Every wait sells within the tolerance of the same slot |
+| `exit_late` | Moves the clock forward by each wait, then buys and sells the reference size | Never: it is not the present | A later round trip fails, or returns more than the tolerance less than now | Every later round trip is within the tolerance of now |
+| `exit_launch_clock` | Sets the clock to each launch-clock position, then buys and sells the reference size | Never: it is not the present | A launch-clock round trip fails, or returns more than the tolerance less than now | Every one is within the tolerance of now |
 | `exit_wallets` | Round-trips the reference size from five fresh wallets, the market creator, the strategy's upgrade authority and each mint authority, each from the same starting state | Fresh wallets get different results from the same state, or an insider gets more back than a fresh wallet | An insider gets less back than a fresh wallet | All get the same |
-| `exit_transferred` | One wallet buys the reference size and sends the tokens to a second wallet, which sells them | The transfer is refused, or the second wallet cannot sell | The second wallet's return is under 95% while the buyer's own is not | The second wallet sells at 95% or more of what the buyer put in |
-| `exit_queue` | Five wallets buy the reference size one after another, then sell in the same order | Any of the five cannot sell, or together they get back under 50% | Together they get back under 95% | All five sell and together get back 95% or more |
+| `exit_transferred` | One wallet buys the reference size and sends the tokens to a second wallet, which sells them | The transfer went through and the second wallet cannot sell | The transfer is refused (for any token, ours or anyone's: the result says the token could not be sent to another wallet, and what the buyer got back by selling it), or the second wallet's return is below the pass band while the buyer's own is not | The second wallet's return is in the pass band |
+| `exit_queue` | Five wallets buy the reference size one after another, then sell in the same order | Any of the five cannot sell, or together they get back within the fail band | Together they get back less than the pass band | All five sell and together get back within the pass band |
 
 - Wallets that are a program's address, not a wallet, are skipped and named.
 - In `exit_queue` only the total is judged: in a thin pool the first buyer out gains what the last one loses, which is ordinary price movement.
@@ -152,7 +153,7 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 
 | Id | What it does | Fail | Warn | Pass |
 | --- | --- | --- | --- | --- |
-| `cost` | Reports the **round-trip return** at every size of `exit_sizes`, and splits the loss at the smallest size and at the reference size into Pipeline's fee on both legs, Token-2022 transfer fees, and the rest, which is the strategy's own fee and spread | The ordinary trade returns under 50% | The ordinary trade returns 50% up to 95%, or any other size returns under 95% | Every size returns 95% or more |
+| `cost` | Reports the **round-trip return** at every size of `exit_sizes`, and splits the loss at the smallest size and at the reference size into Pipeline's fee on both legs, Token-2022 transfer fees, and the rest, which is the strategy's own fee and spread | The ordinary trade's return is in the fail band | The ordinary trade's return is between the two bands, or any other size returns less than the pass band | Every size's return is in the pass band |
 
 - Pipeline's fee on the sale is charged in the token and is valued at the sale's own price; at the reference size on devnet the two legs together come to 0.49% to 0.50% of what was put in, and to 0.37% on the outside builder's AMM, where the sale brings back half as much.
 - The same bands apply to the returns measured by the other exit checks.
@@ -164,7 +165,7 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | `direct_call` | Calls the strategy's `pipeline_swap` without the router, once with another key signing as the market signer and once with the real market signer not signing, after sending the input to the vault as the router would | Never | The call is accepted: trades can skip the Pipeline fee and leave no swap event | Both calls are refused |
 | `token_authorities` | For each of the market's mints, acts as each authority that exists and then trades again (see below) | Never: it depends on an authority acting | An authority exists and its action took from the market or stopped or emptied a trade; the figure is reported | No mint has such an authority |
 | `transaction_accounts` | Lists accounts the strategy asks for that describe the transaction, not the market: the Instructions, SlotHashes and RecentBlockhashes sysvars | Never | The strategy asks for one, so it could tell a simulated trade from a real one and Canary's results may not hold | It asks for none |
-| `contained_mint` | For a mint with a transfer hook, reads the hook program, whether it can still be upgraded, and the hook's authority, as [`containment-hook.md`](containment-hook.md) recognises a contained token | Never | The hook is not our containment hook with the mint's unlock PDA as its authority, or the hook program can still be upgraded | The hook is our containment hook, its authority is the mint's unlock PDA and the hook program is frozen; "not run" when no mint has a hook |
+| `contained_mint` | For a mint with a transfer hook, reads the hook program, whether it can still be upgraded, and the hook's authority, as [`containment-hook.md`](containment-hook.md) recognises a contained token | Never | The hook is not our containment hook with the mint's unlock PDA as its authority, or the hook program can still be upgraded | The hook is our containment hook, its authority is the mint's unlock PDA and the hook program is frozen; "not run" when no mint has a hook, and when a mint's transfer hook extension has both its program and its authority unset, as a contained token's has after its unlock |
 | `custom_instructions` | Lists every instruction in the strategy's code beyond Pipeline's six, each with how often it has been called and by which signers | Noted only | Noted only | Noted only |
 
 What `token_authorities` does with each authority, when the authority is a wallet:
@@ -181,6 +182,7 @@ The prototype ran the first and third on devnet and built the second; no devnet 
 ### Custom instructions are listed, not called
 
 - Instruction names come from the strategy's code: each "Instruction: Name" string Anchor compiles in is kept only when the discriminator of that name is also in the code, which also cuts names that run on into the next string.
+- That list is worked out once per strategy version, by `terminal-api` when the indexer records the version, and stored with it; the facts panel, the forms' instruction check and the explainer read it from there, and the `CanaryRun` Durable Object posts it in the snapshot, so one implementation serves all four.
 - A program that is not built with Anchor gets "none found", worded as such and not as "none".
 - Who has called each instruction, and how often, comes from the indexer's history of the strategy program.
 - Canary v1 does not call custom instructions: the prototype can name them and cannot build their arguments without each strategy's own layout (owner, 2026-11-10).
@@ -236,6 +238,7 @@ Each check on each market produces one **Canary result**, a record the facts pan
 [`pipescope.md`](pipescope.md) repeats one Canary observation in the trade box and asks this file to define it.
 
 - It is any latest result of `exit_sizes`, `exit_hold`, `exit_wallets`, `exit_transferred` or `exit_queue`, for the market's current strategy version, in which a wallet's buy worked and the sale of what it bought then failed.
+- A refused wallet-to-wallet transfer in `exit_transferred` is never "could not sell back": the buyer could still sell, so it raises no notice (`CANARY-27`).
 - It counts whether the result is a fail or a warn, and the notice states the condition from the record: the size, the wait or the wallet's role, and the refusing program's own error message.
   On devnet today that is the three open bonding curves: "a wallet that bought 1 SOL or more could not sell back; buys of 0.1 SOL and less sold back".
 - `exit_late` and `exit_launch_clock` do not count: they describe another time, and the scheduled runs see that time when it comes.
@@ -249,6 +252,7 @@ Each check on each market produces one **Canary result**, a record the facts pan
 - **A market is created or registered**: that market at once, and again 10 minutes, 1 hour and 1 day later, because launch-time rules are live then and fade.
 - **Every 6 hours**: every market (owner, 2026-11-10).
   A change in a market's own state, or in a mint's authorities or extensions, shows within 6 hours; v1 has no separate watch on mints.
+- This section is the only place in the spec that states the schedule (`CANARY-22`, `CANARY-23`); in code its delays and the sweep's interval live in `terminal-api`'s config module ([`pipescope-architecture.md`](pipescope-architecture.md#one-place-for-every-value)), the code that starts runs, not in `crates/canary`.
 - The triggers come from the indexer's ProgramData watch and its market events, as [Where Pipescope's indexer gets its data](https://github.com/imDev2023/testing-pipeline/issues/6) decided; no router event marks a new strategy version.
 - Each trigger starts or wakes the `CanaryRun` Durable Object of the strategy version concerned, which [`pipescope-architecture.md`](pipescope-architecture.md) keys by program id and ProgramData slot; that file left the triggers beyond a new version to this one.
 - A sweep of all 61 devnet markets took 2 minutes 27 seconds on the owner's Mac, about 45 seconds of it CPU, and 442 RPC requests (about 7 a market), before the token-authority runs were added; with them the request count was the same.
@@ -257,9 +261,31 @@ Each check on each market produces one **Canary result**, a record the facts pan
   If each sweep keeps the one container awake for about ten minutes, four sweeps a day are about 20 GiB-hours a month, close to the 18.5 the architecture budgeted and, like them, at worst a few cents over the allowance shared with the owner's other project.
   The build should measure a sweep on the `basic` instance, a quarter of a vCPU, before trusting that figure.
 
+## One place for every value
+
+Every policy value of a Canary run lives in one module, `crates/canary/src/config.rs`, as a named constant (`CANARY-28`); nothing else in code writes them, and the check rows above refer to the bands and the tolerance by name rather than by number.
+A change to any of them changes the `harness` version that every Canary result carries, so results made under different rules can be told apart.
+
+| Value | Default | Decision |
+| --- | --- | --- |
+| Sizes with wrapped SOL, and the reference size | 0.00001, 0.001, 0.01, 0.1, 1 and 10 SOL; 0.01 SOL | `CANARY-06` |
+| Sizes without wrapped SOL, the small-vault threshold and the reference sizes | 1, 100, 1,000, 10,000 and 50,000 parts per million of the money vault, or 0.01 to 100 whole tokens under 2,000,000 units; 1,000 parts per million, or 1 token | `CANARY-07` |
+| Waits | the same slot, the next slot, 10 seconds, 1 minute, 10 minutes, 1 hour, 1 day, 3 days and 30 days | `CANARY-08` |
+| Launch-clock offsets | creation, then 10 seconds, 1 minute, 10 minutes, 1 hour and 1 day after it | `CANARY-09` |
+| Clock rates | 2.5 slots a second, 432,000 slots an epoch | `CANARY-08` |
+| Pass band and fail band | 95% or more back; under 50% back | `CANARY-12` |
+| Tolerance over time | 1 point | `CANARY-13` |
+| Wallets | five fresh wallets in `exit_wallets`, five buyers in `exit_queue` | `CANARY-16` |
+| Token authorities acting | mint 100 times the vault's holding; a transfer fee of 100% with no maximum, two epochs on | `CANARY-17` |
+| Compute limits used to class a failure | 200,000 units for a quote, 1,400,000 for a swap | `CANARY-14` |
+| Snapshot rounds before checks are "not run" | 4 | `CANARY-25` |
+
+- The sections above explain each value where it is used; when one changes, the constant, this table, that section and the decision's block change in one PR.
+- The schedule is not here: see [When Canary runs](#when-canary-runs).
+
 ## Built on
 
-- Pipeline's Apache-2.0 crates at a pinned commit, through Cargo: `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
+- Pipeline's Apache-2.0 crates, from crates.io at exact versions (published 2026-11-10 at Pipeline's `5ac3121`; see [`pipescope-architecture.md`](pipescope-architecture.md#pipelines-packages)): `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
 - The router's program is loaded from the cluster's own bytes, never built or copied into this repo; `pipeline-check` does the same.
 - Every trade in the checks goes through one swap function, so the architecture's licence seam holds: on devnet it calls the router, and it can be replaced by a direct call to the strategy plus Pipeline's Apache-2.0 settlement code if running the router's bytes in production is not allowed.
   `conformance` is the exception, because `pipeline-check` itself runs the router; without the router it is "not run".

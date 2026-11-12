@@ -44,6 +44,8 @@ borsh.workspace = true
 litesvm.workspace = true
 pipeline-check.workspace = true
 pipeline-client.workspace = true
+# The tax AMM's test harness, which these tests share, decodes the router's swap events.
+pipeline-events.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 solana-account.workspace = true

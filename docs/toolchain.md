@@ -78,6 +78,8 @@ Set up by [Tax AMM: Pipeline's strategy template in our repo, with CI and a loca
 - `programs/buy-wall-amm` is the buy wall AMM (crate `buy-wall-amm`), generated the same way by `scripts/new-strategy.sh` from a scratchpad clone at `5ad130d` by [Buy wall AMM: a market opens](https://github.com/imDev2023/testing-pipeline/issues/47) and owned here: the program in `src/` (the market state's fixed layout in `state.rs`, the seed's maths in `opening.rs`, the build-time values and the `security.txt` in `config.rs`), its LiteSVM tests and invariant fuzzer in `tests/`, its Z3 proofs in `proofs/`, `metadata.json`, and the demo script in `scripts/`.
   Its IDL (`idl/`) and generated client (`scripts/client/`) are built as the tax AMM's are (`pnpm idl`, `pnpm client`), and `tests/idl.rs` also checks the IDL's market state against the spec's byte offset table.
   Its program id is `BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6`; nothing of it is deployed or registered on devnet before [its devnet ticket](https://github.com/imDev2023/testing-pipeline/issues/56).
+- `programs/lending-amm` is the lending AMM (crate `lending-amm`), generated the same way by [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) on 2026-11-12, from a scratchpad clone at `5ad130d`, laid out as the tax AMM is: the program in `src/` (`config.rs` holds every constant and the per-cluster `LENT_MINTS`, `pricing.rs` and `shares.rs` the maths), its LiteSVM tests and invariant fuzzer in `tests/`, its Z3 proofs in `proofs/` (run as the buy wall AMM's are), `metadata.json`, the IDL in `idl/`, and the demo script and generated client in `scripts/`.
+  It is built for one cluster by the feature `devnet` (the default) or `mainnet` (`--no-default-features --features mainnet`); its program id is `Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG`, and nothing of it is deployed or registered on devnet before [its devnet ticket](https://github.com/imDev2023/testing-pipeline/issues/87).
 - `fixtures/` holds what scripts fetch or build; only `fixtures/pins.env` is committed.
 - TypeScript is one pnpm workspace at the repo root (`package.json`, `pnpm-workspace.yaml`): each program's `scripts/` now, Aviary's apps and packages when they are built.
 
@@ -93,6 +95,7 @@ All under `~/.config/testing-pipeline/devnet/` (directory 700, files 600), never
 | Tax AMM program | `tax-amm.json` | `J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t` | The program's address, for its first devnet deploy |
 | Buy wall AMM program | `buy-wall-amm.json` | `BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6` | The program's address, for its first devnet deploy |
 | Containment hook program | `containment-hook.json` | `aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv` | The hook's address, for its first devnet deploy |
+| Lending AMM program | `lending-amm.json` | `Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG` | The program's address, for its first devnet deploy |
 
 Each program keypair was passed to `new-strategy.sh`, so nothing went into `~/.config/pipeline/keys/`.
 `cargo build-sbf` also writes a `programs/target/deploy/<program>-keypair.json` (`tax_amm-keypair.json`, `buy_wall_amm-keypair.json`), which is not the program's key and is gitignored; deploy with `--program-id ~/.config/testing-pipeline/devnet/<program>.json`.
@@ -105,6 +108,8 @@ Each program keypair was passed to `new-strategy.sh`, so nothing went into `~/.c
   `scripts/test-fetch-router.sh` tests this without the network.
 - `scripts/fetch-pipeline.sh [sdk] [programs]` clones Pipeline into `fixtures/pipeline/` at the `rev` `programs/Cargo.toml` pins (its one source) and builds the TypeScript SDK, which is not on npm and which the demo scripts link to, and Pipeline's test programs (`test-hook`, `test-hook-refill`, `test-strategy-cp`, `test-strategy-evil`) for hostile tests; never the router, whose source is BSL 1.1.
   Nothing of it is copied into the repo.
+  The lending AMM's tests load the `test-hook` built here for their hooked-mint cases.
+- `programs/lending-amm/scripts/fetch-accounts.sh` copies the devnet accounts the lending AMM's local demo run needs (now the collateral mints of our Kamino lending market's reserves, from `deployments/kamino-devnet.json`) into `fixtures/accounts/`, and `scripts/local-validator.sh` loads every account file there at its address.
 
 ### Build and test
 
@@ -124,19 +129,26 @@ cd ..
 for p in programs/*/proofs/*_z3.py; do python "$p"; done   # the Z3 proofs, with z3-solver installed
 pnpm install && pnpm typecheck           # the TypeScript workspace
 scripts/test-fetch-router.sh && scripts/test-check-no-keypairs.sh && scripts/check-no-keypairs.sh
+cargo build-sbf --manifest-path programs/lending-amm/Cargo.toml --no-default-features --features mainnet --sbf-out-dir programs/target/deploy-mainnet
 ```
 
+The lending AMM's tests ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78), 2026-11-12) need `scripts/fetch-pipeline.sh programs` for Pipeline's `test-hook`.
+On the owner's Mac the workspace's tests then passed in 100 seconds, the lending AMM's stateful invariant fuzzer taking 48 of them for its default 24 sequences (`PROPTEST_CASES` sets more; 200 took 7 minutes); `pipeline-check` reported 13 pass, 0 warn, 0 fail and only `exact_out_refund` skipped on every market they create; all eight Kani harnesses, the tax AMM's and the lending AMM's, took 93 seconds; and the four Z3 proofs took under a second.
+
 On 2026-11-10 on the owner's Mac, from warm caches, everything above but Kani took 49 seconds in a fresh shell: the router matched its pin, Pipeline built at `5ad130d69e9e`, formatting and clippy were clean, and the tests passed: 3 unit tests of the pricing, the `security.txt` test and the template's 4 LiteSVM tests through devnet's router, on whose markets `pipeline-check` reported 14 pass, 0 warn and 0 fail.
+On 2026-11-12, with seeding and trading, `cargo test --workspace` took 66 seconds from warm caches, 31 of them the property tests.
 From cold, the SBF build took 53 seconds, the test build 60 seconds and `fetch-pipeline.sh` 2 minutes 22 seconds.
-`cargo kani --workspace -j --output-format=terse` proves the template's pricing in two harnesses run in parallel (`programs/tax-amm/src/pricing.rs`): `out_given_in` never panics or overflows for any reserves and amount at the edge fees 0, 1, 30 and 9,999 (64 checks, 85 seconds), and it never pays out a whole output reserve while the input side holds anything, and buys nothing with zero input, with both reserves and the amount below 16 (85 checks, 108 seconds); 112 seconds in all on this Mac.
-Each proof fails when its property is broken: with the zero-denominator guard removed, or the `reserve_in > 0` condition dropped from the assertion, Kani finds the counterexample.
+`cargo kani --workspace -j --output-format=terse` proves the tax AMM's constant-product curve in two harnesses run in parallel (`programs/tax-amm/src/pricing.rs`): `curve_out` never panics or overflows for any real and virtual reserves and amount (61 checks, 9 seconds), and it never pays out a whole output side while the input side holds anything, and buys nothing with zero input, with both sides and the amount below 16 (80 checks, 11 seconds); 80 seconds in all on this Mac on 2026-11-12, most of it compiling.
+Each proof fails when its property is broken: with the zero-denominator guard removed, or the `effective_in > 0` condition dropped from the assertion, Kani finds the counterexample (checked on 2026-11-12).
+They replaced the template's proofs of `out_given_in` (85 and 108 seconds), which left with its pool fee in [Tax AMM: seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60); the taxed pricing and the split are proved in [Tax AMM: proofs of the pricing, tax and split maths](https://github.com/imDev2023/testing-pipeline/issues/64), and Proptest checks them meanwhile (`programs/tax-amm/tests/maths.rs`, 10,000 cases a property, about 30 seconds in a debug build).
 `in_given_out`, the template's exact-out maths, left with [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) on 2026-11-12, because the tax AMM refuses exact-out; its no-panic proof, which passed before it left, took 14.5 minutes.
 
 ### Local demo run
 
 The demo script, grown from the template's `deploy-devnet.ts`, takes the cluster and the keys as arguments and refuses any cluster other than devnet or a local validator.
-It registers the strategy signed by the upgrade authority, creates two test tokens, computes the router's market and fee accounts and the tax AMM's vaults before sending anything, creates a tax market from the metadata's `init` form with a fee account for each mint in one transaction, and stops unless every computed address exists afterwards and the market state, read with the generated client, holds exactly the parameters sent.
-Seeding and trading join it with [seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60).
+It registers the strategy signed by the upgrade authority, creates two test tokens, computes the router's market and fee accounts and the tax AMM's vaults before sending anything, creates a tax market from the metadata's `init` form with a fee account for each mint and the metadata's `seed` action in one transaction, and stops unless every computed address exists afterwards and the market state, read with the generated client, holds exactly the parameters sent, open and holding the seed.
+Then it buys and sells through the router with Pipeline's SDK, each swap with its quote as the minimum, and stops unless each delivered its quote, the quote is the spec's price, and the market state's reserves, owed amounts and counters equal the script's own calculation from the spec's formulas (`spec-model.ts`), to the unit.
+It quotes at `confirmed`, the commitment it confirms at, since the SDK's default, `finalized`, trails a fresh local validator by about 32 slots and would quote a market that does not exist yet, or one before the last swap.
 On a local validator it airdrops what the payer and the upgrade authority need; on devnet it never does.
 
 `scripts/local-validator.sh` runs `solana-test-validator` from an empty ledger in `fixtures/test-ledger` with devnet's router (the pinned fixture bytes, and its config account as devnet has it, so the 0.01 SOL listing fee and its recipient are devnet's) and every program of the workspace from `programs/target/deploy`, at its `declare_id!` address and upgradeable by the upgrade authority, as on devnet.
@@ -157,12 +169,16 @@ pnpm demo --cluster localnet \
   --upgrade-authority ~/.config/testing-pipeline/devnet/upgrade-authority.json
 ```
 
-Passed on 2026-11-12 with `solana-test-validator` 4.4.1 and Node 24.4.1, in 19 seconds: the strategy registered, the tax market created with both fee accounts in one transaction, and all fourteen creation parameters read back as sent.
+Passed on 2026-11-12 with `solana-test-validator` 4.4.1 and Node 24.4.1, in 6 seconds, by [seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60): the strategy registered; the tax market created and seeded with both fee accounts in one version 0 transaction of 1,212 bytes; all fourteen creation parameters read back as sent; a buy of 1,000,000,000 of token B quoted and delivered 482,900,432 of token A, with a buy tax of 30,000,000, and a sell of 300,000 of token A quoted and delivered 575,252 of token B, with a sell tax of 30,277; and the reserves, the six owed amounts, `tax_collected` (30,030,277), both volumes and `swap_count` equal to the spec's formulas.
+Earlier the same day, before the seed and trading, it passed in 19 seconds.
 The template's demo, before the tax AMM replaced its pool, passed on 2026-11-10, twice, the second time from fresh shells following these steps, in 8 seconds each.
 The upgrade authority registered the strategy and paid the 0.01 SOL listing fee and the strategy account's rent (its balance went from 1 to 0.987 SOL); the market was created with both fee accounts in one transaction; 100,000,000,000 of token A and 200,000,000,000 of token B went in through `deposit`; and 1,000,000 of token A quoted at 1,993,980 of token B (4,876 compute units), which the router's swap delivered exactly, with Pipeline's fee of 2,500.
 In the swap the router invoked the strategy, which used 8,683 of the swap's 39,862 compute units.
 The demo confirms at `confirmed`, so a local run takes seconds where Pipeline's smoke script, which waits for `finalized`, takes two minutes.
 Until this repo's `main` has the metadata, step 2 warns that the published copy at the default URI is not there yet, which changes nothing locally.
+
+The lending AMM's demo runs the same way, after `bash programs/lending-amm/scripts/fetch-accounts.sh` (before starting the validator), from `programs/lending-amm/scripts`: it registers the strategy, creates a test token and wraps SOL, creates a WSOL-lent market from the metadata's `init` form with both fee accounts and the first deposit from its `add_liquidity` action in one transaction, buys and sells through the router, and adds liquidity again, stopping unless each swap's output equals its quote and the market's reserves and share count equal its own calculation from the spec's formulas after every step.
+It passed on 2026-11-12 with `solana-test-validator` 4.4.1 and Node 24.4.1, in 20 seconds from a fresh validator, and simulates quotes at `confirmed`, as it confirms transactions, since the SDK's default `finalized` lags on a fresh local validator.
 
 The buy wall AMM's demo (`programs/buy-wall-amm/scripts/demo.ts`) takes the same arguments, on the same validator:
 
@@ -202,7 +218,7 @@ Without `--goal` or `--deadline`, or with a goal too large for a `u64`, it stops
 | --- | --- | --- |
 | `changes` | always | Decides whether on-chain code changed: `programs/`, `fixtures/pins.env`, the scripts that install, fetch, build or run it, the pnpm workspace files or the workflow |
 | `no keypairs` | always | `scripts/test-check-no-keypairs.sh`, then `scripts/check-no-keypairs.sh` |
-| `rust` | on-chain changes | The toolchain from `scripts/install-toolchain.sh solana`, the router fixture's test and fetch, Pipeline's test programs from `scripts/fetch-pipeline.sh programs`, `cargo fmt --check`, each program's SBF build by its manifest, clippy with `-D warnings`, the tests |
+| `rust` | on-chain changes | The toolchain from `scripts/install-toolchain.sh solana`, the router fixture's test and fetch, Pipeline's test programs from `scripts/fetch-pipeline.sh programs` (its clone cached by the pinned `rev`), `cargo fmt --check`, each program's SBF build by its manifest, clippy with `-D warnings`, the tests, and the lending AMM's `mainnet` build with its clippy and unit tests |
 | `typescript` | on-chain changes | Pipeline's SDK from `scripts/fetch-pipeline.sh sdk`, `pnpm install --frozen-lockfile`, `pnpm typecheck` |
 | `kani` | on-chain changes | Every program's Z3 proofs (`programs/*/proofs/*_z3.py`, with `z3-solver` 5.4.1.0), then Kani from `scripts/install-toolchain.sh kani` and `cargo kani --workspace -j --output-format=terse` |
 | `gate` | always | Passes only if `changes` and `no keypairs` passed and, when on-chain code changed, every heavy job passed too; when none changed, they must have been skipped |

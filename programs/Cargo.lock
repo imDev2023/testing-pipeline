@@ -989,6 +989,7 @@ dependencies = [
  "mint-rules",
  "pipeline-check",
  "pipeline-client",
+ "pipeline-events",
  "pipeline-strategy-interface",
  "proptest",
  "serde_json",
@@ -1934,6 +1935,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
+name = "lending-amm"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+ "base64 0.22.1",
+ "borsh",
+ "litesvm",
+ "mint-rules",
+ "pipeline-check",
+ "pipeline-client",
+ "pipeline-strategy-interface",
+ "proptest",
+ "serde_json",
+ "solana-account",
+ "solana-clock 3.2.1",
+ "solana-keypair",
+ "solana-security-txt",
+ "solana-signer",
+ "solana-transaction",
+ "spl-token-2022-interface 3.1.2",
+ "toml",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2327,6 +2353,15 @@ dependencies = [
  "solana-instruction 3.5.1",
  "solana-pubkey 4.3.0",
  "url",
+]
+
+[[package]]
+name = "pipeline-events"
+version = "0.1.0"
+source = "git+https://github.com/MetalLegBob/pipeline?rev=5ad130d#5ad130d69e9e55420946199dfa81e6c75a8d595b"
+dependencies = [
+ "borsh",
+ "solana-pubkey 4.3.0",
 ]
 
 [[package]]
@@ -5085,7 +5120,9 @@ dependencies = [
  "mint-rules",
  "pipeline-check",
  "pipeline-client",
+ "pipeline-events",
  "pipeline-strategy-interface",
+ "proptest",
  "serde_json",
  "solana-account",
  "solana-clock 3.2.1",

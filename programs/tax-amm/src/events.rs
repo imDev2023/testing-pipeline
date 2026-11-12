@@ -15,3 +15,13 @@ pub struct MarketCreated {
     pub created_slot: u64,
     pub created_at: i64,
 }
+
+/// The seeder funded a market, which opened. `amounts` is what arrived in each vault, in
+/// mint order, which the market recorded as its real reserves.
+#[event]
+#[derive(Debug, PartialEq, Eq)]
+pub struct Seeded {
+    pub market_state: Pubkey,
+    pub seeder: Pubkey,
+    pub amounts: [u64; 2],
+}
