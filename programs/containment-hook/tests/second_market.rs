@@ -1,7 +1,10 @@
 //! A second market for a contained token (docs/spec/containment-hook.md, "What this
 //! refuses"): anyone may create one, on the tax AMM or on another strategy, since neither
-//! knows about containment, but the hook refuses every transfer that would fund it and every
-//! transfer that would pay out of it, so the token's liquidity stays in its home market.
+//! knows about containment, but the hook refuses every transfer that would fund it (a seed,
+//! a deposit, a sell into it, a transfer into its vault) and every transfer that would pay
+//! out of it, so it can never trade the token. The one way the token reaches its vault is
+//! as a gift: a home-market buy may deliver to any account, a vault included, and what lands
+//! there can only be sold back into the home market.
 
 mod support;
 
@@ -89,8 +92,8 @@ fn funding_a_market_on_another_strategy_is_refused() {
 
 #[test]
 fn paying_out_of_a_second_tax_market_is_refused() {
-    // A second market that somehow held the token (written in here, since nothing can fund
-    // one) still could not pay it out: a buy from it is refused.
+    // A second market holding the token (written in here; a home-market buy delivering to its
+    // vault, below, is the real way) still cannot pay it out: a buy from it is refused.
     let mut env = hook_env();
     let launched = launch(&mut env);
     let (market, _) = second_tax_market(&mut env, &launched);
@@ -138,6 +141,59 @@ fn paying_out_of_a_market_on_another_strategy_is_refused() {
     let swap = cp_buy(&env, &market, &buyer.pubkey(), 1_000_000, &launched.mint);
     assert_hook_refused(env.send(&[swap], &[&buyer]), HookError::TransferRefused);
     assert_eq!(env.balance(&market.vaults[0]), AMOUNT);
+}
+
+#[test]
+fn a_buy_delivered_into_a_second_markets_vault_is_a_gift_that_market_cannot_trade() {
+    let mut env = hook_env();
+    let launched = launch(&mut env);
+    let (market, _) = second_tax_market(&mut env, &launched);
+    let buyer = trader(&mut env, &launched, 10 * SOL);
+    let into_its_vault = Swap {
+        output_to: Some(market.vaults[CONTAINED]),
+        ..Swap::default()
+    };
+    // The hook sees a transfer out of the home vault, which it allows.
+    swap(
+        &mut env,
+        &launched,
+        &buyer,
+        (QUOTE, CONTAINED),
+        SOL,
+        &into_its_vault,
+    )
+    .unwrap();
+    let gift = env.balance(&market.vaults[CONTAINED]);
+    assert!(gift > 0);
+
+    // Even open, with the gift as its reserve, the second market can trade it with nobody.
+    let mut state = env.tax_market(&market.market_state);
+    state.status = MarketStatus::Open;
+    state.reserves = [gift, AMOUNT];
+    let mut data = vec![];
+    anchor_lang::AccountSerialize::try_serialize(&state, &mut data).unwrap();
+    edit_account(&mut env, &market.market_state, |account| {
+        account.data = data
+    });
+    set_balance(&mut env, &market.vaults[QUOTE], AMOUNT);
+    let trader = env.funded_wallet(&market, AMOUNT);
+    for (direction, what) in [
+        ((QUOTE, CONTAINED), "a buy from it"),
+        ((CONTAINED, QUOTE), "a sell into it"),
+    ] {
+        println!("{what}");
+        assert_hook_refused(
+            env.swap_with(
+                &market,
+                &trader,
+                direction,
+                1_000_000,
+                &SwapOptions::default(),
+            ),
+            HookError::TransferRefused,
+        );
+    }
+    assert_eq!(env.balance(&market.vaults[CONTAINED]), gift);
 }
 
 /// Writes a token account's balance.

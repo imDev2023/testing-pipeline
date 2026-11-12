@@ -22,9 +22,9 @@
 //   9. show, in simulation, the hook refusing a wallet-to-wallet `transfer_checked` and a sell
 //      that carries an integrator fee above zero.
 //
-// The hook accounts (the hook program, the validation account and the config) are resolved
-// from the validation account (hook-accounts.ts), because neither Pipeline client resolves
-// them. Revoking the mint authority, an optional last step, must come after `bind`. Deploy
+// The hook accounts (the config, the hook program and the validation account) are resolved
+// from the validation account with Token-2022's own client, `resolveExtraAccountMetasForExecute`
+// from @solana-program/token-2022, because neither Pipeline client resolves them. Revoking the mint authority, an optional last step, must come after `bind`. Deploy
 // both programs and register the tax AMM first; docs/toolchain.md says how, on a local
 // validator and on devnet.
 //
@@ -88,6 +88,7 @@ import {
     getTransferCheckedInstruction,
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
+import { resolveExtraAccountMetasForExecute } from '@solana-program/token-2022';
 import * as pipeline from '@pipeline-placeholder/sdk';
 
 import {
@@ -100,8 +101,7 @@ import {
     getBindInstructionAsync,
     MAX_UNLOCK_DEADLINE_SECS,
 } from './client/index.ts';
-import { fetchTaxMarket, findVault0Pda, findVault1Pda, MarketStatus, TAX_AMM_PROGRAM_ADDRESS } from '../../tax-amm/scripts/client/index.ts';
-import { resolveHookAccounts } from './hook-accounts.ts';
+import { fetchTaxMarket, findAuthorityPda, findVault0Pda, findVault1Pda, MarketStatus, TAX_AMM_PROGRAM_ADDRESS } from '../../tax-amm/scripts/client/index.ts';
 
 const TOKEN_2022_PROGRAM_ADDRESS = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
 const WRAPPED_SOL = address('So11111111111111111111111111111111111111112');
@@ -127,9 +127,13 @@ const HOME_MARKET = {
     // The seed: this much of the token, and no quote mint, which the virtual reserve prices.
     seed: [800_000_000_000_000n, 0n],
 } as const;
-// The trades the launch makes after the seed, in base units: a buy spending this much of the
-// quote mint, then a sell of half of what it bought; an integrator fee for the refused sell.
-const TRADES = { buy: 1_000_000_000n, integratorFeeBps: 50 } as const;
+// The trades the launch makes after the seed: a buy spending this many whole units of the
+// quote mint (1 SOL with wrapped SOL), then a sell of half of what it bought; and the
+// integrator fee of the sell the hook refuses.
+const TRADES = { buyUnits: 1n, integratorFeeBps: 50 } as const;
+// What the launch's rents and fees may cost beyond the market's setup and the buy, which the
+// launcher must hold before anything is sent, so a launch never stops halfway for want of SOL.
+const RENT_AND_FEES = 200_000_000n;
 const CONTAINED_INDEX = 0;
 const QUOTE_INDEX = 1;
 // The most SOL the tax AMM's setup may spend on rent; the router returns the rest.
@@ -372,10 +376,9 @@ async function swapInstruction(
     const strategyAccounts = await pipeline.resolveAccounts(rpc, view, request, trader.address, simulation);
     const { quote } = await pipeline.quoteStrategy(rpc, view, request, strategyAccounts, trader.address, simulation);
     const buying = output === CONTAINED_INDEX;
-    // The tax AMM pays out of its vault, signed by its vault authority, the last strategy account.
-    const vaultAuthority = strategyAccounts[strategyAccounts.length - 1]!.address;
+    // On a buy the tax AMM pays out of its vault, signed by its vault authority.
     const tail = buying
-        ? await hookAccounts(view.vaults[output]!, traderOutput, vaultAuthority)
+        ? await hookAccounts(view.vaults[output]!, traderOutput, (await findAuthorityPda({ marketState: view.marketState }))[0])
         : await hookAccounts(traderInput, view.vaults[input]!, trader.address);
     const instruction = await pipeline.swap(
         {
@@ -483,6 +486,22 @@ async function main() {
     info('the tax AMM is registered with the router');
     const quote = await account(quoteMint);
     if (quote?.owner !== TOKEN_PROGRAM_ADDRESS) fail(`the quote mint ${quoteMint} is not an SPL Token mint on this cluster`);
+    // The buy is sized in whole units of the quote mint; a mint's decimals are its byte 44.
+    const buy = TRADES.buyUnits * 10n ** BigInt(quote.data[44]!);
+    const buySpend = pipeline.maxTotalSpend(buy, 0) ?? fail('the buy overflows');
+    const [quoteHolder] = await findAssociatedTokenPda({ owner: launcher.address, mint: quoteMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+    // Everything the launch spends is checked before it sends anything: the binding and the
+    // seed cannot be undone, so a launch that ran out halfway would leave a market untraded.
+    let solNeeded = MAX_CREATOR_LAMPORTS + RENT_AND_FEES;
+    if (quoteMint === WRAPPED_SOL) {
+        solNeeded += buySpend;
+    } else {
+        const held = (await account(quoteHolder)) ? await tokenBalance(quoteHolder) : 0n;
+        if (held < buySpend) fail(`the launcher's ${quoteMint} account ${quoteHolder} holds ${held}, but the buy needs ${buySpend} with Pipeline's fee`);
+    }
+    const { value: solHeld } = await rpc.getBalance(launcher.address, { commitment: 'confirmed' }).send();
+    if (solHeld < solNeeded) fail(`the launcher holds ${Number(solHeld) / 1e9} SOL, but the launch needs ${Number(solNeeded) / 1e9}`);
+    info(`the launcher holds ${Number(solHeld) / 1e9} SOL of the ${Number(solNeeded) / 1e9} the launch needs`);
     const metadata = pipeline.parseStrategyMetadata(
         JSON.parse(readFileSync(new URL('../../tax-amm/metadata.json', import.meta.url), 'utf8')),
     );
@@ -699,8 +718,8 @@ async function main() {
 
     // Every hooked transfer of the token from here on carries the hook accounts, resolved
     // from the validation account just read.
-    const hookAccounts = (source: Address, destination: Address, authority: Address) =>
-        resolveHookAccounts(hookProgram, { source, mint, destination, authority }, validationAccount.data);
+    const hookAccounts: HookAccountsFor = (source, destination, owner) =>
+        resolveExtraAccountMetasForExecute({ rpc, transferHookProgramAddress: hookProgram, source, mint, destination, owner, amount: 0n });
     const view: pipeline.MarketView = {
         market,
         strategyProgram: taxAmm,
@@ -731,18 +750,17 @@ async function main() {
     record.push(['seeded', `${HOME_MARKET.seed[CONTAINED_INDEX]} of the token into its vault, through the hook`]);
 
     step('7. Buying the token through the router with the SDK');
-    const [quoteHolder] = await findAssociatedTokenPda({ owner: launcher.address, mint: quoteMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
     if (quoteMint === WRAPPED_SOL) {
         // Wrap the buy and Pipeline's fee on it.
-        const wrap = pipeline.maxTotalSpend(TRADES.buy, 0) ?? fail('the buy overflows');
+        const wrap = buySpend;
         await send(`wrap ${Number(wrap) / 1e9} SOL`, launcher, [
             await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: launcher.address, mint: WRAPPED_SOL }),
             getTransferSolInstruction({ source: launcher, destination: quoteHolder, amount: wrap }),
             getSyncNativeInstruction({ account: quoteHolder }),
         ]);
     }
-    const bought = await trade(launcher, view, QUOTE_INDEX, CONTAINED_INDEX, TRADES.buy, holder, quoteHolder, hookAccounts);
-    record.push(['buy', `${TRADES.buy} of the quote mint bought ${bought.received} of the token, its quote; Execute ${bought.hookUnits.join(' CU')} CU`]);
+    const bought = await trade(launcher, view, QUOTE_INDEX, CONTAINED_INDEX, buy, holder, quoteHolder, hookAccounts);
+    record.push(['buy', `${buy} of the quote mint bought ${bought.received} of the token, its quote; Execute ${bought.hookUnits.join(' and ')} CU`]);
 
     step('8. Selling half of it back the same way');
     const feeBefore = await tokenBalance(feeAccounts[CONTAINED_INDEX]!);

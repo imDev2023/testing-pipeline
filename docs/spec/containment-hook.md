@@ -91,6 +91,7 @@ Bypass needs no rule: the tax AMM refuses it, so every trade in the home market 
   Integrators must pass a zero integrator fee on sells of a contained token (at zero the router makes no transfer); buys pay their integrator fee in the quote mint as usual.
 
 A buy may deliver the token to anyone's account, since the router does not check who owns the output account; that account can then only sell into the home market, so it is a gift, not an escape.
+This includes another market's vault: a buy can deliver into it, since the hook cannot tell a vault from a wallet, but that market can neither pay the token out nor take it in from anyone, so it never trades it, and the token's liquidity stays in its home market (shown in `tests/second_market.rs` by [Containment hook: a contained token moves only through its home market](https://github.com/imDev2023/testing-pipeline/issues/69)).
 
 ## Unlock (`unlock`)
 

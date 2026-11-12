@@ -3202,7 +3202,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-29: The launch script's seed and trades
 
 - Question: How does the launch script seed and trade a contained token after binding it?
-- Answer: It seeds 800,000,000 of the 1,000,000,000 tokens single-sided on the market's virtual quote reserve, buys with 1 unit of the quote mint and sells half of what it bought through the router with Pipeline's SDK, resolving the hook accounts from the validation account with its own resolver, and shows the hook refusing a wallet-to-wallet transfer and a sell with a 50 basis point integrator fee in simulation, so no failed transaction lands.
+- Answer: It seeds 800,000,000 of the 1,000,000,000 tokens single-sided on the market's virtual quote reserve, buys with one whole unit of the quote mint and sells half of what it bought through the router with Pipeline's SDK, resolving the hook accounts from the validation account with Token-2022's own client, checks before sending anything that the launcher can pay for the whole launch, and shows the hook refusing a wallet-to-wallet transfer and a sell with a 50 basis point integrator fee in simulation, so no failed transaction lands.
 - Alternatives: Seeding both sides, which would make the launcher wrap quote liquidity the virtual reserve already prices; sending the refused transactions, which would leave failed transactions on devnet.
 - Specified in: [the ticket, Containment hook: a contained token moves only through its home market](https://github.com/imDev2023/testing-pipeline/issues/69)
 - Changes by: spec only
