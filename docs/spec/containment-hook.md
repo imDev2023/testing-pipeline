@@ -40,7 +40,8 @@ The config is never closed, so it stays as the record of the token's containment
 - Signed by the mint's mint authority, which is how the hook knows the caller is the launcher; nobody else can bind a mint, so binding cannot be front-run.
 - Creates the config and the validation account; it fails if the config already exists, which makes binding write-once.
 - No instruction changes the config afterwards: not the launcher, not us.
-- Arguments: the unlock goal (greater than zero, in quote-mint base units) and the unlock deadline (a Unix timestamp later than now and at most 90 days after the binding).
+- Arguments: the unlock goal (greater than zero, in quote-mint base units, a `u64`) and the unlock deadline (a Unix timestamp strictly later than the binding's clock and at most the longest deadline after it, `MAX_UNLOCK_DEADLINE_SECS` in "Where its policy values live"; a deadline exactly that far away is allowed).
+- Paid for by a payer that may be the mint authority or any other signer, so a launcher whose mint authority holds no SOL can still bind.
 
 ### Checks on the mint
 
@@ -124,7 +125,7 @@ Nothing breaks while an unlock waits, since sells into the home market keep work
 
 ## Unlock deadline
 
-- Required at binding, at most 90 days after it; once it passes, the unlock is due even if the goal was never met.
+- Required at binding, at most the longest deadline after it (`MAX_UNLOCK_DEADLINE_SECS` in "Where its policy values live"); once it passes, the unlock is due even if the goal was never met.
 - A contained token is a honeypot by construction if its home market stops working, for example after a bad tax AMM upgrade or a router upgrade that changes the fee account's derivation; the deadline caps how long holders can be stuck.
 
 ## Hook accounts callers must pass
@@ -139,6 +140,8 @@ Nothing breaks while an unlock waits, since sells into the home market keep work
   - Create the mint with only allowed extensions and no freeze authority, with the hook and its authority set as in "Lifecycle", and mint the supply.
   - Then the tax AMM's market creation (`docs/spec/tax-amm.md`, "Creating a market") with `bind` inserted before the seed: the router's `create_market` with the tax side on the quote mint, `init_fee_account` for each mint, `bind` with the goal and deadline given as required flags (no defaults), then the tax AMM's `seed`.
 - `bind` belongs in the same transaction as the market's creation, but may go in a later one with the seed if the transaction is too large: nothing can move the token before `bind`, the market is closed to swaps until its seed, and only the seeder can seed.
+  Measured by [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) on 2026-11-12: it does not fit (see "Measured"), so the script sends `bind` in the next transaction, before the seed, and measures it again on every run.
+  It does not create an address lookup table to make it fit, since the table would cost a transaction of its own and a slot's wait before it can be used.
 - Revoking the mint authority is an optional last step; it must come after `bind`, which needs the mint authority's signature, or the token can never be bound and never transfer.
 - Graduating a contained token from a launchpad through `pipeline_seed_liquidity` is not supported in v1, because the seed would move tokens before the `Market` account that `bind` reads exists.
 - Aviary v1 does not launch new tokens (`docs/spec/pipescope.md`), so the script is the only way to launch a contained token.
@@ -206,7 +209,13 @@ Decided with the owner on 2026-11-10 in [Cut the containment hook and tax AMM bu
 
 As for the tax AMM (`docs/spec/tax-amm.md`, "Where its policy values live"), under the owner's standing rule of 2026-11-10.
 
-- The longest unlock deadline (90 days) and the tax AMM's program id are build-time constants in one config module of the program, and no other file repeats them.
+- The longest unlock deadline and the tax AMM's program id are build-time constants in one config module of the program, `programs/containment-hook/src/config.rs`, and no other file repeats them; the program id is taken from the tax AMM's own crate, so its address is written once in the whole workspace.
+
+  | Constant | Value | Meaning |
+  | --- | --- | --- |
+  | `MAX_UNLOCK_DEADLINE_SECS` | 7,776,000 (90 days) | The latest unlock deadline `bind` accepts, in seconds after the binding |
+  | `TAX_AMM_PROGRAM_ID` | the tax AMM's `declare_id!` | The only strategy a home market may run on |
+
 - The mint extension allowlist is the tax AMM's own: `bind` calls the shared mint-rules crate (`docs/spec/tax-amm.md`, "Where its policy values live") and adds the hook's stricter rule that the freeze authority is unset.
 - These are fixed on-chain because holders rely on them, so they can change until the hook is frozen and not after.
 - The unlock goal and the unlock deadline are `bind`'s arguments, chosen per token by its launcher, with no default anywhere, the launch script included.
@@ -273,13 +282,21 @@ Tickets 1 to 4 are verified by LiteSVM tests through the real router copied from
 
 ### Done means
 
-- LiteSVM tests through the real router with a tax AMM home market cover: buys, sells, the Pipeline fee and `sweep_fees` with the hook tail; refusal of wallet-to-wallet transfers, of a second market's funding, of a sell with a non-zero integrator fee and of every transfer missing a hook account or calling `Execute` directly; `bind`'s refusal of each refused extension, of a freeze authority, of a wrong signer, of a market on another strategy, of a tax side on the contained token, of a deadline beyond 90 days and of a second `bind`; `unlock` by the goal, by the deadline, its refusal before either, and a second `unlock`; and transfers skipping the hook afterwards.
+- LiteSVM tests through the real router with a tax AMM home market cover: buys, sells, the Pipeline fee and `sweep_fees` with the hook tail; refusal of wallet-to-wallet transfers, of a second market's funding, of a sell with a non-zero integrator fee and of every transfer missing a hook account or calling `Execute` directly; `bind`'s refusal of each refused extension, of a freeze authority, of a wrong signer, of a market on another strategy, of a tax side on the contained token, of a deadline beyond `MAX_UNLOCK_DEADLINE_SECS` and of a second `bind`; `unlock` by the goal, by the deadline, its refusal before either, and a second `unlock`; and transfers skipping the hook afterwards.
 - The invariants above under the fuzzing layer, and the compute ceilings and a call-depth test on buys under the limits layer.
 - On devnet: the hook deployed; a contained token launched by the script, bought and sold through the router with the SDK, a wallet-to-wallet transfer refused, then unlocked by a short deadline, with the mint showing both hook fields unset.
   A second contained token is unlocked by reaching a small goal, so the unlock's read of the deployed tax AMM's counter is shown on devnet too (added when the build tickets were cut).
 - Whatever else `docs/spec/README.md` requires of our on-chain programs.
 
+## Measured
+
+By [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) on 2026-11-12, against devnet's router bytes:
+
+- `bind` costs 22,366 compute units in LiteSVM (contained mint first in the market; 22,365 when it is second), under its 60,000 ceiling.
+- The market's creation transaction (`create_market` and `init_fee_account` for each mint, as a version 0 transaction) is 1,143 bytes; with `bind` it is 1,307 bytes, over the 1,232 a transaction may hold, so `bind` goes in the next transaction.
+  With an address lookup table holding every account that does not sign, the same transaction would be 690 bytes.
+  The launch script measures both on every run, in step 4.
+
 ## Not measured yet
 
 - The compute cost of the hook on each hooked transfer: into the vault and into the fee account on a sell, out of the vault on a buy; measured in the build against the ceilings above.
-- Whether the creation transaction with `bind` fits in one transaction with an address lookup table; if not, `bind` and the seed go in a second one, as above.

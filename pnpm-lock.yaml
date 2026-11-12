@@ -8,6 +8,37 @@ importers:
 
   .: {}
 
+  programs/containment-hook/scripts:
+    dependencies:
+      '@pipeline-placeholder/sdk':
+        specifier: link:../../../fixtures/pipeline/sdk/ts
+        version: link:../../../fixtures/pipeline/sdk/ts
+      '@solana-program/system':
+        specifier: 0.16.0
+        version: 0.16.0(@solana/kit@8.6.0(typescript@7.0.2))
+      '@solana-program/token':
+        specifier: 0.18.0
+        version: 0.18.0(@solana/kit@8.6.0(typescript@7.0.2))
+      '@solana/kit':
+        specifier: 8.6.0
+        version: 8.6.0(typescript@7.0.2)
+    devDependencies:
+      '@codama/nodes-from-anchor':
+        specifier: 1.5.6
+        version: 1.5.6(typescript@7.0.2)
+      '@codama/renderers-js':
+        specifier: 2.8.0
+        version: 2.8.0(typescript@7.0.2)
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      codama:
+        specifier: 1.11.0
+        version: 1.11.0
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   programs/tax-amm/scripts:
     dependencies:
       '@pipeline-placeholder/sdk':

@@ -103,6 +103,8 @@ jobs:
         run: scripts/test-fetch-router.sh
       - name: Fetch devnet's router, checked against its pinned hash
         run: source scripts/toolchain-env.sh && scripts/fetch-router.sh
+      - name: Build Pipeline's test programs, for hostile tests (a second strategy, test hooks)
+        run: source scripts/toolchain-env.sh && scripts/fetch-pipeline.sh programs
       - name: Formatting
         run: cd programs && cargo fmt --all -- --check
       - name: Build each program by its own manifest

@@ -1,0 +1,57 @@
+//! The containment hook: one Token-2022 transfer hook program, deployed once, that keeps
+//! every contained token in its one home market until it unlocks
+//! (docs/spec/containment-hook.md).
+//!
+//! | Instruction | Called by                          | Does                                         |
+//! |-------------|------------------------------------|----------------------------------------------|
+//! | `bind`      | the launcher, as mint authority    | binds a mint to its home market, once        |
+//! | `execute`   | Token-2022, on every transfer      | refuses the transfer                         |
+//!
+//! `execute` refuses every transfer, bound or not, until the allow rule arrives with
+//! [Containment hook: a contained token moves only through its home
+//! market](https://github.com/imDev2023/testing-pipeline/issues/69); `unlock` arrives with
+//! [Containment hook: unlock by the goal or the
+//! deadline](https://github.com/imDev2023/testing-pipeline/issues/70). No instruction
+//! changes a config once `bind` has written it.
+//!
+//! Where things live: the build-time policy values in [`config`], the unlock terms' rules
+//! in [`terms`], the accounts in [`state`], what is read from a mint in [`mint`], from the
+//! router in [`router`] and from the tax AMM in [`tax_market`], and each instruction in its
+//! own module of [`instructions`]. The mint extension allowlist is the shared `mint-rules`
+//! crate.
+
+use anchor_lang::prelude::*;
+
+pub mod config;
+pub mod errors;
+pub mod instructions;
+pub mod mint;
+pub mod router;
+pub mod state;
+pub mod tax_market;
+pub mod terms;
+
+pub use errors::HookError;
+pub use instructions::*;
+pub use state::Config;
+
+// The program's address; its key is `~/.config/testing-pipeline/devnet/containment-hook.json`.
+declare_id!("aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv");
+
+#[program]
+pub mod containment_hook {
+    use super::*;
+
+    /// Binds a Token-2022 mint to its home market, once and for good: the unlock goal, in
+    /// quote-mint base units, and the unlock deadline, a Unix time.
+    pub fn bind(ctx: Context<Bind>, unlock_goal: u64, unlock_deadline: i64) -> Result<()> {
+        instructions::process_bind(ctx, unlock_goal, unlock_deadline)
+    }
+
+    /// The transfer hook interface's `Execute`, which Token-2022 calls on every transfer of
+    /// a mint whose hook is this program.
+    #[instruction(discriminator = &state::EXECUTE_DISCRIMINATOR)]
+    pub fn execute(ctx: Context<Execute>, amount: u64) -> Result<()> {
+        instructions::process_execute(ctx, amount)
+    }
+}
