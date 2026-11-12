@@ -27,6 +27,7 @@ anchor-spl = "=1.2.2"
 pipeline-strategy-interface = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d" }
 pipeline-client = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d" }
 pipeline-check = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d", default-features = false }
+pipeline-events = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d" }
 solana-security-txt = "=1.1.3"
 mint-rules = { path = "mint-rules" }
 # The buy wall AMM's zero-copy market state (Anchor's `zero_copy` derives through it).

@@ -46,6 +46,8 @@ pub mod layout {
 pub enum MarketStatus {
     /// Created and not yet seeded: every quote and swap is refused.
     Created,
+    /// Seeded: open for swaps through the router, for good.
+    Open,
 }
 
 /// A tax market: the market state account the router records and passes to every call.

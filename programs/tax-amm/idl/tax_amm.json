@@ -233,7 +233,8 @@
     {
       "name": "pipeline_resolve_accounts",
       "docs": [
-        "Lists the strategy accounts a swap needs, after the router's ten fixed ones."
+        "Lists the strategy accounts a swap needs, after the router's ten fixed ones: the",
+        "output vault and the vault authority."
       ],
       "discriminator": [
         12,
@@ -291,7 +292,8 @@
     {
       "name": "pipeline_swap",
       "docs": [
-        "Settles a trade the router sends."
+        "Settles a trade the router sends. Remaining accounts: the output vault and the",
+        "vault authority, then the output mint's transfer-hook accounts."
       ],
       "discriminator": [
         161,
@@ -353,6 +355,77 @@
           }
         }
       ]
+    },
+    {
+      "name": "seed",
+      "docs": [
+        "Custom action: the seeder funds the market once, before any swap, and opens it.",
+        "Remaining accounts are transfer-hook accounts, for either mint."
+      ],
+      "discriminator": [
+        255,
+        178,
+        140,
+        239,
+        113,
+        22,
+        214,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "seeder",
+          "signer": true,
+          "relations": [
+            "market_state"
+          ]
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "seeder_token_0",
+          "docs": [
+            "seeder's authority over it."
+          ],
+          "writable": true
+        },
+        {
+          "name": "seeder_token_1",
+          "writable": true
+        },
+        {
+          "name": "vault_0",
+          "writable": true
+        },
+        {
+          "name": "vault_1",
+          "writable": true
+        },
+        {
+          "name": "mint_0"
+        },
+        {
+          "name": "mint_1"
+        },
+        {
+          "name": "token_program_0"
+        },
+        {
+          "name": "token_program_1"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_0",
+          "type": "u64"
+        },
+        {
+          "name": "amount_1",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -382,6 +455,19 @@
         84,
         6,
         58
+      ]
+    },
+    {
+      "name": "Seeded",
+      "discriminator": [
+        95,
+        55,
+        75,
+        113,
+        178,
+        157,
+        251,
+        224
       ]
     }
   ],
@@ -495,6 +581,31 @@
       "code": 6021,
       "name": "Overflow",
       "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6022,
+      "name": "NotSeeder",
+      "msg": "Only the market's seeder can seed it"
+    },
+    {
+      "code": 6023,
+      "name": "AlreadySeeded",
+      "msg": "The market has already been seeded"
+    },
+    {
+      "code": 6024,
+      "name": "ZeroSeed",
+      "msg": "A side without a virtual reserve needs a seed above 0"
+    },
+    {
+      "code": 6025,
+      "name": "ZeroOutput",
+      "msg": "The trade's output would be 0"
+    },
+    {
+      "code": 6026,
+      "name": "InsufficientLiquidity",
+      "msg": "The trade would pay out more than the market's real reserve"
     }
   ],
   "types": [
@@ -664,6 +775,9 @@
         "variants": [
           {
             "name": "Created"
+          },
+          {
+            "name": "Open"
           }
         ]
       }
@@ -687,6 +801,35 @@
           {
             "name": "round",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Seeded",
+      "docs": [
+        "The seeder funded a market, which opened. `amounts` is what arrived in each vault, in",
+        "mint order, which the market recorded as its real reserves."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "seeder",
+            "type": "pubkey"
+          },
+          {
+            "name": "amounts",
+            "type": {
+              "array": [
+                "u64",
+                2
+              ]
+            }
           }
         ]
       }
@@ -988,6 +1131,26 @@
           }
         ]
       }
+    }
+  ],
+  "constants": [
+    {
+      "name": "MAX_TAX_BPS",
+      "docs": [
+        "The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so no",
+        "tax market can be a honeypot through its tax. Published in the IDL (`#[constant]`)."
+      ],
+      "type": "u16",
+      "value": "1000"
+    },
+    {
+      "name": "SUITE_SHARE_BPS",
+      "docs": [
+        "The suite share, in basis points of every tax, taken before the creator's split: 10%.",
+        "Published in the IDL (`#[constant]`), where the demo script reads it."
+      ],
+      "type": "u16",
+      "value": "1000"
     }
   ]
 }

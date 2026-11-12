@@ -14,6 +14,8 @@
 
 #![allow(dead_code)]
 
+pub mod model;
+
 use std::path::PathBuf;
 
 use anchor_lang::{AccountDeserialize, AnchorDeserialize, Discriminator};
@@ -577,60 +579,291 @@ impl Env {
     /// A new wallet holding `amount` of each of the market's mints, plus some SOL.
     pub fn funded_wallet(&mut self, market: &Market, amount: u64) -> Keypair {
         let wallet = Keypair::new();
-        self.svm.airdrop(&wallet.pubkey(), SOL).unwrap();
-        for (mint, token_program) in market.mints.iter().zip(&market.token_programs) {
-            write_token_account(&mut self.svm, mint, token_program, &wallet.pubkey(), amount)
-                .unwrap();
-        }
+        self.fund(&wallet.pubkey(), market, [amount, amount]);
         wallet
     }
 
+    /// Gives `wallet` some SOL and an associated token account for each of the market's
+    /// mints holding `amounts` (replacing any it had).
+    pub fn fund(&mut self, wallet: &Pubkey, market: &Market, amounts: [u64; 2]) {
+        self.svm.airdrop(wallet, SOL).unwrap();
+        for ((mint, token_program), amount) in
+            market.mints.iter().zip(&market.token_programs).zip(amounts)
+        {
+            write_token_account(&mut self.svm, mint, token_program, wallet, amount).unwrap();
+        }
+    }
+
+    /// Sends the tax AMM's `seed` action, signed by `seeder` from their associated token
+    /// accounts, with `hook_accounts` after its own.
+    pub fn seed_with(
+        &mut self,
+        market: &Market,
+        seeder: &Keypair,
+        amounts: [u64; 2],
+        hook_accounts: Vec<AccountMeta>,
+    ) -> Result<TransactionMetadata, String> {
+        let instruction = seed_instruction(market, &seeder.pubkey(), amounts, hook_accounts);
+        self.send_meta(&[instruction], &[seeder])
+    }
+
+    /// [`Env::seed_with`] with the transfer-hook accounts both transfers need.
+    pub fn seed(
+        &mut self,
+        market: &Market,
+        seeder: &Keypair,
+        amounts: [u64; 2],
+    ) -> Result<TransactionMetadata, String> {
+        let owner = seeder.pubkey();
+        let hooks: Vec<AccountMeta> = (0..2)
+            .flat_map(|i| {
+                let source =
+                    pda::associated_token(&owner, &market.mints[i], &market.token_programs[i]);
+                self.hook_accounts(&market.mints[i], source, market.vaults[i], owner)
+            })
+            .collect();
+        self.seed_with(market, seeder, amounts, hooks)
+    }
+
+    /// A market on `mints` with `params` (whose seeder is replaced by a fresh wallet),
+    /// created and seeded with `amounts` by that wallet.
+    pub fn seeded_market(
+        &mut self,
+        mints: [(Pubkey, Pubkey); 2],
+        params: &InitParams,
+        amounts: [u64; 2],
+    ) -> Market {
+        let seeder = Keypair::new();
+        let params = InitParams {
+            seeder: ak(&seeder.pubkey()),
+            ..*params
+        };
+        let market = self.create_tax_market(mints, &params).unwrap();
+        self.fund(&seeder.pubkey(), &market, amounts);
+        self.seed(&market, &seeder, amounts).unwrap();
+        market
+    }
+
     /// An exact-in swap through the router of `amount_in` of mint `input` for mint
-    /// `output`, by `trader` from their associated token accounts, with the strategy
-    /// accounts given rather than resolved (an unopened market resolves, but never trades).
+    /// `output`, by `trader` from their associated token accounts, as a terminal sends it:
+    /// the strategy accounts resolved, then the transfer-hook accounts of the output mint,
+    /// and the input mint's hook accounts for the router. Returns the router's result.
     pub fn swap(
+        &mut self,
+        market: &Market,
+        trader: &Keypair,
+        direction: (usize, usize),
+        amount_in: u64,
+    ) -> Result<client::SwapResult, String> {
+        let meta = self.swap_with(
+            market,
+            trader,
+            direction,
+            amount_in,
+            &SwapOptions::default(),
+        )?;
+        borsh::from_slice(&meta.return_data.data).map_err(|e| e.to_string())
+    }
+
+    /// [`Env::swap`] with `options`, returning the transaction's metadata.
+    pub fn swap_with(
         &mut self,
         market: &Market,
         trader: &Keypair,
         (input, output): (usize, usize),
         amount_in: u64,
-    ) -> Result<client::SwapResult, String> {
-        let owner = trader.pubkey();
-        let trade = exact_in(input, output, amount_in);
+        options: &SwapOptions,
+    ) -> Result<TransactionMetadata, String> {
+        let instruction = self.swap_instruction(
+            market,
+            &trader.pubkey(),
+            (input, output),
+            amount_in,
+            options,
+        )?;
+        self.send_meta(&[instruction], &[trader])
+    }
+
+    /// The router's `swap` for [`Env::swap_with`].
+    pub fn swap_instruction(
+        &self,
+        market: &Market,
+        owner: &Pubkey,
+        (input, output): (usize, usize),
+        amount_in: u64,
+        options: &SwapOptions,
+    ) -> Result<Instruction, String> {
+        let mode = options.mode.unwrap_or(TradeMode::ExactIn);
+        let mut trade = exact_in(input, output, amount_in);
+        trade.mode = mode;
+        let trader_input =
+            pda::associated_token(owner, &market.mints[input], &market.token_programs[input]);
+        let trader_output =
+            pda::associated_token(owner, &market.mints[output], &market.token_programs[output]);
+        let mut strategy_accounts = match &options.strategy_accounts {
+            Some(accounts) => accounts.clone(),
+            None => self.resolve_accounts(market, &exact_in(input, output, amount_in))?,
+        };
+        strategy_accounts.extend(self.hook_accounts(
+            &market.mints[output],
+            market.vaults[output],
+            trader_output,
+            market.authority,
+        ));
+        let input_hook_accounts = self.hook_accounts(
+            &market.mints[input],
+            trader_input,
+            market.vaults[input],
+            *owner,
+        );
         let accounts = client::SwapAccounts {
-            trader: owner,
+            trader: *owner,
             strategy_program: strategy_id(),
             market_state: market.market_state,
-            trader_input: pda::associated_token(
-                &owner,
-                &market.mints[input],
-                &market.token_programs[input],
-            ),
-            trader_output: pda::associated_token(
-                &owner,
-                &market.mints[output],
-                &market.token_programs[output],
-            ),
+            trader_input,
+            trader_output,
             input_vault: market.vaults[input],
             input_mint: market.mints[input],
             output_mint: market.mints[output],
             input_token_program: market.token_programs[input],
             output_token_program: market.token_programs[output],
             integrator_fee_account: None,
-            strategy_accounts: self.resolve_accounts(market, &trade)?,
-            input_hook_accounts: vec![],
+            strategy_accounts,
+            input_hook_accounts: input_hook_accounts.clone(),
+        };
+        let (amount_in, amount_out) = match mode {
+            TradeMode::ExactIn => (amount_in, 0),
+            TradeMode::ExactOut => (u64::MAX / 2, amount_in),
         };
         let args = client::SwapArgs {
-            mode: TradeMode::ExactIn,
+            mode,
             amount_in,
-            amount_out: 0,
-            min_amount_out: 0,
+            amount_out,
+            min_amount_out: options.min_amount_out,
             integrator_fee_bps: 0,
-            input_hook_accounts: 0,
+            input_hook_accounts: input_hook_accounts.len() as u8,
             extra: vec![],
         };
-        let data = self.send(&[client::swap(&accounts, &args)], &[trader])?;
-        borsh::from_slice(&data).map_err(|e| e.to_string())
+        Ok(client::swap(&accounts, &args))
+    }
+
+    /// The transfer-hook accounts a transfer of `mint` needs, or none when it has no hook.
+    pub fn hook_accounts(
+        &self,
+        mint: &Pubkey,
+        source: Pubkey,
+        destination: Pubkey,
+        authority: Pubkey,
+    ) -> Vec<AccountMeta> {
+        let Some(hook_program) = self.hook_program(mint) else {
+            return vec![];
+        };
+        let transfer = pipeline_check::hooks::Transfer {
+            source,
+            mint: *mint,
+            destination,
+            authority,
+            amount: 0,
+        };
+        pipeline_check::hooks::resolve(&hook_program, &transfer, |key| {
+            self.svm.get_account(key).map(|account| account.data)
+        })
+        .expect("the hook's accounts")
+    }
+
+    /// The transfer-hook program of a Token-2022 mint, if it has one.
+    pub fn hook_program(&self, mint: &Pubkey) -> Option<Pubkey> {
+        use spl_token_2022_interface::extension::{transfer_hook, StateWithExtensions};
+        let account = self.svm.get_account(mint)?;
+        if account.owner != TOKEN_2022 {
+            return None;
+        }
+        let state =
+            StateWithExtensions::<spl_token_2022_interface::state::Mint>::unpack(&account.data)
+                .ok()?;
+        transfer_hook::get_program_id(&state).map(|id| Pubkey::new_from_array(id.to_bytes()))
+    }
+
+    /// Loads Pipeline's `test-hook` (built by `scripts/fetch-pipeline.sh`), a transfer hook
+    /// that approves every transfer once a mint's list is initialized with nobody on it.
+    pub fn add_test_hook(&mut self) -> Pubkey {
+        let program = test_hook_id();
+        if self.svm.get_account(&program).is_none() {
+            let path =
+                crate_dir().join("../../fixtures/pipeline/programs/target/deploy/test_hook.so");
+            let bytes = read_program(path, "Run `scripts/fetch-pipeline.sh` first.");
+            self.svm.add_program(program, &bytes).unwrap();
+        }
+        program
+    }
+
+    /// A Token-2022 mint whose transfer hook is Pipeline's `test-hook`, approving every
+    /// transfer.
+    pub fn create_hooked_mint(&mut self) -> Pubkey {
+        let hook = self.add_test_hook();
+        let mint = self.create_mint_with(
+            &TOKEN_2022,
+            MintOptions {
+                transfer_hook: Some(hook),
+                ..MintOptions::default()
+            },
+        );
+        let validation = pipeline_check::hooks::validation_address(&hook, &mint);
+        let whitelist = Pubkey::find_program_address(&[b"whitelist", mint.as_ref()], &hook).0;
+        let initialize = Instruction::new_with_bytes(
+            hook,
+            b"tsthkini",
+            vec![
+                AccountMeta::new(self.admin.pubkey(), true),
+                AccountMeta::new(validation, false),
+                AccountMeta::new(whitelist, false),
+                AccountMeta::new_readonly(mint, false),
+                AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
+            ],
+        );
+        self.send(&[initialize], &[]).unwrap();
+        mint
+    }
+
+    /// The router's swap events in a transaction.
+    pub fn swap_events(meta: &TransactionMetadata) -> Vec<pipeline_events::SwapEvent> {
+        meta.inner_instructions
+            .iter()
+            .flatten()
+            .filter_map(
+                |inner| match pipeline_events::decode(&inner.instruction.data) {
+                    Some(pipeline_events::PipelineEvent::Swap(event)) => Some(event),
+                    _ => None,
+                },
+            )
+            .collect()
+    }
+
+    /// Sends `amount` of the market's mint `i` from `owner`'s associated token account to
+    /// `to` with a plain token transfer, as anyone can send tokens to a vault.
+    pub fn transfer(
+        &mut self,
+        market: &Market,
+        owner: &Keypair,
+        i: usize,
+        to: Pubkey,
+        amount: u64,
+    ) -> Result<TransactionMetadata, String> {
+        let from =
+            pda::associated_token(&owner.pubkey(), &market.mints[i], &market.token_programs[i]);
+        let decimals = self.svm.get_account(&market.mints[i]).unwrap().data[44];
+        let mut data = vec![12u8];
+        data.extend_from_slice(&amount.to_le_bytes());
+        data.push(decimals);
+        let mut accounts = vec![
+            AccountMeta::new(from, false),
+            AccountMeta::new_readonly(market.mints[i], false),
+            AccountMeta::new(to, false),
+            AccountMeta::new_readonly(owner.pubkey(), true),
+        ];
+        accounts.extend(self.hook_accounts(&market.mints[i], from, to, owner.pubkey()));
+        let instruction = Instruction::new_with_bytes(market.token_programs[i], &data, accounts);
+        self.send_meta(&[instruction], &[owner])
     }
 
     /// A token account's balance.
@@ -644,6 +877,21 @@ impl Default for Env {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// How [`Env::swap_with`] departs from a plain exact-in swap with no minimum.
+#[derive(Clone, Debug, Default)]
+pub struct SwapOptions {
+    pub min_amount_out: u64,
+    /// Exact-out sends `amount` as the output wanted.
+    pub mode: Option<TradeMode>,
+    /// The strategy accounts to pass instead of resolving them.
+    pub strategy_accounts: Option<Vec<AccountMeta>>,
+}
+
+/// Where tests load Pipeline's `test-hook`.
+pub fn test_hook_id() -> Pubkey {
+    pipeline_client::pubkey!("TestHook11111111111111111111111111111111111")
 }
 
 /// What [`Env::create_mint_with`] sets up besides a plain mint.
@@ -678,6 +926,39 @@ pub fn exact_in(input: usize, output: usize, amount: u64) -> TradeRequest {
         trader: None,
         extra: vec![],
     }
+}
+
+/// The tax AMM's `seed` action, in the account order `metadata.json` lists: the seeder,
+/// the market state, the seeder's associated token account for each mint, the vaults, the
+/// mints and their token programs, then `hook_accounts`.
+pub fn seed_instruction(
+    market: &Market,
+    seeder: &Pubkey,
+    amounts: [u64; 2],
+    hook_accounts: Vec<AccountMeta>,
+) -> Instruction {
+    use anchor_lang::InstructionData;
+    let data = tax_amm::instruction::Seed {
+        amount_0: amounts[0],
+        amount_1: amounts[1],
+    }
+    .data();
+    let source =
+        |i: usize| pda::associated_token(seeder, &market.mints[i], &market.token_programs[i]);
+    let mut accounts = vec![
+        AccountMeta::new_readonly(*seeder, true),
+        AccountMeta::new(market.market_state, false),
+        AccountMeta::new(source(0), false),
+        AccountMeta::new(source(1), false),
+        AccountMeta::new(market.vaults[0], false),
+        AccountMeta::new(market.vaults[1], false),
+        AccountMeta::new_readonly(market.mints[0], false),
+        AccountMeta::new_readonly(market.mints[1], false),
+        AccountMeta::new_readonly(market.token_programs[0], false),
+        AccountMeta::new_readonly(market.token_programs[1], false),
+    ];
+    accounts.extend(hook_accounts);
+    Instruction::new_with_bytes(strategy_id(), &data, accounts)
 }
 
 pub fn strategy_call<T: borsh::BorshSerialize>(
@@ -719,12 +1000,17 @@ pub fn strategy_compute(logs: &[String]) -> Vec<u64> {
 
 /// The `MarketCreated` events the strategy logged.
 pub fn market_created_events(logs: &[String]) -> Vec<MarketCreated> {
+    strategy_events(logs)
+}
+
+/// The strategy's events of type `E` in a transaction's logs.
+pub fn strategy_events<E: Discriminator + AnchorDeserialize>(logs: &[String]) -> Vec<E> {
     logs.iter()
         .filter_map(|line| line.strip_prefix("Program data: "))
         .filter_map(|data| base64::engine::general_purpose::STANDARD.decode(data).ok())
         .filter_map(|bytes| {
-            let body = bytes.strip_prefix(MarketCreated::DISCRIMINATOR)?;
-            MarketCreated::try_from_slice(body).ok()
+            let body = bytes.strip_prefix(E::DISCRIMINATOR)?;
+            E::try_from_slice(body).ok()
         })
         .collect()
 }

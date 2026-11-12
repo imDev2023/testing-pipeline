@@ -2547,6 +2547,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59)
 
+### TAX-35: The vault authority in a swap
+
+- Question: How does a swap reach the vault authority that signs the transfer out of a vault?
+- Answer: `pipeline_resolve_accounts` lists it, read-only, after the output vault, and `pipeline_swap` checks it against the PDA from the market state's stored bump before signing with it.
+- Alternatives: Vaults owned by the market state itself, which a fresh keypair's account can't sign for; the authority's address stored in the market state, which would need a field the fixed layout does not have.
+- Specified in: [`docs/spec/tax-amm.md`, Addresses](spec/tax-amm.md#addresses)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seed a market and trade it with buy and sell tax](https://github.com/imDev2023/testing-pipeline/issues/60)
+
+### TAX-36: How a refused seed or trade is reported
+
+- Question: How does the program say why it refused a seed or a trade?
+- Answer: With an error of its own for each rule: a seed from anyone but the seeder, a second seed, and a zero seed on a side without a virtual reserve; a trade whose output would be 0, and one that would pay out more than the real reserve; exact-out has its own error too, though the router refuses exact-out swaps itself before they reach the strategy.
+- Alternatives: One error for any refused trade.
+- Specified in: [`docs/spec/tax-amm.md`, Pricing and the tax](spec/tax-amm.md#pricing-and-the-tax)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seed a market and trade it with buy and sell tax](https://github.com/imDev2023/testing-pipeline/issues/60)
+
+### TAX-37: The tax cap and the suite share in the IDL
+
+- Question: How do Aviary and the demo script learn the tax cap and the suite share without restating them?
+- Answer: The program publishes `MAX_TAX_BPS` and `SUITE_SHARE_BPS` in its IDL with Anchor's `#[constant]`, so the TypeScript client generated from it carries both, and the config module stays their one place.
+- Alternatives: Each reader restating the values; reading them from a market, which does not hold them.
+- Specified in: [`docs/spec/tax-amm.md`, Where its policy values live](spec/tax-amm.md#where-its-policy-values-live)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seed a market and trade it with buy and sell tax](https://github.com/imDev2023/testing-pipeline/issues/60)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained

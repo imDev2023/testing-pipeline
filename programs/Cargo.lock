@@ -2302,6 +2302,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipeline-events"
+version = "0.1.0"
+source = "git+https://github.com/MetalLegBob/pipeline?rev=5ad130d#5ad130d69e9e55420946199dfa81e6c75a8d595b"
+dependencies = [
+ "borsh",
+ "solana-pubkey 4.3.0",
+]
+
+[[package]]
 name = "pipeline-quoter"
 version = "0.1.0"
 source = "git+https://github.com/MetalLegBob/pipeline?rev=5ad130d#5ad130d69e9e55420946199dfa81e6c75a8d595b"
@@ -4968,7 +4977,9 @@ dependencies = [
  "mint-rules",
  "pipeline-check",
  "pipeline-client",
+ "pipeline-events",
  "pipeline-strategy-interface",
+ "proptest",
  "serde_json",
  "solana-account",
  "solana-clock 3.2.1",
