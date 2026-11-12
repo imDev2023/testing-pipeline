@@ -55,56 +55,86 @@ impl InitParams {
         if self.virtual_side > 1 {
             return Err(StrategyError::BadVirtualSide);
         }
-        for (rate, min, max) in [
-            (self.buy_tax_bps, self.buy_tax_min_bps, self.buy_tax_max_bps),
-            (
-                self.sell_tax_bps,
-                self.sell_tax_min_bps,
-                self.sell_tax_max_bps,
-            ),
-        ] {
-            if max > MAX_TAX_BPS {
-                return Err(StrategyError::TaxAboveCap);
-            }
-            if min > max {
-                return Err(StrategyError::RangeInverted);
-            }
-            if rate < min || rate > max {
-                return Err(StrategyError::RateOutsideRange);
-            }
-        }
+        check_rates(
+            [self.buy_tax_bps, self.sell_tax_bps],
+            [
+                [self.buy_tax_min_bps, self.buy_tax_max_bps],
+                [self.sell_tax_min_bps, self.sell_tax_max_bps],
+            ],
+        )?;
         if self.seeder == Pubkey::default() {
             return Err(StrategyError::NoSeeder);
         }
-        let used = self
-            .recipients
-            .iter()
-            .take_while(|recipient| **recipient != Pubkey::default())
-            .count();
-        if used == 0 {
-            return Err(StrategyError::NoRecipient);
-        }
-        if self.recipients[used..]
-            .iter()
-            .any(|recipient| *recipient != Pubkey::default())
-        {
-            return Err(StrategyError::RecipientsOutOfOrder);
-        }
-        if self.shares[..used].contains(&0) {
-            return Err(StrategyError::ZeroShare);
-        }
-        if self.shares[used..].iter().any(|&share| share != 0) {
-            return Err(StrategyError::ShareWithoutRecipient);
-        }
-        let total: u32 =
-            self.shares.iter().map(|&share| share as u32).sum::<u32>() + self.burn_share_bps as u32;
-        // Every share is in basis points of the creator's part of the tax.
-        if total as u64 != pipeline_strategy_interface::BPS_DENOMINATOR {
-            return Err(StrategyError::SharesNotWhole);
-        }
-        if self.burn_share_bps > 0 && NATIVE_MINTS.contains(&mints[self.tax_side as usize]) {
-            return Err(StrategyError::BurnOnNativeSol);
-        }
-        Ok(())
+        check_split(
+            &self.recipients,
+            &self.shares,
+            self.burn_share_bps,
+            &mints[self.tax_side as usize],
+        )
     }
+}
+
+/// The rules on the buy and sell tax (`rates`, in that order), each inside its `[min, max]`
+/// range, every range inside `[0, MAX_TAX_BPS]`: checked at creation and by `set_taxes`,
+/// so no sequence of calls can take a rate past its range or the cap.
+pub fn check_rates(
+    rates: [u16; 2],
+    ranges: [[u16; 2]; 2],
+) -> core::result::Result<(), StrategyError> {
+    for (rate, [min, max]) in rates.into_iter().zip(ranges) {
+        if max > MAX_TAX_BPS {
+            return Err(StrategyError::TaxAboveCap);
+        }
+        if min > max {
+            return Err(StrategyError::RangeInverted);
+        }
+        if rate < min || rate > max {
+            return Err(StrategyError::RateOutsideRange);
+        }
+    }
+    Ok(())
+}
+
+/// The rules on the tax recipients, their shares and the burn share of a market whose tax
+/// is taken in `tax_mint`: checked at creation and by `set_recipients`, which follows the
+/// rules of creation exactly.
+pub fn check_split(
+    recipients: &[Pubkey; MAX_RECIPIENTS],
+    shares: &[u16; MAX_RECIPIENTS],
+    burn_share_bps: u16,
+    tax_mint: &Pubkey,
+) -> core::result::Result<(), StrategyError> {
+    let used = used_slots(recipients);
+    if used == 0 {
+        return Err(StrategyError::NoRecipient);
+    }
+    if recipients[used..]
+        .iter()
+        .any(|recipient| *recipient != Pubkey::default())
+    {
+        return Err(StrategyError::RecipientsOutOfOrder);
+    }
+    if shares[..used].contains(&0) {
+        return Err(StrategyError::ZeroShare);
+    }
+    if shares[used..].iter().any(|&share| share != 0) {
+        return Err(StrategyError::ShareWithoutRecipient);
+    }
+    let total: u32 = shares.iter().map(|&share| share as u32).sum::<u32>() + burn_share_bps as u32;
+    // Every share is in basis points of the creator's part of the tax.
+    if total as u64 != pipeline_strategy_interface::BPS_DENOMINATOR {
+        return Err(StrategyError::SharesNotWhole);
+    }
+    if burn_share_bps > 0 && NATIVE_MINTS.contains(tax_mint) {
+        return Err(StrategyError::BurnOnNativeSol);
+    }
+    Ok(())
+}
+
+/// How many recipient slots are used: the leading slots that name a wallet.
+pub fn used_slots(recipients: &[Pubkey; MAX_RECIPIENTS]) -> usize {
+    recipients
+        .iter()
+        .take_while(|recipient| **recipient != Pubkey::default())
+        .count()
 }

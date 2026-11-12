@@ -173,6 +173,14 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
   - `renounce_tax_authority`, after which the market's taxes and recipients never change again.
 - Changes take effect immediately.
 - Nobody else can change anything about a market, us included; the program has no admin.
+- Built by [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62) on 2026-11-12, with these rules besides:
+  - `set_taxes` and creation share one rate rule, and `set_recipients` and creation share one split rule (`programs/tax-amm/src/params.rs`), so a change can never pass a rule creation would refuse.
+  - Renouncing turns the market state's tax authority into the default key, as on a market created without one, and sets the renounced flag, so Aviary can tell the two apart and both refuse every action for good.
+  - A refused action says why: `AlreadyRenounced` on a market whose authority renounced, `NoTaxAuthority` on one created without an authority, and `NotTaxAuthority` for any other signer, checked in that order.
+  - `set_recipients` refuses to empty a recipient slot that is still owed tax (`OwedSlotLeftEmpty`), since nobody could then be paid what the slot holds; the slot can be handed to another wallet instead, or paid out first with `distribute`, in the same transaction if need be.
+    The burn slot needs no wallet, so the burn share may drop to 0 whatever the burn is owed.
+  - `set_recipients` takes the recipients and the shares as arrays of `MAX_RECIPIENTS`, which encode exactly as the metadata's flattened `recipient_0` to `recipient_3` and `share_0` to `share_3`, as the creation parameters do.
+  - Each action writes only the market state: no reserve, owed amount, counter, vault balance or value fixed at creation changes (`programs/tax-amm/tests/tax_authority.rs`).
 
 ### Where the tax goes
 
@@ -192,6 +200,8 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
   - The burn slot burns its owed amount from the vault.
   - Each slot is paid separately, so one broken recipient account never holds up the others.
 - Owed amounts belong to slots: if the tax authority changes a slot's recipient, what the slot is owed goes to the new recipient, so a recipient leaving should be paid out first (anyone can call `distribute`).
+  So until a slot is paid out, the tax authority decides which wallet receives what it is owed, its own included; a recipient protects what it is owed by calling `distribute`, and Aviary's tax panel shows each slot's owed amount beside its wallet.
+  A recipient slot still owed tax can't be emptied, so every owed amount always has a wallet or the burn to go to (see "Tax authority"); `distribute` therefore pays a recipient slot whatever its share, and burns the burn slot's owed amount whatever the burn share.
 - Owed amounts fit in u64, because together with the real reserve they never exceed the vault's balance.
 - Pipeline's API reports raw vault balances, so tax not yet paid out shows there as liquidity; Aviary reads the real reserves from the market state instead.
 
@@ -373,3 +383,4 @@ The buy wall AMM and the containment hook start from what ticket 1 sets up.
   Measured on 2026-11-12 by [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59), on mints without a transfer hook: `pipeline_init_market` 37,909 units on SPL Token mints and 37,345 on Token-2022 mints, `pipeline_market_info` 4,249 inside `create_market` and 2,531 called directly, `pipeline_resolve_accounts` 4,484.
 - Measured on 2026-11-12 by [Tax AMM: seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60), on mints without a transfer hook: `pipeline_quote` 5,429 to 5,439 units, `pipeline_swap` 14,110 to 14,163 on SPL Token mints and 15,804 to 15,857 on Token-2022 mints (a whole router swap 39,805 to 46,442), and `seed` 13,040 on SPL Token mints and 16,420 on Token-2022 mints.
   A swap of a mint with Pipeline's allow-all `test-hook` took 51,347 to 63,250 units in all, the hook called at depth 4 inside the tax AMM's transfer when the hooked mint is the output.
+- Measured on 2026-11-12 by [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62), on a market that has traded, the same on SPL Token and Token-2022 mints: `set_taxes` 5,043 units, `set_recipients` 5,587 from one recipient to four and 5,637 back to one (three emptied slots checked for owed tax), and `renounce_tax_authority` 5,005, each against its ceiling of 20,000.

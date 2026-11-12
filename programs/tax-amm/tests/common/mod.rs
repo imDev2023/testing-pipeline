@@ -14,6 +14,7 @@
 
 #![allow(dead_code)]
 
+pub mod authority;
 pub mod model;
 
 use std::path::PathBuf;
