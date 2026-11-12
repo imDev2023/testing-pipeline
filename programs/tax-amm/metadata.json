@@ -1,11 +1,15 @@
 {
     "schema": "pipeline-strategy-metadata/1",
     "name": "Aviary Tax AMM",
-    "description": "Will be a tax AMM whose markets take a buy and sell tax in one chosen mint. For now it is Pipeline's constant-product strategy template: a pool for two tokens with a fee chosen per pool, kept in the pool.",
+    "description": "Constant-product markets that take a buy and a sell tax in one chosen mint, the tax side, whichever way a trade goes. Every tax is capped by a limit compiled into the program, and can only move inside a range fixed at creation, by an optional tax authority that can also renounce. Liquidity is seeded once and locked for good. The tax is booked in the market's vault and paid out to the market's tax recipients and burn, after the suite share. Markets can be created now; seeding and trading arrive in the next build.",
     "category": "amm",
-    "tags": ["cpmm"],
+    "tags": [
+        "tax",
+        "cpmm"
+    ],
     "links": {
         "source": "https://github.com/imDev2023/testing-pipeline/tree/main/programs/tax-amm",
+        "idl": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/idl/tax_amm.json",
         "github": "https://github.com/imDev2023/testing-pipeline"
     },
     "source": {
@@ -13,44 +17,164 @@
         "path": "programs/tax-amm"
     },
     "init": {
-        "description": "Creates a pool for two tokens. There is one pool per pair of tokens and fee.",
+        "description": "Creates a tax market for two tokens. The market state is a new keypair, which signs. Add the router's init_fee_account for each mint in the same transaction.",
         "idl_type": "InitParams",
-        "market_state": "pda:strategy:str:pool,key:input:mint_a,key:input:mint_b,arg:fee_bps",
-        "args": [{ "name": "fee_bps", "type": "u16", "label": "Pool fee (basis points)" }],
+        "market_state": "new_keypair",
+        "args": [
+            {
+                "name": "tax_side",
+                "type": "u8",
+                "label": "Tax side",
+                "description": "The mint index, 0 or 1, every tax is taken in, whichever way a trade goes. Fixed for the market's life."
+            },
+            {
+                "name": "buy_tax_bps",
+                "type": "u16",
+                "label": "Buy tax (basis points)",
+                "description": "Taken from the input when the tax side is sold into the market. Inside its range."
+            },
+            {
+                "name": "sell_tax_bps",
+                "type": "u16",
+                "label": "Sell tax (basis points)",
+                "description": "Taken from the output when the tax side is bought from the market. Inside its range."
+            },
+            {
+                "name": "buy_tax_min_bps",
+                "type": "u16",
+                "label": "Lowest buy tax (basis points)",
+                "description": "The buy tax can never go below this. Fixed for the market's life."
+            },
+            {
+                "name": "buy_tax_max_bps",
+                "type": "u16",
+                "label": "Highest buy tax (basis points)",
+                "description": "The buy tax can never go above this, and never above the program's cap. Fixed for the market's life."
+            },
+            {
+                "name": "sell_tax_min_bps",
+                "type": "u16",
+                "label": "Lowest sell tax (basis points)",
+                "description": "The sell tax can never go below this. Fixed for the market's life."
+            },
+            {
+                "name": "sell_tax_max_bps",
+                "type": "u16",
+                "label": "Highest sell tax (basis points)",
+                "description": "The sell tax can never go above this, and never above the program's cap. Fixed for the market's life."
+            },
+            {
+                "name": "tax_authority",
+                "type": "pubkey",
+                "label": "Tax authority",
+                "description": "May change the taxes inside their ranges and the tax recipients, or renounce. The default (all-zero) key means none, so nothing can ever change."
+            },
+            {
+                "name": "seeder",
+                "type": "pubkey",
+                "label": "Seeder",
+                "description": "The only wallet that can seed the market's liquidity, once."
+            },
+            {
+                "name": "recipient_0",
+                "type": "pubkey",
+                "label": "Tax recipient 1",
+                "description": "A wallet paid its share of the creator's part of the tax. Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "recipient_1",
+                "type": "pubkey",
+                "label": "Tax recipient 2",
+                "description": "Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "recipient_2",
+                "type": "pubkey",
+                "label": "Tax recipient 3",
+                "description": "Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "recipient_3",
+                "type": "pubkey",
+                "label": "Tax recipient 4",
+                "description": "Used slots first; an unused slot is the default (all-zero) key."
+            },
+            {
+                "name": "share_0",
+                "type": "u16",
+                "label": "Tax recipient 1's share (basis points)",
+                "description": "Of the creator's part, what is left after the suite share. Above 0 for a used slot, 0 for an unused one; the shares and the burn share sum to 10,000."
+            },
+            {
+                "name": "share_1",
+                "type": "u16",
+                "label": "Tax recipient 2's share (basis points)",
+                "description": "Above 0 for a used slot, 0 for an unused one."
+            },
+            {
+                "name": "share_2",
+                "type": "u16",
+                "label": "Tax recipient 3's share (basis points)",
+                "description": "Above 0 for a used slot, 0 for an unused one."
+            },
+            {
+                "name": "share_3",
+                "type": "u16",
+                "label": "Tax recipient 4's share (basis points)",
+                "description": "Above 0 for a used slot, 0 for an unused one."
+            },
+            {
+                "name": "burn_share_bps",
+                "type": "u16",
+                "label": "Burn share (basis points)",
+                "description": "Of the creator's part, burned. 0 when the tax side is native SOL."
+            },
+            {
+                "name": "virtual_side",
+                "type": "u8",
+                "label": "Virtual side",
+                "description": "The mint index, 0 or 1, whose reserve the virtual reserve adds to in pricing."
+            },
+            {
+                "name": "virtual_reserve",
+                "type": "u64",
+                "label": "Virtual reserve",
+                "description": "Added to the virtual side's real reserve in pricing, never paid out; 0 for none. Lets a token launch single-sided."
+            }
+        ],
         "accounts": [
-            { "name": "mint_a", "source": "input:mint_a" },
-            { "name": "mint_b", "source": "input:mint_b" },
-            { "name": "vault_a", "source": "ata:market_state,input:mint_a", "writable": true },
-            { "name": "vault_b", "source": "ata:market_state,input:mint_b", "writable": true },
-            { "name": "token_program_a", "source": "token_program_of:input:mint_a" },
-            { "name": "token_program_b", "source": "token_program_of:input:mint_b" },
-            { "name": "associated_token_program", "source": "associated_token_program" }
+            {
+                "name": "mint_0",
+                "source": "input:mint_0"
+            },
+            {
+                "name": "mint_1",
+                "source": "input:mint_1"
+            },
+            {
+                "name": "authority",
+                "source": "pda:strategy:str:authority,key:market_state"
+            },
+            {
+                "name": "vault_0",
+                "source": "pda:strategy:str:vault,key:market_state,key:input:mint_0",
+                "writable": true
+            },
+            {
+                "name": "vault_1",
+                "source": "pda:strategy:str:vault,key:market_state,key:input:mint_1",
+                "writable": true
+            },
+            {
+                "name": "token_program_0",
+                "source": "token_program_of:input:mint_0"
+            },
+            {
+                "name": "token_program_1",
+                "source": "token_program_of:input:mint_1"
+            }
         ]
     },
-    "actions": [
-        {
-            "name": "deposit",
-            "label": "Add liquidity",
-            "kind": "add_liquidity",
-            "description": "Adds both tokens to the pool. This starter pool has no withdrawals: deposits stay in the pool.",
-            "args": [
-                { "name": "amount_a", "type": "u64", "label": "Amount of token A", "decimals_of": "mint:0" },
-                { "name": "amount_b", "type": "u64", "label": "Amount of token B", "decimals_of": "mint:1" }
-            ],
-            "accounts": [
-                { "name": "depositor", "source": "wallet", "signer": true },
-                { "name": "pool", "source": "market_state", "writable": true },
-                { "name": "depositor_a", "source": "wallet_token_account:0", "writable": true },
-                { "name": "depositor_b", "source": "wallet_token_account:1", "writable": true },
-                { "name": "vault_a", "source": "vault:0", "writable": true },
-                { "name": "vault_b", "source": "vault:1", "writable": true },
-                { "name": "mint_a", "source": "mint:0" },
-                { "name": "mint_b", "source": "mint:1" },
-                { "name": "token_program_a", "source": "token_program:0" },
-                { "name": "token_program_b", "source": "token_program:1" }
-            ]
-        }
-    ],
     "security": {
         "contact": "https://github.com/imDev2023/testing-pipeline/security/advisories/new",
         "policy": "https://github.com/imDev2023/testing-pipeline/security/policy"

@@ -1,19 +1,23 @@
-// The tax AMM's demo: lists the strategy on a Pipeline router and trades it once, step by
-// step, building the market creation and the custom action from metadata.json with
-// Pipeline's TypeScript SDK, as Aviary will:
+// The tax AMM's demo: lists the strategy on a Pipeline router and creates a tax market,
+// step by step, building the market creation from metadata.json with Pipeline's TypeScript
+// SDK, as Aviary will, and reading the market back with the generated client (client/):
 //
 //   1. check the program is deployed and the upgrade-authority key is its upgrade authority;
 //   2. check metadata.json, and the published copy at the metadata URI;
 //   3. register the strategy, signed and paid for by the upgrade authority (once), or point
 //      it at a new metadata URI;
 //   4. create two test tokens;
-//   5. create a market from the metadata's `init` form, with a fee account for each mint, in
-//      one transaction;
-//   6. add liquidity through the metadata's `deposit` action;
-//   7. quote a swap, swap through the router, and check the output equals the quote.
+//   5. compute, before sending anything, the addresses the creation will use: the router's
+//      market and fee accounts, and the tax AMM's market state, vaults and vault authority;
+//   6. create a tax market from the metadata's `init` form, with a fee account for each mint,
+//      in one transaction;
+//   7. check every address computed in step 5 exists as what it should be, and read back from
+//      the market state exactly the parameters sent.
 //
-// Grown from Pipeline's strategy template (scripts/deploy-devnet.ts at 5ad130d). Deploy the
-// program first; docs/toolchain.md says how, on a local validator and on devnet.
+// Seeding and trading arrive with the next build ticket; until a market is seeded it refuses
+// every quote and swap. Grown from Pipeline's strategy template (scripts/deploy-devnet.ts at
+// 5ad130d). Deploy the program first; docs/toolchain.md says how, on a local validator and on
+// devnet.
 //
 // Usage, from this directory after `pnpm install` (docs/toolchain.md, "Local demo run"):
 //
@@ -24,7 +28,7 @@
 //   --cluster            localnet (http://127.0.0.1:8899), devnet, or an RPC URL of either;
 //                        the cluster's genesis hash must be devnet's, or the URL a local
 //                        validator's: devnet only until Pipeline is on mainnet
-//   --payer              pays fees, creates the tokens and the market, and trades
+//   --payer              pays fees, creates the tokens and the market
 //   --upgrade-authority  the program's upgrade authority; signs register_strategy and pays
 //                        its listing fee (docs/spec/README.md, "Upgrade authority")
 //   --metadata-uri       where metadata.json is published (default: this repo's main branch)
@@ -45,6 +49,7 @@ import {
     createSolanaRpcFromTransport,
     createTransactionMessage,
     generateKeyPairSigner,
+    getAddressDecoder,
     getBase64EncodedWireTransaction,
     getSignatureFromTransaction,
     lamports,
@@ -68,17 +73,32 @@ import {
 } from '@solana-program/token';
 import * as pipeline from '@pipeline-placeholder/sdk';
 
+import { fetchTaxMarket, findAuthorityPda, findVault0Pda, findVault1Pda, MarketStatus } from './client/index.ts';
+
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
 const DEFAULT_PROGRAM_ID = 'J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t';
+// The all-zero key: an unused tax recipient slot.
+const DEFAULT_ADDRESS = address('11111111111111111111111111111111');
 const DEFAULT_METADATA_URI =
     'https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json';
 
-// The demo market. These are the demo's own choices, not the program's policy values.
-const POOL_FEE_BPS = 30;
+// The demo market: the demo's own choices, in one place, not the program's policy values
+// (docs/spec/tax-amm.md, "Where its policy values live"). Taxes are taken in token B; the
+// payer is the tax authority, the seeder and the first tax recipient.
 const MINTED = 1_000_000_000_000n;
-const DEPOSIT_A = 100_000_000_000n;
-const DEPOSIT_B = 200_000_000_000n;
-const SWAP_AMOUNT = 1_000_000n;
+const DEMO_MARKET = {
+    taxSide: 1,
+    buyTaxBps: 300,
+    sellTaxBps: 500,
+    buyTaxRangeBps: [100, 800],
+    sellTaxRangeBps: [0, 900],
+    // Tax recipients beyond the payer are fresh addresses; unused slots stay empty.
+    otherRecipients: 1,
+    shares: [6_000, 3_000, 0, 0],
+    burnShareBps: 1_000,
+    virtualSide: 0,
+    virtualReserve: 50_000_000n,
+} as const;
 // The most SOL the strategy's setup may spend on rent; the router returns the rest.
 const MAX_CREATOR_LAMPORTS = 100_000_000n;
 // What a local run airdrops when a key holds less: the payer creates tokens and a market,
@@ -246,11 +266,6 @@ async function accountData(account: Address): Promise<Uint8Array | null> {
     return value ? new Uint8Array(Buffer.from(value.data[0], 'base64')) : null;
 }
 
-async function tokenBalance(account: Address): Promise<bigint> {
-    const { value } = await rpc.getTokenAccountBalance(account, { commitment: 'confirmed' }).send();
-    return BigInt(value.amount);
-}
-
 async function walletTokenAccount(owner: Address, mint: Address): Promise<Address> {
     const [account] = await findAssociatedTokenPda({ owner, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
     return account;
@@ -334,9 +349,8 @@ async function main() {
         info('desks will show the strategy without metadata until it can be fetched');
     }
     const metadata = local.value;
-    const deposit = metadata.actions?.find((action) => action.name === 'deposit');
-    if (!metadata.init || !deposit) {
-        fail('metadata.json needs `init` and a `deposit` action for this demo');
+    if (!metadata.init) {
+        fail('metadata.json needs `init` for this demo');
     }
 
     step('3. Registering the strategy');
@@ -388,115 +402,164 @@ async function main() {
         { mint: mintB, tokenProgram: TOKEN_PROGRAM_ADDRESS },
     ];
 
-    step("5. Creating the market from the metadata's init form, with its fee accounts");
+    step('5. Computing the addresses the creation will use, before sending it');
     // `init` says how to create a market: the market state address, the init data and the
-    // accounts. A desk does exactly this to show a "create market" form. When the market
-    // state is a fresh keypair, it signs the creation.
-    const marketStateKey =
-        (metadata.init.market_state ?? 'new_keypair') === 'new_keypair' ? await generateKeyPairSigner() : undefined;
+    // accounts. A desk does exactly this to show a "create market" form. The market state is
+    // a fresh keypair, which signs the creation.
+    if ((metadata.init.market_state ?? 'new_keypair') !== 'new_keypair') {
+        fail('a tax market\'s state is a new keypair (docs/spec/tax-amm.md, "Addresses")');
+    }
+    const marketStateKey = await generateKeyPairSigner();
+    const marketState = marketStateKey.address;
+    const otherRecipients = await Promise.all(
+        Array.from({ length: DEMO_MARKET.otherRecipients }, async () => (await generateKeyPairSigner()).address),
+    );
+    const recipients = [payer.address, ...otherRecipients];
+    while (recipients.length < DEMO_MARKET.shares.length) recipients.push(DEFAULT_ADDRESS);
+    const sent = {
+        taxSide: DEMO_MARKET.taxSide,
+        buyTaxBps: DEMO_MARKET.buyTaxBps,
+        sellTaxBps: DEMO_MARKET.sellTaxBps,
+        buyTaxMinBps: DEMO_MARKET.buyTaxRangeBps[0],
+        buyTaxMaxBps: DEMO_MARKET.buyTaxRangeBps[1],
+        sellTaxMinBps: DEMO_MARKET.sellTaxRangeBps[0],
+        sellTaxMaxBps: DEMO_MARKET.sellTaxRangeBps[1],
+        taxAuthority: payer.address,
+        seeder: payer.address,
+        recipients,
+        shares: [...DEMO_MARKET.shares],
+        burnShareBps: DEMO_MARKET.burnShareBps,
+        virtualSide: DEMO_MARKET.virtualSide,
+        virtualReserve: DEMO_MARKET.virtualReserve,
+    };
+    // The metadata's arguments, in its own names: the arrays flattened, as metadata has none.
+    const args: Record<string, number | bigint | Address> = {
+        tax_side: sent.taxSide,
+        buy_tax_bps: sent.buyTaxBps,
+        sell_tax_bps: sent.sellTaxBps,
+        buy_tax_min_bps: sent.buyTaxMinBps,
+        buy_tax_max_bps: sent.buyTaxMaxBps,
+        sell_tax_min_bps: sent.sellTaxMinBps,
+        sell_tax_max_bps: sent.sellTaxMaxBps,
+        tax_authority: sent.taxAuthority,
+        seeder: sent.seeder,
+        burn_share_bps: sent.burnShareBps,
+        virtual_side: sent.virtualSide,
+        virtual_reserve: sent.virtualReserve,
+    };
+    sent.recipients.forEach((recipient, i) => (args[`recipient_${i}`] = recipient));
+    sent.shares.forEach((share, i) => (args[`share_${i}`] = share));
+
     const { instruction: createMarket, resolved } = await pipeline.buildCreateMarketFromMetadata({
         init: metadata.init,
         strategyProgram: programId,
         creator: payer.address,
-        marketState: marketStateKey?.address,
-        args: { fee_bps: POOL_FEE_BPS },
-        inputs: { mint_a: mintA, mint_b: mintB },
+        marketState,
+        args,
+        inputs: { mint_0: mintA, mint_1: mintB },
         tokenPrograms: Object.fromEntries(mints.map(({ mint, tokenProgram }) => [mint, tokenProgram])),
         maxCreatorLamports: MAX_CREATOR_LAMPORTS,
         rpc,
     });
-    // init_fee_account for each mint, in the same transaction, so both tokens can be sold.
-    const feeAccounts = await Promise.all(
-        mints.map(({ mint, tokenProgram }) =>
-            pipeline.initFeeAccount({ payer: payer.address, market: resolved.market, mint, tokenProgram }),
-        ),
-    );
-    await send(
-        'create_market + init_fee_account x2',
-        payer,
-        [createMarket, ...feeAccounts],
-        marketStateKey ? [marketStateKey] : [],
-    );
-    info(`market ${explorer('address', resolved.market)}`);
-    info(`pool   ${resolved.marketState}`);
-    record.push(['market', resolved.market], ['market state', resolved.marketState]);
-
-    step("6. Adding liquidity through the metadata's deposit action");
-    const marketAccount = pipeline.decodeMarket((await accountData(resolved.market)) ?? new Uint8Array());
-    if (!marketAccount) {
-        fail(`the router has no market at ${resolved.market}`);
-    }
-    const view = pipeline.marketViewFromMarket(
-        resolved.market,
-        marketAccount,
-        mints.map(({ tokenProgram }) => tokenProgram),
-    );
-    const depositInstruction = await pipeline.buildActionInstruction({
-        action: deposit,
-        market: view,
-        wallet: payer.address,
-        args: { amount_a: DEPOSIT_A, amount_b: DEPOSIT_B },
-    });
-    await send('deposit', payer, [depositInstruction]);
-    info(`deposited ${DEPOSIT_A} of token A and ${DEPOSIT_B} of token B`);
-
-    step('7. Quoting and swapping through the router');
-    const trade = {
-        mode: pipeline.TradeMode.ExactIn,
-        inputIndex: 0,
-        outputIndex: 1,
-        amount: SWAP_AMOUNT,
-        trader: payer.address,
-        extra: new Uint8Array(),
+    // What the metadata resolved, by its account names, checked against the client's PDAs.
+    const initAccount = (name: string) => {
+        const index = metadata.init!.accounts?.findIndex((account) => account.name === name) ?? -1;
+        return resolved.strategyAccounts[index]?.address ?? fail(`metadata init has no account "${name}"`);
     };
-    // Simulate against `confirmed` state, like every read here: the market was created
-    // moments ago and may not be finalized yet.
-    const simulation = { commitment: 'confirmed' } as const;
-    const strategyAccounts = await pipeline.resolveAccounts(rpc, view, trade, payer.address, simulation);
-    const { quote, unitsConsumed } = await pipeline.quoteStrategy(
-        rpc,
-        view,
-        trade,
-        strategyAccounts,
-        payer.address,
-        simulation,
-    );
-    info(`quote: ${SWAP_AMOUNT} of token A -> ${quote.amountOut} of token B (${unitsConsumed} compute units)`);
-    const traderA = await walletTokenAccount(payer.address, mintA);
-    const traderB = await walletTokenAccount(payer.address, mintB);
-    const before = await tokenBalance(traderB);
-    await send('swap', payer, [
-        await pipeline.swap(
-            {
-                trader: payer.address,
-                strategyProgram: programId,
-                marketState: resolved.marketState,
-                traderInput: traderA,
-                traderOutput: traderB,
-                inputVault: view.vaults[0]!,
-                inputMint: mintA,
-                outputMint: mintB,
-                inputTokenProgram: TOKEN_PROGRAM_ADDRESS,
-                outputTokenProgram: TOKEN_PROGRAM_ADDRESS,
-                strategyAccounts,
-            },
-            {
-                mode: pipeline.TradeMode.ExactIn,
-                amountIn: SWAP_AMOUNT,
-                amountOut: 0n,
-                minAmountOut: quote.amountOut,
-                integratorFeeBps: 0,
-                extra: new Uint8Array(),
-            },
-        ),
-    ]);
-    const received = (await tokenBalance(traderB)) - before;
-    info(`received ${received} of token B; Pipeline's fee was ${pipeline.pipelineFee(SWAP_AMOUNT)} of token A`);
-    if (received !== quote.amountOut) {
-        fail(`the swap delivered ${received}, but the quote was ${quote.amountOut}`);
+    const [authority] = await findAuthorityPda({ marketState }, { programAddress: programId });
+    const [vault0] = await findVault0Pda({ marketState, mint0: mintA }, { programAddress: programId });
+    const [vault1] = await findVault1Pda({ marketState, mint1: mintB }, { programAddress: programId });
+    const vaults = [vault0, vault1];
+    if (initAccount('authority') !== authority || initAccount('vault_0') !== vault0 || initAccount('vault_1') !== vault1) {
+        fail("the metadata's init accounts are not the program's PDAs");
     }
-    info(`the output equals the quote: ${received} = ${quote.amountOut}`);
-    record.push(['quoted', `${quote.amountOut}`], ['received', `${received}`]);
+    const market = await pipeline.marketPda(programId, marketState);
+    if (resolved.market !== market || resolved.marketState !== marketState) {
+        fail('the SDK resolved a different market or market state');
+    }
+    const feeAccounts = await Promise.all(
+        mints.map(({ mint, tokenProgram }) => pipeline.feeAccountPda(market, mint, tokenProgram)),
+    );
+    const computed: [string, Address][] = [
+        ['router market', market],
+        ['fee account, token A', feeAccounts[0]!],
+        ['fee account, token B', feeAccounts[1]!],
+        ['market state', marketState],
+        ['vault, token A', vault0],
+        ['vault, token B', vault1],
+        // The vault authority only signs, so it never holds an account.
+        ['vault authority', authority],
+    ];
+    for (const [label, account] of computed) {
+        if (await accountData(account)) fail(`the ${label} ${account} exists before the creation`);
+        info(`${label.padEnd(20)} ${account}`);
+    }
+
+    step("6. Creating the market from the metadata's init form, with its fee accounts");
+    // init_fee_account for each mint, in the same transaction, so both tokens can be sold.
+    const initFeeAccounts = await Promise.all(
+        mints.map(({ mint, tokenProgram }) => pipeline.initFeeAccount({ payer: payer.address, market, mint, tokenProgram })),
+    );
+    await send('create_market + init_fee_account x2', payer, [createMarket, ...initFeeAccounts], [marketStateKey]);
+    info(`market ${explorer('address', market)}`);
+    record.push(['market', market], ['market state', marketState]);
+
+    step('7. Checking what exists, and reading the market state back');
+    const routerMarket = pipeline.decodeMarket((await accountData(market)) ?? new Uint8Array());
+    if (!routerMarket) fail(`the router has no market at ${market}`);
+    const view = pipeline.marketViewFromMarket(market, routerMarket, mints.map(({ tokenProgram }) => tokenProgram));
+    if (view.mints.join() !== [mintA, mintB].join() || view.vaults.join() !== vaults.join()) {
+        fail(`the router recorded mints ${view.mints.join(', ')} and vaults ${view.vaults.join(', ')}`);
+    }
+    info('router market: the mints in the creator\'s order, with the vaults computed in step 5');
+    for (const [i, feeAccount] of feeAccounts.entries()) {
+        const { value } = await rpc.getAccountInfo(feeAccount, { encoding: 'base64', commitment: 'confirmed' }).send();
+        if (value?.owner !== mints[i]!.tokenProgram) fail(`fee account ${feeAccount} is not a token account`);
+    }
+    info('fee accounts: both exist at the computed addresses');
+    for (const [i, vault] of vaults.entries()) {
+        const data = await accountData(vault);
+        const { value } = await rpc.getAccountInfo(vault, { encoding: 'base64', commitment: 'confirmed' }).send();
+        const mint = data && getAddressDecoder().decode(data.subarray(0, 32));
+        const owner = data && getAddressDecoder().decode(data.subarray(32, 64));
+        if (value?.owner !== mints[i]!.tokenProgram || mint !== mints[i]!.mint || owner !== authority) {
+            fail(`vault ${vault} is not a token account of ${mints[i]!.mint} owned by the vault authority`);
+        }
+    }
+    info('vaults: token accounts of their mints, owned by the vault authority, at the computed addresses');
+
+    const { data: state } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
+    const readBack = {
+        taxSide: state.taxSide,
+        buyTaxBps: state.buyTaxBps,
+        sellTaxBps: state.sellTaxBps,
+        buyTaxMinBps: state.buyTaxMinBps,
+        buyTaxMaxBps: state.buyTaxMaxBps,
+        sellTaxMinBps: state.sellTaxMinBps,
+        sellTaxMaxBps: state.sellTaxMaxBps,
+        taxAuthority: state.taxAuthority,
+        seeder: state.seeder,
+        recipients: state.recipients,
+        shares: state.shares,
+        burnShareBps: state.burnShareBps,
+        virtualSide: state.virtualSide,
+        virtualReserve: state.virtualReserve,
+    };
+    const show = (value: unknown) => JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
+    for (const key of Object.keys(sent) as (keyof typeof sent)[]) {
+        const [wanted, got] = [show(sent[key]), show(readBack[key])];
+        if (wanted !== got) fail(`the market state's ${key} is ${got}, but ${wanted} was sent`);
+        info(`${key.padEnd(14)} ${got}`);
+    }
+    if (show(Object.keys(readBack).sort()) !== show(Object.keys(sent).sort())) fail('a parameter was not compared');
+    if (state.status !== MarketStatus.Created || state.marketSigner !== market) {
+        fail(`the market state is ${state.status}, with market signer ${state.marketSigner}`);
+    }
+    if (state.mints.join() !== [mintA, mintB].join() || state.vaults.join() !== vaults.join()) {
+        fail('the market state records other mints or vaults');
+    }
+    info('the market state holds exactly the parameters sent; it is created and not yet seeded');
+    record.push(['parameters read back', 'all equal to those sent']);
 
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));

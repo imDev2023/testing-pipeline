@@ -1,7 +1,10 @@
 {
     "compilerOptions": {
         "target": "es2022",
-        "lib": ["es2022", "dom"],
+        "lib": [
+            "es2022",
+            "dom"
+        ],
         "module": "nodenext",
         "moduleResolution": "nodenext",
         "strict": true,
@@ -11,7 +14,13 @@
         "erasableSyntaxOnly": true,
         "skipLibCheck": true,
         "noEmit": true,
-        "types": ["node"]
+        "types": [
+            "node"
+        ],
+        "allowImportingTsExtensions": true
     },
-    "include": ["*.ts"]
+    "include": [
+        "*.ts",
+        "client/**/*.ts"
+    ]
 }

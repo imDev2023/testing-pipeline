@@ -22,8 +22,9 @@ anchor-debug = []
 no-log-ix-name = []
 
 [dependencies]
-anchor-lang = { workspace = true, features = ["init-if-needed"] }
+anchor-lang.workspace = true
 anchor-spl.workspace = true
+mint-rules.workspace = true
 pipeline-strategy-interface.workspace = true
 solana-security-txt.workspace = true
 
@@ -34,11 +35,16 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"
 
 # For the LiteSVM tests in `tests/` only. `cargo build-sbf` never builds these.
 [dev-dependencies]
+base64.workspace = true
 borsh.workspace = true
 litesvm.workspace = true
 pipeline-check.workspace = true
 pipeline-client.workspace = true
+serde_json.workspace = true
+solana-account.workspace = true
+solana-clock.workspace = true
 solana-keypair.workspace = true
 solana-signer.workspace = true
 solana-transaction.workspace = true
 spl-token-2022-interface.workspace = true
+toml.workspace = true

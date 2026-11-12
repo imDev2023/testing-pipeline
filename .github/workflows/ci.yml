@@ -35,7 +35,7 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           # The programs, everything that builds, tests or runs them, and this workflow.
           ONCHAIN_PATHS: >-
-            ^programs/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator)\.sh$
+            ^programs/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator)\.sh$|^scripts/workspace-programs\.py$
         run: |
           case "$EVENT" in
             pull_request) range="$PR_BASE...$PR_HEAD" ;;

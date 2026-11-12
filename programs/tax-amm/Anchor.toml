@@ -1,0 +1,15 @@
+# Only for `anchor idl build`, which needs an Anchor workspace to build the IDL in
+# idl/tax_amm.json (scripts/build-idl.sh). Programs are built by cargo build-sbf, never by
+# `anchor build` (docs/toolchain.md).
+[toolchain]
+anchor_version = "1.2.1"
+
+[workspace]
+members = ["."]
+
+[programs.localnet]
+tax_amm = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"
+
+[provider]
+cluster = "localnet"
+wallet = "/dev/null"

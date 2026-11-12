@@ -57,7 +57,7 @@ while IFS= read -r member; do
   fi
   echo "$member at $id, upgradeable by $AUTHORITY"
   args+=(--upgradeable-program "$id" "$so" "$AUTHORITY")
-done < <(python3 -c 'import sys, tomllib; print("\n".join(tomllib.load(open(sys.argv[1], "rb"))["workspace"]["members"]))' "$ROOT/programs/Cargo.toml")
+done < <(python3 "$ROOT/scripts/workspace-programs.py")
 
 echo "Router $ROUTER_PROGRAM from $ROUTER_SO (pinned), config $ROUTER_CONFIG as on devnet"
 echo "Ledger $LEDGER; RPC http://127.0.0.1:8899"
