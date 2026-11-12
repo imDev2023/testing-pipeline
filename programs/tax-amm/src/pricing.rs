@@ -359,7 +359,8 @@ mod tests {
 // - bounded, default: properties about quotients, with the reserves and amounts below
 //   `SMALL` (the tax's own maths below `TAX_SMALL`) and every rate up to the cap;
 // - full domain behind `RUSTFLAGS="--cfg kani_full"`: those same properties for every
-//   input, which do not finish (Z3 proves them for every input instead, `proofs/pricing_z3.py`).
+//   input, none of which finished in 60 minutes when run on 2026-11-12 (Z3 proves them for
+//   every input instead, `proofs/pricing_z3.py`).
 #[cfg(kani)]
 mod proofs {
     use super::*;
