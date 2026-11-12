@@ -2287,6 +2287,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58)
 
+### TAX-30: The market state's layout
+
+- Question: What does the market state hold beyond the fields the spec names, and where does each field sit?
+- Answer: A status, the vault authority's bump, a flag set when the tax authority renounces and 64 zero bytes kept for later fields, in a 596-byte account with the tax side at offset 10 and `tax_collected` at offset 460, every offset pinned by a test.
+- Alternatives: No reserved bytes, so a new field would need a new layout version; telling a renounced market apart only from its events.
+- Specified in: [`docs/spec/tax-amm.md`, Counters for the containment hook](spec/tax-amm.md#counters-for-the-containment-hook)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59)
+
+### TAX-31: How a refused market is reported
+
+- Question: How does the program say why it refused a market?
+- Answer: Every rule on the creation parameters and the mints refuses with an error of its own, and a mint refused for an extension is logged with Token-2022's number for it, so Aviary's launch form can name the rule.
+- Alternatives: One error for any bad parameter.
+- Specified in: [`docs/spec/tax-amm.md`, Creation parameters](spec/tax-amm.md#creation-parameters)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59)
+
+### TAX-32: How the mint rules read a mint
+
+- Question: How does the shared mint-rules crate find a mint's extensions?
+- Answer: It reads the extension entries itself, as Token-2022 lays them out, and depends on no other crate, so an extension Token-2022 adds later is refused by its number and a program using the crate pulls in nothing else.
+- Alternatives: Token-2022's own interface crate, which fails to read an extension newer than its version and brings its dependencies into every program that uses the rules.
+- Specified in: [`docs/spec/tax-amm.md`, Where its policy values live](spec/tax-amm.md#where-its-policy-values-live)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59)
+
+### TAX-33: Creating the vaults
+
+- Question: When and how are a market's vaults created?
+- Answer: By `pipeline_init_market` itself, after every rule has passed, so a refused mint gets the error of the rule it breaks, each vault sized by its mint's token program, and with lamports already at a vault's address kept as a donation rather than blocking the creation.
+- Alternatives: Anchor's `init` constraints, which read the mints before the program can check them and fail with a generic error on an extension they don't know.
+- Specified in: [`docs/spec/tax-amm.md`, Addresses](spec/tax-amm.md#addresses)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59)
+
+### TAX-34: IDL and TypeScript client
+
+- Question: Where do the tax AMM's IDL and TypeScript client come from?
+- Answer: The Anchor IDL is built by `anchor idl build` and committed beside the program, and the client is generated from it by Codama in Node-runnable TypeScript, each checked against the other and the program by tests.
+- Alternatives: A hand-written client; a client compiled to JavaScript in a package of its own.
+- Specified in: [`docs/spec/tax-amm.md`, Custom actions and metadata](spec/tax-amm.md#custom-actions-and-metadata)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
@@ -3179,5 +3229,6 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-29` to `SUITE-31`: the owner answered these on a ticket that is still open, so "Specified in" names the ticket; the session that closes it points them at wherever the site's own docs record them.
 - `POOL4-20`, `POOL4-21`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI, One fixed-size layout) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
+- `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.

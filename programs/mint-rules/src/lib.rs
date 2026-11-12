@@ -1,0 +1,127 @@
+//! The mint rules every market of the suite's strategies applies, in one place
+//! (docs/spec/tax-amm.md, "Mint rules" and "Where its policy values live").
+//!
+//! A mint must belong to SPL Token or Token-2022, and a Token-2022 mint may carry only the
+//! extensions in [`ALLOWED_MINT_EXTENSIONS`]: every other one, including any Token-2022
+//! adds later, is refused, because an extension such as a permanent delegate or a transfer
+//! fee could take from a market's vaults or change what a trade delivers. Mint and freeze
+//! authorities are allowed, since USDC has both.
+//!
+//! The tax AMM, the containment hook and the lending AMM all depend on this crate, so there
+//! is one list and never a second copy; a product with a stricter rule adds it on top. The
+//! list is fixed on-chain because traders rely on it: it can change until a program is
+//! frozen, and like every decision in the spec it is a default MetalLegBob may change.
+//!
+//! The crate depends on nothing, so a program that uses it pulls in no other program. It
+//! reads the mint's bytes the way Token-2022 does, which its tests check against
+//! Token-2022's own state code.
+
+/// SPL Token, `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`.
+pub const TOKEN_PROGRAM_ID: [u8; 32] = [
+    6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237,
+    95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+];
+
+/// Token-2022, `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb`.
+pub const TOKEN_2022_PROGRAM_ID: [u8; 32] = [
+    6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218, 182, 26, 252, 77,
+    131, 185, 13, 39, 254, 189, 249, 40, 216, 161, 139, 252,
+];
+
+/// Token-2022's numbers for the extensions the rules allow (its `ExtensionType`).
+pub mod extension {
+    pub const TRANSFER_HOOK: u16 = 14;
+    pub const METADATA_POINTER: u16 = 18;
+    pub const TOKEN_METADATA: u16 = 19;
+    pub const GROUP_POINTER: u16 = 20;
+    pub const TOKEN_GROUP: u16 = 21;
+    pub const GROUP_MEMBER_POINTER: u16 = 22;
+    pub const TOKEN_GROUP_MEMBER: u16 = 23;
+}
+
+/// The only mint extensions a market's mint may carry: a transfer hook (any hook program),
+/// and the metadata and group extensions, which describe a token without acting on it.
+pub const ALLOWED_MINT_EXTENSIONS: [u16; 7] = [
+    extension::TRANSFER_HOOK,
+    extension::METADATA_POINTER,
+    extension::TOKEN_METADATA,
+    extension::GROUP_POINTER,
+    extension::TOKEN_GROUP,
+    extension::GROUP_MEMBER_POINTER,
+    extension::TOKEN_GROUP_MEMBER,
+];
+
+/// Why a mint is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MintRefusal {
+    /// The account belongs to neither SPL Token nor Token-2022.
+    NotATokenProgram,
+    /// The account is not an initialized mint as its token program lays one out.
+    NotAMint,
+    /// The mint carries an extension outside [`ALLOWED_MINT_EXTENSIONS`], by Token-2022's
+    /// number for it; an extension Token-2022 has not defined yet is refused the same way.
+    ExtensionNotAllowed(u16),
+}
+
+/// An SPL Token mint, and a Token-2022 mint's base, before any extension.
+const MINT_LEN: usize = 82;
+const IS_INITIALIZED: usize = 45;
+/// Token-2022 pads an extended mint to a token account's length, then writes the account
+/// type, then its type-length-value extension entries.
+const ACCOUNT_LEN: usize = 165;
+const ACCOUNT_TYPE_MINT: u8 = 1;
+/// A multisig's length, which Token-2022 never reads as a mint.
+const MULTISIG_LEN: usize = 355;
+/// Token-2022's `Uninitialized` type, which ends the list of entries.
+const UNINITIALIZED: u16 = 0;
+
+/// Checks that `data`, an account owned by `owner`, is a mint a market may trade.
+pub fn check_mint(owner: &[u8; 32], data: &[u8]) -> Result<(), MintRefusal> {
+    let token_2022 = if *owner == TOKEN_PROGRAM_ID {
+        false
+    } else if *owner == TOKEN_2022_PROGRAM_ID {
+        true
+    } else {
+        return Err(MintRefusal::NotATokenProgram);
+    };
+    if data.len() < MINT_LEN || data[IS_INITIALIZED] != 1 {
+        return Err(MintRefusal::NotAMint);
+    }
+    if data.len() == MINT_LEN {
+        return Ok(());
+    }
+    // Only Token-2022 mints are longer than the base, and never a multisig's length.
+    if !token_2022 || data.len() == MULTISIG_LEN || data.len() <= ACCOUNT_LEN {
+        return Err(MintRefusal::NotAMint);
+    }
+    if data[MINT_LEN..ACCOUNT_LEN].iter().any(|&b| b != 0) || data[ACCOUNT_LEN] != ACCOUNT_TYPE_MINT
+    {
+        return Err(MintRefusal::NotAMint);
+    }
+    check_extensions(&data[ACCOUNT_LEN + 1..])
+}
+
+/// Walks the type-length-value entries as Token-2022 does: an `Uninitialized` type, or too
+/// few bytes left for a type, ends the list; an entry whose length runs past the account
+/// is malformed.
+fn check_extensions(mut entries: &[u8]) -> Result<(), MintRefusal> {
+    while entries.len() >= 2 {
+        let extension_type = u16::from_le_bytes([entries[0], entries[1]]);
+        if extension_type == UNINITIALIZED {
+            return Ok(());
+        }
+        let len = match entries.get(2..4) {
+            Some(len) => u16::from_le_bytes([len[0], len[1]]) as usize,
+            None => return Err(MintRefusal::NotAMint),
+        };
+        let rest = entries.get(4..).unwrap_or(&[]);
+        if len > rest.len() {
+            return Err(MintRefusal::NotAMint);
+        }
+        if !ALLOWED_MINT_EXTENSIONS.contains(&extension_type) {
+            return Err(MintRefusal::ExtensionNotAllowed(extension_type));
+        }
+        entries = &rest[len..];
+    }
+    Ok(())
+}

@@ -1,57 +1,40 @@
-//! # Pricing: change this file to make the strategy your own
+//! # Pricing
 //!
 //! [`quote`] is the only pricing function. `pipeline_quote` calls it to answer quotes and
-//! `pipeline_swap` calls it to settle trades, so a quote is always exactly what a swap
-//! delivers. Never price a swap any other way.
+//! `pipeline_swap` will call it to settle trades, so a quote is always exactly what a swap
+//! delivers (docs/spec/tax-amm.md, "Pricing and the tax").
 //!
-//! The starting point is a constant-product pool (`x · y = k`) with a fee kept in the
-//! pool. Replace the body of [`quote`] with your own formula, auction, oracle-anchored price
-//! or anything else. It may read anything in [`Pool`] (add fields there) plus the Clock
-//! and Rent sysvars, and it must:
+//! A tax market prices exact-in trades only, and only once it is open: the seed opens it,
+//! and the constant-product curve with the buy and sell taxes arrives with it
+//! ([Tax AMM: seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60)).
+//! Until then every quote is refused. The curve maths below is the template's, which that
+//! ticket builds the taxed pricing on, and its Kani proofs stay in CI meanwhile.
 //!
-//! - be deterministic: the same pool and trade always give the same answer;
-//! - never quote more output than the output side holds;
-//! - refuse to price an empty side;
-//! - for exact-in, quote `amount_in == trade.amount` (the swap refunds any difference);
-//! - for exact-out, quote the least input that delivers `trade.amount`, or set
-//!   [`SUPPORTS_EXACT_OUT`] to `false` and return an error.
-//!
-//! Amounts are measured at the pool's vaults: input is what arrived, output is what
-//! leaves. Pipeline's 0.25% fee is charged by the router on top; don't include it here.
-//! `cargo test` checks quotes against real swaps through the router with `pipeline-check`.
+//! Amounts are measured at the market's vaults: input is what arrived, output is what
+//! leaves. Pipeline's 0.25% fee is charged by the router on top; it is not included here.
 
 use anchor_lang::prelude::*;
-use pipeline_strategy_interface::{QuoteResult, TradeMode, TradeRequest};
+use pipeline_strategy_interface::QuoteResult;
 
-use crate::{Pool, StrategyError};
+use crate::errors::StrategyError;
+use crate::interface::{TradeMode, TradeRequest};
+use crate::state::{MarketStatus, TaxMarket};
 
-/// Reported to the router at market creation. `false` means traders can only swap
-/// exact-in, and [`quote`] may reject [`TradeMode::ExactOut`].
-pub const SUPPORTS_EXACT_OUT: bool = true;
+/// Reported to the router at market creation: traders can only swap exact-in, and [`quote`]
+/// refuses [`TradeMode::ExactOut`].
+pub const SUPPORTS_EXACT_OUT: bool = false;
 
-const BPS: u128 = 10_000;
+/// Basis points in a whole, Pipeline's denominator.
+const BPS: u128 = pipeline_strategy_interface::BPS_DENOMINATOR as u128;
 
-/// Prices `trade` against `pool`. Used by both `pipeline_quote` and `pipeline_swap`.
-pub fn quote(pool: &Pool, trade: &TradeRequest) -> Result<QuoteResult> {
-    let (reserve_in, reserve_out) = pool.reserves(trade)?;
-    // A one-sided pool has no meaningful price: either side could be drained.
+/// Prices `trade` against `market`.
+pub fn quote(market: &TaxMarket, trade: &TradeRequest) -> Result<QuoteResult> {
     require!(
-        reserve_in > 0 && reserve_out > 0,
-        StrategyError::InsufficientLiquidity
+        trade.mode == TradeMode::ExactIn,
+        StrategyError::ExactOutNotSupported
     );
-    match trade.mode {
-        TradeMode::ExactIn => Ok(QuoteResult {
-            amount_in: trade.amount,
-            amount_out: out_given_in(reserve_in, reserve_out, trade.amount, pool.fee_bps),
-        }),
-        TradeMode::ExactOut => {
-            let amount_in = in_given_out(reserve_in, reserve_out, trade.amount, pool.fee_bps)
-                .ok_or(StrategyError::InsufficientLiquidity)?;
-            Ok(QuoteResult {
-                amount_in,
-                amount_out: trade.amount,
-            })
-        }
+    match market.status {
+        MarketStatus::Created => err!(StrategyError::MarketNotOpen),
     }
 }
 
@@ -65,26 +48,6 @@ pub fn out_given_in(reserve_in: u64, reserve_out: u64, amount_in: u64, fee_bps: 
     }
     // At most `reserve_out`, so it fits in a u64.
     mul_div(reserve_out as u128, in_after_fee, denominator).0 as u64
-}
-
-/// The least input for which [`out_given_in`] returns at least `amount_out`, or `None`
-/// if the pool can't provide it. Rounds up, in the pool's favour.
-pub fn in_given_out(
-    reserve_in: u64,
-    reserve_out: u64,
-    amount_out: u64,
-    fee_bps: u16,
-) -> Option<u64> {
-    if amount_out == 0 {
-        return Some(0);
-    }
-    if amount_out >= reserve_out {
-        return None;
-    }
-    let denominator = (reserve_out - amount_out) as u128 * (BPS - fee_bps as u128);
-    let (quotient, remainder) = mul_div(reserve_in as u128 * BPS, amount_out as u128, denominator);
-    let rounded_up = quotient.checked_add((remainder > 0) as u128)?;
-    u64::try_from(rounded_up).ok()
 }
 
 /// `a × b / d` as (quotient, remainder), with a 256-bit product so large pools and
@@ -132,17 +95,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_out_is_the_least_input_that_delivers() {
-        for amount_out in [1, 7, 1_992, 1_993, 500_000] {
-            let amount_in = in_given_out(1_000_000, 2_000_000, amount_out, 30).unwrap();
-            assert!(out_given_in(1_000_000, 2_000_000, amount_in, 30) >= amount_out);
-            assert!(out_given_in(1_000_000, 2_000_000, amount_in - 1, 30) < amount_out);
-        }
-    }
-
-    #[test]
     fn the_pool_cannot_be_emptied() {
-        assert_eq!(in_given_out(1_000_000, 2_000_000, 2_000_000, 30), None);
         assert!(out_given_in(1, 2_000_000, u64::MAX, 30) < 2_000_000);
     }
 }
@@ -191,11 +144,6 @@ mod proofs {
         }};
     }
 
-    // CI proves the exact-in maths only. This build still prices exact-out swaps with the
-    // template's `in_given_out`, but the tax AMM refuses exact-out (docs/spec/tax-amm.md,
-    // "Pricing and the tax"), so `in_given_out` leaves with the template's pricing; its
-    // no-panic proof below took 14.5 minutes, so it runs only with `--cfg kani_full`.
-
     /// For any reserves and amount, the exact-in price is computed without panicking: no
     /// overflow, no division by zero, no shift out of range.
     #[kani::proof]
@@ -203,14 +151,6 @@ mod proofs {
     fn out_given_in_never_panics() {
         let (reserve_in, reserve_out, amount_in): (u64, u64, u64) = kani::any();
         with_edge_fee!(fee => out_given_in(reserve_in, reserve_out, amount_in, fee));
-    }
-
-    #[cfg(kani_full)]
-    #[kani::proof]
-    #[kani::solver(cadical)]
-    fn in_given_out_never_panics() {
-        let (reserve_in, reserve_out, amount_out): (u64, u64, u64) = kani::any();
-        with_edge_fee!(fee => in_given_out(reserve_in, reserve_out, amount_out, fee));
     }
 
     /// The pool's output never reaches its whole output reserve while its input side holds

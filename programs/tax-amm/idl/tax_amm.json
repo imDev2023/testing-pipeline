@@ -1,0 +1,993 @@
+{
+  "address": "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t",
+  "metadata": {
+    "name": "tax_amm",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "A Pipeline strategy whose markets take their tax in one chosen mint",
+    "repository": "https://github.com/imDev2023/testing-pipeline"
+  },
+  "instructions": [
+    {
+      "name": "pipeline_init_market",
+      "docs": [
+        "Creates a tax market. `data` is the Borsh-encoded [`InitParams`]."
+      ],
+      "discriminator": [
+        178,
+        5,
+        160,
+        22,
+        249,
+        172,
+        13,
+        224
+      ],
+      "accounts": [
+        {
+          "name": "market_signer",
+          "docs": [
+            "The router's market PDA for this market state."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "docs": [
+            "A fresh keypair the creator generated, which signs (metadata `new_keypair`). The",
+            "router passes its signature on only while the account is empty and unfunded."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "A router PDA holding the SOL the creator allowed for setup. Rent comes from it; the",
+            "router returns what is left to the creator."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "mint_0"
+        },
+        {
+          "name": "mint_1"
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_0",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "mint_0"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_1",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "mint_1"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program_0"
+        },
+        {
+          "name": "token_program_1"
+        }
+      ],
+      "args": [
+        {
+          "name": "data",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "pipeline_market_info",
+      "docs": [
+        "Reports the market's mints, vaults and exact-out support."
+      ],
+      "discriminator": [
+        180,
+        137,
+        108,
+        173,
+        216,
+        7,
+        77,
+        97
+      ],
+      "accounts": [
+        {
+          "name": "market_state"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "pipeline_quote",
+      "docs": [
+        "Prices a trade without changing anything."
+      ],
+      "discriminator": [
+        134,
+        139,
+        91,
+        59,
+        182,
+        37,
+        152,
+        218
+      ],
+      "accounts": [
+        {
+          "name": "market_signer"
+        },
+        {
+          "name": "market_state"
+        },
+        {
+          "name": "trader"
+        },
+        {
+          "name": "trader_input"
+        },
+        {
+          "name": "trader_output"
+        },
+        {
+          "name": "input_vault"
+        },
+        {
+          "name": "input_mint"
+        },
+        {
+          "name": "output_mint"
+        },
+        {
+          "name": "input_token_program"
+        },
+        {
+          "name": "output_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "TradeRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pipeline_resolve_accounts",
+      "docs": [
+        "Lists the strategy accounts a swap needs, after the router's ten fixed ones."
+      ],
+      "discriminator": [
+        12,
+        225,
+        237,
+        111,
+        47,
+        123,
+        6,
+        62
+      ],
+      "accounts": [
+        {
+          "name": "market_signer"
+        },
+        {
+          "name": "market_state"
+        },
+        {
+          "name": "trader"
+        },
+        {
+          "name": "trader_input"
+        },
+        {
+          "name": "trader_output"
+        },
+        {
+          "name": "input_vault"
+        },
+        {
+          "name": "input_mint"
+        },
+        {
+          "name": "output_mint"
+        },
+        {
+          "name": "input_token_program"
+        },
+        {
+          "name": "output_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "ResolveRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pipeline_swap",
+      "docs": [
+        "Settles a trade the router sends."
+      ],
+      "discriminator": [
+        161,
+        235,
+        193,
+        107,
+        155,
+        234,
+        162,
+        140
+      ],
+      "accounts": [
+        {
+          "name": "market_signer",
+          "docs": [
+            "The router's market PDA; compared with the market state's `market_signer`."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "trader"
+        },
+        {
+          "name": "trader_input",
+          "writable": true
+        },
+        {
+          "name": "trader_output",
+          "writable": true
+        },
+        {
+          "name": "input_vault",
+          "writable": true
+        },
+        {
+          "name": "input_mint"
+        },
+        {
+          "name": "output_mint"
+        },
+        {
+          "name": "input_token_program"
+        },
+        {
+          "name": "output_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "SwapRequest"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "TaxMarket",
+      "discriminator": [
+        160,
+        70,
+        114,
+        42,
+        147,
+        206,
+        67,
+        97
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "MarketCreated",
+      "discriminator": [
+        88,
+        184,
+        130,
+        231,
+        226,
+        84,
+        6,
+        58
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "BadInitData",
+      "msg": "Init data is not valid creation parameters"
+    },
+    {
+      "code": 6001,
+      "name": "NotPipeline",
+      "msg": "Caller is not this market's Pipeline market"
+    },
+    {
+      "code": 6002,
+      "name": "WrongAccount",
+      "msg": "Unexpected account"
+    },
+    {
+      "code": 6003,
+      "name": "EqualMints",
+      "msg": "A market's two mints must differ"
+    },
+    {
+      "code": 6004,
+      "name": "NotAMint",
+      "msg": "A market's mints must be SPL Token or Token-2022 mints"
+    },
+    {
+      "code": 6005,
+      "name": "MintExtensionNotAllowed",
+      "msg": "The mint carries an extension the mint rules refuse"
+    },
+    {
+      "code": 6006,
+      "name": "WrongTokenProgram",
+      "msg": "The token program is not the mint's"
+    },
+    {
+      "code": 6007,
+      "name": "BadTaxSide",
+      "msg": "The tax side must be 0 or 1"
+    },
+    {
+      "code": 6008,
+      "name": "BadVirtualSide",
+      "msg": "The virtual side must be 0 or 1"
+    },
+    {
+      "code": 6009,
+      "name": "TaxAboveCap",
+      "msg": "A tax range may not go above MAX_TAX_BPS"
+    },
+    {
+      "code": 6010,
+      "name": "RangeInverted",
+      "msg": "A tax range's minimum is above its maximum"
+    },
+    {
+      "code": 6011,
+      "name": "RateOutsideRange",
+      "msg": "A tax rate is outside its range"
+    },
+    {
+      "code": 6012,
+      "name": "NoSeeder",
+      "msg": "The seeder must not be the default key"
+    },
+    {
+      "code": 6013,
+      "name": "NoRecipient",
+      "msg": "A market needs at least one tax recipient"
+    },
+    {
+      "code": 6014,
+      "name": "RecipientsOutOfOrder",
+      "msg": "Used recipient slots come first, unused slots after them"
+    },
+    {
+      "code": 6015,
+      "name": "ZeroShare",
+      "msg": "A used recipient slot needs a share above 0"
+    },
+    {
+      "code": 6016,
+      "name": "ShareWithoutRecipient",
+      "msg": "An unused recipient slot must have no share"
+    },
+    {
+      "code": 6017,
+      "name": "SharesNotWhole",
+      "msg": "The recipients' shares and the burn share must sum to 10,000"
+    },
+    {
+      "code": 6018,
+      "name": "BurnOnNativeSol",
+      "msg": "Native SOL can't be burned, so its tax side has no burn share"
+    },
+    {
+      "code": 6019,
+      "name": "MarketNotOpen",
+      "msg": "The market is not open: it has not been seeded"
+    },
+    {
+      "code": 6020,
+      "name": "ExactOutNotSupported",
+      "msg": "Exact-out swaps are not supported"
+    },
+    {
+      "code": 6021,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    }
+  ],
+  "types": [
+    {
+      "name": "InitParams",
+      "docs": [
+        "`create_market`'s `init_data`: these fields, Borsh-encoded in this order.",
+        "",
+        "`metadata.json`'s `init.args` lists the same fields, with the arrays flattened into",
+        "`recipient_0` to `recipient_3` and `share_0` to `share_3`, because metadata arguments",
+        "have no arrays; a fixed-size array encodes exactly as its elements one after another,",
+        "so both describe the same bytes."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "tax_side",
+            "docs": [
+              "The mint index (0 or 1) every tax is taken in, fixed for the market's life."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "buy_tax_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_tax_bps",
+            "type": "u16"
+          },
+          {
+            "name": "buy_tax_min_bps",
+            "type": "u16"
+          },
+          {
+            "name": "buy_tax_max_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_tax_min_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_tax_max_bps",
+            "type": "u16"
+          },
+          {
+            "name": "tax_authority",
+            "docs": [
+              "May change the rates inside their ranges and the recipients; the default key means",
+              "none, so the market's taxes and recipients never change."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "seeder",
+            "docs": [
+              "The only signer the seed action accepts."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "recipients",
+            "docs": [
+              "Owner wallets; used slots first, unused slots the default key."
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                4
+              ]
+            }
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "Each used slot's share in basis points of the creator's part, above 0; unused 0."
+            ],
+            "type": {
+              "array": [
+                "u16",
+                4
+              ]
+            }
+          },
+          {
+            "name": "burn_share_bps",
+            "docs": [
+              "The burn's share of the creator's part."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "virtual_side",
+            "docs": [
+              "The mint index (0 or 1) whose reserve the virtual reserve adds to in pricing."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "virtual_reserve",
+            "docs": [
+              "0 for none."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketCreated",
+      "docs": [
+        "A tax market was created through the router's `create_market`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "mints",
+            "type": {
+              "array": [
+                "pubkey",
+                2
+              ]
+            }
+          },
+          {
+            "name": "vaults",
+            "type": {
+              "array": [
+                "pubkey",
+                2
+              ]
+            }
+          },
+          {
+            "name": "params",
+            "type": {
+              "defined": {
+                "name": "InitParams"
+              }
+            }
+          },
+          {
+            "name": "created_slot",
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketStatus",
+      "docs": [
+        "Where a market is in its life. New states are only ever added after the last."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Created"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ResolveRequest",
+      "docs": [
+        "`pipeline_strategy_interface::ResolveRequest`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "trade",
+            "type": {
+              "defined": {
+                "name": "TradeRequest"
+              }
+            }
+          },
+          {
+            "name": "round",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwapRequest",
+      "docs": [
+        "`pipeline_strategy_interface::SwapRequest`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "trade",
+            "type": {
+              "defined": {
+                "name": "TradeRequest"
+              }
+            }
+          },
+          {
+            "name": "amount_sent",
+            "type": "u64"
+          },
+          {
+            "name": "min_amount_out",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TaxMarket",
+      "docs": [
+        "A tax market: the market state account the router records and passes to every call."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "docs": [
+              "[`STATE_VERSION`]."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "MarketStatus"
+              }
+            }
+          },
+          {
+            "name": "tax_side",
+            "docs": [
+              "The mint index (0 or 1) every tax is taken in; fixed at creation."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "virtual_side",
+            "docs": [
+              "The mint index (0 or 1) whose reserve `virtual_reserve` adds to; fixed at creation."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "authority_bump",
+            "docs": [
+              "The bump of the vault authority PDA."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "tax_authority_renounced",
+            "docs": [
+              "Set once the tax authority renounces, after which taxes and recipients never change."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "mints",
+            "docs": [
+              "The two mints, in the creator's order."
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                2
+              ]
+            }
+          },
+          {
+            "name": "vaults",
+            "docs": [
+              "The vault for each mint, in the same order."
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                2
+              ]
+            }
+          },
+          {
+            "name": "market_signer",
+            "docs": [
+              "The router's market PDA for this market state, the only caller allowed to swap."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "buy_tax_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_tax_bps",
+            "type": "u16"
+          },
+          {
+            "name": "buy_tax_min_bps",
+            "type": "u16"
+          },
+          {
+            "name": "buy_tax_max_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_tax_min_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_tax_max_bps",
+            "type": "u16"
+          },
+          {
+            "name": "tax_authority",
+            "docs": [
+              "The default key when the market has none."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "seeder",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                4
+              ]
+            }
+          },
+          {
+            "name": "shares",
+            "type": {
+              "array": [
+                "u16",
+                4
+              ]
+            }
+          },
+          {
+            "name": "burn_share_bps",
+            "type": "u16"
+          },
+          {
+            "name": "virtual_reserve",
+            "type": "u64"
+          },
+          {
+            "name": "reserves",
+            "docs": [
+              "What the market owns in each vault, as far as pricing is concerned."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                2
+              ]
+            }
+          },
+          {
+            "name": "owed",
+            "docs": [
+              "Tax booked to each slot and not yet paid out, in the tax-side mint (see",
+              "[`OWED_SLOTS`])."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                6
+              ]
+            }
+          },
+          {
+            "name": "tax_collected",
+            "docs": [
+              "Counters for the containment hook, changed only by router swaps."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "volume",
+            "type": {
+              "array": [
+                "u128",
+                2
+              ]
+            }
+          },
+          {
+            "name": "swap_count",
+            "type": "u64"
+          },
+          {
+            "name": "created_slot",
+            "docs": [
+              "When the market was created."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradeMode",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "ExactIn"
+          },
+          {
+            "name": "ExactOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradeRequest",
+      "docs": [
+        "`pipeline_strategy_interface::TradeRequest`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mode",
+            "type": {
+              "defined": {
+                "name": "TradeMode"
+              }
+            }
+          },
+          {
+            "name": "input_index",
+            "type": "u8"
+          },
+          {
+            "name": "output_index",
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "trader",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "extra",
+            "type": "bytes"
+          }
+        ]
+      }
+    }
+  ]
+}

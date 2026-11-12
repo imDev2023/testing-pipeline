@@ -2,13 +2,15 @@
     "name": "tax-amm-scripts",
     "private": true,
     "type": "module",
-    "description": "The tax AMM's demo: registers the strategy on a Pipeline router, creates a market from its metadata and trades it",
+    "description": "The tax AMM's demo, which registers the strategy on a Pipeline router and creates a tax market from its metadata, and its generated TypeScript client",
     "engines": {
         "node": ">=24 <25"
     },
     "scripts": {
         "demo": "node demo.ts",
-        "typecheck": "tsc --noEmit"
+        "idl": "bash build-idl.sh",
+        "client": "node codama.ts",
+        "typecheck": "node codama.ts --check && tsc --noEmit"
     },
     "dependencies": {
         "@pipeline-placeholder/sdk": "link:../../../fixtures/pipeline/sdk/ts",
@@ -17,7 +19,10 @@
         "@solana/kit": "8.6.0"
     },
     "devDependencies": {
+        "@codama/nodes-from-anchor": "1.5.6",
+        "@codama/renderers-js": "2.8.0",
         "@types/node": "24.19.2",
+        "codama": "1.11.0",
         "typescript": "7.0.2"
     }
 }

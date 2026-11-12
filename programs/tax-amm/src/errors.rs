@@ -1,0 +1,52 @@
+//! The tax AMM's errors. Anchor numbers them from 6000 in this order, and Aviary and
+//! integrators show them by number, so new errors only ever go at the end.
+
+use anchor_lang::prelude::*;
+
+#[error_code]
+pub enum StrategyError {
+    #[msg("Init data is not valid creation parameters")]
+    BadInitData,
+    #[msg("Caller is not this market's Pipeline market")]
+    NotPipeline,
+    #[msg("Unexpected account")]
+    WrongAccount,
+    #[msg("A market's two mints must differ")]
+    EqualMints,
+    #[msg("A market's mints must be SPL Token or Token-2022 mints")]
+    NotAMint,
+    #[msg("The mint carries an extension the mint rules refuse")]
+    MintExtensionNotAllowed,
+    #[msg("The token program is not the mint's")]
+    WrongTokenProgram,
+    #[msg("The tax side must be 0 or 1")]
+    BadTaxSide,
+    #[msg("The virtual side must be 0 or 1")]
+    BadVirtualSide,
+    #[msg("A tax range may not go above MAX_TAX_BPS")]
+    TaxAboveCap,
+    #[msg("A tax range's minimum is above its maximum")]
+    RangeInverted,
+    #[msg("A tax rate is outside its range")]
+    RateOutsideRange,
+    #[msg("The seeder must not be the default key")]
+    NoSeeder,
+    #[msg("A market needs at least one tax recipient")]
+    NoRecipient,
+    #[msg("Used recipient slots come first, unused slots after them")]
+    RecipientsOutOfOrder,
+    #[msg("A used recipient slot needs a share above 0")]
+    ZeroShare,
+    #[msg("An unused recipient slot must have no share")]
+    ShareWithoutRecipient,
+    #[msg("The recipients' shares and the burn share must sum to 10,000")]
+    SharesNotWhole,
+    #[msg("Native SOL can't be burned, so its tax side has no burn share")]
+    BurnOnNativeSol,
+    #[msg("The market is not open: it has not been seeded")]
+    MarketNotOpen,
+    #[msg("Exact-out swaps are not supported")]
+    ExactOutNotSupported,
+    #[msg("Arithmetic overflow")]
+    Overflow,
+}

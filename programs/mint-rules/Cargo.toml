@@ -1,0 +1,17 @@
+[package]
+name = "mint-rules"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The suite's mint extension allowlist and the one check that applies it"
+
+# A plain library: our programs depend on it, and it depends on nothing, so a program that
+# uses it pulls in neither the tax AMM nor another copy of the list
+# (docs/spec/tax-amm.md, "Where its policy values live").
+[lib]
+name = "mint_rules"
+
+# Only to check, in tests, that this crate reads mints exactly as Token-2022 lays them out.
+[dev-dependencies]
+spl-token-2022-interface.workspace = true
