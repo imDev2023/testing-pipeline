@@ -3705,6 +3705,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
 
+### LENDING-48: How add_liquidity gets the reserve
+
+- Question: How does `add_liquidity` get the Kamino reserve it values the lent side from?
+- Answer: As its last named account, which the metadata's `add_liquidity` action takes as the named input `reserve` and Aviary's form fills in, and which the program refuses unless it is the reserve `LENT_MINTS` names for the market's lent mint.
+- Alternatives: A metadata source reading the reserve from the market state, which the metadata schema at `5ad130d` does not have; a remaining account after the hook accounts, which would let a deposit leave it out.
+- Specified in: [`docs/spec/lending-pool.md`, Custom actions and metadata](spec/lending-pool.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
+
+### LENDING-49: Where the reserve sits in a swap's accounts
+
+- Question: Where do quotes and swaps find the Kamino reserve, and how is it locked?
+- Answer: Third among the strategy accounts `pipeline_resolve_accounts` lists, after the output vault and the vault authority, read-only, so ordinary swaps never write-lock the reserve every Kamino user of that mint shares; a trade built without it fails the reserve check with `ReserveWrongAddress`.
+- Alternatives: After the hook accounts, which would make its place depend on the output mint.
+- Specified in: [`docs/spec/lending-pool.md`, Accounts](spec/lending-pool.md#accounts)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
+
+### LENDING-50: Valuing cTokens at the edges
+
+- Question: What are a market's cTokens worth when the reserve's total supply or cToken supply is 0, or when the value does not fit a u64?
+- Answer: Nothing when either supply is 0, which can only understate where klend would use its initial rate of one, and a value above a u64 is refused (`Overflow`); a total supply klend's own fixed point cannot compute (beyond 128 bits, or negative) refuses with `ReserveSupplyInvalid`.
+- Alternatives: klend's initial rate of one for an empty reserve.
+- Specified in: [`docs/spec/lending-pool.md`, Total reserves](spec/lending-pool.md#total-reserves)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
+
+### LENDING-51: One error for each part of the reserve check
+
+- Question: How does a reserve that fails the check say which part failed?
+- Answer: With its own error for each part, in the order the check runs: address, owner, size, discriminator, lending market, liquidity mint, collateral mint.
+- Alternatives: One error for every part, with the part only in the logs.
+- Specified in: [`docs/spec/lending-pool.md`, Checking the reserve before reading it](spec/lending-pool.md#checking-the-reserve-before-reading-it)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
+
+### LENDING-52: Where the Kamino fixtures live
+
+- Question: Where do the tests and the local demo run get Kamino's accounts and program?
+- Answer: The tests load accounts dumped from each cluster at one slot and committed in `programs/lending-amm/tests/fixtures/kamino/<cluster>/`, replaced only on purpose; klend's bytes from both clusters are fetched into the gitignored `fixtures/klend/` and refused unless they match the hashes in `fixtures/pins.env`; the local demo run clones our devnet lending market's accounts afresh from devnet and warps the validator past their slot.
+- Alternatives: The local demo run on the committed devnet dump; caching klend's bytes in CI rather than fetching them on every run.
+- Specified in: [`docs/spec/lending-pool.md`, Building it](spec/lending-pool.md#building-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.

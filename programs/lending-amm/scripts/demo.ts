@@ -4,7 +4,10 @@
 // Pipeline's TypeScript SDK, as Aviary will, and reading the market back with the generated
 // client (client/):
 //
-//   1. check the program is deployed and the upgrade-authority key is its upgrade authority;
+//   1. check the program is deployed and the upgrade-authority key is its upgrade authority,
+//      and that Kamino Lend runs with the reserve the market lends to: at the address the
+//      devnet lending market's file names, in klend's layout, decoded by this script at the
+//      spec's offsets (kamino.ts);
 //   2. check metadata.json, and the published copy at the metadata URI;
 //   3. register the strategy, signed and paid for by the upgrade authority (once), or point
 //      it at a new metadata URI;
@@ -17,12 +20,16 @@
 //   7. check every address computed in step 5 exists as what it should be, and that the
 //      market state's reserves and share count are the script's own calculation from the
 //      spec's formulas;
-//   8. buy the test token with WSOL and sell it back through the router, each swap's output
-//      equal to its quote and the reserves equal to the script's calculation, to the unit;
-//   9. add liquidity again at the market's ratio, with the shares and the amounts taken
+//   8. buy the test token with WSOL and sell it back through the router, each quote and swap
+//      reading the Kamino reserve (account resolution lists it, read-only), each swap's
+//      output equal to its quote, and both equal to the script's calculation with the lent
+//      side valued at L = B + V, V being the market's cTokens at the reserve's stored rate as
+//      this script decodes it; the reserves equal the script's calculation, to the unit;
+//   9. check a swap built without the reserve is refused;
+//  10. add liquidity again at the market's ratio, with the shares and the amounts taken
 //      equal to the script's calculation.
 //
-// Nothing is lent yet: the whole lent side stays in the buffer, and rebalancing into Kamino
+// Nothing is lent yet, so the market's cTokens are zero and V is 0; rebalancing into Kamino
 // joins the demo with its own build ticket. Grown from Pipeline's strategy template
 // (scripts/deploy-devnet.ts at 5ad130d). Deploy the program first; docs/toolchain.md says how,
 // on a local validator and on devnet.
@@ -45,12 +52,14 @@
 // On a local cluster the script airdrops the SOL both keys need; on devnet it never does
 // (fund them with devnet-airdrop, docs/toolchain.md). The lending AMM's devnet build lends
 // to our own Kamino lending market, whose addresses come from deployments/kamino-devnet.json;
-// a local validator needs its collateral mints (programs/lending-amm/scripts/fetch-accounts.sh).
+// a local validator runs devnet's klend with that lending market's accounts cloned from devnet
+// (programs/lending-amm/scripts/fetch-klend.sh and fetch-accounts.sh, docs/toolchain.md).
 
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 
 import {
+    AccountRole,
     address,
     addSignersToTransactionMessage,
     appendTransactionMessageInstructions,
@@ -67,6 +76,7 @@ import {
     setTransactionMessageFeePayerSigner,
     setTransactionMessageLifetimeUsingBlockhash,
     signTransactionMessageWithSigners,
+    type AccountMeta,
     type Address,
     type Instruction,
     type KeyPairSigner,
@@ -93,6 +103,7 @@ import {
     findVault0Pda,
     findVault1Pda,
 } from './client/index.ts';
+import { decodeReserve, KLEND_PROGRAM, lentValue, rate, type ReserveView } from './kamino.ts';
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
 const DEFAULT_PROGRAM_ID = 'Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG';
@@ -268,6 +279,22 @@ async function send(label: string, feePayer: KeyPairSigner, instructions: Instru
     return signature;
 }
 
+/** Simulates a transaction at `confirmed`, returning its error and logs; nothing is sent. */
+async function simulate(feePayer: KeyPairSigner, instructions: Instruction[]) {
+    const { value: blockhash } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
+    const message = pipe(
+        createTransactionMessage({ version: 0 }),
+        (m) => setTransactionMessageFeePayerSigner(feePayer, m),
+        (m) => setTransactionMessageLifetimeUsingBlockhash(blockhash, m),
+        (m) => appendTransactionMessageInstructions(instructions, m),
+    );
+    const signed = await signTransactionMessageWithSigners(message);
+    const { value } = await rpc
+        .simulateTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64', commitment: 'confirmed' })
+        .send();
+    return { err: value.err, logs: value.logs ?? [] };
+}
+
 /** On a local validator, tops `key` up to `amount` lamports. */
 async function fundLocally(label: string, key: Address, amount: bigint) {
     const { value: balance } = await rpc.getBalance(key, { commitment: 'confirmed' }).send();
@@ -387,10 +414,37 @@ function laterDeposit(max: [bigint, bigint], reserves: [bigint, bigint], shareCo
 }
 
 /** Kamino's devnet lending market, which the devnet build lends to. */
-type KaminoDevnet = { reserves: { wsol: { collateralMint: string } } };
+type KaminoDevnet = {
+    lendingMarket: { address: string };
+    reserves: { wsol: { address: string; collateralMint: string } };
+};
 const KAMINO = JSON.parse(
     readFileSync(new URL('../../../deployments/kamino-devnet.json', import.meta.url), 'utf8'),
 ) as KaminoDevnet;
+
+/** The WSOL reserve of our devnet lending market, which the demo market lends to. */
+const RESERVE = address(KAMINO.reserves.wsol.address);
+
+/**
+ * Reads the reserve and decodes it at the spec's offsets, stopping unless it is the reserve
+ * the demo market lends to: owned by klend, in klend's layout, naming our lending market, WSOL
+ * and the cToken mint deployments/kamino-devnet.json lists.
+ */
+async function readReserve(): Promise<ReserveView> {
+    const found = await accountInfo(RESERVE);
+    if (!found) fail(`the Kamino reserve ${RESERVE} does not exist on ${cluster.url}${cluster.local ? ': run programs/lending-amm/scripts/fetch-accounts.sh, then restart the validator' : ''}`);
+    if (found.owner !== KLEND_PROGRAM) fail(`the Kamino reserve ${RESERVE} is owned by ${found.owner}, not Kamino Lend`);
+    const view = decodeReserve(found.data);
+    if (typeof view === 'string') fail(`the Kamino reserve ${RESERVE}: ${view}`);
+    if (
+        view.lendingMarket !== KAMINO.lendingMarket.address ||
+        view.liquidityMint !== WSOL ||
+        view.collateralMint !== KAMINO.reserves.wsol.collateralMint
+    ) {
+        fail(`the Kamino reserve ${RESERVE} names another lending market or mints`);
+    }
+    return view;
+}
 
 const show = (value: unknown) => JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
 
@@ -422,6 +476,17 @@ async function main() {
         );
     }
     info(`deployed (${program.loader} loader), upgrade authority ${program.upgradeAuthority}`);
+    const klend = (await rpc.getAccountInfo(KLEND_PROGRAM, { encoding: 'base64', commitment: 'confirmed' }).send()).value;
+    if (!klend?.executable) {
+        fail(`Kamino Lend is not deployed at ${KLEND_PROGRAM}${cluster.local ? ': start the validator after programs/lending-amm/scripts/fetch-klend.sh (docs/toolchain.md)' : ''}`);
+    }
+    info(`Kamino Lend is deployed at ${KLEND_PROGRAM}`);
+    const reserveView = await readReserve();
+    const slot = await rpc.getSlot({ commitment: 'confirmed' }).send();
+    info(
+        `reserve ${RESERVE}: lending market ${reserveView.lendingMarket}, WSOL, cToken mint ${reserveView.collateralMint}; S_total ${reserveView.totalSupplySf >> 60n} (60-bit fixed point), S_ctoken ${reserveView.mintTotalSupply}, stored rate ${rate(reserveView)}, last refreshed ${slot - reserveView.lastUpdateSlot} slots ago`,
+    );
+    record.push(['Kamino reserve', `${RESERVE}, stored rate ${rate(reserveView)}`]);
 
     step('2. Checking metadata');
     const local = pipeline.parseStrategyMetadata(
@@ -557,6 +622,7 @@ async function main() {
             market: view,
             wallet: payer.address,
             args: { max_0: max.token, max_1: max.wsol, min_lp: minLp },
+            inputs: { reserve: RESERVE },
             tokenPrograms,
         });
 
@@ -616,6 +682,13 @@ async function main() {
         info(`${label}: reserves ${reserves[0]} token and ${reserves[1]} WSOL, share count ${shareCount}, all as calculated`);
         return state;
     }
+    /** The lent side's total, L = B + V, from the market state and the reserve as this script decodes them. */
+    async function lentSide() {
+        const { data: state } = await fetchLendingAmmMarket(rpc, marketState, { commitment: 'confirmed' });
+        const value = lentValue(state.ctokens, await readReserve());
+        const buffer = state.reserves[1] ?? fail('the market state has no lent-side reserve');
+        return { buffer, ctokens: state.ctokens, value, total: buffer + value };
+    }
     const state = await checkMarket('after the first deposit');
     if (state.lentIndex !== 1 || state.lpFeeBps !== DEMO.lpFeeBps || state.marketSigner !== market || state.lpMint !== lpMint) {
         fail('the market state records other parameters');
@@ -628,6 +701,7 @@ async function main() {
 
     step('8. Trading both ways through the router');
     const feeBps = BigInt(DEMO.lpFeeBps);
+    let lastSwap: { input: 0 | 1; amount: bigint; strategyAccounts: AccountMeta[] } | undefined;
     for (const [label, input, amount] of [
         ['buy the token with WSOL', 1, DEMO.buyWithLamports],
         ['sell the token for WSOL', 0, DEMO.sellTokens],
@@ -645,6 +719,10 @@ async function main() {
         // `finalized`, which a fresh local validator reaches only after about 32 slots).
         const simulation = { commitment: 'confirmed' } as const;
         const strategyAccounts = await pipeline.resolveAccounts(rpc, routerView, trade, payer.address, simulation);
+        const listed = strategyAccounts[2];
+        if (listed?.address !== RESERVE || listed.role !== AccountRole.READONLY) {
+            fail(`${label}: account resolution does not list the Kamino reserve ${RESERVE} read-only after the vault and the authority`);
+        }
         const { quote, unitsConsumed } = await pipeline.quoteStrategy(
             rpc,
             routerView,
@@ -653,10 +731,14 @@ async function main() {
             payer.address,
             simulation,
         );
-        const calculated = exactIn(reserves[input]!, reserves[output]!, amount, feeBps);
+        // The lent side priced at L = B + V, V decoded by this script from the reserve.
+        const lent = await lentSide();
+        const effective: [bigint, bigint] = [reserves[0], lent.total];
+        const calculated = exactIn(effective[input]!, effective[output]!, amount, feeBps);
         if (quote.amountOut !== calculated || quote.amountIn !== amount) {
             fail(`${label}: the quote is ${quote.amountIn} in, ${quote.amountOut} out; the formula gives ${amount} in, ${calculated} out`);
         }
+        info(`${label}: lent side L = B + V = ${lent.buffer} + ${lent.value} (${lent.ctokens} cTokens at the stored rate) = ${lent.total}`);
         info(`${label}: ${amount} in quotes ${quote.amountOut} out (${unitsConsumed} compute units), as calculated`);
         const before = await tokenBalance(holdings[output]!);
         await send(
@@ -696,11 +778,47 @@ async function main() {
         info(`${label}: received exactly the quote, ${received}`);
         await checkMarket(`after "${label}"`);
         record.push([label, `${amount} in, ${received} out, equal to its quote`]);
+        lastSwap = { input, amount, strategyAccounts };
     }
 
-    step('9. Adding liquidity again, at the ratio');
+    step('9. Checking a swap built without the Kamino reserve is refused');
+    if (!lastSwap) fail('no swap to rebuild');
+    const withoutReserve = lastSwap.strategyAccounts.filter((account) => account.address !== RESERVE);
+    const refusal = await simulate(payer, [
+        await pipeline.swap(
+            {
+                trader: payer.address,
+                strategyProgram: programId,
+                marketState,
+                traderInput: holdings[lastSwap.input]!,
+                traderOutput: holdings[1 - lastSwap.input]!,
+                inputVault: vaults[lastSwap.input]!,
+                inputMint: mints[lastSwap.input]!,
+                outputMint: mints[1 - lastSwap.input]!,
+                inputTokenProgram: TOKEN_PROGRAM_ADDRESS,
+                outputTokenProgram: TOKEN_PROGRAM_ADDRESS,
+                strategyAccounts: withoutReserve,
+            },
+            {
+                mode: pipeline.TradeMode.ExactIn,
+                amountIn: lastSwap.amount,
+                amountOut: 0n,
+                minAmountOut: 0n,
+                integratorFeeBps: 0,
+                extra: new Uint8Array(),
+            },
+        ),
+    ]);
+    if (!refusal.err || !refusal.logs.some((line) => line.includes('Error Code: ReserveWrongAddress'))) {
+        fail(`a swap without the reserve was not refused with ReserveWrongAddress: ${show(refusal.err)}\n   ${refusal.logs.join('\n   ')}`);
+    }
+    info('refused by the lending AMM with ReserveWrongAddress, in simulation, so nothing was sent');
+    record.push(['swap without the reserve', 'refused: ReserveWrongAddress']);
+
+    step('10. Adding liquidity again, at the ratio');
     const second = DEMO.secondDeposit;
-    const later = laterDeposit([second.token, second.wsol], reserves, shareCount);
+    const lentNow = await lentSide();
+    const later = laterDeposit([second.token, second.wsol], [reserves[0], lentNow.total], shareCount);
     const sharesBefore = await tokenBalance(lpShares);
     await send('add_liquidity', payer, [await deposit(second, later.shares)]);
     reserves = [reserves[0] + later.taken[0], reserves[1] + later.taken[1]];

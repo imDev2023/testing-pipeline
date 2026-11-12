@@ -27,8 +27,8 @@ mod ceilings {
 /// Solana's limit on a serialized transaction, in bytes.
 const PACKET_DATA_SIZE: usize = 1_232;
 
-/// Funded WSOL-lent markets whose other side is plain SPL Token, plain Token-2022 and a
-/// Token-2022 mint with Pipeline's test-hook.
+/// Funded WSOL-lent markets holding cTokens, whose other side is plain SPL Token, plain
+/// Token-2022 and a Token-2022 mint with Pipeline's test-hook.
 fn markets() -> Vec<(&'static str, Env, Market, solana_keypair::Keypair)> {
     let mut out = vec![];
     for name in ["SPL Token", "Token-2022", "hooked Token-2022"] {
@@ -48,6 +48,9 @@ fn markets() -> Vec<(&'static str, Env, Market, solana_keypair::Keypair)> {
         let (market, lp) = env
             .create_funded_market(&spec, [1_000_000_000_000, 50 * SOL])
             .unwrap();
+        // cTokens worth about 150 SOL, as if rebalance had lent three quarters of the lent
+        // side: valuing them is the dearest part of reading the reserve.
+        env.give_ctokens(&market, 150 * SOL);
         out.push((name, env, market, lp));
     }
     out

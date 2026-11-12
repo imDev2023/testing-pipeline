@@ -103,6 +103,10 @@ jobs:
         run: scripts/test-fetch-router.sh
       - name: Fetch devnet's router, checked against its pinned hash
         run: source scripts/toolchain-env.sh && scripts/fetch-router.sh
+      - name: The Kamino fixture scripts refuse klend bytes that differ from their pins, and a changed account layout
+        run: bash programs/lending-amm/scripts/test-fixture-scripts.sh
+      - name: Fetch klend from mainnet and devnet, checked against their pinned hashes
+        run: source scripts/toolchain-env.sh && bash programs/lending-amm/scripts/fetch-klend.sh
       - name: Cache Pipeline's clone and test programs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -118,13 +122,13 @@ jobs:
         run: cd programs && cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (LiteSVM through devnet's router, with pipeline-check)
         run: cd programs && cargo test --workspace
-      - name: The lending AMM's mainnet build (its default is devnet)
+      - name: The lending AMM's mainnet build (its default is devnet), tested on the cloned mainnet reserves
         run: |
           source scripts/toolchain-env.sh
           cargo build-sbf --manifest-path programs/lending-amm/Cargo.toml --no-default-features --features mainnet --sbf-out-dir programs/target/deploy-mainnet
           cd programs
           cargo clippy -p lending-amm --no-default-features --features mainnet --all-targets -- -D warnings
-          cargo test -p lending-amm --no-default-features --features mainnet --lib
+          SBF_OUT_DIR="$PWD/target/deploy-mainnet" cargo test -p lending-amm --no-default-features --features mainnet
 
   typescript:
     name: typescript

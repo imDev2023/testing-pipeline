@@ -1,0 +1,99 @@
+{
+  "cluster": "devnet",
+  "slot": 521450343,
+  "unixTimestamp": 1794483473,
+  "readAt": "2026-11-12T11:37:54Z",
+  "accounts": [
+    {
+      "label": "reserve-sol",
+      "address": "5vJJ1sQi972Qcf6oUy3gHEx6prijjSj31CWo5He85Hjw",
+      "owner": "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+      "size": 8624,
+      "sha256": "ddda99f70a998ff99de6dff511a1279e67e21a3ff465298574369a90dff729f6"
+    },
+    {
+      "label": "liquidity-mint-sol",
+      "address": "So11111111111111111111111111111111111111112",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 82,
+      "sha256": "b0f919425a529f4971ef8dabd535aec34947d5c8c4885df80dae91635b98c5f3"
+    },
+    {
+      "label": "collateral-mint-sol",
+      "address": "8gdtrmgc9QmintdEgJbZhRaqh286ti4wUHMUZw54pLr8",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 82,
+      "sha256": "8a1ede82ed4903301dd89c9190892394259f6d2d01f179fb0a624c63c22bfaf0"
+    },
+    {
+      "label": "liquidity-supply-sol",
+      "address": "GEEjB2HWqjXXTPzceyjzhk3wwD1rwLjAPfiEoBAd9Tzv",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "0f282e2fc49b9d7058bc04472f12022bc597ac32d73302844e6cf935ed264532"
+    },
+    {
+      "label": "fee-vault-sol",
+      "address": "DmtJaFW5N7cUQoR9797JaV7gkk5TK7S2djpqXjouhGxU",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "f9c012b426292a724dc75fff15e47bbe1dcca51eec288e15462f1545504e509a"
+    },
+    {
+      "label": "collateral-supply-sol",
+      "address": "CrVzwtcr82sYdEkCb2iUEzUQYQGWyE2qp34M76iPJ5tF",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "c1cd639ffdd2571f6b5ec5915b0662d0aef5002a7783a5eb137f16e2d1f70abd"
+    },
+    {
+      "label": "reserve-usdc",
+      "address": "72wAn7eQBbBSXQcb2eAMHz2SDxUgAM51LHhH3aGbY7T3",
+      "owner": "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+      "size": 8624,
+      "sha256": "223d34f74ed47cd696cb70b280898b0ff2400a69cb3276edbb4837dca8917b17"
+    },
+    {
+      "label": "liquidity-mint-usdc",
+      "address": "CqHMaMB72rTsJGRDzeQmcAsVHuwoBw7V7gdaCexcjcC7",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 82,
+      "sha256": "6d765cf5737ebba15bcc72d83c71fc4cf0b8abd6d2e70ae6dcf1d24c9c8aba8b"
+    },
+    {
+      "label": "collateral-mint-usdc",
+      "address": "73WCFtKov59GmY4qJMV7NqqoD5wNNioHRMv29ay5tgFd",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 82,
+      "sha256": "f65a1e43812d3233b4741c4e78e60468d3ae93ca75fb3685cd2bb66db512c7b5"
+    },
+    {
+      "label": "liquidity-supply-usdc",
+      "address": "8SgXG2wtwPWfv7knvsSEQVb4MobqXtKS26NDzNSHizeX",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "c956c2a01cfe0bcc5a153d8f4fa444fd8fafbb20377b2a6debb55efeb03c9271"
+    },
+    {
+      "label": "fee-vault-usdc",
+      "address": "4YL8Xzf45PKZyeEAJqupTwFCwXiQ6QnssVGT6FwGGboa",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "5f4df8ab0dca907aee811f074f7118afceccb4ac2437c9d6d0d16e908398703d"
+    },
+    {
+      "label": "collateral-supply-usdc",
+      "address": "CTGBx6N6MreBWYm68BW6pHLqXcQKNtiHC4cMWuweBUEK",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "918531bb0fcdcee5881f7d62f7b331b6e1c53e9d272e6a22e8b9493496f1fb10"
+    },
+    {
+      "label": "lending-market",
+      "address": "DCKrWS5G3YEcrRP1Ayu8S8nBR4QfgFsSaRzRdPrjqzj3",
+      "owner": "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+      "size": 4664,
+      "sha256": "ad6e765c078250a27331e23249920e1d4a3286b3418ed000e5886c23f4d46aea"
+    }
+  ]
+}
