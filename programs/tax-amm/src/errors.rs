@@ -49,4 +49,14 @@ pub enum StrategyError {
     ExactOutNotSupported,
     #[msg("Arithmetic overflow")]
     Overflow,
+    #[msg("Only the market's seeder can seed it")]
+    NotSeeder,
+    #[msg("The market has already been seeded")]
+    AlreadySeeded,
+    #[msg("A side without a virtual reserve needs a seed above 0")]
+    ZeroSeed,
+    #[msg("The trade's output would be 0")]
+    ZeroOutput,
+    #[msg("The trade would pay out more than the market's real reserve")]
+    InsufficientLiquidity,
 }

@@ -956,7 +956,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: What is the default slippage?
 - Answer: 1%, which the trader can change.
 - Alternatives: None recorded.
-- Specified in: [`docs/spec/pipescope.md`, Trading](spec/pipescope.md#trading)
+- Specified in: [`docs/spec/pipescope-screens.md`, One place for every value](spec/pipescope-screens.md#one-place-for-every-value)
 - Changes by: build-time constant
 - Status: default
 - Decided: 2026-11-10 in [Pipescope v1 scope](https://github.com/imDev2023/testing-pipeline/issues/3)
@@ -1731,6 +1731,126 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16)
 
+### PIPESCOPE-86: The terminal's spec files
+
+- Question: Should the terminal's six spec files be merged into one `aviary.md` before its build tickets are cut?
+- Answer: No: they stay one file per topic, reconciled so that each value is stated in one place, because this register and every product's build tickets link into their sections.
+- Alternatives: One merged `aviary.md`, which the names ticket allowed.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Build tickets](spec/pipescope-architecture.md#build-tickets)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-87: Pipeline's packages
+
+- Question: How does the terminal get Pipeline's TypeScript SDK and Rust crates, now that both are published?
+- Answer: `@pipeline-sol/sdk` from npm at one exact version in the pnpm catalog, and Pipeline's crates from crates.io at exact versions in `crates/Cargo.toml`, a Cargo workspace apart from `programs/`; nothing of the terminal links to a clone of Pipeline's repo, and a release move is a PR of its own.
+- Alternatives: A clone of Pipeline built locally at a pinned commit, as the programs' demo scripts did before the release; git dependencies pinned by `rev`.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Pipeline's packages](spec/pipescope-architecture.md#pipelines-packages)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-88: Where token images are kept
+
+- Question: Where does `terminal-api` keep its own copies of token images?
+- Answer: In the KV namespace the architecture already has, keyed by the SHA-256 of the bytes, with the record of each image (URI, hash, type, size, fetch outcome) in Postgres, so serving an image never wakes the database and nothing new is added to the account.
+- Alternatives: An R2 bucket, a new service on the owner's account; the bytes in Postgres, which wakes Neon on every image view and fills its free storage.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Data](spec/pipescope-architecture.md#data)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-89: The API's config module
+
+- Question: Where do the indexer's timings, candle retention, live-room batching, the metadata fetcher's limits, the quote mint order, the image limits and Canary's schedule live?
+- Answer: As named constants in `apps/terminal-api/src/config.ts`, with one every-minute cron that runs whatever those intervals make due and the live socket closing 3 minutes after the last viewer leaves; per-environment values stay vars of `wrangler.jsonc`.
+- Alternatives: Intervals written as separate cron expressions in `wrangler.jsonc`; values written where each is used.
+- Specified in: [`docs/spec/pipescope-architecture.md`, One place for every value](spec/pipescope-architecture.md#one-place-for-every-value)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-90: Public API rate limits
+
+- Question: How many requests may one IP make to the public API?
+- Answer: 300 reads a minute, 60 a minute for quotes, prepares and trade signatures together, and 10 "This is wrong" reports a minute, set in the rate-limiting bindings of `terminal-api`'s `wrangler.jsonc`.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-91: Pipeline's fee on the pages
+
+- Question: Where do the pages, the bot and Canary's cost split get Pipeline's own fee?
+- Answer: From the router's config account, read by `terminal-api` and returned with every quote and on the fees endpoint, so no page, message or check writes it as a number.
+- Alternatives: The 0.25% written into the trade box and the Fees page.
+- Specified in: [`docs/spec/pipescope-architecture.md`, The integrator fee's configuration](spec/pipescope-architecture.md#the-integrator-fees-configuration)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-92: One list of a strategy's instructions
+
+- Question: Which code works out the instructions compiled into a strategy version?
+- Answer: `terminal-api`, once per strategy version when the indexer records it, stored with the version and read by the facts panel, the forms' instruction check, the explainer's F items and Canary's snapshot.
+- Alternatives: Canary's binary working it out and the web app working it out again for the forms.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-93: Pipeline's hosted API in the tests
+
+- Question: How far does the terminal lean on Pipeline's hosted devnet API?
+- Answer: As a test oracle only: the devnet tests compare our trades, candles, trust flags, quotes and unhooked swap transactions with its answers, and our Canary `conformance` result with its hosted checks; its `checks-*` flags are not shown, since Canary's own result says the same thing.
+- Alternatives: Serving the feed, charts or wallet page from it, which ADR 0003 ruled out; showing its `checks-*` flags beside Canary's result.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-94: How signing is tested
+
+- Question: How do the terminal's tests sign transactions without Aviary ever holding a user's key?
+- Answer: Playwright registers a Wallet Standard test wallet, only in test builds, that signs with a devnet test key from `~/.config/testing-pipeline/devnet/`; each ticket that adds a signing flow also runs it once in a real wallet extension set to devnet, driven in the owner's Chrome, with screenshots in its PR.
+- Alternatives: Only real wallets, by hand; a mocked signer that never reaches devnet.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Build tickets](spec/pipescope-architecture.md#build-tickets)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-95: Order of the terminal's build tickets
+
+- Question: In what order are the terminal's build tickets run, and what can run side by side?
+- Answer: Owner setup, then the scaffold, the indexer, candles and the market page, facts, trading, forms, Canary on the pages, the explainer, and the bot; Canary's binary starts at once beside them, and each product's Aviary panel waits for the terminal tickets it builds on.
+- Alternatives: Building the layers one at a time (all of the API, then all of the pages), as the architecture's suggested slices did.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Build tickets](spec/pipescope-architecture.md#build-tickets)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-96: How a terminal ticket is verified
+
+- Question: What does a terminal build ticket have to show before it counts as done?
+- Answer: Its criteria run on Aviary's devnet deployment against devnet data, every page it touches is checked at 1440, 390 and 360 px wide in the light and the dark theme with Playwright screenshots in the PR, and CI runs the same tests on recorded devnet fixtures with no network.
+- Alternatives: Local runs only; CI against live devnet, which would spend Aviary's RPC credits and fail when devnet does.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Build tickets](spec/pipescope-architecture.md#build-tickets)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-97: Where the keeper page lives
+
+- Question: Where in Aviary is the keeper runner's public page?
+- Answer: At `/keeper`, read-only, linked from every page's footer beside Fees and Devnet help, and from each product panel's due keeper jobs.
+- Alternatives: A page reached only from the product panels.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Build tickets](spec/pipescope-architecture.md#build-tickets)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
@@ -1998,10 +2118,30 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: How does Canary report a bought token that cannot be sent to a second wallet?
 - Answer: As a warn, for any token, stating that the token could not be sent to another wallet and what the buyer got back by selling it; `exit_transferred` fails only when a transferred token cannot then be sold, and a refusal never raises the trade box's notice.
 - Alternatives: A warn only when the hook is ours, which would exempt our own product; keeping the fail and writing an exception into the bar.
-- Specified in: [`docs/spec/containment-hook.md`, Canary checks](spec/containment-hook.md#canary-checks)
+- Specified in: [`docs/spec/pipescope-canary.md`, Exit test](spec/pipescope-canary.md#exit-test)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### CANARY-28: Canary's config module
+
+- Question: Where do Canary's policy values live in code?
+- Answer: As named constants in `crates/canary/src/config.rs`: sizes, waits, launch-clock offsets, clock rates, the pass and fail bands, the tolerance, wallet counts, the token authorities' actions, compute limits and snapshot rounds; a change to any of them changes the `harness` version on every result.
+- Alternatives: Values written in each check's code.
+- Specified in: [`docs/spec/pipescope-canary.md`, One place for every value](spec/pipescope-canary.md#one-place-for-every-value)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### CANARY-29: A contained token after its unlock
+
+- Question: What does `contained_mint` report for a mint whose transfer hook extension remains with both its program and its authority unset, as a contained token's does after its unlock?
+- Answer: "Not run", as for a mint with no hook, never a warn for a hook that is not ours.
+- Alternatives: Treating the empty extension as a hook that is not ours, a warn.
+- Specified in: [`docs/spec/pipescope-canary.md`, Control](spec/pipescope-canary.md#control)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
 
 ## Explainer (EXPLAINER)
 
@@ -2204,6 +2344,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Pipescope v1 scope](https://github.com/imDev2023/testing-pipeline/issues/3)
+
+### EXPLAINER-21: One module for the prompt's rules
+
+- Question: Where do the banned terms, the length limits, the caps on author text, the prompt version and the model's id live?
+- Answer: In `packages/terminal-explainer/src/rules.ts`, from which the prompt is rendered and which the validator, the evidence builder and the approve command import, with a test that the rendered prompt equals the spec's text.
+- Alternatives: The same values written in the prompt's text and again in the validator.
+- Specified in: [`docs/spec/pipescope-explainer.md`, One place for every value](spec/pipescope-explainer.md#one-place-for-every-value)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
 
 ## Tax AMM (TAX)
 
@@ -2547,6 +2697,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59)
 
+### TAX-35: The vault authority in a swap
+
+- Question: How does a swap reach the vault authority that signs the transfer out of a vault?
+- Answer: `pipeline_resolve_accounts` lists it, read-only, after the output vault, and `pipeline_swap` checks it against the PDA from the market state's stored bump before signing with it.
+- Alternatives: Vaults owned by the market state itself, which a fresh keypair's account can't sign for; the authority's address stored in the market state, which would spend 32 of its 64 reserved bytes on what the stored bump already gives.
+- Specified in: [`docs/spec/tax-amm.md`, Addresses](spec/tax-amm.md#addresses)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seed a market and trade it with buy and sell tax](https://github.com/imDev2023/testing-pipeline/issues/60)
+
+### TAX-36: How a refused seed or trade is reported
+
+- Question: How does the program say why it refused a seed or a trade?
+- Answer: With an error of its own for each rule: a seed from anyone but the seeder, a second seed, and a zero seed on a side without a virtual reserve; a trade whose output would be 0, and one that would pay out more than the real reserve; exact-out has its own error too, though the router refuses exact-out swaps itself before they reach the strategy.
+- Alternatives: One error for any refused trade.
+- Specified in: [`docs/spec/tax-amm.md`, Pricing and the tax](spec/tax-amm.md#pricing-and-the-tax)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seed a market and trade it with buy and sell tax](https://github.com/imDev2023/testing-pipeline/issues/60)
+
+### TAX-37: The tax cap and the suite share in the IDL
+
+- Question: How do Aviary and the demo script learn the tax cap and the suite share without restating them?
+- Answer: The program publishes `MAX_TAX_BPS` and `SUITE_SHARE_BPS` in its IDL with Anchor's `#[constant]`, so the TypeScript client generated from it carries both, and the config module stays their one place.
+- Alternatives: Each reader restating the values; reading them from a market, which does not hold them.
+- Specified in: [`docs/spec/tax-amm.md`, Where its policy values live](spec/tax-amm.md#where-its-policy-values-live)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: seed a market and trade it with buy and sell tax](https://github.com/imDev2023/testing-pipeline/issues/60)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
@@ -2768,6 +2948,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23)
+
+### HOOK-23: The edges of the unlock terms
+
+- Question: What exactly do "later than now" and "at most 90 days" allow, and in what units are the goal and the deadline given?
+- Answer: The goal is a `u64` in quote-mint base units above zero; the deadline is a Unix time strictly later than the binding's clock, and one exactly `MAX_UNLOCK_DEADLINE_SECS` (7,776,000 seconds) after it is allowed, a rule proved with Kani over every pair of times.
+- Alternatives: A `u128` goal to match the tax AMM's `tax_collected` counter; allowing a deadline equal to the binding time.
+- Specified in: [`docs/spec/containment-hook.md`, Binding (`bind`)](spec/containment-hook.md#binding-bind)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+
+### HOOK-24: Who pays for a binding
+
+- Question: Must the mint authority also pay the rent of the config and the validation account?
+- Answer: No: `bind` takes a payer that may be the mint authority or any other signer, so only the mint authority's signature is what makes the binding the launcher's.
+- Alternatives: The mint authority pays, which a launcher whose mint authority is a cold key holding no SOL could not do.
+- Specified in: [`docs/spec/containment-hook.md`, Binding (`bind`)](spec/containment-hook.md#binding-bind)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+
+### HOOK-25: Binding in its own transaction
+
+- Question: Since `bind` does not fit in the market's creation transaction (1,307 of 1,232 bytes, measured), how does the launch script send it?
+- Answer: In the next transaction, before the seed, measuring the size on every run and sending one transaction whenever it fits; it creates no address lookup table, with which the transaction would be 690 bytes.
+- Alternatives: An address lookup table created first, which costs a transaction of its own and a slot's wait before it can be used.
+- Specified in: [`docs/spec/containment-hook.md`, Launch in v1](spec/containment-hook.md#launch-in-v1)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+
+### HOOK-26: The launch script's own choices
+
+- Question: What does the launch script choose for the token and its home market besides the goal and the deadline?
+- Answer: Wrapped SOL as the quote mint unless `--quote-mint` names another, 6 decimals and a supply of 1,000,000,000 tokens, and a home market with a 3% buy tax (range 1% to 8%), a 5% sell tax (range 0% to 9%), the launcher as tax authority, seeder and only tax recipient, no burn, and a 30 SOL virtual quote reserve, all in one block at the top of the script.
+- Alternatives: Flags for every market parameter, which the launch form in Aviary would carry instead once Aviary launches tokens.
+- Specified in: [the ticket, Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
+
+### HOOK-27: Where the tax AMM's address comes from
+
+- Question: How is the tax AMM's program id fixed in the hook?
+- Answer: The hook's config module takes it from the tax AMM's own crate (`tax_amm::ID`), and reads the market state through the offsets that crate publishes, so the address and the layout are each written once in the workspace and a test fails if the hook's reading and the tax AMM's layout disagree.
+- Alternatives: The address written out again in the hook's config module, checked against the tax AMM's by a test.
+- Specified in: [`docs/spec/containment-hook.md`, Where its policy values live](spec/containment-hook.md#where-its-policy-values-live)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68)
 
 ## Buy wall AMM (POOL4)
 
@@ -3425,6 +3655,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77)
 
+### LENDING-43: Which cluster's lent mints a build carries
+
+- Question: How does the program choose between the devnet and mainnet rows of `LENT_MINTS`?
+- Answer: By the crate's `devnet` or `mainnet` feature, exactly one of them, with `devnet` the default because devnet is the only cluster this project deploys to; CI builds both, and the devnet rows must equal `deployments/kamino-devnet.json`.
+- Alternatives: No default feature, so every build and test command names its cluster; a mainnet default.
+- Specified in: [`docs/spec/lending-pool.md`, Constants](spec/lending-pool.md#constants)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
+
+### LENDING-44: The market state's final layout
+
+- Question: What does a lending AMM market's state hold, and how can it grow?
+- Answer: Every field the whole spec needs from the first build (withdraw mode, the recorded cTokens and the running totals deposited into and redeemed from Kamino included), after a version byte, at fixed offsets, with 256 reserved bytes that only ever gain appended fields, a zeroed value meaning the old behaviour; 663 bytes.
+- Alternatives: Adding fields with each ticket and reallocating; a smaller reserve.
+- Specified in: [`docs/spec/lending-pool.md`, Market state](spec/lending-pool.md#market-state)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
+
+### LENDING-45: Where an LP's shares go
+
+- Question: Into which account does `add_liquidity` mint an LP's shares?
+- Answer: The LP's shares account, a token account of the LP mint owned by the LP at the PDA `["lp_shares", market_state, lp]`, which `add_liquidity` creates at the LP's expense if it is missing, because metadata cannot describe the associated token account of a mint that is itself a PDA.
+- Alternatives: The LP's associated token account, which a generic desk could not build from the metadata; any token account the LP names.
+- Specified in: [`docs/spec/lending-pool.md`, Addresses](spec/lending-pool.md#addresses)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
+
+### LENDING-46: How add_liquidity takes its amounts
+
+- Question: In what order does `add_liquidity` take the most an LP will add of each mint?
+- Answer: By mint index, `max_0` and `max_1`, as its accounts are ordered, so a form can show each amount with its own mint's decimals whichever side is lent.
+- Alternatives: By side, `max_other` and `max_lent`, as the spec first wrote it.
+- Specified in: [`docs/spec/lending-pool.md`, Adding](spec/lending-pool.md#adding)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
+
+### LENDING-47: The collateral mint at creation
+
+- Question: How does market creation get the lent mint's collateral mint, which its cToken account needs?
+- Answer: As a named input of the metadata's `init` form, which Aviary's form fills in, and which the program refuses unless it is the collateral mint `LENT_MINTS` names for the lent mint.
+- Alternatives: A fixed address in the metadata, which cannot serve both lent mints; creating the cToken account later, at the first `rebalance`.
+- Specified in: [`docs/spec/lending-pool.md`, Custom actions and metadata](spec/lending-pool.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -3437,31 +3717,25 @@ Open on 2026-11-10; the session that settles each one adds its blocks above.
 Places where a spec disagrees with a later answer, spreads one value over several places, or fixes in prose something that should be one named value.
 They are listed here for the sessions that own those specs, not fixed in this file's PR.
 
-- `CANARY-27`: the owner's answer lives in `containment-hook.md` (Canary checks), while the `exit_transferred` row of `pipescope-canary.md` still makes a refused transfer a fail; the Canary spec's row is its place.
 - `LENDING-19`: the owner approved burning LP shares as the way to make liquidity protocol-owned; the spec adds `lock_lp` for that and has a burn hand its value to the remaining LPs, a refinement the owner was not asked about.
 - `BAR-18`, `BAR-27`, `POOL4-19`, `LENDING-34`: `README.md` makes the hardening ticket each program's last build ticket, and the owner's answer for the tax AMM and the containment hook puts it after the deploy; the buy wall AMM and the lending AMM harden before their first deploy, a choice of their sessions.
   One order belongs in `README.md`, with a product's departure and its reason in that product's file.
 - `SUITE-06`: the map's Notes still give the order set while charting, with the terminal first; `tax-amm.md` says the tax AMM is built first.
-- `PIPESCOPE-10`: the rate is written in `pipescope.md` (The integrator fee, and again in the trade box's breakdown) and as 50 basis points in `pipescope-architecture.md`; it should be stated once and referred to.
-- Pipeline's own fee of 0.25% is written as a fixed number in the trade box's breakdown, in Canary's cost split, in three program specs and in the glossary; it is the router's setting, not ours, so Aviary should read it from the router's config.
-- `HOOK-09`, `HOOK-21`: `containment-hook.md` gives the 90-day limit one home in code but still writes the number in four of its sections, and has no Constants table to name it as the other programs' files do.
-- `CANARY-06` to `CANARY-09`, `CANARY-12`, `CANARY-13`, `CANARY-16`, `CANARY-17`: Canary's policy values are spread through `pipescope-canary.md` (the bands are repeated in the rows of `exit_transferred`, `exit_queue` and `cost`, the 1-point tolerance in three rows), and the spec names no config module for them in `crates/canary`.
-- `CANARY-22`, `CANARY-23`: the schedule is written in `pipescope-canary.md` and three times in `pipescope-architecture.md` (the crons, the indexer's new markets, the Canary runner).
-- `EXPLAINER-11`, `EXPLAINER-12`: the banned terms and the length limits are written in the prompt's text and again in the validator's rules; both should come from one constant, so a change cannot leave them disagreeing.
-- `EXPLAINER-18`: the model's id is written in `pipescope-explainer.md` and twice in `pipescope-architecture.md`.
+- Pipeline's own fee of 0.25% is the router's setting, not ours; Aviary now reads it from the router's config (`PIPESCOPE-91`), but three program specs and the glossary still write it as a fixed number.
 - `SUITE-16`, `BAR-02`, `BAR-31`: Pipeline's commit is now pinned once in code, as the `rev` in `programs/Cargo.toml`, and `README.md` (Starting point) names that place; the "Building it" sections of the four program specs still write the commit out.
-- `PIPESCOPE-08`, `PIPESCOPE-28`, `PIPESCOPE-30`, `PIPESCOPE-31`, `PIPESCOPE-36`: only the integrator fee has a named home, `terminal-api`'s vars; default slippage, the indexer's timings, candle retention, live-room batching and the metadata fetcher's limits have none, and the public API's rate limit has no number at all.
 - `TAX-02`, `LENDING-09`: the launch forms' defaults are stated in the product specs (the tax side's in two sections of `tax-amm.md`) but live in Aviary's forms; `pool4-for-solana.md` says its pre-filled values are kept in one place in the form, and the other two should say the same.
 - `TAX-06`, `POOL4-04`: `GLOSSARY.md` gives the suite share and the designer share as fixed tenths, so a change to either constant also has to edit the glossary; it should name the constant, not the number.
 - `SUITE-04`, `SUITE-05`, `SUITE-07`, `SUITE-12` to `SUITE-14`: these live only in the map's body; when the map closes they need a home in `docs/spec/README.md`.
 - `SUITE-29` to `SUITE-31`: the owner answered these on a ticket that is still open, so "Specified in" names the ticket; the session that closes it points them at wherever the site's own docs record them.
 - `POOL4-20`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
+- `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
-- `PIPESCOPE-08`: `pipescope-screens.md` (One place for every value) now names the screens' config module as the home of the default slippage; `pipescope.md` (Trading) still writes the number.
-- `PIPESCOPE-82`: `pipescope-screens.md` has `terminal-api` keep its own copies of token images, and `pipescope-architecture.md` (Data) names no store for files; the session that cuts the terminal's build tickets says where they are kept.
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
+- `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
+- `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.
+- `BAR-04`, `BAR-29`, `PIPESCOPE-87`: Pipeline's crates are on crates.io and its SDK on npm since 2026-11-10; the terminal uses the published packages, while the bar still pins the on-chain workspace's crates by git `rev` and the programs' demo scripts link a local SDK build from `scripts/fetch-pipeline.sh`; whether they move to the published packages is for the bar's owner.

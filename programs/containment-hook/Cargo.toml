@@ -1,0 +1,59 @@
+[package]
+name = "containment-hook"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A Token-2022 transfer hook that keeps a token in its one home market until it unlocks"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "containment_hook"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+custom-heap = []
+custom-panic = []
+anchor-debug = []
+no-log-ix-name = []
+
+[dependencies]
+anchor-lang.workspace = true
+anchor-spl.workspace = true
+mint-rules.workspace = true
+pipeline-strategy-interface.workspace = true
+solana-security-txt.workspace = true
+# Only for the tax AMM's program id and its published market state offsets; with
+# `no-entrypoint` it brings no program of its own.
+tax-amm.workspace = true
+
+# Anchor's macros check `target_os = "solana"`, which host builds don't know about, and
+# Kani sets `kani`; `kani_full` turns on the full-domain proofs, as in Pipeline.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))', 'cfg(kani)', 'cfg(kani_full)'] }
+
+# For the LiteSVM tests in `tests/` only. `cargo build-sbf` never builds these. The tests
+# share the tax AMM's test support (`tax-amm/tests/common`), so they need its crates too.
+[dev-dependencies]
+base64.workspace = true
+borsh.workspace = true
+litesvm.workspace = true
+pipeline-check.workspace = true
+pipeline-client.workspace = true
+# The tax AMM's test harness, which these tests share, decodes the router's swap events.
+pipeline-events.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+solana-account.workspace = true
+solana-clock.workspace = true
+solana-keypair.workspace = true
+solana-signer.workspace = true
+solana-transaction.workspace = true
+spl-tlv-account-resolution.workspace = true
+spl-token-2022-interface.workspace = true
+spl-transfer-hook-interface.workspace = true
+toml.workspace = true

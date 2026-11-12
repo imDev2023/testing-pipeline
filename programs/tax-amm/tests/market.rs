@@ -100,15 +100,18 @@ fn market_info_refuses_an_account_that_is_not_a_tax_market() {
 }
 
 #[test]
-fn resolve_accounts_lists_the_output_vault_in_one_round() {
+fn resolve_accounts_lists_the_output_vault_and_the_vault_authority_in_one_round() {
     let (env, market) = created_market();
     for (input, output) in [(0, 1), (1, 0)] {
         let accounts = env
             .resolve_accounts(&market, &exact_in(input, output, 1_000))
             .unwrap();
-        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts.len(), 2);
         assert_eq!(accounts[0].pubkey, market.vaults[output]);
         assert!(accounts[0].is_writable);
+        // The vault authority signs the transfer out of the vault, so it is read-only.
+        assert_eq!(accounts[1].pubkey, market.authority);
+        assert!(!accounts[1].is_writable);
     }
     // A direction that isn't one of the market's two, with the accounts of a real one.
     for (input, output) in [(0, 0), (1, 1), (0, 2), (2, 0)] {

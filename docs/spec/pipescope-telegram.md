@@ -3,7 +3,7 @@
 Decided with the owner in [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32) on 2026-11-10.
 It hangs off Aviary's first devnet version ([`pipescope.md`](pipescope.md)), its architecture ([`pipescope-architecture.md`](pipescope-architecture.md)), its Canary checks ([`pipescope-canary.md`](pipescope-canary.md)) and its explainer ([`pipescope-explainer.md`](pipescope-explainer.md)).
 Telegram's and the wallets' documentation was read on 2026-11-10; what it did not settle is listed under [Checked facts and open checks](#checked-facts-and-open-checks).
-[Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) merges this file with the other Aviary spec files.
+[Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) reconciled this file with the other Aviary spec files on 2026-11-12 and cut its build tickets, listed in [`pipescope-architecture.md`](pipescope-architecture.md#build-tickets).
 
 Decision: [ADR 0007](../adr/0007-telegram-trades-are-signed-in-aviarys-trade-box.md) (a trade that starts in Telegram is signed in Aviary's own trade box).
 
@@ -288,7 +288,7 @@ Every value below is a default that can change, and each lives in one place: the
 
 ### Suggested build slices
 
-For [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) to adjust; each is demonstrable on devnet on its own.
+The slices this ticket suggested, kept for the record; [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) cut them into five build tickets on 2026-11-12, listed in [`pipescope-architecture.md`](pipescope-architecture.md#build-tickets).
 
 1. In the web app, with its pages: the trade link's parameters on the market page, the reopen-in-your-wallet chooser on phones, the Get alerts in Telegram link, and the official handles on the site.
 2. The bot's scaffold: the webhook route and its secret check, `/start`, `/help` and `/stop`, the chat's storage, the message builder with its untrusted-text rule, and the working bot wired to the devnet deploy.

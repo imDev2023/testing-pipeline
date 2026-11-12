@@ -3,7 +3,7 @@
 Decided in [Pipescope architecture](https://github.com/imDev2023/testing-pipeline/issues/13) with the owner on 2026-11-10.
 It builds on the findings of [Where Pipescope's indexer gets its data](https://github.com/imDev2023/testing-pipeline/issues/6) ([findings](https://github.com/imDev2023/testing-pipeline/blob/research/indexer-data-source/research/indexer-data-source.md)), [Where the quoter runs for Canary checks](https://github.com/imDev2023/testing-pipeline/issues/7) ([findings](https://github.com/imDev2023/testing-pipeline/blob/research/quoter-hosting/research/quoter-hosting.md)), [Prior art for behavioural testing of Solana programs](https://github.com/imDev2023/testing-pipeline/issues/8), [Prior art for AI explanations of contracts, and what an explainer can safely say](https://github.com/imDev2023/testing-pipeline/issues/9) and [How the containment hook works with the router and unlocks](https://github.com/imDev2023/testing-pipeline/issues/10), and on the explainer spec in `pipescope-explainer.md`.
 Patterns are copied from Top-pad at commit `b833a7b` (`/Volumes/Farhan/Work Folder/Dev/AI/Top-pad`, read only), whose devnet build runs on the same Cloudflare account.
-[Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) merges this file with the other Aviary spec files.
+[Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) reconciled this file with the other Aviary spec files on 2026-11-12 and cut the build tickets listed under [Build tickets](#build-tickets); the files stay separate, one per topic, because the decision register and every product's tickets link into their sections (`PIPESCOPE-86`).
 
 Decisions: [ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md) (our own indexer, not Pipeline's hosted API), [ADR 0004](../adr/0004-postgres-on-neon-is-pipescopes-record.md) (Postgres on Neon is the only system of record), [ADR 0005](../adr/0005-canary-checks-run-natively-in-a-container.md) (Canary checks run natively in a Cloudflare Container).
 
@@ -46,8 +46,19 @@ Decisions: [ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md) (our own
   It is kept in the project's `.env` as `RPC_URL` (the Helius devnet URL carrying the key) and as the Worker secret `RPC_URL`, as Top-pad does.
   Expected use is about 400,000 credits a month for the indexer, about 53,000 requests for Canary's sweeps and some thousands for re-runs of new markets, trade-box quotes and pre-signature simulations, about 500,000 credits in all, inside the free plan's 1 million.
 - **GitHub Actions**: verified builds run on GitHub's free minutes (2,000 a month while the repo is private, unlimited on standard runners once it is public).
-- **LLM**: `claude-haiku-5-5` through the `ANTHROPIC_API_KEY` in the owner's `~/.config/env/global.env`, one approved batch at a time (`pipescope-explainer.md`, Model and cost).
+- **LLM**: the explainer's model (`EXPLAINER-18`) through the `ANTHROPIC_API_KEY` in the owner's `~/.config/env/global.env`, one approved batch at a time (`pipescope-explainer.md`, Model and cost).
 - Nothing else is paid. The paid upgrades for mainnet (a dedicated Helius plan with LaserStream, a paid Neon plan if compute runs out) belong to the mainnet effort.
+
+## Pipeline's packages
+
+Pipeline published its TypeScript SDK and its Rust crates on 2026-11-10 (commit `5ac3121`, release 0.1.0; 0.1.1 followed on 2026-11-11 with the `checks-*` and `conformance-stale` flags), all under Apache-2.0 (`PIPESCOPE-87`).
+
+- The web app, `terminal-api`, the indexer, the explainer package and the Telegram package use `@pipeline-sol/sdk` from npm, at one exact version in the pnpm catalog of `pnpm-workspace.yaml`, the one place the terminal's TypeScript pins Pipeline.
+  Nothing of the terminal links to a clone of Pipeline's repo.
+- `crates/canary` uses `pipeline-check`, `pipeline-quoter`, `pipeline-client` and `pipeline-strategy-interface` from crates.io, at exact (`=`) versions in the `[workspace.dependencies]` of `crates/Cargo.toml`, the one place the terminal's Rust pins Pipeline.
+  `crates/` is its own Cargo workspace, apart from the on-chain workspace in `programs/`, so a native dependency of Canary's can never change a program's bytes ([`README.md`](README.md), Framework and toolchain).
+- The router's program is never a package and never copied: Canary and the tests load the router's deployed bytes.
+- A move to a newer Pipeline release is a PR of its own that moves both pins together and re-runs the parity checks.
 
 ## The two Workers
 
@@ -58,8 +69,10 @@ Decisions: [ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md) (our own
 - One Container: `crates/canary`'s image, instance type `basic` (a quarter of a vCPU, 1 GiB, 4 GB of disk), `max_instances` 1.
 - Hyperdrive in front of Neon, with its query cache off.
 - A rate-limiting binding for the public API (see API).
-- Crons: every minute (wake the indexer for reconciliation, the ProgramData watch and, every tenth minute, the registry snapshot; poll running verified builds) every hour (re-fetch strategy metadata) and every 6 hours (Canary's sweep of every market).
+- One cron, every minute, which runs whatever is due by the intervals in the config module ([One place for every value](#one-place-for-every-value)): the indexer's reconciliation, ProgramData watch and registry snapshot, polling running verified builds, the hourly metadata re-fetch and Canary's scheduled sweep ([`pipescope-canary.md`](pipescope-canary.md), When Canary runs).
+  So no interval is written in `wrangler.jsonc`, and changing one is a change to one constant.
 - Secrets: `RPC_URL`, and `GH_ACTIONS_TOKEN`, a fine-grained GitHub token limited to this repo with Actions read and write and nothing else, for verified builds.
+- A KV namespace, `TERMINAL_CACHE`, for public caches and for the copies of token images ([Data](#data)).
 - No LLM key, no wallet key and no Secrets Store binding.
 
 ### `terminal-web`
@@ -74,8 +87,12 @@ Decisions: [ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md) (our own
 [ADR 0004](../adr/0004-postgres-on-neon-is-pipescopes-record.md).
 
 - Postgres on Neon is the only system of record, through Drizzle, reached by the Workers through Hyperdrive with its query cache off (Hyperdrive never invalidates a cached read when a write lands, and the indexer, the Canary runner and the explainer must read what was just written).
-- What it holds, as tables for the build to name: strategies; strategy versions (program id, ProgramData slot, `executable_sha256`, when seen); markets and their mints; indexed transactions; trades (keyed by signature and event index, with slot and in-block position); candles; indexer cursors; metadata snapshots (URI, fetch time, outcome, hash, normalised document); Canary runs and one record per check; verified-build requests and results; explanation keys with their stored evidence, estimated cost and status; explanations; reports from the "This is wrong" control.
-- Durable Object storage holds only the indexer's socket and alarm state and the Canary run's progress; KV holds only public caches up to 60 s stale; D1 and R2 are not used.
+- What it holds, as tables for the build to name: strategies; strategy versions (program id, ProgramData slot, `executable_sha256`, when seen); markets and their mints; indexed transactions; trades (keyed by signature and event index, with slot and in-block position); candles; indexer cursors; metadata snapshots (URI, fetch time, outcome, hash, normalised document); Canary runs and one record per check; verified-build requests and results; explanation keys with their stored evidence, estimated cost and status; explanations; reports from the "This is wrong" control; each strategy version's instruction list; token image records; the keeper runner's `keeper_runs` ([`keeper-runner.md`](keeper-runner.md), What it records); and the Telegram bot's chats, watch lists, alerts and deliveries ([`pipescope-telegram.md`](pipescope-telegram.md), What the bot stores).
+- Durable Object storage holds only the indexer's socket and alarm state and the Canary run's progress.
+- KV holds public caches up to 60 s stale, and the copies of token images, keyed by the SHA-256 of their bytes (`PIPESCOPE-88`): Postgres records, per mint, the image's URI, hash, type, size and fetch outcome, and KV holds only bytes that a re-fetch could replace, so Postgres stays the only record ([ADR 0004](../adr/0004-postgres-on-neon-is-pipescopes-record.md)).
+  Serving an image never wakes the database: the page gets the hash with the mint, and `terminal-api` serves `/images/<hash>` from KV.
+  KV is already in the architecture and inside the account's allowance (devnet holds a few dozen images of at most 1 MB), so nothing new is bought or added.
+- D1 and R2 are not used.
 - The free plan gives 100 compute-hours a project a month, so the database must sleep when devnet is quiet: reconciliation asks the chain first and touches the database only when there is something new, as Top-pad's does.
 - Local development uses a Docker Postgres, as Top-pad's `docker-compose.yml` does.
 
@@ -95,32 +112,41 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - **ProgramData watch** every minute: one `getMultipleAccounts` with a 45-byte `dataSlice` per 100 programs reads each strategy's and the router's last-deploy slot.
   A changed slot on a strategy is a new strategy version: it is recorded, a Canary run of all its markets starts, a verified build is requested if a source lead exists, and the strategy's markets are re-read.
   A changed slot on the router is recorded and flagged, and starts a Canary run of every market, since a router upgrade can change event layouts; events the decoder does not know are kept and indexed again by newer code.
-- **New markets**: each `MarketCreated`, and each market the registry snapshot finds, starts a Canary run of that market at once and again 10 minutes, 1 hour and 1 day later.
-- **Strategy-program calls**: every instruction the indexer sees on a strategy program is stored with its caller, which Canary's `control` check reads as who has called each instruction.
+- **New markets**: each `MarketCreated`, and each market the registry snapshot finds, starts that market's Canary runs on the schedule of [`pipescope-canary.md`](pipescope-canary.md), When Canary runs.
+- **Strategy-program calls**: every instruction the indexer sees on a strategy program is stored with its caller, which Canary's `custom_instructions` result reads as who has called each instruction.
+- **Instruction lists**: when a strategy version is recorded, `terminal-api` reads its program's bytes once and stores the instructions compiled into it, as [`pipescope-canary.md`](pipescope-canary.md) (Custom instructions are listed, not called) defines them; the facts panel, the forms' instruction check, the explainer's F items and Canary's snapshot all read that one list (`PIPESCOPE-92`).
 - **Market accounts**: after each event or custom action that touches a market, its market state and vaults are re-read; there are no account subscriptions.
 - **Mints**: when a market brings a mint not yet seen, its mint account and on-chain token metadata are read once and stored, for the facts (Pipeline's trust flags) and for symbols and images, which `pipescope.md` treats as untrusted.
 - **Unknown or failed decodes** are kept with the transaction, and re-indexing transactions first indexed by older code is Top-pad's `reindexTransactions`.
 - **Deploys**: an object kept awake goes on running the code from before a deploy, so the indexer resets itself whenever the Worker calling it runs another version (Top-pad's `wake`).
 - **Backfill**: the router's whole history (185 transactions on 2026-11-09) is indexed as soon as the indexer first runs, because devnet history may be reset and Postgres must be the record.
 - **Trades made through Aviary** reach the indexer at once through the trade fast path (see Trading path); other people's trades show live while anyone is watching, and within a minute otherwise.
-- **Parity check**: the devnet tests compare our trades and candles for a set of markets with Pipeline's hosted devnet API (`https://pipeline-devnet.up.railway.app`, `docs/API.md` in Pipeline's repo); it is a test oracle, never a source.
+- **Parity checks**: Pipeline's hosted devnet API (`https://pipeline-devnet.up.railway.app`, `docs/API.md` in Pipeline's repo) is a test oracle, never a source ([ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md)), and the devnet tests lean on it wherever it answers the same question (`PIPESCOPE-93`):
+  - trades, per market and per trader, equal its `/v1/markets/{market}/trades` and `/v1/traders/{address}/trades`;
+  - candles, for the lengths it serves, equal its `/v1/markets/{market}/candles` for the same base and quote;
+  - the trust flags of every strategy, market and mint equal its `flags`, apart from `checks-passed`, `checks-failed` and `checks-pending`, which record its own `pipeline-check` runs; Aviary shows its own Canary `conformance` result instead, and a test checks the two agree for the same code hash;
+  - a quote equals its `/v1/quote` for the same market, mints, amount and integrator fee;
+  - a prepared swap of an unhooked mint carries the same router instruction as its `POST /v1/swap-transaction`; for a hooked input mint, which it refuses, our own hook accounts are checked against the mint's `ExtraAccountMetaList` instead.
 - **Restart test**: Top-pad's pattern (`tests/devnet/src/indexer-restart.test.ts`): stop the indexer, make swaps with this project's devnet keys (`~/.config/testing-pipeline/devnet/`), restart it, and check the indexed trades equal the swaps decoded from the chain.
 
 ### Candles
 
-- Each trade is folded into its candle at every length as it is indexed, by trade order (slot, in-block position, event index) rather than arrival, the same fold a rebuild makes (Top-pad's `candles.ts`); any candle can be rebuilt from trades.
+- Each trade is folded into its candle at every length the config module lists as it is indexed, by trade order (slot, in-block position, event index) rather than arrival, the same fold a rebuild makes (Top-pad's `candles.ts`); any candle can be rebuilt from trades.
 - Candles are kept per market and mint pair, since a market has two to four mints; a trade's price is `received / net_sent` for its pair (Pipeline's integrator guide); which mint of a pair is shown as the quote is for Aviary's v1 scope and screens.
-- Lengths and retention as Top-pad's: 1 s, 15 s, 1 m, 5 m, 15 m, 1 h, 4 h and 1 d; 1 s candles kept 7 days, 15 s candles 30 days, coarser ones and all trades forever.
+- Lengths and retention as Top-pad's, kept in the config module (`PIPESCOPE-30`): 1 s, 15 s, 1 m, 5 m, 15 m, 1 h, 4 h and 1 d; 1 s candles kept 7 days, 15 s candles 30 days, coarser ones and all trades forever.
+- The API returns `quote_mint` and `base_mint` with every market, candle series and trade, from the quote mint order in the config module ([`pipescope-screens.md`](pipescope-screens.md), Price direction).
 
 ### Live rooms
 
-- One `LiveRoom` Durable Object per market and one for the feed, holding hibernatable browser WebSockets, so they cost no duration while idle; the indexer publishes each decoded trade, new market and new strategy version to its room, and rooms batch every 100 ms.
+- One `LiveRoom` Durable Object per market and one for the feed, holding hibernatable browser WebSockets, so they cost no duration while idle; the indexer publishes each decoded trade, new market and new strategy version to its room, and rooms batch at the interval in the config module, 100 ms (`PIPESCOPE-31`).
 - A reconnecting browser resyncs from its last slot through the API.
 - The rooms tell the indexer when the first viewer arrives and when the last one leaves, which opens and closes its socket.
 
 ## API
 
 - **Public** (owner, 2026-11-10): the read endpoints and the prepare endpoints are open to anyone, with no key and any origin, behind a per-IP limit from the Workers rate-limiting binding, and labelled unstable until v1 ships, so other builders can use Aviary's data.
+- **Rate limits** (`PIPESCOPE-90`), per IP, in the rate-limiting bindings of `terminal-api`'s `wrangler.jsonc`, their one place: 300 reads a minute; 60 a minute for quotes, prepares and trade signatures together; 10 "This is wrong" reports a minute.
+  A page view of the feed or a market makes about ten reads, and a quote is asked at most once per pause in typing, so a reader never meets them; an answer over the limit is a 429 that names the wait, and the page says so in the panel that asked.
   This is also where Canary results get their "page and API" in the map's Canary attestations fog.
 - Endpoints, as a sketch for the build to settle in the zod contract:
   - strategies, a strategy's versions, and per version its facts, Canary results, verified-build status and explanation;
@@ -154,8 +180,9 @@ Top-pad's flow (`apps/web/src/components/coin/QuickTrade.tsx`, `prepareSwap` the
 
 ### The integrator fee's configuration
 
-- The rate (50 basis points), the fee mints (wrapped SOL and the cluster's USDC mint) and the fee wallet's two token accounts are vars of `terminal-api` per environment in its `wrangler.jsonc`, so they change by a configuration deploy, with no code change; the fee wallet's key is never on a server ([`pipescope.md`](pipescope.md), The integrator fee).
+- The rate ([`pipescope.md`](pipescope.md), The integrator fee), the fee mints (wrapped SOL and the cluster's USDC mint) and the fee wallet's two token accounts are vars of `terminal-api` per environment in its `wrangler.jsonc`, so they change by a configuration deploy, with no code change; the fee wallet's key is never on a server ([`pipescope.md`](pipescope.md), The integrator fee).
 - The API returns the rate it built each swap with, so the trade box shows exactly that rate.
+- Pipeline's own fee is the router's setting, not ours: `terminal-api` reads it from the router's config account (cached up to 60 s) and returns it with every quote and on the fees endpoint, so the trade box, the Fees page, the Telegram bot and Canary's cost split never write it as a number (`PIPESCOPE-91`).
 
 ## Canary runner
 
@@ -169,7 +196,7 @@ What the checks are, how a run copies a market and when runs happen are in [`pip
   The build measures a sweep on `basic` before trusting the cost below, and whether a shorter sleep or the `lite` instance (1/16 vCPU, 256 MiB) serves as well.
 - **Orchestration**: one `CanaryRun` Durable Object per strategy version, keyed by program id and ProgramData slot, which runs that version on all of its markets or on one of them.
   For each market it builds the snapshot through Helius, posts it to the single `CanaryContainer`, fetches any accounts the binary names as missing and posts again, at most four times, stores the results in Postgres, and retries on its alarm if the container restarts mid-run.
-  Its triggers are `pipescope-canary.md`'s: a new strategy version (all its markets), a router upgrade (every market), a market created or registered (that market at once, then 10 minutes, 1 hour and 1 day later), and every 6 hours (every market, from the cron); a manual re-run command is part of the build.
+  Its triggers are those of [`pipescope-canary.md`](pipescope-canary.md), When Canary runs, the one place that states them; a manual re-run command is part of the build.
 - **Snapshot**: per market, the router's and the strategy's ProgramData, the router config, the market with its market state, mints, vaults and fee accounts, whatever `pipeline_resolve_accounts` asks for, and the cluster's slot, epoch and time; about 7 RPC requests a market (442 for all 61 devnet markets on 2026-11-10).
   The router is loaded from its deployed bytes, never a local build, so checks test what is on chain.
 - **Results**: one Canary result per check, market, strategy version and slot, kept as `pipescope-canary.md` says (the latest of each check per market and version, and every earlier one whose outcome differed from the next); the facts panel and the explainer read them as C items, and changed outcomes make a new explanation key.
@@ -194,7 +221,8 @@ What the checks are, how a run copies a market and when runs happen are in [`pip
 ## Metadata fetcher
 
 - Runs in `terminal-api` on `StrategyRegistered`, on `MetadataUpdated`, and every hour, because the document behind an unchanged URI can change with no event.
-- Limits: `https:` only, at most 64 KB, a JSON content type, a 5 s timeout, at most 3 redirects, each `https:`; it never fetches a URL found inside the document.
+- Limits, in the config module (`PIPESCOPE-36`): `https:` only, at most 64 KB, a JSON content type, a 5 s timeout, at most 3 redirects, each `https:`; it never fetches a URL found inside the document.
+- The same fetcher, under the same limits apart from the size, fetches the image a mint's on-chain token metadata names, once per URI and again when the URI changes, and keeps it only as [`pipescope-screens.md`](pipescope-screens.md) (Token names and images) allows.
 - The document is validated with Pipeline's `parse_strategy_metadata` (the TypeScript SDK's port), giving the `metadata-missing`, `metadata-unreachable` or `metadata-invalid` fact, then normalised as `pipescope-explainer.md` says, and stored with its hash.
 - A changed hash is a metadata change: it makes a new explanation key, pending approval.
 - Everything works with no metadata at all, as on devnet today, where all four strategies' metadata links returned 404 on 2026-11-09.
@@ -205,10 +233,32 @@ What the explainer is, its key, prompt, validator and presentation are in `pipes
 
 - When a new key arises (a new strategy version, a metadata change, changed Canary outcomes, or a new prompt or model version), `terminal-api` builds the evidence input: P items from constant text, F items with Pipeline's trust facts from the TypeScript SDK, C items from the Canary records, S items from the verified source at its commit, and A items from the normalised metadata.
   It stores the input with the key, its estimated cost and the status pending.
-- `pnpm explainer:approve`, run by the owner on their Mac, lists the pending keys with their estimated cost; for the keys the owner approves it calls `claude-haiku-5-5` with the `ANTHROPIC_API_KEY` from `~/.config/env/global.env`, runs the validator, retries once with the validator's errors, writes the explanation or the failed status to Postgres through the project's database URL, and appends one line per batch to `~/.config/spend/ledger.csv`.
+- `pnpm explainer:approve`, run by the owner on their Mac, lists the pending keys with their estimated cost; for the keys the owner approves it calls the model named in the explainer's rules module ([`pipescope-explainer.md`](pipescope-explainer.md), One place for every value) with the `ANTHROPIC_API_KEY` from `~/.config/env/global.env`, runs the validator, retries once with the validator's errors, writes the explanation or the failed status to Postgres through the project's database URL, and appends one line per batch to `~/.config/spend/ledger.csv`.
 - No LLM key is in Cloudflare, so nothing paid can run from the deployed product, whatever its code does.
 - `pnpm explainer:reports` lists the "This is wrong" reports with the keys they refer to.
 - Until a key's explanation exists, the strategy page shows the facts panel alone, with "No explanation for this version yet."
+
+## One place for every value
+
+`terminal-api`'s config module, `apps/terminal-api/src/config.ts`, holds every policy value of the API, the indexer and the jobs that is not a per-environment var (`PIPESCOPE-89`).
+Each is a named constant; the pages and the Telegram bot read what they show from the API and never repeat it.
+
+| Value | Default | Decision |
+| --- | --- | --- |
+| Reconciliation: router, strategy programs | every minute, every 5 minutes | `PIPESCOPE-28` |
+| Registry snapshot, ProgramData watch | every 10 minutes, every minute | `PIPESCOPE-28` |
+| Socket: reopen alarm, close after the last viewer | 15 s, 3 minutes | `PIPESCOPE-27`, `PIPESCOPE-28` |
+| Candle lengths and retention | as [Candles](#candles) | `PIPESCOPE-30` |
+| Live-room batching | 100 ms | `PIPESCOPE-31` |
+| Fast path: confirmation poll | every 300 ms | `PIPESCOPE-33` |
+| Metadata fetcher limits and re-fetch interval | as [Metadata fetcher](#metadata-fetcher), every hour | `PIPESCOPE-36` |
+| Quote mint order | wrapped SOL, then the cluster's USDC, then the later mint of the pair | `PIPESCOPE-74` |
+| Token image types and size | PNG, JPEG or WebP, at most 1 MB | `PIPESCOPE-82` |
+| Canary's schedule | as [`pipescope-canary.md`](pipescope-canary.md), When Canary runs | `CANARY-22`, `CANARY-23` |
+| Public caches | up to 60 s stale | `PIPESCOPE-32` |
+
+- Per-environment values are vars or bindings in `terminal-api`'s `wrangler.jsonc`: the integrator fee's settings (`PIPESCOPE-13`), the rate limits (`PIPESCOPE-90`) and the Telegram bot's handles and origin (`PIPESCOPE-62`).
+- The web app's own values are in its screens' config module, theme stylesheet and brand module ([`pipescope-screens.md`](pipescope-screens.md), One place for every value); Canary's are in `crates/canary/src/config.rs` ([`pipescope-canary.md`](pipescope-canary.md), One place for every value); the explainer's in `packages/terminal-explainer/src/rules.ts`; the bot's in `packages/terminal-telegram`'s config module.
 
 ## Copied from Top-pad
 
@@ -233,10 +283,11 @@ Each copied file starts with a header naming Top-pad commit `b833a7b` and its pa
 ## Repo layout
 
 - `apps/terminal-api`, `apps/terminal-web`
-- `packages/terminal-db`, `packages/terminal-indexer`
-- `crates/canary`, in the root Rust workspace beside our on-chain programs
-- `tests/terminal-e2e` (Playwright), `tests/devnet` (the restart test and the parity check)
+- `packages/terminal-db`, `packages/terminal-indexer`, `packages/terminal-explainer` (the prompt, its rules module, the normaliser and the validator, shared by `terminal-api` and the approve command), `packages/terminal-telegram`
+- `crates/canary`, in its own Cargo workspace, `crates/Cargo.toml` ([Pipeline's packages](#pipelines-packages))
+- `tests/terminal-e2e` (Playwright), `tests/devnet` (the restart test and the parity checks)
 - `.github/workflows/verify-build.yml`
+- Each joins the root pnpm workspace or, for Rust, `crates/`; none is built by the on-chain CI jobs, and CI gets a terminal job of its own behind the same `gate` check.
 
 ## Environments
 
@@ -253,16 +304,53 @@ Each copied file starts with a header naming Top-pad commit `b833a7b` and its pa
 
 Nothing is purchased: Workers Paid is already active.
 
-## Suggested build slices
+## Build tickets
 
-For [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) to adjust; each slice is meant to be demonstrable on devnet on its own.
+Cut by [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) on 2026-11-12, labelled `build`, one session each, with native blocking edges on GitHub (`PIPESCOPE-95`).
+They replace the slices this section first suggested: each ticket is a vertical slice, from the database to the page it shows on, so each is demonstrable on devnet on its own.
+Every ticket works as [`docs/agents/build-tickets.md`](../agents/build-tickets.md) says, and in addition:
 
-1. Scaffold both Workers, the database and the devnet deploy, with an empty API and page.
-2. The indexer: router and strategy programs, reconciliation, registry snapshot, ProgramData watch, backfill, restart test.
-3. Candles, live rooms and the viewer-gated socket.
-4. The trading path, with transfer-hook extra accounts and the fast path.
-5. The metadata fetcher and the facts (Pipeline's trust facts) behind the facts panel.
-6. The Canary runner: `crates/canary`, its image, `CanaryRun` and the records.
-7. Verified builds.
-8. Explainer jobs: the evidence builder, the approve command and the reports command.
-9. The web app's pages, from Aviary's v1 scope and screens.
+- **Verified on devnet data** (`PIPESCOPE-96`): its criteria run on Aviary's devnet deployment; every page it adds or changes is checked at 1440, 390 and 360 px wide in the light and the dark theme, with Playwright screenshots in its PR; CI runs the same tests on recorded devnet fixtures with no network.
+- **Signing in tests** (`PIPESCOPE-94`): Playwright registers a Wallet Standard test wallet, only in test builds, that signs with a devnet test key from `~/.config/testing-pipeline/devnet/`; each ticket that adds a signing flow also runs it once in a real wallet extension set to devnet, driven in the owner's Chrome.
+- **The keeper page** lives at `/keeper`, linked from every page's footer and from each product panel's due keeper jobs (`PIPESCOPE-97`).
+
+Owner tasks first, each a HITL task ticket on the map:
+
+1. [Aviary: owner setup for the first deploy (Aviary's Helius key and the Neon project)](https://github.com/imDev2023/testing-pipeline/issues/110), before the scaffold.
+2. [Aviary: owner setup for verified builds and the Telegram bot (GitHub token and working bot)](https://github.com/imDev2023/testing-pipeline/issues/111), before verified builds and the bot.
+
+The terminal, in run order:
+
+1. [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+2. [Aviary: index the router's history into Postgres, with the feed's two tables](https://github.com/imDev2023/testing-pipeline/issues/116)
+3. [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117) and [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118), side by side
+4. [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119) (after strategy versions) and [Aviary: trade plain mints: quotes, the trade box, review and sign, the fast path and the Fees page](https://github.com/imDev2023/testing-pipeline/issues/121) (after the market page), side by side
+5. [Aviary: token names and images, and search](https://github.com/imDev2023/testing-pipeline/issues/120), [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122) and [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
+
+Canary, whose binary needs none of the above and starts at once:
+
+1. [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+2. [Aviary: Canary over time and across wallets (holding, later, launch clock, insiders, transferred tokens, a queue of buyers)](https://github.com/imDev2023/testing-pipeline/issues/114) and [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115), side by side
+3. [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124), after both and the strategy versions
+4. [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125), after the facts panel and the trade box
+
+Then the explainer and the rest:
+
+1. [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126), after Canary in the Container and the facts; its first paid run waits for the owner's approval
+2. [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+3. [Aviary: verified builds of strategy versions](https://github.com/imDev2023/testing-pipeline/issues/128), after the explainer jobs, the GitHub token and [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66), whose program is the first verified match
+4. [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129), after the scaffold and [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
+The Telegram bot, built alongside the pages ([`pipescope-telegram.md`](pipescope-telegram.md), When it is built):
+
+1. [Aviary: arriving from Telegram (trade links, the wallet chooser on phones, alert links and the official handles)](https://github.com/imDev2023/testing-pipeline/issues/130), after the trade box
+2. [Aviary: the Telegram bot's scaffold](https://github.com/imDev2023/testing-pipeline/issues/131), after the scaffold and the working bot
+3. [Aviary: Telegram lookups (cards, search and the trade buttons)](https://github.com/imDev2023/testing-pipeline/issues/132), after Canary in the Container, the facts and the explainer jobs
+4. [Aviary: Telegram alerts and the public channel](https://github.com/imDev2023/testing-pipeline/issues/133)
+5. [Aviary: the Telegram watch list (upgrades with their results, changed Canary outcomes)](https://github.com/imDev2023/testing-pipeline/issues/134)
+
+Each product's Aviary ticket waits for the terminal tickets it builds on, wired as native edges:
+
+- [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75) and [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76): the market page, the facts, hooked mints, the forms and product-panel place, and Canary on the pages; the tax AMM's also the keeper page, for its due `distribute` jobs.
+- [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57): the market page, the facts, hooked mints, the forms, the explainer jobs and the keeper page.
+- [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88): the strategy-program calls, the market page, the trading path, hooked mints, the forms, the explainer jobs and the keeper page.

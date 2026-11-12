@@ -7,3 +7,4 @@
  */
 
 export * from "./marketCreated.ts";
+export * from "./seeded.ts";

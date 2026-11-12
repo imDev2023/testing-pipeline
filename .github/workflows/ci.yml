@@ -103,6 +103,13 @@ jobs:
         run: scripts/test-fetch-router.sh
       - name: Fetch devnet's router, checked against its pinned hash
         run: source scripts/toolchain-env.sh && scripts/fetch-router.sh
+      - name: Cache Pipeline's clone and test programs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fixtures/pipeline
+          key: ${{ runner.os }}-pipeline-${{ hashFiles('programs/Cargo.toml', 'scripts/fetch-pipeline.sh') }}
+      - name: Build Pipeline's test programs, for hostile tests (a second strategy, test hooks)
+        run: source scripts/toolchain-env.sh && scripts/fetch-pipeline.sh programs
       - name: Formatting
         run: cd programs && cargo fmt --all -- --check
       - name: Build each program by its own manifest
@@ -111,6 +118,13 @@ jobs:
         run: cd programs && cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (LiteSVM through devnet's router, with pipeline-check)
         run: cd programs && cargo test --workspace
+      - name: The lending AMM's mainnet build (its default is devnet)
+        run: |
+          source scripts/toolchain-env.sh
+          cargo build-sbf --manifest-path programs/lending-amm/Cargo.toml --no-default-features --features mainnet --sbf-out-dir programs/target/deploy-mainnet
+          cd programs
+          cargo clippy -p lending-amm --no-default-features --features mainnet --all-targets -- -D warnings
+          cargo test -p lending-amm --no-default-features --features mainnet --lib
 
   typescript:
     name: typescript

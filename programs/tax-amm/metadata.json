@@ -1,7 +1,7 @@
 {
     "schema": "pipeline-strategy-metadata/1",
     "name": "Aviary Tax AMM",
-    "description": "Constant-product markets that take a buy and a sell tax in one chosen mint, the tax side, whichever way a trade goes. Every tax is capped by a limit compiled into the program, and can only move inside a range fixed at creation, by an optional tax authority that can also renounce. Liquidity is seeded once and locked for good. The tax is booked in the market's vault and paid out to the market's tax recipients and burn, after the suite share. Markets can be created now; seeding and trading arrive in the next build.",
+    "description": "Constant-product markets that take a buy and a sell tax in one chosen mint, the tax side, whichever way a trade goes. Every tax is capped by a limit compiled into the program, and can only move inside a range fixed at creation, by an optional tax authority that can also renounce. Liquidity is seeded once and locked for good. The tax is booked in the market's vault and paid out to the market's tax recipients and burn, after the suite share.",
     "category": "amm",
     "tags": [
         "tax",
@@ -17,7 +17,7 @@
         "path": "programs/tax-amm"
     },
     "init": {
-        "description": "Creates a tax market for two tokens. The market state is a new keypair, which signs. Add the router's init_fee_account for each mint in the same transaction.",
+        "description": "Creates a tax market for two tokens. The market state is a new keypair, which signs. Add the router's init_fee_account for each mint and the seed action in the same transaction, so the market opens as it is created.",
         "idl_type": "InitParams",
         "market_state": "new_keypair",
         "args": [
@@ -175,6 +175,76 @@
             }
         ]
     },
+    "actions": [
+        {
+            "name": "seed",
+            "label": "Seed liquidity",
+            "kind": "add_liquidity",
+            "description": "The market's seeder funds it, once, before any swap, and it opens for trading. The liquidity is locked for good: nothing can ever take it out. A side may be left empty only when its virtual reserve prices it.",
+            "args": [
+                {
+                    "name": "amount_0",
+                    "type": "u64",
+                    "label": "Amount of token 0",
+                    "decimals_of": "mint:0"
+                },
+                {
+                    "name": "amount_1",
+                    "type": "u64",
+                    "label": "Amount of token 1",
+                    "decimals_of": "mint:1"
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "seeder",
+                    "source": "wallet",
+                    "signer": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                },
+                {
+                    "name": "seeder_token_0",
+                    "source": "wallet_token_account:0",
+                    "writable": true
+                },
+                {
+                    "name": "seeder_token_1",
+                    "source": "wallet_token_account:1",
+                    "writable": true
+                },
+                {
+                    "name": "vault_0",
+                    "source": "vault:0",
+                    "writable": true
+                },
+                {
+                    "name": "vault_1",
+                    "source": "vault:1",
+                    "writable": true
+                },
+                {
+                    "name": "mint_0",
+                    "source": "mint:0"
+                },
+                {
+                    "name": "mint_1",
+                    "source": "mint:1"
+                },
+                {
+                    "name": "token_program_0",
+                    "source": "token_program:0"
+                },
+                {
+                    "name": "token_program_1",
+                    "source": "token_program:1"
+                }
+            ]
+        }
+    ],
     "security": {
         "contact": "https://github.com/imDev2023/testing-pipeline/security/advisories/new",
         "policy": "https://github.com/imDev2023/testing-pipeline/security/policy"
