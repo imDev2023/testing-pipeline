@@ -183,7 +183,7 @@ Passed on 2026-11-12 from a fresh validator in 5 seconds: the transaction was 1,
 | --- | --- | --- |
 | `changes` | always | Decides whether on-chain code changed: `programs/`, `fixtures/pins.env`, the scripts that install, fetch, build or run it, the pnpm workspace files or the workflow |
 | `no keypairs` | always | `scripts/test-check-no-keypairs.sh`, then `scripts/check-no-keypairs.sh` |
-| `rust` | on-chain changes | The toolchain from `scripts/install-toolchain.sh solana`, the router fixture's test and fetch, `cargo fmt --check`, each program's SBF build by its manifest, clippy with `-D warnings`, the tests |
+| `rust` | on-chain changes | The toolchain from `scripts/install-toolchain.sh solana`, the router fixture's test and fetch, Pipeline's test programs from `scripts/fetch-pipeline.sh programs` (its clone cached by the pinned `rev`), `cargo fmt --check`, each program's SBF build by its manifest, clippy with `-D warnings`, the tests |
 | `typescript` | on-chain changes | Pipeline's SDK from `scripts/fetch-pipeline.sh sdk`, `pnpm install --frozen-lockfile`, `pnpm typecheck` |
 | `kani` | on-chain changes | Every program's Z3 proofs (`programs/*/proofs/*_z3.py`, with `z3-solver` 5.4.1.0), then Kani from `scripts/install-toolchain.sh kani` and `cargo kani --workspace -j --output-format=terse` |
 | `gate` | always | Passes only if `changes` and `no keypairs` passed and, when on-chain code changed, every heavy job passed too; when none changed, they must have been skipped |
