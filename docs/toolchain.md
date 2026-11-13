@@ -251,6 +251,25 @@ Both settings need the repository public on GitHub Free, so the owner runs `bash
 
 The first run, on [the PR that added CI](https://github.com/imDev2023/testing-pipeline/pull/102) on 2026-11-12, took 9 minutes from cold caches: `rust` 9 minutes (2 minutes 13 seconds of it compiling cargo-build-sbf, then the SBF build in 44 seconds, clippy in 64 seconds and the test build in 49 seconds), `kani` 3 minutes with Kani's install, `typescript` 28 seconds, and `changes`, `no keypairs` and `gate` a few seconds each.
 
+### CI on the owner's iMac
+
+While the repository is private, GitHub's included Actions minutes run out, and from 2026-11-12 GitHub refused to start any job; so on 2026-11-13 the owner moved CI to the iMac (`BAR-39`).
+Both workflows run where the repository variable `CI_RUNS_ON` says, as a JSON list of runner labels, and on GitHub's runners when it is unset:
+
+```bash
+gh variable set CI_RUNS_ON --repo imDev2023/testing-pipeline --body '["self-hosted","testing-pipeline"]'   # the iMac
+gh variable delete CI_RUNS_ON --repo imDev2023/testing-pipeline                                          # GitHub's runners again
+```
+
+The iMac's runners are two Docker containers from `scripts/ci-runner/` (Ubuntu 24.04 with what the jobs take from GitHub's image, and GitHub's runner at a pinned, checksummed release), so the `rust` and `kani` jobs of one run go side by side.
+Each has 8 CPUs and 7 GB of Docker Desktop's VM and its own home volume, which keeps its registration and the toolchains, Kani, Z3 and cargo registry the jobs install, so the cache steps run only on GitHub's runners.
+No host folder is mounted: a job sees nothing of the Mac's files, keys or `~/.config`.
+
+- `scripts/ci-runner/start.sh` builds the image, registers each runner the first time (with a one-use token from `gh`) and starts them; they restart with Docker Desktop.
+- `docker compose -f scripts/ci-runner/compose.yml logs -f` follows them, and `docker compose -f scripts/ci-runner/compose.yml down` stops them and keeps their volumes.
+- A job waits in the queue while Docker Desktop is not running, so the iMac must be awake for CI to finish.
+- To start a runner afresh, remove it under the repository's Settings, Actions, Runners, then its volume (`docker volume rm testing-pipeline-ci_runner-1`), and run `start.sh` again.
+
 ### Review skills
 
 Stronghold of Security and Book of Knowledge, from MetalLegBob's MIT-licensed [Solana Vibes Kit](https://github.com/MetalLegBob/solana-vibes-kit), are in `.claude/skills/` (commands `/SOS:*` and `/BOK:*` in `.claude/commands/`) at commit `969c43d`, the newest on 2026-11-10.
