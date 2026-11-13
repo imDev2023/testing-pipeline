@@ -3473,6 +3473,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48)
 
+### POOL4-28: How metadata describes seeding from another program
+
+- Question: How does the buy wall AMM's metadata tell a launcher how to fill in `pipeline_seed_liquidity`, which Pipeline's metadata standard has no field for?
+- Answer: As the tax AMM does (`TAX-41`): a top-level `seed_liquidity` form shaped as `init` is, with the seeded market state as a `pda:` source keyed by `input:seeder`, `input:token_mint` and wrapped SOL, `data` as init's arguments under the same IDL type with the seeder marked ignored, and the vault authority and both vaults after Pipeline's fixed seed accounts.
+- Alternatives: A prose description only, which no tool could resolve; a `create_market` custom action, which is called by a wallet, not by another program.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Custom actions and metadata](spec/pool4-for-solana.md#custom-actions-and-metadata)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53)
+
+### POOL4-29: How a seed request is checked
+
+- Question: What does the buy wall AMM's `pipeline_seed_liquidity` check beyond the creation, mint and seed rules, and what does it report and emit?
+- Answer: Exactly two amounts, the token's then wrapped SOL's (an error of its own otherwise), `data` exactly the creation parameters, escrows owned by the seeder as `seed` requires of the seeder's accounts, `SeedResult.taken` as what it measured leaving each escrow, and the same `MarketCreated` and `MarketSeeded` events as the router's path, every market being created and opened by the same code as one created through the router and seeded by `seed`; any signer, a wallet included, may call it and becomes its market's seeder.
+- Alternatives: Reporting the amounts requested as taken, as Pipeline's reference strategy does; an event of its own for a graduation; refusing an on-curve seeder (a wallet) so only programs' PDAs can seed, which protects nothing the seeder-keyed address does not already protect and would stop a wallet launching its own market this way.
+- Specified in: [`docs/spec/pool4-for-solana.md`, The seed](spec/pool4-for-solana.md#the-seed)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
