@@ -889,6 +889,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
 
+### BAR-39: Where CI runs
+
+- Question: Where do CI's jobs run while GitHub's included Actions minutes for a private repository are used up?
+- Answer: On two runner containers on the owner's iMac (`scripts/ci-runner/`), chosen by the repository variable `CI_RUNS_ON`; with the variable unset, both workflows run on GitHub's runners again.
+- Alternatives: A paid Actions budget; making the repository public, where GitHub's runners cost nothing, after the privacy purge; a runner on macOS itself, which would see the Mac's files and keys and differ from GitHub's Ubuntu image.
+- Specified in: [`docs/toolchain.md`, CI on the owner's iMac](toolchain.md#ci-on-the-owners-imac)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-13 in [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
