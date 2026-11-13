@@ -268,6 +268,7 @@ No host folder is mounted: a job sees nothing of the Mac's files, keys or `~/.co
 - `scripts/ci-runner/start.sh` builds the image, registers each runner the first time (with a one-use token from `gh`) and starts them; they restart with Docker Desktop.
 - `docker compose -f scripts/ci-runner/compose.yml logs -f` follows them, and `docker compose -f scripts/ci-runner/compose.yml down` stops them and keeps their volumes.
 - A job waits in the queue while Docker Desktop is not running, so the iMac must be awake for CI to finish.
+- They are for a private repository only: their home volumes outlive each job, so a pull request from a fork must never run on them; `scripts/make-repo-public.sh` deletes `CI_RUNS_ON` before it makes the repository public, and `docker compose -f scripts/ci-runner/compose.yml down` stops the runners for good.
 - To start a runner afresh, remove it under the repository's Settings, Actions, Runners, then its volume (`docker volume rm testing-pipeline-ci_runner-1`), and run `start.sh` again.
 
 ### Review skills
