@@ -9,7 +9,10 @@ The public names were settled on 2026-11-10 (`docs/spec/README.md`, Names) and a
 Building: the on-chain workspace is `programs/`, starting with the tax AMM from Pipeline's strategy template, and CI is `.github/workflows/ci.yml`; `docs/toolchain.md` says how to build, test and run the local demo.
 The wayfinder map is charted (2026-11-09): [Map: a build-ready spec for the Pipeline suite on devnet](https://github.com/imDev2023/testing-pipeline/issues/1), built from `docs/charting-brief.md`.
 The owner wants it done as soon as possible in parallel sessions: one ticket per session (research tickets excepted), each claimed by assigning yourself before any work.
-Auto mode refuses `gh repo create` and similar outward GitHub writes: write the commands to a script and hand the owner one `! bash <script>` line (`scripts/create-github-repo.sh` is the repo's).
+Auto mode refuses outward GitHub writes it cannot tie to the task (force-pushes, branch deletion, repo settings): write the commands to a script and hand the owner one `! bash <script>` line.
+The repo is private while MetalLegBob's profile is purged from its history (owner-run `~/.config/testing-pipeline/purge-profile-history.sh`; GitHub Support must drop the merged-PR refs it lists before it goes public); write everything as if it were public.
+GitHub's included Actions minutes ran out on 2026-11-12: CI runs on runner containers on the owner's iMac when the repository variable `CI_RUNS_ON` names them (`docs/toolchain.md`, "CI on the owner's iMac"; `scripts/ci-runner/`).
+Parallel sessions are coordinated from the main checkout with `~/.config/testing-pipeline/watch/` (watcher, standing briefs, `spawn-build.sh`); every session runs on Opus 5.5 at high effort.
 Start every session by reading the map's `## Next` section (the map is the issue labelled `wayfinder:map`: `gh issue list --repo imDev2023/testing-pipeline --label wayfinder:map`).
 Decisions land in `docs/adr/` and the spec in `docs/spec/`: a shared `README.md` plus one file per product; build tickets are labelled `build` and run one per session.
 Every decision settled so far is one block in `docs/decisions.md`, the decision register, with a stable ID.
@@ -63,8 +66,7 @@ Single-context. See `docs/agents/domain.md`.
 
 This project is mirrored on the owner's Multica dashboard (workspace Pandora) as project `8eefe62d-d883-4e95-9ee0-d1ae91a2580a`.
 The GitHub issues on `imDev2023/testing-pipeline` stay the source of truth; Multica only mirrors them.
-The starting Multica tickets (PAND-764 create the repo, PAND-765 send the outreach, PAND-766 chart the map) were done by 2026-11-09; from then on Multica mirrors the map's tickets.
-The Multica project was linked to the local folder because the repo did not exist yet.
+Multica mirrors the map's tickets.
 At the end of every session, after the tracker is updated, run the `multica-sync` skill for this project: mirror ticket statuses, add any new tickets, and refresh the project's "Current step" section.
 Every Multica write passes `--no-start` and no ticket is ever assigned to an agent, so the sync never starts an agent run.
 If the `multica` CLI is not signed in, say so in the session summary and stop anyway; the sync never blocks the work.
