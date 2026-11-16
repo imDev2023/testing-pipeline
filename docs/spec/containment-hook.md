@@ -80,6 +80,7 @@ The allowed sets are the same for sources and destinations, and neither allowed 
 - `sweep_fees`, which moves the fee account to Pipeline's treasury (it passes on the source, so the treasury needs no entry).
 - The tax AMM's one-time `seed` into the vault.
 - The tax AMM's `distribute`, which pays tax out of the vault; with the tax side on the quote mint it never moves the contained token anyway.
+- A transfer from an account to itself, which Token-2022 completes before it calls any hook, moving nothing, with or without the hook accounts (found by [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71); `spl-token-2022` returns early on a self-transfer).
 
 Bypass needs no rule: the tax AMM refuses it, so every trade in the home market goes through the router, pays Pipeline's fee and counts in the market's counters.
 
@@ -242,12 +243,17 @@ Tests assert the measured cost of each instruction with headroom, never above th
 | `bind` | 60,000 | Creates two accounts and reads the mint's extensions, the router's `Market` and the market state |
 | `unlock` | 30,000 | Two Token-2022 calls signed by the unlock PDA |
 
+`bind`'s cost leaves out what its bump searches spend beyond each address's first bump, as the tax AMM's ceilings do (`docs/spec/tax-amm.md`, "Compute ceilings").
+It searches four times, for the config, the validation account, the unlock PDA and the fee account's associated token address, at 1,500 units for each bump tried after the first, and how many each takes depends on the mint's address.
+Less those, it costs the same on every mint (20,916 units measured on 2026-11-16), while with them the invariant fuzzer measured up to 55,416 units, so a ceiling on the whole cost would fail on a rare mint (measured by [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)).
+`bind` runs once per token with the transaction's compute limit, so the search costs only compute, never a refusal.
+
 ### Invariants
 
 For the bar's stateful fuzzing layer, beyond its shared three:
 
 1. While contained, no sequence of actions moves the token between two accounts that are both outside the home vault and the fee account.
-2. A transfer that leaves out or substitutes any hook account is refused.
+2. A transfer that leaves out or substitutes any hook account is refused, but for a transfer from an account to itself, which moves nothing (see "What this allows").
 3. The config never changes after binding, except the unlock time, which is set once.
 4. `unlock` succeeds exactly when the tax collected reaches the goal or the deadline has passed; afterwards both of the mint's hook fields are unset, and nothing else ever changes them.
 5. The shared "every holder can still exit" invariant holds for contained tokens, through sells into the home market.
@@ -322,3 +328,10 @@ By [Containment hook: unlock by the goal or the deadline](https://github.com/imD
 
 - Both are under the 30,000 ceiling; the cost does not move from mint to mint, since `unlock` uses the bumps the config stores, and differs between runs only by the length of the numbers it logs.
   `tests/compute.rs` asserts the ceiling, and the launch script prints the cost from the unlock's logs.
+
+By [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) on 2026-11-16, against devnet's router bytes, with the invariant fuzzer (`tests/fuzz.rs`) on every market shape of the tax AMM's fuzzer:
+
+- 20,000 sequences of up to 50 steps passed in 345 seconds on 20 threads of the owner's Mac, 10,589 of them ending unlocked; CI runs 1,000.
+- The most each instruction took across them: `Execute` 5,603 units of its 10,000, `unlock` 13,655 of its 30,000, and `bind` 20,916 of its 60,000 once its bump searches beyond the first bumps are left out (see "Compute ceilings"); with them, an earlier run of 20,000 measured `bind` at up to 55,416 units.
+- Each of the five invariants caught a deliberate fault in the hook on its own, with only it checked: the allow rule passing every transfer (1), `Execute` approving when Token-2022 calls it without the validation account and the config, as `test-hook` does (2), `unlock` also rewriting the deadline (3), `unlock` clearing the hook program but not the hook authority (4), and the fee account left out of the allowed accounts, which stops every sell (5).
+- The fuzzer found three failures, all of its own model and none of the hook's, each fixed with a regression test: a transfer from an account to itself, which Token-2022 completes before it calls any hook (see "What this allows"); the seeder spending part of its seed before the seed, which the tax AMM's model now expects to be refused with `InsufficientFunds`; and that model judging a seed's two sides in the program's order.
