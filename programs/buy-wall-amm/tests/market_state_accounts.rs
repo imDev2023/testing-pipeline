@@ -15,6 +15,10 @@ use solana_signer::Signer;
 const TOKENS: u64 = 1_000_000_000_000;
 const LAMPORTS: u64 = 10 * SOL;
 
+/// The vault authority's bump in the market state (docs/spec/pool4-for-solana.md, the layout
+/// table; `authority_bump` in `src/state.rs`).
+const AUTHORITY_BUMP_OFFSET: usize = 10;
+
 /// A change to a planted copy's bytes.
 type Change = Box<dyn Fn(&mut Vec<u8>)>;
 
@@ -22,12 +26,27 @@ type Change = Box<dyn Fn(&mut Vec<u8>)>;
 /// `owner`, and returns the market's addresses with the copy as its market state.
 fn plant(env: &mut Env, market: &Market, owner: Pubkey, change: impl Fn(&mut Vec<u8>)) -> Market {
     let mut account = env.svm.get_account(&market.market_state).unwrap();
+    let bump = account.data[AUTHORITY_BUMP_OFFSET];
     change(&mut account.data);
     account.owner = owner;
     account.lamports = env
         .svm
         .minimum_balance_for_rent_exemption(account.data.len());
-    let address = Pubkey::new_unique();
+    // The program derives the vault authority from the bump stored in the state, which is
+    // the canonical bump for the original address only. At an address whose canonical bump
+    // differs, that bump can fail to give a program address, and instructions that derive the
+    // authority refuse with WrongAccount for a reason that is not the change under test; so
+    // plant the copy where the stored bump is canonical (two tries on average).
+    let address = loop {
+        let candidate = Pubkey::new_unique();
+        let (_, canonical) = Pubkey::find_program_address(
+            &[buy_wall_amm::state::AUTHORITY_SEED, candidate.as_ref()],
+            &strategy_id(),
+        );
+        if canonical == bump {
+            break candidate;
+        }
+    };
     env.svm.set_account(address, account).unwrap();
     Market {
         market_state: address,
