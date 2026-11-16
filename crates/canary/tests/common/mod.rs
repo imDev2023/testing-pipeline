@@ -1,7 +1,7 @@
 //! A small cluster in LiteSVM for Canary's tests: devnet's router, checked against the hash
-//! pinned in `fixtures/pins.env` as `scripts/fetch-router.sh` checks it, and Pipeline's
-//! Apache-2.0 test strategies, with markets created through the router as anyone creates
-//! them on devnet. Canary then copies a market out of this cluster exactly as it copies one
+//! pinned in `fixtures/pins.env` as `scripts/fetch-router.sh` checks it, Pipeline's
+//! Apache-2.0 test strategies and transfer hook, and Canary's own fixture strategy, with
+//! markets created through the router as anyone creates them on devnet. Canary then copies a market out of this cluster exactly as it copies one
 //! from devnet, through an account source.
 //!
 //! Build the fixtures first, from the repo root:
@@ -10,9 +10,12 @@
 //! source scripts/toolchain-env.sh
 //! scripts/fetch-router.sh              # fixtures/router/pipeline.so
 //! scripts/fetch-pipeline.sh programs   # fixtures/pipeline/programs/target/deploy/*.so
+//! crates/canary/tests/fixtures/build.sh   # Canary's own fixture programs
 //! ```
 
 #![allow(dead_code)]
+
+pub mod rows;
 
 use std::path::PathBuf;
 
@@ -32,6 +35,20 @@ pub const WSOL: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 pub const CP: Pubkey = pubkey!("yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx");
 /// `test-strategy-evil`'s address.
 pub const EVIL: Pubkey = pubkey!("Dyn7Jwr9xtQxs4Nyiun58mTAh278SXyqWFX6331uvT72");
+/// Where the tests deploy Canary's own fixture strategy (`tests/fixtures/strategy`).
+pub const FIXTURE: Pubkey = pubkey!("CanaryFixtureStrategy1111111111111111111111");
+/// Where the tests deploy Pipeline's Apache-2.0 `test-hook`, as Pipeline's own tests do.
+pub const HOOK: Pubkey = pubkey!("BfAcC8daPZSS4iEYz1figEshePUr96gDFwtytn7DyNZ3");
+pub const TOKEN_2022: Pubkey = client::TOKEN_2022_PROGRAM_ID;
+
+/// The fixture strategy's modes (`tests/fixtures/strategy/src/lib.rs`).
+pub mod mode {
+    pub const FAIR: u8 = 0;
+    pub const INSIDER_PAID_MORE: u8 = 1;
+    pub const INSIDER_PAID_LESS: u8 = 2;
+    pub const LAUNCH_TAX: u8 = 3;
+    pub const CLOSES: u8 = 4;
+}
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -72,6 +89,15 @@ pub fn test_program(name: &str) -> Vec<u8> {
             "fixtures/pipeline/programs/target/deploy/{name}.so"
         )),
         "Run scripts/fetch-pipeline.sh programs first.",
+    )
+}
+
+/// Canary's own fixture strategy, built by `tests/fixtures/build.sh`.
+pub fn fixture_program() -> Vec<u8> {
+    read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/strategy/target/deploy/canary_fixture_strategy.so"),
+        "Run crates/canary/tests/fixtures/build.sh first.",
     )
 }
 
@@ -134,6 +160,12 @@ impl Cluster {
         cluster
     }
 
+    /// The admin's address: the router's admin, every test market's creator, and the mint
+    /// authority and upgrade authority of what the tests create.
+    pub fn admin_key(&self) -> Pubkey {
+        self.admin.pubkey()
+    }
+
     pub fn try_send(
         &mut self,
         instructions: &[Instruction],
@@ -158,14 +190,20 @@ impl Cluster {
         self.try_send(instructions, signers).unwrap();
     }
 
-    /// Deploys and registers a strategy program, unless it already is.
+    /// Deploys and registers one of Pipeline's test strategies, unless it already is.
     pub fn register(&mut self, program: &Pubkey, so_name: &str) {
         if self.svm.get_account(&pda::strategy(program)).is_some() {
             return;
         }
-        self.svm
-            .add_program(*program, &test_program(so_name))
-            .unwrap();
+        self.register_bytes(program, &test_program(so_name));
+    }
+
+    /// Deploys and registers a strategy program from its bytes.
+    pub fn register_bytes(&mut self, program: &Pubkey, bytes: &[u8]) {
+        if self.svm.get_account(&pda::strategy(program)).is_some() {
+            return;
+        }
+        self.svm.add_program(*program, bytes).unwrap();
         let admin = self.admin.pubkey();
         set_upgrade_authority(&mut self.svm, program, &admin);
         let ix = client::register_strategy(
@@ -381,6 +419,206 @@ impl Cluster {
         }
     }
 
+    /// A market on Canary's fixture strategy in `mode`, 1,000 SOL against 1,000,000 tokens of
+    /// a 6-decimal mint whose supply is 100 times the vault's, with `insider` as the one
+    /// wallet the insider modes treat differently.
+    pub fn fixture_market(&mut self, mode: u8, insider: Pubkey) -> Market {
+        self.register_bytes(&FIXTURE, &fixture_program());
+        let mint_a = self.wrapped_sol();
+        let mint_b = self.create_mint(6);
+        let state = Pubkey::find_program_address(
+            &[b"state", mint_a.as_ref(), mint_b.as_ref(), &[mode]],
+            &FIXTURE,
+        )
+        .0;
+        let vault_a = self.give(&mint_a, &state, 1_000 * SOL);
+        let vault_b = self.give(&mint_b, &state, 1_000_000_000_000);
+        self.set_supply(&mint_b, 100_000_000_000_000);
+        let mut init_data = vec![mode];
+        init_data.extend_from_slice(insider.as_ref());
+        let creator = self.admin.pubkey();
+        let ix = client::create_market(&client::CreateMarket {
+            creator,
+            strategy_program: FIXTURE,
+            market_state: state,
+            market_state_signs: false,
+            init_data,
+            max_creator_lamports: SOL,
+            strategy_accounts: vec![
+                AccountMeta::new_readonly(mint_a, false),
+                AccountMeta::new_readonly(mint_b, false),
+                AccountMeta::new(vault_a, false),
+                AccountMeta::new(vault_b, false),
+            ],
+        });
+        self.send(&[ix], &[]);
+        let market = pda::market(&FIXTURE, &state);
+        self.send(
+            &[
+                client::init_fee_account(&creator, &market, &mint_a, &TOKEN),
+                client::init_fee_account(&creator, &market, &mint_b, &TOKEN),
+            ],
+            &[],
+        );
+        Market {
+            market,
+            state,
+            mint_a,
+            mint_b,
+        }
+    }
+
+    /// A wrapped SOL market on `test-strategy-cp` whose token is a Token-2022 mint with
+    /// Pipeline's `test-hook` as its transfer hook, allowing only transfers into or out of the
+    /// market's token vault and its fee account: wallet-to-wallet transfers are refused, as a
+    /// contained token's are. 1,000 SOL against 1,000,000 tokens.
+    pub fn hooked_market(&mut self) -> Market {
+        self.register(&CP, "test_strategy_cp");
+        if self.svm.get_account(&HOOK).is_none() {
+            self.svm
+                .add_program(HOOK, &test_program("test_hook"))
+                .unwrap();
+        }
+        let sol = self.wrapped_sol();
+        let token = self.create_hooked_mint(6);
+        let fee_bps: u16 = 30;
+        let pool = Pubkey::find_program_address(
+            &[
+                b"pool",
+                sol.as_ref(),
+                token.as_ref(),
+                &fee_bps.to_le_bytes(),
+            ],
+            &CP,
+        )
+        .0;
+        let market = pda::market(&CP, &pool);
+        let vault_sol = pda::associated_token(&pool, &sol, &TOKEN);
+        let vault_token = pda::associated_token(&pool, &token, &TOKEN_2022);
+        let fee_token = pda::fee_account(&market, &token, &TOKEN_2022);
+        let mut allowed = vault_token.to_bytes().to_vec();
+        allowed.extend_from_slice(fee_token.as_ref());
+        let whitelist = Pubkey::find_program_address(&[b"whitelist", token.as_ref()], &HOOK).0;
+        let init_hook = Instruction::new_with_bytes(
+            HOOK,
+            &[b"tsthkini".as_slice(), &allowed].concat(),
+            vec![
+                AccountMeta::new(self.admin.pubkey(), true),
+                AccountMeta::new(hook_validation(&token), false),
+                AccountMeta::new(whitelist, false),
+                AccountMeta::new_readonly(token, false),
+                AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
+            ],
+        );
+        self.send(&[init_hook], &[]);
+        let creator = self.admin.pubkey();
+        let ix = client::create_market(&client::CreateMarket {
+            creator,
+            strategy_program: CP,
+            market_state: pool,
+            market_state_signs: false,
+            init_data: borsh::to_vec(&fee_bps).unwrap(),
+            max_creator_lamports: SOL,
+            strategy_accounts: vec![
+                AccountMeta::new_readonly(sol, false),
+                AccountMeta::new_readonly(token, false),
+                AccountMeta::new(vault_sol, false),
+                AccountMeta::new(vault_token, false),
+                AccountMeta::new_readonly(TOKEN, false),
+                AccountMeta::new_readonly(TOKEN_2022, false),
+                AccountMeta::new_readonly(client::ASSOCIATED_TOKEN_PROGRAM_ID, false),
+            ],
+        });
+        self.send(&[ix], &[]);
+        self.send(
+            &[
+                client::init_fee_account(&creator, &market, &sol, &TOKEN),
+                client::init_fee_account(&creator, &market, &token, &TOKEN_2022),
+            ],
+            &[],
+        );
+        // The liquidity, through the strategy's `deposit`: the hook allows a transfer into
+        // the vault.
+        let (reserve_sol, reserve_token) = (1_000 * SOL, 1_000_000_000_000u64);
+        let lp = Keypair::new();
+        self.svm.airdrop(&lp.pubkey(), SOL).unwrap();
+        let lp_sol =
+            write_token_account(&mut self.svm, &sol, &TOKEN, &lp.pubkey(), reserve_sol).unwrap();
+        let lp_token = write_token_account(
+            &mut self.svm,
+            &token,
+            &TOKEN_2022,
+            &lp.pubkey(),
+            reserve_token,
+        )
+        .unwrap();
+        let mut data = client::instruction_discriminator("deposit").to_vec();
+        data.extend_from_slice(&reserve_sol.to_le_bytes());
+        data.extend_from_slice(&reserve_token.to_le_bytes());
+        let accounts = vec![
+            AccountMeta::new_readonly(lp.pubkey(), true),
+            AccountMeta::new(pool, false),
+            AccountMeta::new(lp_sol, false),
+            AccountMeta::new(lp_token, false),
+            AccountMeta::new(vault_sol, false),
+            AccountMeta::new(vault_token, false),
+            AccountMeta::new_readonly(sol, false),
+            AccountMeta::new_readonly(token, false),
+            AccountMeta::new_readonly(TOKEN, false),
+            AccountMeta::new_readonly(TOKEN_2022, false),
+            AccountMeta::new_readonly(whitelist, false),
+            AccountMeta::new_readonly(HOOK, false),
+            AccountMeta::new_readonly(hook_validation(&token), false),
+        ];
+        self.send(&[Instruction::new_with_bytes(CP, &data, accounts)], &[&lp]);
+        self.set_supply(&token, 100 * reserve_token);
+        Market {
+            market,
+            state: pool,
+            mint_a: sol,
+            mint_b: token,
+        }
+    }
+
+    /// A Token-2022 mint with `test-hook` as its transfer hook and the admin as its mint
+    /// authority.
+    pub fn create_hooked_mint(&mut self, decimals: u8) -> Pubkey {
+        use spl_token_2022_interface::extension::ExtensionType;
+        let mint = Keypair::new();
+        let authority = self.admin.pubkey();
+        let space =
+            ExtensionType::try_calculate_account_len::<spl_token_2022_interface::state::Mint>(&[
+                ExtensionType::TransferHook,
+            ])
+            .unwrap();
+        let ixs = vec![
+            create_account(
+                &authority,
+                &mint.pubkey(),
+                self.svm.minimum_balance_for_rent_exemption(space),
+                space as u64,
+                &TOKEN_2022,
+            ),
+            spl_token_2022_interface::extension::transfer_hook::instruction::initialize(
+                &TOKEN_2022,
+                &mint.pubkey(),
+                Some(authority),
+                Some(HOOK),
+            )
+            .unwrap(),
+            spl_token_2022_interface::instruction::initialize_mint2(
+                &TOKEN_2022,
+                &mint.pubkey(),
+                &authority,
+                None,
+                decimals,
+            )
+            .unwrap(),
+        ];
+        self.send(&ixs, &[&mint]);
+        mint.pubkey()
+    }
+
     /// Gives a market a third mint in the router's record, with a vault holding `reserve`,
     /// as if the strategy had reported three mints when the market was created.
     pub fn add_third_mint(&mut self, market: &Market, reserve: u64) -> Pubkey {
@@ -461,12 +699,26 @@ impl Cluster {
         self.send(&[ix], &[]);
     }
 
+    /// Lets `seconds` pass on the cluster's clock, slot, epoch and Unix time together.
+    pub fn pass_time(&mut self, seconds: u64) {
+        let now: solana_clock::Clock = self.svm.get_sysvar();
+        canary::clock::set(
+            &mut self.svm,
+            &canary::clock::after(&now, canary::config::Wait::Seconds(seconds)),
+        );
+    }
+
     /// Overwrites an account's data in place, keeping its owner and lamports.
     pub fn edit(&mut self, address: &Pubkey, edit: impl FnOnce(&mut Vec<u8>)) {
         let mut account = self.svm.get_account(address).expect("account exists");
         edit(&mut account.data);
         self.svm.set_account(*address, account).unwrap();
     }
+}
+
+/// The test hook's extra-account-meta list for `mint`.
+pub fn hook_validation(mint: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[b"extra-account-metas", mint.as_ref()], &HOOK).0
 }
 
 fn create_account(

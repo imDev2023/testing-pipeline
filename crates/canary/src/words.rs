@@ -42,3 +42,10 @@ pub fn share(ppm: u64) -> String {
     }
     percent(ppm)
 }
+
+/// Parts per million as percentage points with one decimal place, rounded down: "1.0 point".
+pub fn points(ppm: u64) -> String {
+    let tenths = ppm / (PPM_PER_POINT / 10);
+    let unit = if tenths == 10 { "point" } else { "points" };
+    format!("{}.{} {unit}", tenths / 10, tenths % 10)
+}

@@ -27,6 +27,13 @@ pub struct SwapRequest<'a> {
     pub strategy_accounts: &'a [AccountMeta],
     /// `TradeRequest::extra`.
     pub extra: &'a [u8],
+    /// The input mint's transfer-hook accounts for the trader-to-vault transfer, and the
+    /// output mint's for the vault-to-trader transfer, as [`Session::hook_accounts`] found
+    /// them; empty for a mint without a hook.
+    ///
+    /// [`Session::hook_accounts`]: crate::market::Session::hook_accounts
+    pub input_hook_accounts: &'a [AccountMeta],
+    pub output_hook_accounts: &'a [AccountMeta],
 }
 
 /// What a committed swap did.
@@ -75,6 +82,10 @@ impl SwapPath for ThroughRouter {
         request: &SwapRequest,
     ) -> Result<SwapReceipt, Failure> {
         let (input, output, trader) = (request.input, request.output, request.trader);
+        // The strategy pays out of its vault itself, so it is handed the output mint's hook
+        // accounts after its own; the router moves the input and takes the input's.
+        let mut strategy_accounts = request.strategy_accounts.to_vec();
+        strategy_accounts.extend_from_slice(request.output_hook_accounts);
         let accounts = client::SwapAccounts {
             trader,
             strategy_program: market.strategy(),
@@ -87,8 +98,8 @@ impl SwapPath for ThroughRouter {
             input_token_program: market.token_program(input),
             output_token_program: market.token_program(output),
             integrator_fee_account: None,
-            strategy_accounts: request.strategy_accounts.to_vec(),
-            input_hook_accounts: vec![],
+            strategy_accounts,
+            input_hook_accounts: request.input_hook_accounts.to_vec(),
         };
         let args = client::SwapArgs {
             mode: TradeMode::ExactIn,

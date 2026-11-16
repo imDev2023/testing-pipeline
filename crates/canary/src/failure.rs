@@ -20,6 +20,8 @@ pub enum Stage {
     ResolveAccounts,
     Quote,
     Swap,
+    /// One wallet sending the token to another, outside the market.
+    Transfer,
 }
 
 impl Stage {
@@ -29,6 +31,7 @@ impl Stage {
             Stage::ResolveAccounts => "resolving the trade's accounts",
             Stage::Quote => "quoting",
             Stage::Swap => "the swap",
+            Stage::Transfer => "sending the token to another wallet",
         }
     }
 }

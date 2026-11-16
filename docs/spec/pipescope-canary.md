@@ -135,11 +135,12 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | `exit_late` | Moves the clock forward by each wait, then buys and sells the reference size | Never: it is not the present | A later round trip fails, or returns more than the tolerance less than now | Every later round trip is within the tolerance of now |
 | `exit_launch_clock` | Sets the clock to each launch-clock position, then buys and sells the reference size | Never: it is not the present | A launch-clock round trip fails, or returns more than the tolerance less than now | Every one is within the tolerance of now |
 | `exit_wallets` | Round-trips the reference size from five fresh wallets, the market creator, the strategy's upgrade authority and each mint authority, each from the same starting state | Fresh wallets get different results from the same state, or an insider gets more back than a fresh wallet | An insider gets less back than a fresh wallet | All get the same |
-| `exit_transferred` | One wallet buys the reference size and sends the tokens to a second wallet, which sells them | The transfer went through and the second wallet cannot sell | The transfer is refused (for any token, ours or anyone's: the result says the token could not be sent to another wallet, and what the buyer got back by selling it), or the second wallet's return is below the pass band while the buyer's own is not | The second wallet's return is in the pass band |
+| `exit_transferred` | One wallet buys the reference size and sends the tokens to a second wallet, which sells them | The transfer went through and the second wallet cannot sell | The transfer is refused (for any token, ours or anyone's: the result says the token could not be sent to another wallet, and what the buyer got back by selling it), or the second wallet's return is below the pass band while the buyer's own is not, or, when the buyer's own is below it too, more than the tolerance below the buyer's own (`CANARY-37`) | The second wallet's return is in the pass band, or no more than the tolerance below a buyer's own return that is also below it |
 | `exit_queue` | Five wallets buy the reference size one after another, then sell in the same order | Any of the five cannot sell, or together they get back within the fail band | Together they get back less than the pass band | All five sell and together get back within the pass band |
 
-- Wallets that are a program's address, not a wallet, are skipped and named.
+- Wallets that are a program's address, not a wallet, are skipped and named: a key off the Ed25519 curve, a program, or an account a program holds (`CANARY-39`).
 - In `exit_queue` only the total is judged: in a thin pool the first buyer out gains what the last one loses, which is ordinary price movement.
+- Every row but `exit_sizes` trades the reference size, or the size that stands in for it in `exit_sizes`, and judges a later or earlier time against a round trip measured in the same row at the cluster's clock, from the same kind of starting state (`CANARY-40`).
 
 ### Quote against swap
 
@@ -148,6 +149,7 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | `quote_matches_swap` | Compares every swap the run commits with the quote taken in the same state just before it: output received, input sent, Pipeline fee, and the trader's own balance changes | In the ordinary trade, any difference, a quoted swap that fails, or a swap that works when its quote failed | The same at another size or clock position | Every compared swap equals its quote; the count is reported |
 
 - Exact-out quoting stays with `pipeline-check`'s `quotes`, `quote_matches_swap` and `exact_out_refund` checks, carried in the conformance report; Canary trades exact-in only.
+- Of the exit checks' own swaps, the ordinary trade is a buy or sale of the reference size by a fresh wallet in the copy's own state, at the cluster's clock or the next slot: `exit_hold`'s buy and its sales in the same and the next slot, `exit_late`'s round trips now and a slot later, `exit_launch_clock`'s round trip now, the fresh wallets' round trips in `exit_wallets`, the buy in `exit_transferred` and the first buy in `exit_queue` (`CANARY-41`).
 
 ### Fee honesty
 
@@ -239,6 +241,7 @@ Each check on each market produces one **Canary result**, a record the facts pan
 
 - It is any latest result of `exit_sizes`, `exit_hold`, `exit_wallets`, `exit_transferred` or `exit_queue`, for the market's current strategy version, in which a wallet's buy worked and the sale of what it bought then failed.
 - A refused wallet-to-wallet transfer in `exit_transferred` is never "could not sell back": the buyer could still sell, so it raises no notice (`CANARY-27`).
+- Every exit record carries `could_not_sell_back` in its numbers, true exactly when this definition holds for it, so the trade box reads one field (`CANARY-38`); `exit_late` and `exit_launch_clock` carry it as false.
 - It counts whether the result is a fail or a warn, and the notice states the condition from the record: the size, the wait or the wallet's role, and the refusing program's own error message.
   On devnet today that is the three open bonding curves: "a wallet that bought 1 SOL or more could not sell back; buys of 0.1 SOL and less sold back".
 - `exit_late` and `exit_launch_clock` do not count: they describe another time, and the scheduled runs see that time when it comes.
