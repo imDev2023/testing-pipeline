@@ -164,3 +164,34 @@ fn a_market_whose_cap_is_falling_and_trimming_passes_every_check() {
         .unwrap();
     assert_eq!(events::<buy_wall_amm::events::Trimmed>(&logs).len(), 1);
 }
+
+#[test]
+fn markets_seeded_by_another_program_pass_every_check() {
+    for (what, hooked) in [
+        (
+            "seeded by the stand-in launchpad through pipeline_seed_liquidity",
+            false,
+        ),
+        (
+            "a token with Pipeline's test-hook, seeded by the stand-in launchpad",
+            true,
+        ),
+    ] {
+        let mut env = Env::new();
+        let (token, program) = if hooked {
+            (env.seedable_hooked_token(), TOKEN_2022)
+        } else {
+            (env.seedable_token(&TOKEN), TOKEN)
+        };
+        let launch = env.launch(token, program, 1_000_000_000_000, 10 * SOL);
+        let graduated = env
+            .graduate(
+                &launch,
+                &launch_params(pipeline_client::Pubkey::new_unique()),
+                1_000_000_000_000,
+                10 * SOL,
+            )
+            .unwrap();
+        check(&env, &graduated.market, what);
+    }
+}

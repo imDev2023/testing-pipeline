@@ -889,6 +889,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63)
 
+### BAR-39: Where CI runs
+
+- Question: Where do CI's jobs run while GitHub's included Actions minutes for a private repository are used up?
+- Answer: On two runner containers on the owner's iMac (`scripts/ci-runner/`), chosen by the repository variable `CI_RUNS_ON`; with the variable unset, both workflows run on GitHub's runners again.
+- Alternatives: A paid Actions budget; making the repository public, where GitHub's runners cost nothing, after the privacy purge; a runner on macOS itself, which would see the Mac's files and keys and differ from GitHub's Ubuntu image.
+- Specified in: [`docs/toolchain.md`, CI on the owner's iMac](toolchain.md#ci-on-the-owners-imac)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-13 in [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -3463,7 +3473,27 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48)
 
-### POOL4-28: What a swap that moves the cap reports
+### POOL4-28: How metadata describes seeding from another program
+
+- Question: How does the buy wall AMM's metadata tell a launcher how to fill in `pipeline_seed_liquidity`, which Pipeline's metadata standard has no field for?
+- Answer: As the tax AMM does (`TAX-41`): a top-level `seed_liquidity` form shaped as `init` is, with the seeded market state as a `pda:` source keyed by `input:seeder`, `input:token_mint` and wrapped SOL, `data` as init's arguments under the same IDL type with the seeder marked ignored, and the vault authority and both vaults after Pipeline's fixed seed accounts.
+- Alternatives: A prose description only, which no tool could resolve; a `create_market` custom action, which is called by a wallet, not by another program.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Custom actions and metadata](spec/pool4-for-solana.md#custom-actions-and-metadata)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53)
+
+### POOL4-29: How a seed request is checked
+
+- Question: What does the buy wall AMM's `pipeline_seed_liquidity` check beyond the creation, mint and seed rules, and what does it report and emit?
+- Answer: Exactly two amounts, the token's then wrapped SOL's (an error of its own otherwise), `data` exactly the creation parameters, escrows owned by the seeder as `seed` requires of the seeder's accounts, `SeedResult.taken` as what it measured leaving each escrow, and the same `MarketCreated` and `MarketSeeded` events as the router's path, every market being created and opened by the same code as one created through the router and seeded by `seed`; any signer, a wallet included, may call it and becomes its market's seeder.
+- Alternatives: Reporting the amounts requested as taken, as Pipeline's reference strategy does; an event of its own for a graduation; refusing an on-curve seeder (a wallet) so only programs' PDAs can seed, which protects nothing the seeder-keyed address does not already protect and would stop a wallet launching its own market this way.
+- Specified in: [`docs/spec/pool4-for-solana.md`, The seed](spec/pool4-for-solana.md#the-seed)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53)
+
+### POOL4-30: What a swap that moves the cap reports
 
 - Question: What does a swap that lowers the inventory cap or trims the curve emit, and how does the demo learn the cap's constants without restating them?
 - Answer: Two events, `CapLowered` (market state, the new cap, how far it fell, what the curve held, the decay credit left) and `Trimmed` (market state, the tokens retired, the SOL moved to idle SOL, the new liquidity, the cap), each emitted only when its step changes something; and the program publishes `DECAY_CREDIT_WINDOW` and `MIN_LIQUIDITY` in its IDL with Anchor's `#[constant]`, as it does the fee shares (`POOL4-25`), so the demo's model of the cap reads them from the generated client.
@@ -3473,7 +3503,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49)
 
-### POOL4-29: The ratchet after a sell
+### POOL4-31: The ratchet after a sell
 
 - Question: Does the ratchet run only after buys, as the spec's summary puts it, or after any swap that leaves the curve below the cap, as step 6's rule reads?
 - Answer: After any swap: step 6 compares the curve with the cap whichever way the trade went, so a sell that leaves the curve still below a cap the decay credit kept from falling all the way lowers it too, within the credit and the floor.
@@ -3986,7 +4016,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-25` to `POOL4-27`: set by the session of [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-24` is the owner's answer to that session's question.
-- `POOL4-28`, `POOL4-29`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.

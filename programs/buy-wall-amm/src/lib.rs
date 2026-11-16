@@ -13,6 +13,7 @@
 //! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices an exact-in trade             |
 //! | `pipeline_swap`             | the router, from `swap`          | settles a trade, then the cap        |
 //! | `seed`                      | the market's seeder, directly    | seeds and opens the market, once      |
+//! | `pipeline_seed_liquidity`   | a launchpad's program, by CPI    | creates, seeds and opens a market     |
 //!
 //! Policy values live only in `config.rs` (build-time constants) and in each market's
 //! creation parameters (`params.rs`).
@@ -87,6 +88,19 @@ pub mod buy_wall_amm {
         sol_amount: u64,
     ) -> Result<()> {
         instructions::seed::handle_seed(ctx, token_amount, sol_amount)
+    }
+
+    /// Pipeline's optional extension, called by another program such as a launchpad
+    /// graduating a token: creates a market at the PDA `["seeded", seeder, token_mint,
+    /// wsol_mint]` from the creation parameters in `request.data` (with the signing seeder in
+    /// place of theirs), takes `request.amounts` from the seeder's escrows, opens it as
+    /// `seed` does and returns `SeedResult { taken, lp_amount: 0 }`. Remaining accounts are
+    /// the token's transfer-hook accounts.
+    pub fn pipeline_seed_liquidity<'info>(
+        ctx: Context<'info, SeedLiquidity<'info>>,
+        request: interface::SeedRequest,
+    ) -> Result<()> {
+        instructions::seed_liquidity::handle_seed_liquidity(ctx, request)
     }
 }
 

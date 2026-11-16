@@ -98,6 +98,7 @@ fn its_instructions_are_pipelines_and_the_seed_with_their_discriminators() {
         ("pipeline_resolve_accounts", discriminator::RESOLVE_ACCOUNTS),
         ("pipeline_swap", discriminator::SWAP),
         ("seed", pipeline_client::instruction_discriminator("seed")),
+        ("pipeline_seed_liquidity", discriminator::SEED_LIQUIDITY),
     ];
     assert_eq!(
         idl["instructions"].as_array().unwrap().len(),
@@ -139,6 +140,41 @@ fn its_init_and_seed_accounts_and_arguments_are_the_metadatas() {
     let action = named(&metadata["actions"], "seed");
     assert_eq!(names(&seed["accounts"]), names(&action["accounts"]));
     assert_eq!(names(&seed["args"]), names(&action["args"]));
+}
+
+#[test]
+fn its_seed_liquidity_accounts_are_pipelines_then_the_metadatas() {
+    let idl = idl();
+    let metadata = read_json("metadata.json");
+    let seed = named(&idl["instructions"], "pipeline_seed_liquidity");
+    let accounts = names(&seed["accounts"]);
+    // Pipeline's five fixed accounts (`seed_accounts`), then mint, escrow and token program
+    // for the token and for wrapped SOL, then the metadata's `seed_liquidity` accounts.
+    assert_eq!(
+        accounts[..11],
+        [
+            "seeder",
+            "market_state",
+            "payer",
+            "system_program",
+            "lp_recipient",
+            "token_mint",
+            "token_escrow",
+            "token_program",
+            "wsol_mint",
+            "sol_escrow",
+            "sol_token_program",
+        ]
+    );
+    assert_eq!(
+        accounts[11..],
+        names(&metadata["seed_liquidity"]["accounts"])[..]
+    );
+    // One argument, Pipeline's `SeedRequest`, whose `data` is the metadata's form.
+    assert_eq!(names(&seed["args"]), ["request"]);
+    let request = named(&idl["types"], "SeedRequest");
+    assert_eq!(names(&request["type"]["fields"]), ["amounts", "data"]);
+    assert_eq!(metadata["seed_liquidity"]["idl_type"], "InitParams");
 }
 
 #[test]
@@ -191,25 +227,27 @@ fn its_events_and_errors_are_the_programs() {
         ["CapLowered", "MarketCreated", "MarketSeeded", "Trimmed"]
     );
 
-    // Errors are numbered from 6000 in the enum's order, the last being `PriceBoundReached`.
+    // Errors are numbered from 6000 in the enum's order, the last being `BadSeedAmounts`.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "PriceBoundReached");
-    let last_code: u32 = buy_wall_amm::errors::StrategyError::PriceBoundReached.into();
+    assert_eq!(last["name"], "BadSeedAmounts");
+    let last_code: u32 = buy_wall_amm::errors::StrategyError::BadSeedAmounts.into();
     assert_eq!(last["code"].as_u64().unwrap() as u32, last_code);
-    // The four trading refusals follow `Overflow`, so every earlier error keeps its number.
+    // The four trading refusals follow `Overflow`, then the seed request's, so every earlier
+    // error keeps its number.
     let names: Vec<_> = errors.iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert_eq!(
-        names[names.len() - 5..],
+        names[names.len() - 6..],
         [
             "Overflow",
             "ZeroInput",
             "ZeroOutput",
             "NothingAfterFee",
-            "PriceBoundReached"
+            "PriceBoundReached",
+            "BadSeedAmounts"
         ]
     );
 }
@@ -217,7 +255,7 @@ fn its_events_and_errors_are_the_programs() {
 #[test]
 fn it_publishes_the_constants_the_demo_reads() {
     // The demo reads these from the generated client rather than repeating them
-    // (`POOL4-25`, `POOL4-28`): the fee shares, and what its model of the cap needs.
+    // (`POOL4-25`, `POOL4-30`): the fee shares, and what its model of the cap needs.
     let idl = idl();
     let value = |name: &str| -> String {
         named(&idl["constants"], name)["value"]
