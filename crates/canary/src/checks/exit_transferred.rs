@@ -75,7 +75,7 @@ pub fn measure(
                 reference: reference.clone(),
                 buyer: None,
                 receiver,
-                hook: session.market.mints[token].transfer_hook,
+                hook: session.market.mints[token].transfer_hook_program(),
                 sent: 0,
                 transfer: None,
                 receiver_sale: None,
