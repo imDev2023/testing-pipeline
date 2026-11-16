@@ -1,30 +1,18 @@
 //! Compute ceilings (docs/spec/tax-amm.md, "Compute ceilings"; docs/spec/README.md, "Test
-//! layers" 5). This module mirrors the spec's table, and its one place in the tests: a
-//! ceiling changes only by a PR to the spec file and this table together.
+//! layers" 5), as `common/ceilings.rs` defines them once, mirroring the spec's table: a
+//! ceiling changes only by a PR to the spec file and that table together, which
+//! [`the_table_mirrors_the_spec`] checks. The invariant fuzzer (`tests/fuzz.rs`) holds every
+//! instruction it calls to the same ceilings, on every market shape it builds.
 //!
 //! A cost is what the tax AMM's own invocation consumes, its token program calls included,
 //! measured on mints without a transfer hook. Each test prints what it measured.
 
 mod common;
 
+use common::ceilings;
 use common::*;
 use pipeline_client::Pubkey;
 use solana_signer::Signer;
-
-/// The spec's table, in compute units.
-mod ceilings {
-    pub const PIPELINE_QUOTE: u64 = 25_000;
-    pub const PIPELINE_SWAP: u64 = 60_000;
-    pub const PIPELINE_MARKET_INFO: u64 = 15_000;
-    pub const PIPELINE_RESOLVE_ACCOUNTS: u64 = 15_000;
-    pub const PIPELINE_INIT_MARKET: u64 = 120_000;
-    pub const PIPELINE_SEED_LIQUIDITY: u64 = 150_000;
-    pub const SEED: u64 = 80_000;
-    pub const DISTRIBUTE: u64 = 90_000;
-    pub const SET_TAXES: u64 = 20_000;
-    pub const SET_RECIPIENTS: u64 = 20_000;
-    pub const RENOUNCE_TAX_AUTHORITY: u64 = 20_000;
-}
 
 /// Markets on plain mints of each token program, SPL Token's and Token-2022's.
 fn markets() -> Vec<(&'static str, Env, Market)> {
@@ -365,25 +353,34 @@ fn distribute_stays_under_its_ceiling_when_it_creates_the_token_account_and_when
             ),
         ];
         for (slot, what) in cases {
-            let meta = env.distribute(&market, &caller, slot).unwrap();
-            let costs = strategy_compute(&meta.logs);
-            assert_eq!(costs.len(), 1);
-            println!("distribute {what} on {name} mints: {} CU", costs[0]);
-            assert!(
-                costs[0] <= ceilings::DISTRIBUTE,
-                "{name}, {what}: {}",
-                costs[0]
-            );
+            let cost = distribute_cost(&mut env, &market, &caller, slot);
+            println!("distribute {what} on {name} mints: {cost} CU");
+            assert!(cost <= ceilings::DISTRIBUTE, "{name}, {what}: {cost}");
         }
         // Into a token account that already exists, after more tax is booked.
         env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
-        let meta = env.distribute(&market, &caller, 0).unwrap();
-        let cost = strategy_compute(&meta.logs)[0];
+        let cost = distribute_cost(&mut env, &market, &caller, 0);
         println!(
             "distribute paying a tax recipient's existing token account on {name} mints: {cost} CU"
         );
         assert!(cost <= ceilings::DISTRIBUTE, "{name}: {cost}");
     }
+}
+
+/// `distribute` for `slot`, and its compute less what finding the slot wallet's associated
+/// token account costs beyond its first bump, which the ceiling leaves out
+/// ([`ceilings::distribute_bump_search`]).
+fn distribute_cost(
+    env: &mut Env,
+    market: &Market,
+    caller: &solana_keypair::Keypair,
+    slot: u8,
+) -> u64 {
+    let search = ceilings::distribute_bump_search(env, market, slot);
+    let meta = env.distribute(market, caller, slot).unwrap();
+    let costs = strategy_compute(&meta.logs);
+    assert_eq!(costs.len(), 1);
+    costs[0] - search
 }
 
 #[test]
@@ -428,6 +425,27 @@ fn the_table_mirrors_the_spec() {
         "`set_taxes`, `set_recipients`, `renounce_tax_authority`",
         SET_TAXES,
     );
+}
+
+#[test]
+fn every_instruction_of_the_program_has_a_ceiling() {
+    let idl: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("idl/tax_amm.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut instructions: Vec<&str> = idl["instructions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|instruction| instruction["name"].as_str().unwrap())
+        .collect();
+    let mut table: Vec<&str> = ceilings::ALL.iter().map(|(name, _)| *name).collect();
+    instructions.sort_unstable();
+    table.sort_unstable();
+    assert_eq!(table, instructions, "the ceiling table against the IDL");
 }
 
 /// `120000` as the spec writes it, `120,000`.

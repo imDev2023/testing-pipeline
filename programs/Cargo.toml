@@ -56,6 +56,13 @@ toml = "0.9"
 # Property tests of the maths (docs/spec/README.md, "Test layers" 2 and 3).
 proptest = "1.7"
 
+# Host builds of the tests optimize every dependency (LiteSVM, the SBF VM, the token programs,
+# the signature checks) and none of our own crates: the invariant fuzzers send tens of
+# thousands of transactions, about fifty times faster so (docs/toolchain.md, "Build and
+# test"). `cargo build-sbf` builds the programs with `release` and is unaffected.
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 overflow-checks = true
 lto = "fat"
