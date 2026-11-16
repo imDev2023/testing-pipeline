@@ -77,6 +77,8 @@ export const BUY_WALL_AMM_ERROR__NOTHING_AFTER_FEE = 0x178c; // 6028
 export const BUY_WALL_AMM_ERROR__PRICE_BOUND_REACHED = 0x178d; // 6029
 /** BadSeedAmounts: A seed request needs exactly one amount per mint: the token's, then wrapped SOL's */
 export const BUY_WALL_AMM_ERROR__BAD_SEED_AMOUNTS = 0x178e; // 6030
+/** WallBelowThreshold: Neither idle SOL nor the SOL the wall has spent reaches WALL_THRESHOLD */
+export const BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD = 0x178f; // 6031
 
 export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__ALREADY_SEEDED
@@ -106,6 +108,7 @@ export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__SEEDER_REQUIRED
   | typeof BUY_WALL_AMM_ERROR__SEED_TOO_SMALL
   | typeof BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE
+  | typeof BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD
   | typeof BUY_WALL_AMM_ERROR__WALL_SPLIT_OUT_OF_RANGE
   | typeof BUY_WALL_AMM_ERROR__WRONG_ACCOUNT
   | typeof BUY_WALL_AMM_ERROR__ZERO_INPUT
@@ -141,6 +144,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [BUY_WALL_AMM_ERROR__SEEDER_REQUIRED]: `The seeder must not be the default key`,
     [BUY_WALL_AMM_ERROR__SEED_TOO_SMALL]: `The seed must bring at least MIN_SEED_LAMPORTS`,
     [BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE]: `Trading is not available in this build`,
+    [BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD]: `Neither idle SOL nor the SOL the wall has spent reaches WALL_THRESHOLD`,
     [BUY_WALL_AMM_ERROR__WALL_SPLIT_OUT_OF_RANGE]: `The wall split must be at most 10,000 basis points`,
     [BUY_WALL_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,
     [BUY_WALL_AMM_ERROR__ZERO_INPUT]: `The input is zero`,

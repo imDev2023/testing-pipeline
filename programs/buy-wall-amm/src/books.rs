@@ -25,7 +25,7 @@ pub struct FeeSplit {
 /// 10,000 + r`, it is `q × bps + floor(r × bps / 10,000)` exactly, where `q × bps <= amount`
 /// and `r × bps < 10,000²` both fit. As in Pipeline's `fees::ceil_bps`, avoiding 128-bit
 /// division keeps it provable by Kani for every input.
-fn share(amount: u64, bps: u16) -> Option<u64> {
+pub(crate) fn share(amount: u64, bps: u16) -> Option<u64> {
     if bps > BPS {
         return None;
     }
