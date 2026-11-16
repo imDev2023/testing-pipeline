@@ -81,24 +81,25 @@ fn a_funded_usdc_market_lending_at_index_0_passes_every_check() {
 }
 
 #[test]
-fn a_funded_market_holding_ctokens_passes_every_check() {
-    // As if rebalance had lent three quarters of the lent side: quotes and swaps value the
-    // cTokens from the Kamino reserve dumped from this build's cluster.
+fn a_market_rebalance_has_lent_passes_every_check() {
+    // rebalance lends four fifths of the lent side through klend's real deposit, and quotes
+    // and swaps then value the cTokens from the Kamino reserve of this build's cluster; then a
+    // swap drains the buffer below its band and rebalance redeems from Kamino, and the market
+    // passes again.
     for lent_entry in 0..2 {
         let mut env = Env::new();
-        let other = env.create_mint(&TOKEN);
-        let (lent_mint, buffer) = [(wsol(), 50 * SOL), (lent(1).0, 50_000_000_000)][lent_entry];
-        let spec = MarketSpec {
-            mints: [(other, TOKEN), (lent_mint, TOKEN)],
-            params: lending_amm::InitParams {
-                lent_index: 1,
-                lp_fee_bps: 30,
-            },
-        };
+        let spec = common::rebalance::lent_spec(&mut env, lent_entry, 30);
+        let buffer = common::rebalance::units(lent_entry, 50);
         let (market, _) = env
             .create_funded_market(&spec, [1_000_000_000_000, buffer])
             .unwrap();
-        env.give_ctokens(&market, 3 * buffer);
+        env.rebalance(&market, None).unwrap();
+        assert!(env.market_state(&market.market_state).ctokens > 0);
+        assert_conforms(&env, &market);
+
+        let market = env.market_below_the_band(lent_entry);
+        env.rebalance(&market, None).unwrap();
+        assert!(env.market_state(&market.market_state).redeemed > 0);
         assert_conforms(&env, &market);
     }
 }

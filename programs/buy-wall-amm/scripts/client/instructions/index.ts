@@ -12,4 +12,5 @@ export * from "./pipelineQuote.ts";
 export * from "./pipelineResolveAccounts.ts";
 export * from "./pipelineSeedLiquidity.ts";
 export * from "./pipelineSwap.ts";
+export * from "./placeWall.ts";
 export * from "./seed.ts";

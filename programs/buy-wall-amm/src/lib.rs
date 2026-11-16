@@ -11,9 +11,10 @@
 //! | `pipeline_market_info`      | the router, at market creation   | reports mints, vaults, exact-out      |
 //! | `pipeline_resolve_accounts` | quoters and SDKs, in simulation  | lists the output vault, its authority |
 //! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices an exact-in trade             |
-//! | `pipeline_swap`             | the router, from `swap`          | settles a trade, then the cap        |
+//! | `pipeline_swap`             | the router, from `swap`          | settles a trade, the guard, the cap  |
 //! | `seed`                      | the market's seeder, directly    | seeds and opens the market, once      |
 //! | `pipeline_seed_liquidity`   | a launchpad's program, by CPI    | creates, seeds and opens a market     |
+//! | `place_wall`                | anyone, a keeper job             | places idle SOL as the buy wall       |
 //!
 //! Policy values live only in `config.rs` (build-time constants) and in each market's
 //! creation parameters (`params.rs`).
@@ -25,6 +26,7 @@ pub mod cap;
 pub mod config;
 pub mod errors;
 pub mod events;
+pub mod guard;
 pub mod instructions;
 pub mod interface;
 pub mod math;
@@ -34,6 +36,7 @@ pub mod pricing;
 pub mod state;
 pub mod token;
 pub mod vaults;
+pub mod wall;
 
 pub use instructions::*;
 pub use params::InitParams;
@@ -88,6 +91,14 @@ pub mod buy_wall_amm {
         sol_amount: u64,
     ) -> Result<()> {
         instructions::seed::handle_seed(ctx, token_amount, sol_amount)
+    }
+
+    /// Custom action, a permissionless keeper job: closes the buy wall at the current price
+    /// and places it again with everything idle, at the lower of the price and the wall's
+    /// floor, tipping the caller in wrapped SOL; refused until `idle_sol` or the SOL the
+    /// wall has spent reaches `WALL_THRESHOLD`.
+    pub fn place_wall(ctx: Context<PlaceWall>) -> Result<()> {
+        instructions::place_wall::handle_place_wall(ctx)
     }
 
     /// Pipeline's optional extension, called by another program such as a launchpad

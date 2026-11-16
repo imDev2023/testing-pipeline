@@ -1,6 +1,7 @@
 //! `pipeline_swap`: settles a trade the router sends (docs/spec/pool4-for-solana.md,
-//! "Pricing", "After pricing", "The fee" and "Counters"), then brings the inventory cap up
-//! to date ("After pricing" steps 5 and 6, `cap.rs`).
+//! "Pricing", "After pricing", "The fee" and "Counters"), then brings the wall's guard up to
+//! date ("After pricing" steps 1, 3 and 4, `guard.rs`) and the inventory cap ("After
+//! pricing" steps 5 and 6, `cap.rs`).
 //!
 //! Only this market's router market may call it, so every trade pays Pipeline's fee, emits a
 //! swap event and counts in the market's counters (bypass is refused: ADR 0001). The router
@@ -154,15 +155,26 @@ pub fn handle_swap<'info>(
         &[authority_seeds],
     )?;
 
-    // "After pricing", in its order: steps 2 and 3, the books and the price.
+    // "After pricing", in its order. None of it changes the trade just priced.
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
     let mut state = ctx.accounts.market_state.load_mut()?;
+    // Step 1: the reference, which reads the last close before step 3 replaces it.
+    let guard = state
+        .guard()
+        .follow(clock.slot, now)
+        .ok_or(StrategyError::Overflow)?;
+    // Steps 2 and 3: the books and the price.
     state.set_books(&settled.books);
     state.set_sqrt_price(settled.priced.sqrt_price);
-    state.set_last_close(settled.priced.sqrt_price);
+    // Steps 3 and 4: the last close, then the floor.
+    let guard = guard
+        .close_at(settled.priced.sqrt_price, now)
+        .ok_or(StrategyError::Overflow)?;
+    state.set_guard(&guard);
 
     // Steps 5 and 6: the decay credit, then the ratchet or the trim, at the price just set,
     // with the trimmed totals. They change neither the trade nor the price.
-    let now = Clock::get()?.unix_timestamp;
     let (inventory, moved) = state
         .inventory()
         .after_swap(state.cap_rules(), now)

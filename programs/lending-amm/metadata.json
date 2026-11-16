@@ -1,7 +1,7 @@
 {
     "schema": "pipeline-strategy-metadata/1",
     "name": "Aviary Lending AMM",
-    "description": "Constant-product markets with open LP shares, one side of which, WSOL or USDC, is lent to a fixed Kamino Lend reserve through its cToken instructions while a buffer stays in the market's own vault for swaps. Prices come from the market's total reserves: the other side's vault, and on the lent side the buffer plus the market's cTokens valued at the reserve's stored exchange rate, read after checking the reserve is the one the lent mint lends to, in the layout the program knows. The LP fee and all the lending yield go to LPs through the value of their shares, and LPs bear Kamino's losses. The program has no admin. In this build nothing is lent yet, and a swap that would pay out more of the lent side than the buffer holds is refused.",
+    "description": "Constant-product markets with open LP shares, one side of which, WSOL or USDC, is lent to a fixed Kamino Lend reserve through its cToken instructions while a buffer stays in the market's own vault for swaps. Prices come from the market's total reserves: the other side's vault, and on the lent side the buffer plus the market's cTokens valued at the reserve's stored exchange rate, read after checking the reserve is the one the lent mint lends to, in the layout the program knows. Anyone may call rebalance, which deposits into Kamino or redeems from it to bring the buffer back to its target share of the lent side whenever it leaves its band. The LP fee and all the lending yield go to LPs through the value of their shares, and LPs bear Kamino's losses. The program has no admin. In this build a swap that would pay out more of the lent side than the buffer holds is refused.",
     "category": "amm",
     "tags": [
         "lending",
@@ -185,6 +185,78 @@
                 {
                     "name": "reserve",
                     "source": "input:reserve"
+                }
+            ]
+        },
+        {
+            "name": "rebalance",
+            "label": "Rebalance",
+            "kind": "other",
+            "description": "Anyone moves the market's buffer back to its target share of the lent side when its share has left its band (the program's BUFFER_TARGET_BPS, BUFFER_MIN_BPS and BUFFER_MAX_BPS, in its IDL): above the band it deposits the surplus into the market's Kamino reserve, below it redeems the shortfall, capped at what Kamino can pay right now. Inside the band, or for a move smaller than the lent mint's floor, it fails and changes nothing, so simulate first. It creates no account, and the caller pays only the transaction fee. Inputs are the lent mint and its Kamino reserve, lending market, reserve liquidity supply and collateral mint, which the program checks.",
+            "args": [],
+            "accounts": [
+                {
+                    "name": "caller",
+                    "source": "wallet",
+                    "signer": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                },
+                {
+                    "name": "authority",
+                    "source": "pda:strategy:str:authority,key:market_state"
+                },
+                {
+                    "name": "buffer_vault",
+                    "source": "pda:strategy:str:vault,key:market_state,key:input:lent_mint",
+                    "writable": true
+                },
+                {
+                    "name": "ctoken_account",
+                    "source": "pda:strategy:str:ctoken,key:market_state",
+                    "writable": true
+                },
+                {
+                    "name": "lent_mint",
+                    "source": "input:lent_mint"
+                },
+                {
+                    "name": "reserve",
+                    "source": "input:reserve",
+                    "writable": true
+                },
+                {
+                    "name": "lending_market",
+                    "source": "input:lending_market"
+                },
+                {
+                    "name": "lending_market_authority",
+                    "source": "pda:KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD:str:lma,key:input:lending_market"
+                },
+                {
+                    "name": "reserve_liquidity_supply",
+                    "source": "input:reserve_liquidity_supply",
+                    "writable": true
+                },
+                {
+                    "name": "collateral_mint",
+                    "source": "input:collateral_mint",
+                    "writable": true
+                },
+                {
+                    "name": "token_program",
+                    "source": "fixed:TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "klend_program",
+                    "source": "fixed:KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"
+                },
+                {
+                    "name": "instructions_sysvar",
+                    "source": "fixed:Sysvar1nstructions1111111111111111111111111"
                 }
             ]
         }

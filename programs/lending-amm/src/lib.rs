@@ -14,23 +14,24 @@
 //! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices a trade, read-only                |
 //! | `pipeline_swap`             | the router, from `swap`          | settles a trade                          |
 //! | `add_liquidity`             | LPs, directly                    | adds both mints for LP shares            |
+//! | `rebalance`                 | anyone, a keeper                 | moves the buffer back to its target      |
 //!
 //! Quotes, swaps and deposits value the lent side as `L = B + V`: the buffer `B` in the lent
 //! mint's vault, plus the market's recorded cTokens at the Kamino reserve's stored rate, read
-//! after the reserve is checked ([`kamino`]). No instruction lends yet, so a market's cTokens
-//! are still zero on chain; lending starts with
-//! [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80),
-//! and the market state already holds every field that needs.
+//! after the reserve is checked ([`kamino`]). `rebalance` lends the surplus to Kamino and
+//! redeems a shortfall from it, by the rule in [`buffer`], whenever the buffer's share of the
+//! lent side has left its band.
 //!
 //! Where things live: the build-time policy values in [`config`], the creation parameters
 //! and their rules in [`params`], the market state and its final layout in [`state`], the
-//! one pricing function in [`pricing`], the share maths in [`shares`], every read of Kamino in
-//! [`kamino`], and each instruction
+//! one pricing function in [`pricing`], the share maths in [`shares`], the buffer's rule in
+//! [`buffer`], every read of and call to Kamino in [`kamino`], and each instruction
 //! in its own module of [`instructions`]. The mint extension allowlist is the shared
 //! `mint-rules` crate.
 
 use anchor_lang::prelude::*;
 
+pub mod buffer;
 pub mod config;
 pub mod errors;
 pub mod events;
@@ -100,6 +101,12 @@ pub mod lending_amm {
         min_lp: u64,
     ) -> Result<()> {
         instructions::add_liquidity_handler(ctx, max_0, max_1, min_lp)
+    }
+
+    /// Moves the buffer back to its target by depositing into Kamino or redeeming from it,
+    /// when its share of the lent side has left its band. Anyone may call it.
+    pub fn rebalance<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result<()> {
+        instructions::rebalance_handler(ctx)
     }
 }
 

@@ -24,6 +24,8 @@ const OFFSETS = {
 
 export type ReserveView = {
     lastUpdateSlot: bigint;
+    /** `liquidity.total_available_amount`, the liquidity the reserve holds. */
+    totalAvailableAmount: bigint;
     lendingMarket: Address;
     liquidityMint: Address;
     collateralMint: Address;
@@ -60,6 +62,7 @@ export function decodeReserve(data: Uint8Array): ReserveView | string {
         u128(data, OFFSETS.pendingReferrerFeesSf);
     return {
         lastUpdateSlot: u64(data, OFFSETS.lastUpdateSlot),
+        totalAvailableAmount: u64(data, OFFSETS.totalAvailableAmount),
         lendingMarket: key(data, OFFSETS.lendingMarket),
         liquidityMint: key(data, OFFSETS.liquidityMint),
         collateralMint: key(data, OFFSETS.collateralMint),
@@ -89,4 +92,17 @@ export function rate(reserve: ReserveView): string {
     const scaled = (reserve.totalSupplySf * 10n ** 12n) / (reserve.mintTotalSupply << 60n);
     const text = scaled.toString().padStart(13, '0');
     return `${text.slice(0, -12)}.${text.slice(-12)}`;
+}
+
+/**
+ * klend's `deposit_reserve_liquidity` for `liquidity` at a reserve whose total supply is
+ * `totalSupplySf` and cToken supply `mintTotalSupply` once refreshed: it mints
+ * `floor(liquidity x S_ctoken / S_total)` cTokens and takes back what they are worth, rounded up
+ * (`compute_depositable_amount_and_minted_collateral` in klend 1.28.0), written here on its own.
+ */
+export function klendDeposit(liquidity: bigint, totalSupplySf: bigint, mintTotalSupply: bigint) {
+    const ctokens = (liquidity * mintTotalSupply << 60n) / totalSupplySf;
+    const scaled = mintTotalSupply << 60n;
+    const taken = (ctokens * totalSupplySf + scaled - 1n) / scaled;
+    return { ctokens, taken };
 }

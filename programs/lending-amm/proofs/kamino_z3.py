@@ -11,6 +11,11 @@ u64 cToken supply `N` (docs/spec/lending-pool.md, "Valuing the lent side"; docs/
 2. No intermediate value overflows: the product's 64-bit digits, the divisor, the refusal of a
    quotient of 2^64 or more, and each step of the long division all stay inside their types,
    and the long division's invariant holds at every step, so it returns the exact quotient.
+3. The cTokens a redeem burns for an amount `x` (`ctokens_for_value`, `k = floor(x x N x 2^60 /
+   S)`) are worth at most `x` and less than one cToken's worth below it, so `rebalance` never
+   carries the buffer past its target at the stored rate; and that function's numerator split,
+   its refusal of a quotient of 2^64 or more, and its long division, whose doubled remainder may
+   carry out of 128 bits since the divisor `S` may use all 128, are exact.
 
 Each division is modelled by its quotient and remainder, and each wide product by its 64-bit
 digits (`p = h x 2^64 + l`, `0 <= l < 2^64`), which Z3 proves in seconds where symbolic
@@ -194,6 +199,85 @@ def main():
         n_ok,
         inner_facts,
         value_facts,
+    )
+
+    # 3a. k = floor(x x N x 2^60 / S) cTokens are worth v = floor(k x S / (N x 2^60)) <= x, and
+    # x - v <= ceil(S / (N x 2^60)), one cToken's worth rounded up. The products are fresh
+    # variables tied to their factors, which Z3's nonlinear arithmetic relates.
+    x, x_ok = bounded("x", U64_MAX)
+    s_total = Int("S")
+    s_ok = And(s_total >= 1, s_total <= U128_MAX)
+    m = n * TWO_60
+    k, k_facts = floor_div("k", x * m, s_total)
+    worth, worth_facts = floor_div("worth", k * s_total, m)
+    one_ctoken = Int("one_ctoken")
+    one_facts = And(one_ctoken * m >= s_total, (one_ctoken - 1) * m < s_total)
+    ok &= prove(
+        "the cTokens for an amount are worth at most it, and less than one cToken's worth below it",
+        And(worth <= x, x - worth <= one_ctoken),
+        x_ok,
+        n_ok,
+        s_ok,
+        k_facts,
+        worth_facts,
+        one_facts,
+    )
+
+    # 3b. The numerator x x N x 2^60, with P = x x N below 2^128, is (P >> 4) x 2^64 +
+    # (P mod 16) x 2^60, whose low digit fits a u64; and refusing top >= S refuses exactly the
+    # quotients of 2^64 or more.
+    p, p_ok = bounded("P", U128_MAX)
+    top3, sixteenth = Int("top3"), Int("sixteenth")
+    split = And(p == top3 * 16 + sixteenth, sixteenth >= 0, sixteenth < 16)
+    low3 = sixteenth * TWO_60
+    whole3, whole3_facts = floor_div("whole3", p * TWO_60, s_total)
+    ok &= prove(
+        "the numerator splits exactly into a u128 top and a u64 low digit",
+        And(top3 * TWO_64 + low3 == p * TWO_60, low3 <= U64_MAX, top3 <= U128_MAX, top3 >= 0),
+        p_ok,
+        split,
+    )
+    ok &= prove(
+        "top < S exactly when the cTokens fit a u64",
+        (top3 < s_total) == (whole3 <= U64_MAX),
+        p_ok,
+        split,
+        s_ok,
+        whole3_facts,
+    )
+
+    # 3c. One step of its long division, from any remainder below S: the doubled remainder plus
+    # the next bit is below 2^129; `carry` is its bit 128 and the stored value is it modulo
+    # 2^128; subtracting S when either the carry is set or the stored value is at least S, with
+    # wrapping, gives exactly the doubled remainder less S, below S, and the invariant carries on.
+    r3, q3, y3, bit3 = Int("r3"), Int("q3"), Int("y3"), Int("bit3")
+    step3_ok = And(
+        s_ok,
+        r3 >= 0,
+        r3 < s_total,
+        q3 >= 0,
+        y3 == q3 * s_total + r3,
+        Or(bit3 == 0, bit3 == 1),
+    )
+    doubled3 = 2 * r3 + bit3
+    carry = If(doubled3 >= 2**128, 1, 0)
+    stored = doubled3 - carry * 2**128
+    subtract = Or(carry == 1, stored >= s_total)
+    wrapped = If(stored - s_total < 0, stored - s_total + 2**128, stored - s_total)
+    r3_next = If(subtract, wrapped, stored)
+    q3_next = If(subtract, 2 * q3 + 1, 2 * q3)
+    ok &= prove(
+        "each step of the cToken long division is exact despite the carry, and keeps its invariant",
+        And(
+            doubled3 < 2**129,
+            stored >= 0,
+            stored <= U128_MAX,
+            subtract == (doubled3 >= s_total),
+            r3_next >= 0,
+            r3_next < s_total,
+            2 * y3 + bit3 == q3_next * s_total + r3_next,
+        ),
+        step3_ok,
     )
 
     if not ok:

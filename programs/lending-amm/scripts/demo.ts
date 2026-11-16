@@ -27,10 +27,18 @@
 //      this script decodes it; the reserves equal the script's calculation, to the unit;
 //   9. check a swap built without the reserve is refused;
 //  10. add liquidity again at the market's ratio, with the shares and the amounts taken
-//      equal to the script's calculation.
+//      equal to the script's calculation;
+//  11. call `rebalance`, built from the metadata's action as a keeper builds it: the buffer
+//      holds the whole lent side, above its band, so the market lends the surplus to the
+//      WSOL reserve by klend's own deposit; the cTokens klend minted, the liquidity it took and
+//      the market state all equal the script's calculation from the spec's rule and klend's
+//      deposit maths, the market's cToken account holds the cTokens, the buffer is back at its
+//      target, and quotes taken just before and just after agree within Kamino's rounding;
+//  12. check a second `rebalance` is refused with `WithinBand`, in simulation;
+//  13. trade both ways through the router again, now pricing the cTokens at the reserve's
+//      stored rate, each swap equal to its quote and to the script's calculation.
 //
-// Nothing is lent yet, so the market's cTokens are zero and V is 0; rebalancing into Kamino
-// joins the demo with its own build ticket. Grown from Pipeline's strategy template
+// Grown from Pipeline's strategy template
 // (scripts/deploy-devnet.ts at 5ad130d). Deploy the program first; docs/toolchain.md says how,
 // on a local validator and on devnet.
 //
@@ -103,7 +111,7 @@ import {
     findVault0Pda,
     findVault1Pda,
 } from './client/index.ts';
-import { decodeReserve, lentValue, rate, type ReserveView } from './kamino.ts';
+import { decodeReserve, klendDeposit, lentValue, rate, type ReserveView } from './kamino.ts';
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
 const DEFAULT_PROGRAM_ID = 'Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG';
@@ -417,7 +425,7 @@ function laterDeposit(max: [bigint, bigint], reserves: [bigint, bigint], shareCo
 type KaminoDevnet = {
     klendProgram: string;
     lendingMarket: { address: string };
-    reserves: { wsol: { address: string; collateralMint: string } };
+    reserves: { wsol: { address: string; collateralMint: string; liquiditySupply: string } };
 };
 const KAMINO = JSON.parse(
     readFileSync(new URL('../../../deployments/kamino-devnet.json', import.meta.url), 'utf8'),
@@ -509,6 +517,8 @@ async function main() {
     const init = metadata.init ?? fail('metadata.json needs `init` for this demo');
     const addLiquidity =
         metadata.actions?.find((action) => action.name === 'add_liquidity') ?? fail('metadata.json needs the add_liquidity action');
+    const rebalanceAction =
+        metadata.actions?.find((action) => action.name === 'rebalance') ?? fail('metadata.json needs the rebalance action');
 
     step('3. Registering the strategy');
     const config = pipeline.decodeConfig((await accountData(await pipeline.configPda())) ?? new Uint8Array());
@@ -675,14 +685,24 @@ async function main() {
 
     let reserves: [bigint, bigint] = [first.token, first.wsol];
     let shareCount = firstShares + minimumLiquidity;
+    // What the market has lent, as the script calculates it: nothing until step 11.
+    let lent = { ctokens: 0n, deposited: 0n, redeemed: 0n };
     async function checkMarket(label: string) {
         const { data: state } = await fetchLendingAmmMarket(rpc, marketState, { commitment: 'confirmed' });
         const supply = await mintSupply(lpMint);
-        const got = { reserves: [state.reserves[0], state.reserves[1]], shareCount: supply + minimumLiquidity };
-        const want = { reserves, shareCount };
+        const got = {
+            reserves: [state.reserves[0], state.reserves[1]],
+            shareCount: supply + minimumLiquidity,
+            ctokens: state.ctokens,
+            deposited: state.deposited,
+            redeemed: state.redeemed,
+        };
+        const want = { reserves, shareCount, ...lent };
         if (show(got) !== show(want)) fail(`${label}: the market state holds ${show(got)}, but the formulas give ${show(want)}`);
-        if (state.ctokens !== 0n || state.deposited !== 0n || state.redeemed !== 0n) fail(`${label}: something was lent`);
-        info(`${label}: reserves ${reserves[0]} token and ${reserves[1]} WSOL, share count ${shareCount}, all as calculated`);
+        if ((await tokenBalance(ctokenAccount)) !== lent.ctokens) fail(`${label}: the cToken account holds other than the recorded cTokens`);
+        info(
+            `${label}: reserves ${reserves[0]} token and ${reserves[1]} WSOL in the buffer, ${lent.ctokens} cTokens, share count ${shareCount}, all as calculated`,
+        );
         return state;
     }
     /** The lent side's total, L = B + V, from the market state and the reserve as this script decodes them. */
@@ -704,85 +724,97 @@ async function main() {
 
     step('8. Trading both ways through the router');
     const feeBps = BigInt(DEMO.lpFeeBps);
-    let lastSwap: { input: 0 | 1; amount: bigint; strategyAccounts: AccountMeta[] } | undefined;
-    for (const [label, input, amount] of [
-        ['buy the token with WSOL', 1, DEMO.buyWithLamports],
-        ['sell the token for WSOL', 0, DEMO.sellTokens],
-    ] as const) {
-        const output = 1 - input;
-        const trade = {
-            mode: pipeline.TradeMode.ExactIn,
-            inputIndex: input,
-            outputIndex: output,
-            amount,
-            trader: null,
-            extra: new Uint8Array(),
-        };
-        // Simulated at `confirmed`, as the demo confirms everything (the SDK's default is
-        // `finalized`, which a fresh local validator reaches only after about 32 slots).
-        const simulation = { commitment: 'confirmed' } as const;
+    // Simulated at `confirmed`, as the demo confirms everything (the SDK's default is
+    // `finalized`, which a fresh local validator reaches only after about 32 slots).
+    const simulation = { commitment: 'confirmed' } as const;
+    const tradeOf = (input: 0 | 1, amount: bigint) => ({
+        mode: pipeline.TradeMode.ExactIn,
+        inputIndex: input,
+        outputIndex: 1 - input,
+        amount,
+        trader: null,
+        extra: new Uint8Array(),
+    });
+    /** What a trade quotes now: the amount out. */
+    async function quoteNow(input: 0 | 1, amount: bigint) {
+        const trade = tradeOf(input, amount);
         const strategyAccounts = await pipeline.resolveAccounts(rpc, routerView, trade, payer.address, simulation);
-        const listed = strategyAccounts[2];
-        if (listed?.address !== RESERVE || listed.role !== AccountRole.READONLY) {
-            fail(`${label}: account resolution does not list the Kamino reserve ${RESERVE} read-only after the vault and the authority`);
-        }
-        const { quote, unitsConsumed } = await pipeline.quoteStrategy(
-            rpc,
-            routerView,
-            trade,
-            strategyAccounts,
-            payer.address,
-            simulation,
-        );
-        // The lent side priced at L = B + V, V decoded by this script from the reserve.
-        const lent = await lentSide();
-        const effective: [bigint, bigint] = [reserves[0], lent.total];
-        const calculated = exactIn(effective[input]!, effective[output]!, amount, feeBps);
-        if (quote.amountOut !== calculated || quote.amountIn !== amount) {
-            fail(`${label}: the quote is ${quote.amountIn} in, ${quote.amountOut} out; the formula gives ${amount} in, ${calculated} out`);
-        }
-        info(`${label}: lent side L = B + V = ${lent.buffer} + ${lent.value} (${lent.ctokens} cTokens at the stored rate) = ${lent.total}`);
-        info(`${label}: ${amount} in quotes ${quote.amountOut} out (${unitsConsumed} compute units), as calculated`);
-        const before = await tokenBalance(holdings[output]!);
-        await send(
-            label,
-            payer,
-            [
-                await pipeline.swap(
-                    {
-                        trader: payer.address,
-                        strategyProgram: programId,
-                        marketState,
-                        traderInput: holdings[input]!,
-                        traderOutput: holdings[output]!,
-                        inputVault: vaults[input]!,
-                        inputMint: mints[input]!,
-                        outputMint: mints[output]!,
-                        inputTokenProgram: TOKEN_PROGRAM_ADDRESS,
-                        outputTokenProgram: TOKEN_PROGRAM_ADDRESS,
-                        strategyAccounts,
-                    },
-                    {
-                        mode: pipeline.TradeMode.ExactIn,
-                        amountIn: amount,
-                        amountOut: 0n,
-                        minAmountOut: quote.amountOut,
-                        integratorFeeBps: 0,
-                        extra: new Uint8Array(),
-                    },
-                ),
-            ],
-        );
-        const received = (await tokenBalance(holdings[output]!)) - before;
-        if (received !== quote.amountOut) fail(`${label}: received ${received}, quoted ${quote.amountOut}`);
-        reserves = input === 1
-            ? [reserves[0] - received, reserves[1] + amount]
-            : [reserves[0] + amount, reserves[1] - received];
-        info(`${label}: received exactly the quote, ${received}`);
-        await checkMarket(`after "${label}"`);
-        record.push([label, `${amount} in, ${received} out, equal to its quote`]);
-        lastSwap = { input, amount, strategyAccounts };
+        const { quote } = await pipeline.quoteStrategy(rpc, routerView, trade, strategyAccounts, payer.address, simulation);
+        return quote.amountOut;
     }
+    let lastSwap: { input: 0 | 1; amount: bigint; strategyAccounts: AccountMeta[] } | undefined;
+    /** Buys the token with WSOL and sells it back through the router, checking each swap. */
+    async function tradeBothWays(when: string) {
+        for (const [label, input, amount] of [
+            [`buy the token with WSOL${when}`, 1, DEMO.buyWithLamports],
+            [`sell the token for WSOL${when}`, 0, DEMO.sellTokens],
+        ] as const) {
+            const output = 1 - input;
+            const trade = tradeOf(input, amount);
+            const strategyAccounts = await pipeline.resolveAccounts(rpc, routerView, trade, payer.address, simulation);
+            const listed = strategyAccounts[2];
+            if (listed?.address !== RESERVE || listed.role !== AccountRole.READONLY) {
+                fail(`${label}: account resolution does not list the Kamino reserve ${RESERVE} read-only after the vault and the authority`);
+            }
+            const { quote, unitsConsumed } = await pipeline.quoteStrategy(
+                rpc,
+                routerView,
+                trade,
+                strategyAccounts,
+                payer.address,
+                simulation,
+            );
+            // The lent side priced at L = B + V, V decoded by this script from the reserve.
+            const lent = await lentSide();
+            const effective: [bigint, bigint] = [reserves[0], lent.total];
+            const calculated = exactIn(effective[input]!, effective[output]!, amount, feeBps);
+            if (quote.amountOut !== calculated || quote.amountIn !== amount) {
+                fail(`${label}: the quote is ${quote.amountIn} in, ${quote.amountOut} out; the formula gives ${amount} in, ${calculated} out`);
+            }
+            info(`${label}: lent side L = B + V = ${lent.buffer} + ${lent.value} (${lent.ctokens} cTokens at the stored rate) = ${lent.total}`);
+            info(`${label}: ${amount} in quotes ${quote.amountOut} out (${unitsConsumed} compute units), as calculated`);
+            const before = await tokenBalance(holdings[output]!);
+            await send(
+                label,
+                payer,
+                [
+                    await pipeline.swap(
+                        {
+                            trader: payer.address,
+                            strategyProgram: programId,
+                            marketState,
+                            traderInput: holdings[input]!,
+                            traderOutput: holdings[output]!,
+                            inputVault: vaults[input]!,
+                            inputMint: mints[input]!,
+                            outputMint: mints[output]!,
+                            inputTokenProgram: TOKEN_PROGRAM_ADDRESS,
+                            outputTokenProgram: TOKEN_PROGRAM_ADDRESS,
+                            strategyAccounts,
+                        },
+                        {
+                            mode: pipeline.TradeMode.ExactIn,
+                            amountIn: amount,
+                            amountOut: 0n,
+                            minAmountOut: quote.amountOut,
+                            integratorFeeBps: 0,
+                            extra: new Uint8Array(),
+                        },
+                    ),
+                ],
+            );
+            const received = (await tokenBalance(holdings[output]!)) - before;
+            if (received !== quote.amountOut) fail(`${label}: received ${received}, quoted ${quote.amountOut}`);
+            reserves = input === 1
+                ? [reserves[0] - received, reserves[1] + amount]
+                : [reserves[0] + amount, reserves[1] - received];
+            info(`${label}: received exactly the quote, ${received}`);
+            await checkMarket(`after "${label}"`);
+            record.push([label, `${amount} in, ${received} out, equal to its quote`]);
+            lastSwap = { input, amount, strategyAccounts };
+        }
+    }
+    await tradeBothWays('');
 
     step('9. Checking a swap built without the Kamino reserve is refused');
     if (!lastSwap) fail('no swap to rebuild');
@@ -830,6 +862,79 @@ async function main() {
     await checkMarket('after the second deposit');
     info(`minted ${later.shares} shares for ${later.taken[0]} token and ${later.taken[1]} WSOL, as calculated`);
     record.push(['second deposit', `${later.shares} shares, all as calculated`]);
+
+    step('11. Rebalancing: lending the surplus to Kamino');
+    const targetBps = idlConstant('BUFFER_TARGET_BPS');
+    const maxBps = idlConstant('BUFFER_MAX_BPS');
+    const rebalanceInstruction = () =>
+        pipeline.buildActionInstruction({
+            action: rebalanceAction,
+            market: view,
+            wallet: payer.address,
+            args: {},
+            inputs: {
+                lent_mint: WSOL,
+                reserve: RESERVE,
+                lending_market: address(KAMINO.lendingMarket.address),
+                reserve_liquidity_supply: address(KAMINO.reserves.wsol.liquiditySupply),
+                collateral_mint: collateralMint,
+            },
+            tokenPrograms,
+        });
+    const quotes = async () => [await quoteNow(1, DEMO.buyWithLamports), await quoteNow(0, DEMO.sellTokens)];
+    const quotesBefore = await quotes();
+    const before = await lentSide();
+    if (before.buffer * BPS <= before.total * maxBps) fail(`the buffer ${before.buffer} of ${before.total} is not above its band`);
+    // The spec's rule: deposit B - floor(L x BUFFER_TARGET_BPS / 10,000).
+    const asked = before.buffer - (before.total * targetBps) / BPS;
+    const reserveBefore = await readReserve();
+    const bufferBefore = await tokenBalance(vault1);
+    info(`the buffer holds all ${before.total} of the lent side, above its band: the rule deposits ${asked}`);
+    await send('rebalance', payer, [await rebalanceInstruction()]);
+    const reserveAfter = await readReserve();
+    const minted = await tokenBalance(ctokenAccount);
+    const taken = bufferBefore - (await tokenBalance(vault1));
+    // klend refreshed the reserve, then added exactly what it took and minted, so the supplies
+    // it deposited at are the ones after, less those.
+    const supplyAtDeposit = reserveAfter.totalSupplySf - (taken << 60n);
+    const ctokensAtDeposit = reserveAfter.mintTotalSupply - minted;
+    if (ctokensAtDeposit !== reserveBefore.mintTotalSupply) fail("klend's cToken supply moved by other than what the market received");
+    if (reserveAfter.totalAvailableAmount - reserveBefore.totalAvailableAmount !== taken) {
+        fail('the reserve received other than what left the buffer');
+    }
+    const byKlend = klendDeposit(asked, supplyAtDeposit, ctokensAtDeposit);
+    if (byKlend.ctokens !== minted || byKlend.taken !== taken) {
+        fail(`klend minted ${minted} cTokens for ${taken}; its deposit maths gives ${byKlend.ctokens} for ${byKlend.taken}`);
+    }
+    info(`klend took ${taken} of the ${asked} WSOL asked and minted ${minted} cTokens into ${ctokenAccount}, as its deposit maths gives`);
+    reserves = [reserves[0], reserves[1] - taken];
+    lent = { ctokens: minted, deposited: taken, redeemed: 0n };
+    await checkMarket('after rebalance');
+    const after = await lentSide();
+    const target = (after.total * targetBps) / BPS;
+    if (after.buffer < target || after.buffer - target > 2n) fail(`the buffer ${after.buffer} is not at its target ${target}`);
+    info(`the buffer is ${after.buffer} of a lent side of ${after.total} (V = ${after.value}): its target ${target}, within klend's rounding`);
+    const quotesAfter = await quotes();
+    // Within Kamino's rounding: the lent side moved by at most a unit, worth at most R / L of
+    // the token bought, or a unit of the WSOL a sale pays.
+    const bounds = [reserves[0] / after.total + 2n, 1n];
+    quotesBefore.forEach((quoted, i) => {
+        const now = quotesAfter[i]!;
+        if ((quoted > now ? quoted - now : now - quoted) > bounds[i]!) fail(`a quote moved from ${quoted} to ${now} across the rebalance`);
+    });
+    info(`quotes just before and just after agree within rounding: ${quotesBefore.join(' and ')}, then ${quotesAfter.join(' and ')}`);
+    record.push(['rebalance', `lent ${taken} WSOL for ${minted} cTokens; buffer ${after.buffer} of ${after.total}, at its target`]);
+
+    step('12. Checking a second rebalance is refused inside the band');
+    const again = await simulate(payer, [await rebalanceInstruction()]);
+    if (!again.err || !again.logs.some((line) => line.includes('Error Code: WithinBand'))) {
+        fail(`a second rebalance was not refused with WithinBand: ${show(again.err)}\n   ${again.logs.join('\n   ')}`);
+    }
+    info('refused with WithinBand, in simulation, so nothing was sent and nobody paid');
+    record.push(['second rebalance', 'refused: WithinBand']);
+
+    step('13. Trading both ways again, with the cTokens priced at the stored rate');
+    await tradeBothWays(', after lending');
 
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));
