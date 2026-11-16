@@ -13,7 +13,11 @@
 #     go to devnet;
 #   - every account copied from devnet into fixtures/accounts/*.json (`solana account --output
 #     json`), at its address, such as the Kamino accounts the lending AMM's demo needs
-#     (programs/lending-amm/scripts/fetch-accounts.sh).
+#     (programs/lending-amm/scripts/fetch-accounts.sh), and, when fixtures/accounts/warp-slot
+#     exists, the validator warped to that slot, past the slot those accounts were read at;
+#   - Kamino Lend (klend) as devnet runs it, from fixtures/klend/devnet.so, when
+#     programs/lending-amm/scripts/fetch-klend.sh has fetched it, refused unless it matches the
+#     hash pinned in fixtures/pins.env.
 #
 #   scripts/local-validator.sh [ledger directory] [solana-test-validator flags ...]
 #
@@ -96,6 +100,20 @@ while IFS= read -r member; do
   echo "test program $member at $id"
   args+=(--upgradeable-program "$id" "$so" none)
 done < <(python3 "$ROOT/scripts/workspace-programs.py" --test-programs)
+KLEND_SO="$FIXTURES_DIR/klend/devnet.so"
+if [ -f "$KLEND_SO" ]; then
+  if [ "$(shasum -a 256 "$KLEND_SO" | awk '{print $1}')" != "${KLEND_DEVNET_SHA256:-}" ]; then
+    echo "Refusing $KLEND_SO: it does not match the pinned hash. Run programs/lending-amm/scripts/fetch-klend.sh." >&2
+    exit 1
+  fi
+  echo "klend $KLEND_PROGRAM from $KLEND_SO (pinned)"
+  args+=(--upgradeable-program "$KLEND_PROGRAM" "$KLEND_SO" none)
+fi
+if [ -f "$FIXTURES_DIR/accounts/warp-slot" ]; then
+  warp="$(cat "$FIXTURES_DIR/accounts/warp-slot")"
+  echo "warping to slot $warp, past the slot the copied accounts were read at"
+  args+=(--warp-slot "$warp")
+fi
 
 shopt -s nullglob
 for account in "$FIXTURES_DIR"/accounts/*.json; do

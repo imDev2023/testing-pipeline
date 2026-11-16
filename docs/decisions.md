@@ -899,6 +899,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-13 in [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53)
 
+### BAR-40: Test builds optimize their dependencies
+
+- Question: How do the stateful invariant fuzzers send enough transactions for their runs in CI and on a laptop?
+- Answer: Host test builds optimize every dependency, LiteSVM and the SBF VM among them, and none of our own crates (`[profile.dev.package."*"] opt-level = 3`), which makes a fuzzed sequence about fifty times faster; CI's cargo cache is keyed on the workspace manifest too, so the profile is built once.
+- Alternatives: Running the fuzzers in a release build, which fat LTO makes slow to compile; a separate CI job with its own profile flags, which a plain `cargo test` would not match; fewer sequences than the tickets ask.
+- Specified in: [`docs/toolchain.md`, Build and test](toolchain.md#build-and-test)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -2292,6 +2302,45 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-12 in [Aviary: Canary over time and across wallets (holding, later, launch clock, insiders, transferred tokens, a queue of buyers)](https://github.com/imDev2023/testing-pipeline/issues/114)
+### CANARY-43: Which token authority is a wallet
+
+- Question: When does `token_authorities` act as an authority, and when is it a program's address that is "not run"?
+- Answer: By the rule `exit_wallets` uses for insiders (`CANARY-39`): a key off the Ed25519 curve, a program, or an account a program holds, such as a market's own state or an SPL multisig, is "not run", naming the owner program; any other authority is a wallet Canary acts as.
+- Alternatives: Acting as every authority, which the copy's switched-off signature checks would allow even for addresses only a program can sign for; signing as an SPL multisig's members.
+- Specified in: [`docs/spec/pipescope-canary.md`, Control](spec/pipescope-canary.md#control)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
+
+### CANARY-44: Authorities of the money side's mint
+
+- Question: How does `token_authorities` act as an authority of the money side's mint, which the trader spends rather than holds?
+- Answer: In the same round trip as for a token: freezing the buyer's account or pausing the mint between the buy and the sale, setting the transfer fee before the buy, and, as permanent delegate, taking what the sale returned; a mint authority sells what it minted into each other mint, each sale from the same state.
+- Alternatives: Acting only as the authorities of the mints a trader buys.
+- Specified in: [`docs/spec/pipescope-canary.md`, Control](spec/pipescope-canary.md#control)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
+
+### CANARY-45: What the direct swap refuses
+
+- Question: Which of the router's rules does the swap implementation that calls the strategy directly keep?
+- Answer: Those a trader can meet: a paused router, a trader account that is not a token account of its mint, and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router.
+- Alternatives: Settling without the router's rules, so a paused router would look tradable.
+- Specified in: [`docs/spec/pipescope-canary.md`, Built on](spec/pipescope-canary.md#built-on)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
+
+### CANARY-46: The instruction list in the snapshot
+
+- Question: How does `custom_instructions` get the list `terminal-api` works out, and what does it do without one?
+- Answer: The snapshot's optional `instructions` field carries whether the program is built with Anchor and each instruction's name, call count and signers; Canary drops Pipeline's six by name, notes the rest, and records "not run" when the field is absent.
+- Alternatives: The binary working the list out from the program's bytes, which `PIPESCOPE-92` rules out.
+- Specified in: [`docs/spec/pipescope-canary.md`, Custom instructions are listed, not called](spec/pipescope-canary.md#custom-instructions-are-listed-not-called)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
 
 ## Explainer (EXPLAINER)
 
@@ -3007,6 +3056,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: proofs of the pricing, tax and split maths](https://github.com/imDev2023/testing-pipeline/issues/64)
 
+### TAX-51: Bump searches and the compute ceilings
+
+- Question: How is `distribute` held to its compute ceiling when its cost depends on how many bumps the slot wallet's associated token account needs?
+- Answer: The ceilings leave out what a bump search spends beyond an address's first bump, 1,500 units a try, which for `distribute` is 4,500 units for each further bump when it creates the account (the associated token program derives it twice more) and 1,500 when it does not; the spec states that rule so a caller can size a payout's compute limit, and the tests subtract exactly that.
+- Alternatives: A higher ceiling, which no ceiling can make safe since the search has no fixed bound; asserting the raw cost, which fails at random for about one wallet in a few thousand; changing `distribute` to take the bump as an argument, which the metadata's account sources cannot supply.
+- Specified in: [`docs/spec/tax-amm.md`, Compute ceilings](spec/tax-amm.md#compute-ceilings)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
+
+### TAX-52: What every holder can exit means on a tax market
+
+- Question: How does the fuzzer check the bar's shared invariant that every holder can still exit, given that a tax market never pays out its virtual reserve?
+- Answer: Every wallet's whole holding of either mint quotes, or is refused as dust or, only on a market with a virtual reserve, because the curve would pay out more than the real reserve, in which case the largest sale the real reserve covers must quote; every sequence ends with every wallet selling all it holds, and each sale settles unless the spec refuses it.
+- Alternatives: Requiring every whole holding to sell, which a single-sided launch refuses by design; checking quotes only, which would miss a swap that fails after its quote.
+- Specified in: [`docs/spec/tax-amm.md`, Invariants](spec/tax-amm.md#invariants)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
@@ -3298,6 +3367,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-12 in [Containment hook: a contained token moves only through its home market](https://github.com/imDev2023/testing-pipeline/issues/69)
+
+### HOOK-30: Who signs `unlock`
+
+- Question: Does `unlock` take a signer of its own, such as a caller account?
+- Answer: No: its accounts are the mint, the config, the unlock PDA, the market state and Token-2022, so anyone can send it and pays only the transaction fee, as a fresh wallet with no tie to the token does in the tests and the launch script.
+- Alternatives: A caller account that signs, which adds an account and checks nothing the unlock needs.
+- Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+
+### HOOK-31: A second unlock
+
+- Question: How is a second `unlock` refused?
+- Answer: By the config, which records the first unlock's time, with its own error `AlreadyUnlocked` (6022) before any call to Token-2022, which would refuse it anyway because the hook authority that must sign is gone.
+- Alternatives: Leaving the refusal to Token-2022's authority check alone, whose error says nothing about the unlock.
+- Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+
+### HOOK-32: How the unlock says what made it due
+
+- Question: How does `unlock` record whether the goal or the deadline made it due?
+- Answer: In a log line, "Unlocked by the goal: <collected> of <goal> collected" or "Unlocked by the deadline <deadline>", naming the goal when both hold; the config records only the time, as the spec's accounts table says.
+- Alternatives: An Anchor event; a field in the config for the reason, which would change the config's layout.
+- Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+
+### HOOK-33: The launch script's unlock
+
+- Question: How does the launch script show a token unlocked by its goal and another by its deadline?
+- Answer: An optional `--unlock goal` or `--unlock deadline`: by the goal it trades rounds of a buy of one whole unit of the quote mint and a sell back until the goal is collected, refusing up front a goal that would take more than 10 rounds; by the deadline it waits, refusing up front a deadline less than 60 or more than 600 seconds away and a goal the launch's own trades could reach; a fresh wallet funded with 0.002 SOL sends the unlock; without the flag the token stays contained.
+- Alternatives: Always unlocking, which would leave no way to launch a token that stays contained; a separate unlock script, which would repeat the launch's setup to find the market.
+- Specified in: [the ticket, Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+
+### HOOK-34: The deadline without the market state
+
+- Question: Does an unlock by the deadline still need the home market's state to be readable?
+- Answer: No: a market state at the recorded address that can no longer be read as the tax AMM's (another owner, another size or discriminator, or closed) counts as the goal not reached, so the deadline still unlocks; before the deadline such a market state is refused with `NotATaxMarketState`.
+- Alternatives: Refusing every unlock whose market state cannot be read, which would trap holders for good if a tax AMM upgrade changed the account, the case the deadline exists for.
+- Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
 
 ## Buy wall AMM (POOL4)
 
@@ -4125,6 +4244,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)
 
+### LENDING-48: How add_liquidity gets the reserve
+
+- Question: How does `add_liquidity` get the Kamino reserve it values the lent side from?
+- Answer: As its last named account, which the metadata's `add_liquidity` action takes as the named input `reserve` and Aviary's form fills in, and which the program refuses unless it is the reserve `LENT_MINTS` names for the market's lent mint.
+- Alternatives: A metadata source reading the reserve from the market state, which the metadata schema at `5ad130d` does not have; a remaining account after the hook accounts, which would let a deposit leave it out.
+- Specified in: [`docs/spec/lending-pool.md`, Custom actions and metadata](spec/lending-pool.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
+
+### LENDING-49: Where the reserve sits in a swap's accounts
+
+- Question: Where do quotes and swaps find the Kamino reserve, and how is it locked?
+- Answer: Third among the strategy accounts `pipeline_resolve_accounts` lists, after the output vault and the vault authority, read-only, so ordinary swaps never write-lock the reserve every Kamino user of that mint shares; a trade built without it fails the reserve check with `ReserveWrongAddress`.
+- Alternatives: After the hook accounts, which would make its place depend on the output mint.
+- Specified in: [`docs/spec/lending-pool.md`, Accounts](spec/lending-pool.md#accounts)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
+
+### LENDING-50: Valuing cTokens at the edges
+
+- Question: What are a market's cTokens worth when the reserve's total supply or cToken supply is 0, or when the value does not fit a u64?
+- Answer: Nothing when either supply is 0, which can only understate where klend would use its initial rate of one, and a value above a u64 is refused (`Overflow`); a total supply klend's own fixed point cannot compute (beyond 128 bits, or negative) refuses with `ReserveSupplyInvalid`.
+- Alternatives: klend's initial rate of one for an empty reserve.
+- Specified in: [`docs/spec/lending-pool.md`, Total reserves](spec/lending-pool.md#total-reserves)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
+
+### LENDING-51: One error for each part of the reserve check
+
+- Question: How does a reserve that fails the check say which part failed?
+- Answer: With its own error for each part, in the order the check runs: address, owner, size, discriminator, lending market, liquidity mint, collateral mint.
+- Alternatives: One error for every part, with the part only in the logs.
+- Specified in: [`docs/spec/lending-pool.md`, Checking the reserve before reading it](spec/lending-pool.md#checking-the-reserve-before-reading-it)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
+
+### LENDING-52: Where the Kamino fixtures live
+
+- Question: Where do the tests and the local demo run get Kamino's accounts and program?
+- Answer: The tests load accounts dumped from each cluster at one slot and committed in `programs/lending-amm/tests/fixtures/kamino/<cluster>/`, replaced only on purpose; klend's bytes from both clusters are fetched into the gitignored `fixtures/klend/` and refused unless they match the hashes in `fixtures/pins.env`; the local demo run clones our devnet lending market's accounts afresh from devnet and warps the validator past their slot.
+- Alternatives: The local demo run on the committed devnet dump; caching klend's bytes in CI rather than fetching them on every run.
+- Specified in: [`docs/spec/lending-pool.md`, Building it](spec/lending-pool.md#building-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -4150,6 +4319,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-20`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
 - `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.
@@ -4162,3 +4332,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.
 - `BAR-04`, `BAR-29`, `PIPESCOPE-87`: Pipeline's crates are on crates.io and its SDK on npm since 2026-11-10; the terminal uses the published packages, while the bar still pins the on-chain workspace's crates by git `rev` and the programs' demo scripts link a local SDK build from `scripts/fetch-pipeline.sh`; whether they move to the published packages is for the bar's owner.
+- `BAR-40`, `TAX-51`, `TAX-52`: set by the session of [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.

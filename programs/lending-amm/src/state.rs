@@ -106,9 +106,19 @@ impl LendingAmmMarket {
     /// The account's size, discriminator included.
     pub const SPACE: usize = LendingAmmMarket::DISCRIMINATOR.len() + LendingAmmMarket::INIT_SPACE;
 
+    /// The mint index that is lent.
+    pub fn lent_side(&self) -> usize {
+        self.lent_index as usize & 1
+    }
+
     /// The mint index that is not lent.
     pub fn other_index(&self) -> usize {
-        1 - (self.lent_index as usize & 1)
+        1 - self.lent_side()
+    }
+
+    /// The lent mint.
+    pub fn lent_mint(&self) -> Pubkey {
+        self.mints[self.lent_side()]
     }
 
     /// Whether the first deposit has been made, which opens the market to quotes and swaps.

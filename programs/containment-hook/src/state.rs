@@ -20,7 +20,7 @@ pub const UNLOCK_SEED: &[u8] = b"unlock";
 
 /// One contained mint's binding to its home market. `bind` writes it once; no instruction
 /// changes it afterwards, and it is never closed, so it stays as the record of the token's
-/// containment. Only `unlocked_at` will be set, once, by the unlock.
+/// containment. Only `unlocked_at` is ever set afterwards, once, by `unlock`.
 #[account]
 #[derive(InitSpace, Debug, PartialEq, Eq)]
 pub struct Config {

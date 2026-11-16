@@ -49,10 +49,31 @@ pub enum StrategyError {
     ZeroShares,
     #[msg("The deposit would mint fewer shares than min_lp")]
     BelowMinLp,
+    /// No longer returned: cTokens are valued from Kamino's reserve since
+    /// [#79](https://github.com/imDev2023/testing-pipeline/issues/79). Kept so that every later
+    /// error keeps its number.
     #[msg("The market holds cTokens, which this version cannot value yet")]
     LentValueUnavailable,
     #[msg("Arithmetic overflow")]
     Overflow,
     #[msg("A side of the market holds nothing to price a deposit against")]
     EmptySide,
+    #[msg("The Kamino reserve is not the one the market's lent mint lends to")]
+    ReserveWrongAddress,
+    #[msg("The Kamino reserve is not owned by Kamino Lend")]
+    ReserveNotKamino,
+    #[msg("The Kamino reserve does not have a reserve's size")]
+    ReserveWrongSize,
+    #[msg("The Kamino reserve does not carry a reserve's discriminator")]
+    ReserveWrongDiscriminator,
+    #[msg("The Kamino reserve belongs to another lending market")]
+    ReserveWrongLendingMarket,
+    #[msg("The Kamino reserve lends another mint")]
+    ReserveWrongLiquidityMint,
+    #[msg("The Kamino reserve has another collateral mint")]
+    ReserveWrongCollateralMint,
+    #[msg("The Kamino reserve's total supply cannot be computed")]
+    ReserveSupplyInvalid,
+    #[msg("The Kamino lending market account is not the lent mint's lending market")]
+    LendingMarketWrongAccount,
 }

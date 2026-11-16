@@ -4,7 +4,7 @@
 //! snapshot is everything the run reads.
 //!
 //! ```text
-//! POST /run   {"market", "round", "cluster", "accounts", "seed"?}
+//! POST /run   {"market", "round", "cluster", "accounts", "seed"?, "instructions"?}
 //!   200 {"status": "results", "harness", "records": [...], "notes": [...]}
 //!   200 {"status": "missing", "round", "addresses": [...], "seed"}
 //!   400 {"error"}
@@ -50,6 +50,7 @@ pub fn answer(snapshot: &Snapshot) -> Result<Value, String> {
     let options = RunOptions {
         last_round: snapshot.round >= SNAPSHOT_ROUNDS,
         seed,
+        instructions: snapshot.instructions.clone(),
         ..RunOptions::default()
     };
     Ok(match run_market(&mut source, market, &options) {

@@ -1,5 +1,8 @@
 //! The stateful invariant fuzzer (docs/spec/README.md, "Test layers" 3): Proptest generates
-//! sequences of swaps, deposits, donations and clock jumps, sent as real transactions
+//! markets holding cTokens of the Kamino reserve dumped from the cluster this build lends on
+//! (none, or up to several times the buffer's worth, given directly since no instruction lends
+//! yet), and sequences of swaps, deposits, donations of tokens and cTokens and clock jumps,
+//! sent as real transactions
 //! through the router copied from devnet in LiteSVM, and after every step checks the bar's
 //! three shared invariants and the lending AMM's own that this build makes checkable
 //! (docs/spec/lending-pool.md, "Invariants for test layer 3"):
@@ -7,14 +10,19 @@
 //! - value is conserved: every token any step created is held by a known account, and each
 //!   vault holds exactly what the market has recorded plus what was donated to it;
 //! - every holder can exit: every trader can sell all they hold of either mint, Pipeline's
-//!   fee included (a holding too small to buy one unit is refused as dust, cleanly); an LP's exit arrives with
+//!   fee included (a holding too small to buy one unit is refused as dust, cleanly, and a sell
+//!   paying out more of the lent side than the buffer holds is refused until
+//!   [the in-swap redeem](https://github.com/imDev2023/testing-pipeline/issues/81) pays it from
+//!   Kamino); an LP's exit arrives with
 //!   [remove liquidity](https://github.com/imDev2023/testing-pipeline/issues/82), which adds
 //!   it here;
 //! - each quote equals its swap;
-//! - what the market has recorded never exceeds what it holds;
-//! - no swap lowers `R x L`, and no step lowers the value of an LP share (`R x L / N^2`);
+//! - what the market has recorded never exceeds what it holds: the buffer and the other side
+//!   against their vaults, the cTokens against the cToken account;
+//! - no swap lowers `R x L`, and no step lowers the value of an LP share (`R x L / N^2`), with
+//!   `L = B + V`, the cTokens valued at the reserve's stored rate, which no step moves;
 //! - the share count changes only by `add_liquidity`;
-//! - nothing is lent yet, so no step deposits into or redeems from Kamino.
+//! - no step deposits into or redeems from Kamino, and none moves the recorded cTokens.
 //!
 //! Each case runs in a fresh VM. `PROPTEST_CASES` sets how many cases run (default 24, of
 //! up to 32 steps each).
@@ -42,6 +50,8 @@ enum Step {
     Deposit { lp: usize, fraction: [u32; 2] },
     /// A stranger sends `amount` of mint `side` straight to its vault.
     Donate { side: usize, amount: u64 },
+    /// A stranger sends `amount` cTokens straight to the market's cToken account.
+    DonateCtokens { amount: u64 },
     /// Time passes.
     Wait { slots: u64 },
 }
@@ -53,6 +63,7 @@ fn step() -> impl Strategy<Value = Step> {
         2 => (0..2usize, [1..1_000_000u32, 1..1_000_000u32])
             .prop_map(|(lp, fraction)| Step::Deposit { lp, fraction }),
         1 => (0..2usize, 1..1_000_000_000u64).prop_map(|(side, amount)| Step::Donate { side, amount }),
+        1 => (1..100_000_000_000u64).prop_map(|amount| Step::DonateCtokens { amount }),
         1 => (1..1_000_000u64).prop_map(|slots| Step::Wait { slots }),
     ]
 }
@@ -69,6 +80,10 @@ struct World {
     donated: [u64; 2],
     /// Tokens held by donors, whom the world does not enumerate.
     with_donors: [u128; 2],
+    /// The cTokens the market recorded when it was given them.
+    ctokens: u64,
+    /// Every cToken donated to the cToken account.
+    donated_ctokens: u64,
     /// The share count the market should have.
     shares: u64,
 }
@@ -77,10 +92,11 @@ const SEED: [u64; 2] = [2_000_000_000_000, 40 * SOL];
 const HOLDING: [u64; 2] = [5_000_000_000_000, 100 * SOL];
 
 impl World {
-    fn new(lp_fee_bps: u16) -> Self {
+    fn new(lp_fee_bps: u16, ctokens: u64) -> Self {
         let mut env = Env::new();
         let spec = env.wsol_market_spec(lp_fee_bps);
         let (market, first) = env.create_funded_market(&spec, SEED).unwrap();
+        env.give_ctokens(&market, ctokens);
         let shares = env.share_count(&market);
         let traders: Vec<Keypair> = (0..2)
             .map(|_| env.funded_wallet(&market, HOLDING))
@@ -103,8 +119,30 @@ impl World {
             created,
             donated: [0, 0],
             with_donors: [0, 0],
+            ctokens,
+            donated_ctokens: 0,
             shares,
         }
+    }
+
+    /// The reserve as the program reads it.
+    fn reserve(&self) -> lending_amm::kamino::Reserve {
+        let entry = &lending_amm::config::LENT_MINTS[self.env.lent_entry_of(&self.market)];
+        let data = self.env.data(&ck(&entry.reserve));
+        lending_amm::kamino::read_reserve(
+            &entry.reserve,
+            &lending_amm::config::KLEND_PROGRAM,
+            &data,
+            entry,
+        )
+        .unwrap()
+    }
+
+    /// The effective reserves `[R, L]`, with `L = B + V`.
+    fn effective(&self) -> [u64; 2] {
+        let state = self.env.market_state(&self.market.market_state);
+        let value = self.reserve().lent_value(state.ctokens).unwrap();
+        [state.reserves[0], state.reserves[1] + value]
     }
 
     fn holding(&self, wallet: &Pubkey, i: usize) -> u64 {
@@ -118,6 +156,7 @@ impl World {
 
     fn run(&mut self, step: &Step) -> Result<(), TestCaseError> {
         let before = self.reserves();
+        let effective_before = self.effective();
         match *step {
             Step::Swap {
                 trader,
@@ -145,16 +184,18 @@ impl World {
                         let after = self.reserves();
                         prop_assert_eq!(after[input], before[input] + amount);
                         prop_assert_eq!(after[output], before[output] - quote.amount_out);
-                        // No swap lowers R x L.
+                        // No swap lowers R x L, with L = B + V.
+                        let (now, was) = (self.effective(), effective_before);
                         prop_assert!(
-                            after[0] as u128 * after[1] as u128
-                                >= before[0] as u128 * before[1] as u128
+                            now[0] as u128 * now[1] as u128 >= was[0] as u128 * was[1] as u128
                         );
                     }
                     Err(refusal) => {
-                        // Only dust is refused, and the swap is refused with it.
+                        // Only dust, and a payout beyond the buffer, are refused, and the
+                        // swap is refused with them.
                         prop_assert!(
-                            refusal.contains("ZeroOutput"),
+                            refusal.contains("ZeroOutput")
+                                || (output == 1 && refusal.contains("BeyondBuffer")),
                             "an unexpected refusal of {} of mint {}: {}",
                             amount,
                             input,
@@ -195,6 +236,13 @@ impl World {
                 self.with_donors[1 - side] += amount as u128;
                 prop_assert_eq!(self.reserves(), before);
             }
+            Step::DonateCtokens { amount } => {
+                let account = self.market.addresses.ctoken_account;
+                let held = self.env.balance(&account);
+                self.env.patch(&account, 64, &(held + amount).to_le_bytes());
+                self.donated_ctokens += amount;
+                prop_assert_eq!(self.reserves(), before);
+            }
             Step::Wait { slots } => {
                 let mut clock: solana_clock::Clock = self.env.svm.get_sysvar();
                 clock.slot += slots;
@@ -231,10 +279,13 @@ impl World {
             prop_assert_eq!(held, self.created[i], "mint {} conserved", i);
         }
 
-        // Nothing is lent: no cTokens, nothing deposited into or redeemed from Kamino.
-        prop_assert_eq!(state.ctokens, 0);
+        // Nothing deposited into or redeemed from Kamino, the recorded cTokens never move, and
+        // the cToken account holds them plus what was donated: recorded never exceeds held.
+        prop_assert_eq!(state.ctokens, self.ctokens);
         prop_assert_eq!((state.deposited, state.redeemed), (0, 0));
-        prop_assert_eq!(env.balance(&market.addresses.ctoken_account), 0);
+        let ctokens_held = env.balance(&market.addresses.ctoken_account);
+        prop_assert_eq!(ctokens_held, self.ctokens + self.donated_ctokens);
+        prop_assert!(state.ctokens <= ctokens_held);
 
         // The share count changes only by add_liquidity.
         let n = env.share_count(market);
@@ -243,7 +294,8 @@ impl World {
 
         // The value of an LP share, R x L / N^2, never falls: compare
         // R'L' x N^2 >= R L x N'^2 in 256 bits.
-        let product = state.reserves[0] as u128 * state.reserves[1] as u128;
+        let effective = self.effective();
+        let product = effective[0] as u128 * effective[1] as u128;
         let square = n as u128 * n as u128;
         let (old_product, old_square) = *value_per_share;
         prop_assert!(
@@ -262,7 +314,8 @@ impl World {
                 }
                 if let Err(refusal) = env.quote(market, &exact_in(input, 1 - input, amount)) {
                     prop_assert!(
-                        refusal.contains("ZeroOutput"),
+                        refusal.contains("ZeroOutput")
+                            || (input == 0 && refusal.contains("BeyondBuffer")),
                         "a trader can't exit: {}",
                         refusal
                     );
@@ -294,10 +347,11 @@ proptest! {
     #[test]
     fn the_invariants_hold_after_every_step(
         lp_fee_bps in prop_oneof![Just(0u16), Just(30), Just(200), 0u16..=200],
+        ctokens in prop_oneof![Just(0u64), 1..200 * SOL],
         steps in proptest::collection::vec(step(), 1..32),
     ) {
-        let mut world = World::new(lp_fee_bps);
-        let reserves = world.reserves();
+        let mut world = World::new(lp_fee_bps, ctokens);
+        let reserves = world.effective();
         let n = world.env.share_count(&world.market);
         let mut value = (reserves[0] as u128 * reserves[1] as u128, n as u128 * n as u128);
         world.check(&mut value)?;

@@ -3,7 +3,10 @@
 //! functions of the measurements, so each outcome rule is tested at its band edges.
 
 pub mod conformance;
+pub mod contained_mint;
 pub mod cost;
+pub mod custom_instructions;
+pub mod direct_call;
 pub mod exit_hold;
 pub mod exit_late;
 pub mod exit_launch_clock;
@@ -15,6 +18,8 @@ pub mod exits;
 pub mod quote_matches_swap;
 pub mod readable;
 pub mod timed;
+pub mod token_authorities;
+pub mod transaction_accounts;
 
 /// Check ids, stable.
 pub const READABLE: &str = "readable";
@@ -28,9 +33,14 @@ pub const EXIT_TRANSFERRED: &str = "exit_transferred";
 pub const EXIT_QUEUE: &str = "exit_queue";
 pub const QUOTE_MATCHES_SWAP: &str = "quote_matches_swap";
 pub const COST: &str = "cost";
+pub const DIRECT_CALL: &str = "direct_call";
+pub const TOKEN_AUTHORITIES: &str = "token_authorities";
+pub const TRANSACTION_ACCOUNTS: &str = "transaction_accounts";
+pub const CONTAINED_MINT: &str = "contained_mint";
+pub const CUSTOM_INSTRUCTIONS: &str = "custom_instructions";
 
 /// Every check this binary runs, in the order of its records.
-pub const CHECKS: [&str; 11] = [
+pub const CHECKS: [&str; 16] = [
     READABLE,
     CONFORMANCE,
     EXIT_SIZES,
@@ -42,4 +52,9 @@ pub const CHECKS: [&str; 11] = [
     EXIT_QUEUE,
     QUOTE_MATCHES_SWAP,
     COST,
+    DIRECT_CALL,
+    TOKEN_AUTHORITIES,
+    TRANSACTION_ACCOUNTS,
+    CONTAINED_MINT,
+    CUSTOM_INSTRUCTIONS,
 ];

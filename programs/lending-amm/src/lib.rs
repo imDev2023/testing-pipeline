@@ -15,14 +15,17 @@
 //! | `pipeline_swap`             | the router, from `swap`          | settles a trade                          |
 //! | `add_liquidity`             | LPs, directly                    | adds both mints for LP shares            |
 //!
-//! Nothing is lent yet: the whole lent side sits in the buffer, the lent mint's vault, so
-//! the lent side's total `L` is the buffer `B`. Lending starts with
+//! Quotes, swaps and deposits value the lent side as `L = B + V`: the buffer `B` in the lent
+//! mint's vault, plus the market's recorded cTokens at the Kamino reserve's stored rate, read
+//! after the reserve is checked ([`kamino`]). No instruction lends yet, so a market's cTokens
+//! are still zero on chain; lending starts with
 //! [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80),
 //! and the market state already holds every field that needs.
 //!
 //! Where things live: the build-time policy values in [`config`], the creation parameters
 //! and their rules in [`params`], the market state and its final layout in [`state`], the
-//! one pricing function in [`pricing`], the share maths in [`shares`], and each instruction
+//! one pricing function in [`pricing`], the share maths in [`shares`], every read of Kamino in
+//! [`kamino`], and each instruction
 //! in its own module of [`instructions`]. The mint extension allowlist is the shared
 //! `mint-rules` crate.
 
@@ -33,6 +36,7 @@ pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod interface;
+pub mod kamino;
 pub mod params;
 pub mod pricing;
 pub mod shares;
@@ -73,7 +77,10 @@ pub mod lending_amm {
     }
 
     /// Prices a trade without changing anything.
-    pub fn pipeline_quote(ctx: Context<ReadTrade>, request: interface::TradeRequest) -> Result<()> {
+    pub fn pipeline_quote<'info>(
+        ctx: Context<'info, ReadTrade<'info>>,
+        request: interface::TradeRequest,
+    ) -> Result<()> {
         instructions::quote(ctx, request)
     }
 
