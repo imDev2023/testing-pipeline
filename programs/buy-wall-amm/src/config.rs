@@ -35,15 +35,22 @@ pub const MIN_CAP_FLOOR_BPS: u16 = 10;
 /// The highest cap decay a market may choose, in basis points of the seeded tokens a day.
 pub const MAX_CAP_DECAY_BPS: u16 = 10_000;
 /// Idle SOL, or SOL the wall has spent, that lets the wall be placed again (0.01 SOL).
+/// Published in the IDL (`#[constant]`), where the demo script reads it, as are the tip cap
+/// and the guard's rates below (`POOL4-35`).
+#[constant]
 pub const WALL_THRESHOLD: u64 = 10_000_000;
 /// The most a wall placement tips its caller (0.002 SOL).
+#[constant]
 pub const KEEPER_TIP_CAP: u64 = 2_000_000;
 /// How fast the wall's floor may rise, in basis points of the price a day.
+#[constant]
 pub const FLOOR_CRAWL_BPS: u64 = 400;
 /// How fast the reference may follow the price: `REF_STEP_BPS` of the price per
 /// `REF_STEP_WINDOW` seconds.
+#[constant]
 pub const REF_STEP_BPS: u64 = 200;
 /// See `REF_STEP_BPS`, in seconds.
+#[constant]
 pub const REF_STEP_WINDOW: i64 = 12;
 /// The most cap decay allowance that builds up while a market is idle, in seconds.
 /// Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-30`).

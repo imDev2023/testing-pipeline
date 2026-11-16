@@ -1,6 +1,6 @@
 //! The shared invariant "every holder can exit" (docs/spec/README.md, "Test layers" 3), as
 //! the buy wall AMM defines it at a price bound (docs/spec/pool4-for-solana.md, "Invariants
-//! for test layer 3", `POOL4-32`).
+//! for test layer 3", `POOL4-36`).
 
 use buy_wall_amm::config::MIN_SQRT_PRICE;
 use buy_wall_amm::errors::StrategyError;

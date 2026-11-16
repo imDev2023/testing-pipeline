@@ -1001,3 +1001,45 @@ pub fn trade(mode: TradeMode, input: usize, output: usize, amount: u64) -> Trade
         extra: vec![],
     }
 }
+
+/// The strategy's `place_wall` keeper job, called by `caller`, tipping `tip_account`, in
+/// the account order `metadata.json` lists.
+pub fn place_wall_ix(market: &Market, caller: &Pubkey, tip_account: &Pubkey) -> Instruction {
+    Instruction::new_with_bytes(
+        strategy_id(),
+        &client::instruction_discriminator("place_wall"),
+        vec![
+            AccountMeta::new_readonly(*caller, true),
+            AccountMeta::new(market.market_state, false),
+            AccountMeta::new(market.sol_vault, false),
+            AccountMeta::new(*tip_account, false),
+            AccountMeta::new_readonly(WSOL, false),
+            AccountMeta::new_readonly(market.vault_authority, false),
+            AccountMeta::new_readonly(TOKEN, false),
+        ],
+    )
+}
+
+impl Env {
+    /// A keeper: a wallet with an empty wrapped SOL account for its tips.
+    pub fn keeper(&mut self) -> Keypair {
+        let keeper = Keypair::new();
+        self.svm.airdrop(&keeper.pubkey(), SOL).unwrap();
+        write_token_account(&mut self.svm, &WSOL, &TOKEN, &keeper.pubkey(), 0).unwrap();
+        keeper
+    }
+
+    /// `place_wall` called by `keeper`, tipping its wrapped SOL account. Returns the tip it
+    /// received and the transaction's logs.
+    pub fn place_wall(
+        &mut self,
+        market: &Market,
+        keeper: &Keypair,
+    ) -> Result<(u64, Vec<String>), String> {
+        let tips = pda::associated_token(&keeper.pubkey(), &WSOL, &TOKEN);
+        let before = self.balance(&tips);
+        let ix = place_wall_ix(market, &keeper.pubkey(), &tips);
+        let (_, logs) = self.send_logged(&[ix], &[keeper])?;
+        Ok((self.balance(&tips) - before, logs))
+    }
+}

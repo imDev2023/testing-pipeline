@@ -88,6 +88,17 @@ pub fn held(liquidity: u128, sqrt_price: u128) -> Option<u128> {
         .to_u128()
 }
 
+/// What a curve of liquidity `liquidity` holds at `sqrt_price`, each rounded up:
+/// `(ceil(L × Q / s), ceil(L × s / Q))` token units and lamports, the least ledgers that cover
+/// it. The trim keeps these for the curve it leaves, and `place_wall` keeps them in the pool.
+pub fn held_rounded_up(liquidity: u128, sqrt_price: u128) -> Option<(u128, u128)> {
+    let tokens = U256::times_q(liquidity)
+        .div_ceil(U256::from(sqrt_price))?
+        .to_u128()?;
+    let sol = U256::mul(liquidity, sqrt_price)?.checked_ceil_shr64()?;
+    Some((tokens, sol))
+}
+
 /// Step 5: `min(decay_credit + cap_decay_per_day × (now - decay_time),
 /// cap_decay_per_day × DECAY_CREDIT_WINDOW)`, the time difference saturating at 0.
 ///
@@ -133,11 +144,8 @@ pub fn trim(cap: u64, sqrt_price: u128, liquidity: u128, held: u128) -> Option<O
     if new_liquidity >= liquidity {
         return Some(None);
     }
-    let kept_tokens = U256::times_q(new_liquidity)
-        .div_ceil(U256::from(sqrt_price))?
-        .to_u128()?;
+    let (kept_tokens, kept_sol) = held_rounded_up(new_liquidity, sqrt_price)?;
     let curve_sol = U256::mul(liquidity, sqrt_price)?.checked_shr64()?;
-    let kept_sol = U256::mul(new_liquidity, sqrt_price)?.checked_ceil_shr64()?;
     Some(Some(Trim {
         liquidity: new_liquidity,
         tokens: u64::try_from(held.saturating_sub(kept_tokens)).ok()?,

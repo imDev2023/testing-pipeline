@@ -10,6 +10,16 @@ export const DECAY_CREDIT_WINDOW: bigint = 86400n;
 
 export const DESIGNER_SHARE_BPS: number = 1000;
 
+export const FLOOR_CRAWL_BPS: bigint = 400n;
+
+export const KEEPER_TIP_CAP: bigint = 2000000n;
+
 export const MIN_LIQUIDITY: bigint = 1000000n;
 
+export const REF_STEP_BPS: bigint = 200n;
+
+export const REF_STEP_WINDOW: bigint = 12n;
+
 export const SUITE_SHARE_BPS: number = 1000;
+
+export const WALL_THRESHOLD: bigint = 10000000n;

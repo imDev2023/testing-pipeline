@@ -20,10 +20,22 @@
 //      quote; after each, the inventory cap's steps recomputed from the spec: the buy lowers
 //      the cap by the credit the seconds since the seed built up, and the sell, leaving the
 //      curve above the lowered cap, is trimmed, each swap emitting the event that says so;
-//   8. read the books back: the price, the pool, retired and fee ledgers, the cap, the decay
-//      credit, the trimmed totals and the counters equal the spec's formulas to the unit, and
-//      each vault holds exactly the sum of its ledgers;
-//   9. on a local validator only, graduate a second token from the stand-in launchpad
+//      the wall's guard is recomputed from the spec too, from the slot and time each swap
+//      ran at;
+//   8. place the buy wall through the metadata's `place_wall` action, from the spec's
+//      formulas: refused with WallBelowThreshold while idle SOL is below WALL_THRESHOLD
+//      (shown by simulating it), then, after one more buy if its fee is needed, placed at
+//      the lower of the price and the guard's floor with everything idle, the dust swept
+//      and the caller tipped in wrapped SOL exactly as the spec's rule gives, emitting
+//      WallPlaced;
+//   9. sell into the wall: priced in two steps, the curve alone to the wall's top, then the
+//      curve and the wall together, quoted, swapped and checked against the spec's
+//      formulas like every trade;
+//  10. read the books back: the price, the wall, the guard, the pool, retired and fee
+//      ledgers, the cap, the decay credit, the trimmed, bought and tipped totals and the
+//      counters equal the spec's formulas to the unit, and each vault holds exactly the sum
+//      of its ledgers;
+//  11. on a local validator only, graduate a second token from the stand-in launchpad
 //      (programs/tax-amm/scripts/launchpad.ts): it calls `pipeline_seed_liquidity`, built
 //      from the metadata's `seed_liquidity` form with the SDK's `resolveInit`, and the same
 //      transaction records the market with `register_existing_market` and both fee
@@ -106,14 +118,22 @@ import {
     identifyBuyWallAmmEvent,
     parseCapLoweredEvent,
     parseTrimmedEvent,
+    parseWallPlacedEvent,
     BuyWallAmmEvent,
+    BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD,
     DECAY_CREDIT_WINDOW,
     DESIGNER_SHARE_BPS,
+    FLOOR_CRAWL_BPS,
+    KEEPER_TIP_CAP,
     MARKET_STATE_DISCRIMINATOR,
     MIN_LIQUIDITY,
+    REF_STEP_BPS,
+    REF_STEP_WINDOW,
     SUITE_SHARE_BPS,
+    WALL_THRESHOLD,
     type CapLoweredEvent,
     type TrimmedEvent,
+    type WallPlacedEvent,
 } from './client/index.ts';
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
@@ -135,11 +155,15 @@ const DEMO = {
     rewardShareBps: 1_500,
     capFloorBps: 2_000,
     capDecayBps: 2_000,
-    // Step 7's buy, and the tokens and SOL beyond the seed the payer keeps so that each
-    // trade can pay Pipeline's fee on top of its input.
+    // Step 7's buy (and step 8's, if the wall needs more idle SOL), and the tokens and SOL
+    // beyond the seed the payer keeps so that each trade can pay Pipeline's fee on top of its
+    // input and step 9 can sell into the wall.
     buy: 1_000_000_000n,
-    spareTokens: 1_000_000_000n,
-    spareLamports: 100_000_000n,
+    spareTokens: 30_000_000_000n,
+    spareLamports: 1_200_000_000n,
+    // Step 9 sells what step 8 bought, if anything, and this many more units: as many as the
+    // worked example sells into its wall.
+    wallSell: 20_000_000_000n,
 };
 
 // The worked example's two trades, which the demo market must reproduce exactly
@@ -155,7 +179,7 @@ const WORKED = {
 const DECAY_WAIT_SECONDS = 3n;
 // The most SOL the strategy's setup may spend on rent; the router returns the rest.
 const MAX_CREATOR_LAMPORTS = 100_000_000n;
-// The launch the stand-in launchpad graduates in step 9, on a local validator only: the demo
+// The launch the stand-in launchpad graduates in step 11, on a local validator only: the demo
 // market's parameters and seed, from escrows holding more than the seed, so the market takes
 // exactly the seed and leaves the rest; the launchpad lends the strategy at most
 // `maxPayerLamports` for rent and takes back what it did not spend.
@@ -439,30 +463,130 @@ async function wrapSol(wallet: KeyPairSigner, amount: bigint) {
 }
 
 /**
- * The spec's pricing with no buy wall (docs/spec/pool4-for-solana.md, "A sell", "A buy" and
- * "The fee"), written out here from the spec rather than taken from the program, so the
- * demo checks the program against the spec. The demo's trades stay far from the price
- * bounds, so the model leaves them out: a trade the program refused at a bound would fail
- * the demo at its quote.
+ * The spec's pricing (docs/spec/pool4-for-solana.md, "A sell", "A buy" and "The fee"),
+ * written out here from the spec rather than taken from the program, so the demo checks the
+ * program against the spec: at most two steps, through the curve and the wall together at or
+ * below the wall's top and through the curve alone above it. The demo's trades stay far
+ * from the price bounds, so the model leaves them out: a trade the program refused at a
+ * bound would fail the demo at its quote.
  */
 const Q = 1n << 64n;
 const ceilDiv = (n: bigint, d: bigint) => (n + d - 1n) / d;
 const ceilBps = (amount: bigint, bps: bigint) => ceilDiv(amount * bps, 10_000n);
+const min = (a: bigint, b: bigint) => (a < b ? a : b);
+const max = (a: bigint, b: bigint) => (a > b ? a : b);
 
 type Curve = { sqrtPrice: bigint; liquidity: bigint };
+type Wall = { liquidity: bigint; top: bigint };
 type Priced = { fee: bigint; out: bigint; sqrtPrice: bigint };
+const NO_WALL: Wall = { liquidity: 0n, top: 0n };
 
-function specBuy({ sqrtPrice: s, liquidity: l }: Curve, a: bigint, feeBps: bigint): Priced {
+function specBuy({ sqrtPrice, liquidity: l }: Curve, wall: Wall, a: bigint, feeBps: bigint): Priced {
     const fee = ceilBps(a, feeBps);
-    const next = s + ((a - fee) * Q) / l;
-    return { fee, out: (l * Q * (next - s)) / (next * s), sqrtPrice: next };
+    let [rem, out, s] = [a - fee, 0n, sqrtPrice];
+    if (wall.liquidity > 0n && s < wall.top) {
+        // Through the curve and the wall toward the top: `need` lamports reach it.
+        const liq = l + wall.liquidity;
+        const need = ceilDiv(liq * (wall.top - s), Q);
+        const next = rem >= need ? wall.top : s + (rem * Q) / liq;
+        out += (liq * Q * (next - s)) / (next * s);
+        rem -= rem >= need ? need : rem;
+        s = next;
+    }
+    if (rem > 0n) {
+        const next = s + (rem * Q) / l;
+        out += (l * Q * (next - s)) / (next * s);
+        s = next;
+    }
+    return { fee, out, sqrtPrice: s };
 }
 
-function specSell({ sqrtPrice: s, liquidity: l }: Curve, a: bigint, feeBps: bigint): Priced {
-    const next = ceilDiv(l * Q * s, l * Q + a * s);
-    const gross = (l * (s - next)) / Q;
+function specSell({ sqrtPrice, liquidity: l }: Curve, wall: Wall, a: bigint, feeBps: bigint): Priced {
+    let [rem, gross, s] = [a, 0n, sqrtPrice];
+    if (wall.liquidity > 0n && s > wall.top) {
+        // Through the curve alone toward the top: `need` units reach it.
+        const need = ceilDiv(l * Q * (s - wall.top), s * wall.top);
+        const next = rem >= need ? wall.top : ceilDiv(l * Q * s, l * Q + rem * s);
+        gross += (l * (s - next)) / Q;
+        rem -= rem >= need ? need : rem;
+        s = next;
+    }
+    if (rem > 0n) {
+        const liq = l + wall.liquidity;
+        const next = ceilDiv(liq * Q * s, liq * Q + rem * s);
+        gross += (liq * (s - next)) / Q;
+        s = next;
+    }
     const fee = ceilBps(gross, feeBps);
-    return { fee, out: gross - fee, sqrtPrice: next };
+    return { fee, out: gross - fee, sqrtPrice: s };
+}
+
+/** What the wall holds at `s`: `W × min(s, top) / Q` lamports, and the tokens it bought below its top. */
+const wallSol = (wall: Wall, s: bigint) => (wall.liquidity * min(s, wall.top)) / Q;
+const wallTokens = (wall: Wall, s: bigint) =>
+    wall.liquidity > 0n && s < wall.top ? (wall.liquidity * Q * (wall.top - s)) / (wall.top * s) : 0n;
+
+/**
+ * The wall's guard (docs/spec/pool4-for-solana.md, "After pricing" steps 1, 3 and 4),
+ * written out from the spec: before the books, in a slot later than `lastSlot`, the
+ * reference moves toward the last close by at most `REF_STEP_BPS / 2` of itself per
+ * `REF_STEP_WINDOW`; once the price is set, the floor crawls toward the reference by at most
+ * `FLOOR_CRAWL_BPS / 2` of itself a day and drops at once to a lower price.
+ */
+type Guard = { reference: bigint; refTime: bigint; floor: bigint; floorTime: bigint; lastSlot: bigint; lastClose: bigint };
+
+function specFollow(g: Guard, slot: bigint, now: bigint): Guard {
+    if (slot <= g.lastSlot) return g;
+    const dt = min(max(now - g.refTime, 0n), REF_STEP_WINDOW);
+    const step = (g.reference * REF_STEP_BPS * dt) / (2n * 10_000n * REF_STEP_WINDOW);
+    const reference =
+        g.lastClose >= g.reference ? min(g.reference + step, g.lastClose) : max(g.reference - step, g.lastClose);
+    return { ...g, reference, refTime: now, lastSlot: slot };
+}
+
+function specCloseAt(g: Guard, price: bigint, now: bigint): Guard {
+    let floor = g.floor;
+    if (floor < g.reference) {
+        const dt = min(max(now - g.floorTime, 0n), SECONDS_PER_DAY);
+        floor = min(floor + (floor * FLOOR_CRAWL_BPS * dt) / (2n * 10_000n * SECONDS_PER_DAY), g.reference);
+    }
+    return { ...g, floor: min(floor, price), floorTime: now, lastClose: price };
+}
+
+/**
+ * `place_wall` (docs/spec/pool4-for-solana.md, "`place_wall`"), written out from the spec:
+ * refused below `WALL_THRESHOLD`; the old wall closed at the price; the pool's dust beyond
+ * the curve's holdings, rounded up, swept to idle SOL and the retired tokens; the tip; and
+ * the new wall placed with everything left at `min(price, floor)`.
+ */
+type WallBooks = { wall: Wall; wallSolPlaced: bigint; poolTokens: bigint; poolSol: bigint; retiredTokens: bigint; idleSol: bigint };
+type Placement = { converted: bigint; closedSol: bigint; closedTokens: bigint; dustSol: bigint; dustTokens: bigint; tip: bigint };
+
+function specPlaceWall(b: WallBooks, curve: Curve, floor: bigint, feeBps: bigint): { books: WallBooks; placement: Placement } | null {
+    const s = curve.sqrtPrice;
+    const converted = b.wall.liquidity > 0n ? max(b.wallSolPlaced - wallSol(b.wall, s), 0n) : 0n;
+    if (b.idleSol < WALL_THRESHOLD && converted < WALL_THRESHOLD) return null;
+    const [closedSol, closedTokens] = b.wall.liquidity > 0n ? [wallSol(b.wall, s), wallTokens(b.wall, s)] : [0n, 0n];
+    const curveTokens = ceilDiv(curve.liquidity * Q, s);
+    const curveSol = ceilDiv(curve.liquidity * s, Q);
+    const dustTokens = b.poolTokens - closedTokens - curveTokens;
+    const dustSol = b.poolSol - closedSol - curveSol;
+    let idle = b.idleSol + closedSol + dustSol;
+    const tip = min(min(KEEPER_TIP_CAP, (max(converted, b.idleSol) * feeBps) / 10_000n), idle);
+    idle -= tip;
+    const top = min(s, floor);
+    const wall = { liquidity: (idle * Q) / top, top };
+    return {
+        books: {
+            wall,
+            wallSolPlaced: wallSol(wall, top),
+            poolTokens: curveTokens,
+            poolSol: curveSol + idle,
+            retiredTokens: b.retiredTokens + closedTokens + dustTokens,
+            idleSol: 0n,
+        },
+        placement: { converted, closedSol, closedTokens, dustSol, dustTokens, tip },
+    };
 }
 
 /**
@@ -526,6 +650,7 @@ async function strategyEvents(signature: Signature) {
     }
     const lowered: CapLoweredEvent[] = [];
     const trimmed: TrimmedEvent[] = [];
+    const placed: WallPlacedEvent[] = [];
     for (const line of transaction.meta?.logMessages ?? []) {
         if (!line.startsWith('Program data: ')) continue;
         const data = new Uint8Array(Buffer.from(line.slice('Program data: '.length), 'base64'));
@@ -537,8 +662,10 @@ async function strategyEvents(signature: Signature) {
         }
         if (kind === BuyWallAmmEvent.CapLowered) lowered.push(parseCapLoweredEvent(data));
         if (kind === BuyWallAmmEvent.Trimmed) trimmed.push(parseTrimmedEvent(data));
+        if (kind === BuyWallAmmEvent.WallPlaced) placed.push(parseWallPlacedEvent(data));
     }
-    return { lowered, trimmed };
+    // The slot it ran in, which the wall's guard reads.
+    return { lowered, trimmed, placed, slot: BigInt(transaction.slot) };
 }
 
 /** Waits until the cluster's clock reads at least `time`, in Unix seconds. */
@@ -565,7 +692,7 @@ function specSplit(fee: bigint, wallSplitBps: bigint) {
 const show = (amounts: readonly bigint[]) => amounts.map(String).join(' / ');
 
 /**
- * Step 9, on a local validator: the stand-in launchpad graduates a new token into a buy wall
+ * Step 11, on a local validator: the stand-in launchpad graduates a new token into a buy wall
  * market through `pipeline_seed_liquidity`, built from the metadata's `seed_liquidity` form,
  * and the same transaction records it with `register_existing_market` and both fee accounts;
  * then the market trades both ways through the router at the spec's prices.
@@ -774,7 +901,8 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
         const simulation = { commitment: 'confirmed' } as const;
         const strategyAccounts = await pipeline.resolveAccounts(rpc, view, trade, payer.address, simulation);
         const { quote } = await pipeline.quoteStrategy(rpc, view, trade, strategyAccounts, payer.address, simulation);
-        const spec = input === 1 ? specBuy(curve, amount, BigInt(DEMO.feeBps)) : specSell(curve, amount, BigInt(DEMO.feeBps));
+        const spec =
+            input === 1 ? specBuy(curve, NO_WALL, amount, BigInt(DEMO.feeBps)) : specSell(curve, NO_WALL, amount, BigInt(DEMO.feeBps));
         const worked = input === 1 ? WORKED.buyOut : WORKED.sellOut;
         if (quote.amountOut !== spec.out || spec.out !== worked) {
             fail(`seeded market, ${label} of ${amount}: quoted ${quote.amountOut}; the spec's formulas give ${spec.out}, the worked example ${worked}`);
@@ -1045,6 +1173,8 @@ async function main() {
     const feeBps = BigInt(DEMO.feeBps);
     const books = {
         curve: { sqrtPrice, liquidity },
+        wall: NO_WALL,
+        wallSolPlaced: 0n,
         poolTokens: DEMO.tokens,
         poolSol: DEMO.lamports,
         idleSol: 0n,
@@ -1059,24 +1189,38 @@ async function main() {
             capFloor: le(state.capFloor),
             capDecayPerDay: le(state.capDecayPerDay),
         } as Cap,
+        // The seed starts the guard at the opening price and the seed's own clock.
+        guard: {
+            reference: le(state.reference),
+            refTime: le(state.refTime),
+            floor: le(state.floor),
+            floorTime: le(state.floorTime),
+            lastSlot: le(state.lastSlot),
+            lastClose: le(state.lastClose),
+        } as Guard,
         tokensTrimmed: 0n,
         solTrimmed: 0n,
+        wallTokensBought: 0n,
+        tipsPaid: 0n,
         volume: [0n, 0n],
         feesCollected: 0n,
         swapCount: 0n,
     };
-    // A buy that finds no decay credit leaves the cap alone, and its sell-back then finds the
-    // curve within the cap; waiting a few seconds lets the demo show both of the cap's steps.
-    await waitForClock(books.cap.decayTime + DECAY_WAIT_SECONDS);
-    info(`waited until ${DECAY_WAIT_SECONDS} seconds after the seed, so the buy finds cap decay credit`);
+    if (books.guard.reference !== sqrtPrice || books.guard.floor !== sqrtPrice || books.guard.lastClose !== sqrtPrice) {
+        fail('the seed did not start the wall\'s guard at the opening price');
+    }
     const payerAccounts = await Promise.all([token, WSOL].map((mint) => walletTokenAccount(payer.address, mint)));
-    let bought = 0n;
-    for (const [input, output, label] of [
-        [1, 0, 'buy'],
-        [0, 1, 'sell'],
-    ] as const) {
-        const amount = input === 1 ? DEMO.buy : bought;
-        const trade = {
+
+    /**
+     * One trade through the router, as a terminal would make it: resolved, quoted and
+     * swapped with the SDK, the quote checked against the spec's pricing and the trader paid
+     * exactly the quote; then the books, the guard and the cap brought up to date by the
+     * spec's formulas, and the swap's events checked against them. Returns what it paid,
+     * the spec's price, and what the cap's step did.
+     */
+    async function trade(label: string, input: 0 | 1, amount: bigint, worked?: bigint) {
+        const output = input === 1 ? 0 : 1;
+        const request = {
             mode: pipeline.TradeMode.ExactIn,
             inputIndex: input,
             outputIndex: output,
@@ -1086,7 +1230,7 @@ async function main() {
         };
         // At the commitment the demo confirms at, so the quote sees the swap before it.
         const simulation = { commitment: 'confirmed' } as const;
-        const strategyAccounts = await pipeline.resolveAccounts(rpc, recorded, trade, payer.address, simulation);
+        const strategyAccounts = await pipeline.resolveAccounts(rpc, recorded, request, payer.address, simulation);
         const listed = strategyAccounts.map((account) => account.address).join();
         if (listed !== [view.vaults[output], vaultAuthority].join()) {
             fail(`${label}: account resolution listed ${listed}, not the output vault and the vault authority`);
@@ -1094,17 +1238,18 @@ async function main() {
         const { quote, unitsConsumed } = await pipeline.quoteStrategy(
             rpc,
             recorded,
-            trade,
+            request,
             strategyAccounts,
             payer.address,
             simulation,
         );
-        const spec = input === 1 ? specBuy(books.curve, amount, feeBps) : specSell(books.curve, amount, feeBps);
-        const worked = input === 1 ? WORKED.buyOut : WORKED.sellOut;
-        if (quote.amountIn !== amount || quote.amountOut !== spec.out || spec.out !== worked) {
-            fail(`${label} of ${amount}: quoted ${quote.amountOut} for ${quote.amountIn}; the spec's formulas give ${spec.out}, the worked example ${worked}`);
+        const spec =
+            input === 1 ? specBuy(books.curve, books.wall, amount, feeBps) : specSell(books.curve, books.wall, amount, feeBps);
+        if (quote.amountIn !== amount || quote.amountOut !== spec.out || (worked !== undefined && spec.out !== worked)) {
+            fail(`${label} of ${amount}: quoted ${quote.amountOut} for ${quote.amountIn}; the spec's formulas give ${spec.out}${worked === undefined ? '' : `, the worked example ${worked}`}`);
         }
-        info(`${label} of ${amount}: quoted ${quote.amountOut}, the spec's price and the worked example's, fee ${spec.fee} lamports (${unitsConsumed} CU)`);
+        const crossing = books.wall.liquidity > 0n && (books.curve.sqrtPrice > books.wall.top) !== (spec.sqrtPrice > books.wall.top);
+        info(`${label} of ${amount}: quoted ${quote.amountOut}, the spec's price${worked === undefined ? '' : " and the worked example's"}${crossing ? ', in two steps across the wall\'s top' : ''}, fee ${spec.fee} lamports (${unitsConsumed} CU)`);
         const before = await tokenBalance(payerAccounts[output]!);
         const { signature } = await send(`${label} through the router`, payer, [
             await pipeline.swap(
@@ -1136,17 +1281,24 @@ async function main() {
         info(`${label}: received exactly the quote`);
         record.push([label, `${amount} in, ${received} out`]);
 
-        // What the trade does to the books ("After pricing" steps 2, 3 and 7).
+        // "After pricing", in its order. The market state records the time the swap ran as
+        // its decay_time, and the transaction its slot: the only values the demo takes from
+        // the program here.
+        const { data: afterSwap } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
+        const ranAt = le(afterSwap.decayTime);
+        const events = await strategyEvents(signature);
+        // Step 1, the reference; steps 2 and 3, the books and the price; then the floor.
+        books.guard = specFollow(books.guard, events.slot, ranAt);
         const split = specSplit(spec.fee, BigInt(DEMO.wallSplitBps));
         if (input === 1) {
             books.poolSol += amount - spec.fee;
             books.poolTokens -= spec.out;
-            bought = received;
         } else {
             books.poolTokens += amount;
             books.poolSol -= spec.out + spec.fee;
         }
         books.curve = { sqrtPrice: spec.sqrtPrice, liquidity: books.curve.liquidity };
+        books.guard = specCloseAt(books.guard, spec.sqrtPrice, ranAt);
         books.idleSol += split.wall;
         books.feesRecipient += split.recipient;
         books.feesDesigner += split.designer;
@@ -1155,17 +1307,10 @@ async function main() {
         books.volume[output]! += spec.out;
         books.feesCollected += spec.fee;
         books.swapCount += 1n;
-        const workedPrice = input === 1 ? WORKED.buySqrtPrice : WORKED.sellSqrtPrice;
-        if (spec.sqrtPrice !== workedPrice) fail(`${label}: the spec's formulas move the price to ${spec.sqrtPrice}, not ${workedPrice}`);
 
-        // Steps 5 and 6, at the time the swap ran: the market state records it as its
-        // decay_time, the only value the demo takes from the program here.
-        const { data: afterSwap } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
-        const ranAt = le(afterSwap.decayTime);
-        const since = ranAt - books.cap.decayTime;
+        // Steps 5 and 6, the cap.
         const { cap: nextCap, moved } = specCap(books.cap, books.curve, ranAt);
         books.cap = nextCap;
-        const events = await strategyEvents(signature);
         if (moved.kind === 'trimmed') {
             books.curve = { sqrtPrice: spec.sqrtPrice, liquidity: moved.liquidity };
             books.poolTokens -= moved.tokens;
@@ -1174,10 +1319,6 @@ async function main() {
             books.idleSol += moved.sol;
             books.tokensTrimmed += moved.tokens;
             books.solTrimmed += moved.sol;
-        }
-        const wanted = input === 1 ? 'lowered' : 'trimmed';
-        if (moved.kind !== wanted) {
-            fail(`${label}: the spec's formulas give "${moved.kind}" for the cap ${since} s after the last swap, not "${wanted}"`);
         }
         if (moved.kind === 'lowered') {
             const [event] = events.lowered;
@@ -1207,23 +1348,119 @@ async function main() {
             }
             info(`${label}: trimmed ${moved.tokens} units to the retired tokens and ${moved.sol} lamports to idle SOL, liquidity now ${moved.liquidity}, the price unchanged; Trimmed emitted`);
             record.push([`${label}: trimmed`, `${moved.tokens} units, ${moved.sol} lamports`]);
+        } else if (events.lowered.length + events.trimmed.length !== 0) {
+            fail(`${label}: the cap did not move, but the swap emitted ${events.lowered.length + events.trimmed.length} cap events`);
         }
+        return { received, spec, moved, crossing };
     }
 
-    step("8. Reading the books back against the spec's formulas");
+    // A buy that finds no decay credit leaves the cap alone, and its sell-back then finds the
+    // curve within the cap; waiting a few seconds lets the demo show both of the cap's steps.
+    await waitForClock(books.cap.decayTime + DECAY_WAIT_SECONDS);
+    info(`waited until ${DECAY_WAIT_SECONDS} seconds after the seed, so the buy finds cap decay credit`);
+    const bought = await trade('buy', 1, DEMO.buy, WORKED.buyOut);
+    if (bought.spec.sqrtPrice !== WORKED.buySqrtPrice) fail(`buy: the spec's formulas move the price to ${bought.spec.sqrtPrice}, not ${WORKED.buySqrtPrice}`);
+    if (bought.moved.kind !== 'lowered') fail(`buy: the spec's formulas give "${bought.moved.kind}" for the cap, not "lowered"`);
+    const sold = await trade('sell', 0, bought.received, WORKED.sellOut);
+    if (sold.spec.sqrtPrice !== WORKED.sellSqrtPrice) fail(`sell: the spec's formulas move the price to ${sold.spec.sqrtPrice}, not ${WORKED.sellSqrtPrice}`);
+    if (sold.moved.kind !== 'trimmed') fail(`sell: the spec's formulas give "${sold.moved.kind}" for the cap, not "trimmed"`);
+    info(`the guard: reference ${books.guard.reference}, floor ${books.guard.floor}, as the spec's steps give for these trades`);
+
+    step('8. Placing the buy wall');
+    const placeWallAction = metadata.actions?.find((action) => action.name === 'place_wall') ?? fail('metadata.json has no place_wall action');
+    const placeWall = async () =>
+        pipeline.buildActionInstruction({ action: placeWallAction, market: view, wallet: payer.address, args: {} });
+    const wallBooks = (): WallBooks => ({
+        wall: books.wall,
+        wallSolPlaced: books.wallSolPlaced,
+        poolTokens: books.poolTokens,
+        poolSol: books.poolSol,
+        retiredTokens: books.retiredTokens,
+        idleSol: books.idleSol,
+    });
+    let topUp = 0n;
+    if (specPlaceWall(wallBooks(), books.curve, books.guard.floor, feeBps) === null) {
+        // Below WALL_THRESHOLD, `place_wall` is refused; anyone may simulate it to see so.
+        const { signed } = await sign(payer, [await placeWall()], []);
+        const { value: simulated } = await rpc
+            .simulateTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64', commitment: 'confirmed' })
+            .send();
+        // The RPC's custom error code, which Kit decodes as a bigint.
+        const custom = (simulated.err as { InstructionError?: [unknown, { Custom?: number | bigint }] } | null)?.InstructionError?.[1]?.Custom;
+        if (custom === undefined || Number(custom) !== BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD) {
+            fail(`place_wall with ${books.idleSol} lamports idle: expected WallBelowThreshold, got ${JSON.stringify(simulated.err, (_, v) => (typeof v === 'bigint' ? `${v}` : v))}`);
+        }
+        info(`place_wall with ${books.idleSol} lamports idle, below WALL_THRESHOLD (${WALL_THRESHOLD}): refused with WallBelowThreshold, as the spec says`);
+        record.push(['place_wall below the threshold', 'refused (WallBelowThreshold)']);
+        // One more buy's fee takes idle SOL past the threshold.
+        topUp = (await trade('buy for the wall', 1, DEMO.buy)).received;
+    }
+    const expectedPlacement = specPlaceWall(wallBooks(), books.curve, books.guard.floor, feeBps) ?? fail(`idle SOL ${books.idleSol} is still below WALL_THRESHOLD`);
+    const tipsBefore = await tokenBalance(payerAccounts[1]!);
+    const { signature: placedSignature } = await send('place_wall', payer, [await placeWall()]);
+    const tip = (await tokenBalance(payerAccounts[1]!)) - tipsBefore;
+    const placedEvents = await strategyEvents(placedSignature);
+    const { books: placedBooks, placement } = expectedPlacement;
+    const work = max(placement.converted, books.idleSol);
+    const [placedEvent] = placedEvents.placed;
+    if (
+        placedEvents.placed.length !== 1 ||
+        tip !== placement.tip ||
+        placedEvent!.tip !== placement.tip ||
+        placedEvent!.converted !== placement.converted ||
+        placedEvent!.closedSol !== placement.closedSol ||
+        placedEvent!.closedTokens !== placement.closedTokens ||
+        placedEvent!.dustSol !== placement.dustSol ||
+        placedEvent!.dustTokens !== placement.dustTokens ||
+        placedEvent!.wallTop !== placedBooks.wall.top ||
+        placedEvent!.wallLiquidity !== placedBooks.wall.liquidity ||
+        placedEvent!.wallSolPlaced !== placedBooks.wallSolPlaced ||
+        placedEvent!.caller !== payer.address ||
+        placedEvent!.tipAccount !== payerAccounts[1]
+    ) {
+        fail(`place_wall: expected tip ${placement.tip} and a wall of ${placedBooks.wall.liquidity} at ${placedBooks.wall.top}; received ${tip}, events ${JSON.stringify(placedEvents.placed, (_, v) => (typeof v === 'bigint' ? `${v}` : v))}`);
+    }
+    Object.assign(books, placedBooks);
+    books.tipsPaid += placement.tip;
+    books.wallTokensBought += placement.closedTokens;
+    if (books.wall.top > books.guard.floor || books.wall.top > books.curve.sqrtPrice) fail('the wall was placed above its floor or the price');
+    info(`tipped ${tip} lamports of wrapped SOL to the caller's account: the least of KEEPER_TIP_CAP (${KEEPER_TIP_CAP}) and the fee earned on ${work} lamports of work`);
+    info(`the wall: ${books.wallSolPlaced} lamports at sqrt_price ${books.wall.top} (liquidity ${books.wall.liquidity}), at the lower of the price and the floor; ${placement.dustTokens} units and ${placement.dustSol} lamports of dust swept; WallPlaced emitted`);
+    record.push(['place_wall', `tip ${tip}, wall ${books.wallSolPlaced} lamports at ${books.wall.top}`]);
+
+    step('9. Selling into the wall');
+    const top = books.wall.top;
+    const intoWall = await trade('sell into the wall', 0, topUp + DEMO.wallSell);
+    if (intoWall.spec.sqrtPrice >= top) fail(`the sell left the price at ${intoWall.spec.sqrtPrice}, not below the wall's top ${top}`);
+    const spent = books.wallSolPlaced - wallSol(books.wall, books.curve.sqrtPrice);
+    const boughtByWall = wallTokens(books.wall, books.curve.sqrtPrice);
+    info(`the wall has spent ${spent} lamports on ${boughtByWall} units, as the spec's formulas give`);
+    record.push(['the wall bought', `${boughtByWall} units for ${spent} lamports`]);
+
+    step("10. Reading the books back against the spec's formulas");
     const { data: traded } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
     const read = {
         sqrtPrice: [le(traded.sqrtPrice), books.curve.sqrtPrice],
-        lastClose: [le(traded.lastClose), books.curve.sqrtPrice],
         liquidity: [le(traded.liquidity), books.curve.liquidity],
+        wallLiquidity: [le(traded.wallLiquidity), books.wall.liquidity],
+        wallTop: [le(traded.wallTop), books.wall.top],
+        wallSolPlaced: [le(traded.wallSolPlaced), books.wallSolPlaced],
         poolTokens: [le(traded.poolTokens), books.poolTokens],
         poolSol: [le(traded.poolSol), books.poolSol],
         retiredTokens: [le(traded.retiredTokens), books.retiredTokens],
         idleSol: [le(traded.idleSol), books.idleSol],
         cap: [le(traded.cap), books.cap.cap],
         decayCredit: [le(traded.decayCredit), books.cap.decayCredit],
+        reference: [le(traded.reference), books.guard.reference],
+        refTime: [le(traded.refTime), books.guard.refTime],
+        floor: [le(traded.floor), books.guard.floor],
+        floorTime: [le(traded.floorTime), books.guard.floorTime],
+        lastSlot: [le(traded.lastSlot), books.guard.lastSlot],
+        lastClose: [le(traded.lastClose), books.guard.lastClose],
         tokensTrimmed: [le(traded.tokensTrimmed), books.tokensTrimmed],
         solTrimmed: [le(traded.solTrimmed), books.solTrimmed],
+        wallTokensBought: [le(traded.wallTokensBought), books.wallTokensBought],
+        tipsPaid: [le(traded.tipsPaid), books.tipsPaid],
         feesRecipient: [le(traded.feesRecipient), books.feesRecipient],
         feesDesigner: [le(traded.feesDesigner), books.feesDesigner],
         feesSuite: [le(traded.feesSuite), books.feesSuite],
@@ -1234,7 +1471,7 @@ async function main() {
     };
     for (const [key, [got, wanted]] of Object.entries(read)) {
         if (got !== wanted) fail(`the market state's ${key} is ${got}, but the spec's formulas give ${wanted}`);
-        info(`${key.padEnd(14)} ${got}`);
+        info(`${key.padEnd(16)} ${got}`);
     }
     const [vaultTokensAfter, vaultSolAfter] = await Promise.all(view.vaults.map((vault) => tokenBalance(vault!)));
     const solLedgers = books.poolSol + books.idleSol + books.feesRecipient + books.feesDesigner + books.feesSuite;
@@ -1242,10 +1479,10 @@ async function main() {
     if (vaultTokensAfter !== tokenLedgers || vaultSolAfter !== solLedgers) {
         fail(`the vaults hold ${vaultTokensAfter} and ${vaultSolAfter}, not their ledgers' ${tokenLedgers} and ${solLedgers}`);
     }
-    info("the price, ledgers, cap and counters equal the spec's formulas to the unit; each vault holds exactly its ledgers");
+    info("the price, the wall, the guard, the ledgers, the cap and the counters equal the spec's formulas to the unit; each vault holds exactly its ledgers");
     record.push(['market state after trading', "equal to the spec's formulas"]);
 
-    step('9. Graduating a token from a launchpad into a buy wall market');
+    step('11. Graduating a token from a launchpad into a buy wall market');
     if (cluster.local) {
         await graduateFromLaunchpad(payer, programId, metadata);
     } else {

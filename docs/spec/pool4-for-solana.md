@@ -58,7 +58,7 @@ Terms are as in `GLOSSARY.md`: inventory cap, cap floor, cap decay, trim, retire
 | `MARKET_STATE_SIZE` | 1,024 bytes | The size of every market state, for good |
 
 The constants are compiled into the program; changing one is a program upgrade, which ends when the program is frozen.
-`DESIGNER_SHARE_BPS` and `SUITE_SHARE_BPS` are also published in the program's IDL (Anchor's `#[constant]`), where the generated client and the demo script read them ([`POOL4-25`](../decisions.md#pool4-25-the-fee-shares-in-the-idl)), and so are `DECAY_CREDIT_WINDOW` and `MIN_LIQUIDITY`, which the demo's model of the cap reads ([`POOL4-30`](../decisions.md#pool4-30-what-a-swap-that-moves-the-cap-reports)).
+`DESIGNER_SHARE_BPS` and `SUITE_SHARE_BPS` are also published in the program's IDL (Anchor's `#[constant]`), where the generated client and the demo script read them ([`POOL4-25`](../decisions.md#pool4-25-the-fee-shares-in-the-idl)), and so are `DECAY_CREDIT_WINDOW` and `MIN_LIQUIDITY`, which the demo's model of the cap reads ([`POOL4-30`](../decisions.md#pool4-30-what-a-swap-that-moves-the-cap-reports)), and `WALL_THRESHOLD`, `KEEPER_TIP_CAP`, `FLOOR_CRAWL_BPS`, `REF_STEP_BPS` and `REF_STEP_WINDOW`, which its models of the wall and its guard read ([`POOL4-35`](../decisions.md#pool4-35-the-walls-constants-in-the-idl)).
 There is no admin and no settings account.
 
 Every decision here is a default that MetalLegBob may change (the map's standing rule of 2026-11-10), so each policy value lives in exactly one place:
@@ -162,6 +162,7 @@ Square-root prices are unsigned Q64.64 numbers held in 128 bits: the square root
 
 The buy wall is one stretch of liquidity from `wall_top` down to zero, as in IMD's design.
 At or above `wall_top` it is all SOL, `W × wall_top / Q` lamports; below it, it has bought tokens and holds `W × s / Q` lamports.
+A wall is placed exactly when `W` is above 0; a `wall_top` with no liquidity, which `place_wall` leaves when almost nothing is idle, trades as no wall ([`POOL4-33`](../decisions.md#pool4-33-when-a-wall-counts-as-placed)).
 While the price is at or below `wall_top`, a trade moves through `L + W`; above it, through `L` alone.
 So a trade crosses at most one boundary and is priced in at most two steps, with no square roots and no extra accounts.
 
@@ -226,7 +227,7 @@ None of it changes the trade just priced.
    `sqrt_price` and `last_close` become the new price.
 4. **Floor.**
    If `floor < ref`: `dt = min(now - floor_time, 86,400)` and `floor` rises by `floor(floor × FLOOR_CRAWL_BPS × dt / (2 × 10,000 × 86,400))`, but not above `ref`.
-   Then `floor_time = now`, and `floor` drops to the new price if that is lower.
+   Then `floor_time = now`, on every swap whether or not the floor crawled ([`POOL4-32`](../decisions.md#pool4-32-when-the-floors-clock-moves)), and `floor` drops to the new price if that is lower.
 5. **Decay credit.**
    `decay_credit = min(decay_credit + cap_decay_per_day × (now - decay_time), cap_decay_per_day × DECAY_CREDIT_WINDOW)` and `decay_time = now`.
    The credit is in token-seconds, so nothing is lost to rounding, and at most one day's allowance ever builds up.
@@ -293,6 +294,9 @@ None moves the price.
    This is IMD's rule: the tip never exceeds the fee the market earned on the work, so faking work never pays.
    It is paid in wrapped SOL to a token account the caller names.
 5. The wall is placed with everything left: `wall_top = min(s, floor)`, `W = floor(idle_sol × Q / wall_top)`, `wall_sol_placed = floor(W × wall_top / Q)`, and `idle_sol` moves into `pool_sol`.
+
+The caller signs, and the tip account may be any wrapped SOL account but the market's own SOL vault; the metadata's form names the caller's own.
+It emits `WallPlaced` (the caller, the tip account, `converted`, what closing the old wall moved, the dust, the tip and the new wall), and the lifetime total of tokens the wall bought grows by what each closed wall bought ([`POOL4-34`](../decisions.md#pool4-34-what-place_wall-takes-and-reports)).
 
 ### `settle`
 
@@ -563,6 +567,7 @@ A transfer hook's own compute is outside them.
 Measured on 2026-11-12 by [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48), on markets from 10^-7 to 10^9 lamports a unit and trades from dust to a third of a pool: `pipeline_quote` at most 15,682 units, a one-step `pipeline_swap` 14,837 to 27,630 (a hook's own compute left out), and `pipeline_resolve_accounts` 5,181 to 5,372.
 The ceilings stay as they are for the wall's second step and the trim.
 Measured on 2026-11-12 by [Buy wall AMM: the inventory cap](https://github.com/imDev2023/testing-pipeline/issues/49), on the same five markets: a buy that lowers the cap 22,240 to 35,480 units and a sell that trims 26,649 to 33,223, within their ceilings of 45,000 and 60,000 (a hook's own compute left out); with the cap's steps on every swap, the costliest one-step swap of the earlier measurement is now 36,396.
+Measured on 2026-11-16 by [Buy wall AMM: the buy wall](https://github.com/imDev2023/testing-pipeline/issues/50), on the same five markets: `place_wall` 16,858 to 29,143 units (the most when it closes a wall that has bought tokens, on the market of 10^-7 lamports a unit), a sell that crosses into the wall and trims 41,013 to 48,388, and its quote 25,886 to 28,534; the ceilings stay as they are.
 Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53), inside the stand-in launchpad's call in LiteSVM: `pipeline_seed_liquidity` 48,850 units for an SPL Token token, 59,716 for a Token-2022 one and 65,802 for one with a transfer hook (the hook's own compute left out), and 60,847 for an SPL Token token on a local validator; its ceiling stays at 180,000, room for what later tickets add to creation and the seed.
 
 ### Invariants for test layer 3
@@ -570,9 +575,9 @@ Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://git
 Beyond the shared three (value conserved, every holder can exit, each quote equals its swap), checked after every step of generated sequences of swaps, keeper jobs and clock jumps, including several trades in one slot:
 
 - Every invariant in "Ledgers".
-- "Every holder can exit" means, at a price bound ([`POOL4-32`](../decisions.md#pool4-32-every-holder-can-exit-at-a-price-bound)): a holder's whole holding sells, or it pays nothing (worth less than one lamport), or it is more than the curve can take before `MIN_SQRT_PRICE` and is refused whole, as "Rules for both" says, and then the most the curve can take sells or pays nothing, and one token unit more is refused for the bound.
-  A trim can leave a curve of `MIN_LIQUIDITY` close to the bound, which takes fewer tokens than some holdings; what such a holding cannot sell could only sell below the bound, for the `L × MIN_SQRT_PRICE / Q` lamports the curve keeps there, which no sell reaches for anyone, with or without the cap.
-  A trim lowers `L`, so it only shrinks that amount, which is less than one lamport for any `L` below 2^32, `MIN_LIQUIDITY` among them.
+- "Every holder can exit" means, at a price bound ([`POOL4-36`](../decisions.md#pool4-36-every-holder-can-exit-at-a-price-bound)): a holder's whole holding sells, or it pays nothing (worth less than one lamport), or it is more than the curve can take before `MIN_SQRT_PRICE` and is refused whole, as "Rules for both" says, and then the most the curve can take sells or pays nothing, and one token unit more is refused for the bound.
+  A trim can leave a curve of `MIN_LIQUIDITY` close to the bound, which takes fewer tokens than some holdings; what such a holding cannot sell could only sell below the bound, for the `(L + W) × MIN_SQRT_PRICE / Q` lamports the curve and the wall keep there, which no sell reaches for anyone, with or without the cap.
+  A trim lowers `L`, so it only shrinks that amount, which is less than one lamport whenever `L + W` is below 2^32.
 - A trim never changes `sqrt_price`.
 - A buy sold straight back never returns more than it cost, whatever keeper jobs run in between.
 - The reference never moves on a trade in the slot it was last updated in.

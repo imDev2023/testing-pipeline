@@ -1,4 +1,4 @@
-//! Every holder can exit, at a price bound (#152, `POOL4-32`): the fuzzer's counterexample
+//! Every holder can exit, at a price bound (#152, `POOL4-36`): the fuzzer's counterexample
 //! after the inventory cap, from minimal steps. A small market dumped on is trimmed down to
 //! `MIN_LIQUIDITY` near `MIN_SQRT_PRICE`, where its curve can take fewer tokens before the
 //! bound than a holder holds, so the whole holding is refused with `PriceBoundReached`

@@ -145,11 +145,17 @@ fn the_worked_example_trades_at_the_spec_numbers_through_the_router() {
         (state.fees_collected(), state.swap_count()),
         (19_900_000, 2)
     );
-    // The wall guard is a later ticket's: trading leaves it as the seed set it.
     assert_eq!(state.cap(), 991_666_666_667);
+    // The wall's guard (tests/wall.rs checks it in full): the sell, a minute after the buy,
+    // moved the reference a whole window's step, ref / 100, toward the buy's price, and the
+    // floor dropped to the sell's price; no wall is placed until `place_wall` runs.
     assert_eq!(
-        (state.floor(), state.reference(), state.wall_liquidity()),
-        (opened.floor(), opened.reference(), 0)
+        (state.reference(), state.floor(), state.wall_liquidity()),
+        (
+            opened.reference() + opened.reference() / 100,
+            1_844_674_407_372_029_099,
+            0
+        )
     );
     assert_vaults_match_ledgers(&env, &market);
 }
