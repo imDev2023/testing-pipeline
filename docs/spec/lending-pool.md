@@ -478,6 +478,7 @@ How it is built ([Lending AMM: the fuzzer against a moving Kamino, and the proof
 - It also checks that each call does what "When Kamino can't pay" gives for the state Kamino is in, and that no step but a write-off lowers the rate, so the value of an LP share may fall only on a write-off.
 - Every failure names the invariant it breaks, and `tests/broken_builds.rs` shows each one able to fail: the deliberately broken builds in `tests/broken-builds.json`, each one careless edit (a rounding flipped the wrong way, a missing check) to a copy of the program's source built by `scripts/broken-builds.py` in its own target directory, so the program's source never carries them, must each be caught by the invariant the table names, at least one build for every invariant.
 - `PROPTEST_CASES` sets how many sequences run (24 in a plain `cargo test`, which CI runs on every push with the broken builds), and `FUZZ_SEED` the seed, which every run prints so it can be repeated.
+- On 2026-11-16 a long run of 10,000 sequences of up to 32 steps found no violation on either build: the `devnet` build with `FUZZ_SEED=20261116` in 39 minutes, the `mainnet` build with `FUZZ_SEED=20261117` in 33, on the owner's Mac; the devnet run made 4,757 deposits and 2,709 redeems by `rebalance`, 1,478 withdraw mode changes, 7,522 swaps that redeemed, 3,248 removals in cash and 3,900 in kind, 12,972 rises of the rate, 3,927 write-offs of part of the supply and 416 of all of it, and ran 12,656 steps with the layout check failing.
 
 ### Accepted `pipeline-check` warnings
 
