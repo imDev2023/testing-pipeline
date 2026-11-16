@@ -16,6 +16,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod launchpad;
+pub mod payouts;
 
 use std::path::PathBuf;
 

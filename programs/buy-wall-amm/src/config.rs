@@ -24,9 +24,20 @@ pub const DESIGNER_SHARE_BPS: u16 = 1_000;
 pub const SUITE_SHARE_BPS: u16 = 1_000;
 /// The wallet the designer share is paid to. Unset (the all-zero key) while IMD and Adam
 /// have no known Solana address; an upgrade sets it before the program is frozen.
+/// Published in the IDL (`#[constant]`), where the demo script reads it, as is the suite
+/// treasury below (`POOL4-39`).
+#[cfg(not(feature = "test-designer-recipient"))]
+#[constant]
 pub const DESIGNER_RECIPIENT: Pubkey = Pubkey::new_from_array([0; 32]);
+/// A test build's designer wallet, a key nobody holds, so the tests can show `sweep_fees`
+/// paying slot 1 once `DESIGNER_RECIPIENT` is set (`POOL4-38`). Only CI's extra test build
+/// turns this feature on; no build that is deployed ever does.
+#[cfg(feature = "test-designer-recipient")]
+#[constant]
+pub const DESIGNER_RECIPIENT: Pubkey = pubkey!("DesignerRecipientTestKey11111111111111111111");
 /// The suite treasury, the same wallet the tax AMM pays its suite share to; its key is in
 /// `~/.config/testing-pipeline/devnet/suite-treasury.json` and docs/toolchain.md ("Keys").
+#[constant]
 pub const SUITE_TREASURY: Pubkey = pubkey!("CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF");
 /// The highest reward share a market may choose, in basis points of the trimmed tokens.
 pub const MAX_REWARD_SHARE_BPS: u16 = 3_000;

@@ -96,3 +96,71 @@ pub struct WallPlaced {
     /// The lamports the new wall holds.
     pub wall_sol_placed: u64,
 }
+
+/// `settle` split the retired tokens: the reward share joined the rewards owed and the rest
+/// was burned (docs/spec/pool4-for-solana.md, "`settle`").
+#[event]
+#[derive(Debug, PartialEq, Eq)]
+pub struct Settled {
+    pub market_state: Pubkey,
+    /// The retired tokens settled, all of them.
+    pub retired: u64,
+    /// Token units burned from the token vault.
+    pub burned: u64,
+    /// Token units that joined the rewards owed.
+    pub to_rewards: u64,
+    /// The rewards owed after.
+    pub rewards_owed: u64,
+    /// Lifetime total of the token units burned.
+    pub tokens_burned: u128,
+}
+
+/// `pay_rewards` paid all the rewards owed to the rewards recipient
+/// (docs/spec/pool4-for-solana.md, "`pay_rewards`").
+#[event]
+#[derive(Debug, PartialEq, Eq)]
+pub struct RewardsPaid {
+    pub market_state: Pubkey,
+    pub recipient: Pubkey,
+    /// The recipient's associated token account for the token.
+    pub token_account: Pubkey,
+    /// Token units sent.
+    pub amount: u64,
+    /// Lifetime total of the token units paid.
+    pub rewards_paid: u128,
+}
+
+/// `sweep_fees` paid one fee slot's whole ledger to its wallet
+/// (docs/spec/pool4-for-solana.md, "`sweep_fees { slot }`").
+#[event]
+#[derive(Debug, PartialEq, Eq)]
+pub struct FeesSwept {
+    pub market_state: Pubkey,
+    /// 0 the fee recipient, 1 the designer share, 2 the suite share.
+    pub slot: u8,
+    pub recipient: Pubkey,
+    /// The recipient's associated wrapped SOL account.
+    pub token_account: Pubkey,
+    /// Lamports sent, in wrapped SOL.
+    pub amount: u64,
+}
+
+/// Which recipient a handover changed.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecipientRole {
+    /// The fee recipient, paid fee slot 0.
+    Fee,
+    /// The rewards recipient, paid the reward share.
+    Rewards,
+}
+
+/// A recipient handed its role to another wallet, and what the role is owed follows it
+/// (docs/spec/pool4-for-solana.md, "Recipients").
+#[event]
+#[derive(Debug, PartialEq, Eq)]
+pub struct RecipientChanged {
+    pub market_state: Pubkey,
+    pub role: RecipientRole,
+    pub old: Pubkey,
+    pub new: Pubkey,
+}

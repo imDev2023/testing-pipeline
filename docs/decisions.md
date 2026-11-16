@@ -3772,6 +3772,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
 
+### POOL4-36: How a payout names and checks its recipient's account
+
+- Question: Which account do `pay_rewards` and `sweep_fees` pay, and what do they do when it is missing or no longer the recipient's?
+- Answer: The caller names the recipient's wallet, which must be the one the market or the program names, and only that wallet's associated token account for the mint is paid: created at the caller's expense when it does not exist (never created, closed, or holding only lamports sent to its address), and refused with `RecipientAccountNotTheirs` when it exists but its owner was reassigned, so only that payout waits until the recipient hands its role over.
+- Alternatives: Any token account the recipient owns, which the associated token program's idempotent create would accept and which Aviary and indexers could not predict; reading the recipient from the market state without naming it, which Pipeline's metadata forms cannot describe.
+- Specified in: [`docs/spec/pool4-for-solana.md`, The recipient's token account](spec/pool4-for-solana.md#the-recipients-token-account)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
+
+### POOL4-37: Who signs the payouts and what they report
+
+- Question: Who signs `settle`, `pay_rewards`, `sweep_fees` and the handovers, when may a handover happen, and what does each report?
+- Answer: `settle` needs no signature but the fee payer's, since it pays nobody; `pay_rewards` and `sweep_fees` are signed by the caller, who pays for a missing recipient account; a handover is signed by the role's current recipient and may happen at any time, before the seed too; they emit `Settled`, `RewardsPaid`, `FeesSwept` and `RecipientChanged`, and the lifetime totals of tokens burned and rewards paid grow with each.
+- Alternatives: A named caller on `settle`, as `place_wall` has for its tip, which it has no use for; handovers only once a market is open.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Recipients](spec/pool4-for-solana.md#recipients)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
+
+### POOL4-38: Testing the designer slot before its wallet is set
+
+- Question: How is fee slot 1's payout tested while `DESIGNER_RECIPIENT` is unset in every build that is deployed?
+- Answer: A `test-designer-recipient` feature of the program sets the constant to a test key nobody holds, in `config.rs` beside the real value; CI builds the program a second time with it and runs the payout tests against that build, and no build that is deployed ever turns it on.
+- Alternatives: Testing slot 1 only in the pure functions, never through the router; leaving its payout untested until the constant is set.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Constants](spec/pool4-for-solana.md#constants)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
+
+### POOL4-39: The fee slots' wallets in the IDL
+
+- Question: How does the demo learn the wallets fee slots 1 and 2 are paid to without restating them?
+- Answer: The program publishes `DESIGNER_RECIPIENT` and `SUITE_TREASURY` in its IDL with Anchor's `#[constant]`, as the tax AMM publishes its suite treasury, and the demo reads them from the generated client.
+- Alternatives: Restating them in the demo, which the one-place rule forbids.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Constants](spec/pool4-for-solana.md#constants)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
