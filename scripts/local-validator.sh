@@ -30,6 +30,8 @@
 #
 # Environment: UPGRADE_AUTHORITY, the upgrade authority's keypair (default
 # ~/.config/testing-pipeline/devnet/upgrade-authority.json); only its public key is read.
+# SKIP_PROGRAMS, workspace programs to leave out (space-separated, such as "tax-amm"), so a
+# rehearsal of scripts/deploy-devnet.sh can deploy one as it would be deployed on devnet.
 # Runs in the foreground until stopped; RPC on http://127.0.0.1:8899. Starts from an empty
 # ledger every time. Needs the toolchain (source scripts/toolchain-env.sh).
 set -euo pipefail
@@ -67,6 +69,10 @@ args=(
   --account "$ROUTER_CONFIG" "$ROUTER_CONFIG_JSON"
 )
 while IFS= read -r member; do
+  if [[ " ${SKIP_PROGRAMS:-} " == *" $member "* ]]; then
+    echo "$member left out (SKIP_PROGRAMS)"
+    continue
+  fi
   lib="${member//-/_}"
   so="${CARGO_TARGET_DIR:-$ROOT/programs/target}/deploy/$lib.so"
   id="$(sed -n 's/^declare_id!("\([1-9A-HJ-NP-Za-km-z]*\)");$/\1/p' "$ROOT/programs/$member/src/lib.rs")"
