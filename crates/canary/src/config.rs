@@ -141,6 +141,30 @@ pub const SNAPSHOT_ROUNDS: u32 = 4;
 pub const SNAPSHOT_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------------------
+// Our containment hook, as `contained_mint` recognises a contained token
+// (`docs/spec/containment-hook.md`, "Accounts"; `programs/containment-hook/src/lib.rs`)
+// ---------------------------------------------------------------------------------------
+
+/// Our containment hook's program id. `crates/` cannot depend on the on-chain workspace, so
+/// it is written here once; `tests/contained_mint.rs` checks it against the hook's own
+/// `declare_id!`.
+pub const CONTAINMENT_HOOK_PROGRAM: pipeline_client::Pubkey =
+    pipeline_client::pubkey!("aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv");
+/// The seed of a contained mint's unlock PDA, `["unlock", mint]`, its hook authority.
+pub const CONTAINMENT_HOOK_UNLOCK_SEED: &[u8] = b"unlock";
+
+// ---------------------------------------------------------------------------------------
+// The licence seam (`CANARY-26`)
+// ---------------------------------------------------------------------------------------
+
+/// The swap function every trade of every run goes through, chosen here and nowhere else:
+/// through the router's own deployed bytes, as on devnet, or [`crate::swap::DirectToStrategy`],
+/// which calls the strategy directly and settles with Pipeline's Apache-2.0 settlement code,
+/// should running the router's BSL-licensed bytes in production not be allowed. Only
+/// `conformance` changes with it: it is "not run" off the router.
+pub const SWAP_PATH: &dyn crate::swap::SwapPath = &crate::swap::ThroughRouter;
+
+// ---------------------------------------------------------------------------------------
 // Operations (not policy: they change how a run reads, never what it finds)
 // ---------------------------------------------------------------------------------------
 

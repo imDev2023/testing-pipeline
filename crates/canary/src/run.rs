@@ -11,14 +11,15 @@ use pipeline_client::Pubkey;
 use serde::Serialize;
 
 use crate::checks::{
-    self, conformance, cost, exit_hold, exit_late, exit_launch_clock, exit_queue, exit_sizes,
-    exit_transferred, exit_wallets, quote_matches_swap, readable, timed,
+    self, conformance, contained_mint, cost, direct_call, exit_hold, exit_late, exit_launch_clock,
+    exit_queue, exit_sizes, exit_transferred, exit_wallets, quote_matches_swap, readable, timed,
+    token_authorities, transaction_accounts,
 };
 use crate::market::{token_amount, Copy, Session, Version};
 use crate::record::{Record, RecordContext, Verdict};
 use crate::sizes::{ladder, money_side, Side};
 use crate::source::{ClockMemo, Source};
-use crate::swap::{SwapPath, ThroughRouter};
+use crate::swap::SwapPath;
 use crate::wallets::Seed;
 
 /// How to run.
@@ -33,6 +34,8 @@ pub struct RunOptions {
     /// The run's seed, from which every wallet comes; `None` picks a new random one. The
     /// snapshot rounds of one run pass the seed the first round answered with.
     pub seed: Option<Seed>,
+    /// The strategy version's instruction list, from the snapshot (`PIPESCOPE-92`).
+    pub instructions: Option<checks::custom_instructions::StrategyInstructions>,
 }
 
 impl Default for RunOptions {
@@ -40,8 +43,9 @@ impl Default for RunOptions {
         RunOptions {
             extra: vec![],
             last_round: true,
-            swap: &ThroughRouter,
+            swap: crate::config::SWAP_PATH,
             seed: None,
+            instructions: None,
         }
     }
 }
@@ -148,7 +152,14 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
             return MarketRun::Results(MarketResults {
                 records: checks::CHECKS
                     .iter()
-                    .map(|check| context.record(check, Verdict::not_run(&reason)))
+                    .map(|check| match *check {
+                        // Read from the instruction list alone, never the copy.
+                        checks::CUSTOM_INSTRUCTIONS => context.record(
+                            check,
+                            checks::custom_instructions::judge(options.instructions.as_ref()),
+                        ),
+                        _ => context.record(check, Verdict::not_run(&reason)),
+                    })
                     .collect(),
                 notes: vec![error],
                 seed,
@@ -244,6 +255,24 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         exit_queue::measure(s, path, &sizes_measured)
     });
 
+    // The control checks, each in fresh copies of its own.
+    let first_token = (0..session.market.len()).find(|t| *t != money);
+    let (direct_measured, direct_lacking) = measuring(&mut session, open, None, |s| {
+        first_token.map(|token| direct_call::measure(s, money, token, sizes.reference))
+    });
+    let reference_words = sizes_measured.amount(sizes.reference);
+    let (authorities_measured, authorities_lacking) = measuring(&mut session, open, None, |s| {
+        Some(token_authorities::measure(
+            s,
+            path,
+            money,
+            sizes.reference,
+            reference_words,
+        ))
+    });
+    let (hooked_mints, hooks_lacking) =
+        measuring(&mut session, true, vec![], contained_mint::measure);
+
     let mut lacking = copy_lacking.clone();
     for own in [
         &readable_lacking,
@@ -254,6 +283,9 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         &wallets_lacking,
         &transferred_lacking,
         &queue_lacking,
+        &direct_lacking,
+        &authorities_lacking,
+        &hooks_lacking,
     ] {
         lacking.extend(own.iter().copied());
     }
@@ -289,6 +321,9 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
     ] {
         every_swap_lacking.extend(own.iter().copied());
     }
+    let direct_needed = with(&direct_lacking, &BTreeSet::new());
+    let authorities_needed = with(&authorities_lacking, &BTreeSet::new());
+    let money_words = |amount: u64| sizes_measured.amount(amount);
     let gate = |own: &BTreeSet<Pubkey>, verdict: Verdict| {
         let mut needed = copy_lacking.clone();
         needed.extend(own.iter().copied());
@@ -373,6 +408,38 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
             checks::COST,
             gate(&trading_lacking, cost::judge(&sizes_measured, &trading)),
         ),
+        context.record(
+            checks::DIRECT_CALL,
+            gate(
+                &direct_needed,
+                direct_call::judge(
+                    direct_measured.as_ref(),
+                    &trading,
+                    &market,
+                    sizes_measured.amount(sizes.reference),
+                ),
+            ),
+        ),
+        context.record(
+            checks::TOKEN_AUTHORITIES,
+            gate(
+                &authorities_needed,
+                token_authorities::judge(authorities_measured.as_ref(), &trading, &money_words),
+            ),
+        ),
+        // Every resolution of the run, so it comes after every other measurement.
+        context.record(
+            checks::TRANSACTION_ACCOUNTS,
+            gate(&lacking, transaction_accounts::judge(&session.resolutions)),
+        ),
+        context.record(
+            checks::CONTAINED_MINT,
+            gate(&hooks_lacking, contained_mint::judge(&hooked_mints)),
+        ),
+        context.record(
+            checks::CUSTOM_INSTRUCTIONS,
+            checks::custom_instructions::judge(options.instructions.as_ref()),
+        ),
     ];
     let mut notes = copy.notes.clone();
     notes.extend(session.notes.iter().cloned());
@@ -424,6 +491,8 @@ pub fn sweep(source: &mut dyn Source, markets: &[Pubkey], options: &RunOptions) 
         last_round: true,
         swap: options.swap,
         seed: None,
+        // One strategy version's list must never be judged as another's.
+        instructions: None,
     };
     let mut records = vec![];
     let mut notes = std::collections::BTreeMap::new();

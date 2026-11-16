@@ -78,10 +78,12 @@ async fn a_snapshot_lacking_an_account_gets_exactly_the_missing_addresses_until_
     snapshot.round = SNAPSHOT_ROUNDS;
     let (_, answer) = post(serde_json::to_string(&snapshot).unwrap()).await;
     assert_eq!(answer["status"], "results");
+    // Every check that reads accounts; custom_instructions reads only the instruction list.
     assert!(answer["records"]
         .as_array()
         .unwrap()
         .iter()
+        .filter(|r| r["check"] != "custom_instructions")
         .all(|r| r["outcome"] == "not run"
             && r["reason"].as_str().unwrap().contains(&vault.to_string())));
 }
