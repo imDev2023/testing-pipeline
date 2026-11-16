@@ -140,6 +140,9 @@ A launchpad graduating a token instead calls `pipeline_seed_liquidity`, then the
 - It is refused unless the token's mint and freeze authorities are removed, `y` is at least `MIN_SEED_LAMPORTS`, `sqrt_price` is between `MIN_OPENING_SQRT_PRICE` and `MAX_OPENING_SQRT_PRICE`, and `floor(cap_floor × sqrt_price / 2^64)` is at least `MIN_LIQUIDITY`, so the curve stays usable even with its cap at the floor.
 - Until the seed, quotes and swaps are refused.
 - `pipeline_seed_liquidity` seeds and opens the market in the same call, taking at most `amounts[i]` from each escrow, and returns `SeedResult { taken, lp_amount: 0 }`; the LP recipient is ignored.
+  It is created and opened by the same code as a market created through the router and seeded by `seed`, under every creation rule, mint rule and seed rule, and emits the same two events, `MarketCreated` (with the calling program's PDA as its seeder) and `MarketSeeded` ([`POOL4-29`](../decisions.md#pool4-29-how-a-seed-request-is-checked)).
+  It refuses a request without exactly two amounts, the token's then wrapped SOL's (`BadSeedAmounts`), `data` that is not exactly the creation parameters, and escrows the seeder does not own, as `seed` requires of the seeder's accounts; `taken` is what it measured leaving each escrow.
+  Any signer may call it directly, a wallet included, and becomes its market's seeder; the address keyed by the seeder is what keeps one launchpad from taking another's market first.
 - Tokens or SOL sent to a vault outside a swap or the seed are donations: never credited as input, never paid out.
 
 ## Pricing
@@ -493,6 +496,7 @@ Square-root prices (`sqrt_price`, `wall_top`, `ref`, `floor`, `last_close`) are 
 - Every action that moves the token forwards transfer-hook accounts after its own, as the template's swap does.
   Metadata actions cannot describe those extra accounts, so generic forms work for tokens without a hook and Aviary builds the hooked ones itself.
 - Each instruction emits an event (market created, seeded, wall placed, settled, rewards paid, fees swept, recipient changed), and a swap emits one when it trims or lowers the cap, so Aviary's indexer can show a market's history; Aviary reads current values from the market state, not from events.
+- `pipeline_seed_liquidity` is described in a top-level `seed_liquidity` form shaped as `init` is, which Pipeline's validator allows as an unknown key: the seeded market state as a `pda:` source keyed by `input:seeder`, `input:token_mint` and wrapped SOL, `data` as init's arguments under the same IDL type with the seeder marked ignored, and the vault authority and both vaults after Pipeline's fixed seed accounts, so the SDK's `resolveInit` resolves it ([`POOL4-28`](../decisions.md#pool4-28-how-metadata-describes-seeding-from-another-program)).
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, a description that credits IMD's Pool4, category `amm`, tags including `pool4`, links including `source` and the IDL, `init` as above with `market_state: new_keypair`, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256; where they are published is in `README.md`.
 - The trust flags describe programs and mints, not markets, so nothing there says a market trims or burns: the metadata declares it, and Aviary reads each market's parameters, ledgers and cap from its market state.
 - Pipeline's API reports raw vault balances, so retired tokens, the buy wall, idle SOL and unpaid fees show there as liquidity; Aviary reads the ledgers instead.
@@ -557,6 +561,7 @@ A transfer hook's own compute is outside them.
 
 Measured on 2026-11-12 by [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48), on markets from 10^-7 to 10^9 lamports a unit and trades from dust to a third of a pool: `pipeline_quote` at most 15,682 units, a one-step `pipeline_swap` 14,837 to 27,630 (a hook's own compute left out), and `pipeline_resolve_accounts` 5,181 to 5,372.
 The ceilings stay as they are for the wall's second step and the trim.
+Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53), inside the stand-in launchpad's call in LiteSVM: `pipeline_seed_liquidity` 48,850 units for an SPL Token token, 59,716 for a Token-2022 one and 65,802 for one with a transfer hook (the hook's own compute left out), and 60,847 for an SPL Token token on a local validator; its ceiling stays at 180,000, room for what later tickets add to creation and the seed.
 
 ### Invariants for test layer 3
 
