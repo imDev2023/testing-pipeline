@@ -43,12 +43,16 @@ import {
 import {
   getBindInstructionAsync,
   getExecuteInstruction,
+  getUnlockInstructionAsync,
   parseBindInstruction,
   parseExecuteInstruction,
+  parseUnlockInstruction,
   type BindAsyncInput,
   type ExecuteInput,
   type ParsedBindInstruction,
   type ParsedExecuteInstruction,
+  type ParsedUnlockInstruction,
+  type UnlockAsyncInput,
 } from "../instructions/index.ts";
 import {
   findConfigPda,
@@ -90,8 +94,10 @@ export function identifyContainmentHookAccount(
 export const ContainmentHookInstruction = {
   0: "Bind",
   1: "Execute",
+  2: "Unlock",
   Bind: 0,
   Execute: 1,
+  Unlock: 2,
 } as const;
 
 export type ContainmentHookInstruction =
@@ -126,6 +132,17 @@ export function identifyContainmentHookInstruction(
   ) {
     return ContainmentHookInstruction.Execute;
   }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([101, 155, 40, 21, 158, 189, 56, 203]),
+      ),
+      0,
+    )
+  ) {
+    return ContainmentHookInstruction.Unlock;
+  }
   throw new SolanaError(
     SOLANA_ERROR__PROGRAM_CLIENTS__FAILED_TO_IDENTIFY_INSTRUCTION,
     { instructionData: data, programName: "containmentHook" },
@@ -140,7 +157,10 @@ export type ParsedContainmentHookInstruction<
     } & ParsedBindInstruction<TProgram>)
   | ({
       instructionType: typeof ContainmentHookInstruction.Execute;
-    } & ParsedExecuteInstruction<TProgram>);
+    } & ParsedExecuteInstruction<TProgram>)
+  | ({
+      instructionType: typeof ContainmentHookInstruction.Unlock;
+    } & ParsedUnlockInstruction<TProgram>);
 
 export function parseContainmentHookInstruction<TProgram extends string>(
   instruction: Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array>,
@@ -159,6 +179,13 @@ export function parseContainmentHookInstruction<TProgram extends string>(
       return {
         instructionType: ContainmentHookInstruction.Execute,
         ...parseExecuteInstruction(instruction),
+      };
+    }
+    case ContainmentHookInstruction.Unlock: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: ContainmentHookInstruction.Unlock,
+        ...parseUnlockInstruction(instruction),
       };
     }
     default:
@@ -195,6 +222,10 @@ export type ContainmentHookPluginInstructions = {
     input: ExecuteInput,
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getExecuteInstruction> & SelfPlanAndSendFunctions;
+  unlock: (
+    input: UnlockAsyncInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getUnlockInstructionAsync> & SelfPlanAndSendFunctions;
 };
 
 export type ContainmentHookPluginPdas = {
@@ -235,6 +266,14 @@ export function containmentHookProgram(
             addSelfPlanAndSendFunctions(
               client,
               getExecuteInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          unlock: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getUnlockInstructionAsync(input, {
                 programAddress:
                   instructionConfig?.programAddress ?? config.programAddress,
               }),

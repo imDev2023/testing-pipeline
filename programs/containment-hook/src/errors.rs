@@ -47,4 +47,8 @@ pub enum HookError {
     WrongConfig,
     #[msg("The validation account is not this mint's, at its address and owned by the hook")]
     WrongValidationAccount,
+    #[msg("The unlock is not due: the goal is not reached and the deadline has not passed")]
+    UnlockNotDue,
+    #[msg("The token is already unlocked")]
+    AlreadyUnlocked,
 }

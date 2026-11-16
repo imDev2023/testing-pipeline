@@ -3368,6 +3368,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Containment hook: a contained token moves only through its home market](https://github.com/imDev2023/testing-pipeline/issues/69)
 
+### HOOK-30: Who signs `unlock`
+
+- Question: Does `unlock` take a signer of its own, such as a caller account?
+- Answer: No: its accounts are the mint, the config, the unlock PDA, the market state and Token-2022, so anyone can send it and pays only the transaction fee, as a fresh wallet with no tie to the token does in the tests and the launch script.
+- Alternatives: A caller account that signs, which adds an account and checks nothing the unlock needs.
+- Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+
+### HOOK-31: A second unlock
+
+- Question: How is a second `unlock` refused?
+- Answer: By the config, which records the first unlock's time, with its own error `AlreadyUnlocked` (6022) before any call to Token-2022, which would refuse it anyway because the hook authority that must sign is gone.
+- Alternatives: Leaving the refusal to Token-2022's authority check alone, whose error says nothing about the unlock.
+- Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+
+### HOOK-32: How the unlock says what made it due
+
+- Question: How does `unlock` record whether the goal or the deadline made it due?
+- Answer: In a log line, "Unlocked by the goal: <collected> of <goal> collected" or "Unlocked by the deadline <deadline>", naming the goal when both hold; the config records only the time, as the spec's accounts table says.
+- Alternatives: An Anchor event; a field in the config for the reason, which would change the config's layout.
+- Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+
+### HOOK-33: The launch script's unlock
+
+- Question: How does the launch script show a token unlocked by its goal and another by its deadline?
+- Answer: An optional `--unlock goal` or `--unlock deadline`: by the goal it trades rounds of a buy of one whole unit of the quote mint and a sell back until the goal is collected, refusing up front a goal that would take more than 10 rounds; by the deadline it waits, refusing up front a deadline less than 60 or more than 600 seconds away and a goal the launch's own trades could reach; a fresh wallet funded with 0.002 SOL sends the unlock; without the flag the token stays contained.
+- Alternatives: Always unlocking, which would leave no way to launch a token that stays contained; a separate unlock script, which would repeat the launch's setup to find the market.
+- Specified in: [the ticket, Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+
+### HOOK-34: The deadline without the market state
+
+- Question: Does an unlock by the deadline still need the home market's state to be readable?
+- Answer: No: a market state at the recorded address that can no longer be read as the tax AMM's (another owner, another size or discriminator, or closed) counts as the goal not reached, so the deadline still unlocks; before the deadline such a market state is refused with `NotATaxMarketState`.
+- Alternatives: Refusing every unlock whose market state cannot be read, which would trap holders for good if a tax AMM upgrade changed the account, the case the deadline exists for.
+- Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
+
 ## Buy wall AMM (POOL4)
 
 `POOL4-01` to `POOL4-21` keep the numbers their tickets proposed, which the buy wall AMM's build tickets already cite.
@@ -4229,6 +4279,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-20`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
 - `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.

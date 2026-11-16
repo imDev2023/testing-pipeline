@@ -224,6 +224,95 @@
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "unlock",
+      "docs": [
+        "Unlocks a contained token for good, once its home market has collected the unlock",
+        "goal in tax or its unlock deadline has passed: clears the mint's transfer hook program",
+        "and hook authority, and records the unlock time. Anyone may call it."
+      ],
+      "discriminator": [
+        101,
+        155,
+        40,
+        21,
+        158,
+        189,
+        56,
+        203
+      ],
+      "accounts": [
+        {
+          "name": "mint",
+          "docs": [
+            "The contained mint, whose transfer hook fields Token-2022 clears."
+          ],
+          "writable": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "The mint's config, where the unlock time is recorded."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "unlock",
+          "docs": [
+            "The unlock PDA, the mint's transfer hook authority, which signs both Token-2022 calls."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  110,
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "market_state",
+          "docs": [
+            "The tax AMM market state recorded at binding, read for its tax collected."
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -346,6 +435,16 @@
       "code": 6020,
       "name": "WrongValidationAccount",
       "msg": "The validation account is not this mint's, at its address and owned by the hook"
+    },
+    {
+      "code": 6021,
+      "name": "UnlockNotDue",
+      "msg": "The unlock is not due: the goal is not reached and the deadline has not passed"
+    },
+    {
+      "code": 6022,
+      "name": "AlreadyUnlocked",
+      "msg": "The token is already unlocked"
     }
   ],
   "types": [
@@ -354,7 +453,7 @@
       "docs": [
         "One contained mint's binding to its home market. `bind` writes it once; no instruction",
         "changes it afterwards, and it is never closed, so it stays as the record of the token's",
-        "containment. Only `unlocked_at` will be set, once, by the unlock."
+        "containment. Only `unlocked_at` is ever set afterwards, once, by `unlock`."
       ],
       "type": {
         "kind": "struct",

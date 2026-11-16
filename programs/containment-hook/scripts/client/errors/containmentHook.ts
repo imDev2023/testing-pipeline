@@ -57,8 +57,13 @@ export const CONTAINMENT_HOOK_ERROR__NOT_TRANSFERRING = 0x1782; // 6018
 export const CONTAINMENT_HOOK_ERROR__WRONG_CONFIG = 0x1783; // 6019
 /** WrongValidationAccount: The validation account is not this mint's, at its address and owned by the hook */
 export const CONTAINMENT_HOOK_ERROR__WRONG_VALIDATION_ACCOUNT = 0x1784; // 6020
+/** UnlockNotDue: The unlock is not due: the goal is not reached and the deadline has not passed */
+export const CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE = 0x1785; // 6021
+/** AlreadyUnlocked: The token is already unlocked */
+export const CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED = 0x1786; // 6022
 
 export type ContainmentHookError =
+  | typeof CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED
   | typeof CONTAINMENT_HOOK_ERROR__DEADLINE_NOT_IN_FUTURE
   | typeof CONTAINMENT_HOOK_ERROR__DEADLINE_TOO_FAR
   | typeof CONTAINMENT_HOOK_ERROR__FREEZE_AUTHORITY_SET
@@ -74,6 +79,7 @@ export type ContainmentHookError =
   | typeof CONTAINMENT_HOOK_ERROR__NOT_TRANSFERRING
   | typeof CONTAINMENT_HOOK_ERROR__TAX_SIDE_NOT_QUOTE
   | typeof CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED
+  | typeof CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE
   | typeof CONTAINMENT_HOOK_ERROR__WRONG_CONFIG
   | typeof CONTAINMENT_HOOK_ERROR__WRONG_HOOK_AUTHORITY
   | typeof CONTAINMENT_HOOK_ERROR__WRONG_HOOK_PROGRAM
@@ -85,6 +91,7 @@ let containmentHookErrorMessages:
   Record<ContainmentHookError, string> | undefined;
 if (process.env["NODE_ENV"] !== "production") {
   containmentHookErrorMessages = {
+    [CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED]: `The token is already unlocked`,
     [CONTAINMENT_HOOK_ERROR__DEADLINE_NOT_IN_FUTURE]: `The unlock deadline must be later than now`,
     [CONTAINMENT_HOOK_ERROR__DEADLINE_TOO_FAR]: `The unlock deadline may be at most MAX_UNLOCK_DEADLINE_SECS after the binding`,
     [CONTAINMENT_HOOK_ERROR__FREEZE_AUTHORITY_SET]: `A contained mint must have no freeze authority`,
@@ -100,6 +107,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [CONTAINMENT_HOOK_ERROR__NOT_TRANSFERRING]: `Execute runs only inside a Token-2022 transfer of this mint`,
     [CONTAINMENT_HOOK_ERROR__TAX_SIDE_NOT_QUOTE]: `The home market's tax must be taken in the quote mint`,
     [CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED]: `A contained token can't be transferred there`,
+    [CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE]: `The unlock is not due: the goal is not reached and the deadline has not passed`,
     [CONTAINMENT_HOOK_ERROR__WRONG_CONFIG]: `The config is not this mint's, at its address and owned by the hook`,
     [CONTAINMENT_HOOK_ERROR__WRONG_HOOK_AUTHORITY]: `The mint's transfer hook authority is not its unlock PDA`,
     [CONTAINMENT_HOOK_ERROR__WRONG_HOOK_PROGRAM]: `The mint's transfer hook program is not this program`,
