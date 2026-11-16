@@ -35,14 +35,19 @@ fn every_swap_equals_its_quote_in_an_honest_market_and_the_count_is_reported() {
         .clone();
 
     assert_eq!(record.outcome, Outcome::Pass, "{}", record.reason);
-    // Six sizes, each a buy and a sale.
+    // Every swap the run committed: six sizes, each a buy and a sale (12); one buy held over
+    // nine waits (10); nine later round trips (18); the present alone on the launch clock,
+    // since no time has passed since the market's creation (2); five fresh wallets and the
+    // admin, who created the market and holds the token's mint authority and the strategy's
+    // upgrade authority (12); a buy and the second wallet's sale (2); five buyers in a
+    // queue (10).
     assert_eq!(
         record.numbers["compared"].as_u64(),
-        Some(12),
+        Some(66),
         "{}",
         record.numbers
     );
-    assert!(record.reason.contains("12"), "{}", record.reason);
+    assert!(record.reason.contains("66"), "{}", record.reason);
 }
 
 #[test]
