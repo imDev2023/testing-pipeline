@@ -2,24 +2,24 @@
 //! every contained token in its one home market until it unlocks
 //! (docs/spec/containment-hook.md).
 //!
-//! | Instruction | Called by                          | Does                                         |
-//! |-------------|------------------------------------|----------------------------------------------|
-//! | `bind`      | the launcher, as mint authority    | binds a mint to its home market, once        |
-//! | `execute`   | Token-2022, on every transfer      | refuses the transfer                         |
+//! | Instruction | Called by                       | Does                                            |
+//! |-------------|---------------------------------|-------------------------------------------------|
+//! | `bind`      | the launcher, as mint authority | binds a mint to its home market, once           |
+//! | `execute`   | Token-2022, on every transfer   | passes it only into or out of the home market   |
 //!
-//! `execute` refuses every transfer, bound or not, until the allow rule arrives with
-//! [Containment hook: a contained token moves only through its home
-//! market](https://github.com/imDev2023/testing-pipeline/issues/69); `unlock` arrives with
+//! `execute` is the allow rule: while a token is contained, a transfer passes only into or
+//! out of its home market's vault or that market's fee account, and anything the hook cannot
+//! verify is refused, every transfer of a mint never bound included. `unlock` arrives with
 //! [Containment hook: unlock by the goal or the
 //! deadline](https://github.com/imDev2023/testing-pipeline/issues/70). No instruction
 //! changes what `bind` wrote in a config: not the launcher, not us; the unlock will only
 //! record its time, once, in the config's last field.
 //!
 //! Where things live: the build-time policy values in [`config`], the unlock terms' rules
-//! in [`terms`], the accounts in [`state`], what is read from a mint in [`mint`], from the
-//! router in [`router`] and from the tax AMM in [`tax_market`], and each instruction in its
-//! own module of [`instructions`]. The mint extension allowlist is the shared `mint-rules`
-//! crate.
+//! in [`terms`], the accounts in [`state`], what is read from a mint in [`mint`], from a
+//! token account in [`token_account`], from the router in [`router`] and from the tax AMM in
+//! [`tax_market`], and each instruction in its own module of [`instructions`]. The mint
+//! extension allowlist is the shared `mint-rules` crate.
 
 use anchor_lang::prelude::*;
 
@@ -31,6 +31,7 @@ pub mod router;
 pub mod state;
 pub mod tax_market;
 pub mod terms;
+pub mod token_account;
 
 pub use errors::HookError;
 pub use instructions::*;

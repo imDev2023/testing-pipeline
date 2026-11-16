@@ -391,3 +391,302 @@ pub fn transfer_checked(
     instruction.accounts.extend(tail);
     instruction
 }
+
+/// What a launched contained token looks like in the tests: its mint, its home market with
+/// the contained mint at index 0 and an SPL Token quote mint at index 1, taxed in the quote
+/// mint, bound and seeded through the hook tail by `seeder`, who also holds the rest of the
+/// supply.
+pub struct Launched {
+    pub mint: Pubkey,
+    pub quote: Pubkey,
+    pub market: Market,
+    pub seeder: Keypair,
+    /// The seeder's associated token account for the contained mint.
+    pub holder: Pubkey,
+}
+
+/// The contained token's index in a [`Launched`] home market, and the quote mint's.
+pub const CONTAINED: usize = 0;
+pub const QUOTE: usize = 1;
+/// What [`launch`] mints and seeds.
+pub const SUPPLY: u64 = 1_000_000_000_000_000;
+pub const SEED: [u64; 2] = [500_000_000_000_000, 100_000_000_000];
+
+/// Launches a contained token as the launch script does: the mint, the home market with its
+/// fee accounts, `bind`, the supply minted to the seeder (minting never calls the hook), then
+/// the tax AMM's `seed` with the hook tail after its own accounts.
+pub fn launch(env: &mut Env) -> Launched {
+    let mint = contained_mint(env);
+    let quote = env.create_mint(&TOKEN);
+    let seeder = Keypair::new();
+    env.svm.airdrop(&seeder.pubkey(), SOL).unwrap();
+    let params = quote_taxed_params(&seeder.pubkey(), QUOTE as u8);
+    let market = env
+        .create_tax_market([(mint, TOKEN_2022), (quote, TOKEN)], &params)
+        .unwrap();
+    bind(env, mint, &market).unwrap();
+    let holder = token_2022_account(env, &seeder.pubkey(), &mint);
+    mint_to(env, &mint, &holder, SUPPLY).unwrap();
+    env.write_token_account(&quote, &TOKEN, &seeder.pubkey(), SEED[QUOTE]);
+    env.seed_with(&market, &seeder, SEED, hook_tail(&mint))
+        .unwrap();
+    assert_eq!(env.balance(&market.vaults[CONTAINED]), SEED[CONTAINED]);
+    Launched {
+        mint,
+        quote,
+        market,
+        seeder,
+        holder,
+    }
+}
+
+/// A wallet with SOL, `quote_amount` of the quote mint and an empty associated token account
+/// for the contained mint, created by Token-2022 itself.
+pub fn trader(env: &mut Env, launched: &Launched, quote_amount: u64) -> Keypair {
+    let wallet = Keypair::new();
+    env.svm.airdrop(&wallet.pubkey(), SOL).unwrap();
+    env.write_token_account(&launched.quote, &TOKEN, &wallet.pubkey(), quote_amount);
+    token_2022_account(env, &wallet.pubkey(), &launched.mint);
+    wallet
+}
+
+/// The associated token account of `owner` for the contained mint.
+pub fn contained_account(launched: &Launched, owner: &Pubkey) -> Pubkey {
+    pda::associated_token(owner, &launched.mint, &TOKEN_2022)
+}
+
+/// The router's `swap` of a [`Launched`] market as a terminal builds it with the hook tail:
+/// the strategy accounts resolved by the tax AMM, the hook tail after them when the contained
+/// token is the output (a buy), and the hook tail as `input_hook_accounts` when it is the
+/// input (a sell). `output_to` replaces the trader's own output account, and the integrator
+/// fee is paid into `integrator` at `integrator_fee_bps`.
+#[derive(Clone, Debug, Default)]
+pub struct Swap {
+    pub output_to: Option<Pubkey>,
+    pub integrator: Option<Pubkey>,
+    pub integrator_fee_bps: u16,
+    /// Leaves the hook tail out.
+    pub without_tail: bool,
+}
+
+pub fn swap_instruction(
+    env: &Env,
+    launched: &Launched,
+    trader: &Pubkey,
+    (input, output): (usize, usize),
+    amount_in: u64,
+    options: &Swap,
+) -> Instruction {
+    let market = &launched.market;
+    let tail = if options.without_tail {
+        vec![]
+    } else {
+        hook_tail(&launched.mint)
+    };
+    let mut strategy_accounts = env
+        .resolve_accounts(market, &exact_in(input, output, amount_in))
+        .unwrap();
+    let mut input_hook_accounts = vec![];
+    if output == CONTAINED {
+        strategy_accounts.extend(tail);
+    } else {
+        input_hook_accounts = tail;
+    }
+    let accounts = client::SwapAccounts {
+        trader: *trader,
+        strategy_program: strategy_id(),
+        market_state: market.market_state,
+        trader_input: pda::associated_token(
+            trader,
+            &market.mints[input],
+            &market.token_programs[input],
+        ),
+        trader_output: options.output_to.unwrap_or_else(|| {
+            pda::associated_token(
+                trader,
+                &market.mints[output],
+                &market.token_programs[output],
+            )
+        }),
+        input_vault: market.vaults[input],
+        input_mint: market.mints[input],
+        output_mint: market.mints[output],
+        input_token_program: market.token_programs[input],
+        output_token_program: market.token_programs[output],
+        integrator_fee_account: options.integrator,
+        strategy_accounts,
+        input_hook_accounts,
+    };
+    let args = client::SwapArgs {
+        mode: client::TradeMode::ExactIn,
+        amount_in,
+        amount_out: 0,
+        min_amount_out: 0,
+        integrator_fee_bps: options.integrator_fee_bps,
+        input_hook_accounts: 0,
+        extra: vec![],
+    };
+    client::swap(&accounts, &args)
+}
+
+/// Sends [`swap_instruction`], signed by `trader`.
+pub fn swap(
+    env: &mut Env,
+    launched: &Launched,
+    trader: &Keypair,
+    direction: (usize, usize),
+    amount_in: u64,
+    options: &Swap,
+) -> Result<TransactionMetadata, String> {
+    let instruction = swap_instruction(
+        env,
+        launched,
+        &trader.pubkey(),
+        direction,
+        amount_in,
+        options,
+    );
+    env.send_meta(&[instruction], &[trader])
+}
+
+/// A buy of the contained token with `amount_in` of the quote mint.
+pub fn buy(
+    env: &mut Env,
+    launched: &Launched,
+    trader: &Keypair,
+    amount_in: u64,
+) -> client::SwapResult {
+    let meta = swap(
+        env,
+        launched,
+        trader,
+        (QUOTE, CONTAINED),
+        amount_in,
+        &Swap::default(),
+    )
+    .unwrap();
+    borsh::from_slice(&meta.return_data.data).unwrap()
+}
+
+/// A sell of `amount_in` of the contained token for the quote mint.
+pub fn sell(
+    env: &mut Env,
+    launched: &Launched,
+    trader: &Keypair,
+    amount_in: u64,
+) -> client::SwapResult {
+    let meta = swap(
+        env,
+        launched,
+        trader,
+        (CONTAINED, QUOTE),
+        amount_in,
+        &Swap::default(),
+    )
+    .unwrap();
+    borsh::from_slice(&meta.return_data.data).unwrap()
+}
+
+/// The router's treasury owner, from its config.
+pub fn treasury_owner(env: &Env) -> Pubkey {
+    client::decode_config(
+        &env.svm
+            .get_account(&pda::config())
+            .expect("router config")
+            .data,
+    )
+    .unwrap()
+    .treasury_owner
+}
+
+/// The router's `sweep_fees` of the home market's contained-token fee account into the
+/// treasury owner's associated token account, with `tail` as its remaining accounts.
+pub fn sweep_fees_instruction(
+    launched: &Launched,
+    treasury_owner: &Pubkey,
+    tail: Vec<AccountMeta>,
+) -> Instruction {
+    client::sweep_fees(
+        &launched.market.market,
+        &launched.mint,
+        &TOKEN_2022,
+        treasury_owner,
+        tail,
+    )
+}
+
+/// How many times the hook ran in a transaction, and at which call depths, from its logs.
+pub fn hook_depths(logs: &[String]) -> Vec<u32> {
+    let prefix = format!("Program {} invoke [", hook_id());
+    logs.iter()
+        .filter_map(|line| line.strip_prefix(&prefix))
+        .map(|rest| rest.trim_end_matches(']').parse().unwrap())
+        .collect()
+}
+
+/// The compute units each invocation of the hook consumed, in order, from a transaction's
+/// logs.
+pub fn hook_compute(logs: &[String]) -> Vec<u64> {
+    let prefix = format!("Program {} consumed ", hook_id());
+    logs.iter()
+        .filter_map(|line| line.strip_prefix(&prefix))
+        .map(|rest| rest.split(' ').next().unwrap().parse().unwrap())
+        .collect()
+}
+
+/// A Token-2022 token account of `mint` owned by `owner` at a new keypair's address rather
+/// than the associated one, sized for the transfer hook account extension Token-2022 adds
+/// for a hooked mint: how a holder gets a second account of their own.
+pub fn second_token_account(env: &mut Env, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+    use spl_token_2022_interface::extension::ExtensionType;
+    let account = Keypair::new();
+    let space =
+        ExtensionType::try_calculate_account_len::<spl_token_2022_interface::state::Account>(&[
+            ExtensionType::TransferHookAccount,
+        ])
+        .unwrap();
+    let mut create = 0u32.to_le_bytes().to_vec();
+    create.extend_from_slice(
+        &env.svm
+            .minimum_balance_for_rent_exemption(space)
+            .to_le_bytes(),
+    );
+    create.extend_from_slice(&(space as u64).to_le_bytes());
+    create.extend_from_slice(TOKEN_2022.as_ref());
+    let create = Instruction::new_with_bytes(
+        client::SYSTEM_PROGRAM_ID,
+        &create,
+        vec![
+            AccountMeta::new(env.admin.pubkey(), true),
+            AccountMeta::new(account.pubkey(), true),
+        ],
+    );
+    let initialize = spl_token_2022_interface::instruction::initialize_account3(
+        &TOKEN_2022,
+        &account.pubkey(),
+        mint,
+        owner,
+    )
+    .unwrap();
+    env.send(&[create, initialize], &[&account]).unwrap();
+    account.pubkey()
+}
+
+/// The hook's `Execute` instruction with its six accounts, in the order Token-2022 passes
+/// them: source, mint, destination, owner, validation account, config.
+pub fn execute_instruction(
+    source: Pubkey,
+    mint: Pubkey,
+    destination: Pubkey,
+    owner: Pubkey,
+    validation: Pubkey,
+    config: Pubkey,
+) -> Instruction {
+    let mut data = containment_hook::state::EXECUTE_DISCRIMINATOR.to_vec();
+    data.extend_from_slice(&1_000_000u64.to_le_bytes());
+    let accounts = [source, mint, destination, owner, validation, config]
+        .into_iter()
+        .map(|key| AccountMeta::new_readonly(key, false))
+        .collect();
+    Instruction::new_with_bytes(hook_id(), &data, accounts)
+}
