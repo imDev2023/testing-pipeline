@@ -75,10 +75,13 @@ export const BUY_WALL_AMM_ERROR__ZERO_OUTPUT = 0x178b; // 6027
 export const BUY_WALL_AMM_ERROR__NOTHING_AFTER_FEE = 0x178c; // 6028
 /** PriceBoundReached: The trade reaches a price bound with input left over */
 export const BUY_WALL_AMM_ERROR__PRICE_BOUND_REACHED = 0x178d; // 6029
+/** BadSeedAmounts: A seed request needs exactly one amount per mint: the token's, then wrapped SOL's */
+export const BUY_WALL_AMM_ERROR__BAD_SEED_AMOUNTS = 0x178e; // 6030
 
 export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__ALREADY_SEEDED
   | typeof BUY_WALL_AMM_ERROR__BAD_INIT_DATA
+  | typeof BUY_WALL_AMM_ERROR__BAD_SEED_AMOUNTS
   | typeof BUY_WALL_AMM_ERROR__CAP_DECAY_OUT_OF_RANGE
   | typeof BUY_WALL_AMM_ERROR__CAP_FLOOR_OUT_OF_RANGE
   | typeof BUY_WALL_AMM_ERROR__CAP_FLOOR_TOO_THIN
@@ -113,6 +116,7 @@ if (process.env["NODE_ENV"] !== "production") {
   buyWallAmmErrorMessages = {
     [BUY_WALL_AMM_ERROR__ALREADY_SEEDED]: `The market is already seeded`,
     [BUY_WALL_AMM_ERROR__BAD_INIT_DATA]: `Init data is not valid creation parameters`,
+    [BUY_WALL_AMM_ERROR__BAD_SEED_AMOUNTS]: `A seed request needs exactly one amount per mint: the token's, then wrapped SOL's`,
     [BUY_WALL_AMM_ERROR__CAP_DECAY_OUT_OF_RANGE]: `The cap decay must be at most MAX_CAP_DECAY_BPS`,
     [BUY_WALL_AMM_ERROR__CAP_FLOOR_OUT_OF_RANGE]: `The cap floor must be between MIN_CAP_FLOOR_BPS and 10,000 basis points`,
     [BUY_WALL_AMM_ERROR__CAP_FLOOR_TOO_THIN]: `The curve at the cap floor would hold less than MIN_LIQUIDITY`,

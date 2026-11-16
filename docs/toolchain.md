@@ -212,6 +212,8 @@ pnpm demo --cluster localnet \
 It registers the strategy, creates a test token with its mint authority removed and wraps the SOL for the seed and a buy, then in one transaction creates the market from the metadata's `init` form, adds both fee accounts and seeds it through the metadata's `seed` action; it reads the market back through the router's record and the generated client.
 Since [plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48), it then buys with 1 SOL and sells what it bought, each quoted and swapped through the router with the SDK, checks each quote against the spec's formulas (recomputed in the script) and the worked example's numbers, and reads the price, ledgers and counters back against the same formulas.
 Passed on 2026-11-12 from a fresh validator in 7 seconds: the seed opened at `sqrt_price` 1,844,674,407,370,955,161, `liquidity` 99,999,999,999 and cap 1,000,000,000,000 in a 1,091-byte transaction; the buy paid 90,081,892,629 units and the sell back 980,099,999 lamports, exactly the quotes and the worked example's numbers; and the market state ended at `sqrt_price` 1,844,674,407,372,029,099, with every ledger and counter equal to the spec's formulas and each vault holding exactly its ledgers.
+On a local validator it goes on to a ninth step, which [seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53) added: the stand-in launchpad graduates a second token through `pipeline_seed_liquidity`, built from the metadata's `seed_liquidity` form with the SDK's `resolveInit` and sent with the tax AMM's `launchpad.ts`, the same transaction records the market with `register_existing_market` and both fee accounts, and the market trades both ways; on devnet the step is skipped.
+Passed on 2026-11-12 from a fresh validator in 9 seconds, on other ports because one start collided (`scripts/local-validator.sh --rpc-port 8869 --faucet-port 9940 --gossip-port 8180 --dynamic-port-range 8181-8210`, the demo given `--cluster http://127.0.0.1:8869`): the graduation was one transaction of 1,094 bytes; exactly the seed left the escrows, which `SeedResult.taken` reported with `lp_amount` 0; `pipeline_seed_liquidity` used 60,847 units; the market state held the parameters sent with the launchpad's PDA as its seeder, open at the worked example's price; both trades delivered their quotes, the worked example's numbers; and `pipeline-check --url http://127.0.0.1:8869 --market <the graduated market>` reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped.
 ### Containment hook
 
 The launch script, `programs/containment-hook/scripts/launch.ts`, launches a contained token on a cluster where both programs are deployed and the tax AMM is registered with the router; on a local validator, `scripts/local-validator.sh` deploys both and the tax AMM's demo registers it.
@@ -250,6 +252,26 @@ Without `--goal` or `--deadline`, or with a goal too large for a `u64`, it stops
 Both settings need the repository public on GitHub Free, so the owner runs `bash scripts/github-settings.sh` once it is.
 
 The first run, on [the PR that added CI](https://github.com/imDev2023/testing-pipeline/pull/102) on 2026-11-12, took 9 minutes from cold caches: `rust` 9 minutes (2 minutes 13 seconds of it compiling cargo-build-sbf, then the SBF build in 44 seconds, clippy in 64 seconds and the test build in 49 seconds), `kani` 3 minutes with Kani's install, `typescript` 28 seconds, and `changes`, `no keypairs` and `gate` a few seconds each.
+
+### CI on the owner's iMac
+
+While the repository is private, GitHub's included Actions minutes run out, and from 2026-11-12 GitHub refused to start any job; so on 2026-11-13 the owner moved CI to the iMac (`BAR-39`).
+Both workflows run where the repository variable `CI_RUNS_ON` says, as a JSON list of runner labels, and on GitHub's runners when it is unset:
+
+```bash
+gh variable set CI_RUNS_ON --repo imDev2023/testing-pipeline --body '["self-hosted","testing-pipeline"]'   # the iMac
+gh variable delete CI_RUNS_ON --repo imDev2023/testing-pipeline                                          # GitHub's runners again
+```
+
+The iMac's runners are two Docker containers from `scripts/ci-runner/` (Ubuntu 24.04 with what the jobs take from GitHub's image, and GitHub's runner at a pinned, checksummed release), so the `rust` and `kani` jobs of one run go side by side.
+Each has 8 CPUs and 7 GB of Docker Desktop's VM and its own home volume, which keeps its registration and the toolchains, Kani, Z3 and cargo registry the jobs install, so the cache steps run only on GitHub's runners.
+No host folder is mounted: a job sees nothing of the Mac's files, keys or `~/.config`.
+
+- `scripts/ci-runner/start.sh` builds the image, registers each runner the first time (with a one-use token from `gh`) and starts them; they restart with Docker Desktop.
+- `docker compose -f scripts/ci-runner/compose.yml logs -f` follows them, and `docker compose -f scripts/ci-runner/compose.yml down` stops them and keeps their volumes.
+- A job waits in the queue while Docker Desktop is not running, so the iMac must be awake for CI to finish.
+- They are for a private repository only: their home volumes outlive each job, so a pull request from a fork must never run on them; `scripts/make-repo-public.sh` deletes `CI_RUNS_ON` before it makes the repository public, and `docker compose -f scripts/ci-runner/compose.yml down` stops the runners for good.
+- To start a runner afresh, remove it under the repository's Settings, Actions, Runners, then its volume (`docker volume rm testing-pipeline-ci_runner-1`), and run `start.sh` again.
 
 ### Review skills
 
