@@ -9,10 +9,10 @@
 //!
 //! So ordinary swaps pass the reserve read-only and never write-lock it, since every Kamino user
 //! of that mint shares it. A trade paying out the other side never redeems and resolves in one
-//! round. One paying out the lent side needs the reserve's data to run the quote, so its first
-//! round lists the three accounts and asks for another; the second receives them, runs the
-//! quote with the same pricing function as quotes and swaps, and lists the redeem accounts
-//! only if the quote redeems.
+//! round. One paying out the lent side needs the reserve's data to run the quote, so a round
+//! that is not passed the reserve third among the strategy accounts lists the three accounts
+//! and asks for another; the next receives them, runs the quote with the same pricing function
+//! as quotes and swaps, and lists the redeem accounts only if the quote redeems.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program::set_return_data;
@@ -39,10 +39,15 @@ pub fn resolve_accounts(ctx: Context<ReadTrade>, request: ResolveRequest) -> Res
     ];
     let complete = if output != market.lent_side() {
         true
-    } else if let Some(reserve_account) = ctx.remaining_accounts.get(2) {
-        // The round after the first: the reserve is among the accounts it returned. A reserve
-        // that fails its check, and a trade the quote refuses, list no redeem accounts; their
-        // quote and swap then report why.
+    } else if let Some(reserve_account) = ctx
+        .remaining_accounts
+        .get(2)
+        .filter(|account| *account.key == lent.reserve)
+    {
+        // A round after the first, passed back the accounts listed so far, with the reserve
+        // third; anything else in its place, or nothing, asks for another round with them. A
+        // reserve that fails its check, and a trade the quote refuses, list no redeem accounts;
+        // their quote and swap then report why.
         let shortfall = kamino::reserve_of(&market.lent_mint(), reserve_account)
             .and_then(|reserve| pricing::quote(market, &reserve, &request.trade, || Ok(u64::MAX)))
             .map_or(0, |quote| quote.shortfall);

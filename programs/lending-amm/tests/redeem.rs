@@ -449,3 +449,31 @@ fn what_klend_pays_above_the_shortfall_stays_in_the_buffer() {
         assert!(excess > 0, "a higher rate pays more than the shortfall");
     }
 }
+
+#[test]
+fn a_round_not_passed_the_reserve_asks_for_another_rather_than_answering_without_a_redeem() {
+    // A client that sends a later round with something else third, such as leftovers from
+    // another trade, is asked for another round, never told the sale needs no redeem.
+    use pipeline_client::AccountMeta;
+    let mut env = Env::new();
+    let market = env.lending_market(0, 30);
+    let (other, lent_side) = (market.other_index(), market.lent_index);
+    let buffer = env.buffer(&market);
+    let trade = exact_in(other, lent_side, env.sell_paying(&market, 2 * buffer));
+    let known = vec![
+        AccountMeta::new(market.vaults[lent_side], false),
+        AccountMeta::new_readonly(market.addresses.authority, false),
+        AccountMeta::new_readonly(market.addresses.ctoken_account, false),
+    ];
+    let meta = env.resolve_round_meta(&market, &trade, 1, &known).unwrap();
+    let result: ResolveResult = borsh::from_slice(&meta.return_data.data).unwrap();
+    assert!(!result.complete);
+    assert_eq!(result.accounts.len(), 3);
+    assert_eq!(
+        Pubkey::new_from_array(result.accounts[2].address),
+        env.reserve_of(&market)
+    );
+    // Given the reserve, the next round lists the redeem accounts.
+    let (accounts, _) = env.resolve_rounds(&market, &trade).unwrap();
+    assert_eq!(accounts.len(), 11);
+}

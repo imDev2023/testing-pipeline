@@ -206,6 +206,7 @@ How it is built ([Lending AMM: redeem a swap's shortfall from Kamino inside the 
 - Ordinary swaps then pass the reserve read-only, for valuation, and never write-lock Kamino's reserve, which every Kamino user of that mint shares.
 - The program recognises the redeem accounts by klend's id where they start, and only after a lent-side output's reserve, where nothing else can follow since a lent mint has no transfer hook; it checks them, as `rebalance` checks its own, only when the trade redeems, each failure with `KaminoAccountWrong` unless the reserve check or the lending market check names it, the cToken account against the market's own, and the redeem pays only into the output vault, which must be the market's own lent-mint vault.
 - A swap that needs a redeem but was built without those accounts, because the buffer shrank between quote and swap, fails cleanly with its own error, `RedeemAccountsMissing`, and changes nothing, and the integrator resolves again.
+- The instructions sysvar among the redeem accounts is klend's, which its redeem introspects; the lending AMM never reads it, but Canary's `transaction_accounts` check lists it for any sale it resolves beyond the buffer, as it would for any strategy whose swap calls klend.
 - A swap that redeems costs about 30k compute units more (Kamino's redeem, mainnet median 29,670).
 
 ### Bypass

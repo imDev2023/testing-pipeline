@@ -165,9 +165,10 @@ impl<'a, 'info> StrategyAccounts<'a, 'info> {
     }
 }
 
-/// For quotes and account resolution, which run in simulation: only the market state (and,
-/// for quotes, the reserve among the strategy accounts) is read, and the other accounts may be
-/// placeholders.
+/// For quotes and account resolution, which run in simulation: the market state and the
+/// strategy accounts are read (the reserve, and for a lent-side output beyond the buffer the
+/// redeem accounts), and so is the output mint for such a quote, which must then be the real
+/// lent mint; the other accounts may be placeholders.
 #[derive(Accounts)]
 pub struct ReadTrade<'info> {
     /// CHECK: unused in reads.
@@ -183,7 +184,8 @@ pub struct ReadTrade<'info> {
     pub input_vault: UncheckedAccount<'info>,
     /// CHECK: unused in reads.
     pub input_mint: UncheckedAccount<'info>,
-    /// CHECK: unused in reads.
+    /// CHECK: read only by a quote of a lent-side output beyond the buffer, which checks it is
+    /// the lent mint before passing it on as klend's liquidity mint.
     pub output_mint: UncheckedAccount<'info>,
     /// CHECK: unused in reads.
     pub input_token_program: UncheckedAccount<'info>,

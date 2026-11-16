@@ -952,16 +952,19 @@ async function main() {
     // A sale paying out 1.5 times the buffer, by the formula out = L x a_net / (R + a_net):
     // a_net = ceil(out x R / (L - out)) and one unit more, then the LP fee on top.
     const beforeSale = await lentSide();
-    const wanted = beforeSale.buffer + beforeSale.buffer / 2n;
-    const saleNet = ceilDiv(wanted * reserves[0], beforeSale.total - wanted) + 1n;
-    const saleAmount = ceilDiv(saleNet * BPS, BPS - feeBps);
-    const smaller = await pipeline.resolveAccounts(rpc, routerView, tradeOf(0, DEMO.sellTokens), payer.address, simulation);
+    /** The sale of the token that pays out at least `out` WSOL, by the formula, one unit more net. */
+    const salePaying = (out: bigint) =>
+        ceilDiv((ceilDiv(out * reserves[0], beforeSale.total - out) + 1n) * BPS, BPS - feeBps);
+    const saleAmount = salePaying(beforeSale.buffer + beforeSale.buffer / 2n);
+    // The smaller sale pays out about half the buffer, which the buffer covers.
+    const smallerAmount = salePaying(beforeSale.buffer / 2n);
+    const smaller = await pipeline.resolveAccounts(rpc, routerView, tradeOf(0, smallerAmount), payer.address, simulation);
     if (smaller.length !== 3) fail(`a sale the buffer covers resolved ${smaller.length} strategy accounts, not 3`);
     const stale = await simulate(payer, [await swapInstruction(0, saleAmount, smaller, 0n)]);
     if (!stale.err || !stale.logs.some((line) => line.includes('Error Code: RedeemAccountsMissing'))) {
         fail(`a sale built from a smaller sale's accounts was not refused with RedeemAccountsMissing: ${show(stale.err)}\n   ${stale.logs.join('\n   ')}`);
     }
-    info(`selling ${saleAmount} with the 3 accounts resolved for selling ${DEMO.sellTokens}: refused with RedeemAccountsMissing, in simulation`);
+    info(`selling ${saleAmount} with the 3 accounts resolved for selling ${smallerAmount}: refused with RedeemAccountsMissing, in simulation`);
     record.push(['sale with stale accounts', 'refused: RedeemAccountsMissing']);
 
     step('15. Selling for more WSOL than the buffer: the swap redeems the shortfall from Kamino');
