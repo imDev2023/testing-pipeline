@@ -32,3 +32,36 @@ pub struct MarketSeeded {
     pub cap_decay_per_day: u64,
     pub seed_time: i64,
 }
+
+/// A swap left the curve holding less than the inventory cap and the ratchet lowered the
+/// cap (docs/spec/pool4-for-solana.md, "After pricing" step 6).
+#[event]
+#[derive(Debug, PartialEq, Eq)]
+pub struct CapLowered {
+    pub market_state: Pubkey,
+    /// The new inventory cap, in token units.
+    pub cap: u64,
+    /// How far the cap fell, in token units.
+    pub lowered_by: u64,
+    /// What the curve holds at the swap's price, in token units.
+    pub held: u64,
+    /// The decay credit left, in token-seconds.
+    pub decay_credit: u128,
+}
+
+/// A swap left the curve holding more than the inventory cap and the trim took the excess
+/// out of it without moving the price (docs/spec/pool4-for-solana.md, "After pricing" step
+/// 6).
+#[event]
+#[derive(Debug, PartialEq, Eq)]
+pub struct Trimmed {
+    pub market_state: Pubkey,
+    /// Token units moved from the pool to the retired tokens.
+    pub tokens: u64,
+    /// Lamports moved from the pool to idle SOL.
+    pub sol: u64,
+    /// The curve's liquidity after the trim.
+    pub liquidity: u128,
+    /// The inventory cap, unchanged by a trim.
+    pub cap: u64,
+}
