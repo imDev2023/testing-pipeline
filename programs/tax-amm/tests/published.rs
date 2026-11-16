@@ -40,11 +40,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Checks the published facts of `metadata` against the commit `deployments/devnet.json`
-/// records for the program (if it is deployed) and the committed conformance report (if any).
+/// Checks the published facts of `metadata` against the commits `deployments/devnet.json`
+/// records for the program (its current deploy first, then earlier ones; none before the
+/// first deploy) and the committed conformance report (if any).
 fn check_published(
     metadata: &Value,
-    deployed_commit: Option<&str>,
+    deployed: &[&str],
     report: Option<&[u8]>,
 ) -> Result<(), String> {
     if metadata["security"]["audits"] != json!([]) {
@@ -62,15 +63,15 @@ fn check_published(
             ))
         }
     };
-    match (commit, deployed_commit) {
-        (Some(commit), Some(deployed)) if commit != deployed => {
-            return Err(format!(
-                "source.commit is {commit}, but deployments/devnet.json records {deployed}"
-            ))
-        }
-        (Some(commit), None) => {
+    match (commit, deployed) {
+        (Some(commit), []) => {
             return Err(format!(
                 "source.commit is {commit}, but deployments/devnet.json records no deploy"
+            ))
+        }
+        (Some(commit), deployed) if !deployed.contains(&commit) => {
+            return Err(format!(
+                "source.commit is {commit}, but deployments/devnet.json records {deployed:?}"
             ))
         }
         _ => {}
@@ -129,22 +130,27 @@ fn check_links(metadata: &Value, code: &str, docs: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The commit `deployments/devnet.json` records for the program, if it records it.
-fn deployed_commit() -> Option<String> {
+/// The commits `deployments/devnet.json` records for the program: its current deploy, then
+/// its earlier ones (`history`), newest first; none before the first deploy.
+fn deployed_commits() -> Vec<String> {
     let path = manifest_dir().join("../../deployments/devnet.json");
     if !path.exists() {
-        return None;
+        return Vec::new();
     }
-    read_json(&path)["programs"][PROGRAM]["commit"]
-        .as_str()
-        .map(str::to_owned)
+    let entry = &read_json(&path)["programs"][PROGRAM];
+    std::iter::once(entry)
+        .chain(entry["history"].as_array().into_iter().flatten())
+        .filter_map(|deploy| deploy["commit"].as_str().map(str::to_owned))
+        .collect()
 }
 
 #[test]
 fn the_committed_metadata_publishes_what_was_deployed() {
     let metadata = read_json(&manifest_dir().join("metadata.json"));
     let report = std::fs::read(manifest_dir().join(REPORT)).ok();
-    check_published(&metadata, deployed_commit().as_deref(), report.as_deref()).unwrap();
+    let deployed = deployed_commits();
+    let deployed: Vec<&str> = deployed.iter().map(String::as_str).collect();
+    check_published(&metadata, &deployed, report.as_deref()).unwrap();
 }
 
 #[test]
@@ -188,71 +194,80 @@ fn with_report(mut m: Value, report_commit: &str, report: &[u8]) -> Value {
 
 #[test]
 fn before_the_deploy_the_links_point_at_main() {
-    check_published(&unpinned(), None, None).unwrap();
+    check_published(&unpinned(), &[], None).unwrap();
     // A deploy recorded before the metadata is pinned: the pinning PR follows it.
-    check_published(&unpinned(), Some(COMMIT), None).unwrap();
+    check_published(&unpinned(), &[COMMIT], None).unwrap();
 }
 
 #[test]
 fn pinned_links_are_at_the_deployed_commit() {
-    check_published(&pinned(COMMIT), Some(COMMIT), None).unwrap();
+    check_published(&pinned(COMMIT), &[COMMIT], None).unwrap();
     let report = br#"{"checks":[]}"#;
     check_published(
         &with_report(pinned(COMMIT), OTHER, report),
-        Some(COMMIT),
+        &[COMMIT],
         Some(report),
     )
     .unwrap();
 }
 
 #[test]
-fn a_commit_that_is_not_the_deployed_one_is_refused() {
-    let err = check_published(&pinned(COMMIT), Some(OTHER), None).unwrap_err();
+fn a_redeploy_recorded_before_the_metadata_is_pinned_again_passes() {
+    // The record of a new deploy merges first; the metadata still names the earlier deploy,
+    // now in the record's history, until the next PR pins it (docs/toolchain.md).
+    check_published(&pinned(COMMIT), &[OTHER, COMMIT], None).unwrap();
+    let err = check_published(&pinned(COMMIT), &[OTHER], None).unwrap_err();
     assert!(err.contains("records"), "{err}");
-    let err = check_published(&pinned(COMMIT), None, None).unwrap_err();
+}
+
+#[test]
+fn a_commit_that_is_not_the_deployed_one_is_refused() {
+    let err = check_published(&pinned(COMMIT), &[OTHER], None).unwrap_err();
+    assert!(err.contains("records"), "{err}");
+    let err = check_published(&pinned(COMMIT), &[], None).unwrap_err();
     assert!(err.contains("no deploy"), "{err}");
     let mut short = pinned(COMMIT);
     short["source"]["commit"] = json!("0123456");
-    assert!(check_published(&short, Some("0123456"), None).is_err());
+    assert!(check_published(&short, &["0123456"], None).is_err());
 }
 
 #[test]
 fn a_link_left_at_another_commit_or_at_main_is_refused() {
     let mut m = pinned(COMMIT);
     m["links"]["idl"] = json!(format!("{RAW}/{OTHER}/{DIR}/idl/tax_amm.json"));
-    assert!(check_published(&m, Some(COMMIT), None)
+    assert!(check_published(&m, &[COMMIT], None)
         .unwrap_err()
         .contains("links.idl"));
     let mut m = pinned(COMMIT);
     m["links"]["docs"] = json!(format!("{REPO}/blob/main/{DIR}/README.md"));
-    assert!(check_published(&m, Some(COMMIT), None)
+    assert!(check_published(&m, &[COMMIT], None)
         .unwrap_err()
         .contains("links.docs"));
     // With a report, the README is the one at the report's commit, which records the deploy.
     let report = b"r";
     let mut m = with_report(pinned(COMMIT), OTHER, report);
     m["links"]["docs"] = json!(format!("{REPO}/blob/{COMMIT}/{DIR}/README.md"));
-    let err = check_published(&m, Some(COMMIT), Some(report)).unwrap_err();
+    let err = check_published(&m, &[COMMIT], Some(report)).unwrap_err();
     assert!(err.contains("links.docs"), "{err}");
 }
 
 #[test]
 fn a_report_that_does_not_match_its_hash_is_refused() {
     let m = with_report(pinned(COMMIT), OTHER, b"the report published");
-    let err = check_published(&m, Some(COMMIT), Some(b"another report")).unwrap_err();
+    let err = check_published(&m, &[COMMIT], Some(b"another report")).unwrap_err();
     assert!(err.contains("hashes to"), "{err}");
-    let err = check_published(&m, Some(COMMIT), None).unwrap_err();
+    let err = check_published(&m, &[COMMIT], None).unwrap_err();
     assert!(err.contains("not committed"), "{err}");
     let mut at_main = m.clone();
     at_main["conformance"]["report"] = json!(format!("{RAW}/main/{DIR}/{REPORT}"));
-    assert!(check_published(&at_main, Some(COMMIT), Some(b"the report published")).is_err());
+    assert!(check_published(&at_main, &[COMMIT], Some(b"the report published")).is_err());
 }
 
 #[test]
 fn a_report_without_the_deployed_commit_is_refused() {
     let report = b"r";
     let err =
-        check_published(&with_report(unpinned(), OTHER, report), None, Some(report)).unwrap_err();
+        check_published(&with_report(unpinned(), OTHER, report), &[], Some(report)).unwrap_err();
     assert!(err.contains("source.commit"), "{err}");
 }
 
@@ -260,10 +275,10 @@ fn a_report_without_the_deployed_commit_is_refused() {
 fn an_audit_listed_is_refused() {
     let mut m = unpinned();
     m["security"]["audits"] = json!([{ "by": "anyone" }]);
-    assert!(check_published(&m, None, None)
+    assert!(check_published(&m, &[], None)
         .unwrap_err()
         .contains("audits"));
     let mut m = unpinned();
     m["security"].as_object_mut().unwrap().remove("audits");
-    assert!(check_published(&m, None, None).is_err());
+    assert!(check_published(&m, &[], None).is_err());
 }

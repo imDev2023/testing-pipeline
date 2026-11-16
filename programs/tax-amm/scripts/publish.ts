@@ -82,6 +82,9 @@ function pin(reportCommit: string | undefined) {
         if (!isCommit(reportCommit)) fail(`--report-commit must be a full commit hash, not ${reportCommit}`);
         const report = readFileSync(here(`../${REPORT}`));
         metadata.conformance = { report: `${RAW}/${reportCommit}/${DIR}/${REPORT}`, sha256: sha256(report) };
+    } else {
+        // An earlier deploy's report does not describe this one.
+        delete metadata.conformance;
     }
     metadata.security = { ...metadata.security, audits: [] };
     checkLocally(metadata);
@@ -102,8 +105,11 @@ async function getJson(url: string) {
     return JSON.parse(Buffer.from(await getOk(url)).toString('utf8'));
 }
 
-function onMain(commit: string) {
+function fetchMain() {
     execFileSync('perl', ['-e', 'alarm 120; exec @ARGV', 'git', '-C', repoRoot, 'fetch', '-q', 'origin', 'main']);
+}
+
+function onMain(commit: string) {
     try {
         execFileSync('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', commit, 'origin/main']);
         return true;
@@ -130,7 +136,9 @@ async function predictedMintFlags(rpc: ReturnType<typeof createSolanaRpc>, mint:
 }
 
 async function verify(uri: string, market: string | undefined) {
-    const programId = address('J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t');
+    const deployments = JSON.parse(readFileSync(`${repoRoot}/deployments/devnet.json`, 'utf8'));
+    const deployed = deployments.programs?.[PROGRAM] ?? fail(`deployments/devnet.json records no ${PROGRAM}`);
+    const programId = address(deployed.programId);
     const published = await pipeline.fetchStrategyMetadata(uri);
     if (!published.ok) fail(`${uri}: ${published.reason}: ${published.errors.join('; ')}`);
     if (published.warnings.length > 0) fail(`${uri} has warnings: ${published.warnings.join('; ')}`);
@@ -140,6 +148,7 @@ async function verify(uri: string, market: string | undefined) {
     console.log('ok: security.audits is empty');
 
     const commit: string = metadata.source?.commit ?? fail('the metadata names no source.commit');
+    if (commit !== deployed.commit) fail(`the metadata names ${commit}, but the last deploy is of ${deployed.commit}`);
     const reportCommit = /^https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/([0-9a-f]{40})\//.exec(metadata.conformance?.report ?? '')?.[1];
     if (!reportCommit) fail(`the conformance report ${metadata.conformance?.report} is not linked at a commit`);
     const want = repoLinks(commit, reportCommit);
@@ -155,6 +164,7 @@ async function verify(uri: string, market: string | undefined) {
     if (sha256(report) !== metadata.conformance.sha256) fail(`the report hashes to ${sha256(report)}, not ${metadata.conformance.sha256}`);
     console.log(`ok: the report's SHA-256 is ${metadata.conformance.sha256}, as the metadata says`);
     const uriCommit = /^https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/([0-9a-f]{40})\//.exec(uri)?.[1];
+    fetchMain();
     for (const [what, c] of [['the deployed commit', commit], ['the report commit', reportCommit], ['the metadata URI commit', uriCommit]] as const) {
         if (!c || !onMain(c)) fail(`${what} (${c ?? 'none'}) is not a commit on origin/main`);
         console.log(`ok: ${what} ${c} is on origin/main`);
@@ -166,8 +176,7 @@ async function verify(uri: string, market: string | undefined) {
     if (registered?.metadataUri !== uri) fail(`the router on devnet points the strategy at ${registered?.metadataUri ?? 'nothing'}`);
     console.log('ok: the router on devnet points the strategy at this URI');
 
-    const deployments = JSON.parse(readFileSync(`${repoRoot}/deployments/devnet.json`, 'utf8'));
-    const deployedHash: string = deployments.programs?.[PROGRAM]?.executableHash ?? fail(`deployments/devnet.json records no ${PROGRAM}`);
+    const deployedHash: string = deployed.executableHash;
     const apiStrategy = await getJson(`${API}/v1/strategies/${programId}`);
     console.log(
         `Pipeline's API: strategy metadata ${apiStrategy.metadata_status} from ${apiStrategy.metadata_url}, code hash ${apiStrategy.executable_sha256}, flags ${JSON.stringify(apiStrategy.flags)}`,
@@ -177,7 +186,7 @@ async function verify(uri: string, market: string | undefined) {
     }
     if (apiStrategy.executable_sha256 !== deployedHash) fail(`Pipeline's API sees code hash ${apiStrategy.executable_sha256}, not the deployed ${deployedHash}`);
     for (const flag of ['upgradeable', 'conformance-report']) {
-        if (!apiStrategy.flags.includes(flag)) fail(`Pipeline's API does not flag the strategy ${flag}`);
+        if (!(apiStrategy.flags ?? []).includes(flag)) fail(`Pipeline's API does not flag the strategy ${flag}`);
     }
     console.log('ok: the API shows the strategy, its valid metadata, the deployed code hash, and upgradeable with a conformance report');
     if (market) {
@@ -190,7 +199,7 @@ async function verify(uri: string, market: string | undefined) {
             const shown = [...(mint.flags ?? [])].sort();
             console.log(`Pipeline's API: mint ${mint.mint} flags ${JSON.stringify(shown)}`);
             if (JSON.stringify(shown) !== JSON.stringify(predicted)) fail(`mint ${mint.mint} shows ${JSON.stringify(shown)}, but predicts ${JSON.stringify(predicted)}`);
-            for (const flag of predicted) if (!apiMarket.flags.includes(flag)) fail(`the market's flags lack its mint's ${flag}`);
+            for (const flag of predicted) if (!(apiMarket.flags ?? []).includes(flag)) fail(`the market's flags lack its mint's ${flag}`);
         }
         console.log(`Pipeline's API: market ${market} flags ${JSON.stringify(apiMarket.flags)}`);
         console.log('ok: every mint shows exactly the trust flags the mint rules predict, and the market carries them');

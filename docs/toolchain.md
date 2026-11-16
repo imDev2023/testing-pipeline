@@ -447,7 +447,8 @@ The repo must be public before the first deploy of a program (`BAR-21`), since t
 - it builds that commit, exported with `git archive` so nothing uncommitted reaches the bytes, with `solana-verify build --library-name <lib> --arch v3` in the Docker image `fixtures/pins.env` pins (`VERIFY_IMAGE`, the image solana-verify 0.5.2 picks for `[workspace.metadata.cli] solana` 4.3.0; the script refuses when the workspace pins another version);
 - it deploys, or upgrades, paid by `wallet.json`, with `upgrade-authority.json` as the upgrade authority, at the address of `<program>.json`;
 - it stops unless `solana-verify get-program-hash` on the cluster equals the build's executable hash and the program's upgrade authority is `upgrade-authority.json`'s key;
-- it records the program id, the executable hash, the commit, the image, the upgrade authority, the payer and the deploy slot under the program's name in `deployments/devnet.json` (on a local validator, only where `--record` says).
+- it records the program id, the executable hash, the commit, the image, the upgrade authority, the payer and the deploy slot under the program's name in `deployments/devnet.json` (on a local validator, only where `--record` says), moving the program's earlier deploy into its `history`, newest first, so a metadata still naming that deploy passes `tests/published.rs` until it is pinned again;
+- an uncommitted `deployments/devnet.json` alone does not count as a change, so several programs can be deployed before their records go through one PR.
 
 `--build-only` builds and prints the hash and sends nothing; `scripts/test-deploy-devnet.sh` tests the script without the network or Docker.
 It needs solana-verify 0.5.2 or later, which `bash scripts/install-toolchain.sh verify` installs beside the machine's older one and `toolchain-env.sh` puts first, and Docker Desktop running.

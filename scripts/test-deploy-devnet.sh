@@ -178,10 +178,26 @@ fi
 # The build is of the commit, not of whatever the worktree holds (here they agree).
 cmp -s "$work/built-lib.rs" "$repo/programs/toy/src/lib.rs" || fail "the build saw other sources"
 
+# The next deploy (an upgrade, or another program) runs with that record not yet merged: the
+# record alone does not count as a change, and the earlier deploy moves into `history`.
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "two" && git -C "$repo" push -q origin main
+second="$(git -C "$repo" rev-parse HEAD)"
+if run toy; then
+  python3 - "$repo/deployments/devnet.json" "$commit" "$second" <<'PY' && pass "a second deploy records its commit and keeps the first in history" || fail "history: $(cat "$repo/deployments/devnet.json")"
+import json, sys
+entry = json.load(open(sys.argv[1]))["programs"]["toy"]
+assert entry["commit"] == sys.argv[3], entry
+assert [h["commit"] for h in entry["history"]] == [sys.argv[2]], entry
+assert "history" not in entry["history"][0], entry
+PY
+else
+  fail "a second deploy with the first record uncommitted: $(cat "$work/out")"
+fi
+
 # After the deploy: the cluster's hash and the upgrade authority must be what was built and meant.
 git -C "$repo" checkout -q -- deployments 2>/dev/null || rm -f "$repo/deployments/devnet.json"
 ALREADY_DEPLOYED=1 FAKE_PROGRAM_HASH=3333 expect_refused "an on-chain hash other than the build's" "does not match" toy
-ALREADY_DEPLOYED=1 FAKE_AUTHORITY_AFTER=$WALLET expect_refused "an upgrade authority other than upgrade-authority.json" "upgrade authority" toy
+ALREADY_DEPLOYED=1 FAKE_AUTHORITY_AFTER=$WALLET expect_refused "an upgrade authority other than upgrade-authority.json" "not upgrade-authority.json's" toy
 [ ! -f "$repo/deployments/devnet.json" ] || fail "a failed check still wrote the record"
 
 # A local validator: no main or genesis checks needed, and the record goes where --record says.

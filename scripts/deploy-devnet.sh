@@ -12,7 +12,8 @@
 #   4. stops unless the cluster's program hash equals the build's executable hash and the
 #      program's upgrade authority is upgrade-authority.json's key;
 #   5. records the program id, the executable hash, the commit, the Docker image, the upgrade
-#      authority, the payer and the deploy slot in deployments/devnet.json.
+#      authority, the payer and the deploy slot in deployments/devnet.json, moving the
+#      program's earlier deploy into its `history`.
 #
 #   scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only]
 #                            [--record <file>]
@@ -91,8 +92,9 @@ if [ "$(printf '%s\n%s\n' "$MIN_VERIFY_VERSION" "$verify_version" | sort -V | he
   stop "solana-verify is $verify_version; verified builds need $MIN_VERIFY_VERSION or later (scripts/install-toolchain.sh verify)"
 fi
 
-# The commit: on devnet it must be a commit on main, with nothing uncommitted beside it.
-if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
+# The commit: on devnet it must be a commit on main, with nothing uncommitted beside it but
+# deployments/devnet.json, whose new records reach main through a PR after the deploys.
+if [ -n "$(git -C "$ROOT" status --porcelain -- . ':(exclude)deployments/devnet.json')" ]; then
   if $local_cluster; then
     echo "note: the worktree has uncommitted changes, which the build leaves out" >&2
   else
@@ -156,11 +158,6 @@ retry() {
   done
   "$@"
 }
-show="$(retry solana program show -u "$url" --commitment confirmed "$program_id" --output json)"
-onchain_authority="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["authority"])' "$show")"
-slot="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["lastDeploySlot"])' "$show")"
-[ "$onchain_authority" = "$authority" ] \
-  || stop "the program's upgrade authority is $onchain_authority, not upgrade-authority.json's $authority"
 # Right after an upgrade a cluster can still answer with the old bytes, so wait for the new.
 for _ in $(seq 1 "${DEPLOY_CHECK_TRIES:-30}"); do
   onchain_hash="$(retry solana-verify get-program-hash -u "$url" "$program_id")"
@@ -168,6 +165,12 @@ for _ in $(seq 1 "${DEPLOY_CHECK_TRIES:-30}"); do
   sleep 2
 done
 [ "$onchain_hash" = "$hash" ] || stop "the cluster's program hash $onchain_hash does not match the build's $hash"
+# Read once the new bytes are served, so the slot and the authority are this deploy's.
+show="$(retry solana program show -u "$url" --commitment confirmed "$program_id" --output json)"
+onchain_authority="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["authority"])' "$show")"
+slot="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["lastDeploySlot"])' "$show")"
+[ "$onchain_authority" = "$authority" ] \
+  || stop "the program's upgrade authority is $onchain_authority, not upgrade-authority.json's $authority"
 echo "On-chain hash matches the build: $onchain_hash; upgrade authority $onchain_authority; deployed in slot $slot"
 
 # 5. The record.
@@ -180,7 +183,8 @@ path, cluster, program, program_id, hash_, commit, image, authority, payer, slot
 record = json.load(open(path)) if os.path.exists(path) else {"cluster": cluster, "programs": {}}
 if record.get("cluster") != cluster:
     sys.exit(f"{path} records {record.get('cluster')}, not {cluster}")
-record["programs"][program] = {
+previous = record["programs"].get(program)
+entry = {
     "programId": program_id,
     "executableHash": hash_,
     "commit": commit,
@@ -190,6 +194,12 @@ record["programs"][program] = {
     "slot": int(slot),
     "deployedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }
+# Earlier deploys of the program, newest first: the metadata may still name one of them
+# until it is pinned to this deploy.
+if previous:
+    earlier = {k: v for k, v in previous.items() if k != "history"}
+    entry["history"] = [earlier] + previous.get("history", [])
+record["programs"][program] = entry
 record["programs"] = dict(sorted(record["programs"].items()))
 with open(path, "w") as f:
     json.dump(record, f, indent=2)
