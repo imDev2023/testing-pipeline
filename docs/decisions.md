@@ -2937,7 +2937,27 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
 
-### TAX-49: Bump searches and the compute ceilings
+### TAX-49: The maths re-checks the creation rules
+
+- Question: Should the pricing and the split refuse a rate above the cap and shares that are not the whole themselves, when creation and the tax authority's changes already refuse them?
+- Answer: Yes: the pricing refuses a rate above `MAX_TAX_BPS` and the split refuses shares that do not sum to 10,000 with the burn share, for every input, so the proven properties hold for the maths on its own and not only for the market states creation allows.
+- Alternatives: Relying on the creation rules alone, which left the pricing applying any rate up to 100% and the split booking shares past the whole on small taxes if a market state ever held them.
+- Specified in: [`docs/spec/tax-amm.md`, Pricing and the tax](spec/tax-amm.md#pricing-and-the-tax)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: proofs of the pricing, tax and split maths](https://github.com/imDev2023/testing-pipeline/issues/64)
+
+### TAX-50: How the tax AMM's maths is proven
+
+- Question: Which properties of the pricing, tax and split maths are proven, and how is each established?
+- Answer: The property list in `docs/security/tax-amm/maths-properties.md`, chosen with Book of Knowledge: Kani proves for every input what needs no quotient and the rest for small inputs, Z3 proves every quotient claim for every input from lemmas proven on their own, and Proptest checks each property of the tax, a swap, the split and the curve on the compiled code, on at least 10,000 cases that exercise it.
+- Alternatives: Kani alone, whose full-domain proofs about quotients do not finish; Z3 on whole trades directly, which does not finish either.
+- Specified in: [`docs/spec/tax-amm.md`, Maths proofs](spec/tax-amm.md#maths-proofs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: proofs of the pricing, tax and split maths](https://github.com/imDev2023/testing-pipeline/issues/64)
+
+### TAX-51: Bump searches and the compute ceilings
 
 - Question: How is `distribute` held to its compute ceiling when its cost depends on how many bumps the slot wallet's associated token account needs?
 - Answer: The ceilings leave out what a bump search spends beyond an address's first bump, 1,500 units a try, which for `distribute` is 4,500 units for each further bump when it creates the account (the associated token program derives it twice more) and 1,500 when it does not; the spec states that rule so a caller can size a payout's compute limit, and the tests subtract exactly that.
@@ -2947,7 +2967,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
 
-### TAX-50: What every holder can exit means on a tax market
+### TAX-52: What every holder can exit means on a tax market
 
 - Question: How does the fuzzer check the bar's shared invariant that every holder can still exit, given that a tax market never pays out its virtual reserve?
 - Answer: Every wallet's whole holding of either mint quotes, or is refused as dust or, only on a market with a virtual reserve, because the curve would pay out more than the real reserve, in which case the largest sale the real reserve covers must quote; every sequence ends with every wallet selling all it holds, and each sale settles unless the spec refuses it.
@@ -4030,4 +4050,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.
 - `BAR-04`, `BAR-29`, `PIPESCOPE-87`: Pipeline's crates are on crates.io and its SDK on npm since 2026-11-10; the terminal uses the published packages, while the bar still pins the on-chain workspace's crates by git `rev` and the programs' demo scripts link a local SDK build from `scripts/fetch-pipeline.sh`; whether they move to the published packages is for the bar's owner.
-- `BAR-40`, `TAX-49`, `TAX-50`: set by the session of [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
+- `BAR-40`, `TAX-51`, `TAX-52`: set by the session of [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
