@@ -9,7 +9,8 @@ use anchor_lang::prelude::*;
 
 use crate::params::InitParams;
 
-/// A market was created through the router's `create_market`.
+/// A market was created, through the router's `create_market` or a launchpad's
+/// `pipeline_seed_liquidity`, which then emits [`MarketSeeded`].
 #[event]
 pub struct MarketCreated {
     pub market_state: Pubkey,
@@ -37,6 +38,26 @@ pub struct LiquidityAdded {
     pub share_count: u64,
     /// Whether this was the first deposit, which set the price.
     pub first: bool,
+}
+
+/// A launchpad's program seeded a new market with `pipeline_seed_liquidity`: its first deposit
+/// came from the seeder's escrows, and its shares went to the LP recipient.
+#[event]
+pub struct MarketSeeded {
+    pub market_state: Pubkey,
+    /// The calling program's PDA that signed, whose address scopes the market's.
+    pub seeder: Pubkey,
+    /// The owner of the shares, and the token account of the LP mint they went to: the
+    /// recipient's associated token account, the lock account when the recipient is the vault
+    /// authority.
+    pub lp_recipient: Pubkey,
+    pub shares_account: Pubkey,
+    /// What the market took of each mint, by mint index.
+    pub amounts: [u64; 2],
+    /// The LP shares minted to the recipient.
+    pub shares: u64,
+    /// The market's share count after the seed, the locked minimum included.
+    pub share_count: u64,
 }
 
 /// Which way a `rebalance` moved the lent mint.

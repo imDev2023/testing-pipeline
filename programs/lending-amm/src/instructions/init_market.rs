@@ -20,8 +20,8 @@ use crate::errors::StrategyError;
 use crate::events::MarketCreated;
 use crate::params::InitParams;
 use crate::state::{
-    market_state_address, LendingAmmMarket, AUTHORITY_SEED, CTOKEN_SEED, LP_MINT_SEED, MARKET_SEED,
-    RESERVED_LEN, STATE_VERSION, VAULT_SEED,
+    market_state_address, seeded_market_state_address, LendingAmmMarket, AUTHORITY_SEED,
+    CTOKEN_SEED, LP_MINT_SEED, MARKET_SEED, RESERVED_LEN, SEEDED_SEED, STATE_VERSION, VAULT_SEED,
 };
 use crate::token;
 
@@ -80,133 +80,215 @@ pub fn init_market<'info>(ctx: Context<'info, InitMarket<'info>>, data: Vec<u8>)
         StrategyError::NotPipeline
     );
 
-    let mints = [ctx.accounts.mint_0.key(), ctx.accounts.mint_1.key()];
-    require_keys_neq!(mints[0], mints[1], StrategyError::EqualMints);
-    params.validate()?;
-    let lent_index = params.lent_index as usize;
-    let other_index = 1 - lent_index;
-
-    // Every creation parameter is in the seeds, so nobody can occupy a market's address
-    // with other parameters.
-    let (expected_state, state_bump) =
-        market_state_address(&mints[other_index], &mints[lent_index], params.lp_fee_bps);
-    require_keys_eq!(
-        market_state,
-        expected_state,
-        StrategyError::WrongMarketState
-    );
-
     let accounts = &ctx.accounts;
-    let mint_accounts = [&accounts.mint_0, &accounts.mint_1];
-    let token_programs = [&accounts.token_program_0, &accounts.token_program_1];
-    let lent = config::lent_mint(&mints[lent_index]).ok_or(StrategyError::LentMintNotListed)?;
-    check_lent_mint(mint_accounts[lent_index], token_programs[lent_index])?;
-    check_other_mint(mint_accounts[other_index], token_programs[other_index])?;
-    require_keys_eq!(
-        accounts.collateral_mint.key(),
-        lent.collateral_mint,
-        StrategyError::WrongCollateralMint
-    );
+    let state = NewMarket {
+        market_state: &accounts.market_state,
+        payer: &accounts.payer,
+        system_program: &accounts.system_program,
+        mints: [&accounts.mint_0, &accounts.mint_1],
+        token_programs: [&accounts.token_program_0, &accounts.token_program_1],
+        authority: &accounts.authority,
+        authority_bump: ctx.bumps.authority,
+        vaults: [&accounts.vault_0, &accounts.vault_1],
+        vault_bumps: [ctx.bumps.vault_0, ctx.bumps.vault_1],
+        collateral_mint: &accounts.collateral_mint,
+        ctoken_account: &accounts.ctoken_account,
+        ctoken_bump: ctx.bumps.ctoken_account,
+        lp_mint: &accounts.lp_mint,
+        lp_mint_bump: ctx.bumps.lp_mint,
+        token_program: &accounts.token_program,
+    }
+    .create(&params, None, market_signer)?;
+    state.write(&accounts.market_state)
+}
 
-    let payer = accounts.payer.to_account_info();
-    let system = accounts.system_program.to_account_info();
-    let fee_seed = params.lp_fee_bps.to_le_bytes();
-    let state_seeds: &[&[u8]] = &[
-        MARKET_SEED,
-        mints[other_index].as_ref(),
-        mints[lent_index].as_ref(),
-        &fee_seed,
-        &[state_bump],
-    ];
-    token::create_pda_account(
-        &payer,
-        &system,
-        &accounts.market_state.to_account_info(),
-        LendingAmmMarket::SPACE as u64,
-        &crate::ID,
-        state_seeds,
-    )?;
+/// Everything a new market is created from, whether through the router's `create_market`
+/// or a launchpad's `pipeline_seed_liquidity`, so both refuse the same markets and create
+/// the same accounts.
+pub struct NewMarket<'a, 'info> {
+    pub market_state: &'a UncheckedAccount<'info>,
+    pub payer: &'a Signer<'info>,
+    pub system_program: &'a Program<'info, System>,
+    pub mints: [&'a UncheckedAccount<'info>; 2],
+    pub token_programs: [&'a Interface<'info, TokenInterface>; 2],
+    pub authority: &'a UncheckedAccount<'info>,
+    pub authority_bump: u8,
+    pub vaults: [&'a UncheckedAccount<'info>; 2],
+    pub vault_bumps: [u8; 2],
+    pub collateral_mint: &'a UncheckedAccount<'info>,
+    pub ctoken_account: &'a UncheckedAccount<'info>,
+    pub ctoken_bump: u8,
+    pub lp_mint: &'a UncheckedAccount<'info>,
+    pub lp_mint_bump: u8,
+    pub token_program: &'a Program<'info, Token>,
+}
 
-    let authority = accounts.authority.to_account_info();
-    let vault_bumps = [ctx.bumps.vault_0, ctx.bumps.vault_1];
-    let vaults = [&accounts.vault_0, &accounts.vault_1];
-    for i in 0..2 {
-        let bump = [vault_bumps[i]];
-        let seeds: &[&[u8]] = &[VAULT_SEED, market_state.as_ref(), mints[i].as_ref(), &bump];
+impl<'info> NewMarket<'_, 'info> {
+    /// Refuses a market that breaks a rule, checks the market state's address, and creates
+    /// the market state, both vaults, the cToken account and the LP mint. The market state
+    /// is `["market", other_mint, lent_mint, lp_fee_bps]`, or, for a market `seeder` seeds,
+    /// `["seeded", seeder, other_mint, lent_mint, lp_fee_bps]`. Returns the new market's
+    /// state, with nothing deposited, for the caller to complete and write. `market_signer` is
+    /// the router's market PDA for the market state, [`pipeline_market_signer`], which the
+    /// caller has already derived.
+    pub fn create(
+        &self,
+        params: &InitParams,
+        seeder: Option<Pubkey>,
+        market_signer: Pubkey,
+    ) -> Result<LendingAmmMarket> {
+        let market_state = self.market_state.key();
+        let mints = [self.mints[0].key(), self.mints[1].key()];
+        require_keys_neq!(mints[0], mints[1], StrategyError::EqualMints);
+        params.validate()?;
+        let lent_index = params.lent_index as usize;
+        let other_index = 1 - lent_index;
+        let (other_mint, lent_mint) = (mints[other_index], mints[lent_index]);
+
+        // Every creation parameter is in the seeds, so nobody can occupy a market's address
+        // with other parameters; a seeded market's seeds also hold its seeder, so nobody but
+        // the seeder's own program can create or fund it first.
+        let fee_seed = params.lp_fee_bps.to_le_bytes();
+        let (expected_state, state_bump) = match &seeder {
+            None => market_state_address(&other_mint, &lent_mint, params.lp_fee_bps),
+            Some(seeder) => {
+                seeded_market_state_address(seeder, &other_mint, &lent_mint, params.lp_fee_bps)
+            }
+        };
+        require_keys_eq!(
+            market_state,
+            expected_state,
+            StrategyError::WrongMarketState
+        );
+
+        let lent = config::lent_mint(&lent_mint).ok_or(StrategyError::LentMintNotListed)?;
+        check_lent_mint(self.mints[lent_index], self.token_programs[lent_index])?;
+        check_other_mint(self.mints[other_index], self.token_programs[other_index])?;
+        require_keys_eq!(
+            self.collateral_mint.key(),
+            lent.collateral_mint,
+            StrategyError::WrongCollateralMint
+        );
+
+        let payer = self.payer.to_account_info();
+        let system = self.system_program.to_account_info();
+        let bump = [state_bump];
+        let seeder_key = seeder.unwrap_or_default();
+        let state_seeds: Vec<&[u8]> = match &seeder {
+            None => vec![
+                MARKET_SEED,
+                other_mint.as_ref(),
+                lent_mint.as_ref(),
+                &fee_seed,
+                &bump,
+            ],
+            Some(_) => vec![
+                SEEDED_SEED,
+                seeder_key.as_ref(),
+                other_mint.as_ref(),
+                lent_mint.as_ref(),
+                &fee_seed,
+                &bump,
+            ],
+        };
+        token::create_pda_account(
+            &payer,
+            &system,
+            &self.market_state.to_account_info(),
+            LendingAmmMarket::SPACE as u64,
+            &crate::ID,
+            &state_seeds,
+        )?;
+
+        let authority = self.authority.to_account_info();
+        for (((mint, vault), vault_bump), token_program) in self
+            .mints
+            .iter()
+            .zip(self.vaults)
+            .zip(self.vault_bumps)
+            .zip(self.token_programs)
+        {
+            let bump = [vault_bump];
+            let mint_key = mint.key();
+            let seeds: &[&[u8]] = &[VAULT_SEED, market_state.as_ref(), mint_key.as_ref(), &bump];
+            token::create_token_account(
+                &payer,
+                &system,
+                &vault.to_account_info(),
+                &mint.to_account_info(),
+                &authority,
+                &token_program.to_account_info(),
+                seeds,
+            )?;
+        }
+        let spl_token = self.token_program.to_account_info();
+        let ctoken_bump = [self.ctoken_bump];
         token::create_token_account(
             &payer,
             &system,
-            &vaults[i].to_account_info(),
-            &mint_accounts[i].to_account_info(),
+            &self.ctoken_account.to_account_info(),
+            &self.collateral_mint.to_account_info(),
             &authority,
-            &token_programs[i].to_account_info(),
-            seeds,
+            &spl_token,
+            &[CTOKEN_SEED, market_state.as_ref(), &ctoken_bump],
         )?;
-    }
-    let spl_token = accounts.token_program.to_account_info();
-    let ctoken_bump = [ctx.bumps.ctoken_account];
-    token::create_token_account(
-        &payer,
-        &system,
-        &accounts.ctoken_account.to_account_info(),
-        &accounts.collateral_mint.to_account_info(),
-        &authority,
-        &spl_token,
-        &[CTOKEN_SEED, market_state.as_ref(), &ctoken_bump],
-    )?;
-    let lp_mint_bump = [ctx.bumps.lp_mint];
-    token::create_mint(
-        &payer,
-        &system,
-        &accounts.lp_mint.to_account_info(),
-        &authority.key(),
-        LP_DECIMALS,
-        &spl_token,
-        &[LP_MINT_SEED, market_state.as_ref(), &lp_mint_bump],
-    )?;
+        let lp_mint_bump = [self.lp_mint_bump];
+        token::create_mint(
+            &payer,
+            &system,
+            &self.lp_mint.to_account_info(),
+            &authority.key(),
+            LP_DECIMALS,
+            &spl_token,
+            &[LP_MINT_SEED, market_state.as_ref(), &lp_mint_bump],
+        )?;
 
-    let clock = Clock::get()?;
-    let vault_keys = [accounts.vault_0.key(), accounts.vault_1.key()];
-    let state = LendingAmmMarket {
-        version: STATE_VERSION,
-        bump: state_bump,
-        authority_bump: ctx.bumps.authority,
-        lent_index: params.lent_index,
-        lp_fee_bps: params.lp_fee_bps,
-        withdraw_mode: false,
-        mints,
-        vaults: vault_keys,
-        market_signer,
-        lp_mint: accounts.lp_mint.key(),
-        ctoken_account: accounts.ctoken_account.key(),
-        reserve: lent.reserve,
-        collateral_mint: lent.collateral_mint,
-        seeder: Pubkey::default(),
-        reserves: [0; 2],
-        ctokens: 0,
-        deposited: 0,
-        redeemed: 0,
-        created_slot: clock.slot,
-        created_at: clock.unix_timestamp,
-        reserved: [0; RESERVED_LEN],
-    };
-    {
-        let info = accounts.market_state.to_account_info();
-        let mut data = info.try_borrow_mut_data()?;
-        state.try_serialize(&mut &mut data[..])?;
+        let clock = Clock::get()?;
+        let vaults = [self.vaults[0].key(), self.vaults[1].key()];
+        emit!(MarketCreated {
+            market_state,
+            mints,
+            vaults,
+            params: *params,
+            reserve: lent.reserve,
+            lp_mint: self.lp_mint.key(),
+            ctoken_account: self.ctoken_account.key(),
+            created_slot: clock.slot,
+            created_at: clock.unix_timestamp,
+        });
+        Ok(LendingAmmMarket {
+            version: STATE_VERSION,
+            bump: state_bump,
+            authority_bump: self.authority_bump,
+            lent_index: params.lent_index,
+            lp_fee_bps: params.lp_fee_bps,
+            withdraw_mode: false,
+            mints,
+            vaults,
+            market_signer,
+            lp_mint: self.lp_mint.key(),
+            ctoken_account: self.ctoken_account.key(),
+            reserve: lent.reserve,
+            collateral_mint: lent.collateral_mint,
+            seeder: seeder_key,
+            reserves: [0; 2],
+            ctokens: 0,
+            deposited: 0,
+            redeemed: 0,
+            created_slot: clock.slot,
+            created_at: clock.unix_timestamp,
+            reserved: [0; RESERVED_LEN],
+        })
     }
-    emit!(MarketCreated {
-        market_state,
-        mints,
-        vaults: vault_keys,
-        params,
-        reserve: lent.reserve,
-        lp_mint: accounts.lp_mint.key(),
-        ctoken_account: accounts.ctoken_account.key(),
-        created_slot: clock.slot,
-        created_at: clock.unix_timestamp,
-    });
-    Ok(())
+}
+
+impl LendingAmmMarket {
+    /// Writes the market state, discriminator first, into its account.
+    pub fn write(&self, account: &UncheckedAccount) -> Result<()> {
+        let info = account.to_account_info();
+        let mut data = info.try_borrow_mut_data()?;
+        self.try_serialize(&mut &mut data[..])
+    }
 }
 
 /// The router's market PDA for a market state of this program: `["market", program,

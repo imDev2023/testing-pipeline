@@ -86,6 +86,72 @@
             }
         ]
     },
+    "seed_liquidity": {
+        "description": "For a launchpad graduating a token: its program calls pipeline_seed_liquidity, which creates a market for a token and a lent mint and makes its first deposit from the launchpad's escrows, all in one call. SeedRequest.data is these arguments, Borsh-encoded in order, exactly as init's: lent_index (u8), then lp_fee_bps (u16), under the same rules as creation. This form gives the mints in the order of the market state's seeds, the other mint first and the lent mint second, so lent_index is 1 and each vault below is derived from the mint at its index; a launchpad that builds the call itself may give the lent mint first instead, with lent_index 0 and vault_0 and vault_1 derived from the mints in that order, and the market's address is the same either way. SeedRequest.amounts is what to take from each escrow, in mint order, both above 0: the market takes both in full and opens at the price they imply. Accounts: Pipeline's fixed seed accounts (the seeder, the market state below, the payer, the system program and the LP recipient), then mint, escrow and token program for each mint, then the accounts below, then the token's transfer-hook accounts, if any. The first deposit's shares, the square root of the product of the two amounts less the locked minimum (MINIMUM_LIQUIDITY among the IDL's constants), kept back for good, go to the LP recipient's associated token account for the market's LP mint, the input lp_recipient_shares, which the call creates from the payer's SOL; to lock them for good, name the market's vault authority (pda:strategy:str:authority,key:market_state) as the LP recipient, which puts them in the market's lock account. The input reserve is the lent mint's Kamino reserve and collateral_mint its collateral mint, which the program checks, as init's and add_liquidity's. Returns SeedResult with what left each escrow and the shares minted as lp_amount. Follow it in the same transaction with the router's register_existing_market (no info accounts after the market state) and init_fee_account for each mint. The market state is keyed by the seeder, the mints and the LP fee, so nobody else can create or fund it, and a seeder seeds a pair, lent side and fee once.",
+        "idl_type": "InitParams",
+        "market_state": "pda:strategy:str:seeded,key:input:seeder,key:input:other_mint,key:input:lent_mint,arg:lp_fee_bps",
+        "args": [
+            {
+                "name": "lent_index",
+                "type": "u8",
+                "label": "Lent mint's index (1 on this form)",
+                "description": "Which of the two mints is lent to Kamino. This form takes the other mint first and the lent mint second, so it is 1; a caller that orders the mints the other way passes 0."
+            },
+            {
+                "name": "lp_fee_bps",
+                "type": "u16",
+                "label": "LP fee (basis points)",
+                "description": "Taken from every swap's input and kept in the market for its LPs. At most the program's cap."
+            }
+        ],
+        "accounts": [
+            {
+                "name": "authority",
+                "source": "pda:strategy:str:authority,key:market_state"
+            },
+            {
+                "name": "vault_0",
+                "source": "pda:strategy:str:vault,key:market_state,key:input:other_mint",
+                "writable": true
+            },
+            {
+                "name": "vault_1",
+                "source": "pda:strategy:str:vault,key:market_state,key:input:lent_mint",
+                "writable": true
+            },
+            {
+                "name": "collateral_mint",
+                "source": "input:collateral_mint"
+            },
+            {
+                "name": "ctoken_account",
+                "source": "pda:strategy:str:ctoken,key:market_state",
+                "writable": true
+            },
+            {
+                "name": "lp_mint",
+                "source": "pda:strategy:str:lp_mint,key:market_state",
+                "writable": true
+            },
+            {
+                "name": "token_program",
+                "source": "fixed:TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            },
+            {
+                "name": "recipient_shares",
+                "source": "input:lp_recipient_shares",
+                "writable": true
+            },
+            {
+                "name": "associated_token_program",
+                "source": "associated_token_program"
+            },
+            {
+                "name": "reserve",
+                "source": "input:reserve"
+            }
+        ]
+    },
     "actions": [
         {
             "name": "add_liquidity",
