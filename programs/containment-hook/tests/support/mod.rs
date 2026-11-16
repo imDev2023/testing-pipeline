@@ -412,19 +412,52 @@ pub const QUOTE: usize = 1;
 pub const SUPPLY: u64 = 1_000_000_000_000_000;
 pub const SEED: [u64; 2] = [500_000_000_000_000, 100_000_000_000];
 
+/// How [`launch_with`] departs from [`launch`]: the unlock terms and the home market's tax
+/// authority.
+#[derive(Clone, Copy, Debug)]
+pub struct LaunchOptions {
+    pub unlock_goal: u64,
+    /// The unlock deadline, in seconds after the binding.
+    pub deadline_after: i64,
+    /// The home market's tax authority; a key nobody holds when `None`.
+    pub tax_authority: Option<Pubkey>,
+}
+
+impl Default for LaunchOptions {
+    /// [`BindArgs::new`]'s terms: the goal [`GOAL`] and a deadline 30 days away.
+    fn default() -> Self {
+        LaunchOptions {
+            unlock_goal: GOAL,
+            deadline_after: 30 * DAY,
+            tax_authority: None,
+        }
+    }
+}
+
 /// Launches a contained token as the launch script does: the mint, the home market with its
 /// fee accounts, `bind`, the supply minted to the seeder (minting never calls the hook), then
 /// the tax AMM's `seed` with the hook tail after its own accounts.
 pub fn launch(env: &mut Env) -> Launched {
+    launch_with(env, LaunchOptions::default())
+}
+
+/// [`launch`] with other unlock terms or a tax authority.
+pub fn launch_with(env: &mut Env, options: LaunchOptions) -> Launched {
     let mint = contained_mint(env);
     let quote = env.create_mint(&TOKEN);
     let seeder = Keypair::new();
     env.svm.airdrop(&seeder.pubkey(), SOL).unwrap();
-    let params = quote_taxed_params(&seeder.pubkey(), QUOTE as u8);
+    let mut params = quote_taxed_params(&seeder.pubkey(), QUOTE as u8);
+    if let Some(authority) = options.tax_authority {
+        params.tax_authority = ak(&authority);
+    }
     let market = env
         .create_tax_market([(mint, TOKEN_2022), (quote, TOKEN)], &params)
         .unwrap();
-    bind(env, mint, &market).unwrap();
+    let mut args = BindArgs::new(env, mint, &market);
+    args.unlock_goal = options.unlock_goal;
+    args.unlock_deadline = now(env) + options.deadline_after;
+    send_bind(env, &args, &[]).unwrap();
     let holder = token_2022_account(env, &seeder.pubkey(), &mint);
     mint_to(env, &mint, &holder, SUPPLY).unwrap();
     env.write_token_account(&quote, &TOKEN, &seeder.pubkey(), SEED[QUOTE]);
@@ -689,4 +722,67 @@ pub fn execute_instruction(
         .map(|key| AccountMeta::new_readonly(key, false))
         .collect();
     Instruction::new_with_bytes(hook_id(), &data, accounts)
+}
+
+/// The `unlock` instruction for `mint`, with `market_state` as the home market's state.
+pub fn unlock_instruction(mint: &Pubkey, market_state: &Pubkey) -> Instruction {
+    let data = containment_hook::instruction::Unlock {}.data();
+    let accounts = vec![
+        AccountMeta::new(*mint, false),
+        AccountMeta::new(config_pda(mint), false),
+        AccountMeta::new_readonly(unlock_pda(mint), false),
+        AccountMeta::new_readonly(*market_state, false),
+        AccountMeta::new_readonly(TOKEN_2022, false),
+    ];
+    Instruction::new_with_bytes(hook_id(), &data, accounts)
+}
+
+/// A wallet with SOL and no tie to any token: it holds none, minted none, bound none and
+/// owns no market.
+pub fn stranger(env: &mut Env) -> Keypair {
+    let wallet = Keypair::new();
+    env.svm.airdrop(&wallet.pubkey(), SOL).unwrap();
+    wallet
+}
+
+/// Sends `instructions` signed and paid for by `payer` alone.
+pub fn send_as(
+    env: &mut Env,
+    payer: &Keypair,
+    instructions: &[Instruction],
+) -> Result<TransactionMetadata, String> {
+    env.svm.expire_blockhash();
+    let tx = solana_transaction::Transaction::new_signed_with_payer(
+        instructions,
+        Some(&payer.pubkey()),
+        &[payer],
+        env.svm.latest_blockhash(),
+    );
+    env.svm
+        .send_transaction(tx)
+        .map_err(|failed| format!("{:?}\n{}", failed.err, failed.meta.logs.join("\n")))
+}
+
+/// Sends `unlock` for a [`Launched`] token from a fresh [`stranger`], with the market state
+/// recorded at binding.
+pub fn unlock(env: &mut Env, launched: &Launched) -> Result<TransactionMetadata, String> {
+    let caller = stranger(env);
+    let instruction = unlock_instruction(&launched.mint, &launched.market.market_state);
+    send_as(env, &caller, &[instruction])
+}
+
+/// Sets the VM's clock to the Unix time `unix_timestamp`, leaving the rest of it alone.
+pub fn warp_to(env: &mut Env, unix_timestamp: i64) {
+    let mut clock = env.svm.get_sysvar::<solana_clock::Clock>();
+    clock.unix_timestamp = unix_timestamp;
+    env.svm.set_sysvar(&clock);
+}
+
+/// The mint's transfer hook authority and program, each `None` when unset; `None` when the
+/// mint has no transfer hook extension.
+pub fn mint_hook(env: &Env, mint: &Pubkey) -> Option<containment_hook::mint::TransferHook> {
+    let data = env.svm.get_account(mint).expect("mint").data;
+    containment_hook::mint::read_mint(&data)
+        .expect("a mint")
+        .transfer_hook
 }

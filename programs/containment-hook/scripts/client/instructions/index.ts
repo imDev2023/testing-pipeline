@@ -8,3 +8,4 @@
 
 export * from "./bind.ts";
 export * from "./execute.ts";
+export * from "./unlock.ts";

@@ -81,6 +81,51 @@ fn the_hook_reads_only_whole_tax_amm_market_states() {
 }
 
 #[test]
+fn the_hook_reads_the_tax_collected_the_tax_amm_wrote() {
+    for tax_collected in [0u128, 1, u64::MAX as u128, u64::MAX as u128 + 1, u128::MAX] {
+        let mut market = distinct_market(1);
+        market.tax_collected = tax_collected;
+        let mut bytes = vec![];
+        market.try_serialize(&mut bytes).unwrap();
+        assert_eq!(tax_market::tax_collected(&bytes), Some(tax_collected));
+    }
+    let mut bytes = vec![];
+    distinct_market(1).try_serialize(&mut bytes).unwrap();
+    assert_eq!(
+        tax_market::tax_collected(&bytes),
+        Some(u128::from_le_bytes([0xF1; 16]))
+    );
+    for broken in [
+        bytes[..bytes.len() - 1].to_vec(),
+        [bytes.as_slice(), &[0]].concat(),
+        {
+            let mut other = bytes.clone();
+            other[0] ^= 1;
+            other
+        },
+    ] {
+        assert_eq!(tax_market::tax_collected(&broken), None);
+    }
+}
+
+#[test]
+fn the_hook_reads_the_tax_collected_of_a_real_market_after_trades() {
+    let mut env = hook_env();
+    let launched = launch(&mut env);
+    let trader = trader(&mut env, &launched, 10 * SOL);
+    let bought = buy(&mut env, &launched, &trader, SOL);
+    sell(&mut env, &launched, &trader, bought.received / 2);
+    let state = env.tax_market(&launched.market.market_state);
+    assert!(state.tax_collected > 0);
+    let data = env
+        .svm
+        .get_account(&launched.market.market_state)
+        .unwrap()
+        .data;
+    assert_eq!(tax_market::tax_collected(&data), Some(state.tax_collected));
+}
+
+#[test]
 fn the_hook_reads_the_tax_side_of_real_markets() {
     let mut env = hook_env();
     for tax_side in [0u8, 1] {

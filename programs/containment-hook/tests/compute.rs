@@ -78,6 +78,40 @@ fn execute_stays_under_its_ceiling_on_every_hooked_transfer() {
 }
 
 #[test]
+fn unlock_stays_under_its_ceiling() {
+    // By the deadline and by the goal. It uses the bumps the config stores, so its cost does
+    // not move from mint to mint as `bind`'s does.
+    let mut most = 0;
+    for by_goal in [false, true] {
+        let mut env = hook_env();
+        let launched = launch_with(
+            &mut env,
+            LaunchOptions {
+                unlock_goal: if by_goal { 1 } else { GOAL },
+                ..LaunchOptions::default()
+            },
+        );
+        if by_goal {
+            let trader = trader(&mut env, &launched, 10 * SOL);
+            buy(&mut env, &launched, &trader, SOL);
+        } else {
+            let deadline = config(&env, &launched.mint).unlock_deadline;
+            warp_to(&mut env, deadline);
+        }
+        let meta = unlock(&mut env, &launched).unwrap();
+        let costs = hook_compute(&meta.logs);
+        assert_eq!(costs.len(), 1, "{:?}", meta.logs);
+        println!(
+            "unlock by the {}: {} CU",
+            if by_goal { "goal" } else { "deadline" },
+            costs[0]
+        );
+        most = most.max(costs[0]);
+    }
+    assert!(most <= ceilings::UNLOCK, "unlock took {most} CU");
+}
+
+#[test]
 fn a_buy_calls_the_hook_at_the_deepest_level_devnet_allows() {
     // docs/spec/README.md, "Test layers" 5: router (1), tax AMM (2), Token-2022 (3), hook (4).
     // Devnet does not have SIMD-0268's deeper call limit, and neither does this VM, which
