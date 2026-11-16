@@ -8,7 +8,7 @@
 mod common;
 
 use anchor_lang::Discriminator;
-use buy_wall_amm::events::{CapLowered, MarketCreated, MarketSeeded, Trimmed};
+use buy_wall_amm::events::{CapLowered, MarketCreated, MarketSeeded, Trimmed, WallPlaced};
 use buy_wall_amm::state::MarketState;
 use common::*;
 use pipeline_client::interface::discriminator;
@@ -89,7 +89,7 @@ fn the_idl_is_this_programs() {
 }
 
 #[test]
-fn its_instructions_are_pipelines_and_the_seed_with_their_discriminators() {
+fn its_instructions_are_pipelines_and_the_custom_actions_with_their_discriminators() {
     let idl = idl();
     let expected = [
         ("pipeline_init_market", discriminator::INIT_MARKET),
@@ -99,6 +99,10 @@ fn its_instructions_are_pipelines_and_the_seed_with_their_discriminators() {
         ("pipeline_swap", discriminator::SWAP),
         ("seed", pipeline_client::instruction_discriminator("seed")),
         ("pipeline_seed_liquidity", discriminator::SEED_LIQUIDITY),
+        (
+            "place_wall",
+            pipeline_client::instruction_discriminator("place_wall"),
+        ),
     ];
     assert_eq!(
         idl["instructions"].as_array().unwrap().len(),
@@ -140,6 +144,12 @@ fn its_init_and_seed_accounts_and_arguments_are_the_metadatas() {
     let action = named(&metadata["actions"], "seed");
     assert_eq!(names(&seed["accounts"]), names(&action["accounts"]));
     assert_eq!(names(&seed["args"]), names(&action["args"]));
+
+    // `place_wall`: the metadata's accounts, and no arguments.
+    let place_wall = named(&idl["instructions"], "place_wall");
+    let action = named(&metadata["actions"], "place_wall");
+    assert_eq!(names(&place_wall["accounts"]), names(&action["accounts"]));
+    assert!(names(&place_wall["args"]).is_empty() && names(&action["args"]).is_empty());
 }
 
 #[test]
@@ -222,32 +232,42 @@ fn its_events_and_errors_are_the_programs() {
     assert_eq!(bytes(&lowered["discriminator"]), CapLowered::DISCRIMINATOR);
     let trimmed = named(&idl["events"], "Trimmed");
     assert_eq!(bytes(&trimmed["discriminator"]), Trimmed::DISCRIMINATOR);
+    // `place_wall` emits one.
+    let placed = named(&idl["events"], "WallPlaced");
+    assert_eq!(bytes(&placed["discriminator"]), WallPlaced::DISCRIMINATOR);
     assert_eq!(
         names(&idl["events"]),
-        ["CapLowered", "MarketCreated", "MarketSeeded", "Trimmed"]
+        [
+            "CapLowered",
+            "MarketCreated",
+            "MarketSeeded",
+            "Trimmed",
+            "WallPlaced"
+        ]
     );
 
-    // Errors are numbered from 6000 in the enum's order, the last being `BadSeedAmounts`.
+    // Errors are numbered from 6000 in the enum's order, the last being `WallBelowThreshold`.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "BadSeedAmounts");
-    let last_code: u32 = buy_wall_amm::errors::StrategyError::BadSeedAmounts.into();
+    assert_eq!(last["name"], "WallBelowThreshold");
+    let last_code: u32 = buy_wall_amm::errors::StrategyError::WallBelowThreshold.into();
     assert_eq!(last["code"].as_u64().unwrap() as u32, last_code);
-    // The four trading refusals follow `Overflow`, then the seed request's, so every earlier
-    // error keeps its number.
+    // The four trading refusals follow `Overflow`, then the seed request's, then
+    // `place_wall`'s, so every earlier error keeps its number.
     let names: Vec<_> = errors.iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert_eq!(
-        names[names.len() - 6..],
+        names[names.len() - 7..],
         [
             "Overflow",
             "ZeroInput",
             "ZeroOutput",
             "NothingAfterFee",
             "PriceBoundReached",
-            "BadSeedAmounts"
+            "BadSeedAmounts",
+            "WallBelowThreshold"
         ]
     );
 }
@@ -255,7 +275,8 @@ fn its_events_and_errors_are_the_programs() {
 #[test]
 fn it_publishes_the_constants_the_demo_reads() {
     // The demo reads these from the generated client rather than repeating them
-    // (`POOL4-25`, `POOL4-30`): the fee shares, and what its model of the cap needs.
+    // (`POOL4-25`, `POOL4-30`, `POOL4-35`): the fee shares, and what its models of the cap,
+    // the wall and the guard need.
     let idl = idl();
     let value = |name: &str| -> String {
         named(&idl["constants"], name)["value"]
@@ -271,4 +292,9 @@ fn it_publishes_the_constants_the_demo_reads() {
         DECAY_CREDIT_WINDOW.to_string()
     );
     assert_eq!(value("MIN_LIQUIDITY"), MIN_LIQUIDITY.to_string());
+    assert_eq!(value("WALL_THRESHOLD"), WALL_THRESHOLD.to_string());
+    assert_eq!(value("KEEPER_TIP_CAP"), KEEPER_TIP_CAP.to_string());
+    assert_eq!(value("FLOOR_CRAWL_BPS"), FLOOR_CRAWL_BPS.to_string());
+    assert_eq!(value("REF_STEP_BPS"), REF_STEP_BPS.to_string());
+    assert_eq!(value("REF_STEP_WINDOW"), REF_STEP_WINDOW.to_string());
 }

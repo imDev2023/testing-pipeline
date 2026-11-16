@@ -600,6 +600,60 @@
       ]
     },
     {
+      "name": "place_wall",
+      "docs": [
+        "Custom action, a permissionless keeper job: closes the buy wall at the current price",
+        "and places it again with everything idle, at the lower of the price and the wall's",
+        "floor, tipping the caller in wrapped SOL; refused until `idle_sol` or the SOL the",
+        "wall has spent reaches `WALL_THRESHOLD`."
+      ],
+      "discriminator": [
+        204,
+        8,
+        129,
+        186,
+        78,
+        118,
+        132,
+        102
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone; named in the event."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "sol_vault",
+          "writable": true
+        },
+        {
+          "name": "tip_account",
+          "docs": [
+            "Any wrapped SOL account, for the tip; never the SOL vault itself."
+          ],
+          "writable": true
+        },
+        {
+          "name": "wsol_mint"
+        },
+        {
+          "name": "vault_authority"
+        },
+        {
+          "name": "sol_token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "seed",
       "docs": [
         "Custom action: seeds and opens a market, signed by its seeder, once. Remaining",
@@ -741,6 +795,19 @@
         98,
         212,
         110
+      ]
+    },
+    {
+      "name": "WallPlaced",
+      "discriminator": [
+        73,
+        189,
+        105,
+        99,
+        208,
+        230,
+        254,
+        212
       ]
     }
   ],
@@ -899,6 +966,11 @@
       "code": 6030,
       "name": "BadSeedAmounts",
       "msg": "A seed request needs exactly one amount per mint: the token's, then wrapped SOL's"
+    },
+    {
+      "code": 6031,
+      "name": "WallBelowThreshold",
+      "msg": "Neither idle SOL nor the SOL the wall has spent reaches WALL_THRESHOLD"
     }
   ],
   "types": [
@@ -1910,6 +1982,100 @@
           }
         ]
       }
+    },
+    {
+      "name": "WallPlaced",
+      "docs": [
+        "`place_wall` closed the old wall at the current price and placed the new one with",
+        "everything idle (docs/spec/pool4-for-solana.md, \"`place_wall`\")."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "caller",
+            "docs": [
+              "Whoever called it."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "tip_account",
+            "docs": [
+              "The wrapped SOL account the tip was paid to."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "converted",
+            "docs": [
+              "The SOL the old wall had spent buying tokens, in lamports."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "closed_sol",
+            "docs": [
+              "Lamports the old wall still held, moved to idle SOL."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "closed_tokens",
+            "docs": [
+              "Token units the old wall had bought, moved to the retired tokens."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "dust_sol",
+            "docs": [
+              "Lamports the pool held beyond the curve's own holdings, moved to idle SOL."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "dust_tokens",
+            "docs": [
+              "Token units the pool held beyond the curve's own holdings, moved to the retired",
+              "tokens."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "tip",
+            "docs": [
+              "The caller's tip, in lamports."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "wall_top",
+            "docs": [
+              "The new wall's top, a Q64.64 square-root price."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "wall_liquidity",
+            "docs": [
+              "The new wall's liquidity."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "wall_sol_placed",
+            "docs": [
+              "The lamports the new wall holds."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
     }
   ],
   "constants": [
@@ -1932,6 +2098,22 @@
       "value": "1000"
     },
     {
+      "name": "FLOOR_CRAWL_BPS",
+      "docs": [
+        "How fast the wall's floor may rise, in basis points of the price a day."
+      ],
+      "type": "u64",
+      "value": "400"
+    },
+    {
+      "name": "KEEPER_TIP_CAP",
+      "docs": [
+        "The most a wall placement tips its caller (0.002 SOL)."
+      ],
+      "type": "u64",
+      "value": "2000000"
+    },
+    {
       "name": "MIN_LIQUIDITY",
       "docs": [
         "The least liquidity the curve may ever hold.",
@@ -1941,6 +2123,23 @@
       "value": "1000000"
     },
     {
+      "name": "REF_STEP_BPS",
+      "docs": [
+        "How fast the reference may follow the price: `REF_STEP_BPS` of the price per",
+        "`REF_STEP_WINDOW` seconds."
+      ],
+      "type": "u64",
+      "value": "200"
+    },
+    {
+      "name": "REF_STEP_WINDOW",
+      "docs": [
+        "See `REF_STEP_BPS`, in seconds."
+      ],
+      "type": "i64",
+      "value": "12"
+    },
+    {
       "name": "SUITE_SHARE_BPS",
       "docs": [
         "The suite share, in basis points of the fee (10%).",
@@ -1948,6 +2147,16 @@
       ],
       "type": "u16",
       "value": "1000"
+    },
+    {
+      "name": "WALL_THRESHOLD",
+      "docs": [
+        "Idle SOL, or SOL the wall has spent, that lets the wall be placed again (0.01 SOL).",
+        "Published in the IDL (`#[constant]`), where the demo script reads it, as are the tip cap",
+        "and the guard's rates below (`POOL4-35`)."
+      ],
+      "type": "u64",
+      "value": "10000000"
     }
   ]
 }

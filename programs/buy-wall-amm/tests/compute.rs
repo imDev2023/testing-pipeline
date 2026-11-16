@@ -20,10 +20,10 @@ const MARKET_INFO: u64 = 10_000;
 const RESOLVE_ACCOUNTS: u64 = 10_000;
 const QUOTE: u64 = 40_000;
 const SWAP_ONE_STEP: u64 = 45_000;
-/// The spec's ceiling for a swap that crosses into the wall and trims; the wall's second
-/// step arrives with its own ticket, so a trim is measured against it now.
+/// The spec's ceiling for a swap that crosses into the wall and trims.
 const SWAP_TRIM: u64 = 60_000;
 const SEED_LIQUIDITY: u64 = 180_000;
+const PLACE_WALL: u64 = 50_000;
 
 const TOKENS: u64 = 1_000_000_000_000;
 const LAMPORTS: u64 = 10 * SOL;
@@ -327,4 +327,111 @@ fn pipeline_seed_liquidity_stays_under_its_ceiling() {
         worst = worst.max(units);
     }
     println!("worst: pipeline_seed_liquidity {worst} CU");
+}
+
+#[test]
+fn place_wall_and_swaps_that_cross_into_the_wall_and_trim_stay_under_their_ceilings() {
+    use buy_wall_amm::events::{Trimmed, WallPlaced};
+    // The same markets: an hour after the seed a buy and a sell back that trims leave SOL
+    // idle; `place_wall` places it at the price; a buy lifts the price above the wall's top
+    // and a sell of more than it bought crosses back into the wall and trims; then
+    // `place_wall` again closes a wall that has bought tokens.
+    let markets: [(&str, Pubkey, bool, u64, u64); 5] = [
+        (
+            "SPL Token, the worked example",
+            TOKEN,
+            false,
+            TOKENS,
+            LAMPORTS,
+        ),
+        ("Token-2022", TOKEN_2022, false, TOKENS, LAMPORTS),
+        (
+            "Token-2022 with a transfer hook",
+            TOKEN_2022,
+            true,
+            TOKENS,
+            LAMPORTS,
+        ),
+        ("a high price", TOKEN, false, 10_000_000, 10_000_000 * SOL),
+        ("a low price", TOKEN, false, u64::MAX / 2, 100 * SOL),
+    ];
+    let mut worst = (0, 0, 0);
+    for (label, program, hook, tokens, lamports) in markets {
+        let mut env = Env::new();
+        let admin = env.admin.pubkey();
+        let market = if hook {
+            let token = env.seedable_hooked_token();
+            env.create_and_seed_hooked(token, &launch_params(admin), tokens, lamports)
+                .unwrap()
+        } else {
+            let token = env.seedable_token(&program);
+            env.create_and_seed(token, program, &launch_params(admin), tokens, lamports)
+                .unwrap()
+                .0
+        };
+        let trader = env.trader(&market, tokens / 2, lamports);
+        let keeper = env.keeper();
+        let later = |env: &mut Env, seconds: i64| {
+            let clock = env.svm.get_sysvar::<anchor_lang::prelude::Clock>();
+            env.set_clock(clock.slot + 150, clock.unix_timestamp + seconds);
+        };
+        let swap = |env: &mut Env, direction: (usize, usize), amount: u64| {
+            env.swap_logged(&market, &trader, direction, TradeMode::ExactIn, amount, 0)
+                .unwrap()
+        };
+        later(&mut env, 3_600);
+        let (bought, _) = swap(&mut env, (1, 0), lamports / 3);
+        later(&mut env, 60);
+        swap(&mut env, (0, 1), bought.received + tokens / 100);
+
+        let (_, logs) = env.place_wall(&market, &keeper).unwrap();
+        assert_eq!(events::<WallPlaced>(&logs).len(), 1);
+        let placing = strategy_units(&logs, 0);
+        let top = env.state(&market).wall_top();
+
+        later(&mut env, 60);
+        let (bought, _) = swap(&mut env, (1, 0), lamports / 3);
+        assert!(env.state(&market).sqrt_price() > top);
+        later(&mut env, 60);
+        let sell = bought.received + tokens / 100;
+        let (_, logs) = env.quote_logged(&market, &exact_in(0, 1, sell)).unwrap();
+        let quote = strategy_units(&logs, 0);
+        let (_, logs) = swap(&mut env, (0, 1), sell);
+        assert!(
+            env.state(&market).sqrt_price() < top,
+            "{label}: the sell crosses into the wall"
+        );
+        assert_eq!(events::<Trimmed>(&logs).len(), 1, "{label}: the sell trims");
+        let crossing = strategy_units_without_hooks(&logs);
+
+        let (_, logs) = env.place_wall(&market, &keeper).unwrap();
+        let [placed] = events::<WallPlaced>(&logs).try_into().unwrap();
+        assert!(
+            placed.closed_tokens > 0,
+            "{label}: the old wall had bought tokens"
+        );
+        let replacing = strategy_units(&logs, 0);
+        println!(
+            "{label}: place_wall {placing} CU, again {replacing} CU; \
+             a sell crossing into the wall and trimming {crossing} CU, quoted in {quote} CU"
+        );
+        assert!(
+            placing.max(replacing) <= PLACE_WALL,
+            "{label}: place_wall used {placing}, {replacing}"
+        );
+        assert!(
+            crossing <= SWAP_TRIM,
+            "{label}: a sell crossing and trimming used {crossing}"
+        );
+        assert!(quote <= QUOTE, "{label}: pipeline_quote used {quote}");
+        worst = (
+            worst.0.max(placing.max(replacing)),
+            worst.1.max(crossing),
+            worst.2.max(quote),
+        );
+    }
+    println!(
+        "worst: place_wall {} CU, a sell crossing into the wall and trimming {} CU, pipeline_quote {} CU",
+        worst.0, worst.1, worst.2
+    );
 }

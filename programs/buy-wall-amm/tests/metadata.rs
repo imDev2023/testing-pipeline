@@ -1,6 +1,6 @@
 //! `metadata.json` (docs/spec/pool4-for-solana.md, "Custom actions and metadata") passes
-//! Pipeline's validator with zero warnings, and its `init`, `seed_liquidity` and `seed` forms
-//! describe exactly the instructions the program takes: the same arguments in the same order and Borsh
+//! Pipeline's validator with zero warnings, and its `init`, `seed_liquidity`, `seed` and
+//! `place_wall` forms describe exactly the instructions the program takes: the same arguments in the same order and Borsh
 //! encoding, and the same accounts, resolved here from each form's account sources.
 
 mod common;
@@ -208,6 +208,33 @@ fn the_seed_action_builds_exactly_what_seed_takes() {
                 ("sol_amount", Value::from(7)),
             ],
         ));
+        assert_eq!(data, expected.data);
+    }
+}
+
+#[test]
+fn the_place_wall_action_builds_exactly_what_place_wall_takes() {
+    let metadata = metadata();
+    let action = metadata["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == "place_wall")
+        .unwrap();
+    assert_eq!(action["kind"], "other");
+    assert_eq!(action["args"].as_array().map(Vec::len), Some(0));
+    let wallet = Pubkey::new_unique();
+    for token_program in [TOKEN, TOKEN_2022] {
+        let market = Market::addresses(Pubkey::new_unique(), Pubkey::new_unique(), token_program);
+        // The tip goes to the caller's own wrapped SOL account.
+        let tips = pda::associated_token(&wallet, &WSOL, &TOKEN);
+        let expected = place_wall_ix(&market, &wallet, &tips);
+        assert_eq!(
+            resolve_accounts(action, &market, &wallet, &[]),
+            expected.accounts
+        );
+        let mut data = pipeline_client::instruction_discriminator("place_wall").to_vec();
+        data.extend(encode_args(action, &[]));
         assert_eq!(data, expected.data);
     }
 }

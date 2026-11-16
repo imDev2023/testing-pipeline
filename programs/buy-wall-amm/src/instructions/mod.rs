@@ -2,6 +2,7 @@
 
 pub mod init_market;
 pub mod market_info;
+pub mod place_wall;
 pub mod read_trade;
 pub mod seed;
 pub mod seed_liquidity;
@@ -9,6 +10,7 @@ pub mod swap;
 
 pub use init_market::*;
 pub use market_info::*;
+pub use place_wall::*;
 pub use read_trade::*;
 pub use seed::*;
 pub use seed_liquidity::*;

@@ -47,6 +47,7 @@ import {
   getPipelineResolveAccountsInstruction,
   getPipelineSeedLiquidityInstructionAsync,
   getPipelineSwapInstruction,
+  getPlaceWallInstruction,
   getSeedInstruction,
   parsePipelineInitMarketInstruction,
   parsePipelineMarketInfoInstruction,
@@ -54,6 +55,7 @@ import {
   parsePipelineResolveAccountsInstruction,
   parsePipelineSeedLiquidityInstruction,
   parsePipelineSwapInstruction,
+  parsePlaceWallInstruction,
   parseSeedInstruction,
   type ParsedPipelineInitMarketInstruction,
   type ParsedPipelineMarketInfoInstruction,
@@ -61,6 +63,7 @@ import {
   type ParsedPipelineResolveAccountsInstruction,
   type ParsedPipelineSeedLiquidityInstruction,
   type ParsedPipelineSwapInstruction,
+  type ParsedPlaceWallInstruction,
   type ParsedSeedInstruction,
   type PipelineInitMarketAsyncInput,
   type PipelineMarketInfoInput,
@@ -68,6 +71,7 @@ import {
   type PipelineResolveAccountsInput,
   type PipelineSeedLiquidityAsyncInput,
   type PipelineSwapInput,
+  type PlaceWallInput,
   type SeedInput,
 } from "../instructions/index.ts";
 import {
@@ -113,10 +117,12 @@ export const BuyWallAmmEvent = {
   1: "MarketCreated",
   2: "MarketSeeded",
   3: "Trimmed",
+  4: "WallPlaced",
   CapLowered: 0,
   MarketCreated: 1,
   MarketSeeded: 2,
   Trimmed: 3,
+  WallPlaced: 4,
 } as const;
 
 export type BuyWallAmmEvent = (typeof BuyWallAmmEvent)[Exclude<
@@ -172,6 +178,17 @@ export function identifyBuyWallAmmEvent(
   ) {
     return BuyWallAmmEvent.Trimmed;
   }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([73, 189, 105, 99, 208, 230, 254, 212]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmEvent.WallPlaced;
+  }
   throw new Error(
     "The provided event could not be identified as a buyWallAmm event.",
   );
@@ -184,14 +201,16 @@ export const BuyWallAmmInstruction = {
   3: "PipelineResolveAccounts",
   4: "PipelineSeedLiquidity",
   5: "PipelineSwap",
-  6: "Seed",
+  6: "PlaceWall",
+  7: "Seed",
   PipelineInitMarket: 0,
   PipelineMarketInfo: 1,
   PipelineQuote: 2,
   PipelineResolveAccounts: 3,
   PipelineSeedLiquidity: 4,
   PipelineSwap: 5,
-  Seed: 6,
+  PlaceWall: 6,
+  Seed: 7,
 } as const;
 
 export type BuyWallAmmInstruction = (typeof BuyWallAmmInstruction)[Exclude<
@@ -273,6 +292,17 @@ export function identifyBuyWallAmmInstruction(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([204, 8, 129, 186, 78, 118, 132, 102]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmInstruction.PlaceWall;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
         new Uint8Array([255, 178, 140, 239, 113, 22, 214, 231]),
       ),
       0,
@@ -307,6 +337,9 @@ export type ParsedBuyWallAmmInstruction<
   | ({
       instructionType: typeof BuyWallAmmInstruction.PipelineSwap;
     } & ParsedPipelineSwapInstruction<TProgram>)
+  | ({
+      instructionType: typeof BuyWallAmmInstruction.PlaceWall;
+    } & ParsedPlaceWallInstruction<TProgram>)
   | ({
       instructionType: typeof BuyWallAmmInstruction.Seed;
     } & ParsedSeedInstruction<TProgram>);
@@ -356,6 +389,13 @@ export function parseBuyWallAmmInstruction<TProgram extends string>(
       return {
         instructionType: BuyWallAmmInstruction.PipelineSwap,
         ...parsePipelineSwapInstruction(instruction),
+      };
+    }
+    case BuyWallAmmInstruction.PlaceWall: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: BuyWallAmmInstruction.PlaceWall,
+        ...parsePlaceWallInstruction(instruction),
       };
     }
     case BuyWallAmmInstruction.Seed: {
@@ -420,6 +460,10 @@ export type BuyWallAmmPluginInstructions = {
     input: PipelineSwapInput,
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getPipelineSwapInstruction> & SelfPlanAndSendFunctions;
+  placeWall: (
+    input: PlaceWallInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getPlaceWallInstruction> & SelfPlanAndSendFunctions;
   seed: (
     input: SeedInput,
     config?: { programAddress?: Address | HasAddress },
@@ -502,6 +546,14 @@ export function buyWallAmmProgram(
             addSelfPlanAndSendFunctions(
               client,
               getPipelineSwapInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          placeWall: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getPlaceWallInstruction(input, {
                 programAddress:
                   instructionConfig?.programAddress ?? config.programAddress,
               }),
