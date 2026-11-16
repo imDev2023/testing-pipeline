@@ -1,4 +1,4 @@
-//! `quote_matches_swap`: compares every swap the run commits with the quote taken in the
+//! `quote_matches_swap`: compares every swap the run commits, in every exit check, with the quote taken in the
 //! same state just before it: output received, input sent, Pipeline's fee, and the trader's
 //! own balance changes.
 //!
@@ -13,6 +13,7 @@
 use serde_json::{json, Value};
 
 use crate::checks::exit_sizes::Measured;
+use crate::checks::exits::Committed;
 use crate::checks::readable::Trading;
 use crate::record::{Outcome, Verdict};
 use crate::trade::{Disagreement, Leg};
@@ -22,12 +23,16 @@ struct Compared<'a> {
     leg: &'a Leg,
     ordinary: bool,
     role: &'static str,
+    /// The check and step it came from, for a swap of a check other than `exit_sizes`.
+    context: Option<&'a str>,
 }
 
-fn legs(m: &Measured) -> Vec<Compared<'_>> {
-    // Every swap here is at the cluster's current clock and sold back in the same slot, so
-    // the ordinary trade is the ordinary sizes.
-    m.pairs
+fn legs<'a>(m: &'a Measured, others: &'a [Committed]) -> Vec<Compared<'a>> {
+    // Every swap of `exit_sizes` is at the cluster's current clock and sold back in the same
+    // slot, so its ordinary trade is the ordinary sizes; the other checks say which of
+    // theirs are.
+    let mut out: Vec<Compared> = m
+        .pairs
         .iter()
         .flat_map(|pair| pair.rows.iter())
         .flat_map(|row| {
@@ -36,21 +41,35 @@ fn legs(m: &Measured) -> Vec<Compared<'_>> {
                 leg: &row.buy,
                 ordinary,
                 role: "buy",
+                context: None,
             })
             .chain(row.sell.as_ref().map(|leg| Compared {
                 leg,
                 ordinary,
                 role: "sale",
+                context: None,
             }))
         })
-        .collect()
+        .collect();
+    out.extend(others.iter().map(|c| Compared {
+        leg: &c.leg,
+        ordinary: c.ordinary,
+        role: if c.leg.input == m.money {
+            "buy"
+        } else {
+            "sale"
+        },
+        context: Some(&c.context),
+    }));
+    out
 }
 
 fn describe(m: &Measured, c: &Compared, disagreement: &Disagreement) -> String {
-    let size = if c.role == "buy" {
-        format!("the buy of {}", m.amount(c.leg.amount_in))
-    } else {
-        format!("the sale of {} units bought", c.leg.amount_in)
+    let size = match (c.context, c.role) {
+        (Some(context), "buy") => format!("{context} of {}", m.amount(c.leg.amount_in)),
+        (Some(context), _) => format!("{context} of {} units bought", c.leg.amount_in),
+        (None, "buy") => format!("the buy of {}", m.amount(c.leg.amount_in)),
+        (None, _) => format!("the sale of {} units bought", c.leg.amount_in),
     };
     match disagreement {
         Disagreement::Figures { fields } => {
@@ -97,13 +116,14 @@ fn numbers(m: &Measured, compared: &[Compared]) -> Value {
     })
 }
 
-pub fn judge(m: &Measured, trading: &Trading) -> Verdict {
+/// Judges every swap of `exit_sizes` and the `others` the other exit checks committed.
+pub fn judge(m: &Measured, trading: &Trading, others: &[Committed]) -> Verdict {
     if let Trading::NotRun(why) = trading {
         return Verdict::not_run(format!("Not run: {why}."));
     }
-    let compared = legs(m);
+    let compared = legs(m, others);
     let numbers = numbers(m, &compared);
-    let inputs = json!({ "swaps": "every swap of exit_sizes", "mode": "exact-in" });
+    let inputs = json!({ "swaps": "every swap the run committed", "mode": "exact-in" });
     let disagreements: Vec<(&Compared, Disagreement)> = compared
         .iter()
         .filter_map(|c| c.leg.disagreement().map(|d| (c, d)))
