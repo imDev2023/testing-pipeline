@@ -106,4 +106,6 @@ pub enum StrategyError {
     KaminoDepositsBlocked,
     #[msg("The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only")]
     ReserveDeprecated,
+    #[msg("rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls")]
+    RebalanceNotAlone,
 }

@@ -318,6 +318,10 @@ fn its_events_and_errors_are_the_programs() {
             "ReserveDeprecated",
             lending_amm::StrategyError::ReserveDeprecated,
         ),
+        (
+            "RebalanceNotAlone",
+            lending_amm::StrategyError::RebalanceNotAlone,
+        ),
     ] {
         let listed = errors.iter().find(|e| e["name"] == name).unwrap();
         assert_eq!(
@@ -326,5 +330,5 @@ fn its_events_and_errors_are_the_programs() {
             "{name}"
         );
     }
-    assert_eq!(errors.last().unwrap()["name"], "ReserveDeprecated");
+    assert_eq!(errors.last().unwrap()["name"], "RebalanceNotAlone");
 }

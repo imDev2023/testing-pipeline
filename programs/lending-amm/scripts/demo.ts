@@ -1484,7 +1484,8 @@ async function main() {
     kaminoCommand('emergency', 'on');
     const inEmergency = await lentSide();
     await sellToken('sell within the buffer in emergency mode', await saleNow(inEmergency.buffer / 2n));
-    const beyondAmount = await saleNow((await lentSide()).buffer + (await lentSide()).buffer / 2n);
+    const afterWithin = await lentSide();
+    const beyondAmount = await saleNow(afterWithin.buffer + afterWithin.buffer / 2n);
     const beyondTrade = tradeOf(0, beyondAmount);
     const beyondAccounts = await pipeline.resolveAccounts(rpc, routerView, beyondTrade, payer.address, simulation);
     if (beyondAccounts.length !== 3) fail(`a sale Kamino cannot pay resolved ${beyondAccounts.length} strategy accounts, not 3 without redeem accounts`);

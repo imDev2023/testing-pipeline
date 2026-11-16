@@ -17,14 +17,23 @@
 //! The market then measures what actually moved, at its buffer vault and its cToken account,
 //! and records exactly that, with the running totals deposited into and redeemed from Kamino,
 //! and the mode it is in. It creates no account and pays nothing, so the caller pays only the
-//! transaction fee. A call Kamino refuses fails whole.
+//! transaction fee. A call Kamino refuses fails whole. It must be called directly, beside nothing
+//! but compute budget instructions, klend's `refresh_reserve` and other `rebalance` calls
+//! ([`require_alone`]), so nothing in its transaction can move Kamino's free liquidity around it.
 
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::instruction::{get_stack_height, TRANSACTION_LEVEL_STACK_HEIGHT};
+use anchor_lang::Discriminator;
+use solana_instructions_sysvar::load_instruction_at_checked;
+
+/// The compute budget program, whose instructions may share a transaction with `rebalance`.
+const COMPUTE_BUDGET: Pubkey = pubkey!("ComputeBudget111111111111111111111111111111");
 
 use crate::buffer::Move;
+use crate::config::KLEND_PROGRAM;
 use crate::errors::StrategyError;
 use crate::events::{RebalanceDirection, Rebalanced, WithdrawModeEntered, WithdrawModeLeft};
-use crate::kamino::KaminoAccounts;
+use crate::kamino::{KaminoAccounts, INSTRUCTIONS_SYSVAR, REFRESH_RESERVE};
 use crate::state::{LendingAmmMarket, AUTHORITY_SEED};
 use crate::token;
 use crate::withdraw_mode::{self, Kamino};
@@ -73,7 +82,51 @@ pub struct Rebalance<'info> {
     pub instructions_sysvar: UncheckedAccount<'info>,
 }
 
+/// Whether an instruction of `program` with `data` may share a transaction with `rebalance`:
+/// compute budget instructions, klend's `refresh_reserve`, which a keeper puts first when the
+/// reserve's stored rate is stale, and `rebalance` itself, on this market or another.
+pub fn allowed_beside_rebalance(program: &Pubkey, data: &[u8]) -> bool {
+    let tag = data.get(..8);
+    *program == COMPUTE_BUDGET
+        || (*program == KLEND_PROGRAM && tag == Some(&REFRESH_RESERVE[..]))
+        || (*program == crate::ID && tag == Some(crate::instruction::Rebalance::DISCRIMINATOR))
+}
+
+/// Refuses with `RebalanceNotAlone` unless `rebalance` is called directly, at the transaction's
+/// level, beside nothing [`allowed_beside_rebalance`] refuses, as the instructions sysvar shows.
+///
+/// Withdraw mode measures Kamino's free liquidity at the moment `rebalance` runs, so anything else
+/// in its transaction could move it there and back: a deposit before it and a redeem after it, by
+/// klend's instructions or by another program calling klend, to force a market out of withdraw
+/// mode and lend into a crunch, or a flash loan around it to force one in
+/// (docs/spec/lending-pool.md, "Withdraw mode").
+fn require_alone(instructions: &AccountInfo) -> Result<()> {
+    require!(
+        get_stack_height() == TRANSACTION_LEVEL_STACK_HEIGHT,
+        StrategyError::RebalanceNotAlone
+    );
+    require_keys_eq!(
+        *instructions.key,
+        INSTRUCTIONS_SYSVAR,
+        StrategyError::KaminoAccountWrong
+    );
+    let count = {
+        let data = instructions.try_borrow_data()?;
+        let bytes = data.get(..2).ok_or(StrategyError::KaminoAccountWrong)?;
+        u16::from_le_bytes([bytes[0], bytes[1]])
+    };
+    for index in 0..count {
+        let instruction = load_instruction_at_checked(index as usize, instructions)?;
+        require!(
+            allowed_beside_rebalance(&instruction.program_id, &instruction.data),
+            StrategyError::RebalanceNotAlone
+        );
+    }
+    Ok(())
+}
+
 pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result<()> {
+    require_alone(&ctx.accounts.instructions_sysvar)?;
     let accounts = &ctx.accounts;
     let market = &accounts.market_state;
     require!(market.is_open(), StrategyError::MarketNotOpen);
@@ -111,21 +164,17 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
     )?;
     let market_key = market.key();
     if decision.withdraw_mode != market.withdraw_mode {
-        let lent_total = buffer
-            .checked_add(lent_value)
-            .ok_or(StrategyError::Overflow)?;
-        let exposure = withdraw_mode::exposure(lent_value, lent_total);
         if decision.withdraw_mode {
             emit!(WithdrawModeEntered {
                 market_state: market_key,
                 free_liquidity: kamino_state.free,
-                exposure,
+                exposure: decision.exposure,
             });
         } else {
             emit!(WithdrawModeLeft {
                 market_state: market_key,
                 free_liquidity: kamino_state.free,
-                exposure,
+                exposure: decision.exposure,
             });
         }
     }

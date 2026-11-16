@@ -43,11 +43,13 @@ pub struct Kamino {
     pub deposits_blocked: bool,
 }
 
-/// What `rebalance` does: the mode the market has afterwards, and what it moves, if anything.
+/// What `rebalance` does: the mode the market has afterwards, what it moves, if anything, and
+/// the exposure `X` it measured the mode against.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Decision {
     pub withdraw_mode: bool,
     pub planned: Option<Move>,
+    pub exposure: u64,
 }
 
 /// The market's exposure, `X = max(V, T)`, for a lent value `lent_value` out of a lent side of
@@ -103,7 +105,8 @@ pub fn decide(
     let lent_total = buffer
         .checked_add(lent_value)
         .ok_or(StrategyError::Overflow)?;
-    let mode = next_mode(withdraw_mode, kamino.free, exposure(lent_value, lent_total));
+    let x = exposure(lent_value, lent_total);
+    let mode = next_mode(withdraw_mode, kamino.free, x);
     let planned = if mode {
         redeem_everything(lent_value, kamino.can_pay, min_rebalance)
     } else {
@@ -118,10 +121,12 @@ pub fn decide(
         Ok(planned) => Ok(Decision {
             withdraw_mode: mode,
             planned: Some(planned),
+            exposure: x,
         }),
         Err(_) if mode != withdraw_mode => Ok(Decision {
             withdraw_mode: mode,
             planned: None,
+            exposure: x,
         }),
         Err(refusal) => Err(refusal),
     }
@@ -187,7 +192,8 @@ mod tests {
             code(decide(false, 20, 80, kamino(399, 1_000), floor)),
             Ok(Decision {
                 withdraw_mode: true,
-                planned: Some(Move::Redeem(80))
+                planned: Some(Move::Redeem(80)),
+                exposure: 80
             })
         );
         // Kamino can pay only part of it.
@@ -195,7 +201,8 @@ mod tests {
             code(decide(false, 20, 80, kamino(399, 30), floor)),
             Ok(Decision {
                 withdraw_mode: true,
-                planned: Some(Move::Redeem(30))
+                planned: Some(Move::Redeem(30)),
+                exposure: 80
             })
         );
         // Entering with nothing Kamino can pay still records the mode.
@@ -203,7 +210,8 @@ mod tests {
             code(decide(false, 20, 80, kamino(399, 0), floor)),
             Ok(Decision {
                 withdraw_mode: true,
-                planned: None
+                planned: None,
+                exposure: 80
             })
         );
         // Already in it, everything redeemed: nothing to do, and it stays.
@@ -216,7 +224,8 @@ mod tests {
             code(decide(true, 100, 0, kamino(801, 0), floor)),
             Ok(Decision {
                 withdraw_mode: false,
-                planned: Some(Move::Deposit(80))
+                planned: Some(Move::Deposit(80)),
+                exposure: 80
             })
         );
         // Leaving while deposits are blocked still records the mode.
@@ -228,7 +237,8 @@ mod tests {
             code(decide(true, 100, 0, blocked, floor)),
             Ok(Decision {
                 withdraw_mode: false,
-                planned: None
+                planned: None,
+                exposure: 80
             })
         );
         // Blocked deposits are skipped and redeems go ahead.
@@ -244,7 +254,8 @@ mod tests {
             code(decide(false, 5, 95, blocked, floor)),
             Ok(Decision {
                 withdraw_mode: false,
-                planned: Some(Move::Redeem(15))
+                planned: Some(Move::Redeem(15)),
+                exposure: 95
             })
         );
         // Stopped redeems refuse, whatever else holds.
@@ -262,7 +273,8 @@ mod tests {
             code(decide(true, 100, 5, kamino(0, 1_000), floor)),
             Ok(Decision {
                 withdraw_mode: true,
-                planned: Some(Move::Redeem(5))
+                planned: Some(Move::Redeem(5)),
+                exposure: 84
             })
         );
         assert_eq!(

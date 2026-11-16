@@ -524,6 +524,40 @@ fn the_ceilings_hold_in_every_state_of_kamino() {
                 ceilings::REMOVE_LIQUIDITY_IN_KIND,
             ));
 
+            // Exactly the calls the state allows ran, so none of them escaped being measured.
+            let every_state = [
+                "pipeline_quote within",
+                "pipeline_resolve_accounts within",
+                "pipeline_swap within",
+                "pipeline_resolve_accounts beyond",
+                "remove_liquidity, in kind",
+            ];
+            let redeeming = [
+                "pipeline_quote beyond",
+                "pipeline_swap beyond",
+                "rebalance",
+                "remove_liquidity, cash",
+            ];
+            let mut allowed: Vec<&str> = every_state.to_vec();
+            match state {
+                KaminoState::Normal | KaminoState::BlockCtokenUsage => {
+                    allowed.extend(redeeming);
+                    allowed.push("add_liquidity");
+                }
+                KaminoState::LittleFreeLiquidity(_) => {
+                    allowed.extend(redeeming);
+                    allowed.extend(["add_liquidity", "rebalance leaving withdraw mode"]);
+                }
+                KaminoState::CapUsedUp
+                | KaminoState::ReserveEmergencyMode
+                | KaminoState::MarketEmergencyMode => allowed.push("add_liquidity"),
+                KaminoState::Deprecated | KaminoState::FailsLayoutCheck => {}
+            }
+            let mut ran: Vec<&str> = measured.iter().map(|(what, _, _)| what.as_str()).collect();
+            ran.sort_unstable();
+            allowed.sort_unstable();
+            assert_eq!(ran, allowed, "{name}, {state:?}: the calls that ran");
+
             let line: Vec<String> = measured
                 .iter()
                 .map(|(what, cost, _)| format!("{what} {cost}"))

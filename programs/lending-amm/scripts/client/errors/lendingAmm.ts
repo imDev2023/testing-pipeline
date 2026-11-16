@@ -113,6 +113,8 @@ export const LENDING_AMM_ERROR__KAMINO_STOPPED = 0x179e; // 6046
 export const LENDING_AMM_ERROR__KAMINO_DEPOSITS_BLOCKED = 0x179f; // 6047
 /** ReserveDeprecated: The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only */
 export const LENDING_AMM_ERROR__RESERVE_DEPRECATED = 0x17a0; // 6048
+/** RebalanceNotAlone: rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls */
+export const LENDING_AMM_ERROR__REBALANCE_NOT_ALONE = 0x17a1; // 6049
 
 export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__BAD_INIT_DATA
@@ -142,6 +144,7 @@ export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__NOT_ENOUGH_SHARES
   | typeof LENDING_AMM_ERROR__NOT_PIPELINE
   | typeof LENDING_AMM_ERROR__OVERFLOW
+  | typeof LENDING_AMM_ERROR__REBALANCE_NOT_ALONE
   | typeof LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING
   | typeof LENDING_AMM_ERROR__REDEEM_PAID_SHORT
   | typeof LENDING_AMM_ERROR__RESERVE_DEPRECATED
@@ -195,6 +198,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__NOT_ENOUGH_SHARES]: `The removal burns more LP shares than the market has minted`,
     [LENDING_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
     [LENDING_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
+    [LENDING_AMM_ERROR__REBALANCE_NOT_ALONE]: `rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls`,
     [LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING]: `The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again`,
     [LENDING_AMM_ERROR__REDEEM_PAID_SHORT]: `Kamino's redeem paid the market less than the swap's shortfall`,
     [LENDING_AMM_ERROR__RESERVE_DEPRECATED]: `The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only`,

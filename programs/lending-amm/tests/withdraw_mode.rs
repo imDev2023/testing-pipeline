@@ -174,3 +174,93 @@ fn a_market_that_has_lent_nothing_makes_no_first_deposit_into_a_reserve_below_th
         assert!(env.market_state(&market.market_state).ctokens > 0);
     }
 }
+
+#[test]
+fn rebalance_runs_alone_so_nothing_in_its_transaction_can_move_kamino_around_it() {
+    // Withdraw mode measures Kamino's free liquidity at the moment `rebalance` runs, so anything
+    // else in its transaction could move it there and back: a deposit before it and a redeem
+    // after it to force a market out of withdraw mode and lend into a crunch, or a flash loan
+    // around it to force one in. So `rebalance` must be called directly, never by another
+    // program, beside nothing but compute budget instructions, klend's `refresh_reserve` and
+    // other `rebalance` calls.
+    use solana_keypair::Keypair;
+    use solana_signer::Signer;
+    let lent = 0;
+    let entry = &LENT_MINTS[lent];
+    let mut env = Env::new();
+    env.load_klend();
+    env.load_smart_wallet();
+    let market = lent_market(&mut env, lent);
+    let exposure = env.exposure(&market);
+    env.set_free_liquidity(&market, WITHDRAW_MODE_ENTER * exposure - 1);
+    let caller = Keypair::new();
+    env.svm.airdrop(&caller.pubkey(), 10 * SOL).unwrap();
+    let before = env.market_state(&market.market_state);
+
+    // Any klend instruction but a refresh, here a stranger's redeem of one cToken.
+    let stranger = Keypair::new();
+    env.svm.airdrop(&stranger.pubkey(), SOL).unwrap();
+    let collateral = env.spl_account(&stranger.pubkey(), &ck(&entry.collateral_mint), 1);
+    let liquidity = env.spl_account(&stranger.pubkey(), &ck(&entry.mint), 0);
+    let klend_redeem = common::kamino::redeem_reserve_collateral(
+        &env.kamino,
+        lent,
+        &stranger.pubkey(),
+        &collateral,
+        &liquidity,
+        1,
+    );
+    let rebalance = env.rebalance_instruction(&market, &caller.pubkey());
+    assert_refused(
+        env.send_meta(
+            &[klend_redeem.clone(), rebalance.clone()],
+            &[&caller, &stranger],
+        ),
+        StrategyError::RebalanceNotAlone,
+    );
+    assert_refused(
+        env.send_meta(&[rebalance.clone(), klend_redeem], &[&caller, &stranger]),
+        StrategyError::RebalanceNotAlone,
+    );
+    // Any other program's instruction, here a plain SOL transfer.
+    let mut data = 2u32.to_le_bytes().to_vec();
+    data.extend(1u64.to_le_bytes());
+    let transfer = pipeline_client::Instruction::new_with_bytes(
+        pipeline_client::SYSTEM_PROGRAM_ID,
+        &data,
+        vec![
+            pipeline_client::AccountMeta::new(caller.pubkey(), true),
+            pipeline_client::AccountMeta::new(stranger.pubkey(), false),
+        ],
+    );
+    assert_refused(
+        env.send_meta(&[transfer, rebalance.clone()], &[&caller]),
+        StrategyError::RebalanceNotAlone,
+    );
+    // Called by another program.
+    assert_refused(
+        env.send_meta(
+            &[common::smart_wallet::through_smart_wallet(
+                rebalance.clone(),
+            )],
+            &[&caller],
+        ),
+        StrategyError::RebalanceNotAlone,
+    );
+    assert_eq!(env.market_state(&market.market_state), before);
+
+    // Beside a compute budget instruction and klend's refresh it runs, and enters withdraw mode.
+    let mut budget = vec![2u8];
+    budget.extend(200_000u32.to_le_bytes());
+    let compute_budget = pipeline_client::Instruction::new_with_bytes(
+        "ComputeBudget111111111111111111111111111111"
+            .parse()
+            .unwrap(),
+        &budget,
+        vec![],
+    );
+    let refresh = env.refresh_reserve_instruction(&market);
+    env.send_meta(&[compute_budget, refresh, rebalance], &[&caller])
+        .unwrap();
+    assert!(env.market_state(&market.market_state).withdraw_mode);
+}
