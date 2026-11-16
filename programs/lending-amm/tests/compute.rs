@@ -2,11 +2,13 @@
 //! docs/spec/lending-pool.md, "Compute ceilings", for the instructions that exist so far,
 //! and the creation transaction's size.
 //!
-//! The `ceilings` module mirrors the spec's table, and is its one place in the tests: a
-//! ceiling changes only by a PR to the spec file and this table together. A cost is what the
-//! lending AMM's own invocation consumes, its calls to other programs included, measured on
-//! plain SPL Token and Token-2022 mints and on a mint with Pipeline's test-hook. Each test
-//! prints what it measured.
+//! `Row` mirrors the spec's table, and is its one place in the tests: a ceiling, or the
+//! highest cost measured, changes only by a PR to the spec file and this table together. A
+//! cost is what the lending AMM's own invocation consumes, its calls to other programs
+//! included, measured on plain SPL Token and Token-2022 mints and on a mint with Pipeline's
+//! test-hook, and in every state of Kamino. Every measurement goes through [`record`], which
+//! prints it as `measured <row> <cost> CU: <where>` and asserts it is at most its row's
+//! ceiling.
 
 mod common;
 
@@ -16,19 +18,94 @@ use pipeline_client::Pubkey;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
 
-/// The spec's table, in compute units, for the instructions this build has.
-mod ceilings {
-    pub const PIPELINE_QUOTE: u64 = 40_000;
-    pub const PIPELINE_SWAP_NO_REDEEM: u64 = 40_000;
-    pub const PIPELINE_SWAP_WITH_REDEEM: u64 = 80_000;
-    pub const PIPELINE_RESOLVE_ACCOUNTS: u64 = 40_000;
-    pub const PIPELINE_INIT_MARKET: u64 = 150_000;
-    pub const PIPELINE_SEED_LIQUIDITY: u64 = 200_000;
-    pub const ADD_LIQUIDITY: u64 = 60_000;
-    pub const REBALANCE: u64 = 100_000;
-    pub const REMOVE_LIQUIDITY_CASH: u64 = 120_000;
-    pub const REMOVE_LIQUIDITY_IN_KIND: u64 = 90_000;
-    pub const LOCK_LP: u64 = 40_000;
+/// A row of the spec's table: its ceiling, and the highest cost measured for it on both
+/// cluster builds, every mint and every state of Kamino, in compute units.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Row {
+    PipelineQuote,
+    PipelineSwapNoRedeem,
+    PipelineSwapWithRedeem,
+    PipelineResolveAccounts,
+    PipelineInitMarket,
+    PipelineSeedLiquidity,
+    AddLiquidity,
+    Rebalance,
+    RemoveLiquidityCash,
+    RemoveLiquidityInKind,
+    LockLp,
+}
+
+impl Row {
+    const ALL: [Row; 11] = [
+        Row::PipelineQuote,
+        Row::PipelineSwapNoRedeem,
+        Row::PipelineSwapWithRedeem,
+        Row::PipelineResolveAccounts,
+        Row::PipelineInitMarket,
+        Row::PipelineSeedLiquidity,
+        Row::AddLiquidity,
+        Row::Rebalance,
+        Row::RemoveLiquidityCash,
+        Row::RemoveLiquidityInKind,
+        Row::LockLp,
+    ];
+
+    /// The row's first cell in the spec's table.
+    fn instruction(self) -> &'static str {
+        match self {
+            Row::PipelineQuote => "`pipeline_quote`",
+            Row::PipelineSwapNoRedeem => "`pipeline_swap`, no redeem",
+            Row::PipelineSwapWithRedeem => "`pipeline_swap`, with a redeem",
+            Row::PipelineResolveAccounts => "`pipeline_resolve_accounts`",
+            Row::PipelineInitMarket => "`pipeline_init_market`",
+            Row::PipelineSeedLiquidity => "`pipeline_seed_liquidity`",
+            Row::AddLiquidity => "`add_liquidity`",
+            Row::Rebalance => "`rebalance`",
+            Row::RemoveLiquidityCash => "`remove_liquidity`, cash",
+            Row::RemoveLiquidityInKind => "`remove_liquidity`, in kind",
+            Row::LockLp => "`lock_lp`",
+        }
+    }
+
+    /// `(highest measured, ceiling)`.
+    fn figures(self) -> (u64, u64) {
+        match self {
+            Row::PipelineQuote => (15_669, 20_000),
+            Row::PipelineSwapNoRedeem => (25_281, 35_000),
+            Row::PipelineSwapWithRedeem => (59_801, 75_000),
+            Row::PipelineResolveAccounts => (26_268, 35_000),
+            Row::PipelineInitMarket => (61_325, 80_000),
+            Row::PipelineSeedLiquidity => (110_575, 140_000),
+            // Kept at 60,000 rather than the rule's 55,000: on random keys the hooked first
+            // deposit measured up to 55,635 (see `fixed_key`).
+            Row::AddLiquidity => (40_662, 60_000),
+            Row::Rebalance => (71_758, 90_000),
+            Row::RemoveLiquidityCash => (76_080, 100_000),
+            Row::RemoveLiquidityInKind => (62_710, 80_000),
+            Row::LockLp => (36_981, 50_000),
+        }
+    }
+
+    fn ceiling(self) -> u64 {
+        self.figures().1
+    }
+}
+
+/// The headroom rule (docs/spec/lending-pool.md, "Compute ceilings"): a ceiling is at least
+/// the highest cost measured plus a quarter, rounded up to a multiple of 5,000.
+fn with_headroom(measured: u64) -> u64 {
+    (measured + measured.div_ceil(4)).div_ceil(5_000) * 5_000
+}
+
+/// Prints a measured cost and asserts it is at most its row's ceiling.
+fn record(row: Row, cost: u64, context: &str) {
+    println!("measured {row:?} {cost} CU: {context}");
+    assert!(
+        cost <= row.ceiling(),
+        "{context}: {} {cost} CU, ceiling {}",
+        row.instruction(),
+        row.ceiling()
+    );
 }
 
 /// Solana's limit on a serialized transaction, in bytes.
@@ -157,12 +234,12 @@ fn the_one_transaction_creation_succeeds_and_its_instructions_stay_under_their_c
             "on {name}: pipeline_init_market {} CU, add_liquidity (first deposit, creating the LP's shares account) {} CU",
             costs[0], costs[2]
         );
-        assert!(
-            costs[0] <= ceilings::PIPELINE_INIT_MARKET,
-            "{name}: {}",
-            costs[0]
+        record(Row::PipelineInitMarket, costs[0], &format!("on {name}"));
+        record(
+            Row::AddLiquidity,
+            costs[2],
+            &format!("first deposit on {name}"),
         );
-        assert!(costs[2] <= ceilings::ADD_LIQUIDITY, "{name}: {}", costs[2]);
     }
 }
 
@@ -234,11 +311,7 @@ fn seeding_by_a_launchpad_fits_one_transaction_and_stays_under_its_ceiling() {
             let costs = strategy_compute(&created.logs);
             assert_eq!(costs.len(), 2, "{what}: {:?}", created.logs);
             println!("{what}: pipeline_seed_liquidity {} CU", costs[0]);
-            assert!(
-                costs[0] <= ceilings::PIPELINE_SEED_LIQUIDITY,
-                "{what}: {}",
-                costs[0]
-            );
+            record(Row::PipelineSeedLiquidity, costs[0], &what);
         }
     }
 }
@@ -267,13 +340,15 @@ fn a_later_add_liquidity_stays_under_its_ceiling() {
             .unwrap();
         let repeat_cost = strategy_compute(&repeat.logs)[0];
         println!("add_liquidity on {name}: {fresh_cost} CU creating the shares account, {repeat_cost} CU with it");
-        assert!(
-            fresh_cost <= ceilings::ADD_LIQUIDITY,
-            "{name}: {fresh_cost}"
+        record(
+            Row::AddLiquidity,
+            fresh_cost,
+            &format!("on {name}, creating the shares account"),
         );
-        assert!(
-            repeat_cost <= ceilings::ADD_LIQUIDITY,
-            "{name}: {repeat_cost}"
+        record(
+            Row::AddLiquidity,
+            repeat_cost,
+            &format!("on {name}, with the shares account"),
         );
     }
 }
@@ -293,12 +368,10 @@ fn quotes_account_resolution_and_swaps_stay_under_their_ceilings() {
             println!(
                 "{input}->{output} on {name}: pipeline_resolve_accounts {resolve} CU, pipeline_quote {quote} CU, pipeline_swap {swap} CU"
             );
-            assert!(
-                resolve <= ceilings::PIPELINE_RESOLVE_ACCOUNTS,
-                "{name}: {resolve}"
-            );
-            assert!(quote <= ceilings::PIPELINE_QUOTE, "{name}: {quote}");
-            assert!(swap <= ceilings::PIPELINE_SWAP_NO_REDEEM, "{name}: {swap}");
+            let what = format!("{input}->{output} on {name}");
+            record(Row::PipelineResolveAccounts, resolve, &what);
+            record(Row::PipelineQuote, quote, &what);
+            record(Row::PipelineSwapNoRedeem, swap, &what);
         }
     }
 }
@@ -345,15 +418,10 @@ fn a_swap_that_redeems_its_shortfall_and_its_quote_and_resolution_stay_under_the
         println!(
             "a redeeming sell on {name}: pipeline_resolve_accounts {resolve} CU, pipeline_quote {quote} CU, pipeline_swap {swap} CU (klend {klend})"
         );
-        assert!(
-            resolve <= ceilings::PIPELINE_RESOLVE_ACCOUNTS,
-            "{name}: {resolve}"
-        );
-        assert!(quote <= ceilings::PIPELINE_QUOTE, "{name}: {quote}");
-        assert!(
-            swap <= ceilings::PIPELINE_SWAP_WITH_REDEEM,
-            "{name}: {swap}"
-        );
+        let what = format!("a redeeming sell on {name}");
+        record(Row::PipelineResolveAccounts, resolve, &what);
+        record(Row::PipelineQuote, quote, &what);
+        record(Row::PipelineSwapWithRedeem, swap, &what);
     }
 }
 
@@ -386,8 +454,8 @@ fn rebalance_stays_under_its_ceiling_depositing_and_redeeming() {
         println!(
             "rebalance on {name}: depositing {deposit} CU (klend {klend_deposit}), redeeming {redeem} CU (klend {klend_redeem})"
         );
-        assert!(deposit <= ceilings::REBALANCE, "{name}: {deposit}");
-        assert!(redeem <= ceilings::REBALANCE, "{name}: {redeem}");
+        record(Row::Rebalance, deposit, &format!("depositing on {name}"));
+        record(Row::Rebalance, redeem, &format!("redeeming on {name}"));
     }
 }
 
@@ -457,24 +525,34 @@ fn removals_in_cash_and_in_kind_and_lock_lp_stay_under_their_ceilings() {
             "on {name}: remove_liquidity in cash {cash} CU (klend {klend_redeem}), in kind {} CU creating the LP's cToken account and {} CU after; lock_lp {} CU creating the lock account and {} CU after",
             in_kind[0], in_kind[1], locks[0], locks[1]
         );
-        assert!(cash <= ceilings::REMOVE_LIQUIDITY_CASH, "{name}: {cash}");
-        for cost in in_kind {
-            assert!(cost <= ceilings::REMOVE_LIQUIDITY_IN_KIND, "{name}: {cost}");
+        record(Row::RemoveLiquidityCash, cash, &format!("on {name}"));
+        for (cost, when) in in_kind.into_iter().zip(["creating", "into"]) {
+            record(
+                Row::RemoveLiquidityInKind,
+                cost,
+                &format!("on {name}, {when} the LP's cToken account"),
+            );
         }
-        for cost in locks {
-            assert!(cost <= ceilings::LOCK_LP, "{name}: {cost}");
+        for (cost, when) in locks.into_iter().zip(["creating", "into"]) {
+            record(
+                Row::LockLp,
+                cost,
+                &format!("on {name}, {when} the lock account"),
+            );
         }
     }
 }
 
 #[test]
-fn the_ceilings_hold_in_every_state_of_kamino() {
-    // Each row of "When Kamino can't pay" but a failed layout check, where every call but an
-    // in-kind removal is refused, which the removal test above measures: on a market that has
-    // lent through klend's real deposit, at a fixed address and with LPs of fixed keys, every call
-    // the state allows is measured: quotes, account resolution and swaps within the buffer and
-    // beyond it, `rebalance` (entering withdraw mode and redeeming where Kamino is thin, then
-    // leaving it and depositing again), adding, and removing in cash and in kind.
+fn every_instruction_is_measured_in_every_state_of_kamino() {
+    // Each row of "When Kamino can't pay", a failed layout check included: on a market that has
+    // lent through klend's real deposit, at a fixed address and with LPs of fixed keys, every
+    // instruction is called in the state, and every call the state allows is measured: quotes,
+    // account resolution and swaps within the buffer and beyond it, `rebalance` (entering
+    // withdraw mode and redeeming where Kamino is thin, then leaving it and depositing again),
+    // adding, removing in cash and in kind, locking (creating the lock account, then into it),
+    // creating a market and seeding one by a launchpad. The calls that ran are asserted to be
+    // exactly the ones the table allows, so every call the state refuses was refused.
     use common::rebalance::{units, OTHER};
     use common::remove::Payout;
     use common::states::KaminoState;
@@ -489,20 +567,26 @@ fn the_ceilings_hold_in_every_state_of_kamino() {
             KaminoState::ReserveEmergencyMode,
             KaminoState::MarketEmergencyMode,
             KaminoState::Deprecated,
+            KaminoState::FailsLayoutCheck,
         ] {
             let mut env = Env::new();
             env.load_klend();
-            let options = MintOptions {
-                key: Some(fixed_key(&format!("the other mint, lending {name}"))),
-                ..MintOptions::default()
+            let lent_mint = (ck(&entry.mint), TOKEN);
+            let params = lending_amm::InitParams {
+                lent_index: 1,
+                lp_fee_bps: 30,
             };
-            let other_mint = env.create_mint_with(&TOKEN, options);
+            let fixed_mint = |env: &mut Env, role: &str| {
+                let options = MintOptions {
+                    key: Some(fixed_key(&format!("{role}, lending {name}"))),
+                    ..MintOptions::default()
+                };
+                env.create_mint_with(&TOKEN, options)
+            };
+            let other_mint = fixed_mint(&mut env, "the other mint");
             let spec = MarketSpec {
-                mints: [(other_mint, TOKEN), (ck(&entry.mint), TOKEN)],
-                params: lending_amm::InitParams {
-                    lent_index: 1,
-                    lp_fee_bps: 30,
-                },
+                mints: [(other_mint, TOKEN), lent_mint],
+                params,
             };
             let lp = solana_keypair::Keypair::new_from_array(fixed_key(&format!(
                 "an LP lending {name}"
@@ -515,22 +599,36 @@ fn the_ceilings_hold_in_every_state_of_kamino() {
             let within = env.sell_paying(&market, env.buffer(&market) / 2);
             let beyond = env.sell_paying(&market, env.buffer(&market) + little / 2);
             let free = env.free_liquidity(&market);
+            // A second market and a launch, made before the state so only their creation and
+            // seeding are called in it.
+            let created_mint = fixed_mint(&mut env, "a created market's mint");
+            let created_spec = MarketSpec {
+                mints: [(created_mint, TOKEN), lent_mint],
+                params,
+            };
+            let launched_mint = fixed_mint(&mut env, "a launched mint");
+            let seed = [OTHER, units(lent, 50)];
+            let launch = env.launch_by(
+                solana_keypair::Keypair::new_from_array(fixed_key(&format!(
+                    "a launch lending {name}"
+                ))),
+                [(launched_mint, TOKEN), lent_mint],
+                seed,
+            );
+            let recipient =
+                Pubkey::new_from_array(fixed_key(&format!("a recipient lending {name}")));
             env.set_kamino_state(&market, state);
 
-            let mut measured: Vec<(String, u64, u64)> = vec![];
+            let mut measured: Vec<(String, Row, u64)> = vec![];
             let trader = env.funded_wallet(&market, [4 * beyond, 0]);
-            for (size, amount, ceiling) in [
-                ("within", within, ceilings::PIPELINE_SWAP_NO_REDEEM),
-                ("beyond", beyond, ceilings::PIPELINE_SWAP_WITH_REDEEM),
+            for (size, amount, row) in [
+                ("within", within, Row::PipelineSwapNoRedeem),
+                ("beyond", beyond, Row::PipelineSwapWithRedeem),
             ] {
                 let trade = exact_in(other, lent_side, amount);
                 if let Ok(meta) = env.quote_meta(&market, &trade) {
                     let cost = strategy_compute(&meta.logs)[0];
-                    measured.push((
-                        format!("pipeline_quote {size}"),
-                        cost,
-                        ceilings::PIPELINE_QUOTE,
-                    ));
+                    measured.push((format!("pipeline_quote {size}"), Row::PipelineQuote, cost));
                 }
                 if let Ok((_, rounds)) = env.resolve_rounds(&market, &trade) {
                     let cost = rounds
@@ -540,19 +638,19 @@ fn the_ceilings_hold_in_every_state_of_kamino() {
                         .unwrap();
                     measured.push((
                         format!("pipeline_resolve_accounts {size}"),
+                        Row::PipelineResolveAccounts,
                         cost,
-                        ceilings::PIPELINE_RESOLVE_ACCOUNTS,
                     ));
                 }
                 if let Ok(meta) = env.swap_meta(&market, &trader, (other, lent_side), amount) {
                     let cost = *strategy_compute(&meta.logs).last().unwrap();
-                    measured.push((format!("pipeline_swap {size}"), cost, ceiling));
+                    measured.push((format!("pipeline_swap {size}"), row, cost));
                 }
             }
             // The sells drained the buffer below its band.
             if let Ok(meta) = env.rebalance(&market, None) {
                 let cost = strategy_compute(&meta.logs)[0];
-                measured.push(("rebalance".into(), cost, ceilings::REBALANCE));
+                measured.push(("rebalance".into(), Row::Rebalance, cost));
             }
             if env.market_state(&market.market_state).withdraw_mode {
                 // Borrowers repay all they took: rebalance leaves withdraw mode and deposits.
@@ -562,8 +660,8 @@ fn the_ceilings_hold_in_every_state_of_kamino() {
                 let cost = strategy_compute(&meta.logs)[0];
                 measured.push((
                     "rebalance leaving withdraw mode".into(),
+                    Row::Rebalance,
                     cost,
-                    ceilings::REBALANCE,
                 ));
             }
             let adder = solana_keypair::Keypair::new_from_array(fixed_key(&format!(
@@ -582,15 +680,15 @@ fn the_ceilings_hold_in_every_state_of_kamino() {
             }
             if let Ok(meta) = env.add_liquidity(&market, &adder, [OTHER / 10, units(lent, 5)], 0) {
                 let cost = strategy_compute(&meta.logs)[0];
-                measured.push(("add_liquidity".into(), cost, ceilings::ADD_LIQUIDITY));
+                measured.push(("add_liquidity".into(), Row::AddLiquidity, cost));
             }
             let shares = env.lp_shares_of(&market, &lp.pubkey()) / 100;
             if let Ok(meta) = env.remove_liquidity(&market, &lp, shares, [0, 0], Payout::Cash) {
                 let cost = strategy_compute(&meta.logs)[0];
                 measured.push((
                     "remove_liquidity, cash".into(),
+                    Row::RemoveLiquidityCash,
                     cost,
-                    ceilings::REMOVE_LIQUIDITY_CASH,
                 ));
             }
             let meta = env
@@ -599,54 +697,81 @@ fn the_ceilings_hold_in_every_state_of_kamino() {
             let cost = strategy_compute(&meta.logs)[0];
             measured.push((
                 "remove_liquidity, in kind".into(),
+                Row::RemoveLiquidityInKind,
                 cost,
-                ceilings::REMOVE_LIQUIDITY_IN_KIND,
             ));
+            for when in ["creating", "into"] {
+                let meta = env.lock_lp(&market, &lp, shares).unwrap();
+                let cost = strategy_compute(&meta.logs)[0];
+                measured.push((
+                    format!("lock_lp {when} the lock account"),
+                    Row::LockLp,
+                    cost,
+                ));
+            }
+            // Creation reads no reserve; seeding checks it before the first deposit.
+            let created = env.create_market(&created_spec).unwrap();
+            let cost = strategy_compute(&created.created.logs)[0];
+            measured.push(("pipeline_init_market".into(), Row::PipelineInitMarket, cost));
+            let graduation = env.graduation_transaction(&launch, &params, seed, &recipient, None);
+            if let Ok(meta) = env.svm.send_transaction(graduation) {
+                let cost = strategy_compute(&meta.logs)[0];
+                measured.push((
+                    "pipeline_seed_liquidity".into(),
+                    Row::PipelineSeedLiquidity,
+                    cost,
+                ));
+            }
 
             // Exactly the calls the state allows ran, so none of them escaped being measured.
+            // Resolving a trade's accounts reads the reserve only to choose the redeem accounts,
+            // and still answers when the reserve fails its check: the quote and the swap it
+            // resolves for are what refuse.
             let every_state = [
-                "pipeline_quote within",
                 "pipeline_resolve_accounts within",
-                "pipeline_swap within",
                 "pipeline_resolve_accounts beyond",
                 "remove_liquidity, in kind",
+                "lock_lp creating the lock account",
+                "lock_lp into the lock account",
+                "pipeline_init_market",
             ];
+            let trading = ["pipeline_quote within", "pipeline_swap within"];
             let redeeming = [
                 "pipeline_quote beyond",
                 "pipeline_swap beyond",
                 "rebalance",
                 "remove_liquidity, cash",
             ];
+            let adding = ["add_liquidity", "pipeline_seed_liquidity"];
             let mut allowed: Vec<&str> = every_state.to_vec();
             match state {
                 KaminoState::Normal | KaminoState::BlockCtokenUsage => {
+                    allowed.extend(trading);
                     allowed.extend(redeeming);
-                    allowed.push("add_liquidity");
+                    allowed.extend(adding);
                 }
                 KaminoState::LittleFreeLiquidity(_) => {
+                    allowed.extend(trading);
                     allowed.extend(redeeming);
-                    allowed.extend(["add_liquidity", "rebalance leaving withdraw mode"]);
+                    allowed.extend(adding);
+                    allowed.push("rebalance leaving withdraw mode");
                 }
                 KaminoState::CapUsedUp
                 | KaminoState::ReserveEmergencyMode
-                | KaminoState::MarketEmergencyMode => allowed.push("add_liquidity"),
-                KaminoState::Deprecated | KaminoState::FailsLayoutCheck => {}
+                | KaminoState::MarketEmergencyMode => {
+                    allowed.extend(trading);
+                    allowed.extend(adding);
+                }
+                KaminoState::Deprecated => allowed.extend(trading),
+                KaminoState::FailsLayoutCheck => {}
             }
             let mut ran: Vec<&str> = measured.iter().map(|(what, _, _)| what.as_str()).collect();
             ran.sort_unstable();
             allowed.sort_unstable();
             assert_eq!(ran, allowed, "{name}, {state:?}: the calls that ran");
 
-            let line: Vec<String> = measured
-                .iter()
-                .map(|(what, cost, _)| format!("{what} {cost}"))
-                .collect();
-            println!("{name}, {state:?}: {}", line.join(", "));
-            for (what, cost, ceiling) in measured {
-                assert!(
-                    cost <= ceiling,
-                    "{name}, {state:?}: {what} {cost} CU, ceiling {ceiling}"
-                );
+            for (what, row, cost) in measured {
+                record(row, cost, &format!("{what}, lending {name}, {state:?}"));
             }
         }
     }
@@ -664,26 +789,35 @@ fn the_table_mirrors_the_spec() {
         .and_then(|rest| rest.split("\n### ").next())
         .expect("the spec's compute ceilings section")
         .to_string();
-    let row = |instruction: &str, ceiling: u64| {
-        let cells = format!("| {instruction} | {} |", format_cu(ceiling));
+    for row in Row::ALL {
+        let (measured, ceiling) = row.figures();
+        let cells = format!(
+            "| {} | {} | {} |",
+            row.instruction(),
+            format_cu(measured),
+            format_cu(ceiling)
+        );
         assert!(
             table.contains(&cells),
             "the spec's table has no row {cells}"
         );
-    };
-    use ceilings::*;
-    row("`pipeline_quote`", PIPELINE_QUOTE);
-    row("`pipeline_swap`, no redeem", PIPELINE_SWAP_NO_REDEEM);
-    row("`pipeline_swap`, with a redeem", PIPELINE_SWAP_WITH_REDEEM);
-    row("`pipeline_resolve_accounts`", PIPELINE_RESOLVE_ACCOUNTS);
-    row("`pipeline_init_market`", PIPELINE_INIT_MARKET);
-    row("`pipeline_seed_liquidity`", PIPELINE_SEED_LIQUIDITY);
-    row("`add_liquidity`", ADD_LIQUIDITY);
-    row("`rebalance`", REBALANCE);
-    row("`remove_liquidity`, cash", REMOVE_LIQUIDITY_CASH);
-    row("`remove_liquidity`, in kind", REMOVE_LIQUIDITY_IN_KIND);
-    row("`lock_lp`", LOCK_LP);
+        // The headroom rule: every ceiling leaves at least a quarter above the highest cost.
+        assert!(
+            ceiling >= with_headroom(measured),
+            "{}: ceiling {ceiling} under the highest cost {measured} with its headroom",
+            row.instruction()
+        );
+    }
     let _ = Pubkey::default();
+}
+
+#[test]
+fn the_headroom_is_a_quarter_rounded_up_to_five_thousand() {
+    assert_eq!(with_headroom(0), 0);
+    assert_eq!(with_headroom(4_000), 5_000);
+    assert_eq!(with_headroom(16_000), 20_000);
+    assert_eq!(with_headroom(16_001), 25_000);
+    assert_eq!(with_headroom(59_812), 75_000);
 }
 
 /// `150000` as the spec writes it, `150,000`.

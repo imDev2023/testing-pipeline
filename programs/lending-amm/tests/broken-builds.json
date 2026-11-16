@@ -1,0 +1,101 @@
+{
+  "about": "Deliberately broken builds of the lending AMM, each one careless edit to a copy of its source, built by scripts/broken-builds.py and run by tests/broken_builds.rs, which checks that the invariant fuzzer (tests/common/fuzz.rs) catches each one by the invariant named. The program's own source never carries them.",
+  "builds": [
+    {
+      "name": "removal-rounds-up",
+      "why": "A removal's parts rounded up instead of down, so an LP takes more than their shares' part.",
+      "invariant": "[only a fall in Kamino's rate lowers R x L or an LP share's value]",
+      "file": "src/shares.rs",
+      "find": "    let part = |whole: u64| (whole as u128 * lp as u128 / n) as u64;\n",
+      "replace": "    let part = |whole: u64| (whole as u128 * lp as u128).div_ceil(n) as u64;\n"
+    },
+    {
+      "name": "swap-output-rounds-up",
+      "why": "A swap's output rounded up instead of down, in the trader's favour.",
+      "invariant": "[only a fall in Kamino's rate lowers R x L or an LP share's value]",
+      "file": "src/pricing.rs",
+      "find": "    let out = (reserve_out as u128 * net / denominator) as u64;\n",
+      "replace": "    let out = (reserve_out as u128 * net).div_ceil(denominator) as u64;\n"
+    },
+    {
+      "name": "swap-pays-less-than-its-quote",
+      "why": "The swap pays out one unit less than the quote it priced.",
+      "invariant": "[each quote equals its swap]",
+      "file": "src/instructions/swap.rs",
+      "find": "        quote.amount_out,\n        ctx.accounts.output_mint.decimals,\n",
+      "replace": "        quote.amount_out.saturating_sub(1),\n        ctx.accounts.output_mint.decimals,\n"
+    },
+    {
+      "name": "adding-records-more-than-it-takes",
+      "why": "Adding liquidity records one unit more of each side than it took in.",
+      "invariant": "[recorded never exceeds held]",
+      "file": "src/instructions/add_liquidity.rs",
+      "find": "        *reserve = reserve.checked_add(amount).ok_or(StrategyError::Overflow)?;\n",
+      "replace": "        *reserve = reserve.checked_add(amount + 1).ok_or(StrategyError::Overflow)?;\n"
+    },
+    {
+      "name": "swap-loses-a-unit-from-its-books",
+      "why": "A swap takes one unit more off its recorded output side than it paid out, so a unit leaves the books while staying in the vault.",
+      "invariant": "[value conserved]",
+      "file": "src/instructions/swap.rs",
+      "find": "        .checked_sub(quote.amount_out)\n        .ok_or(StrategyError::Overflow)?;\n    Ok(())\n",
+      "replace": "        .checked_sub(quote.amount_out + 1)\n        .ok_or(StrategyError::Overflow)?;\n    Ok(())\n"
+    },
+    {
+      "name": "no-sale-beyond-the-buffer",
+      "why": "The missing check of what Kamino can pay: every sale paying out more than the buffer is refused, though Kamino could pay its shortfall.",
+      "invariant": "[every holder can exit]",
+      "file": "src/pricing.rs",
+      "find": "    if shortfall > kamino_can_pay {\n",
+      "replace": "    if shortfall > 0 {\n"
+    },
+    {
+      "name": "no-removal-in-kind-in-withdraw-mode",
+      "why": "A removal in kind refused while the market is in withdraw mode, which Kamino's thin liquidity brings on.",
+      "invariant": "[a removal in kind succeeds in every Kamino state]",
+      "file": "src/instructions/remove_liquidity.rs",
+      "find": "    require!(removal.other >= min_other, StrategyError::BelowMinOther);\n",
+      "replace": "    require!(removal.other >= min_other, StrategyError::BelowMinOther);\n    require!(!in_kind || !market.withdraw_mode, StrategyError::KaminoCannotPay);\n"
+    },
+    {
+      "name": "swap-redeems-an-extra-ctoken",
+      "why": "A swap's redeem burns one cToken more than its shortfall needs.",
+      "invariant": "[a swap never deposits and redeems only its shortfall]",
+      "file": "src/instructions/swap.rs",
+      "find": "            .ctokens_for_shortfall(quote.shortfall, market.ctokens)?;\n",
+      "replace": "            .ctokens_for_shortfall(quote.shortfall, market.ctokens)?\n            .saturating_add(1);\n"
+    },
+    {
+      "name": "deposits-while-blocked",
+      "why": "The missing check of `block_ctoken_usage`: rebalance plans a deposit while Kamino blocks cToken deposits.",
+      "invariant": "[rebalance moves only towards its target, only redeems in withdraw mode and never deposits while blocked]",
+      "file": "src/withdraw_mode.rs",
+      "find": "            Ok(Move::Deposit(_)) if kamino.deposits_blocked => {\n                Err(StrategyError::KaminoDepositsBlocked)\n            }\n",
+      "replace": ""
+    },
+    {
+      "name": "leaves-withdraw-mode-early",
+      "why": "Withdraw mode left as soon as the free liquidity is back at the entry threshold, not above the exit threshold.",
+      "invariant": "[withdraw mode holds while Kamino's free liquidity is thin]",
+      "file": "src/withdraw_mode.rs",
+      "find": "    } else if free > WITHDRAW_MODE_EXIT as u128 * exposure {\n",
+      "replace": "    } else if free >= WITHDRAW_MODE_ENTER as u128 * exposure {\n"
+    },
+    {
+      "name": "removal-burns-a-share-short",
+      "why": "A removal burns one LP share less than it pays for.",
+      "invariant": "[the share count and the lock account move only as they may]",
+      "file": "src/instructions/remove_liquidity.rs",
+      "find": "        lp,\n    )?;\n\n    // In cash, redeem",
+      "replace": "        lp - 1,\n    )?;\n\n    // In cash, redeem"
+    },
+    {
+      "name": "adds-to-a-deprecated-reserve",
+      "why": "The missing check of a deprecated reserve: adding liquidity is allowed after a total write-off, though no redeem will ever come from it.",
+      "invariant": "[each call does what Kamino's state allows]",
+      "file": "src/instructions/add_liquidity.rs",
+      "find": "    require!(!reserve.deprecated(), StrategyError::ReserveDeprecated);\n",
+      "replace": ""
+    }
+  ]
+}

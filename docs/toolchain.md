@@ -132,6 +132,7 @@ cd programs
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p buy-wall-gate -- test-builds   # the buy wall release gate's stranding test builds, which the tests need
+python3 lending-amm/scripts/broken-builds.py   # the lending AMM's broken builds, which its fuzzer must catch
 cargo test --workspace                   # LiteSVM through devnet's router, with pipeline-check
 cargo kani --workspace -j --output-format=terse   # the maths proofs' default tiers; -j needs terse output
 cd ..

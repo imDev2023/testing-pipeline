@@ -439,19 +439,26 @@ In every state of "When Kamino can't pay" but a failed layout check, every call 
 `remove_liquidity` measured at most 76.1k in cash (klend's redeem 31.3k of it) and 62.7k in kind, both with the hook, the second creating the LP's cToken account; `lock_lp` measured 12.5k into an existing lock account and 32.5k for the market's first lock, which creates the lock account through the associated token program, so its ceiling rises from 20,000, set for one transfer, to 40,000 ([Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82), 2026-11-16).
 `pipeline_seed_liquidity` measured at most 110.6k on both builds through the stand-in launchpad, on a hooked token with the shares to a wallet, which creates five accounts, the recipient's shares account among them; the ceiling stands ([Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84), 2026-11-16).
 
-| Instruction | Ceiling (compute units) | Main cost |
-| --- | --- | --- |
-| `pipeline_quote` | 40,000 | Reserve checks and fixed-point maths; well under the quoter's 200,000 cap |
-| `pipeline_swap`, no redeem | 40,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
-| `pipeline_swap`, with a redeem | 80,000 | Kamino's redeem (mainnet median 29,670) |
-| `pipeline_resolve_accounts` | 40,000 | Runs the quote to decide on the redeem accounts |
-| `pipeline_init_market` | 150,000 | Creating two vaults, the cToken account and the LP mint |
-| `pipeline_seed_liquidity` | 200,000 | Creation plus the first deposit |
-| `add_liquidity` | 60,000 | Two transfers in, an LP mint |
-| `remove_liquidity`, cash | 120,000 | Kamino's redeem, transfers out, an LP burn |
-| `remove_liquidity`, in kind | 90,000 | Transfers out, possibly creating the LP's cToken account |
-| `rebalance` | 100,000 | Kamino's deposit (mainnet median 43,704) or redeem |
-| `lock_lp` | 40,000 | One transfer, and the market's first lock creates the lock account |
+Every instruction measured in every state of "When Kamino can't pay", a failed layout check included, on both builds, gave the Measured column, the highest cost of each row over every mint and state; every ceiling is that cost plus a quarter, rounded up to a multiple of 5,000, and the tests assert every cost against its ceiling and the rule against the table ([Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85), 2026-11-16).
+Two rows depart from that rule.
+`add_liquidity` keeps 60,000 rather than 55,000, because its PDA searches make its cost depend on the LP's key and a hooked mint's, and on random keys the hooked first deposit measured up to 55,635.
+`lock_lp` rises from 40,000 to 50,000, because the market's first lock creates the lock account through the associated token program, whose address search costs 4,500 units for every bump it tries after the first: on a market whose lock account needs one bump more than the market measured before, it took 36,981 against the 32,500 recorded then.
+These figures are measured on fixed keys; a caller sizing a compute limit for an instruction that searches for an address adds 1,500 units for every further bump the address needs, and 4,500 where the associated token program creates the account.
+Account resolution still answers while the reserve fails its layout check, since it reads the reserve only to choose the redeem accounts; the quote and the swap are what refuse.
+
+| Instruction | Measured (compute units) | Ceiling (compute units) | Main cost |
+| --- | --- | --- | --- |
+| `pipeline_quote` | 15,669 | 20,000 | Reserve checks and fixed-point maths; well under the quoter's 200,000 cap |
+| `pipeline_swap`, no redeem | 25,281 | 35,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
+| `pipeline_swap`, with a redeem | 59,801 | 75,000 | Kamino's redeem (mainnet median 29,670) |
+| `pipeline_resolve_accounts` | 26,268 | 35,000 | Runs the quote to decide on the redeem accounts |
+| `pipeline_init_market` | 61,325 | 80,000 | Creating two vaults, the cToken account and the LP mint |
+| `pipeline_seed_liquidity` | 110,575 | 140,000 | Creation plus the first deposit |
+| `add_liquidity` | 40,662 | 60,000 | Two transfers in, an LP mint |
+| `remove_liquidity`, cash | 76,080 | 100,000 | Kamino's redeem, transfers out, an LP burn |
+| `remove_liquidity`, in kind | 62,710 | 80,000 | Transfers out, possibly creating the LP's cToken account |
+| `rebalance` | 71,758 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
+| `lock_lp` | 36,981 | 50,000 | One transfer, and the market's first lock creates the lock account |
 
 ### Invariants for test layer 3
 
@@ -464,6 +471,13 @@ Beyond the shared three (value conserved, every holder can exit, each quote equa
 - Outside withdraw mode `rebalance` only ever moves the buffer's share towards `BUFFER_TARGET_BPS`; in withdraw mode it only redeems; and it never deposits while cToken deposits are blocked.
 - A market in withdraw mode stays in it across `rebalance` calls for as long as Kamino's freely available liquidity is at or below `WITHDRAW_MODE_EXIT` times `max(V, T)`, however much it has already redeemed.
 - The share count `N` changes only by `add_liquidity`, `remove_liquidity`, seeding and SPL burns, and the lock account's balance never falls.
+
+How it is built ([Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85), 2026-11-16):
+
+- The fuzzer, `tests/common/fuzz.rs`, mixes every instruction, created and seeded markets, donations and clock jumps with Kamino's moves, all on klend's deployed bytes: interest raises the rate, by edits of what borrowers owe and by klend's own `refresh_reserve` after time passes; write-offs with klend's real `socialize_loss` lower it, one in ten of them of the whole supply, which deprecates the reserve for good; borrowers move the free liquidity from 0 to 15 times the market's exposure; and `block_ctoken_usage`, both emergency modes and a failed layout check switch on and off.
+- It also checks that each call does what "When Kamino can't pay" gives for the state Kamino is in, and that no step but a write-off lowers the rate, so the value of an LP share may fall only on a write-off.
+- Every failure names the invariant it breaks, and `tests/broken_builds.rs` shows each one able to fail: the deliberately broken builds in `tests/broken-builds.json`, each one careless edit (a rounding flipped the wrong way, a missing check) to a copy of the program's source built by `scripts/broken-builds.py` in its own target directory, so the program's source never carries them, must each be caught by the invariant the table names, at least one build for every invariant.
+- `PROPTEST_CASES` sets how many sequences run (24 in a plain `cargo test`, which CI runs on every push with the broken builds), and `FUZZ_SEED` the seed, which every run prints so it can be repeated.
 
 ### Accepted `pipeline-check` warnings
 
