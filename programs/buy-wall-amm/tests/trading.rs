@@ -118,15 +118,22 @@ fn the_worked_example_trades_at_the_spec_numbers_through_the_router() {
     let state = env.state(&market);
     assert_eq!(state.sqrt_price(), 1_844_674_407_372_029_099);
     // Gross 989,999,999 left the pool: 980,099,999 to the trader and the fee of 9,900,000,
-    // 3,960,000 of it to the wall.
-    assert_eq!(state.pool_sol(), LAMPORTS + SOL - 10_000_000 - 989_999_999);
-    assert_eq!(state.pool_tokens(), TOKENS);
+    // 3,960,000 of it to the wall. The sell left the curve above the cap the buy lowered,
+    // so the trim then moved 8,333,333,329 units to the retired tokens and 83,333,332
+    // lamports to idle SOL (tests/cap.rs checks the cap's numbers).
+    let (trimmed_tokens, trimmed_sol) = (8_333_333_329, 83_333_332);
+    assert_eq!(
+        state.pool_sol(),
+        LAMPORTS + SOL - 10_000_000 - 989_999_999 - trimmed_sol
+    );
+    assert_eq!(state.pool_tokens(), TOKENS - trimmed_tokens);
+    assert_eq!(state.retired_tokens(), trimmed_tokens);
     assert_eq!(
         fee_ledgers(&state),
         (
             1_000_000 + 990_000,
             1_000_000 + 990_000,
-            4_000_000 + 3_960_000,
+            4_000_000 + 3_960_000 + trimmed_sol,
             4_000_000 + 3_960_000
         )
     );
@@ -138,9 +145,8 @@ fn the_worked_example_trades_at_the_spec_numbers_through_the_router() {
         (state.fees_collected(), state.swap_count()),
         (19_900_000, 2)
     );
-    // The inventory cap and the wall guard are later tickets': this one leaves them as the
-    // seed set them.
-    assert_eq!(state.cap(), opened.cap());
+    // The wall guard is a later ticket's: trading leaves it as the seed set it.
+    assert_eq!(state.cap(), 991_666_666_667);
     assert_eq!(
         (state.floor(), state.reference(), state.wall_liquidity()),
         (opened.floor(), opened.reference(), 0)

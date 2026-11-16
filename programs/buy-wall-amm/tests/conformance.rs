@@ -1,13 +1,15 @@
 //! Conformance (docs/spec/README.md, "Test layers" 4; docs/spec/pool4-for-solana.md,
 //! "Accepted `pipeline-check` warnings"): Pipeline's `check_market` reports zero Fail and
 //! zero Warn on seeded buy wall markets, with `exact_out_refund` skipped because exact-out
-//! is refused by design; every other check runs and passes.
+//! is refused by design; every other check runs and passes, including on a market whose
+//! inventory cap is falling and whose sells are trimmed.
 
 mod common;
 
 use buy_wall_amm::config::{MAX_FEE_BPS, MIN_FEE_BPS};
 use common::*;
 use pipeline_check::{check_market, CheckOptions, Status};
+use pipeline_client::TradeMode;
 use solana_signer::Signer;
 
 fn check(env: &Env, market: &Market, what: &str) {
@@ -92,6 +94,75 @@ fn a_seeded_market_of_a_token_with_a_transfer_hook_passes_every_check() {
         )
         .unwrap();
     check(&env, &market, "a token with Pipeline's test-hook");
+}
+
+#[test]
+fn a_market_whose_cap_is_falling_and_trimming_passes_every_check() {
+    // The worked example's market after its buy and a sell of more than it bought: the cap
+    // has fallen, the curve has been trimmed, and a day later a full day's decay credit is
+    // waiting, so the checker's own buys lower the cap further and its sells are trimmed.
+    let mut env = Env::new();
+    let token = env.seedable_token(&TOKEN);
+    let (market, _) = env
+        .create_and_seed(
+            token,
+            TOKEN,
+            &launch_params(env.admin.pubkey()),
+            1_000_000_000_000,
+            10 * SOL,
+        )
+        .unwrap();
+    let trader = env.trader(&market, 100_000_000_000, 2 * SOL);
+    let advance = |env: &mut Env, seconds: i64| {
+        let clock = env.svm.get_sysvar::<anchor_lang::prelude::Clock>();
+        env.set_clock(
+            clock.slot + seconds as u64 * 5 / 2 + 1,
+            clock.unix_timestamp + seconds,
+        );
+    };
+    advance(&mut env, 3_600);
+    let bought = env
+        .swap(&market, &trader, (1, 0), TradeMode::ExactIn, SOL)
+        .unwrap();
+    advance(&mut env, 60);
+    env.swap(
+        &market,
+        &trader,
+        (0, 1),
+        TradeMode::ExactIn,
+        bought.received + 50_000_000_000,
+    )
+    .unwrap();
+    advance(&mut env, 86_400);
+    let state = env.state(&market);
+    assert!(state.cap() < state.seeded_tokens(), "the cap has fallen");
+    assert!(
+        state.tokens_trimmed() > 0 && state.sol_trimmed() > 0,
+        "sells were trimmed"
+    );
+    assert!(state.retired_tokens() > 0 && state.idle_sol() > 0);
+    check(&env, &market, "a market whose cap is falling and trimming");
+
+    // At this state a buy lowers the cap to what the curve then holds (a full day's credit
+    // covers the room it opens), so selling it straight back is trimmed: the checker's
+    // round trips from this state ran through both steps, as this one does.
+    let (bought, logs) = env
+        .swap_logged(&market, &trader, (1, 0), TradeMode::ExactIn, SOL / 2, 0)
+        .unwrap();
+    let lowered = events::<buy_wall_amm::events::CapLowered>(&logs);
+    assert_eq!(lowered.len(), 1);
+    assert_eq!(lowered[0].cap, lowered[0].held);
+    let (_, logs) = env
+        .swap_logged(
+            &market,
+            &trader,
+            (0, 1),
+            TradeMode::ExactIn,
+            bought.received,
+            0,
+        )
+        .unwrap();
+    assert_eq!(events::<buy_wall_amm::events::Trimmed>(&logs).len(), 1);
 }
 
 #[test]

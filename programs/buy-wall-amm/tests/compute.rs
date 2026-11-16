@@ -20,6 +20,9 @@ const MARKET_INFO: u64 = 10_000;
 const RESOLVE_ACCOUNTS: u64 = 10_000;
 const QUOTE: u64 = 40_000;
 const SWAP_ONE_STEP: u64 = 45_000;
+/// The spec's ceiling for a swap that crosses into the wall and trims; the wall's second
+/// step arrives with its own ticket, so a trim is measured against it now.
+const SWAP_TRIM: u64 = 60_000;
 const SEED_LIQUIDITY: u64 = 180_000;
 
 const TOKENS: u64 = 1_000_000_000_000;
@@ -203,6 +206,89 @@ fn quotes_and_one_step_swaps_stay_under_their_ceilings() {
     }
     println!(
         "worst: pipeline_quote {} CU, pipeline_swap {} CU",
+        worst.0, worst.1
+    );
+}
+
+#[test]
+fn swaps_that_lower_the_cap_or_trim_stay_under_their_ceilings() {
+    use buy_wall_amm::events::{CapLowered, Trimmed};
+    // The same markets: an hour after the seed a buy of a third of the pool's SOL lowers the
+    // cap, and a minute later a sell of more than it bought is trimmed.
+    let markets: [(&str, Pubkey, bool, u64, u64); 5] = [
+        (
+            "SPL Token, the worked example",
+            TOKEN,
+            false,
+            TOKENS,
+            LAMPORTS,
+        ),
+        ("Token-2022", TOKEN_2022, false, TOKENS, LAMPORTS),
+        (
+            "Token-2022 with a transfer hook",
+            TOKEN_2022,
+            true,
+            TOKENS,
+            LAMPORTS,
+        ),
+        ("a high price", TOKEN, false, 10_000_000, 10_000_000 * SOL),
+        ("a low price", TOKEN, false, u64::MAX / 2, 100 * SOL),
+    ];
+    let mut worst = (0, 0);
+    for (label, program, hook, tokens, lamports) in markets {
+        let mut env = Env::new();
+        let admin = env.admin.pubkey();
+        let market = if hook {
+            let token = env.seedable_hooked_token();
+            env.create_and_seed_hooked(token, &launch_params(admin), tokens, lamports)
+                .unwrap()
+        } else {
+            let token = env.seedable_token(&program);
+            env.create_and_seed(token, program, &launch_params(admin), tokens, lamports)
+                .unwrap()
+                .0
+        };
+        let trader = env.trader(&market, tokens / 2, lamports);
+        let clock = env.svm.get_sysvar::<anchor_lang::prelude::Clock>();
+        env.set_clock(clock.slot + 9_000, clock.unix_timestamp + 3_600);
+        let (bought, logs) = env
+            .swap_logged(
+                &market,
+                &trader,
+                (1, 0),
+                TradeMode::ExactIn,
+                lamports / 3,
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            events::<CapLowered>(&logs).len(),
+            1,
+            "{label}: the buy lowers the cap"
+        );
+        let lowering = strategy_units_without_hooks(&logs);
+
+        let clock = env.svm.get_sysvar::<anchor_lang::prelude::Clock>();
+        env.set_clock(clock.slot + 150, clock.unix_timestamp + 60);
+        let sell = bought.received + tokens / 100;
+        let (_, logs) = env
+            .swap_logged(&market, &trader, (0, 1), TradeMode::ExactIn, sell, 0)
+            .unwrap();
+        assert_eq!(events::<Trimmed>(&logs).len(), 1, "{label}: the sell trims");
+        let trimming = strategy_units_without_hooks(&logs);
+        println!("{label}: a buy lowering the cap {lowering} CU, a sell trimming {trimming} CU");
+        assert!(
+            lowering <= SWAP_ONE_STEP,
+            "{label}: a buy lowering the cap used {lowering}"
+        );
+        assert!(
+            trimming <= SWAP_TRIM,
+            "{label}: a sell trimming used {trimming}"
+        );
+        worst = (worst.0.max(lowering), worst.1.max(trimming));
+    }
+    println!(
+        "worst: a buy lowering the cap {} CU, a sell trimming {} CU",
         worst.0, worst.1
     );
 }

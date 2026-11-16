@@ -11,7 +11,7 @@
 //! | `pipeline_market_info`      | the router, at market creation   | reports mints, vaults, exact-out      |
 //! | `pipeline_resolve_accounts` | quoters and SDKs, in simulation  | lists the output vault, its authority |
 //! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices an exact-in trade             |
-//! | `pipeline_swap`             | the router, from `swap`          | settles an exact-in trade            |
+//! | `pipeline_swap`             | the router, from `swap`          | settles a trade, then the cap        |
 //! | `seed`                      | the market's seeder, directly    | seeds and opens the market, once      |
 //! | `pipeline_seed_liquidity`   | a launchpad's program, by CPI    | creates, seeds and opens a market     |
 //!
@@ -21,6 +21,7 @@
 use anchor_lang::prelude::*;
 
 pub mod books;
+pub mod cap;
 pub mod config;
 pub mod errors;
 pub mod events;
@@ -69,8 +70,9 @@ pub mod buy_wall_amm {
         instructions::read_trade::handle_quote(ctx, request)
     }
 
-    /// Settles an exact-in trade the router sends: pays the trader from the output vault
-    /// and books the fee, the ledgers, the price and the counters.
+    /// Settles an exact-in trade the router sends: pays the trader from the output vault,
+    /// books the fee, the ledgers, the price and the counters, then lowers the inventory
+    /// cap or trims the curve, emitting `CapLowered` or `Trimmed`.
     pub fn pipeline_swap<'info>(
         ctx: Context<'info, SwapAccounts<'info>>,
         request: interface::SwapRequest,

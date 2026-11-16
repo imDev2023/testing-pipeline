@@ -3643,6 +3643,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53)
 
+### POOL4-30: What a swap that moves the cap reports
+
+- Question: What does a swap that lowers the inventory cap or trims the curve emit, and how does the demo learn the cap's constants without restating them?
+- Answer: Two events, `CapLowered` (market state, the new cap, how far it fell, what the curve held, the decay credit left) and `Trimmed` (market state, the tokens retired, the SOL moved to idle SOL, the new liquidity, the cap), each emitted only when its step changes something; and the program publishes `DECAY_CREDIT_WINDOW` and `MIN_LIQUIDITY` in its IDL with Anchor's `#[constant]`, as it does the fee shares (`POOL4-25`), so the demo's model of the cap reads them from the generated client.
+- Alternatives: One combined event for both steps; an event on every swap whether or not the cap moved; restating the two constants in the demo, which the one-place rule forbids.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Custom actions and metadata](spec/pool4-for-solana.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49)
+
+### POOL4-31: The ratchet after a sell
+
+- Question: Does the ratchet run only after buys, as the spec's summary puts it, or after any swap that leaves the curve below the cap, as step 6's rule reads?
+- Answer: After any swap: step 6 compares the curve with the cap whichever way the trade went, so a sell that leaves the curve still below a cap the decay credit kept from falling all the way lowers it too, within the credit and the floor.
+- Alternatives: Buys only, which would leave such a cap above the curve until the next buy.
+- Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
@@ -4147,6 +4167,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-25` to `POOL4-27`: set by the session of [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-24` is the owner's answer to that session's question.
+- `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.
