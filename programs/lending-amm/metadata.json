@@ -1,7 +1,7 @@
 {
     "schema": "pipeline-strategy-metadata/1",
     "name": "Aviary Lending AMM",
-    "description": "Constant-product markets with open LP shares, one side of which, WSOL or USDC, is lent to a fixed Kamino Lend reserve through its cToken instructions while a buffer stays in the market's own vault for swaps. Prices come from the market's total reserves. The LP fee and all the lending yield go to LPs through the value of their shares, and LPs bear Kamino's losses. The program has no admin. In this build nothing is lent yet: the whole lent side sits in the buffer, and a swap that would pay out more of it than the buffer holds is refused.",
+    "description": "Constant-product markets with open LP shares, one side of which, WSOL or USDC, is lent to a fixed Kamino Lend reserve through its cToken instructions while a buffer stays in the market's own vault for swaps. Prices come from the market's total reserves: the other side's vault, and on the lent side the buffer plus the market's cTokens valued at the reserve's stored exchange rate, read after checking the reserve is the one the lent mint lends to, in the layout the program knows. The LP fee and all the lending yield go to LPs through the value of their shares, and LPs bear Kamino's losses. The program has no admin. In this build nothing is lent yet, and a swap that would pay out more of the lent side than the buffer holds is refused.",
     "category": "amm",
     "tags": [
         "lending",
@@ -91,7 +91,7 @@
             "name": "add_liquidity",
             "label": "Add liquidity",
             "kind": "add_liquidity",
-            "description": "Adds both tokens for LP shares. The first deposit takes both amounts in full and sets the price; later deposits take both tokens at the market's ratio, only as much as the shares minted are worth. Shares go to your LP shares account for this market, a token account you own, created if missing.",
+            "description": "Adds both tokens for LP shares. The first deposit takes both amounts in full and sets the price; later deposits take both tokens at the market's ratio, with the lent side valued at its buffer plus its Kamino cTokens, only as much as the shares minted are worth. Shares go to your LP shares account for this market, a token account you own, created if missing. The reserve is the Kamino reserve of the market's lent mint, which the program checks.",
             "args": [
                 {
                     "name": "max_0",
@@ -181,6 +181,10 @@
                 {
                     "name": "system_program",
                     "source": "system_program"
+                },
+                {
+                    "name": "reserve",
+                    "source": "input:reserve"
                 }
             ]
         }

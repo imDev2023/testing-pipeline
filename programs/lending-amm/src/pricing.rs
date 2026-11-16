@@ -21,6 +21,7 @@ use pipeline_strategy_interface::QuoteResult;
 
 use crate::errors::StrategyError;
 use crate::interface::{TradeMode, TradeRequest};
+use crate::kamino::Reserve;
 use crate::state::LendingAmmMarket;
 
 /// Reported to the router at market creation: traders can only swap exact-in, and [`quote`]
@@ -74,15 +75,17 @@ pub fn exact_in(
 }
 
 /// The lent side's total, `L = B + V`: the buffer the market has recorded in its lent-mint
-/// vault, plus the value of the cTokens it has recorded. Nothing is lent yet, so a market
-/// holds no cTokens and `L = B`; valuing cTokens from Kamino's reserve arrives with
-/// [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79),
-/// and until then a market holding any is refused rather than mispriced.
-pub fn lent_total(market: &LendingAmmMarket) -> core::result::Result<u64, StrategyError> {
-    if market.ctokens != 0 {
-        return Err(StrategyError::LentValueUnavailable);
-    }
-    Ok(market.reserves[market.lent_index as usize & 1])
+/// vault, plus the value of the cTokens it has recorded at the reserve's stored rate
+/// (docs/spec/lending-pool.md, "Total reserves"). Only recorded amounts count, so tokens or
+/// cTokens sent to the market outside its own instructions are never priced.
+pub fn lent_total(
+    market: &LendingAmmMarket,
+    reserve: &Reserve,
+) -> core::result::Result<u64, StrategyError> {
+    let buffer = market.reserves[market.lent_side()];
+    buffer
+        .checked_add(reserve.lent_value(market.ctokens)?)
+        .ok_or(StrategyError::Overflow)
 }
 
 /// What a lent-side output may take from the buffer: refused beyond it. Redeeming the
@@ -95,8 +98,14 @@ pub fn check_buffer(out: u64, buffer: u64) -> core::result::Result<(), StrategyE
     Ok(())
 }
 
-/// Prices `trade` against `market`: exact-in only, once the first deposit has opened it.
-pub fn quote(market: &LendingAmmMarket, trade: &TradeRequest) -> Result<QuoteResult> {
+/// Prices `trade` against `market`, with its lent side valued from `reserve`, which the caller
+/// has checked ([`crate::kamino::reserve_of`]): exact-in only, once the first deposit has
+/// opened it.
+pub fn quote(
+    market: &LendingAmmMarket,
+    reserve: &Reserve,
+    trade: &TradeRequest,
+) -> Result<QuoteResult> {
     require!(
         trade.mode == TradeMode::ExactIn,
         StrategyError::ExactOutNotSupported
@@ -105,9 +114,9 @@ pub fn quote(market: &LendingAmmMarket, trade: &TradeRequest) -> Result<QuoteRes
         .trade_sides(trade.input_index, trade.output_index)
         .ok_or(StrategyError::WrongAccount)?;
     require!(market.is_open(), StrategyError::MarketNotOpen);
-    let lent = market.lent_index as usize & 1;
+    let lent = market.lent_side();
     let mut effective = market.reserves;
-    effective[lent] = lent_total(market)?;
+    effective[lent] = lent_total(market, reserve)?;
     let priced = exact_in(
         effective[input],
         effective[output],
