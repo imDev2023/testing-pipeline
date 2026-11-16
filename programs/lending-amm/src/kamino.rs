@@ -293,6 +293,36 @@ impl Reserve {
     }
 }
 
+impl Reserve {
+    /// What `rebalance` may plan to redeem for a market holding `ctokens` at Unix time `now`:
+    /// what Kamino can pay right now ([`Reserve::can_pay_now`]), but with each of Kamino's own
+    /// limits, its freely available liquidity and what remains of its withdrawal cap, lowered by
+    /// `KAMINO_RATE_HEADROOM_BPS` ([`with_rate_headroom`]), since klend pays at the rate it
+    /// refreshes to inside the redeem.
+    pub fn can_pay_for_rebalance(&self, market: &LendingMarket, ctokens: u64, now: i64) -> u64 {
+        let stopped = market.emergency_mode || self.emergency_mode || self.deprecated();
+        let Ok(supply) = self.total_supply_sf() else {
+            return 0;
+        };
+        let own = collateral_value(ctokens, supply, self.mint_total_supply).unwrap_or(u64::MAX);
+        let now = u64::try_from(now).unwrap_or(0);
+        can_pay(
+            with_rate_headroom(self.freely_available()),
+            with_rate_headroom(withdrawal_cap_remaining(&self.withdrawal_cap, now)),
+            own,
+            stopped,
+        )
+    }
+}
+
+/// `amount` less `KAMINO_RATE_HEADROOM_BPS` of it, rounded so the headroom is never smaller.
+pub fn with_rate_headroom(amount: u64) -> u64 {
+    let headroom =
+        (amount as u128 * crate::config::KAMINO_RATE_HEADROOM_BPS as u128).div_ceil(10_000);
+    // The headroom is at most the amount, since the basis points are below 10,000.
+    amount - headroom as u64
+}
+
 /// A reserve's total supply in 60-bit fixed point, klend's `total_supply`:
 /// `total_available_amount + borrowed_amount_sf - accumulated_protocol_fees_sf -
 /// accumulated_referrer_fees_sf - pending_referrer_fees_sf`, in that order. `None` where
@@ -448,6 +478,10 @@ impl Reserve {
         }
         let burn = ctokens_for_value(liquidity, self.total_supply_sf()?, self.mint_total_supply)
             .ok_or(StrategyError::Overflow)?;
+        // Less than one cToken's worth redeems nothing, which klend refuses: below the floor.
+        if burn == 0 {
+            return Err(StrategyError::BelowMinRebalance);
+        }
         Ok(burn.min(ctokens))
     }
 }
@@ -481,8 +515,14 @@ impl<'info> KaminoAccounts<'_, 'info> {
         require_keys_eq!(*self.instructions_sysvar.key, INSTRUCTIONS_SYSVAR, wrong);
         require_keys_eq!(*self.liquidity_mint.key, lent.mint, wrong);
         require_keys_eq!(*self.collateral_mint.key, lent.collateral_mint, wrong);
-        let reserve = reserve_of(&lent.mint, self.reserve)?;
-        let supply_vault = key_at(&self.reserve.try_borrow_data()?, offsets::LIQUIDITY_SUPPLY);
+        let reserve_data = self.reserve.try_borrow_data()?;
+        let reserve = read_reserve(self.reserve.key, self.reserve.owner, &reserve_data, lent)
+            .map_err(|refusal| {
+                msg!("Reserve {} refused: {:?}", self.reserve.key, refusal);
+                error!(refusal)
+            })?;
+        let supply_vault = key_at(&reserve_data, offsets::LIQUIDITY_SUPPLY);
+        drop(reserve_data);
         require!(
             supply_vault == Some(*self.liquidity_supply.key),
             StrategyError::KaminoAccountWrong
@@ -831,6 +871,46 @@ mod tests {
     }
 
     #[test]
+    fn the_rate_headroom_is_taken_from_kaminos_limits_rounded_up() {
+        let bps = crate::config::KAMINO_RATE_HEADROOM_BPS as u64;
+        assert_eq!(
+            with_rate_headroom(1_000_000),
+            1_000_000 - 1_000_000 * bps / 10_000
+        );
+        assert_eq!(with_rate_headroom(1), 0);
+        assert_eq!(with_rate_headroom(0), 0);
+        assert!(with_rate_headroom(u64::MAX) < u64::MAX);
+        // Kamino's limits get the headroom, and the market's own cTokens do not: here the
+        // cTokens are worth the least, 1,500 at a rate of 1.5, so they bind exactly.
+        let reserve = Reserve {
+            version: RESERVE_VERSION,
+            total_available_amount: 3_000_000,
+            mint_total_supply: 2_000_000,
+            ..Reserve::default()
+        };
+        let market = LendingMarket::default();
+        assert_eq!(reserve.can_pay_for_rebalance(&market, 1_000, 0), 1_500);
+        assert_eq!(
+            reserve.can_pay_for_rebalance(&market, 4_000_000, 0),
+            with_rate_headroom(3_000_000)
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+        /// The headroom never exceeds the amount, never falls below the basis points' share,
+        /// and so leaves at most what Kamino can pay.
+        #[test]
+        fn the_rate_headroom_is_never_negative_and_never_short(amount: u64) {
+            let left = with_rate_headroom(amount);
+            let bps = crate::config::KAMINO_RATE_HEADROOM_BPS as u128;
+            prop_assert!(left <= amount);
+            prop_assert!((amount - left) as u128 * 10_000 >= amount as u128 * bps);
+        }
+    }
+
+    #[test]
     fn a_redeem_burns_everything_once_it_asks_for_the_whole_value() {
         let reserve = Reserve {
             total_available_amount: 3,
@@ -856,9 +936,10 @@ mod tests {
                 .map_err(|e| e as u32),
             Ok(999)
         );
+        // Less than one cToken's worth burns nothing, which klend would refuse: below the floor.
         assert_eq!(
-            reserve.ctokens_to_redeem(0, 1_000).map_err(|e| e as u32),
-            Ok(0)
+            reserve.ctokens_to_redeem(1, 1_000).map_err(|e| e as u32),
+            Err(StrategyError::BelowMinRebalance as u32)
         );
     }
 
@@ -1025,6 +1106,13 @@ mod proofs {
         assert_never_above_klend(c, s, n);
     }
 
+    /// For any amount, the headroom never panics and leaves at most the amount.
+    #[kani::proof]
+    fn with_rate_headroom_never_panics_and_never_leaves_more() {
+        let amount: u64 = kani::any();
+        assert!(with_rate_headroom(amount) <= amount);
+    }
+
     /// For any value, total supply and cToken supply, the cTokens for the value are computed
     /// without panicking or overflowing.
     #[kani::proof]
@@ -1041,7 +1129,7 @@ mod proofs {
                 assert!(value <= x);
                 assert!(
                     ((x - value) as u128) << FRACTION_BITS
-                        <= s.div_ceil(n as u128) + (1u128 << FRACTION_BITS)
+                        <= s.div_ceil(n as u128).saturating_add(1u128 << FRACTION_BITS)
                 );
             }
         }

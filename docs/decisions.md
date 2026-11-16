@@ -4314,6 +4314,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
 
+### LENDING-59: Headroom below Kamino's limits on a redeem
+
+- Question: How far below Kamino's freely available liquidity and withdrawal cap does `rebalance` plan a redeem, given that klend pays at the rate it refreshes the reserve to inside the redeem?
+- Answer: 10 basis points of each limit, the constant `KAMINO_RATE_HEADROOM_BPS`, about a week of interest at 5% a year since the reserve's last refresh, and none on the value of the market's own cTokens.
+- Alternatives: No headroom, which makes klend refuse a redeem capped at a limit whenever the reserve was not refreshed in the same slot; calling klend's `refresh_reserve` first, which needs the reserve's oracle accounts whenever its price is stale, a dependency the cToken path otherwise avoids; projecting the interest, which would copy Kamino's interest maths.
+- Specified in: [`docs/spec/lending-pool.md`, Constants](spec/lending-pool.md#constants)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -4346,7 +4356,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-25` to `POOL4-27`: set by the session of [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-24` is the owner's answer to that session's question.
-- `LENDING-53` to `LENDING-58`: set by the session of [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `LENDING-53` to `LENDING-59`: set by the session of [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.

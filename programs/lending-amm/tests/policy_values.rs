@@ -73,6 +73,7 @@ fn every_constant_is_defined_once_in_the_config_module() {
         "BUFFER_MAX_BPS",
         "WITHDRAW_MODE_ENTER",
         "WITHDRAW_MODE_EXIT",
+        "KAMINO_RATE_HEADROOM_BPS",
         "MAX_LP_FEE_BPS",
         "MINIMUM_LIQUIDITY",
         "LP_DECIMALS",
@@ -210,6 +211,7 @@ fn the_constants_have_the_specs_values() {
         (5, 10)
     );
     assert_eq!(config::MAX_LP_FEE_BPS, 200);
+    assert_eq!(config::KAMINO_RATE_HEADROOM_BPS, 10);
     assert_eq!(config::MINIMUM_LIQUIDITY, 1_000);
     assert_eq!(config::LP_DECIMALS, 9);
     assert_eq!(

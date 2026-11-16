@@ -62,6 +62,9 @@ enum Step {
     Wait { slots: u64 },
     /// Anyone calls `rebalance`.
     Rebalance,
+    /// A trader sells the other mint for as much of the lent mint as pays out `fraction` (in
+    /// millionths) of the buffer, which can take it below the band.
+    DrainBuffer { trader: usize, fraction: u32 },
 }
 
 fn step() -> impl Strategy<Value = Step> {
@@ -74,6 +77,8 @@ fn step() -> impl Strategy<Value = Step> {
         1 => (1..100_000_000_000u64).prop_map(|amount| Step::DonateCtokens { amount }),
         1 => (1..1_000_000u64).prop_map(|slots| Step::Wait { slots }),
         3 => Just(Step::Rebalance),
+        2 => (0..2usize, 300_000..1_000_000u32)
+            .prop_map(|(trader, fraction)| Step::DrainBuffer { trader, fraction }),
     ]
 }
 
@@ -276,6 +281,25 @@ impl World {
                 prop_assert_eq!(self.reserves(), before);
             }
             Step::Rebalance => return self.rebalance(),
+            Step::DrainBuffer { trader, fraction } => {
+                // out = L x a_net / (R + a_net), so a_net = out x R / (L - out), and the input
+                // a is a_net plus the LP fee on it, rounded up; then it is an ordinary swap.
+                let lent = self.market.lent_index;
+                let other = self.market.other_index();
+                let state = self.env.market_state(&self.market.market_state);
+                let out = state.reserves[lent] as u128 * fraction as u128 / 1_000_000;
+                let total = effective_before[lent] as u128;
+                let net = (out * effective_before[other] as u128).div_ceil(total - out);
+                let fee = state.lp_fee_bps as u128;
+                let amount = (net * 10_000).div_ceil(10_000 - fee);
+                let budget = self.holding(&self.traders[trader].pubkey(), other);
+                let fraction = (amount * 1_000_000 / (budget as u128).max(1)).min(999_999) as u32;
+                return self.run(&Step::Swap {
+                    trader,
+                    input: other,
+                    fraction: fraction.max(1),
+                });
+            }
         }
         Ok(0)
     }
@@ -301,7 +325,7 @@ impl World {
             )
             .unwrap()
         };
-        let can_pay = reserve.can_pay_now(
+        let can_pay = reserve.can_pay_for_rebalance(
             &lending_market,
             before.ctokens,
             self.env.clock().unix_timestamp,
@@ -328,16 +352,29 @@ impl World {
                         prop_assert!(after.ctokens > before.ctokens);
                         prop_assert_eq!(after.deposited, before.deposited + taken as u128);
                         prop_assert_eq!(after.redeemed, before.redeemed);
-                        prop_assert!(buffer_after + one_ctoken >= target(total_after));
+                        // On the target it was planned at, within klend's rounding; klend's
+                        // refresh then accrues interest that raises L, and the target, a little.
+                        let planned_target = target(total);
+                        prop_assert!(buffer_after >= planned_target);
+                        prop_assert!(buffer_after - planned_target <= one_ctoken);
                     }
                     Move::Redeem(asked) => {
                         prop_assert_eq!(band(buffer, total), Band::Below);
                         let received = buffer_after - buffer;
-                        prop_assert!(received <= asked + one_ctoken);
+                        // klend pays at the rate it refreshes to, at most the rate it leaves:
+                        // the cTokens it burned are worth at most the shortfall at the stored
+                        // rate, so it pays at most that, grown by the rate's rise.
+                        let reserve_after = self.reserve();
+                        let rate = |r: &lending_amm::kamino::Reserve| {
+                            r.total_supply_sf().unwrap() as f64 / r.mint_total_supply as f64
+                        };
+                        let accrual = asked as f64 * (rate(&reserve_after) / rate(&reserve) - 1.0);
+                        let allowed = asked + one_ctoken + accrual.max(0.0).ceil() as u64;
+                        prop_assert!(received <= allowed, "{} > {}", received, allowed);
                         prop_assert!(after.ctokens < before.ctokens);
                         prop_assert_eq!(after.redeemed, before.redeemed + received as u128);
                         prop_assert_eq!(after.deposited, before.deposited);
-                        prop_assert!(buffer_after <= target(total_after) + one_ctoken);
+                        prop_assert!(buffer_after <= target(total) + (allowed - asked));
                     }
                 }
                 // Towards the target: the distance from it in basis points of the lent side

@@ -31,6 +31,13 @@ pub const BUFFER_MIN_BPS: u16 = 1_000;
 /// ...or above this.
 #[constant]
 pub const BUFFER_MAX_BPS: u16 = 3_000;
+/// Headroom `rebalance` leaves below Kamino's own limits on a redeem (its freely available
+/// liquidity and what remains of its withdrawal cap), in basis points of each: klend refreshes
+/// the reserve inside the redeem and pays at the refreshed rate, which is above the stored rate
+/// the redeem is planned at, so a redeem sized right up to a limit would overshoot it and be
+/// refused. 10 bps covers about a week of interest at 5% a year since the reserve's last
+/// refresh. The market's own cTokens' value needs none.
+pub const KAMINO_RATE_HEADROOM_BPS: u16 = 10;
 /// Enter withdraw mode when Kamino's freely available liquidity is below this many times
 /// the larger of the market's lent value and its target lent value.
 pub const WITHDRAW_MODE_ENTER: u64 = 5;

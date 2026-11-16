@@ -17,7 +17,7 @@
 //! target. Kamino then rounds in its own favour, by at most one cToken's worth
 //! ([`crate::kamino::ctokens_to_redeem`] and klend's deposit), which the instruction measures
 //! rather than assumes. Proptest checks these properties here, Kani proves them below, and
-//! `proofs/lending_amm_z3.py` proves them with Z3 for every input.
+//! `proofs/buffer_z3.py` proves them with Z3 for every input.
 
 use crate::config::{BUFFER_MAX_BPS, BUFFER_MIN_BPS, BUFFER_TARGET_BPS};
 use crate::errors::StrategyError;
@@ -197,7 +197,7 @@ mod tests {
 // Kani proofs of the rule (`cargo kani`, docs/toolchain.md), in the tiers `pricing.rs` uses:
 // full domain for what needs no reasoning about a quotient (nothing panics or overflows), the
 // rule's properties bounded below `SMALL`, and the same properties for every input behind
-// `RUSTFLAGS="--cfg kani_full"`, which may not finish. `proofs/lending_amm_z3.py` proves them
+// `RUSTFLAGS="--cfg kani_full"`, which may not finish. `proofs/buffer_z3.py` proves them
 // for every input with Z3.
 #[cfg(kani)]
 mod proofs {
