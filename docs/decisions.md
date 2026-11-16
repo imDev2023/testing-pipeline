@@ -3702,6 +3702,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49)
 
+### POOL4-32: Every holder can exit, at a price bound
+
+- Question: When a holding is more than the curve can take before `MIN_SQRT_PRICE`, as a trim down to `MIN_LIQUIDITY` near the bound can make it, should the pricing sell what it can, or is the whole holding refused, and what does the invariant "every holder can exit" then ask?
+- Answer: The whole holding is refused with `PriceBoundReached`, as the pricing's rules already say, since an exact-in swap keeps all its input and cannot fill in part; the holder exits by selling the most the curve can take, so the invariant asks that the whole holding sells, or pays nothing, or that the most the curve can take sells or pays nothing while one token unit more is refused for the bound.
+- Alternatives: A partial fill that pays for what the curve can take and keeps the rest of the input, which takes the rest from the trader; refusing such a holding with `ZeroOutput` when the curve holds less than a lamport above the bound, which changes a program error for no holder's gain; keeping trims from shrinking the curve below what every holding needs, which no market can know.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Invariants for test layer 3](spec/pool4-for-solana.md#invariants-for-test-layer-3)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
@@ -4257,6 +4267,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-25` to `POOL4-27`: set by the session of [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-24` is the owner's answer to that session's question.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-32`: set by the session of [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152) from the spec's existing rule that a trade reaching a price bound is refused, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.

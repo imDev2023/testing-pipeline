@@ -570,6 +570,9 @@ Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://git
 Beyond the shared three (value conserved, every holder can exit, each quote equals its swap), checked after every step of generated sequences of swaps, keeper jobs and clock jumps, including several trades in one slot:
 
 - Every invariant in "Ledgers".
+- "Every holder can exit" means, at a price bound ([`POOL4-32`](../decisions.md#pool4-32-every-holder-can-exit-at-a-price-bound)): a holder's whole holding sells, or it pays nothing (worth less than one lamport), or it is more than the curve can take before `MIN_SQRT_PRICE` and is refused whole, as "Rules for both" says, and then the most the curve can take sells or pays nothing, and one token unit more is refused for the bound.
+  A trim can leave a curve of `MIN_LIQUIDITY` close to the bound, which takes fewer tokens than some holdings; what such a holding cannot sell could only sell below the bound, for the `L × MIN_SQRT_PRICE / Q` lamports the curve keeps there, which no sell reaches for anyone, with or without the cap.
+  A trim lowers `L`, so it only shrinks that amount, which is less than one lamport for any `L` below 2^32, `MIN_LIQUIDITY` among them.
 - A trim never changes `sqrt_price`.
 - A buy sold straight back never returns more than it cost, whatever keeper jobs run in between.
 - The reference never moves on a trade in the slot it was last updated in.

@@ -9,7 +9,8 @@
 //! - value is conserved: no token unit or lamport of wrapped SOL is created or lost, across
 //!   every wallet, every vault and the router's fee accounts;
 //! - every holder can exit: each trader holding a market's token can sell all of it, unless
-//!   it is worth less than one lamport;
+//!   it is worth less than one lamport, or is more than the curve can take before its price
+//!   bound and the most the curve can take sells (`common::exit`, `POOL4-32`);
 //! - each quote equals its swap, to the unit, and a refused quote is a refused swap;
 //! - the invariants of docs/spec/pool4-for-solana.md, "Ledgers", that apply so far: each
 //!   vault holds at least the sum of its ledgers, the pool ledgers cover what the curve
@@ -713,8 +714,10 @@ impl World {
             );
             tracked.last = state;
         }
-        // Every holder can exit: a buyer's whole token balance sells, unless it is worth
-        // less than one lamport (and every quote equals its swap, checked on each trade).
+        // Every holder can exit, as `exit::can_exit` defines it (`POOL4-32`): a buyer's whole
+        // token balance sells, unless it is worth less than one lamport or is more than the
+        // curve can take before its price bound, when the most it can take sells (and every
+        // quote equals its swap, checked on each trade).
         for &(market, buyer) in &self.buyers {
             let m = &self.markets[market].market;
             let account = pda::associated_token(&buyer, &m.token_mint, &m.token_program);
@@ -722,13 +725,8 @@ impl World {
             if held == 0 {
                 continue;
             }
-            let quote = self.env.quote(m, &trade(TradeMode::ExactIn, 0, 1, held));
-            if let Err(error) = &quote {
-                let dust: u32 = buy_wall_amm::errors::StrategyError::ZeroOutput.into();
-                assert!(
-                    error.contains(&format!("Custom({dust})")),
-                    "a holder of {held} cannot exit: {error}"
-                );
+            if let Err(why) = exit::can_exit(&self.env, m, held) {
+                panic!("{why}");
             }
         }
     }
