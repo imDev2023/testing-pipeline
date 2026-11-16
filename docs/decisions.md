@@ -4494,6 +4494,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
 
+### LENDING-60: How a redeeming swap's accounts are resolved
+
+- Question: How does `pipeline_resolve_accounts` decide whether a trade needs Kamino's redeem accounts, and which does it list?
+- Answer: A lent-side output resolves in two rounds, the second reading the reserve and running the quote with the one pricing function, and only a trade that quote redeems gets the reserve writable and, after it, klend, the lending market, its authority, the reserve's liquidity supply and collateral mint, the market's cToken account, SPL Token once and the instructions sysvar; an other-side output resolves in one round, and a reserve failing its check or a refused trade gets no redeem accounts.
+- Alternatives: Always listing the redeem accounts for a lent-side output, which would write-lock the reserve every Kamino user of that mint shares on every sale; one round with the redeem accounts guessed from vault balances, which cannot value the cTokens.
+- Specified in: [`docs/spec/lending-pool.md`, Accounts](spec/lending-pool.md#accounts)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
+### LENDING-61: A swap built without its redeem accounts
+
+- Question: How does a swap recognise the redeem accounts, and what does one that needs a redeem but lacks them do?
+- Answer: It recognises them by klend's id right after a lent-side output's reserve and checks them only when the trade redeems, each failing with `KaminoAccountWrong` unless the reserve or lending market check names it; without them it fails with its own error, `RedeemAccountsMissing`, and changes nothing, so the integrator resolves again.
+- Alternatives: Spending only the buffer and refusing the rest with `BeyondBuffer`, which would not tell the integrator that resolving again fixes it; checking the redeem accounts on every swap that carries them, which costs compute for nothing.
+- Specified in: [`docs/spec/lending-pool.md`, Accounts](spec/lending-pool.md#accounts)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
+### LENDING-62: What Kamino can pay a swap
+
+- Question: How much of a shortfall may a swap plan to redeem, given that klend pays at the rate it refreshes the reserve to inside the redeem?
+- Answer: What Kamino can pay right now with the same `KAMINO_RATE_HEADROOM_BPS` taken off its freely available liquidity and withdrawal cap as for `rebalance`, read from the lending market and the clock only when the output passes the buffer; a larger shortfall is refused with `BeyondBuffer` by the quote and the swap alike.
+- Alternatives: Kamino's limits with no headroom, under which a quote could promise a trade klend then refuses whenever the reserve was not refreshed in the same slot.
+- Specified in: [`docs/spec/lending-pool.md`, Redeeming the shortfall](spec/lending-pool.md#redeeming-the-shortfall)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
+### LENDING-63: What a redeeming swap records and tells
+
+- Question: What does a swap that redeems record, and what does it emit?
+- Answer: It measures the lent mint that arrived in its buffer vault and the cTokens that left its cToken account, fails with `RedeemPaidShort` below the shortfall, keeps anything above it in the buffer, adds what arrived to its running total redeemed, and emits `ShortfallRedeemed` with the shortfall, the cTokens burned, the lent mint received and the buffer, cTokens and running total afterwards.
+- Alternatives: Recording what it asked klend for rather than what moved; leaving the redeem to the router's swap event, which carries only the trade's amounts.
+- Specified in: [`docs/spec/lending-pool.md`, Redeeming the shortfall](spec/lending-pool.md#redeeming-the-shortfall)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
+### LENDING-64: Kamino's rounding in a redeeming swap
+
+- Question: May a swap that redeems lower the lent side's total, and so `R x L`, by Kamino's own rounding?
+- Answer: Yes, by at most one unit of the lent mint, as a `rebalance` may, since klend pays its rounded-down rate for the cTokens burned while the market values the rest rounded down too; the tests and the fuzzer allow exactly that unit and no more.
+- Alternatives: Refusing a redeem whose rounding would lower the total, which would refuse ordinary sales over a single unit.
+- Specified in: [`docs/spec/lending-pool.md`, Invariants for test layer 3](spec/lending-pool.md#invariants-for-test-layer-3)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.

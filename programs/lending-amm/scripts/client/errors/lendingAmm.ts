@@ -49,7 +49,7 @@ export const LENDING_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED = 0x177e; // 6014
 export const LENDING_AMM_ERROR__ZERO_OUTPUT = 0x177f; // 6015
 /** WouldEmptySide: The trade would pay out a side's whole reserve */
 export const LENDING_AMM_ERROR__WOULD_EMPTY_SIDE = 0x1780; // 6016
-/** BeyondBuffer: The trade would pay out more of the lent side than the buffer holds */
+/** BeyondBuffer: The trade would pay out more of the lent side than the buffer holds plus what Kamino can pay right now */
 export const LENDING_AMM_ERROR__BEYOND_BUFFER = 0x1781; // 6017
 /** ZeroDeposit: The first deposit needs both amounts above 0 */
 export const LENDING_AMM_ERROR__ZERO_DEPOSIT = 0x1782; // 6018
@@ -89,6 +89,10 @@ export const LENDING_AMM_ERROR__WITHIN_BAND = 0x1792; // 6034
 export const LENDING_AMM_ERROR__BELOW_MIN_REBALANCE = 0x1793; // 6035
 /** KaminoAccountWrong: A Kamino account is not the one the lent mint's reserve names */
 export const LENDING_AMM_ERROR__KAMINO_ACCOUNT_WRONG = 0x1794; // 6036
+/** RedeemAccountsMissing: The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again */
+export const LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING = 0x1795; // 6037
+/** RedeemPaidShort: Kamino's redeem paid the market less than the swap's shortfall */
+export const LENDING_AMM_ERROR__REDEEM_PAID_SHORT = 0x1796; // 6038
 
 export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__BAD_INIT_DATA
@@ -111,6 +115,8 @@ export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__NOT_A_MINT
   | typeof LENDING_AMM_ERROR__NOT_PIPELINE
   | typeof LENDING_AMM_ERROR__OVERFLOW
+  | typeof LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING
+  | typeof LENDING_AMM_ERROR__REDEEM_PAID_SHORT
   | typeof LENDING_AMM_ERROR__RESERVE_NOT_KAMINO
   | typeof LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_ADDRESS
@@ -136,7 +142,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__BAD_LENT_INDEX]: `The lent index must be 0 or 1`,
     [LENDING_AMM_ERROR__BELOW_MIN_LP]: `The deposit would mint fewer shares than min_lp`,
     [LENDING_AMM_ERROR__BELOW_MIN_REBALANCE]: `The move is smaller than the lent mint's MIN_REBALANCE, so it is skipped`,
-    [LENDING_AMM_ERROR__BEYOND_BUFFER]: `The trade would pay out more of the lent side than the buffer holds`,
+    [LENDING_AMM_ERROR__BEYOND_BUFFER]: `The trade would pay out more of the lent side than the buffer holds plus what Kamino can pay right now`,
     [LENDING_AMM_ERROR__EMPTY_SIDE]: `A side of the market holds nothing to price a deposit against`,
     [LENDING_AMM_ERROR__EQUAL_MINTS]: `A market's two mints must differ`,
     [LENDING_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED]: `Exact-out swaps are not supported`,
@@ -152,6 +158,8 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__NOT_A_MINT]: `A market's mints must be SPL Token or Token-2022 mints`,
     [LENDING_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
     [LENDING_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
+    [LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING]: `The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again`,
+    [LENDING_AMM_ERROR__REDEEM_PAID_SHORT]: `Kamino's redeem paid the market less than the swap's shortfall`,
     [LENDING_AMM_ERROR__RESERVE_NOT_KAMINO]: `The Kamino reserve is not owned by Kamino Lend`,
     [LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID]: `The Kamino reserve's total supply cannot be computed`,
     [LENDING_AMM_ERROR__RESERVE_WRONG_ADDRESS]: `The Kamino reserve is not the one the market's lent mint lends to`,

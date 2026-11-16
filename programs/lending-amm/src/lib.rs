@@ -18,9 +18,10 @@
 //!
 //! Quotes, swaps and deposits value the lent side as `L = B + V`: the buffer `B` in the lent
 //! mint's vault, plus the market's recorded cTokens at the Kamino reserve's stored rate, read
-//! after the reserve is checked ([`kamino`]). `rebalance` lends the surplus to Kamino and
-//! redeems a shortfall from it, by the rule in [`buffer`], whenever the buffer's share of the
-//! lent side has left its band.
+//! after the reserve is checked ([`kamino`]). A swap that pays out more of the lent side than
+//! the buffer holds redeems just the shortfall from Kamino inside the swap, and never deposits.
+//! `rebalance` lends the surplus to Kamino and redeems a shortfall from it, by the rule in
+//! [`buffer`], whenever the buffer's share of the lent side has left its band.
 //!
 //! Where things live: the build-time policy values in [`config`], the creation parameters
 //! and their rules in [`params`], the market state and its final layout in [`state`], the

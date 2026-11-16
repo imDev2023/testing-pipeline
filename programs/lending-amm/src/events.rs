@@ -1,7 +1,8 @@
 //! Events, one per instruction of ours that changes a market, so Aviary's indexer can show a
 //! market's history; current values are always read from the market state. A swap emits the
 //! router's swap event instead, which carries its amounts, and moves the recorded reserves
-//! by exactly the input it credits and the output it pays.
+//! by exactly the input it credits and the output it pays; a swap that redeems its shortfall
+//! from Kamino also emits [`ShortfallRedeemed`].
 
 use anchor_lang::prelude::*;
 
@@ -63,5 +64,26 @@ pub struct Rebalanced {
     /// The running totals of the lent mint deposited into and redeemed from Kamino
     /// afterwards; the lending yield so far is `V + redeemed - deposited`.
     pub deposited: u128,
+    pub redeemed: u128,
+}
+
+/// A swap redeemed its shortfall from Kamino before paying the trader
+/// (docs/spec/lending-pool.md, "Redeeming the shortfall").
+#[event]
+pub struct ShortfallRedeemed {
+    pub market_state: Pubkey,
+    /// What the trade paid out beyond the buffer, `out - B`.
+    pub shortfall: u64,
+    /// The cTokens burned, `ceil(shortfall x S_ctoken / S_total)` at the stored rate, as
+    /// measured at the market's cToken account.
+    pub ctokens: u64,
+    /// The lent mint klend's redeem actually paid into the buffer vault, at least the shortfall;
+    /// anything above it stays in the buffer.
+    pub liquidity: u64,
+    /// The buffer `B` the market has recorded after paying the trader.
+    pub buffer: u64,
+    /// The cTokens `c` the market has recorded afterwards.
+    pub ctokens_held: u64,
+    /// The running total of the lent mint redeemed from Kamino afterwards.
     pub redeemed: u128,
 }

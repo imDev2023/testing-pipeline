@@ -9,7 +9,11 @@ use common::*;
 use pipeline_check::{check_market, CheckOptions, Status};
 
 fn assert_conforms(env: &Env, market: &Market) {
-    let report = check_market(&env.svm, market.market, &CheckOptions::default());
+    assert_conforms_with(env, market, &CheckOptions::default());
+}
+
+fn assert_conforms_with(env: &Env, market: &Market, options: &CheckOptions) {
+    let report = check_market(&env.svm, market.market, options);
     println!("{}", report.to_text());
     let not_passing: Vec<_> = report
         .checks
@@ -101,5 +105,32 @@ fn a_market_rebalance_has_lent_passes_every_check() {
         env.rebalance(&market, None).unwrap();
         assert!(env.market_state(&market.market_state).redeemed > 0);
         assert_conforms(&env, &market);
+    }
+}
+
+#[test]
+fn quotes_equal_swaps_on_both_sides_of_the_buffers_edge() {
+    // pipeline-check's default sizes come from vault balances and never pay out more than the
+    // lent-mint vault, the buffer, holds; explicit sizes do: a sell paying out half the buffer
+    // and one paying out 1.4 times it, which redeems from Kamino in the swap. Every check passes
+    // with them, `quote_matches_swap` and `transaction_size` (with the redeem accounts) included.
+    for lent_entry in 0..2 {
+        let mut env = Env::new();
+        let market = env.lending_market(lent_entry, 30);
+        let (other, lent) = (market.other_index(), market.lent_index);
+        let buffer = env.buffer(&market);
+        let within = env.largest_sell_within(&market, buffer / 2);
+        let beyond = env.sell_paying(&market, buffer / 10 * 14);
+        let pays = |amount| {
+            env.quote(&market, &exact_in(other, lent, amount))
+                .unwrap()
+                .amount_out
+        };
+        assert!(pays(within) <= buffer && pays(beyond) > buffer);
+        let options = CheckOptions {
+            amounts: Some(vec![within / 100, within, beyond]),
+            ..CheckOptions::default()
+        };
+        assert_conforms_with(&env, &market, &options);
     }
 }
