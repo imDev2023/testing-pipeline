@@ -8,7 +8,7 @@ mod common;
 
 use anchor_lang::Discriminator;
 use common::*;
-use lending_amm::events::{LiquidityAdded, MarketCreated, Rebalanced};
+use lending_amm::events::{LiquidityAdded, MarketCreated, Rebalanced, ShortfallRedeemed};
 use lending_amm::state::layout;
 use lending_amm::LendingAmmMarket;
 use pipeline_client::interface::discriminator;
@@ -207,7 +207,11 @@ fn its_events_and_errors_are_the_programs() {
         LiquidityAdded::DISCRIMINATOR.to_vec()
     )));
     assert!(events.contains(&("Rebalanced".into(), Rebalanced::DISCRIMINATOR.to_vec())));
-    assert_eq!(events.len(), 3);
+    assert!(events.contains(&(
+        "ShortfallRedeemed".into(),
+        ShortfallRedeemed::DISCRIMINATOR.to_vec()
+    )));
+    assert_eq!(events.len(), 4);
 
     // Errors are numbered from 6000 in the enum's order, new ones only ever appended.
     let errors = idl["errors"].as_array().unwrap();
@@ -239,6 +243,14 @@ fn its_events_and_errors_are_the_programs() {
             "KaminoAccountWrong",
             lending_amm::StrategyError::KaminoAccountWrong,
         ),
+        (
+            "RedeemAccountsMissing",
+            lending_amm::StrategyError::RedeemAccountsMissing,
+        ),
+        (
+            "RedeemPaidShort",
+            lending_amm::StrategyError::RedeemPaidShort,
+        ),
     ] {
         let listed = errors.iter().find(|e| e["name"] == name).unwrap();
         assert_eq!(
@@ -247,5 +259,5 @@ fn its_events_and_errors_are_the_programs() {
             "{name}"
         );
     }
-    assert_eq!(errors.last().unwrap()["name"], "KaminoAccountWrong");
+    assert_eq!(errors.last().unwrap()["name"], "RedeemPaidShort");
 }

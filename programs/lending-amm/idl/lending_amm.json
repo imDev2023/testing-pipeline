@@ -712,6 +712,19 @@
         52,
         182
       ]
+    },
+    {
+      "name": "ShortfallRedeemed",
+      "discriminator": [
+        208,
+        206,
+        3,
+        143,
+        152,
+        189,
+        140,
+        24
+      ]
     }
   ],
   "errors": [
@@ -803,7 +816,7 @@
     {
       "code": 6017,
       "name": "BeyondBuffer",
-      "msg": "The trade would pay out more of the lent side than the buffer holds"
+      "msg": "The trade would pay out more of the lent side than the buffer holds plus what Kamino can pay right now"
     },
     {
       "code": 6018,
@@ -899,6 +912,16 @@
       "code": 6036,
       "name": "KaminoAccountWrong",
       "msg": "A Kamino account is not the one the lent mint's reserve names"
+    },
+    {
+      "code": 6037,
+      "name": "RedeemAccountsMissing",
+      "msg": "The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again"
+    },
+    {
+      "code": 6038,
+      "name": "RedeemPaidShort",
+      "msg": "Kamino's redeem paid the market less than the swap's shortfall"
     }
   ],
   "types": [
@@ -1320,6 +1343,66 @@
           {
             "name": "round",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ShortfallRedeemed",
+      "docs": [
+        "A swap redeemed its shortfall from Kamino before paying the trader",
+        "(docs/spec/lending-pool.md, \"Redeeming the shortfall\")."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "shortfall",
+            "docs": [
+              "What the trade paid out beyond the buffer, `out - B`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ctokens",
+            "docs": [
+              "The cTokens burned, `ceil(shortfall x S_ctoken / S_total)` at the stored rate, as",
+              "measured at the market's cToken account."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "liquidity",
+            "docs": [
+              "The lent mint klend's redeem actually paid into the buffer vault, at least the shortfall;",
+              "anything above it stays in the buffer."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "buffer",
+            "docs": [
+              "The buffer `B` the market has recorded after paying the trader."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ctokens_held",
+            "docs": [
+              "The cTokens `c` the market has recorded afterwards."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "redeemed",
+            "docs": [
+              "The running total of the lent mint redeemed from Kamino afterwards."
+            ],
+            "type": "u128"
           }
         ]
       }

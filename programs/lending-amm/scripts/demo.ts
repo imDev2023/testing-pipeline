@@ -1,8 +1,8 @@
 // The lending AMM's demo: lists the strategy on a Pipeline router, creates a WSOL-lent market
-// and makes its first deposit in one transaction, trades it both ways through the router and
-// adds liquidity again, step by step, building every transaction from metadata.json with
-// Pipeline's TypeScript SDK, as Aviary will, and reading the market back with the generated
-// client (client/):
+// and makes its first deposit in one transaction, trades it both ways through the router, adds
+// liquidity again, lends the surplus to Kamino and sells beyond the buffer, step by step,
+// building every transaction from metadata.json with Pipeline's TypeScript SDK, as Aviary will,
+// and reading the market back with the generated client (client/):
 //
 //   1. check the program is deployed and the upgrade-authority key is its upgrade authority,
 //      and that Kamino Lend runs with the reserve the market lends to: at the address the
@@ -36,7 +36,17 @@
 //      target, and quotes taken just before and just after agree within Kamino's rounding;
 //  12. check a second `rebalance` is refused with `WithinBand`, in simulation;
 //  13. trade both ways through the router again, now pricing the cTokens at the reserve's
-//      stored rate, each swap equal to its quote and to the script's calculation.
+//      stored rate, each swap equal to its quote and to the script's calculation;
+//  14. check a sale paying out more WSOL than the buffer holds, built from the accounts
+//      resolved for a smaller sale, is refused with `RedeemAccountsMissing`, in simulation;
+//  15. make that sale with its own accounts, which list the reserve writable and klend's
+//      redeem accounts: the trader receives exactly the quote, the script's calculation, and
+//      the swap redeems the shortfall from Kamino inside the swap, its redeem event carrying
+//      the shortfall `out - B`, the market's cTokens falling by `ceil(s x S_ctoken / S_total)`
+//      at the stored rate as this script decodes it, and anything klend paid above the
+//      shortfall staying in the buffer;
+//  16. call `rebalance` again: the buffer, drained below its band by the sale, is redeemed back
+//      to its target within klend's rounding.
 //
 // Grown from Pipeline's strategy template
 // (scripts/deploy-devnet.ts at 5ad130d). Deploy the program first; docs/toolchain.md says how,
@@ -77,7 +87,9 @@ import {
     createTransactionMessage,
     generateKeyPairSigner,
     getAddressDecoder,
+    getAddressEncoder,
     getBase64EncodedWireTransaction,
+    getProgramDerivedAddress,
     getSignatureFromTransaction,
     lamports,
     pipe,
@@ -88,6 +100,7 @@ import {
     type Address,
     type Instruction,
     type KeyPairSigner,
+    type ReadonlyUint8Array,
     type Signature,
 } from '@solana/kit';
 import { getCreateAccountInstruction, getTransferSolInstruction } from '@solana-program/system';
@@ -110,6 +123,8 @@ import {
     findLpSharesPda,
     findVault0Pda,
     findVault1Pda,
+    getShortfallRedeemedEventDecoder,
+    SHORTFALL_REDEEMED_EVENT_DISCRIMINATOR,
 } from './client/index.ts';
 import { decodeReserve, klendDeposit, lentValue, rate, type ReserveView } from './kamino.ts';
 
@@ -457,6 +472,30 @@ async function readReserve(): Promise<ReserveView> {
     return view;
 }
 
+/** The instructions sysvar, which klend's redeem introspects. */
+const INSTRUCTIONS_SYSVAR = address('Sysvar1nstructions1111111111111111111111111');
+
+/** klend's lending market authority, the PDA `["lma", lending_market]`. */
+async function lendingMarketAuthority(): Promise<Address> {
+    const [authority] = await getProgramDerivedAddress({
+        programAddress: KLEND,
+        seeds: [new TextEncoder().encode('lma'), getAddressEncoder().encode(address(KAMINO.lendingMarket.address))],
+    });
+    return authority;
+}
+
+/** The data of every event with `discriminator` that transaction `signature` logged, without it. */
+async function strategyEvents(signature: Signature, discriminator: ReadonlyUint8Array): Promise<Uint8Array[]> {
+    const transaction = await rpc
+        .getTransaction(signature, { commitment: 'confirmed', encoding: 'json', maxSupportedTransactionVersion: 0 })
+        .send();
+    const logs = transaction?.meta?.logMessages ?? fail(`no logs for ${signature}`);
+    return logs
+        .filter((line) => line.startsWith('Program data: '))
+        .map((line) => new Uint8Array(Buffer.from(line.slice('Program data: '.length), 'base64')))
+        .filter((data) => discriminator.every((byte, i) => data[i] === byte));
+}
+
 const show = (value: unknown) => JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
 
 async function main() {
@@ -742,6 +781,31 @@ async function main() {
         const { quote } = await pipeline.quoteStrategy(rpc, routerView, trade, strategyAccounts, payer.address, simulation);
         return quote.amountOut;
     }
+    /** The router's `swap` for `amount` of mint `input`, with the strategy accounts given. */
+    const swapInstruction = (input: 0 | 1, amount: bigint, strategyAccounts: AccountMeta[], minAmountOut: bigint) =>
+        pipeline.swap(
+            {
+                trader: payer.address,
+                strategyProgram: programId,
+                marketState,
+                traderInput: holdings[input]!,
+                traderOutput: holdings[1 - input]!,
+                inputVault: vaults[input]!,
+                inputMint: mints[input]!,
+                outputMint: mints[1 - input]!,
+                inputTokenProgram: TOKEN_PROGRAM_ADDRESS,
+                outputTokenProgram: TOKEN_PROGRAM_ADDRESS,
+                strategyAccounts,
+            },
+            {
+                mode: pipeline.TradeMode.ExactIn,
+                amountIn: amount,
+                amountOut: 0n,
+                minAmountOut,
+                integratorFeeBps: 0,
+                extra: new Uint8Array(),
+            },
+        );
     let lastSwap: { input: 0 | 1; amount: bigint; strategyAccounts: AccountMeta[] } | undefined;
     /** Buys the token with WSOL and sells it back through the router, checking each swap. */
     async function tradeBothWays(when: string) {
@@ -774,35 +838,7 @@ async function main() {
             info(`${label}: lent side L = B + V = ${lent.buffer} + ${lent.value} (${lent.ctokens} cTokens at the stored rate) = ${lent.total}`);
             info(`${label}: ${amount} in quotes ${quote.amountOut} out (${unitsConsumed} compute units), as calculated`);
             const before = await tokenBalance(holdings[output]!);
-            await send(
-                label,
-                payer,
-                [
-                    await pipeline.swap(
-                        {
-                            trader: payer.address,
-                            strategyProgram: programId,
-                            marketState,
-                            traderInput: holdings[input]!,
-                            traderOutput: holdings[output]!,
-                            inputVault: vaults[input]!,
-                            inputMint: mints[input]!,
-                            outputMint: mints[output]!,
-                            inputTokenProgram: TOKEN_PROGRAM_ADDRESS,
-                            outputTokenProgram: TOKEN_PROGRAM_ADDRESS,
-                            strategyAccounts,
-                        },
-                        {
-                            mode: pipeline.TradeMode.ExactIn,
-                            amountIn: amount,
-                            amountOut: 0n,
-                            minAmountOut: quote.amountOut,
-                            integratorFeeBps: 0,
-                            extra: new Uint8Array(),
-                        },
-                    ),
-                ],
-            );
+            await send(label, payer, [await swapInstruction(input, amount, strategyAccounts, quote.amountOut)]);
             const received = (await tokenBalance(holdings[output]!)) - before;
             if (received !== quote.amountOut) fail(`${label}: received ${received}, quoted ${quote.amountOut}`);
             reserves = input === 1
@@ -819,31 +855,7 @@ async function main() {
     step('9. Checking a swap built without the Kamino reserve is refused');
     if (!lastSwap) fail('no swap to rebuild');
     const withoutReserve = lastSwap.strategyAccounts.filter((account) => account.address !== RESERVE);
-    const refusal = await simulate(payer, [
-        await pipeline.swap(
-            {
-                trader: payer.address,
-                strategyProgram: programId,
-                marketState,
-                traderInput: holdings[lastSwap.input]!,
-                traderOutput: holdings[1 - lastSwap.input]!,
-                inputVault: vaults[lastSwap.input]!,
-                inputMint: mints[lastSwap.input]!,
-                outputMint: mints[1 - lastSwap.input]!,
-                inputTokenProgram: TOKEN_PROGRAM_ADDRESS,
-                outputTokenProgram: TOKEN_PROGRAM_ADDRESS,
-                strategyAccounts: withoutReserve,
-            },
-            {
-                mode: pipeline.TradeMode.ExactIn,
-                amountIn: lastSwap.amount,
-                amountOut: 0n,
-                minAmountOut: 0n,
-                integratorFeeBps: 0,
-                extra: new Uint8Array(),
-            },
-        ),
-    ]);
+    const refusal = await simulate(payer, [await swapInstruction(lastSwap.input, lastSwap.amount, withoutReserve, 0n)]);
     if (!refusal.err || !refusal.logs.some((line) => line.includes('Error Code: ReserveWrongAddress'))) {
         fail(`a swap without the reserve was not refused with ReserveWrongAddress: ${show(refusal.err)}\n   ${refusal.logs.join('\n   ')}`);
     }
@@ -935,6 +947,95 @@ async function main() {
 
     step('13. Trading both ways again, with the cTokens priced at the stored rate');
     await tradeBothWays(', after lending');
+
+    step('14. Selling for more WSOL than the buffer, with accounts resolved for a smaller sale');
+    // A sale paying out 1.5 times the buffer, by the formula out = L x a_net / (R + a_net):
+    // a_net = ceil(out x R / (L - out)) and one unit more, then the LP fee on top.
+    const beforeSale = await lentSide();
+    const wanted = beforeSale.buffer + beforeSale.buffer / 2n;
+    const saleNet = ceilDiv(wanted * reserves[0], beforeSale.total - wanted) + 1n;
+    const saleAmount = ceilDiv(saleNet * BPS, BPS - feeBps);
+    const smaller = await pipeline.resolveAccounts(rpc, routerView, tradeOf(0, DEMO.sellTokens), payer.address, simulation);
+    if (smaller.length !== 3) fail(`a sale the buffer covers resolved ${smaller.length} strategy accounts, not 3`);
+    const stale = await simulate(payer, [await swapInstruction(0, saleAmount, smaller, 0n)]);
+    if (!stale.err || !stale.logs.some((line) => line.includes('Error Code: RedeemAccountsMissing'))) {
+        fail(`a sale built from a smaller sale's accounts was not refused with RedeemAccountsMissing: ${show(stale.err)}\n   ${stale.logs.join('\n   ')}`);
+    }
+    info(`selling ${saleAmount} with the 3 accounts resolved for selling ${DEMO.sellTokens}: refused with RedeemAccountsMissing, in simulation`);
+    record.push(['sale with stale accounts', 'refused: RedeemAccountsMissing']);
+
+    step('15. Selling for more WSOL than the buffer: the swap redeems the shortfall from Kamino');
+    const sale = tradeOf(0, saleAmount);
+    const saleAccounts = await pipeline.resolveAccounts(rpc, routerView, sale, payer.address, simulation);
+    // The reserve writable, then klend's redeem accounts, as the spec lists them.
+    const expectedRedeem: [Address, AccountRole][] = [
+        [RESERVE, AccountRole.WRITABLE],
+        [KLEND, AccountRole.READONLY],
+        [address(KAMINO.lendingMarket.address), AccountRole.READONLY],
+        [(await lendingMarketAuthority()), AccountRole.READONLY],
+        [address(KAMINO.reserves.wsol.liquiditySupply), AccountRole.WRITABLE],
+        [collateralMint, AccountRole.WRITABLE],
+        [ctokenAccount, AccountRole.WRITABLE],
+        [TOKEN_PROGRAM_ADDRESS, AccountRole.READONLY],
+        [INSTRUCTIONS_SYSVAR, AccountRole.READONLY],
+    ];
+    expectedRedeem.forEach(([account, role], i) => {
+        const listed = saleAccounts[2 + i];
+        if (listed?.address !== account || listed.role !== role) {
+            fail(`the sale's account resolution lists ${show(listed)} at ${2 + i}, not ${account} with role ${role}`);
+        }
+    });
+    info(`account resolution lists the reserve writable and klend's redeem accounts: ${saleAccounts.length} strategy accounts`);
+    const { quote: saleQuote, unitsConsumed: saleUnits } = await pipeline.quoteStrategy(rpc, routerView, sale, saleAccounts, payer.address, simulation);
+    const calculatedOut = exactIn(reserves[0], beforeSale.total, saleAmount, feeBps);
+    if (saleQuote.amountOut !== calculatedOut) fail(`the sale quotes ${saleQuote.amountOut}; the formula gives ${calculatedOut}`);
+    const shortfall = saleQuote.amountOut - beforeSale.buffer;
+    if (shortfall <= 0n) fail(`the sale pays out ${saleQuote.amountOut}, within the buffer ${beforeSale.buffer}`);
+    // The spec's burn, ceil(s x S_ctoken / S_total) at the stored rate, from this script's decoding.
+    const stored = await readReserve();
+    const burn = ceilDiv(shortfall * (stored.mintTotalSupply << 60n), stored.totalSupplySf);
+    info(`${saleAmount} in quotes ${saleQuote.amountOut} WSOL out (${saleUnits} compute units), as calculated: ${shortfall} beyond the buffer ${beforeSale.buffer}, for ${burn} cTokens`);
+    const wsolBefore = await tokenBalance(holdings[1]!);
+    const ctokensBefore = await tokenBalance(ctokenAccount);
+    const saleSignature = await send('sell beyond the buffer', payer, [await swapInstruction(0, saleAmount, saleAccounts, saleQuote.amountOut)]);
+    const saleReceived = (await tokenBalance(holdings[1]!)) - wsolBefore;
+    if (saleReceived !== saleQuote.amountOut) fail(`the sale received ${saleReceived}, quoted ${saleQuote.amountOut}`);
+    const redeemed = (await strategyEvents(saleSignature, SHORTFALL_REDEEMED_EVENT_DISCRIMINATOR)).map((data) =>
+        getShortfallRedeemedEventDecoder().decode(data),
+    );
+    if (redeemed.length !== 1) fail(`the sale emitted ${redeemed.length} ShortfallRedeemed events, not 1`);
+    const event = redeemed[0]!;
+    if (event.shortfall !== shortfall) fail(`the redeem event carries the shortfall ${event.shortfall}, not ${shortfall}`);
+    if (event.ctokens !== burn || ctokensBefore - (await tokenBalance(ctokenAccount)) !== burn) {
+        fail(`the market's cTokens fell by ${ctokensBefore - (await tokenBalance(ctokenAccount))} (event ${event.ctokens}), not the ${burn} calculated`);
+    }
+    if (event.liquidity < shortfall) fail(`klend paid ${event.liquidity}, less than the shortfall ${shortfall}`);
+    reserves = [reserves[0] + saleAmount, reserves[1] + event.liquidity - saleQuote.amountOut];
+    lent = { ctokens: lent.ctokens - burn, deposited: lent.deposited, redeemed: lent.redeemed + event.liquidity };
+    await checkMarket('after the sale');
+    info(`the trader received exactly the quote; klend's redeem paid ${event.liquidity} for ${burn} cTokens, ${event.liquidity - shortfall} above the shortfall, which stays in the buffer`);
+    record.push(['sell beyond the buffer', `${saleAmount} in, ${saleReceived} out, ${shortfall} redeemed for ${burn} cTokens`]);
+
+    step('16. Rebalancing: the buffer back to its target');
+    const drained = await lentSide();
+    if (drained.buffer * BPS >= drained.total * idlConstant('BUFFER_MIN_BPS')) fail(`the buffer ${drained.buffer} of ${drained.total} is not below its band`);
+    const ctokensBeforeRebalance = await tokenBalance(ctokenAccount);
+    const bufferBeforeRebalance = await tokenBalance(vault1);
+    await send('rebalance after the sale', payer, [await rebalanceInstruction()]);
+    const burned = ctokensBeforeRebalance - (await tokenBalance(ctokenAccount));
+    const paid = (await tokenBalance(vault1)) - bufferBeforeRebalance;
+    reserves = [reserves[0], reserves[1] + paid];
+    lent = { ctokens: lent.ctokens - burned, deposited: lent.deposited, redeemed: lent.redeemed + paid };
+    await checkMarket('after the second rebalance');
+    const restored = await lentSide();
+    const restoredTarget = (restored.total * targetBps) / BPS;
+    // Within Kamino's rounding: a redeem burns the cTokens worth at most the shortfall, so the
+    // buffer lands less than one cToken's worth below its target, plus what klend's refresh adds.
+    const oneCtoken = ceilDiv(stored.totalSupplySf, stored.mintTotalSupply << 60n);
+    const gap = restored.buffer > restoredTarget ? restored.buffer - restoredTarget : restoredTarget - restored.buffer;
+    if (gap > oneCtoken + 2n) fail(`the buffer ${restored.buffer} is ${gap} from its target ${restoredTarget}`);
+    info(`klend paid ${paid} WSOL for ${burned} cTokens: the buffer is ${restored.buffer} of ${restored.total}, its target ${restoredTarget}, within klend's rounding`);
+    record.push(['rebalance after the sale', `redeemed ${paid} WSOL for ${burned} cTokens; buffer ${restored.buffer} of ${restored.total}, at its target`]);
 
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));

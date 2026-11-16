@@ -39,7 +39,7 @@ pub enum StrategyError {
     ZeroOutput,
     #[msg("The trade would pay out a side's whole reserve")]
     WouldEmptySide,
-    #[msg("The trade would pay out more of the lent side than the buffer holds")]
+    #[msg("The trade would pay out more of the lent side than the buffer holds plus what Kamino can pay right now")]
     BeyondBuffer,
     #[msg("The first deposit needs both amounts above 0")]
     ZeroDeposit,
@@ -82,4 +82,8 @@ pub enum StrategyError {
     BelowMinRebalance,
     #[msg("A Kamino account is not the one the lent mint's reserve names")]
     KaminoAccountWrong,
+    #[msg("The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again")]
+    RedeemAccountsMissing,
+    #[msg("Kamino's redeem paid the market less than the swap's shortfall")]
+    RedeemPaidShort,
 }

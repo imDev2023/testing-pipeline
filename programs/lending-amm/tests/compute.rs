@@ -19,6 +19,7 @@ use solana_transaction::Transaction;
 mod ceilings {
     pub const PIPELINE_QUOTE: u64 = 40_000;
     pub const PIPELINE_SWAP_NO_REDEEM: u64 = 40_000;
+    pub const PIPELINE_SWAP_WITH_REDEEM: u64 = 80_000;
     pub const PIPELINE_RESOLVE_ACCOUNTS: u64 = 40_000;
     pub const PIPELINE_INIT_MARKET: u64 = 150_000;
     pub const ADD_LIQUIDITY: u64 = 60_000;
@@ -201,7 +202,7 @@ fn quotes_account_resolution_and_swaps_stay_under_their_ceilings() {
         let trader = env.funded_wallet(&market, [1_000_000_000_000, 100 * SOL]);
         for (input, output, amount) in [(1, 0, 3 * SOL), (0, 1, 20_000_000_000)] {
             let trade = exact_in(input, output, amount);
-            let resolve = strategy_compute(&env.resolve_meta(&market, &trade).unwrap().logs)[0];
+            let resolve = resolve_compute(&env, &market, &trade);
             let quote = strategy_compute(&env.quote_meta(&market, &trade).unwrap().logs)[0];
             let swap = env
                 .swap_meta(&market, &trader, (input, output), amount)
@@ -217,6 +218,60 @@ fn quotes_account_resolution_and_swaps_stay_under_their_ceilings() {
             assert!(quote <= ceilings::PIPELINE_QUOTE, "{name}: {quote}");
             assert!(swap <= ceilings::PIPELINE_SWAP_NO_REDEEM, "{name}: {swap}");
         }
+    }
+}
+
+/// The most any round of `pipeline_resolve_accounts` consumed for `trade`.
+fn resolve_compute(env: &Env, market: &Market, trade: &TradeRequest) -> u64 {
+    let (_, rounds) = env.resolve_rounds(market, trade).unwrap();
+    rounds
+        .iter()
+        .map(|round| strategy_compute(&round.logs)[0])
+        .max()
+        .unwrap()
+}
+
+#[test]
+fn a_swap_that_redeems_its_shortfall_and_its_quote_and_resolution_stay_under_their_ceilings() {
+    // Markets that lent through klend's real deposit, on both lent mints; a sell paying out 1.5
+    // times the buffer redeems the rest from Kamino in the swap. Nothing these instructions run
+    // searches for a PDA's bump but the lending market authority's, which depends only on the
+    // lending market, so their costs do not depend on the market's keys.
+    for lent in 0..lending_amm::config::LENT_MINTS.len() {
+        let name = common::kamino::lent_name(lent);
+        let mut env = Env::new();
+        let market = env.lending_market(lent, 30);
+        let (other, lent_side) = (market.other_index(), market.lent_index);
+        let buffer = env.buffer(&market);
+        let amount = env.sell_paying(&market, buffer + buffer / 2);
+        let trade = exact_in(other, lent_side, amount);
+        let resolve = resolve_compute(&env, &market, &trade);
+        let quote = strategy_compute(&env.quote_meta(&market, &trade).unwrap().logs)[0];
+        let trader = env.funded_wallet(&market, [2 * amount, 0]);
+        let logs = env
+            .swap_meta(&market, &trader, (other, lent_side), amount)
+            .unwrap()
+            .logs;
+        assert_eq!(
+            events::<lending_amm::events::ShortfallRedeemed>(&logs).len(),
+            1
+        );
+        let (swap, klend) = (
+            *strategy_compute(&logs).last().unwrap(),
+            klend_compute(&logs),
+        );
+        println!(
+            "a redeeming sell on {name}: pipeline_resolve_accounts {resolve} CU, pipeline_quote {quote} CU, pipeline_swap {swap} CU (klend {klend})"
+        );
+        assert!(
+            resolve <= ceilings::PIPELINE_RESOLVE_ACCOUNTS,
+            "{name}: {resolve}"
+        );
+        assert!(quote <= ceilings::PIPELINE_QUOTE, "{name}: {quote}");
+        assert!(
+            swap <= ceilings::PIPELINE_SWAP_WITH_REDEEM,
+            "{name}: {swap}"
+        );
     }
 }
 
@@ -276,6 +331,7 @@ fn the_table_mirrors_the_spec() {
     use ceilings::*;
     row("`pipeline_quote`", PIPELINE_QUOTE);
     row("`pipeline_swap`, no redeem", PIPELINE_SWAP_NO_REDEEM);
+    row("`pipeline_swap`, with a redeem", PIPELINE_SWAP_WITH_REDEEM);
     row("`pipeline_resolve_accounts`", PIPELINE_RESOLVE_ACCOUNTS);
     row("`pipeline_init_market`", PIPELINE_INIT_MARKET);
     row("`add_liquidity`", ADD_LIQUIDITY);

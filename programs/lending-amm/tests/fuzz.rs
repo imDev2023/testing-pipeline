@@ -1,5 +1,6 @@
 //! The stateful invariant fuzzer (docs/spec/README.md, "Test layers" 3): Proptest generates
-//! WSOL-lent markets, which may lend from the start, and sequences of swaps, deposits,
+//! WSOL-lent markets, which may lend from the start, and sequences of swaps (some redeeming
+//! their shortfall from Kamino), deposits,
 //! `rebalance` calls, donations of tokens and cTokens and clock jumps, sent as real
 //! transactions through the router copied from devnet and klend's deployed bytes, against the
 //! Kamino reserve dumped from the cluster this build lends on, in LiteSVM. A market holds only
@@ -11,10 +12,9 @@
 //!   to Kamino by `rebalance` (net of what it redeemed), and each vault holds exactly what the
 //!   market has recorded plus what was donated to it;
 //! - every holder can exit: every trader can sell all they hold of either mint, Pipeline's
-//!   fee included (a holding too small to buy one unit is refused as dust, cleanly, and a sell
-//!   paying out more of the lent side than the buffer holds is refused until
-//!   [the in-swap redeem](https://github.com/imDev2023/testing-pipeline/issues/81) pays it from
-//!   Kamino); an LP's exit arrives with
+//!   fee included (a holding too small to buy one unit is refused as dust, cleanly, and so is a
+//!   sell paying out more of the lent side than the buffer holds plus what Kamino can pay right
+//!   now, by the spec's formula); an LP's exit arrives with
 //!   [remove liquidity](https://github.com/imDev2023/testing-pipeline/issues/82), which adds
 //!   it here;
 //! - each quote equals its swap;
@@ -22,10 +22,15 @@
 //!   against their vaults, the cTokens against the cToken account;
 //! - no swap lowers `R x L`, and no step lowers the value of an LP share (`R x L / N^2`), with
 //!   `L = B + V`, the cTokens valued at the reserve's stored rate, which only klend's own calls
-//!   move, and only up; a `rebalance` may lower `L` by Kamino's rounding, one unit;
+//!   move, and only up; a `rebalance`, and a swap that redeems, may lower `L` by Kamino's
+//!   rounding, one unit;
 //! - the share count changes only by `add_liquidity`;
-//! - only `rebalance` deposits into or redeems from Kamino or moves the recorded cTokens, and
-//!   it only ever moves the buffer's share towards `BUFFER_TARGET_BPS`: a deposit only from
+//! - a swap never deposits into Kamino, never redeems when the buffer covers its output, and
+//!   otherwise redeems exactly `ceil(s x S_ctoken / S_total)` cTokens for its shortfall `s`, never
+//!   more than one cToken beyond what is worth `s`, receives at least `s` and keeps the rest in
+//!   the buffer;
+//! - only `rebalance` and a swap's redeem move the recorded cTokens, and `rebalance` only ever
+//!   moves the buffer's share towards `BUFFER_TARGET_BPS`: a deposit only from
 //!   above the band, landing on the target within Kamino's rounding, a redeem only from below
 //!   it, never past the target by more than that rounding; refused, it was inside the band or
 //!   its move was below the floor, and nothing changed.
@@ -63,7 +68,8 @@ enum Step {
     /// Anyone calls `rebalance`.
     Rebalance,
     /// A trader sells the other mint for as much of the lent mint as pays out `fraction` (in
-    /// millionths) of the buffer, which can take it below the band.
+    /// millionths) of the buffer, which can take it below the band, or, beyond a whole buffer,
+    /// redeem the rest from Kamino in the swap.
     DrainBuffer { trader: usize, fraction: u32 },
 }
 
@@ -77,7 +83,7 @@ fn step() -> impl Strategy<Value = Step> {
         1 => (1..100_000_000_000u64).prop_map(|amount| Step::DonateCtokens { amount }),
         1 => (1..1_000_000u64).prop_map(|slots| Step::Wait { slots }),
         3 => Just(Step::Rebalance),
-        2 => (0..2usize, 300_000..1_000_000u32)
+        2 => (0..2usize, 300_000..2_000_000u32)
             .prop_map(|(trader, fraction)| Step::DrainBuffer { trader, fraction }),
     ]
 }
@@ -107,6 +113,8 @@ struct World {
     /// How the case's `rebalance` calls went: deposits, redeems, and refusals inside the band
     /// and below the floor, printed with `--nocapture` to show what the fuzzer reached.
     rebalances: [usize; 4],
+    /// How many swaps redeemed their shortfall from Kamino.
+    redeeming_swaps: usize,
 }
 
 const SEED: [u64; 2] = [2_000_000_000_000, 40 * SOL];
@@ -150,6 +158,7 @@ impl World {
             donated_ctokens: 0,
             shares,
             rebalances: [0; 4],
+            redeeming_swaps: 0,
         }
     }
 
@@ -183,7 +192,8 @@ impl World {
     }
 
     /// Runs `step`, and returns how far it may have lowered the lent side's total by Kamino's
-    /// rounding: one unit after a `rebalance` that moved, and nothing after any other step.
+    /// rounding: one unit after a `rebalance` that moved or a swap that redeemed, and nothing
+    /// after any other step.
     fn run(&mut self, step: &Step) -> Result<u64, TestCaseError> {
         let before = self.reserves();
         let effective_before = self.effective();
@@ -193,48 +203,12 @@ impl World {
                 input,
                 fraction,
             } => {
-                let output = 1 - input;
                 let wallet = self.traders[trader].pubkey();
                 // What the trader can spend, Pipeline's fee included.
                 let budget =
                     (self.holding(&wallet, input) as u128 * fraction as u128 / 1_000_000) as u64;
                 let amount = amount_for_budget(budget, 0);
-                let quote = self
-                    .env
-                    .quote(&self.market, &exact_in(input, output, amount));
-                let trader = self.traders[trader].insecure_clone();
-                let swapped = self
-                    .env
-                    .swap(&self.market, &trader, (input, output), amount);
-                match quote {
-                    Ok(quote) => {
-                        let swapped = swapped.map_err(TestCaseError::fail)?;
-                        // Each quote equals its swap.
-                        prop_assert_eq!(swapped.received, quote.amount_out);
-                        let after = self.reserves();
-                        prop_assert_eq!(after[input], before[input] + amount);
-                        prop_assert_eq!(after[output], before[output] - quote.amount_out);
-                        // No swap lowers R x L, with L = B + V.
-                        let (now, was) = (self.effective(), effective_before);
-                        prop_assert!(
-                            now[0] as u128 * now[1] as u128 >= was[0] as u128 * was[1] as u128
-                        );
-                    }
-                    Err(refusal) => {
-                        // Only dust, and a payout beyond the buffer, are refused, and the
-                        // swap is refused with them.
-                        prop_assert!(
-                            refusal.contains("ZeroOutput")
-                                || (output == 1 && refusal.contains("BeyondBuffer")),
-                            "an unexpected refusal of {} of mint {}: {}",
-                            amount,
-                            input,
-                            refusal
-                        );
-                        prop_assert!(swapped.is_err());
-                        prop_assert_eq!(self.reserves(), before);
-                    }
-                }
+                return self.swap(trader, input, amount);
             }
             Step::Deposit { lp, fraction } => {
                 let wallet = self.lps[lp].pubkey();
@@ -287,8 +261,11 @@ impl World {
                 let lent = self.market.lent_index;
                 let other = self.market.other_index();
                 let state = self.env.market_state(&self.market.market_state);
-                let out = state.reserves[lent] as u128 * fraction as u128 / 1_000_000;
                 let total = effective_before[lent] as u128;
+                // Up to twice the buffer, which redeems the rest from Kamino, and short of the
+                // whole lent side.
+                let out = (state.reserves[lent] as u128 * fraction as u128 / 1_000_000)
+                    .min(total * 9 / 10);
                 let net = (out * effective_before[other] as u128).div_ceil(total - out);
                 let fee = state.lp_fee_bps as u128;
                 let amount = (net * 10_000).div_ceil(10_000 - fee);
@@ -302,6 +279,147 @@ impl World {
             }
         }
         Ok(0)
+    }
+
+    /// What Kamino can pay the market right now for a swap's redeem, as the program plans it.
+    fn kamino_can_pay(&self) -> u64 {
+        let entry = &lending_amm::config::LENT_MINTS[self.env.lent_entry_of(&self.market)];
+        let data = self.env.data(&ck(&entry.lending_market));
+        let lending_market = lending_amm::kamino::read_lending_market(
+            &entry.lending_market,
+            &lending_amm::config::KLEND_PROGRAM,
+            &data,
+            entry,
+        )
+        .unwrap();
+        let ctokens = self.env.market_state(&self.market.market_state).ctokens;
+        self.reserve()
+            .can_pay_planned(&lending_market, ctokens, self.env.clock().unix_timestamp)
+    }
+
+    /// Whether a quote of `amount` of mint `input` may be refused: dust that pays out nothing,
+    /// or a lent-side payout beyond the buffer plus what Kamino can pay right now, by the
+    /// spec's formula on the market as it is.
+    fn refusal_expected(&self, input: usize, amount: u64, refusal: &str) -> bool {
+        let lent = self.market.lent_index;
+        let effective = self.effective();
+        let state = self.env.market_state(&self.market.market_state);
+        let fee = (amount as u128 * state.lp_fee_bps as u128).div_ceil(10_000);
+        let net = amount as u128 - fee;
+        let out = effective[1 - input] as u128 * net / (effective[input] as u128 + net);
+        if out == 0 {
+            return refusal.contains("ZeroOutput");
+        }
+        let buffer = state.reserves[lent] as u128;
+        1 - input == lent
+            && out > buffer + self.kamino_can_pay() as u128
+            && refusal.contains("BeyondBuffer")
+    }
+
+    /// A trader swaps `amount` of mint `input` through the router; checks it paid exactly its
+    /// quote, never deposited into Kamino, never redeemed while the buffer covered its output,
+    /// and otherwise redeemed exactly `ceil(s x S_ctoken / S_total)` cTokens for its shortfall
+    /// `s`, no more than one cToken beyond what is worth `s`, receiving at least `s`; or that
+    /// its quote and the swap were refused alike, for a reason the spec gives, changing nothing.
+    /// Returns how far it may have lowered the lent side's total by Kamino's rounding: one unit
+    /// after a redeem, as after a `rebalance`.
+    fn swap(&mut self, trader: usize, input: usize, amount: u64) -> Result<u64, TestCaseError> {
+        use lending_amm::events::ShortfallRedeemed;
+        let output = 1 - input;
+        let lent = self.market.lent_index;
+        let before = self.env.market_state(&self.market.market_state);
+        let effective_before = self.effective();
+        let reserve = self.reserve();
+        let ctokens_held = self.env.balance(&self.market.addresses.ctoken_account);
+        let quote = self
+            .env
+            .quote(&self.market, &exact_in(input, output, amount));
+        let trader = self.traders[trader].insecure_clone();
+        let swapped = self
+            .env
+            .swap_meta(&self.market, &trader, (input, output), amount);
+        let quote = match quote {
+            Ok(quote) => quote,
+            Err(refusal) => {
+                prop_assert!(
+                    self.refusal_expected(input, amount, &refusal),
+                    "an unexpected refusal of {} of mint {}: {}",
+                    amount,
+                    input,
+                    refusal
+                );
+                prop_assert!(swapped.is_err());
+                prop_assert_eq!(self.env.market_state(&self.market.market_state), before);
+                return Ok(0);
+            }
+        };
+        let meta = swapped.map_err(TestCaseError::fail)?;
+        let result: pipeline_client::SwapResult =
+            borsh::from_slice(&meta.return_data.data).unwrap();
+        // Each quote equals its swap.
+        prop_assert_eq!(result.received, quote.amount_out);
+        let after = self.env.market_state(&self.market.market_state);
+        prop_assert_eq!(after.reserves[input], before.reserves[input] + amount);
+        // A swap never deposits into Kamino.
+        prop_assert_eq!(after.deposited, before.deposited);
+        let redeems = events::<ShortfallRedeemed>(&meta.logs);
+        let buffer = before.reserves[lent];
+        let shortfall = if output == lent {
+            quote.amount_out.saturating_sub(buffer)
+        } else {
+            0
+        };
+        let rounding = if shortfall == 0 {
+            // A swap the buffer covers, or one paying out the other side, never redeems.
+            prop_assert!(redeems.is_empty());
+            prop_assert_eq!(after.ctokens, before.ctokens);
+            prop_assert_eq!(after.redeemed, before.redeemed);
+            prop_assert_eq!(
+                after.reserves[output],
+                before.reserves[output] - quote.amount_out
+            );
+            0
+        } else {
+            prop_assert_eq!(redeems.len(), 1);
+            let redeem = &redeems[0];
+            prop_assert_eq!(redeem.shortfall, shortfall);
+            // It burns ceil(s x S_ctoken / S_total) at the stored rate, never more than one
+            // cToken beyond what is worth s, and klend pays at least s.
+            let burned = redeem.ctokens;
+            prop_assert_eq!(
+                burned,
+                common::redeem::ctokens_for_shortfall(&reserve, shortfall)
+            );
+            let worth = lending_amm::kamino::ctokens_for_value(
+                shortfall,
+                reserve.total_supply_sf().unwrap(),
+                reserve.mint_total_supply,
+            )
+            .unwrap();
+            prop_assert!(burned <= worth + 1);
+            prop_assert!(redeem.liquidity >= shortfall);
+            prop_assert_eq!(after.ctokens, before.ctokens - burned);
+            prop_assert_eq!(
+                self.env.balance(&self.market.addresses.ctoken_account),
+                ctokens_held - burned
+            );
+            prop_assert_eq!(after.redeemed, before.redeemed + redeem.liquidity as u128);
+            // What klend paid above the shortfall stays in the buffer.
+            prop_assert_eq!(after.reserves[lent], redeem.liquidity - shortfall);
+            self.ctokens = after.ctokens;
+            self.redeemed = after.redeemed;
+            self.redeeming_swaps += 1;
+            1
+        };
+        // No swap lowers R x L, with L = B + V, but for Kamino's rounding of a redeem.
+        let (now, was) = (self.effective(), effective_before);
+        prop_assert!(
+            now[0] as u128 * (now[1] + rounding) as u128 >= was[0] as u128 * was[1] as u128,
+            "a swap lowered R x L: {:?} -> {:?}",
+            was,
+            now
+        );
+        Ok(rounding)
     }
 
     /// Anyone calls `rebalance`; checks it moved the buffer's share only towards its target, or
@@ -325,7 +443,7 @@ impl World {
             )
             .unwrap()
         };
-        let can_pay = reserve.can_pay_for_rebalance(
+        let can_pay = reserve.can_pay_planned(
             &lending_market,
             before.ctokens,
             self.env.clock().unix_timestamp,
@@ -449,7 +567,7 @@ impl World {
             );
         }
 
-        // Only rebalance deposits into or redeems from Kamino or moves the recorded cTokens, and
+        // Only rebalance and a swap's redeem move the recorded cTokens and the running totals, and
         // the cToken account holds them plus what was donated: recorded never exceeds held.
         prop_assert_eq!(state.ctokens, self.ctokens);
         prop_assert_eq!(
@@ -488,8 +606,7 @@ impl World {
                 }
                 if let Err(refusal) = env.quote(market, &exact_in(input, 1 - input, amount)) {
                     prop_assert!(
-                        refusal.contains("ZeroOutput")
-                            || (input == 0 && refusal.contains("BeyondBuffer")),
+                        self.refusal_expected(input, amount, &refusal),
                         "a trader can't exit: {}",
                         refusal
                     );
@@ -536,7 +653,8 @@ proptest! {
         let [deposits, redeems, within, below] = world.rebalances;
         println!(
             "rebalance: {deposits} deposits, {redeems} redeems, refused {within} inside the band \
-             and {below} below the floor"
+             and {below} below the floor; {} swaps redeemed their shortfall",
+            world.redeeming_swaps
         );
     }
 }
