@@ -183,6 +183,7 @@ fn create_market_and_add_liquidity_built_from_the_metadata_are_what_the_program_
             ("other_mint".to_string(), (other, TOKEN)),
             ("lent_mint".to_string(), (lent_mint, TOKEN)),
             ("collateral_mint".to_string(), (lent(0).1, TOKEN)),
+            ("reserve".to_string(), (lent(0).2, TOKEN)),
         ]),
         args: args.clone(),
         market: None,

@@ -135,6 +135,9 @@ Until the first deposit, quotes and swaps are refused, because an empty side can
 - `S_total` is the reserve's total supply, `total_available_amount + borrowed_amount_sf - accumulated_protocol_fees_sf - accumulated_referrer_fees_sf - pending_referrer_fees_sf` (fixed point with 60 fractional bits where the field ends in `_sf`), and `S_ctoken` is the reserve's own `collateral.mint_total_supply`, never the SPL mint's supply, which differs by the 100,000-unit seed on new reserves and by 13.8M on mainnet USDC.
 - Field offsets are in the [Kamino facts](https://github.com/imDev2023/testing-pipeline/blob/research/lending-market/research/lending-market-kamino-facts.md), section 4, at klend 1.28.0.
 - Tokens or cTokens sent to the market outside its own instructions are donations: never credited, never priced and never paid out.
+- `V` is exactly what klend's `redeem_reserve_collateral` pays for `c` at the same rate: klend multiplies `c` by the total supply in 256-bit fixed point, divides by `S_ctoken` and rounds down, and `floor(floor(x / n) / 2^60) = floor(x / (n x 2^60))`.
+  The program computes it with every intermediate inside its type (the product as 64-bit digits, a 64-step long division), refuses a value above a u64, and counts cTokens as worth nothing when `S_total` or `S_ctoken` is 0, which can only understate ([Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79), 2026-11-12).
+  On 2026-11-12 the valuation equalled klend's real payout to the unit on the cloned mainnet SOL and USDC reserves when refreshed in the same slot, and stayed below it on a reserve refreshed 60 seconds earlier.
 
 ### The stored rate, everywhere
 
@@ -153,6 +156,8 @@ Until the first deposit, quotes and swaps are refused, because an empty side can
 
 - Every instruction that reads the reserve first checks its address (the constant for the lent mint), owner (`KLEND_PROGRAM`), size (8624 bytes), Anchor account discriminator, lending market, liquidity mint and collateral mint.
 - On any mismatch, such as a Kamino upgrade that changes the layout, it refuses rather than misprices: quotes, swaps, adding liquidity and `rebalance` fail.
+- Each part has its own error, in the order above (`ReserveWrongAddress`, `ReserveNotKamino`, `ReserveWrongSize`, `ReserveWrongDiscriminator`, `ReserveWrongLendingMarket`, `ReserveWrongLiquidityMint`, `ReserveWrongCollateralMint`), so a trade built without the reserve fails with `ReserveWrongAddress` whatever account sits in its place.
+- The check runs whether or not the market holds cTokens, so a Kamino change stops trading in every market at once rather than only in those that have lent.
 - Removing liquidity in kind never reads the reserve, so a Kamino change can stop trading but can never trap LPs.
 
 ## Swaps
@@ -176,11 +181,13 @@ For a trade from side `i` to side `o`, with effective reserves `E` (`R` for the 
 - It burns `ceil(s x S_ctoken / S_total)` cTokens with `redeem_reserve_collateral`; Kamino refreshes the reserve inside that call, so the rate it pays at is at least the stored rate, and the market receives at least `s`.
 - The market measures what actually arrived in its vault; anything above `s` stays in the buffer.
 - What Kamino can pay right now is the smallest of: the reserve's freely available liquidity (`total_available_amount` minus the value of queued withdrawal tickets), what remains of its withdrawal cap in the current interval, and the value of the market's own cTokens; it is zero while either emergency mode is on or the reserve is deprecated.
+  As klend counts them: the cap has no limit when its interval length is 0, is back to its whole capacity once the interval is over, counts net outflow (deposits make the running total smaller, even negative), and leaves nothing for a negative capacity or an interval starting in the future; a reserve is deprecated when its `version` is not klend's program version, 1, which klend sets to `u64::MAX` after a total write-off; and the lending market's emergency mode is its byte at offset 122.
+  `block_ctoken_usage` does not change it, since it stops deposits, not redeems ([Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79), 2026-11-12, each term shown binding against klend's real redeem).
 - `pipeline_quote` and `pipeline_swap` call the same pricing function on the same reserve fields, so a quote shows whether a trade redeems and refuses a trade Kamino could not pay, and `pipeline-check`'s `quote_matches_swap` verifies quotes on both sides of the buffer's edge.
 
 ### Accounts
 
-- Every swap needs the output vault and the vault authority, which signs the payout; `pipeline_resolve_accounts` lists both, in that order, and resolves in one round.
+- Every swap needs the output vault, the vault authority, which signs the payout, and the reserve, read-only, for valuation; `pipeline_resolve_accounts` lists them in that order, and resolves in one round.
 - `pipeline_resolve_accounts` receives the trade, so it lists the Kamino redeem accounts (klend, lending market, lending market authority, reserve liquidity supply, reserve collateral mint, both token programs, the instructions sysvar) and marks the reserve writable only when the trade's quote needs a redeem.
 - Ordinary swaps then pass the reserve read-only, for valuation, and never write-lock Kamino's reserve, which every Kamino user of that mint shares.
 - A swap that needs a redeem but was built without those accounts, because the buffer shrank between quote and swap, fails cleanly with its own error, and the integrator resolves again.
@@ -299,6 +306,7 @@ Locked shares still count in `N` and still earn the LP fee and the yield, which 
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, description, category `amm`, tags including `lending` and `kamino`, links including `source` and the IDL, `init` as above with `market_state` as a `pda:` source, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256.
 - A `pda:` source lists its seeds in a fixed order and metadata arguments have no default values (the schema at `5ad130d`), so the `init` form takes the two mints as named inputs in the order of the market state's seeds, the other mint and then the lent mint, and that order makes `lent_index` 1; the form's label for `lent_index` says so, and Aviary's own form fills it in.
   A caller that builds `create_market` itself, and a launchpad seeding a market, may give the mints in either order.
+- The `add_liquidity` action takes the lent mint's reserve the same way, as the named input `reserve` after its other accounts, since adding values the lent side from it; the program refuses any reserve but the one `LENT_MINTS` names, and Aviary's form fills it in ([Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79), 2026-11-12).
 - The `init` form also takes the lent mint's collateral mint as a named input, because a market creates its cToken account at creation and metadata has no source for a value that depends on which mint is lent; the program refuses any collateral mint but the one `LENT_MINTS` names, and Aviary's form fills it in ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78), 2026-11-12).
 
 ## Aviary's panel
@@ -330,6 +338,7 @@ What `docs/spec/README.md` asks each product's file to add.
 
 Asserted per instruction in test layer 5; the build ticket measures each one and may lower it, and raising one needs a written reason here.
 The tests measure each on plain SPL Token and Token-2022 mints and on a mint with Pipeline's `test-hook`; on 2026-11-12 the highest were `pipeline_init_market` 65k, `add_liquidity` 45k (a first deposit that creates the LP's shares account, with the hook), `pipeline_swap` 24k (paying out the hooked token), and `pipeline_quote` and `pipeline_resolve_accounts` 6k ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)).
+With the reserve checked and read, on markets holding cTokens, they were `pipeline_quote` 8.5k, `pipeline_swap` 28.2k (paying out the hooked token), `pipeline_resolve_accounts` 6.2k and `add_liquidity` 43.1k, and the one-transaction creation 1,198 of the 1,232 bytes a transaction may hold ([Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)).
 
 | Instruction | Ceiling (compute units) | Main cost |
 | --- | --- | --- |
@@ -390,6 +399,9 @@ Exact-out checks are skipped by design and need no reason.
 - Write the Kamino instruction data, account lists and reserve offsets by hand from klend 1.28.0, and never depend on the klend crate: klend is BSL 1.1 with no use grant until 2027-11-17, so we call its deployed program but never compile its code into ours.
 - Tests load klend's deployed program bytes with cloned mainnet reserve, lending market and mint accounts, as `docs/spec/README.md` (test layer 6) sets.
   A fixture script dumps the accounts once and commits them with the slot they were read at, since an RPC cannot serve an account's past state; it fetches klend's program bytes into a gitignored folder at each setup and checks them against a hash pinned in the repo, as the router's fixture does, so a Kamino upgrade fails the check and is re-pinned deliberately; klend's bytes are never committed.
+- The fixtures, from [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79) (2026-11-12): `programs/lending-amm/scripts/kamino_accounts.py dump` reads each reserve a cluster build lends to, its lending market (and its authority, when it holds an account), mints and token accounts in one `getMultipleAccounts` call, so all are as they were at one slot, into `programs/lending-amm/tests/fixtures/kamino/<cluster>/` with the slot and its time; its `check` dumps afresh and compares the layout (owners, sizes, discriminators, the addresses the reserve check compares, token accounts' mints and owners).
+  `programs/lending-amm/scripts/fetch-klend.sh` fetches klend from mainnet and devnet into `fixtures/klend/`, refused unless each matches its hash in `fixtures/pins.env`, and its header says how to re-pin after a Kamino upgrade.
+  The tests of each cluster build load that cluster's dump with the clock one slot past it, and klend's bytes wherever klend runs.
 - Build and test with the toolchain in `docs/toolchain.md` (`source scripts/toolchain-env.sh`).
 
 ### Build tickets

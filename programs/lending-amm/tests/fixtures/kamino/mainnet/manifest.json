@@ -1,0 +1,106 @@
+{
+  "cluster": "mainnet",
+  "slot": 468511218,
+  "unixTimestamp": 1794483473,
+  "readAt": "2026-11-12T11:37:54Z",
+  "accounts": [
+    {
+      "label": "reserve-sol",
+      "address": "d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q",
+      "owner": "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+      "size": 8624,
+      "sha256": "97d63252ee99864d1b85924e72b7f44cf52f5d65b56ca962fc46f6bd93a9d5fa"
+    },
+    {
+      "label": "liquidity-mint-sol",
+      "address": "So11111111111111111111111111111111111111112",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 82,
+      "sha256": "b0f919425a529f4971ef8dabd535aec34947d5c8c4885df80dae91635b98c5f3"
+    },
+    {
+      "label": "collateral-mint-sol",
+      "address": "2UywZrUdyqs5vDchy7fKQJKau2RVyuzBev2XKGPDSiX1",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 82,
+      "sha256": "e53360639cffe221cc6d23c66046ef30e9e07e2e10670b19c9fea133329acb94"
+    },
+    {
+      "label": "liquidity-supply-sol",
+      "address": "GafNuUXj9rxGLn4y79dPu6MHSuPWeJR6UtTWuexpGh3U",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "4fe901c95a9e3dcdd8c8ae22541aab5a04d898b7fe831b5752c398ec4c463f34"
+    },
+    {
+      "label": "fee-vault-sol",
+      "address": "3JNof8s453bwG5UqiXBLJc77NRQXezYYEBbk3fqnoKph",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "e027ada6d223c642d2c0e9860dc270475bf8e29198cec3020c800d4d175be96d"
+    },
+    {
+      "label": "collateral-supply-sol",
+      "address": "8NXMyRD91p3nof61BTkJvrfpGTASHygz1cUvc3HvwyGS",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "c03e15cb171ad45a1ee35d6a822b811cbe758f24ac51b210c21bcdb36e6db82d"
+    },
+    {
+      "label": "reserve-usdc",
+      "address": "D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59",
+      "owner": "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+      "size": 8624,
+      "sha256": "515339f66b7e26a7743b367be172413137b625c5e9998f7d95e1ceb3f92aa251"
+    },
+    {
+      "label": "liquidity-mint-usdc",
+      "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 82,
+      "sha256": "62f9a7bc6c533503200920e7df3d5e28bbc9d98f83cfb2688059c837421036c1"
+    },
+    {
+      "label": "collateral-mint-usdc",
+      "address": "B8V6WVjPxW1UGwVDfxH2d2r8SyT4cqn7dQRK6XneVa7D",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 82,
+      "sha256": "d79dd8e0beb0752532fc657d56b2fbb4f0243eb109541d14504a7ae59c8e11f2"
+    },
+    {
+      "label": "liquidity-supply-usdc",
+      "address": "Bgq7trRgVMeq33yt235zM2onQ4bRDBsY5EWiTetF4qw6",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "1a337944a7cdc3ca184a2682dc421aa922bdad44aa82f2b4aafbd57b8745eb62"
+    },
+    {
+      "label": "fee-vault-usdc",
+      "address": "BbDUrk1bVtSixgQsPLBJFZEF7mwGstnD5joA1WzYvYFX",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "911d30b2aff4b8993fa9d79945af759d6a98b59f64d2aaaf1c9cd8cd3b666092"
+    },
+    {
+      "label": "collateral-supply-usdc",
+      "address": "3DzjXRfxRm6iejfyyMynR4tScddaanrePJ1NJU2XnPPL",
+      "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "size": 165,
+      "sha256": "25d8d3f188ee1ef212f4d4e1cd89ed02af5e3026af1eaf4b2e9ce4be60ffd29e"
+    },
+    {
+      "label": "lending-market",
+      "address": "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF",
+      "owner": "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+      "size": 4664,
+      "sha256": "d340e4cbca93cf414379bfa02cf737c7d48ca64ce68bd1a166f84c22f39a21bf"
+    },
+    {
+      "label": "lending-market-authority",
+      "address": "9DrvZvyWh1HuAoZxvYWMvkf2XCzryCpGgHqrMjyDWpmo",
+      "owner": "11111111111111111111111111111111",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

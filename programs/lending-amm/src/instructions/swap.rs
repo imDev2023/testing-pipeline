@@ -6,15 +6,16 @@
 //! it with the same function as `pipeline_quote`, pays the output from the output vault and
 //! keeps the whole input in the input vault, where it joins its side.
 //!
-//! Remaining accounts: the output vault and the vault authority, as
-//! `pipeline_resolve_accounts` listed them, then any transfer-hook accounts, which are
-//! forwarded to the payout.
+//! Remaining accounts: the output vault, the vault authority and the Kamino reserve (read-only),
+//! as `pipeline_resolve_accounts` listed them, then any transfer-hook accounts, which are
+//! forwarded to the payout. The reserve is checked before it is read, and values the market's
+//! cTokens at its stored rate, as the quote did.
 
 use anchor_lang::prelude::*;
 use pipeline_strategy_interface as psi;
 
 use crate::errors::StrategyError;
-use crate::instructions::SwapAccounts;
+use crate::instructions::{strategy_accounts, SwapAccounts};
 use crate::interface::{SwapRequest, TradeMode};
 use crate::pricing;
 use crate::state::AUTHORITY_SEED;
@@ -40,9 +41,9 @@ pub fn swap<'info>(ctx: Context<'info, SwapAccounts<'info>>, request: SwapReques
         market.vaults[input],
         StrategyError::WrongAccount
     );
-    let [output_vault, authority, hook_accounts @ ..] = ctx.remaining_accounts else {
-        return err!(StrategyError::WrongAccount);
-    };
+    let accounts = strategy_accounts(market, ctx.remaining_accounts)?;
+    let (output_vault, authority, hook_accounts) =
+        (accounts.output_vault, accounts.authority, accounts.rest);
     require_keys_eq!(
         output_vault.key(),
         market.vaults[output],
@@ -64,7 +65,7 @@ pub fn swap<'info>(ctx: Context<'info, SwapAccounts<'info>>, request: SwapReques
         amount: credited,
         ..trade.clone()
     };
-    let quote = pricing::quote(market, &priced)?;
+    let quote = pricing::quote(market, &accounts.reserve, &priced)?;
 
     let bump = [market.authority_bump];
     let authority_seeds: &[&[u8]] = &[AUTHORITY_SEED, market_key.as_ref(), &bump];

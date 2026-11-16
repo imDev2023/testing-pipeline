@@ -10,8 +10,10 @@
 //! LP at the PDA `["lp_shares", market_state, lp]`, which this creates if it is missing, so
 //! the first deposit fits in the transaction that creates the market. (A PDA rather than the
 //! LP's associated token account, because metadata can't describe the associated token
-//! account of a mint that is itself a PDA.) Remaining accounts are the other side's
-//! transfer-hook accounts, forwarded to its transfer in; the lent mint has none.
+//! account of a mint that is itself a PDA.) The lent side is valued from the Kamino reserve,
+//! which every deposit, the first included, checks before reading, so adding is refused while
+//! the reserve fails the check. Remaining accounts are the other side's transfer-hook
+//! accounts, forwarded to its transfer in; the lent mint has none.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, MintTo, Token};
@@ -19,6 +21,7 @@ use anchor_spl::token_interface::{Mint, TokenInterface};
 
 use crate::errors::StrategyError;
 use crate::events::LiquidityAdded;
+use crate::kamino;
 use crate::pricing;
 use crate::shares;
 use crate::state::{LendingAmmMarket, AUTHORITY_SEED, LP_SHARES_SEED};
@@ -75,6 +78,9 @@ pub struct AddLiquidity<'info> {
     /// SPL Token, the LP mint's program.
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+    /// The Kamino reserve the lent mint lends to, read-only, from which the lent side is valued.
+    /// CHECK: checked by `kamino::reserve_of` against the lent mint's entry in `LENT_MINTS`.
+    pub reserve: UncheckedAccount<'info>,
 }
 
 pub fn add_liquidity_handler<'info>(
@@ -84,15 +90,16 @@ pub fn add_liquidity_handler<'info>(
     min_lp: u64,
 ) -> Result<()> {
     let market = &ctx.accounts.market_state;
-    let lent_index = market.lent_index as usize & 1;
+    let lent_index = market.lent_side();
     let other_index = market.other_index();
     let max = [max_0, max_1];
     let (max_other, max_lent) = (max[other_index], max[lent_index]);
+    let reserve = kamino::reserve_of(&market.lent_mint(), &ctx.accounts.reserve.to_account_info())?;
     let first = !market.is_open();
     let deposit = if first {
         shares::first_deposit(max_other, max_lent)?
     } else {
-        let lent_total = pricing::lent_total(market)?;
+        let lent_total = pricing::lent_total(market, &reserve)?;
         let share_count = shares::share_count(ctx.accounts.lp_mint.supply)?;
         shares::later_deposit(
             max_other,
