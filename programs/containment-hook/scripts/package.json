@@ -16,6 +16,7 @@
         "@pipeline-placeholder/sdk": "link:../../../fixtures/pipeline/sdk/ts",
         "@solana-program/system": "0.16.0",
         "@solana-program/token": "0.18.0",
+        "@solana-program/token-2022": "0.20.0",
         "@solana/kit": "8.6.0"
     },
     "devDependencies": {
