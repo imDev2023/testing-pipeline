@@ -7,6 +7,8 @@
  */
 
 export * from "./liquidityAdded.ts";
+export * from "./liquidityRemoved.ts";
 export * from "./marketCreated.ts";
 export * from "./rebalanced.ts";
+export * from "./sharesLocked.ts";
 export * from "./shortfallRedeemed.ts";

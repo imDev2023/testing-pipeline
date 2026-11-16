@@ -5,8 +5,9 @@
 //!
 //! A market's share count is `N = LP mint supply + MINIMUM_LIQUIDITY`: the locked minimum
 //! is never minted, so it can never be withdrawn, and it stops the first depositor from
-//! inflating the value of one share. `add_liquidity` is the only instruction here that
-//! moves `N`.
+//! inflating the value of one share. `N` moves only by `add_liquidity`, `remove_liquidity` and
+//! SPL Token burns of LP shares; `lock_lp` moves shares into the lock account and leaves `N`
+//! as it is.
 
 use crate::config::MINIMUM_LIQUIDITY;
 use crate::errors::StrategyError;
@@ -81,6 +82,79 @@ pub fn later_deposit(
         other: worth(reserve_other),
         lent: worth(reserve_lent),
     })
+}
+
+/// What a removal pays an LP for the shares it burns: each part pro rata, rounded down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Removal {
+    /// Of the other side's reserve `R`, from its vault.
+    pub other: u64,
+    /// Of the buffer `B`, in the lent mint, from the buffer vault.
+    pub buffer: u64,
+    /// Of the market's cTokens `c`: paid as cTokens in kind, or redeemed from Kamino and paid
+    /// in the lent mint in cash.
+    pub ctokens: u64,
+}
+
+/// A removal of `lp` shares from a market with LP mint supply `lp_supply`, other-side reserve
+/// `R`, buffer `B` and cTokens `c`: it pays `R x lp / N`, `B x lp / N` and `c x lp / N`, each
+/// rounded down, with `N = lp_supply + MINIMUM_LIQUIDITY` (docs/spec/lending-pool.md,
+/// "Removing"). So it never pays more than the burned shares' part of any of the three, and
+/// since `lp <= lp_supply < N`, the locked minimum's part of each always stays behind.
+/// Refused for no shares, for more shares than exist, and when every part rounds to nothing,
+/// which would burn the shares for nothing.
+pub fn removal(
+    lp: u64,
+    lp_supply: u64,
+    reserve_other: u64,
+    buffer: u64,
+    ctokens: u64,
+) -> Result<Removal, StrategyError> {
+    if lp == 0 {
+        return Err(StrategyError::ZeroRemoval);
+    }
+    if lp > lp_supply {
+        return Err(StrategyError::NotEnoughShares);
+    }
+    let n = share_count(lp_supply)? as u128;
+    // At most `whole`, since lp < N, so a u64.
+    let part = |whole: u64| (whole as u128 * lp as u128 / n) as u64;
+    let paid = Removal {
+        other: part(reserve_other),
+        buffer: part(buffer),
+        ctokens: part(ctokens),
+    };
+    if paid.other == 0 && paid.buffer == 0 && paid.ctokens == 0 {
+        return Err(StrategyError::ZeroRemoval);
+    }
+    Ok(paid)
+}
+
+/// The running totals deposited into and redeemed from Kamino after `paid` of a market's
+/// `held` cTokens leave in kind: the cTokens take `paid / held` of the net amount lent,
+/// `deposited - redeemed`, rounded towards zero, off `deposited` while it is positive and off
+/// `redeemed` while it is negative. So the market's lending yield, `V + redeemed - deposited`,
+/// falls by the same fraction as `V`, the part that left with the cTokens, without valuing them.
+pub fn totals_after_in_kind(
+    deposited: u128,
+    redeemed: u128,
+    paid: u64,
+    held: u64,
+) -> Result<(u128, u128), StrategyError> {
+    if paid == 0 || held == 0 || paid > held {
+        return Err(StrategyError::Overflow);
+    }
+    let take = |net: u128| -> Result<u128, StrategyError> {
+        Ok(net
+            .checked_mul(paid as u128)
+            .ok_or(StrategyError::Overflow)?
+            / held as u128)
+    };
+    if deposited >= redeemed {
+        Ok((deposited - take(deposited - redeemed)?, redeemed))
+    } else {
+        Ok((deposited, redeemed - take(redeemed - deposited)?))
+    }
 }
 
 /// The integer square root, `floor(sqrt(n))`, digit by digit: at most 64 rounds, and no
@@ -185,8 +259,142 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_removal_pays_each_part_pro_rata_rounded_down() {
+        // N = 2,000 + 1,000 = 3,000; burning 1,000 is a third of each, rounded down.
+        assert_eq!(
+            removal(1_000, 2_000, 9_001, 3_002, 302).map_err(|e| e as u32),
+            Ok(Removal {
+                other: 3_000,
+                buffer: 1_000,
+                ctokens: 100,
+            })
+        );
+        // A part too small for one unit pays nothing, but the others still pay.
+        assert_eq!(
+            removal(1, 2_000, 9_000, 2, 0).map_err(|e| e as u32),
+            Ok(Removal {
+                other: 3,
+                buffer: 0,
+                ctokens: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn a_removal_of_nothing_or_of_more_than_exists_is_refused() {
+        let code = |r: Result<Removal, StrategyError>| r.map_err(|e| e as u32);
+        assert_eq!(
+            code(removal(0, 2_000, 9_000, 3_000, 300)),
+            Err(StrategyError::ZeroRemoval as u32)
+        );
+        // Shares worth less than one unit of every part pay out nothing.
+        assert_eq!(
+            code(removal(1, 2_000, 2, 2, 2)),
+            Err(StrategyError::ZeroRemoval as u32)
+        );
+        assert_eq!(
+            code(removal(2_001, 2_000, 9_000, 3_000, 300)),
+            Err(StrategyError::NotEnoughShares as u32)
+        );
+    }
+
+    #[test]
+    fn ctokens_paid_in_kind_take_their_part_of_the_net_amount_lent() {
+        // Half the cTokens leave: half the net 100 lent comes off what was deposited.
+        assert_eq!(
+            totals_after_in_kind(150, 50, 5, 10).map_err(|e| e as u32),
+            Ok((100, 50))
+        );
+        // Redeemed beyond deposited, by yield: half the net 60 comes off what was redeemed.
+        assert_eq!(
+            totals_after_in_kind(40, 100, 5, 10).map_err(|e| e as u32),
+            Ok((40, 70))
+        );
+        // Rounding towards zero, and every cToken leaving takes the whole net.
+        assert_eq!(
+            totals_after_in_kind(10, 0, 1, 3).map_err(|e| e as u32),
+            Ok((7, 0))
+        );
+        assert_eq!(
+            totals_after_in_kind(10, 3, 3, 3).map_err(|e| e as u32),
+            Ok((3, 3))
+        );
+        assert!(totals_after_in_kind(10, 0, 4, 3).is_err());
+    }
+
+    #[test]
+    fn the_last_lp_out_leaves_the_locked_minimums_part_of_every_side() {
+        let all = removal(2_000, 2_000, 9_000, 3_000, 300).unwrap();
+        assert_eq!((all.other, all.buffer, all.ctokens), (6_000, 2_000, 200));
+        // The locked minimum's third of each stays.
+        assert_eq!(
+            (9_000 - all.other, 3_000 - all.buffer, 300 - all.ctokens),
+            (3_000, 1_000, 100)
+        );
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+        /// A removal never pays more than the burned shares' part of any of the three:
+        /// part x N <= X x lp, and rounds each down by less than one unit.
+        #[test]
+        fn a_removal_never_pays_more_than_the_burned_shares_part(
+            lp_supply: u64,
+            burn: u64,
+            other: u64,
+            buffer: u64,
+            ctokens: u64,
+        ) {
+            prop_assume!(lp_supply > 0);
+            let lp = burn % lp_supply + 1;
+            let removed = removal(lp, lp_supply, other, buffer, ctokens);
+            prop_assume!(removed.is_ok());
+            if let Ok(r) = removed {
+                let n = lp_supply as u128 + MINIMUM_LIQUIDITY as u128;
+                for (part, whole) in [(r.other, other), (r.buffer, buffer), (r.ctokens, ctokens)] {
+                    prop_assert!(part as u128 * n <= whole as u128 * lp as u128);
+                    prop_assert!((part as u128 + 1) * n > whole as u128 * lp as u128);
+                    // What stays is at least the locked minimum's part.
+                    prop_assert!((whole - part) as u128 * n >= whole as u128 * MINIMUM_LIQUIDITY as u128);
+                }
+            }
+        }
+
+        /// Adding liquidity and removing the shares it minted at once never returns more than
+        /// was put in: of the other side, nor of the lent side, the buffer's part plus what the
+        /// cTokens' part is worth at the reserve's rate, by klend's rounding. Inputs up to 2^50
+        /// and rates from 1 to 2 lamports a cToken, where deposits mint and removals pay.
+        #[test]
+        fn adding_then_removing_at_once_never_returns_more_than_was_put_in(
+            max_other in 0u64..1 << 50,
+            max_lent in 0u64..1 << 50,
+            reserve_other in 1u64..1 << 50,
+            buffer in 0u64..1 << 50,
+            ctokens in 0u64..1 << 50,
+            lp_supply in 0u64..1 << 50,
+            mint_total_supply in 1u64..1 << 50,
+            rate_fraction in 0u128..1 << 60,
+        ) {
+            let total_supply_sf = mint_total_supply as u128 * ((1u128 << 60) + rate_fraction);
+            let value = |k: u64| crate::kamino::collateral_value(k, total_supply_sf, mint_total_supply).unwrap();
+            let lent_total = buffer + value(ctokens);
+            prop_assume!(lent_total > 0);
+            let n = share_count(lp_supply).unwrap();
+            let deposit = later_deposit(max_other, max_lent, reserve_other, lent_total, n);
+            prop_assume!(deposit.is_ok());
+            let d = deposit.unwrap();
+            // Shares too few to pay out a unit of anything are refused, returning nothing.
+            let r = match removal(d.shares, lp_supply + d.shares, reserve_other + d.other, buffer + d.lent, ctokens) {
+                Ok(r) => r,
+                Err(StrategyError::ZeroRemoval) => return Ok(()),
+                Err(other) => return Err(TestCaseError::fail(format!("{other:?}"))),
+            };
+            prop_assert!(r.other <= d.other);
+            let paid_lent = r.buffer as u128 + value(r.ctokens) as u128;
+            prop_assert!(paid_lent <= d.lent as u128, "{} > {}", paid_lent, d.lent);
+        }
 
         #[test]
         fn isqrt_is_the_floor_of_the_square_root(n: u128) {
@@ -323,6 +531,107 @@ mod proofs {
             let n = share_count as u128;
             assert!(d.shares as u128 * reserve_other as u128 <= d.other as u128 * n);
             assert!(d.shares as u128 * reserve_lent as u128 <= d.lent as u128 * n);
+        }
+    }
+
+    fn assert_removal_within_its_part(
+        lp: u64,
+        lp_supply: u64,
+        other: u64,
+        buffer: u64,
+        ctokens: u64,
+    ) {
+        if let Ok(r) = removal(lp, lp_supply, other, buffer, ctokens) {
+            let n = lp_supply as u128 + MINIMUM_LIQUIDITY as u128;
+            assert!(r.other as u128 * n <= other as u128 * lp as u128);
+            assert!(r.buffer as u128 * n <= buffer as u128 * lp as u128);
+            assert!(r.ctokens as u128 * n <= ctokens as u128 * lp as u128);
+            assert!(r.other <= other && r.buffer <= buffer && r.ctokens <= ctokens);
+        }
+    }
+
+    /// A removal never pays more than the burned shares' part of any of the three: bounded,
+    /// the shares below 2^5 and the three sides below 2^12, so that against the locked minimum
+    /// in `N` every part can be above 0.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn a_removal_never_pays_more_than_the_burned_shares_part_bounded() {
+        let side = |x: &u64| *x < (1 << 12);
+        assert_removal_within_its_part(
+            kani::any_where(|&x| x < SMALL),
+            kani::any_where(|&x| x < SMALL),
+            kani::any_where(side),
+            kani::any_where(side),
+            kani::any_where(side),
+        );
+    }
+
+    /// For any inputs, a removal never panics.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn a_removal_never_panics() {
+        let _ = removal(
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn a_removal_never_pays_more_than_the_burned_shares_part() {
+        assert_removal_within_its_part(
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
+    }
+
+    /// The cTokens' value at a rate `num / den`, rounded down as klend rounds: Kani cannot
+    /// run the 64-step long division of `kamino::collateral_value` over symbolic inputs, so
+    /// the bounded proof values cTokens at a small symbolic rate; Proptest checks the same
+    /// property with the real valuation, and `proofs/removal_z3.py` for every input.
+    fn value_at(ctokens: u64, num: u64, den: u64) -> u128 {
+        ctokens as u128 * num as u128 / den as u128
+    }
+
+    /// Adding liquidity, then removing the shares it minted at once, never returns more than
+    /// was put in, of either side, the lent side counting the cTokens' part at its value.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn adding_then_removing_at_once_never_returns_more_than_was_put_in_bounded() {
+        let max_other: u64 = kani::any_where(|&x| x < SMALL);
+        let max_lent: u64 = kani::any_where(|&x| x < SMALL);
+        let reserve_other: u64 = kani::any_where(|&x| (1..SMALL).contains(&x));
+        let buffer: u64 = kani::any_where(|&x| x < SMALL);
+        let ctokens: u64 = kani::any_where(|&x| x < SMALL);
+        let lp_supply: u64 = kani::any_where(|&x| x < SMALL);
+        let num: u64 = kani::any_where(|&x| (1..8).contains(&x));
+        let den: u64 = kani::any_where(|&x| (1..8).contains(&x));
+        let lent_total = buffer + value_at(ctokens, num, den) as u64;
+        let n = lp_supply + MINIMUM_LIQUIDITY;
+        if let Ok(d) = later_deposit(max_other, max_lent, reserve_other, lent_total, n) {
+            // Shares too few to pay out a unit of anything are refused, returning nothing.
+            let r = match removal(
+                d.shares,
+                lp_supply + d.shares,
+                reserve_other + d.other,
+                buffer + d.lent,
+                ctokens,
+            ) {
+                Ok(r) => r,
+                Err(error) => {
+                    assert!(matches!(error, StrategyError::ZeroRemoval));
+                    return;
+                }
+            };
+            assert!(r.other <= d.other);
+            assert!(r.buffer as u128 + value_at(r.ctokens, num, den) <= d.lent as u128);
         }
     }
 }

@@ -1,7 +1,7 @@
 {
     "schema": "pipeline-strategy-metadata/1",
     "name": "Aviary Lending AMM",
-    "description": "Constant-product markets with open LP shares, one side of which, WSOL or USDC, is lent to a fixed Kamino Lend reserve through its cToken instructions while a buffer stays in the market's own vault for swaps. Prices come from the market's total reserves: the other side's vault, and on the lent side the buffer plus the market's cTokens valued at the reserve's stored exchange rate, read after checking the reserve is the one the lent mint lends to, in the layout the program knows. Anyone may call rebalance, which deposits into Kamino or redeems from it to bring the buffer back to its target share of the lent side whenever it leaves its band. The LP fee and all the lending yield go to LPs through the value of their shares, and LPs bear Kamino's losses. The program has no admin. In this build a swap that would pay out more of the lent side than the buffer holds is refused.",
+    "description": "Constant-product markets with open LP shares, one side of which, WSOL or USDC, is lent to a fixed Kamino Lend reserve through its cToken instructions while a buffer stays in the market's own vault for swaps. Prices come from the market's total reserves: the other side's vault, and on the lent side the buffer plus the market's cTokens valued at the reserve's stored exchange rate, read after checking the reserve is the one the lent mint lends to, in the layout the program knows. Anyone may call rebalance, which deposits into Kamino or redeems from it to bring the buffer back to its target share of the lent side whenever it leaves its band. The LP fee and all the lending yield go to LPs through the value of their shares, and LPs bear Kamino's losses. The program has no admin. A swap that pays out more of the lent side than the buffer holds redeems the shortfall from Kamino inside the swap. LPs remove liquidity in cash, with the cTokens' part redeemed from Kamino, or in kind, with the cTokens themselves and no Kamino account involved, so they can leave whatever state Kamino is in; and they may lock shares for good in the market's lock account, where they keep earning.",
     "category": "amm",
     "tags": [
         "lending",
@@ -257,6 +257,364 @@
                 {
                     "name": "instructions_sysvar",
                     "source": "fixed:Sysvar1nstructions1111111111111111111111111"
+                }
+            ]
+        },
+        {
+            "name": "remove_liquidity",
+            "label": "Remove liquidity",
+            "kind": "remove_liquidity",
+            "description": "Burns LP shares from your LP shares account for your part of the market, each part rounded down: of the other token, of the buffer, and of the market's Kamino cTokens, which this form redeems from Kamino and pays in the lent token, so you receive only the two tokens. It fails before calling Kamino when Kamino cannot pay that part right now; then use Remove liquidity in kind, which always works. Inputs are the lent mint's Kamino collateral mint, reserve, lending market and reserve liquidity supply, which the program checks; the collateral mint comes twice, read-only and then writable among Kamino's accounts, since klend burns from its supply.",
+            "args": [
+                {
+                    "name": "lp",
+                    "type": "u64",
+                    "label": "LP shares to remove",
+                    "decimals_of": "pda:strategy:str:lp_mint,key:market_state"
+                },
+                {
+                    "name": "min_other",
+                    "type": "u64",
+                    "label": "Fewest of the other token to accept",
+                    "description": "Counted in the token that is not lent. The removal fails if it would pay out less, which protects against the price moving first."
+                },
+                {
+                    "name": "min_lent",
+                    "type": "u64",
+                    "label": "Fewest of the lent token to accept",
+                    "description": "The buffer's part plus what Kamino pays for the cTokens' part, in WSOL or USDC. The removal fails if it would pay out less, which protects against the price or Kamino's rate moving first."
+                },
+                {
+                    "name": "in_kind",
+                    "type": "bool",
+                    "label": "In kind (false on this form)",
+                    "description": "This form redeems the cTokens' part from Kamino, so it is false; the in-kind form pays the cTokens instead."
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "lp",
+                    "source": "wallet",
+                    "signer": true,
+                    "writable": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                },
+                {
+                    "name": "lp_mint",
+                    "source": "pda:strategy:str:lp_mint,key:market_state",
+                    "writable": true
+                },
+                {
+                    "name": "lp_shares",
+                    "source": "pda:strategy:str:lp_shares,key:market_state,key:wallet",
+                    "writable": true
+                },
+                {
+                    "name": "lp_token_0",
+                    "source": "wallet_token_account:0",
+                    "writable": true
+                },
+                {
+                    "name": "lp_token_1",
+                    "source": "wallet_token_account:1",
+                    "writable": true
+                },
+                {
+                    "name": "vault_0",
+                    "source": "vault:0",
+                    "writable": true
+                },
+                {
+                    "name": "vault_1",
+                    "source": "vault:1",
+                    "writable": true
+                },
+                {
+                    "name": "mint_0",
+                    "source": "mint:0"
+                },
+                {
+                    "name": "mint_1",
+                    "source": "mint:1"
+                },
+                {
+                    "name": "authority",
+                    "source": "pda:strategy:str:authority,key:market_state"
+                },
+                {
+                    "name": "ctoken_account",
+                    "source": "pda:strategy:str:ctoken,key:market_state",
+                    "writable": true
+                },
+                {
+                    "name": "collateral_mint",
+                    "source": "input:collateral_mint"
+                },
+                {
+                    "name": "lp_ctoken",
+                    "source": "ata:wallet,input:collateral_mint",
+                    "writable": true
+                },
+                {
+                    "name": "token_program_0",
+                    "source": "token_program:0"
+                },
+                {
+                    "name": "token_program_1",
+                    "source": "token_program:1"
+                },
+                {
+                    "name": "token_program",
+                    "source": "fixed:TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "associated_token_program",
+                    "source": "associated_token_program"
+                },
+                {
+                    "name": "system_program",
+                    "source": "system_program"
+                },
+                {
+                    "name": "klend_program",
+                    "source": "fixed:KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"
+                },
+                {
+                    "name": "reserve",
+                    "source": "input:reserve",
+                    "writable": true
+                },
+                {
+                    "name": "lending_market",
+                    "source": "input:lending_market"
+                },
+                {
+                    "name": "lending_market_authority",
+                    "source": "pda:KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD:str:lma,key:input:lending_market"
+                },
+                {
+                    "name": "reserve_liquidity_supply",
+                    "source": "input:reserve_liquidity_supply",
+                    "writable": true
+                },
+                {
+                    "name": "instructions_sysvar",
+                    "source": "fixed:Sysvar1nstructions1111111111111111111111111"
+                },
+                {
+                    "name": "reserve_collateral_mint",
+                    "source": "input:collateral_mint",
+                    "writable": true
+                }
+            ]
+        },
+        {
+            "name": "remove_liquidity_in_kind",
+            "label": "Remove liquidity in kind",
+            "kind": "remove_liquidity",
+            "description": "Burns LP shares from your LP shares account for your part of the market, each part rounded down: of the other token and of the buffer, and the market's Kamino cTokens themselves, paid into your associated token account for the cToken mint, created at your expense if missing. It reads no Kamino account and calls no Kamino instruction, so it works whatever state Kamino is in; redeem the cTokens at Kamino whenever it can pay. The input is the lent mint's Kamino collateral mint, which the program checks. The same instruction as Remove liquidity, without Kamino's accounts.",
+            "discriminator": "5055d14818ceb16c",
+            "args": [
+                {
+                    "name": "lp",
+                    "type": "u64",
+                    "label": "LP shares to remove",
+                    "decimals_of": "pda:strategy:str:lp_mint,key:market_state"
+                },
+                {
+                    "name": "min_other",
+                    "type": "u64",
+                    "label": "Fewest of the other token to accept",
+                    "description": "Counted in the token that is not lent. The removal fails if it would pay out less, which protects against the price moving first."
+                },
+                {
+                    "name": "min_lent",
+                    "type": "u64",
+                    "label": "Fewest of the lent token to accept",
+                    "description": "The buffer's part, in WSOL or USDC. The removal fails if it would pay out less."
+                },
+                {
+                    "name": "in_kind",
+                    "type": "bool",
+                    "label": "In kind (true on this form)",
+                    "description": "This form pays the cTokens' part as cTokens, so it is true."
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "lp",
+                    "source": "wallet",
+                    "signer": true,
+                    "writable": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                },
+                {
+                    "name": "lp_mint",
+                    "source": "pda:strategy:str:lp_mint,key:market_state",
+                    "writable": true
+                },
+                {
+                    "name": "lp_shares",
+                    "source": "pda:strategy:str:lp_shares,key:market_state,key:wallet",
+                    "writable": true
+                },
+                {
+                    "name": "lp_token_0",
+                    "source": "wallet_token_account:0",
+                    "writable": true
+                },
+                {
+                    "name": "lp_token_1",
+                    "source": "wallet_token_account:1",
+                    "writable": true
+                },
+                {
+                    "name": "vault_0",
+                    "source": "vault:0",
+                    "writable": true
+                },
+                {
+                    "name": "vault_1",
+                    "source": "vault:1",
+                    "writable": true
+                },
+                {
+                    "name": "mint_0",
+                    "source": "mint:0"
+                },
+                {
+                    "name": "mint_1",
+                    "source": "mint:1"
+                },
+                {
+                    "name": "authority",
+                    "source": "pda:strategy:str:authority,key:market_state"
+                },
+                {
+                    "name": "ctoken_account",
+                    "source": "pda:strategy:str:ctoken,key:market_state",
+                    "writable": true
+                },
+                {
+                    "name": "collateral_mint",
+                    "source": "input:collateral_mint"
+                },
+                {
+                    "name": "lp_ctoken",
+                    "source": "ata:wallet,input:collateral_mint",
+                    "writable": true
+                },
+                {
+                    "name": "token_program_0",
+                    "source": "token_program:0"
+                },
+                {
+                    "name": "token_program_1",
+                    "source": "token_program:1"
+                },
+                {
+                    "name": "token_program",
+                    "source": "fixed:TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "associated_token_program",
+                    "source": "associated_token_program"
+                },
+                {
+                    "name": "system_program",
+                    "source": "system_program"
+                },
+                {
+                    "name": "klend_program",
+                    "source": "strategy_program"
+                },
+                {
+                    "name": "reserve",
+                    "source": "strategy_program"
+                },
+                {
+                    "name": "lending_market",
+                    "source": "strategy_program"
+                },
+                {
+                    "name": "lending_market_authority",
+                    "source": "strategy_program"
+                },
+                {
+                    "name": "reserve_liquidity_supply",
+                    "source": "strategy_program"
+                },
+                {
+                    "name": "instructions_sysvar",
+                    "source": "strategy_program"
+                },
+                {
+                    "name": "reserve_collateral_mint",
+                    "source": "strategy_program"
+                }
+            ]
+        },
+        {
+            "name": "lock_lp",
+            "label": "Lock LP shares",
+            "kind": "other",
+            "description": "Moves LP shares from your LP shares account into the market's lock account for good: nothing can ever move them out. Locked shares still count in the market's share count and keep earning the LP fee and the lending yield, which stay in the market as depth for traders. The first lock creates the lock account at your expense. The input lock_account is the market's vault authority's associated token account for its LP mint, which the program checks.",
+            "args": [
+                {
+                    "name": "amount",
+                    "type": "u64",
+                    "label": "LP shares to lock",
+                    "decimals_of": "pda:strategy:str:lp_mint,key:market_state"
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "lp",
+                    "source": "wallet",
+                    "signer": true,
+                    "writable": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state"
+                },
+                {
+                    "name": "lp_mint",
+                    "source": "pda:strategy:str:lp_mint,key:market_state"
+                },
+                {
+                    "name": "lp_shares",
+                    "source": "pda:strategy:str:lp_shares,key:market_state,key:wallet",
+                    "writable": true
+                },
+                {
+                    "name": "lock_account",
+                    "source": "input:lock_account",
+                    "writable": true
+                },
+                {
+                    "name": "authority",
+                    "source": "pda:strategy:str:authority,key:market_state"
+                },
+                {
+                    "name": "token_program",
+                    "source": "fixed:TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "associated_token_program",
+                    "source": "associated_token_program"
+                },
+                {
+                    "name": "system_program",
+                    "source": "system_program"
                 }
             ]
         }

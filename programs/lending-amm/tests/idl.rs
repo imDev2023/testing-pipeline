@@ -8,7 +8,9 @@ mod common;
 
 use anchor_lang::Discriminator;
 use common::*;
-use lending_amm::events::{LiquidityAdded, MarketCreated, Rebalanced, ShortfallRedeemed};
+use lending_amm::events::{
+    LiquidityAdded, LiquidityRemoved, MarketCreated, Rebalanced, SharesLocked, ShortfallRedeemed,
+};
 use lending_amm::state::layout;
 use lending_amm::LendingAmmMarket;
 use pipeline_client::interface::discriminator;
@@ -94,6 +96,8 @@ fn its_instructions_are_pipelines_and_the_custom_actions() {
         ("pipeline_swap", discriminator::SWAP),
         ("add_liquidity", anchor_discriminator("add_liquidity")),
         ("rebalance", anchor_discriminator("rebalance")),
+        ("remove_liquidity", anchor_discriminator("remove_liquidity")),
+        ("lock_lp", anchor_discriminator("lock_lp")),
     ];
     assert_eq!(
         idl["instructions"].as_array().unwrap().len(),
@@ -130,7 +134,24 @@ fn every_actions_accounts_and_arguments_are_the_metadatas() {
     let idl = idl();
     let metadata = read_json("metadata.json");
     for action in metadata["actions"].as_array().unwrap() {
-        let name = action["name"].as_str().unwrap();
+        // An action with its own discriminator builds the instruction that has it: the in-kind
+        // removal form builds `remove_liquidity`.
+        let name = match action["discriminator"].as_str() {
+            Some(hex) => idl["instructions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|ix| {
+                    bytes(&ix["discriminator"])
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>()
+                        == hex
+                })
+                .and_then(|ix| ix["name"].as_str())
+                .expect("an instruction with the action's discriminator"),
+            None => action["name"].as_str().unwrap(),
+        };
         let ix = instruction(&idl, name);
         assert_eq!(names(ix, "accounts"), names(action, "accounts"), "{name}");
         assert_eq!(names(ix, "args"), names(action, "args"), "{name}");
@@ -141,6 +162,13 @@ fn every_actions_accounts_and_arguments_are_the_metadatas() {
                 .iter()
                 .find(|a| a["name"] == account["name"])
                 .unwrap();
+            // An optional account a form leaves out is the program's own id, Anchor's way.
+            if account["optional"].as_bool().unwrap_or(false)
+                && listed["source"] == "strategy_program"
+            {
+                assert!(!listed["writable"].as_bool().unwrap_or(false));
+                continue;
+            }
             for flag in ["writable", "signer"] {
                 assert_eq!(
                     account[flag].as_bool().unwrap_or(false),
@@ -211,7 +239,12 @@ fn its_events_and_errors_are_the_programs() {
         "ShortfallRedeemed".into(),
         ShortfallRedeemed::DISCRIMINATOR.to_vec()
     )));
-    assert_eq!(events.len(), 4);
+    assert!(events.contains(&(
+        "LiquidityRemoved".into(),
+        LiquidityRemoved::DISCRIMINATOR.to_vec()
+    )));
+    assert!(events.contains(&("SharesLocked".into(), SharesLocked::DISCRIMINATOR.to_vec())));
+    assert_eq!(events.len(), 6);
 
     // Errors are numbered from 6000 in the enum's order, new ones only ever appended.
     let errors = idl["errors"].as_array().unwrap();
@@ -251,6 +284,22 @@ fn its_events_and_errors_are_the_programs() {
             "RedeemPaidShort",
             lending_amm::StrategyError::RedeemPaidShort,
         ),
+        ("ZeroRemoval", lending_amm::StrategyError::ZeroRemoval),
+        (
+            "NotEnoughShares",
+            lending_amm::StrategyError::NotEnoughShares,
+        ),
+        ("BelowMinOther", lending_amm::StrategyError::BelowMinOther),
+        ("BelowMinLent", lending_amm::StrategyError::BelowMinLent),
+        (
+            "KaminoAccountsMissing",
+            lending_amm::StrategyError::KaminoAccountsMissing,
+        ),
+        (
+            "KaminoCannotPay",
+            lending_amm::StrategyError::KaminoCannotPay,
+        ),
+        ("ZeroLock", lending_amm::StrategyError::ZeroLock),
     ] {
         let listed = errors.iter().find(|e| e["name"] == name).unwrap();
         assert_eq!(
@@ -259,5 +308,5 @@ fn its_events_and_errors_are_the_programs() {
             "{name}"
         );
     }
-    assert_eq!(errors.last().unwrap()["name"], "RedeemPaidShort");
+    assert_eq!(errors.last().unwrap()["name"], "ZeroLock");
 }

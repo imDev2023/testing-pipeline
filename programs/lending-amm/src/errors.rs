@@ -86,4 +86,18 @@ pub enum StrategyError {
     RedeemAccountsMissing,
     #[msg("Kamino's redeem paid the market less than the swap's shortfall")]
     RedeemPaidShort,
+    #[msg("The removal would burn no LP shares or pay out nothing")]
+    ZeroRemoval,
+    #[msg("The removal burns more LP shares than the market has minted")]
+    NotEnoughShares,
+    #[msg("The removal would pay out less of the other mint than min_other")]
+    BelowMinOther,
+    #[msg("The removal would pay out less of the lent mint than min_lent")]
+    BelowMinLent,
+    #[msg("A removal in cash needs the lent mint's Kamino accounts: add them, or remove in kind")]
+    KaminoAccountsMissing,
+    #[msg("Kamino cannot pay the cTokens' part right now: remove in kind")]
+    KaminoCannotPay,
+    #[msg("Locking needs at least one LP share")]
+    ZeroLock,
 }

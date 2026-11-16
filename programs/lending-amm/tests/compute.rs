@@ -24,6 +24,9 @@ mod ceilings {
     pub const PIPELINE_INIT_MARKET: u64 = 150_000;
     pub const ADD_LIQUIDITY: u64 = 60_000;
     pub const REBALANCE: u64 = 100_000;
+    pub const REMOVE_LIQUIDITY_CASH: u64 = 120_000;
+    pub const REMOVE_LIQUIDITY_IN_KIND: u64 = 90_000;
+    pub const LOCK_LP: u64 = 40_000;
 }
 
 /// Solana's limit on a serialized transaction, in bytes.
@@ -310,6 +313,82 @@ fn rebalance_stays_under_its_ceiling_depositing_and_redeeming() {
 }
 
 #[test]
+fn removals_in_cash_and_in_kind_and_lock_lp_stay_under_their_ceilings() {
+    use common::rebalance::{units, OTHER};
+    use common::remove::Payout;
+    // Each other-side mint kind against WSOL, and plain SPL Token against each lent mint, on
+    // markets that have lent through klend's real deposit, each at a fixed address and with
+    // LPs of fixed keys: the removal's and the lock's associated token account checks search
+    // for a bump from the LP's key, and a hooked transfer from the mint's.
+    let mut cases = vec![];
+    for kind in ["SPL Token", "Token-2022", "hooked Token-2022"] {
+        cases.push((kind, 0usize));
+    }
+    for lent in 1..lending_amm::config::LENT_MINTS.len() {
+        cases.push(("SPL Token", lent));
+    }
+    for (kind, lent) in cases {
+        let name = format!("{kind} against {}", common::kamino::lent_name(lent));
+        let mut env = Env::new();
+        env.load_klend();
+        let options = MintOptions {
+            key: Some(fixed_key(&format!("the mint on {name}"))),
+            ..MintOptions::default()
+        };
+        let (mint, token_program) = match kind {
+            "SPL Token" => (env.create_mint_with(&TOKEN, options), TOKEN),
+            "Token-2022" => (env.create_mint_with(&TOKEN_2022, options), TOKEN_2022),
+            _ => (env.create_hooked_mint_with(options).0, TOKEN_2022),
+        };
+        let spec = MarketSpec {
+            mints: [
+                (mint, token_program),
+                (ck(&lending_amm::config::LENT_MINTS[lent].mint), TOKEN),
+            ],
+            params: lending_amm::InitParams {
+                lent_index: 1,
+                lp_fee_bps: 30,
+            },
+        };
+        let lp = solana_keypair::Keypair::new_from_array(fixed_key(&format!("an LP on {name}")));
+        let (market, lp) = env
+            .create_funded_market_by(&spec, [OTHER, units(lent, 50)], lp)
+            .unwrap();
+        env.rebalance(&market, None).unwrap();
+        let third = env.lp_shares_of(&market, &lp.pubkey()) / 3;
+        let logs = env
+            .remove_liquidity(&market, &lp, third, [0, 0], Payout::Cash)
+            .unwrap()
+            .logs;
+        let (cash, klend_redeem) = (strategy_compute(&logs)[0], klend_compute(&logs));
+        // In kind, creating the LP's cToken account, then into the account that exists.
+        let creating = env
+            .remove_liquidity(&market, &lp, third / 2, [0, 0], Payout::InKind)
+            .unwrap();
+        let existing = env
+            .remove_liquidity(&market, &lp, third / 2, [0, 0], Payout::InKind)
+            .unwrap();
+        let in_kind = [creating, existing].map(|meta| strategy_compute(&meta.logs)[0]);
+        // Locking, creating the lock account, then into the account that exists.
+        let locks = [0, 1].map(|_| {
+            let meta = env.lock_lp(&market, &lp, third / 4).unwrap();
+            strategy_compute(&meta.logs)[0]
+        });
+        println!(
+            "on {name}: remove_liquidity in cash {cash} CU (klend {klend_redeem}), in kind {} CU creating the LP's cToken account and {} CU after; lock_lp {} CU creating the lock account and {} CU after",
+            in_kind[0], in_kind[1], locks[0], locks[1]
+        );
+        assert!(cash <= ceilings::REMOVE_LIQUIDITY_CASH, "{name}: {cash}");
+        for cost in in_kind {
+            assert!(cost <= ceilings::REMOVE_LIQUIDITY_IN_KIND, "{name}: {cost}");
+        }
+        for cost in locks {
+            assert!(cost <= ceilings::LOCK_LP, "{name}: {cost}");
+        }
+    }
+}
+
+#[test]
 fn the_table_mirrors_the_spec() {
     let spec = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/lending-pool.md"),
@@ -336,6 +415,9 @@ fn the_table_mirrors_the_spec() {
     row("`pipeline_init_market`", PIPELINE_INIT_MARKET);
     row("`add_liquidity`", ADD_LIQUIDITY);
     row("`rebalance`", REBALANCE);
+    row("`remove_liquidity`, cash", REMOVE_LIQUIDITY_CASH);
+    row("`remove_liquidity`, in kind", REMOVE_LIQUIDITY_IN_KIND);
+    row("`lock_lp`", LOCK_LP);
     let _ = Pubkey::default();
 }
 

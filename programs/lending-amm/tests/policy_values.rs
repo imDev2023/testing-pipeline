@@ -125,24 +125,37 @@ fn the_lent_mints_reserves_and_kamino_are_written_only_in_the_config_module() {
 fn the_metadata_names_only_the_config_modules_klend() {
     let text = std::fs::read_to_string(programs_dir().join("lending-amm/metadata.json")).unwrap();
     let metadata: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let rebalance = metadata["actions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|a| a["name"] == "rebalance")
-        .expect("the rebalance action");
-    let sources: Vec<&str> = rebalance["accounts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|a| a["source"].as_str().unwrap())
-        .collect();
     let klend = config::KLEND_PROGRAM.to_string();
-    assert!(sources.contains(&format!("fixed:{klend}").as_str()));
-    assert!(sources.contains(&format!("pda:{klend}:str:lma,key:input:lending_market").as_str()));
+    // The actions that call klend, `rebalance` and the cash form of `remove_liquidity`, name it
+    // twice each, as the program and as the lending market authority's PDA program, from the
+    // config module's constant; the in-kind form names no Kamino account at all.
+    let calling = ["rebalance", "remove_liquidity"];
+    for action in metadata["actions"].as_array().unwrap() {
+        let name = action["name"].as_str().unwrap();
+        let sources: Vec<&str> = action["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["source"].as_str().unwrap())
+            .collect();
+        let named = sources.iter().filter(|s| s.contains(&klend)).count();
+        if calling.contains(&name) {
+            assert!(
+                sources.contains(&format!("fixed:{klend}").as_str()),
+                "{name}"
+            );
+            assert!(
+                sources.contains(&format!("pda:{klend}:str:lma,key:input:lending_market").as_str()),
+                "{name}"
+            );
+            assert_eq!(named, 2, "{name}");
+        } else {
+            assert_eq!(named, 0, "{name}");
+        }
+    }
     // Nowhere else, and no other address that looks like Kamino's.
-    assert_eq!(text.matches(&klend).count(), 2);
-    assert_eq!(text.matches("KLend").count(), 2);
+    assert_eq!(text.matches(&klend).count(), 2 * calling.len());
+    assert_eq!(text.matches("KLend").count(), 2 * calling.len());
 }
 
 #[cfg(feature = "devnet")]

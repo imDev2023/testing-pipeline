@@ -2,7 +2,8 @@
 //! market's history; current values are always read from the market state. A swap emits the
 //! router's swap event instead, which carries its amounts, and moves the recorded reserves
 //! by exactly the input it credits and the output it pays; a swap that redeems its shortfall
-//! from Kamino also emits [`ShortfallRedeemed`].
+//! from Kamino also emits [`ShortfallRedeemed`]. An SPL Token burn of LP shares emits nothing of
+//! ours; the LP mint's supply shows it.
 
 use anchor_lang::prelude::*;
 
@@ -86,4 +87,39 @@ pub struct ShortfallRedeemed {
     pub ctokens_held: u64,
     /// The running total of the lent mint redeemed from Kamino afterwards.
     pub redeemed: u128,
+}
+
+/// An LP removed liquidity with `remove_liquidity` (docs/spec/lending-pool.md, "Removing").
+#[event]
+pub struct LiquidityRemoved {
+    pub market_state: Pubkey,
+    pub lp: Pubkey,
+    /// The LP shares burned.
+    pub shares: u64,
+    /// The market's share count after the removal, the locked minimum included.
+    pub share_count: u64,
+    /// What the LP received of each mint, by mint index: the other side's part, and of the lent
+    /// mint the buffer's part plus, in cash, what klend paid for the cTokens' part.
+    pub amounts: [u64; 2],
+    /// The cTokens that left the market, as measured: paid to the LP in kind, burned by klend's
+    /// redeem in cash.
+    pub ctokens: u64,
+    /// Whether the cTokens' part was paid as cTokens.
+    pub in_kind: bool,
+    /// In cash, the lent mint klend's redeem paid for the cTokens' part, included in `amounts`.
+    pub redeemed: u64,
+}
+
+/// An LP moved shares into the market's lock account with `lock_lp`, for good
+/// (docs/spec/lending-pool.md, "Locking").
+#[event]
+pub struct SharesLocked {
+    pub market_state: Pubkey,
+    pub lp: Pubkey,
+    /// The shares locked by this call.
+    pub amount: u64,
+    /// The lock account's balance afterwards: every share locked in the market so far.
+    pub locked: u64,
+    /// The market's share count, the locked minimum included, which locking leaves unchanged.
+    pub share_count: u64,
 }

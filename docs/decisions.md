@@ -4167,11 +4167,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-27: Compute ceilings
 
 - Question: How much compute may each instruction use?
-- Answer: From 20,000 units for `lock_lp` to 200,000 for `pipeline_seed_liquidity`, with 40,000 for a swap without a redeem and 80,000 with one; the build may lower a ceiling, and raising one needs a written reason.
-- Alternatives: None recorded.
+- Answer: From 40,000 units for `lock_lp`, raised from 20,000 because the market's first lock creates the lock account, to 200,000 for `pipeline_seed_liquidity`, with 40,000 for a swap without a redeem and 80,000 with one; the build may lower a ceiling, and raising one needs a written reason.
+- Alternatives: The earlier default, 20,000 units for `lock_lp`, set for one transfer.
 - Specified in: [`docs/spec/lending-pool.md`, Compute ceilings](spec/lending-pool.md#compute-ceilings)
 - Changes by: build-time constant
-- Status: default
+- Status: changed 2026-11-16
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-28: Devnet lending market
@@ -4543,6 +4543,86 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: fixed on-chain once deployed
 - Status: default
 - Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
+### LENDING-65: How an in-kind removal leaves Kamino's accounts out
+
+- Question: How does one `remove_liquidity` instruction take Kamino's accounts in cash and none at all in kind?
+- Answer: It takes them last as Anchor optional accounts, among them a writable copy of the collateral mint so that the shared one stays read-only and an in-kind removal never write-locks it; an in-kind removal passes the program's own id in their seven places and never reads them, and metadata has two forms of the one instruction, `remove_liquidity` in cash and `remove_liquidity_in_kind` naming it by its discriminator with `strategy_program` in those places.
+- Alternatives: Kamino's accounts as remaining accounts recognised by klend's id, which metadata cannot describe; two instructions, which would change the spec's one `remove_liquidity { lp, min_other, min_lent, in_kind }`.
+- Specified in: [`docs/spec/lending-pool.md`, Custom actions and metadata](spec/lending-pool.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-66: When a cash removal redeems
+
+- Question: When does a removal in cash redeem the cTokens' part, and when does it refuse?
+- Answer: After checking every Kamino account as `rebalance` does, it refuses with `KaminoCannotPay` before burning anything or calling Kamino unless the part's value at the stored rate is within what Kamino can pay right now as a swap's redeem counts it, headroom included; cTokens worth less than one unit at the stored rate are not redeemed and stay in the market, and a cash removal that would then pay nothing is refused with `ZeroRemoval`; a cash removal that must redeem without Kamino's accounts fails with `KaminoAccountsMissing`.
+- Alternatives: Calling klend and letting it refuse, which would not name the cause; Kamino's limits with no headroom, under which klend could refuse a removal the program let through.
+- Specified in: [`docs/spec/lending-pool.md`, Removing](spec/lending-pool.md#removing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-67: What a cash removal pays and records
+
+- Question: What does an LP receive for the cTokens' part in cash, and what does the market record and tell?
+- Answer: klend redeems the part into the market's buffer vault and the LP receives the buffer's part plus everything klend paid, as measured, at the rate klend refreshed to; the market records exactly what left, adds klend's payout to its running total redeemed, and emits `LiquidityRemoved` with the shares, the share count after, what each mint paid, the cTokens that left, whether in kind and klend's payout.
+- Alternatives: Paying only the part's value at the stored rate and keeping the interest klend accrued in the refresh, which belongs to those cTokens; redeeming straight into the LP's account, which the market could not measure.
+- Specified in: [`docs/spec/lending-pool.md`, Removing](spec/lending-pool.md#removing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-68: Which accounts a removal or a lock takes shares from and pays into
+
+- Question: From which LP token accounts may a removal or a lock take shares, and where do in-kind cTokens go?
+- Answer: From any token account of the LP mint the signer owns, never one they are only a delegate of (`WrongAccount`); in-kind cTokens go to the LP's associated token account for the collateral mint, which the associated token program creates at the LP's expense only when it is missing.
+- Alternatives: Only the LP's shares account PDA, which would strand shares an LP moved elsewhere; letting a delegate remove, which would pay a delegate another holder's liquidity.
+- Specified in: [`docs/spec/lending-pool.md`, Removing](spec/lending-pool.md#removing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-69: The lock account and the first lock
+
+- Question: Who creates the lock account, and how do forms find it?
+- Answer: The market's first `lock_lp` creates it, the vault authority's associated token account for the LP mint, at that LP's expense, and the `lock_lp` metadata action takes it as the named input `lock_account`, since metadata cannot describe the associated token account of a mint that is itself a PDA; it emits `SharesLocked` with the shares locked, the lock account's balance and the share count.
+- Alternatives: Creating the lock account at market creation, which would add rent and a fifth account to every creation transaction already near its size limit.
+- Specified in: [`docs/spec/lending-pool.md`, Locking](spec/lending-pool.md#locking)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-70: min_lent in each form
+
+- Question: What does `min_lent` bound in a cash removal and in an in-kind one?
+- Answer: The lent mint actually paid: the buffer's part plus klend's payout in cash, and the buffer's part alone in kind, where the cTokens' part is fixed by the market's recorded cTokens.
+- Alternatives: Bounding the lent side's value including in-kind cTokens at the stored rate, which would make an in-kind removal read the reserve.
+- Specified in: [`docs/spec/lending-pool.md`, Removing](spec/lending-pool.md#removing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-71: A removal's rounding
+
+- Question: May a removal lower the value of an LP share?
+- Answer: Per share none of `R`, `B` and `c` falls, since each part rounds down; the market values the remaining cTokens rounded down, so `L x lp / N` may read one unit of the lent mint lower, which the tests and the fuzzer allow and no more.
+- Alternatives: Paying fewer cTokens so that the floored value never falls, which would depart from the spec's `c x lp / N`.
+- Specified in: [`docs/spec/lending-pool.md`, Invariants for test layer 3](spec/lending-pool.md#invariants-for-test-layer-3)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-72: The running totals after an in-kind removal
+
+- Question: How do the running totals deposited into and redeemed from Kamino follow cTokens an LP takes in kind, so that the lending yield `V + redeemed - deposited` stays right?
+- Answer: The cTokens take their share of the market's cTokens of the net amount lent, `deposited - redeemed`, rounded towards zero, off `deposited`, or off `redeemed` while redeemed is the larger, so the yield falls by the same fraction as `V`, the part that left with the cTokens, without the in-kind path reading the reserve to value them.
+- Alternatives: Leaving the totals unchanged, which would show a market that paid out half its cTokens in kind as having lost half its lent value; adding the cTokens' value to `redeemed`, which needs the reserve that the in-kind path must never read.
+- Specified in: [`docs/spec/lending-pool.md`, Removing](spec/lending-pool.md#removing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
 
 ## Not decided yet
 
