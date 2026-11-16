@@ -8,7 +8,11 @@
 #     accounts; and the lending market (and its authority, when it holds an account), all read
 #     at one slot by scripts/kamino_accounts.py;
 #   - fixtures/accounts/warp-slot, the slot after that one, which scripts/local-validator.sh
-#     warps the validator to, so that Kamino's own slots are never in the validator's future.
+#     warps the validator to, so that Kamino's own slots are never in the validator's future;
+#   - for the Kamino-side commands of scripts/kamino-devnet the demo calls (the test borrower's
+#     borrow and repay, and emergency mode on and off), the reserves' two Pyth price accounts,
+#     their publish time moved ahead so every price is fresh, and klend's global config
+#     (scripts/kamino_accounts.py local).
 #
 #   bash programs/lending-amm/scripts/fetch-accounts.sh    # needs python3, curl and devnet RPC
 #
@@ -22,10 +26,11 @@ OUT="${FIXTURES_DIR:-$ROOT/fixtures}/accounts"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 python3 "$ROOT/programs/lending-amm/scripts/kamino_accounts.py" dump --cluster devnet --out "$work"
+python3 "$ROOT/programs/lending-amm/scripts/kamino_accounts.py" local --cluster devnet --out "$work/local"
 
 mkdir -p "$OUT"
 rm -f "$OUT"/kamino-*.json "$OUT"/collateral-mint-*.json "$OUT/warp-slot"
-for file in "$work"/*.json; do
+for file in "$work"/*.json "$work"/local/*.json; do
   name="$(basename "$file")"
   [ "$name" = manifest.json ] && continue
   cp "$file" "$OUT/kamino-$name"

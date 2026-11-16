@@ -107,6 +107,12 @@ export const LENDING_AMM_ERROR__KAMINO_ACCOUNTS_MISSING = 0x179b; // 6043
 export const LENDING_AMM_ERROR__KAMINO_CANNOT_PAY = 0x179c; // 6044
 /** ZeroLock: Locking needs at least one LP share */
 export const LENDING_AMM_ERROR__ZERO_LOCK = 0x179d; // 6045
+/** KaminoStopped: Kamino redeems nothing right now (reserve or lending market emergency mode, or a deprecated reserve): rebalance refuses */
+export const LENDING_AMM_ERROR__KAMINO_STOPPED = 0x179e; // 6046
+/** KaminoDepositsBlocked: Kamino blocks cToken deposits into the reserve: rebalance skips the deposit */
+export const LENDING_AMM_ERROR__KAMINO_DEPOSITS_BLOCKED = 0x179f; // 6047
+/** ReserveDeprecated: The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only */
+export const LENDING_AMM_ERROR__RESERVE_DEPRECATED = 0x17a0; // 6048
 
 export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__BAD_INIT_DATA
@@ -123,6 +129,8 @@ export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__KAMINO_ACCOUNTS_MISSING
   | typeof LENDING_AMM_ERROR__KAMINO_ACCOUNT_WRONG
   | typeof LENDING_AMM_ERROR__KAMINO_CANNOT_PAY
+  | typeof LENDING_AMM_ERROR__KAMINO_DEPOSITS_BLOCKED
+  | typeof LENDING_AMM_ERROR__KAMINO_STOPPED
   | typeof LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT
   | typeof LENDING_AMM_ERROR__LENT_MINT_NOT_LISTED
   | typeof LENDING_AMM_ERROR__LENT_MINT_NOT_SPL_TOKEN
@@ -136,6 +144,7 @@ export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__OVERFLOW
   | typeof LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING
   | typeof LENDING_AMM_ERROR__REDEEM_PAID_SHORT
+  | typeof LENDING_AMM_ERROR__RESERVE_DEPRECATED
   | typeof LENDING_AMM_ERROR__RESERVE_NOT_KAMINO
   | typeof LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_ADDRESS
@@ -173,6 +182,8 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__KAMINO_ACCOUNTS_MISSING]: `A removal in cash needs the lent mint's Kamino accounts: add them, or remove in kind`,
     [LENDING_AMM_ERROR__KAMINO_ACCOUNT_WRONG]: `A Kamino account is not the one the lent mint's reserve names`,
     [LENDING_AMM_ERROR__KAMINO_CANNOT_PAY]: `Kamino cannot pay the cTokens' part right now: remove in kind`,
+    [LENDING_AMM_ERROR__KAMINO_DEPOSITS_BLOCKED]: `Kamino blocks cToken deposits into the reserve: rebalance skips the deposit`,
+    [LENDING_AMM_ERROR__KAMINO_STOPPED]: `Kamino redeems nothing right now (reserve or lending market emergency mode, or a deprecated reserve): rebalance refuses`,
     [LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT]: `The Kamino lending market account is not the lent mint's lending market`,
     [LENDING_AMM_ERROR__LENT_MINT_NOT_LISTED]: `The lent mint is not on this cluster's list of lent mints`,
     [LENDING_AMM_ERROR__LENT_MINT_NOT_SPL_TOKEN]: `The lent mint must be owned by SPL Token`,
@@ -186,6 +197,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
     [LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING]: `The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again`,
     [LENDING_AMM_ERROR__REDEEM_PAID_SHORT]: `Kamino's redeem paid the market less than the swap's shortfall`,
+    [LENDING_AMM_ERROR__RESERVE_DEPRECATED]: `The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only`,
     [LENDING_AMM_ERROR__RESERVE_NOT_KAMINO]: `The Kamino reserve is not owned by Kamino Lend`,
     [LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID]: `The Kamino reserve's total supply cannot be computed`,
     [LENDING_AMM_ERROR__RESERVE_WRONG_ADDRESS]: `The Kamino reserve is not the one the market's lent mint lends to`,

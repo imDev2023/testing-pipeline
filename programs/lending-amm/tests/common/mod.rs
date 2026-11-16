@@ -21,6 +21,7 @@ pub mod rebalance;
 pub mod redeem;
 pub mod remove;
 pub mod smart_wallet;
+pub mod states;
 
 use std::path::PathBuf;
 
@@ -280,6 +281,7 @@ impl Env {
         // accounts, as the cluster had them at one slot; the clock then starts one slot and
         // one second after it, so Kamino's own timestamps are never in the future.
         fixtures.install(&mut svm);
+        kamino::second_depositor(&mut svm, &fixtures);
         let mut env = Env {
             svm,
             admin,

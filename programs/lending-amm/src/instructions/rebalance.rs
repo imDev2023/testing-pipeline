@@ -1,28 +1,33 @@
 //! `rebalance {}`: the permissionless keeper job that moves a market's buffer back to its
-//! target (docs/spec/lending-pool.md, "The rule" and "When it runs").
+//! target, and puts the market into withdraw mode and out of it (docs/spec/lending-pool.md, "The
+//! rule", "Withdraw mode", "When it runs" and "When Kamino can't pay").
 //!
-//! Anyone may call it at any time. Inside the band it fails with `WithinBand` and changes
-//! nothing, so a keeper's simulation shows there is nothing to do; above the band it deposits
-//! the surplus into Kamino with `deposit_reserve_liquidity`, and below it redeems the shortfall
-//! with `redeem_reserve_collateral`, capped at what Kamino can pay right now; a move smaller
-//! than the lent mint's `MIN_REBALANCE` is skipped ([`crate::buffer::plan`]). Both Kamino calls
-//! are signed by the market's vault authority, which owns the buffer vault and the cToken
-//! account.
+//! Anyone may call it at any time. It reads Kamino's state at each call and does what
+//! [`crate::withdraw_mode::decide`] says: it refuses while Kamino redeems nothing (either
+//! emergency mode, or a deprecated reserve); below `WITHDRAW_MODE_ENTER` times the market's
+//! exposure of freely available liquidity it enters withdraw mode, where it redeems everything
+//! Kamino can pay and deposits nothing, and above `WITHDRAW_MODE_EXIT` times it leaves; outside
+//! withdraw mode, inside the band it fails with `WithinBand` and changes nothing, above it it
+//! deposits the surplus into Kamino with `deposit_reserve_liquidity` (unless Kamino blocks cToken
+//! deposits), and below it redeems the shortfall with `redeem_reserve_collateral`, capped at what
+//! Kamino can pay right now; a move smaller than the lent mint's `MIN_REBALANCE` is skipped
+//! ([`crate::buffer::plan`]). Both Kamino calls are signed by the market's vault authority, which
+//! owns the buffer vault and the cToken account.
 //!
 //! The market then measures what actually moved, at its buffer vault and its cToken account,
-//! and records exactly that, with the running totals deposited into and redeemed from Kamino.
-//! It creates no account and pays nothing, so the caller pays only the transaction fee.
-//! A call Kamino refuses fails whole; withdraw mode and Kamino's other states come with
-//! [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83).
+//! and records exactly that, with the running totals deposited into and redeemed from Kamino,
+//! and the mode it is in. It creates no account and pays nothing, so the caller pays only the
+//! transaction fee. A call Kamino refuses fails whole.
 
 use anchor_lang::prelude::*;
 
-use crate::buffer::{self, Move};
+use crate::buffer::Move;
 use crate::errors::StrategyError;
-use crate::events::{RebalanceDirection, Rebalanced};
+use crate::events::{RebalanceDirection, Rebalanced, WithdrawModeEntered, WithdrawModeLeft};
 use crate::kamino::KaminoAccounts;
 use crate::state::{LendingAmmMarket, AUTHORITY_SEED};
 use crate::token;
+use crate::withdraw_mode::{self, Kamino};
 
 /// `rebalance` accounts. The order is part of `metadata.json`; keep them in step. The Kamino
 /// accounts are those of the market's lent mint, and are checked against its entry in
@@ -90,13 +95,45 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
 
     let held = market.ctokens;
     let buffer = market.reserves[lent_side];
-    let lent_total = buffer
-        .checked_add(reserve.lent_value(held)?)
-        .ok_or(StrategyError::Overflow)?;
-    let can_pay = reserve.can_pay_planned(&lending_market, held, Clock::get()?.unix_timestamp);
-    let planned = buffer::plan(buffer, lent_total, can_pay, lent.min_rebalance)?;
-
+    let lent_value = reserve.lent_value(held)?;
+    let kamino_state = Kamino {
+        free: reserve.freely_available(),
+        can_pay: reserve.can_pay_planned(&lending_market, held, Clock::get()?.unix_timestamp),
+        stopped: reserve.redeems_stopped(&lending_market),
+        deposits_blocked: reserve.block_ctoken_usage,
+    };
+    let decision = withdraw_mode::decide(
+        market.withdraw_mode,
+        buffer,
+        lent_value,
+        kamino_state,
+        lent.min_rebalance,
+    )?;
     let market_key = market.key();
+    if decision.withdraw_mode != market.withdraw_mode {
+        let lent_total = buffer
+            .checked_add(lent_value)
+            .ok_or(StrategyError::Overflow)?;
+        let exposure = withdraw_mode::exposure(lent_value, lent_total);
+        if decision.withdraw_mode {
+            emit!(WithdrawModeEntered {
+                market_state: market_key,
+                free_liquidity: kamino_state.free,
+                exposure,
+            });
+        } else {
+            emit!(WithdrawModeLeft {
+                market_state: market_key,
+                free_liquidity: kamino_state.free,
+                exposure,
+            });
+        }
+    }
+    let Some(planned) = decision.planned else {
+        ctx.accounts.market_state.withdraw_mode = decision.withdraw_mode;
+        return Ok(());
+    };
+
     let bump = [market.authority_bump];
     let authority_seeds: &[&[u8]] = &[AUTHORITY_SEED, market_key.as_ref(), &bump];
     let vault = accounts.buffer_vault.to_account_info();
@@ -125,6 +162,7 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
 
     // Record exactly what moved, as measured, never what was asked for.
     let market = &mut ctx.accounts.market_state;
+    market.withdraw_mode = decision.withdraw_mode;
     let (direction, liquidity, ctokens) = match planned {
         Move::Deposit(_) => {
             let liquidity = vault_before

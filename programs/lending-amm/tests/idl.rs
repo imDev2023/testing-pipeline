@@ -10,6 +10,7 @@ use anchor_lang::Discriminator;
 use common::*;
 use lending_amm::events::{
     LiquidityAdded, LiquidityRemoved, MarketCreated, Rebalanced, SharesLocked, ShortfallRedeemed,
+    WithdrawModeEntered, WithdrawModeLeft,
 };
 use lending_amm::state::layout;
 use lending_amm::LendingAmmMarket;
@@ -244,7 +245,15 @@ fn its_events_and_errors_are_the_programs() {
         LiquidityRemoved::DISCRIMINATOR.to_vec()
     )));
     assert!(events.contains(&("SharesLocked".into(), SharesLocked::DISCRIMINATOR.to_vec())));
-    assert_eq!(events.len(), 6);
+    assert!(events.contains(&(
+        "WithdrawModeEntered".into(),
+        WithdrawModeEntered::DISCRIMINATOR.to_vec()
+    )));
+    assert!(events.contains(&(
+        "WithdrawModeLeft".into(),
+        WithdrawModeLeft::DISCRIMINATOR.to_vec()
+    )));
+    assert_eq!(events.len(), 8);
 
     // Errors are numbered from 6000 in the enum's order, new ones only ever appended.
     let errors = idl["errors"].as_array().unwrap();
@@ -300,6 +309,15 @@ fn its_events_and_errors_are_the_programs() {
             lending_amm::StrategyError::KaminoCannotPay,
         ),
         ("ZeroLock", lending_amm::StrategyError::ZeroLock),
+        ("KaminoStopped", lending_amm::StrategyError::KaminoStopped),
+        (
+            "KaminoDepositsBlocked",
+            lending_amm::StrategyError::KaminoDepositsBlocked,
+        ),
+        (
+            "ReserveDeprecated",
+            lending_amm::StrategyError::ReserveDeprecated,
+        ),
     ] {
         let listed = errors.iter().find(|e| e["name"] == name).unwrap();
         assert_eq!(
@@ -308,5 +326,5 @@ fn its_events_and_errors_are_the_programs() {
             "{name}"
         );
     }
-    assert_eq!(errors.last().unwrap()["name"], "ZeroLock");
+    assert_eq!(errors.last().unwrap()["name"], "ReserveDeprecated");
 }

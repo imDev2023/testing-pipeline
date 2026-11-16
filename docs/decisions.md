@@ -4624,6 +4624,106 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
 
+### LENDING-73: How withdraw mode measures Kamino and the market
+
+- Question: What exactly does `rebalance` compare to enter and leave withdraw mode?
+- Answer: The reserve's freely available liquidity (`total_available_amount` less queued withdrawal tickets, at the stored rate) against `X = max(V, T)` with `T = L - floor(L x BUFFER_TARGET_BPS / 10,000)`, entering below `WITHDRAW_MODE_ENTER x X`, leaving above `WITHDRAW_MODE_EXIT x X` and keeping the mode at and between both edges, the products taken in 128 bits.
+- Alternatives: `T` rounded down; the total available amount without the queued tickets; comparing at or below and at or above, which would let both edges change the mode.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-74: A rebalance that changes withdraw mode but moves nothing
+
+- Question: What does a `rebalance` do when it should enter or leave withdraw mode but has nothing to move, such as entering when Kamino can pay nothing, or leaving with the buffer inside its band?
+- Answer: It succeeds and records the mode, emitting its event, while a call that neither moves nor changes the mode still refuses as a no-op, with `BelowMinRebalance` in withdraw mode once everything is redeemed.
+- Alternatives: Refusing it like any no-op, which would leave a market that cannot redeem anything right now out of withdraw mode, ready to lend back into the crunch.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-75: The floor in withdraw mode
+
+- Question: Does the lent mint's `MIN_REBALANCE` apply to the redeems `rebalance` makes in withdraw mode?
+- Answer: Yes, except for a redeem that takes every cToken the market holds, so a market can always empty out its last cTokens however little they are worth.
+- Alternatives: The floor always, which could leave dust lent to a reserve in a crunch; no floor, which would let keepers pay for redeems of a few lamports again and again.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-76: Rebalance while Kamino redeems nothing
+
+- Question: What does `rebalance` do while either emergency mode is on or the reserve is deprecated?
+- Answer: It refuses with its own error, `KaminoStopped`, before anything else, changing nothing and leaving withdraw mode as it was.
+- Alternatives: Planning as usual and failing with `BelowMinRebalance`, or calling klend and letting it refuse, either of which hides why.
+- Specified in: [`docs/spec/lending-pool.md`, When Kamino can't pay](spec/lending-pool.md#when-kamino-cant-pay)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-77: Rebalance while cToken deposits are blocked
+
+- Question: What does `rebalance` do above the band while Kamino blocks cToken deposits (`block_ctoken_usage`)?
+- Answer: It skips the deposit and refuses with `KaminoDepositsBlocked`, changing nothing, while redeems below the band go ahead and leaving withdraw mode is still recorded.
+- Alternatives: Calling klend and letting it refuse with its own error.
+- Specified in: [`docs/spec/lending-pool.md`, When Kamino can't pay](spec/lending-pool.md#when-kamino-cant-pay)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-78: A cash removal while Kamino redeems nothing
+
+- Question: May an LP remove in cash while Kamino redeems nothing, when the stored rate values their cTokens' part at nothing, as after a total write-off?
+- Answer: No: whenever Kamino redeems nothing and the LP's part holds any cTokens, a cash removal refuses with `KaminoCannotPay` before calling Kamino, and the LP removes in kind, taking their cTokens.
+- Alternatives: Letting the cash path skip cTokens worth nothing at the stored rate, which would leave the LP's cTokens behind for the remaining LPs.
+- Specified in: [`docs/spec/lending-pool.md`, When Kamino can't pay](spec/lending-pool.md#when-kamino-cant-pay)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-79: What Kamino can pay without the lending market's account
+
+- Question: How do account resolution, and a quote or swap built without the redeem accounts, count what Kamino can pay, when they have the reserve but not the lending market?
+- Answer: From the reserve alone (its emergency mode, deprecation, free liquidity and withdrawal cap), so a trade the reserve refuses gets no redeem accounts and fails with `BeyondBuffer`, while one only the lending market's emergency mode refuses gets them and its quote and swap refuse it.
+- Alternatives: Assuming Kamino can pay anything, which listed klend's accounts for trades Kamino could not pay and sent the swap built from them back to resolution with `RedeemAccountsMissing`; a third round to read the lending market.
+- Specified in: [`docs/spec/lending-pool.md`, Accounts](spec/lending-pool.md#accounts)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-80: A redeem on a stale reserve
+
+- Question: How does `rebalance` redeem what Kamino can pay when the reserve's stored rate is older than `KAMINO_RATE_HEADROOM_BPS` covers, so klend's refreshed rate would carry a capped redeem past Kamino's limits?
+- Answer: The keeper puts klend's own `refresh_reserve`, with the reserve's oracle accounts, before `rebalance` in the same transaction, so the redeem is planned at a rate refreshed in that slot; alone, the call fails whole and changes nothing.
+- Alternatives: A larger or rate-aware headroom; `rebalance` calling `refresh_reserve` itself, which needs the oracle accounts in every call; projecting the interest, which the spec rules out.
+- Specified in: [`docs/spec/lending-pool.md`, The rule](spec/lending-pool.md#the-rule)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-81: Withdraw mode's events
+
+- Question: What does the market emit when `rebalance` enters or leaves withdraw mode?
+- Answer: `WithdrawModeEntered` or `WithdrawModeLeft`, with the market, the free liquidity and the exposure `X` it measured, before the call's `Rebalanced` if it moved anything.
+- Alternatives: One event with a flag; putting the mode into `Rebalanced`, which a call that moves nothing does not emit.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-82: The demo market's size and the tests' second depositor
+
+- Question: How large is the demo market, and how do the `devnet` build's tests keep its WSOL reserve out of withdraw mode?
+- Answer: The demo market's lent side stays near 0.4 SOL, so it fits the 5 SOL the devnet wallet keeps free in the WSOL reserve, and the `devnet` build's tests give the dumped reserve a second depositor of their own that keeps 2,500 SOL free.
+- Alternatives: Topping the devnet reserve up for the demo, which would make the devnet ticket's demo depend on a larger second depositor; shrinking every test market to fit 5 SOL.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -4658,6 +4758,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-25` to `POOL4-27`: set by the session of [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-24` is the owner's answer to that session's question.
 - `LENDING-53` to `LENDING-59`: set by the session of [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `LENDING-73` to `LENDING-82`: set by the session of [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83) while building, where the spec left the choice open, and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.

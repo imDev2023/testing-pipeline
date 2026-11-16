@@ -134,3 +134,41 @@ fn quotes_equal_swaps_on_both_sides_of_the_buffers_edge() {
         assert_conforms_with(&env, &market, &options);
     }
 }
+
+#[test]
+fn a_market_in_withdraw_mode_passes_every_check() {
+    // Kamino's free liquidity falls below WITHDRAW_MODE_ENTER times the market's exposure:
+    // rebalance enters withdraw mode and redeems everything Kamino can pay, and the market, its
+    // lent side now all in the buffer, passes while Kamino stays thin.
+    for lent_entry in 0..2 {
+        let mut env = Env::new();
+        let market = env.lending_market(lent_entry, 30);
+        let exposure = env.exposure(&market);
+        env.set_free_liquidity(
+            &market,
+            lending_amm::config::WITHDRAW_MODE_ENTER * exposure - 1,
+        );
+        env.rebalance(&market, None).unwrap();
+        let state = env.market_state(&market.market_state);
+        assert!(state.withdraw_mode && state.ctokens == 0);
+        assert_conforms(&env, &market);
+    }
+}
+
+#[test]
+fn a_market_whose_reserve_or_lending_market_is_in_emergency_mode_passes_every_check() {
+    // Kamino redeems nothing, so the market trades from its buffer alone, its lent side still
+    // valued at the stored rate; pipeline-check's sizes stay within the buffer and pass.
+    use common::states::KaminoState;
+    for lent_entry in 0..2 {
+        for state in [
+            KaminoState::ReserveEmergencyMode,
+            KaminoState::MarketEmergencyMode,
+        ] {
+            let mut env = Env::new();
+            let market = env.lending_market(lent_entry, 30);
+            env.set_kamino_state(&market, state);
+            assert_conforms(&env, &market);
+        }
+    }
+}

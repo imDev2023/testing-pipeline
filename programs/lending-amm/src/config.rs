@@ -39,9 +39,13 @@ pub const BUFFER_MAX_BPS: u16 = 3_000;
 /// refresh. The market's own cTokens' value needs none.
 pub const KAMINO_RATE_HEADROOM_BPS: u16 = 10;
 /// Enter withdraw mode when Kamino's freely available liquidity is below this many times
-/// the larger of the market's lent value and its target lent value.
+/// the larger of the market's lent value and its target lent value. Exported in the IDL, as is
+/// the exit multiple, from which keepers and the demo read them. It must not be above
+/// `WITHDRAW_MODE_EXIT`, which `crate::withdraw_mode` checks when the program is built.
+#[constant]
 pub const WITHDRAW_MODE_ENTER: u64 = 5;
 /// Leave withdraw mode when it is back above this many times that amount.
+#[constant]
 pub const WITHDRAW_MODE_EXIT: u64 = 10;
 /// The highest LP fee a market may charge, in basis points: 2%. Exported in the IDL, from
 /// which forms and the demo read it.

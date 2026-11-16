@@ -7,7 +7,9 @@
 //!   buffer vault, and the LP receives the buffer's part plus exactly what klend paid, in the
 //!   lent mint. If Kamino cannot pay that part right now, by the same count a swap's redeem
 //!   uses ([`crate::kamino::Reserve::can_pay_planned`]), the instruction fails with
-//!   `KaminoCannotPay` before calling Kamino, and Aviary offers the removal in kind instead.
+//!   `KaminoCannotPay` before calling Kamino, and Aviary offers the removal in kind instead; so
+//!   it does whenever klend redeems nothing (either emergency mode, or a deprecated reserve) and
+//!   the LP's part holds any cTokens, even ones the stored rate values at nothing.
 //! - In kind (`in_kind = true`) the cTokens' part is paid as cTokens into the LP's associated
 //!   token account for the collateral mint, created at the LP's expense when missing. This path
 //!   reads no Kamino account and calls no Kamino instruction, so LPs can leave whatever state
@@ -198,6 +200,12 @@ pub fn remove_liquidity_handler<'info>(
         let lent = crate::config::lent_mint(&market.lent_mint())
             .ok_or(StrategyError::LentMintNotListed)?;
         let (reserve, lending_market) = calls.check(lent)?;
+        // While klend redeems nothing, the cTokens' part goes in kind, which hands the LP their
+        // cTokens, even where the stored rate values them at nothing, as after a total write-off.
+        require!(
+            !reserve.redeems_stopped(&lending_market),
+            StrategyError::KaminoCannotPay
+        );
         let value = reserve.lent_value(removal.ctokens)?;
         // cTokens klend would pay nothing for are not redeemed, so a removal paying nothing else
         // would burn the shares for nothing.

@@ -1,9 +1,12 @@
 //! The stateful invariant fuzzer (docs/spec/README.md, "Test layers" 3): Proptest generates
 //! WSOL-lent markets, which may lend from the start, and sequences of swaps (some redeeming
 //! their shortfall from Kamino), deposits, removals in cash and in kind, locks and SPL burns of
-//! LP shares, `rebalance` calls, donations of tokens and cTokens and clock jumps, sent as real
-//! transactions through the router copied from devnet and klend's deployed bytes, against the
-//! Kamino reserve dumped from the cluster this build lends on, in LiteSVM. A market holds only
+//! LP shares, `rebalance` calls, donations of tokens and cTokens and clock jumps, and moves of
+//! Kamino's own state (borrowers borrowing and repaying its free liquidity to anywhere from 0 to
+//! 15 times the market's exposure, around withdraw mode's thresholds, and `block_ctoken_usage`
+//! and both emergency modes switched on and off), sent as real transactions through the router
+//! copied from devnet and klend's deployed bytes, against the Kamino reserve dumped from the
+//! cluster this build lends on, in LiteSVM. A market holds only
 //! the cTokens klend's own deposits minted it. After every step it checks the bar's three
 //! shared invariants and the lending AMM's own that this build makes checkable
 //! (docs/spec/lending-pool.md, "Invariants for test layer 3"):
@@ -32,11 +35,19 @@
 //!   otherwise redeems exactly `ceil(s x S_ctoken / S_total)` cTokens for its shortfall `s`, never
 //!   more than one cToken beyond what is worth `s`, receives at least `s` and keeps the rest in
 //!   the buffer;
-//! - only `rebalance`, a swap's redeem and a removal move the recorded cTokens, and `rebalance`
-//!   only ever moves the buffer's share towards `BUFFER_TARGET_BPS`: a deposit only from
-//!   above the band, landing on the target within Kamino's rounding, a redeem only from below
-//!   it, never past the target by more than that rounding; refused, it was inside the band or
-//!   its move was below the floor, and nothing changed.
+//! - only `rebalance`, a swap's redeem and a removal move the recorded cTokens, and outside
+//!   withdraw mode `rebalance` only ever moves the buffer's share towards `BUFFER_TARGET_BPS`: a
+//!   deposit only from above the band, landing on the target within Kamino's rounding, a redeem
+//!   only from below it, never past the target by more than that rounding;
+//! - withdraw mode (docs/spec/lending-pool.md, "Withdraw mode"): `rebalance` enters it below
+//!   `WITHDRAW_MODE_ENTER` times `max(V, T)` of Kamino's free liquidity, leaves it above
+//!   `WITHDRAW_MODE_EXIT` times, and keeps the mode it has between, so a market in withdraw mode
+//!   stays in it across `rebalance` calls while the free liquidity is at or below the exit
+//!   threshold; in withdraw mode it only redeems, everything Kamino can pay; it never deposits
+//!   while cToken deposits are blocked; it refuses while Kamino redeems nothing; and refused,
+//!   for the reason the rules give, it changed nothing;
+//! - a removal in cash is refused while Kamino redeems nothing and the LP's part holds cTokens,
+//!   and every LP can still remove in kind.
 //!
 //! Each case runs in a fresh VM. `PROPTEST_CASES` sets how many cases run (default 24, of
 //! up to 32 steps each).
@@ -69,8 +80,9 @@ enum Step {
     DonateCtokens { amount: u64 },
     /// Time passes.
     Wait { slots: u64 },
-    /// Anyone calls `rebalance`.
-    Rebalance,
+    /// Anyone calls `rebalance`; a keeper that sees the reserve's stored rate is stale puts
+    /// klend's `refresh_reserve` first (`refresh_first`).
+    Rebalance { refresh_first: bool },
     /// A trader sells the other mint for as much of the lent mint as pays out `fraction` (in
     /// millionths) of the buffer, which can take it below the band, or, beyond a whole buffer,
     /// redeem the rest from Kamino in the swap.
@@ -85,6 +97,13 @@ enum Step {
     Lock { lp: usize, fraction: u32 },
     /// An LP burns `fraction` (in millionths) of the shares they hold with SPL Token.
     Burn { lp: usize, fraction: u32 },
+    /// Kamino's borrowers borrow or repay until its freely available liquidity is `tenths`
+    /// tenths of the market's exposure `X = max(V, T)`, around withdraw mode's thresholds, as far
+    /// as what they owe allows; the total supply, and so the rate, stays as it was.
+    Liquidity { tenths: u64 },
+    /// Kamino's admin or the lending market's owner sets one of its switches: `block_ctoken_usage`
+    /// (0), the reserve's emergency mode (1) or the lending market's (2).
+    Switch { which: u8, on: bool },
 }
 
 fn step() -> impl Strategy<Value = Step> {
@@ -96,13 +115,15 @@ fn step() -> impl Strategy<Value = Step> {
         1 => (0..2usize, 1..1_000_000_000u64).prop_map(|(side, amount)| Step::Donate { side, amount }),
         1 => (1..100_000_000_000u64).prop_map(|amount| Step::DonateCtokens { amount }),
         1 => (1..1_000_000u64).prop_map(|slots| Step::Wait { slots }),
-        3 => Just(Step::Rebalance),
+        3 => any::<bool>().prop_map(|refresh_first| Step::Rebalance { refresh_first }),
         2 => (0..2usize, 300_000..2_000_000u32)
             .prop_map(|(trader, fraction)| Step::DrainBuffer { trader, fraction }),
         3 => (0..2usize, 1..=1_000_000u32, any::<bool>())
             .prop_map(|(lp, fraction, in_kind)| Step::Remove { lp, fraction, in_kind }),
         1 => (0..2usize, 1..=1_000_000u32).prop_map(|(lp, fraction)| Step::Lock { lp, fraction }),
         1 => (0..2usize, 1..=1_000_000u32).prop_map(|(lp, fraction)| Step::Burn { lp, fraction }),
+        2 => (0..=150u64).prop_map(|tenths| Step::Liquidity { tenths }),
+        1 => (0..3u8, any::<bool>()).prop_map(|(which, on)| Step::Switch { which, on }),
     ]
 }
 
@@ -128,9 +149,11 @@ struct World {
     donated_ctokens: u64,
     /// The share count the market should have.
     shares: u64,
-    /// How the case's `rebalance` calls went: deposits, redeems, and refusals inside the band
-    /// and below the floor, printed with `--nocapture` to show what the fuzzer reached.
-    rebalances: [usize; 4],
+    /// How the case's `rebalance` calls went: deposits, redeems, refusals inside the band, below
+    /// the floor, while Kamino redeemed nothing and while it blocked deposits, and calls that
+    /// changed withdraw mode, and redeems klend refused on a stale reserve and that landed with
+    /// its refresh first, printed with `--nocapture` to show what the fuzzer reached.
+    rebalances: [usize; 8],
     /// How many swaps redeemed their shortfall from Kamino.
     redeeming_swaps: usize,
     /// The LP shares the lock account should hold.
@@ -183,7 +206,7 @@ impl World {
             redeemed: state.redeemed,
             donated_ctokens: 0,
             shares,
-            rebalances: [0; 4],
+            rebalances: [0; 8],
             redeeming_swaps: 0,
             locked: 0,
             taken_in_kind: 0,
@@ -292,7 +315,35 @@ impl World {
                 self.env.svm.set_sysvar(&clock);
                 prop_assert_eq!(self.reserves(), before);
             }
-            Step::Rebalance => return self.rebalance(),
+            Step::Rebalance { refresh_first } => return self.rebalance(refresh_first),
+            Step::Liquidity { tenths } => {
+                let wanted = (self.exposure() as u128 * tenths as u128 / 10) as u64;
+                let reserve = self.reserve();
+                // Borrowers can repay only what they owe.
+                let most =
+                    reserve.total_available_amount + (reserve.borrowed_amount_sf >> 60) as u64;
+                self.env.set_free_liquidity(&self.market, wanted.min(most));
+                prop_assert_eq!(self.reserves(), before);
+            }
+            Step::Switch { which, on } => {
+                use lending_amm::kamino::{lending_market_offsets, offsets};
+                let reserve = self.env.reserve_of(&self.market);
+                let lending_market = self.env.kamino.address("lending-market");
+                match which {
+                    0 => self
+                        .env
+                        .patch(&reserve, offsets::BLOCK_CTOKEN_USAGE, &[on as u8]),
+                    1 => self
+                        .env
+                        .patch(&reserve, offsets::EMERGENCY_MODE, &[on as u8]),
+                    _ => self.env.patch(
+                        &lending_market,
+                        lending_market_offsets::EMERGENCY_MODE,
+                        &[on as u8],
+                    ),
+                }
+                prop_assert_eq!(self.reserves(), before);
+            }
             Step::Remove {
                 lp,
                 fraction,
@@ -363,18 +414,8 @@ impl World {
 
     /// What Kamino can pay the market right now for a swap's redeem, as the program plans it.
     fn kamino_can_pay(&self) -> u64 {
-        let entry = &lending_amm::config::LENT_MINTS[self.env.lent_entry_of(&self.market)];
-        let data = self.env.data(&ck(&entry.lending_market));
-        let lending_market = lending_amm::kamino::read_lending_market(
-            &entry.lending_market,
-            &lending_amm::config::KLEND_PROGRAM,
-            &data,
-            entry,
-        )
-        .unwrap();
         let ctokens = self.env.market_state(&self.market.market_state).ctokens;
-        self.reserve()
-            .can_pay_planned(&lending_market, ctokens, self.env.clock().unix_timestamp)
+        self.kamino_can_pay_for(ctokens)
     }
 
     /// Whether a quote of `amount` of mint `input` may be refused: dust that pays out nothing,
@@ -505,17 +546,11 @@ impl World {
     /// What Kamino can pay right now for `ctokens` of the market's cTokens, as a cash removal
     /// plans its redeem.
     fn kamino_can_pay_for(&self, ctokens: u64) -> u64 {
-        let entry = &lending_amm::config::LENT_MINTS[self.env.lent_entry_of(&self.market)];
-        let data = self.env.data(&ck(&entry.lending_market));
-        let lending_market = lending_amm::kamino::read_lending_market(
-            &entry.lending_market,
-            &lending_amm::config::KLEND_PROGRAM,
-            &data,
-            entry,
+        self.reserve().can_pay_planned(
+            &self.lending_market(),
+            ctokens,
+            self.env.clock().unix_timestamp,
         )
-        .unwrap();
-        self.reserve()
-            .can_pay_planned(&lending_market, ctokens, self.env.clock().unix_timestamp)
     }
 
     /// An LP removes `shares` in cash or in kind; checks it paid exactly the spec's parts, the
@@ -615,6 +650,11 @@ impl World {
             Err(refusal) => {
                 let expected = if shares == 0 || (other == 0 && buffer == 0 && ctokens == 0) {
                     "ZeroRemoval"
+                } else if !in_kind && ctokens > 0 && self.redeems_stopped() {
+                    // klend redeems nothing: the cTokens' part goes in kind only.
+                    "KaminoCannotPay"
+                } else if !in_kind && worth == 0 && other == 0 && buffer == 0 {
+                    "ZeroRemoval"
                 } else if !in_kind && worth > 0 && worth > self.kamino_can_pay_for(ctokens) {
                     "KaminoCannotPay"
                 } else {
@@ -634,37 +674,125 @@ impl World {
         }
     }
 
-    /// Anyone calls `rebalance`; checks it moved the buffer's share only towards its target, or
-    /// was refused for a reason the rule gives and changed nothing.
-    fn rebalance(&mut self) -> Result<u64, TestCaseError> {
+    /// The lending market as the program reads it.
+    fn lending_market(&self) -> lending_amm::kamino::LendingMarket {
+        let entry = &lending_amm::config::LENT_MINTS[self.env.lent_entry_of(&self.market)];
+        let data = self.env.data(&ck(&entry.lending_market));
+        lending_amm::kamino::read_lending_market(
+            &entry.lending_market,
+            &lending_amm::config::KLEND_PROGRAM,
+            &data,
+            entry,
+        )
+        .unwrap()
+    }
+
+    /// Whether klend redeems nothing right now: either emergency mode, or a deprecated reserve.
+    fn redeems_stopped(&self) -> bool {
+        let reserve = self.reserve();
+        self.lending_market().emergency_mode
+            || reserve.emergency_mode
+            || reserve.version != lending_amm::kamino::RESERVE_VERSION
+    }
+
+    /// The market's exposure, `X = max(V, T)` with `T = L - floor(L x BUFFER_TARGET_BPS /
+    /// 10,000)`, by the spec's formula on the market as it is.
+    fn exposure(&self) -> u64 {
+        let lent = self.market.lent_index;
+        let total = self.effective()[lent];
+        let value = total - self.env.market_state(&self.market.market_state).reserves[lent];
+        let target = (total as u128 * BUFFER_TARGET_BPS as u128 / 10_000) as u64;
+        value.max(total - target)
+    }
+
+    /// Anyone calls `rebalance`; checks it did what the spec's rules give for Kamino's state,
+    /// stated here on their own: while Kamino redeems nothing it refuses; withdraw mode is
+    /// entered below `WITHDRAW_MODE_ENTER x X` of free liquidity, left above
+    /// `WITHDRAW_MODE_EXIT x X` and kept between, so a market in withdraw mode stays in it while
+    /// the free liquidity is at or below the exit threshold; in withdraw mode it only redeems,
+    /// everything Kamino can pay; outside it it moves the buffer's share only towards its target;
+    /// it never deposits while Kamino blocks cToken deposits; a call that changes the mode
+    /// succeeds even when it moves nothing; and a refused call changes nothing.
+    ///
+    /// klend pays at the rate it refreshes to, so a redeem planned right up to Kamino's free
+    /// liquidity or withdrawal cap on a reserve whose stored rate is older than
+    /// `KAMINO_RATE_HEADROOM_BPS` covers overshoots it, and klend refuses it; then nothing
+    /// changed, and the keeper's way, klend's `refresh_reserve` first, lands it
+    /// (docs/spec/lending-pool.md, "The rule").
+    fn rebalance(&mut self, refresh_first: bool) -> Result<u64, TestCaseError> {
         use lending_amm::buffer::{band, plan, target, Band, Move};
+        use lending_amm::config::{WITHDRAW_MODE_ENTER, WITHDRAW_MODE_EXIT};
+        // klend refuses a refresh in emergency mode, where `rebalance` refuses anyway.
+        if refresh_first && !self.redeems_stopped() {
+            let refresh = self.env.refresh_reserve_instruction(&self.market);
+            self.env.send(&[refresh], &[]).unwrap();
+        }
+        let refreshed_slot = {
+            let reserve = self.env.reserve_of(&self.market);
+            u64::from_le_bytes(self.env.data(&reserve)[16..24].try_into().unwrap())
+        };
+        let stale = refreshed_slot != self.env.clock().slot;
         let lent = self.market.lent_index;
         let before = self.env.market_state(&self.market.market_state);
         let reserve = self.reserve();
         let total = self.effective()[lent];
         let buffer = before.reserves[lent];
+        let value = total - buffer;
         let entry = &lending_amm::config::LENT_MINTS[self.env.lent_entry_of(&self.market)];
-        let lending_market = {
-            let address = ck(&entry.lending_market);
-            let data = self.env.data(&address);
-            lending_amm::kamino::read_lending_market(
-                &entry.lending_market,
-                &lending_amm::config::KLEND_PROGRAM,
-                &data,
-                entry,
-            )
-            .unwrap()
-        };
         let can_pay = reserve.can_pay_planned(
-            &lending_market,
+            &self.lending_market(),
             before.ctokens,
             self.env.clock().unix_timestamp,
         );
-        let planned = plan(buffer, total, can_pay, entry.min_rebalance);
+        let free = reserve.freely_available() as u128;
+        let exposure = self.exposure() as u128;
+        let stopped = self.redeems_stopped();
+        let blocked = reserve.block_ctoken_usage;
+        let mode = if free < WITHDRAW_MODE_ENTER as u128 * exposure {
+            true
+        } else if free > WITHDRAW_MODE_EXIT as u128 * exposure {
+            false
+        } else {
+            before.withdraw_mode
+        };
+        // What the spec's rules give: a move, or no move with the mode changed, or a refusal.
+        let planned: Result<Option<Move>, StrategyError> = if stopped {
+            Err(StrategyError::KaminoStopped)
+        } else {
+            let moved = if mode {
+                let asked = value.min(can_pay);
+                if asked == 0 || (asked < entry.min_rebalance && asked < value) {
+                    Err(StrategyError::BelowMinRebalance)
+                } else {
+                    Ok(Move::Redeem(asked))
+                }
+            } else {
+                match plan(buffer, total, can_pay, entry.min_rebalance) {
+                    Ok(Move::Deposit(_)) if blocked => Err(StrategyError::KaminoDepositsBlocked),
+                    other => other,
+                }
+            };
+            match moved {
+                Ok(moved) => Ok(Some(moved)),
+                Err(_) if mode != before.withdraw_mode => Ok(None),
+                Err(rule) => Err(rule),
+            }
+        };
         let result = self.env.rebalance(&self.market, None);
         let after = self.env.market_state(&self.market.market_state);
+        // A market in withdraw mode stays in it while Kamino's free liquidity is at or below the
+        // exit threshold, however much it has redeemed.
+        if before.withdraw_mode && free <= WITHDRAW_MODE_EXIT as u128 * exposure {
+            prop_assert!(
+                after.withdraw_mode,
+                "left withdraw mode at {} free, X {}",
+                free,
+                exposure
+            );
+        }
         match (planned, result) {
             (Ok(planned), Ok(_)) => {
+                prop_assert_eq!(after.withdraw_mode, mode);
                 let total_after = self.effective()[lent];
                 let buffer_after = after.reserves[lent];
                 // Within Kamino's rounding: one cToken's worth, rounded up, and a unit.
@@ -675,7 +803,29 @@ impl World {
                     as u64
                     + 1;
                 match planned {
-                    Move::Deposit(asked) => {
+                    None => {
+                        // Only the mode changed.
+                        prop_assert_ne!(mode, before.withdraw_mode);
+                        prop_assert_eq!(
+                            (
+                                after.reserves,
+                                after.ctokens,
+                                after.deposited,
+                                after.redeemed
+                            ),
+                            (
+                                before.reserves,
+                                before.ctokens,
+                                before.deposited,
+                                before.redeemed
+                            )
+                        );
+                    }
+                    Some(Move::Deposit(asked)) => {
+                        prop_assert!(
+                            !mode && !blocked,
+                            "deposited in withdraw mode or while blocked"
+                        );
                         prop_assert_eq!(band(buffer, total), Band::Above);
                         let taken = buffer - buffer_after;
                         prop_assert!(taken <= asked && asked - taken <= one_ctoken);
@@ -688,11 +838,13 @@ impl World {
                         prop_assert!(buffer_after >= planned_target);
                         prop_assert!(buffer_after - planned_target <= one_ctoken);
                     }
-                    Move::Redeem(asked) => {
-                        prop_assert_eq!(band(buffer, total), Band::Below);
+                    Some(Move::Redeem(asked)) => {
+                        if !mode {
+                            prop_assert_eq!(band(buffer, total), Band::Below);
+                        }
                         let received = buffer_after - buffer;
                         // klend pays at the rate it refreshes to, at most the rate it leaves:
-                        // the cTokens it burned are worth at most the shortfall at the stored
+                        // the cTokens it burned are worth at most what was asked at the stored
                         // rate, so it pays at most that, grown by the rate's rise.
                         let reserve_after = self.reserve();
                         let rate = |r: &lending_amm::kamino::Reserve| {
@@ -704,21 +856,43 @@ impl World {
                         prop_assert!(after.ctokens < before.ctokens);
                         prop_assert_eq!(after.redeemed, before.redeemed + received as u128);
                         prop_assert_eq!(after.deposited, before.deposited);
-                        prop_assert!(buffer_after <= target(total) + (allowed - asked));
+                        if !mode {
+                            prop_assert!(buffer_after <= target(total) + (allowed - asked));
+                        }
                     }
                 }
-                // Towards the target: the distance from it in basis points of the lent side
-                // never grows.
-                let distance = |b: u64, l: u64| {
-                    (b as i128 * 10_000 - l as i128 * BUFFER_TARGET_BPS as i128).abs() * 1_000_000
-                        / (l as i128).max(1)
-                };
-                prop_assert!(distance(buffer_after, total_after) <= distance(buffer, total));
+                // Outside withdraw mode, towards the target: the distance from it in basis
+                // points of the lent side never grows.
+                if !mode && planned.is_some() {
+                    let distance = |b: u64, l: u64| {
+                        (b as i128 * 10_000 - l as i128 * BUFFER_TARGET_BPS as i128).abs()
+                            * 1_000_000
+                            / (l as i128).max(1)
+                    };
+                    prop_assert!(distance(buffer_after, total_after) <= distance(buffer, total));
+                }
                 self.ctokens = after.ctokens;
                 self.deposited = after.deposited;
                 self.redeemed = after.redeemed;
-                self.rebalances[matches!(planned, Move::Redeem(_)) as usize] += 1;
-                Ok(1)
+                match planned {
+                    Some(Move::Deposit(_)) => self.rebalances[0] += 1,
+                    Some(Move::Redeem(_)) => self.rebalances[1] += 1,
+                    None => {}
+                }
+                if mode != before.withdraw_mode {
+                    self.rebalances[6] += 1;
+                }
+                Ok(planned.is_some() as u64)
+            }
+            (Ok(Some(Move::Redeem(asked))), Err(refusal))
+                if stale
+                    && asked == can_pay
+                    && (refusal.contains("Error Code: InsufficientLiquidity.")
+                        || refusal.contains("Error Code: WithdrawalCapReached.")) =>
+            {
+                prop_assert_eq!(after, before);
+                self.rebalances[7] += 1;
+                self.rebalance(true)
             }
             (Err(rule), Err(refusal)) => {
                 prop_assert!(
@@ -728,7 +902,13 @@ impl World {
                     refusal
                 );
                 prop_assert_eq!(after, before);
-                self.rebalances[2 + matches!(rule, StrategyError::BelowMinRebalance) as usize] += 1;
+                let slot = match rule {
+                    StrategyError::WithinBand => 2,
+                    StrategyError::BelowMinRebalance => 3,
+                    StrategyError::KaminoStopped => 4,
+                    _ => 5,
+                };
+                self.rebalances[slot] += 1;
                 Ok(0)
             }
             (planned, result) => {
@@ -889,13 +1069,16 @@ proptest! {
             let rounding = world.run(step)?;
             world.check(&mut value, rounding)?;
         }
-        let [deposits, redeems, within, below] = world.rebalances;
+        let [deposits, redeems, within, below, stopped, blocked, mode_changes, stale] =
+            world.rebalances;
         let [cash, in_kind] = world.removals;
         let [locks, burns] = world.locks_and_burns;
         println!(
-            "rebalance: {deposits} deposits, {redeems} redeems, refused {within} inside the band \
-             and {below} below the floor; {} swaps redeemed their shortfall; removals: {cash} in \
-             cash, {in_kind} in kind; {locks} locks and {burns} burns",
+            "rebalance: {deposits} deposits, {redeems} redeems, refused {within} inside the band, \
+             {below} below the floor, {stopped} while Kamino redeemed nothing and {blocked} while it \
+             blocked deposits, {mode_changes} withdraw mode changes, {stale} stale redeems retried with \
+             klend's refresh first; {} swaps redeemed their \
+             shortfall; removals: {cash} in cash, {in_kind} in kind; {locks} locks and {burns} burns",
             world.redeeming_swaps
         );
     }
