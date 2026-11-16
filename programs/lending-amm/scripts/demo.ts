@@ -46,7 +46,22 @@
 //      at the stored rate as this script decodes it, and anything klend paid above the
 //      shortfall staying in the buffer;
 //  16. call `rebalance` again: the buffer, drained below its band by the sale, is redeemed back
-//      to its target within klend's rounding.
+//      to its target within klend's rounding;
+//  17. a second wallet, funded by the payer, adds liquidity from the metadata's `add_liquidity`
+//      action, its shares and the amounts taken equal to the script's calculation;
+//  18. it removes a third of its shares in cash, from the metadata's `remove_liquidity` action:
+//      it receives exactly `R x lp / N` of the token, and in WSOL exactly `B x lp / N` plus
+//      what klend's redeem, which ran in the transaction, paid for `c x lp / N` cTokens, by
+//      klend's own maths at the rate it refreshed to (`klendRedeem` in kamino.ts);
+//  19. it removes another third in kind, from the metadata's `remove_liquidity_in_kind`
+//      action, an instruction holding no Kamino account at all: it receives exactly
+//      `R x lp / N` of the token, `B x lp / N` of WSOL and `c x lp / N` cTokens, in its
+//      associated token account for the cToken mint, which the removal creates, and the
+//      running totals give up the cTokens' part of the net amount lent;
+//  20. it redeems those cTokens at klend itself, for at least what the market valued them at
+//      when it paid them out, and exactly what klend's own maths gives;
+//  21. it locks a tenth of its shares into the market's lock account with the metadata's
+//      `lock_lp` action, the lock event reporting them and the share count unchanged.
 //
 // Grown from Pipeline's strategy template
 // (scripts/deploy-devnet.ts at 5ad130d). Deploy the program first; docs/toolchain.md says how,
@@ -111,6 +126,7 @@ import {
     getMintSize,
     getMintToInstruction,
     getSyncNativeInstruction,
+    getTransferInstruction,
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
 import * as pipeline from '@pipeline-placeholder/sdk';
@@ -123,10 +139,14 @@ import {
     findLpSharesPda,
     findVault0Pda,
     findVault1Pda,
+    getLiquidityRemovedEventDecoder,
+    getSharesLockedEventDecoder,
     getShortfallRedeemedEventDecoder,
+    LIQUIDITY_REMOVED_EVENT_DISCRIMINATOR,
+    SHARES_LOCKED_EVENT_DISCRIMINATOR,
     SHORTFALL_REDEEMED_EVENT_DISCRIMINATOR,
 } from './client/index.ts';
-import { decodeReserve, klendDeposit, lentValue, rate, type ReserveView } from './kamino.ts';
+import { decodeReserve, klendDeposit, klendRedeem, lentValue, rate, type ReserveView } from './kamino.ts';
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
 const DEFAULT_PROGRAM_ID = 'Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG';
@@ -158,6 +178,16 @@ const DEMO = {
     buyWithLamports: 250_000_000n,
     sellTokens: 30_000_000_000n,
     secondDeposit: { token: 500_000_000_000n, wsol: 2_000_000_000n },
+    // The second wallet, an LP who adds, removes in cash and in kind, and locks: what the payer
+    // gives it, what it offers to add, and what it removes and locks of the shares it gets.
+    secondLp: {
+        lamports: 100_000_000n,
+        wrapLamports: 1_000_000_000n,
+        tokens: 500_000_000_000n,
+        deposit: { token: 500_000_000_000n, wsol: 1_000_000_000n },
+        removeEachThird: 3n,
+        lockTenth: 10n,
+    },
 } as const;
 // The most SOL the strategy's setup may spend on rent; the router returns the rest.
 const MAX_CREATOR_LAMPORTS = 100_000_000n;
@@ -558,6 +588,8 @@ async function main() {
         metadata.actions?.find((action) => action.name === 'add_liquidity') ?? fail('metadata.json needs the add_liquidity action');
     const rebalanceAction =
         metadata.actions?.find((action) => action.name === 'rebalance') ?? fail('metadata.json needs the rebalance action');
+    const removeAction = (name: string) =>
+        metadata.actions?.find((action) => action.name === name) ?? fail(`metadata.json needs the ${name} action`);
 
     step('3. Registering the strategy');
     const config = pipeline.decodeConfig((await accountData(await pipeline.configPda())) ?? new Uint8Array());
@@ -1039,6 +1071,212 @@ async function main() {
     if (gap > oneCtoken + 2n) fail(`the buffer ${restored.buffer} is ${gap} from its target ${restoredTarget}`);
     info(`klend paid ${paid} WSOL for ${burned} cTokens: the buffer is ${restored.buffer} of ${restored.total}, its target ${restoredTarget}, within klend's rounding`);
     record.push(['rebalance after the sale', `redeemed ${paid} WSOL for ${burned} cTokens; buffer ${restored.buffer} of ${restored.total}, at its target`]);
+
+    step('17. A second wallet adds liquidity');
+    const lp2 = await generateKeyPairSigner();
+    const lp2Plan = DEMO.secondLp;
+    const lp2Holdings = await Promise.all(mints.map((mint) => walletTokenAccount(lp2.address, mint)));
+    // The payer funds it: SOL for its fees and rent, the test token, and wrapped SOL.
+    await send('fund the second wallet', payer, [
+        getTransferSolInstruction({ source: payer, destination: lp2.address, amount: lp2Plan.lamports + lp2Plan.wrapLamports }),
+        await getCreateAssociatedTokenIdempotentInstructionAsync({ payer, owner: lp2.address, mint: token }),
+        await getCreateAssociatedTokenIdempotentInstructionAsync({ payer, owner: lp2.address, mint: WSOL }),
+        getTransferInstruction({ source: holdings[0]!, destination: lp2Holdings[0]!, authority: payer, amount: lp2Plan.tokens }),
+    ]);
+    await send('the second wallet wraps SOL', lp2, [
+        getTransferSolInstruction({ source: lp2, destination: lp2Holdings[1]!, amount: lp2Plan.wrapLamports }),
+        getSyncNativeInstruction({ account: lp2Holdings[1]! }),
+    ]);
+    info(`second wallet ${lp2.address}: ${lp2Plan.tokens} token, ${lp2Plan.wrapLamports} WSOL`);
+    const [lp2Shares] = await findLpSharesPda({ marketState, lp: lp2.address }, pdas);
+    const beforeLp2 = await lentSide();
+    const lp2Deposit = laterDeposit([lp2Plan.deposit.token, lp2Plan.deposit.wsol], [reserves[0], beforeLp2.total], shareCount);
+    await send('add_liquidity by the second wallet', lp2, [
+        await pipeline.buildActionInstruction({
+            action: addLiquidity,
+            market: view,
+            wallet: lp2.address,
+            args: { max_0: lp2Plan.deposit.token, max_1: lp2Plan.deposit.wsol, min_lp: lp2Deposit.shares },
+            inputs: { reserve: RESERVE },
+            tokenPrograms,
+        }),
+    ]);
+    reserves = [reserves[0] + lp2Deposit.taken[0], reserves[1] + lp2Deposit.taken[1]];
+    shareCount += lp2Deposit.shares;
+    if ((await tokenBalance(lp2Shares)) !== lp2Deposit.shares) fail('the second wallet received other shares than calculated');
+    await checkMarket("after the second wallet's deposit");
+    info(`minted ${lp2Deposit.shares} shares for ${lp2Deposit.taken[0]} token and ${lp2Deposit.taken[1]} WSOL, as calculated`);
+    record.push(["second wallet's deposit", `${lp2Deposit.shares} shares, all as calculated`]);
+
+    /** The spec's removal parts for `lp` shares: `[R, B, c] x lp / N`, each rounded down. */
+    const removalParts = (lp: bigint) => ({
+        token: (reserves[0] * lp) / shareCount,
+        buffer: (reserves[1] * lp) / shareCount,
+        ctokens: (lent.ctokens * lp) / shareCount,
+    });
+    const removeInputs = {
+        collateral_mint: collateralMint,
+        reserve: RESERVE,
+        lending_market: address(KAMINO.lendingMarket.address),
+        reserve_liquidity_supply: address(KAMINO.reserves.wsol.liquiditySupply),
+    };
+    const removeTokenPrograms = { ...tokenPrograms, [collateralMint]: TOKEN_PROGRAM_ADDRESS };
+    const removeInstruction = (form: string, lp: bigint, min: [bigint, bigint], inKind: boolean) =>
+        pipeline.buildActionInstruction({
+            action: removeAction(form),
+            market: view,
+            wallet: lp2.address,
+            args: { lp, min_other: min[0], min_lent: min[1], in_kind: inKind },
+            inputs: inKind ? { collateral_mint: collateralMint } : removeInputs,
+            tokenPrograms: removeTokenPrograms,
+        });
+    /** The one LiquidityRemoved event transaction `signature` emitted. */
+    async function removedEvent(signature: Signature) {
+        const events = (await strategyEvents(signature, LIQUIDITY_REMOVED_EVENT_DISCRIMINATOR)).map((data) =>
+            getLiquidityRemovedEventDecoder().decode(data),
+        );
+        if (events.length !== 1) fail(`the removal emitted ${events.length} LiquidityRemoved events, not 1`);
+        return events[0]!;
+    }
+    const lp2Ctoken = await walletTokenAccount(lp2.address, collateralMint);
+    const third = lp2Deposit.shares / lp2Plan.removeEachThird;
+
+    step('18. The second wallet removes a third of its shares in cash');
+    const cashParts = removalParts(third);
+    if (cashParts.token === 0n || cashParts.buffer === 0n || cashParts.ctokens === 0n) fail(`a third of the shares pays ${show(cashParts)}`);
+    const storedAtCash = await readReserve();
+    const cashWorth = lentValue(cashParts.ctokens, storedAtCash);
+    const heldBeforeCash = await Promise.all(lp2Holdings.map(tokenBalance));
+    const cashSignature = await send('remove_liquidity in cash', lp2, [
+        await removeInstruction('remove_liquidity', third, [cashParts.token, cashParts.buffer + cashWorth], false),
+    ]);
+    const cashLogs = (await rpc.getTransaction(cashSignature, { commitment: 'confirmed', encoding: 'json', maxSupportedTransactionVersion: 0 }).send())?.meta?.logMessages ?? [];
+    if (!cashLogs.some((line) => line.startsWith(`Program ${KLEND} invoke`)) || !cashLogs.some((line) => line.includes('Instruction: RedeemReserveCollateral'))) {
+        fail("the cash removal's transaction has no klend redeem");
+    }
+    const reserveAfterCash = await readReserve();
+    const cashReceived = await Promise.all(lp2Holdings.map(async (account, i) => (await tokenBalance(account)) - heldBeforeCash[i]!));
+    const paidByKlend = cashReceived[1]! - cashParts.buffer;
+    // klend refreshed the reserve, then paid out the liquidity and burned the cTokens, so the
+    // supplies it redeemed at are the ones after, plus those.
+    const supplyAtRedeem = reserveAfterCash.totalSupplySf + (paidByKlend << 60n);
+    const ctokensAtRedeem = reserveAfterCash.mintTotalSupply + cashParts.ctokens;
+    if (ctokensAtRedeem !== storedAtCash.mintTotalSupply) fail("klend's cToken supply moved by other than the cTokens' part");
+    const byKlendRedeem = klendRedeem(cashParts.ctokens, supplyAtRedeem, ctokensAtRedeem);
+    if (cashReceived[0] !== cashParts.token || paidByKlend !== byKlendRedeem) {
+        fail(`the cash removal paid ${show(cashReceived)}; the formulas give ${cashParts.token} token and ${cashParts.buffer} + ${byKlendRedeem} WSOL`);
+    }
+    if (paidByKlend < cashWorth) fail(`klend paid ${paidByKlend}, less than the market valued the cTokens at, ${cashWorth}`);
+    const cashEvent = await removedEvent(cashSignature);
+    if (cashEvent.inKind || cashEvent.shares !== third || cashEvent.ctokens !== cashParts.ctokens || cashEvent.redeemed !== paidByKlend) {
+        fail(`the removal event carries ${show(cashEvent)}`);
+    }
+    if ((await tokenBalance(lp2Ctoken)) !== 0n) fail('the cash removal paid cTokens');
+    reserves = [reserves[0] - cashParts.token, reserves[1] - cashParts.buffer];
+    shareCount -= third;
+    lent = { ctokens: lent.ctokens - cashParts.ctokens, deposited: lent.deposited, redeemed: lent.redeemed + paidByKlend };
+    await checkMarket('after the cash removal');
+    info(`burned ${third} shares for ${cashParts.token} token and ${cashParts.buffer} + ${paidByKlend} WSOL: klend redeemed ${cashParts.ctokens} cTokens in the transaction, as its maths gives, ${paidByKlend - cashWorth} above their value at the stored rate`);
+    record.push(['remove in cash', `${third} shares for ${cashParts.token} token and ${cashReceived[1]} WSOL, ${cashParts.ctokens} cTokens redeemed by klend`]);
+
+    step('19. The second wallet removes another third in kind, with no Kamino account');
+    const kindParts = removalParts(third);
+    const storedAtKind = await readReserve();
+    const kindWorth = lentValue(kindParts.ctokens, storedAtKind);
+    const inKind = await removeInstruction('remove_liquidity_in_kind', third, [kindParts.token, kindParts.buffer], true);
+    for (const account of inKind.accounts ?? []) {
+        if (account.address === KLEND || (await accountInfo(account.address))?.owner === KLEND) {
+            fail(`the in-kind removal holds the Kamino account ${account.address}`);
+        }
+    }
+    info(`the in-kind removal's ${inKind.accounts?.length ?? 0} accounts include nothing Kamino Lend owns, nor Kamino Lend itself`);
+    if (await accountInfo(lp2Ctoken)) fail(`the second wallet's cToken account ${lp2Ctoken} exists before the removal`);
+    const heldBeforeKind = await Promise.all(lp2Holdings.map(tokenBalance));
+    const kindSignature = await send('remove_liquidity in kind', lp2, [inKind]);
+    const kindReceived = await Promise.all(lp2Holdings.map(async (account, i) => (await tokenBalance(account)) - heldBeforeKind[i]!));
+    if (kindReceived[0] !== kindParts.token || kindReceived[1] !== kindParts.buffer || (await tokenBalance(lp2Ctoken)) !== kindParts.ctokens) {
+        fail(`the in-kind removal paid ${show(kindReceived)} and ${await tokenBalance(lp2Ctoken)} cTokens; the formulas give ${show(kindParts)}`);
+    }
+    const kindEvent = await removedEvent(kindSignature);
+    if (!kindEvent.inKind || kindEvent.ctokens !== kindParts.ctokens || kindEvent.redeemed !== 0n) fail(`the removal event carries ${show(kindEvent)}`);
+    reserves = [reserves[0] - kindParts.token, reserves[1] - kindParts.buffer];
+    shareCount -= third;
+    // The cTokens take their part of the net amount lent, rounded towards zero, off whichever
+    // running total is the larger, so the yield V + redeemed - deposited stays right.
+    const net = lent.deposited - lent.redeemed;
+    const take = ((net < 0n ? -net : net) * kindParts.ctokens) / lent.ctokens;
+    lent = {
+        ctokens: lent.ctokens - kindParts.ctokens,
+        deposited: net >= 0n ? lent.deposited - take : lent.deposited,
+        redeemed: net >= 0n ? lent.redeemed : lent.redeemed - take,
+    };
+    await checkMarket('after the in-kind removal');
+    info(`burned ${third} shares for ${kindParts.token} token, ${kindParts.buffer} WSOL and ${kindParts.ctokens} cTokens in ${lp2Ctoken}, as calculated`);
+    record.push(['remove in kind', `${third} shares for ${kindParts.token} token, ${kindParts.buffer} WSOL and ${kindParts.ctokens} cTokens`]);
+
+    step('20. The second wallet redeems those cTokens at klend itself');
+    const lp2WsolBefore = await tokenBalance(lp2Holdings[1]!);
+    const lmAuthority = await lendingMarketAuthority();
+    const redeemData = new Uint8Array([...(await pipeline.anchorDiscriminator('redeem_reserve_collateral')), ...new Uint8Array(new BigUint64Array([kindParts.ctokens]).buffer)]);
+    // klend 1.28.0's `redeem_reserve_collateral` accounts, in its order.
+    const redeemAt: Instruction = {
+        programAddress: KLEND,
+        accounts: [
+            { address: lp2.address, role: AccountRole.READONLY_SIGNER, signer: lp2 } as AccountMeta,
+            { address: address(KAMINO.lendingMarket.address), role: AccountRole.READONLY },
+            { address: RESERVE, role: AccountRole.WRITABLE },
+            { address: lmAuthority, role: AccountRole.READONLY },
+            { address: WSOL, role: AccountRole.READONLY },
+            { address: collateralMint, role: AccountRole.WRITABLE },
+            { address: address(KAMINO.reserves.wsol.liquiditySupply), role: AccountRole.WRITABLE },
+            { address: lp2Ctoken, role: AccountRole.WRITABLE },
+            { address: lp2Holdings[1]!, role: AccountRole.WRITABLE },
+            { address: TOKEN_PROGRAM_ADDRESS, role: AccountRole.READONLY },
+            { address: TOKEN_PROGRAM_ADDRESS, role: AccountRole.READONLY },
+            { address: INSTRUCTIONS_SYSVAR, role: AccountRole.READONLY },
+        ],
+        data: redeemData,
+    };
+    await send("redeem the cTokens at klend", lp2, [redeemAt]);
+    const reserveAfterRedeem = await readReserve();
+    const redeemedAtKlend = (await tokenBalance(lp2Holdings[1]!)) - lp2WsolBefore;
+    const ownRedeem = klendRedeem(
+        kindParts.ctokens,
+        reserveAfterRedeem.totalSupplySf + (redeemedAtKlend << 60n),
+        reserveAfterRedeem.mintTotalSupply + kindParts.ctokens,
+    );
+    if (redeemedAtKlend !== ownRedeem) fail(`klend paid ${redeemedAtKlend} for the cTokens; its maths gives ${ownRedeem}`);
+    if (redeemedAtKlend < kindWorth) fail(`klend paid ${redeemedAtKlend}, less than the market valued the cTokens at, ${kindWorth}`);
+    if ((await tokenBalance(lp2Ctoken)) !== 0n) fail('the cTokens were not all redeemed');
+    info(`klend paid ${redeemedAtKlend} WSOL for ${kindParts.ctokens} cTokens the market valued at ${kindWorth} when it paid them out, as klend's maths gives`);
+    record.push(['redeem at klend', `${kindParts.ctokens} cTokens for ${redeemedAtKlend} WSOL, valued by the market at ${kindWorth}`]);
+
+    step('21. The second wallet locks a tenth of its shares');
+    const lockAmount = lp2Deposit.shares / lp2Plan.lockTenth;
+    const [lockAccount] = await findAssociatedTokenPda({ owner: authority, mint: lpMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+    const lp2SharesBefore = await tokenBalance(lp2Shares);
+    const lockSignature = await send('lock_lp', lp2, [
+        await pipeline.buildActionInstruction({
+            action: removeAction('lock_lp'),
+            market: view,
+            wallet: lp2.address,
+            args: { amount: lockAmount },
+            inputs: { lock_account: lockAccount },
+            tokenPrograms,
+        }),
+    ]);
+    const locked = (await strategyEvents(lockSignature, SHARES_LOCKED_EVENT_DISCRIMINATOR)).map((data) =>
+        getSharesLockedEventDecoder().decode(data),
+    );
+    if (locked.length !== 1 || locked[0]!.amount !== lockAmount || locked[0]!.locked !== lockAmount || locked[0]!.shareCount !== shareCount) {
+        fail(`the lock event carries ${show(locked)}`);
+    }
+    if ((await tokenBalance(lockAccount)) !== lockAmount || (await tokenBalance(lp2Shares)) !== lp2SharesBefore - lockAmount) {
+        fail(`the lock account ${lockAccount} holds ${await tokenBalance(lockAccount)}, not ${lockAmount}`);
+    }
+    await checkMarket('after the lock');
+    info(`${lockAmount} shares moved into the lock account ${lockAccount} for good; the share count ${shareCount} is unchanged`);
+    record.push(['lock', `${lockAmount} shares in ${lockAccount}`]);
 
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));

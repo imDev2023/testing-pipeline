@@ -106,3 +106,13 @@ export function klendDeposit(liquidity: bigint, totalSupplySf: bigint, mintTotal
     const taken = (ctokens * totalSupplySf + scaled - 1n) / scaled;
     return { ctokens, taken };
 }
+
+/**
+ * klend's `redeem_reserve_collateral` of `ctokens` at a reserve whose total supply is
+ * `totalSupplySf` and cToken supply `mintTotalSupply` once refreshed: it pays
+ * `floor(ctokens x S_total / S_ctoken)` of the liquidity (`collateral_to_liquidity` in klend
+ * 1.28.0), written here on its own.
+ */
+export function klendRedeem(ctokens: bigint, totalSupplySf: bigint, mintTotalSupply: bigint) {
+    return (ctokens * totalSupplySf) / (mintTotalSupply << 60n);
+}

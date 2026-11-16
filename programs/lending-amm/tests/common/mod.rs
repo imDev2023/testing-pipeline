@@ -19,6 +19,7 @@
 pub mod kamino;
 pub mod rebalance;
 pub mod redeem;
+pub mod remove;
 pub mod smart_wallet;
 
 use std::path::PathBuf;

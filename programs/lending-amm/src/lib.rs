@@ -14,6 +14,9 @@
 //! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices a trade, read-only                |
 //! | `pipeline_swap`             | the router, from `swap`          | settles a trade                          |
 //! | `add_liquidity`             | LPs, directly                    | adds both mints for LP shares            |
+//! | `remove_liquidity`          | LPs, directly                    | burns LP shares for both mints, in cash  |
+//! |                             |                                  | or with the cTokens' part in kind        |
+//! | `lock_lp`                   | LPs, directly                    | moves LP shares into the lock account    |
 //! | `rebalance`                 | anyone, a keeper                 | moves the buffer back to its target      |
 //!
 //! Quotes, swaps and deposits value the lent side as `L = B + V`: the buffer `B` in the lent
@@ -102,6 +105,24 @@ pub mod lending_amm {
         min_lp: u64,
     ) -> Result<()> {
         instructions::add_liquidity_handler(ctx, max_0, max_1, min_lp)
+    }
+
+    /// Burns `lp` of the LP's shares for their part of the other side, the buffer and the
+    /// cTokens: in cash, the cTokens' part redeemed from Kamino and paid in the lent mint, or in
+    /// kind, paid as cTokens with no Kamino account read or called.
+    pub fn remove_liquidity<'info>(
+        ctx: Context<'info, RemoveLiquidity<'info>>,
+        lp: u64,
+        min_other: u64,
+        min_lent: u64,
+        in_kind: bool,
+    ) -> Result<()> {
+        instructions::remove_liquidity_handler(ctx, lp, min_other, min_lent, in_kind)
+    }
+
+    /// Moves `amount` of the LP's shares into the market's lock account, for good.
+    pub fn lock_lp(ctx: Context<LockLp>, amount: u64) -> Result<()> {
+        instructions::lock_lp_handler(ctx, amount)
     }
 
     /// Moves the buffer back to its target by depositing into Kamino or redeeming from it,

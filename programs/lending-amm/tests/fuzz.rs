@@ -1,7 +1,7 @@
 //! The stateful invariant fuzzer (docs/spec/README.md, "Test layers" 3): Proptest generates
 //! WSOL-lent markets, which may lend from the start, and sequences of swaps (some redeeming
-//! their shortfall from Kamino), deposits,
-//! `rebalance` calls, donations of tokens and cTokens and clock jumps, sent as real
+//! their shortfall from Kamino), deposits, removals in cash and in kind, locks and SPL burns of
+//! LP shares, `rebalance` calls, donations of tokens and cTokens and clock jumps, sent as real
 //! transactions through the router copied from devnet and klend's deployed bytes, against the
 //! Kamino reserve dumped from the cluster this build lends on, in LiteSVM. A market holds only
 //! the cTokens klend's own deposits minted it. After every step it checks the bar's three
@@ -14,23 +14,26 @@
 //! - every holder can exit: every trader can sell all they hold of either mint, Pipeline's
 //!   fee included (a holding too small to buy one unit is refused as dust, cleanly, and so is a
 //!   sell paying out more of the lent side than the buffer holds plus what Kamino can pay right
-//!   now, by the spec's formula); an LP's exit arrives with
-//!   [remove liquidity](https://github.com/imDev2023/testing-pipeline/issues/82), which adds
-//!   it here;
+//!   now, by the spec's formula), and every LP can remove all their shares in kind;
 //! - each quote equals its swap;
 //! - what the market has recorded never exceeds what it holds: the buffer and the other side
 //!   against their vaults, the cTokens against the cToken account;
 //! - no swap lowers `R x L`, and no step lowers the value of an LP share (`R x L / N^2`), with
 //!   `L = B + V`, the cTokens valued at the reserve's stored rate, which only klend's own calls
 //!   move, and only up; a `rebalance`, and a swap that redeems, may lower `L` by Kamino's
-//!   rounding, one unit;
-//! - the share count changes only by `add_liquidity`;
+//!   rounding, one unit, and a removal by the rounding down of the remaining cTokens' value, one
+//!   unit, while per share none of `R`, `B` and `c` falls;
+//! - a removal pays exactly `R x lp / N`, `B x lp / N` and `c x lp / N`, rounded down, the last
+//!   redeemed by klend in cash for at least its value at the stored rate, or paid as cTokens in
+//!   kind;
+//! - the share count changes only by `add_liquidity`, `remove_liquidity` and SPL burns, and the
+//!   lock account's balance never falls;
 //! - a swap never deposits into Kamino, never redeems when the buffer covers its output, and
 //!   otherwise redeems exactly `ceil(s x S_ctoken / S_total)` cTokens for its shortfall `s`, never
 //!   more than one cToken beyond what is worth `s`, receives at least `s` and keeps the rest in
 //!   the buffer;
-//! - only `rebalance` and a swap's redeem move the recorded cTokens, and `rebalance` only ever
-//!   moves the buffer's share towards `BUFFER_TARGET_BPS`: a deposit only from
+//! - only `rebalance`, a swap's redeem and a removal move the recorded cTokens, and `rebalance`
+//!   only ever moves the buffer's share towards `BUFFER_TARGET_BPS`: a deposit only from
 //!   above the band, landing on the target within Kamino's rounding, a redeem only from below
 //!   it, never past the target by more than that rounding; refused, it was inside the band or
 //!   its move was below the floor, and nothing changed.
@@ -40,6 +43,7 @@
 
 mod common;
 
+use common::remove::Payout;
 use common::*;
 use lending_amm::config::{BUFFER_TARGET_BPS, MINIMUM_LIQUIDITY};
 use lending_amm::StrategyError;
@@ -71,6 +75,16 @@ enum Step {
     /// millionths) of the buffer, which can take it below the band, or, beyond a whole buffer,
     /// redeem the rest from Kamino in the swap.
     DrainBuffer { trader: usize, fraction: u32 },
+    /// An LP removes `fraction` (in millionths) of the shares they hold, in cash or in kind.
+    Remove {
+        lp: usize,
+        fraction: u32,
+        in_kind: bool,
+    },
+    /// An LP locks `fraction` (in millionths) of the shares they hold.
+    Lock { lp: usize, fraction: u32 },
+    /// An LP burns `fraction` (in millionths) of the shares they hold with SPL Token.
+    Burn { lp: usize, fraction: u32 },
 }
 
 fn step() -> impl Strategy<Value = Step> {
@@ -85,6 +99,10 @@ fn step() -> impl Strategy<Value = Step> {
         3 => Just(Step::Rebalance),
         2 => (0..2usize, 300_000..2_000_000u32)
             .prop_map(|(trader, fraction)| Step::DrainBuffer { trader, fraction }),
+        3 => (0..2usize, 1..=1_000_000u32, any::<bool>())
+            .prop_map(|(lp, fraction, in_kind)| Step::Remove { lp, fraction, in_kind }),
+        1 => (0..2usize, 1..=1_000_000u32).prop_map(|(lp, fraction)| Step::Lock { lp, fraction }),
+        1 => (0..2usize, 1..=1_000_000u32).prop_map(|(lp, fraction)| Step::Burn { lp, fraction }),
     ]
 }
 
@@ -115,6 +133,14 @@ struct World {
     rebalances: [usize; 4],
     /// How many swaps redeemed their shortfall from Kamino.
     redeeming_swaps: usize,
+    /// The LP shares the lock account should hold.
+    locked: u64,
+    /// The net amount lent that cTokens paid in kind took off the market's running totals, now
+    /// held by LPs as cTokens.
+    taken_in_kind: i128,
+    /// How many removals went through in cash and in kind, and how many locks and burns.
+    removals: [usize; 2],
+    locks_and_burns: [usize; 2],
 }
 
 const SEED: [u64; 2] = [2_000_000_000_000, 40 * SOL];
@@ -159,6 +185,10 @@ impl World {
             shares,
             rebalances: [0; 4],
             redeeming_swaps: 0,
+            locked: 0,
+            taken_in_kind: 0,
+            removals: [0; 2],
+            locks_and_burns: [0; 2],
         }
     }
 
@@ -195,6 +225,14 @@ impl World {
     /// rounding: one unit after a `rebalance` that moved or a swap that redeemed, and nothing
     /// after any other step.
     fn run(&mut self, step: &Step) -> Result<u64, TestCaseError> {
+        // An LP who has never deposited has no shares account to remove, lock or burn from.
+        if let Step::Remove { lp, .. } | Step::Lock { lp, .. } | Step::Burn { lp, .. } = *step {
+            let shares_account =
+                lp_shares_account(&self.lps[lp].pubkey(), &self.market.market_state);
+            if self.env.svm.get_account(&shares_account).is_none() {
+                return Ok(0);
+            }
+        }
         let before = self.reserves();
         let effective_before = self.effective();
         match *step {
@@ -255,6 +293,48 @@ impl World {
                 prop_assert_eq!(self.reserves(), before);
             }
             Step::Rebalance => return self.rebalance(),
+            Step::Remove {
+                lp,
+                fraction,
+                in_kind,
+            } => {
+                let held = self.env.lp_shares_of(&self.market, &self.lps[lp].pubkey());
+                let shares = (held as u128 * fraction as u128 / 1_000_000) as u64;
+                return self.remove(lp, shares, in_kind);
+            }
+            Step::Lock { lp, fraction } => {
+                let wallet = self.lps[lp].insecure_clone();
+                let held = self.env.lp_shares_of(&self.market, &wallet.pubkey());
+                let amount = (held as u128 * fraction as u128 / 1_000_000) as u64;
+                let lock = self.env.lock_account(&self.market);
+                match self.env.lock_lp(&self.market, &wallet, amount) {
+                    Ok(_) => {
+                        self.locked += amount;
+                        prop_assert_eq!(self.env.balance(&lock), self.locked);
+                        prop_assert_eq!(
+                            self.env.lp_shares_of(&self.market, &wallet.pubkey()),
+                            held - amount
+                        );
+                        self.locks_and_burns[0] += 1;
+                    }
+                    Err(refusal) => {
+                        prop_assert_eq!(amount, 0, "{}", refusal);
+                        prop_assert!(refusal.contains("ZeroLock"), "{}", refusal);
+                    }
+                }
+                prop_assert_eq!(self.reserves(), before);
+            }
+            Step::Burn { lp, fraction } => {
+                let wallet = self.lps[lp].insecure_clone();
+                let held = self.env.lp_shares_of(&self.market, &wallet.pubkey());
+                let amount = (held as u128 * fraction as u128 / 1_000_000) as u64;
+                self.env
+                    .burn_shares(&self.market, &wallet, amount)
+                    .map_err(TestCaseError::fail)?;
+                self.shares -= amount;
+                self.locks_and_burns[1] += 1;
+                prop_assert_eq!(self.reserves(), before);
+            }
             Step::DrainBuffer { trader, fraction } => {
                 // out = L x a_net / (R + a_net), so a_net = out x R / (L - out), and the input
                 // a is a_net plus the LP fee on it, rounded up; then it is an ordinary swap.
@@ -422,6 +502,138 @@ impl World {
         Ok(rounding)
     }
 
+    /// What Kamino can pay right now for `ctokens` of the market's cTokens, as a cash removal
+    /// plans its redeem.
+    fn kamino_can_pay_for(&self, ctokens: u64) -> u64 {
+        let entry = &lending_amm::config::LENT_MINTS[self.env.lent_entry_of(&self.market)];
+        let data = self.env.data(&ck(&entry.lending_market));
+        let lending_market = lending_amm::kamino::read_lending_market(
+            &entry.lending_market,
+            &lending_amm::config::KLEND_PROGRAM,
+            &data,
+            entry,
+        )
+        .unwrap();
+        self.reserve()
+            .can_pay_planned(&lending_market, ctokens, self.env.clock().unix_timestamp)
+    }
+
+    /// An LP removes `shares` in cash or in kind; checks it paid exactly the spec's parts, the
+    /// cTokens' part redeemed by klend for at least its value or paid as cTokens, and that per
+    /// share none of the three sides fell; or that it was refused for a reason the spec gives,
+    /// changing nothing. Returns how far it may have lowered the lent side's total by rounding
+    /// down the remaining cTokens' value: one unit.
+    fn remove(&mut self, lp: usize, shares: u64, in_kind: bool) -> Result<u64, TestCaseError> {
+        use lending_amm::events::LiquidityRemoved;
+        let (o, l) = (self.market.other_index(), self.market.lent_index);
+        let before = self.env.market_state(&self.market.market_state);
+        let n = self.env.share_count(&self.market);
+        let reserve = self.reserve();
+        // The spec's parts, computed here on their own.
+        let part = |whole: u64| (whole as u128 * shares as u128 / n as u128) as u64;
+        let (other, buffer, ctokens) = (
+            part(before.reserves[o]),
+            part(before.reserves[l]),
+            part(before.ctokens),
+        );
+        let worth = reserve.lent_value(ctokens).unwrap();
+        let wallet = self.lps[lp].insecure_clone();
+        let payout = if in_kind {
+            Payout::InKind
+        } else {
+            Payout::Cash
+        };
+        let lp_ctoken = self.env.lp_ctoken_account(&self.market, &wallet.pubkey());
+        let ctokens_before = self.env.balance_or_zero(&lp_ctoken);
+        match self
+            .env
+            .remove_liquidity(&self.market, &wallet, shares, [0, 0], payout)
+        {
+            Ok(meta) => {
+                let removed = events::<LiquidityRemoved>(&meta.logs);
+                prop_assert_eq!(removed.len(), 1);
+                let event = &removed[0];
+                prop_assert_eq!(event.shares, shares);
+                prop_assert_eq!(event.amounts[o], other);
+                let after = self.env.market_state(&self.market.market_state);
+                prop_assert_eq!(after.reserves[o], before.reserves[o] - other);
+                prop_assert_eq!(after.reserves[l], before.reserves[l] - buffer);
+                if in_kind {
+                    prop_assert_eq!(event.amounts[l], buffer);
+                    prop_assert_eq!((event.ctokens, event.redeemed), (ctokens, 0));
+                    prop_assert_eq!(
+                        self.env.balance_or_zero(&lp_ctoken),
+                        ctokens_before + ctokens
+                    );
+                    prop_assert_eq!(after.ctokens, before.ctokens - ctokens);
+                    // The cTokens take their part of the net amount lent, rounded towards zero,
+                    // off whichever running total is the larger.
+                    let net = before.deposited as i128 - before.redeemed as i128;
+                    let take = if ctokens == 0 {
+                        0
+                    } else {
+                        net * ctokens as i128 / before.ctokens as i128
+                    };
+                    let (deposited, redeemed) = if net >= 0 {
+                        (before.deposited as i128 - take, before.redeemed as i128)
+                    } else {
+                        (before.deposited as i128, before.redeemed as i128 + take)
+                    };
+                    prop_assert_eq!(
+                        (after.deposited as i128, after.redeemed as i128),
+                        (deposited, redeemed)
+                    );
+                    self.taken_in_kind += take;
+                } else {
+                    // Redeemed only when worth a unit at the stored rate; then klend pays at least
+                    // that, and the LP receives it with the buffer's part.
+                    let burned = if worth > 0 { ctokens } else { 0 };
+                    prop_assert_eq!(event.ctokens, burned);
+                    prop_assert!(event.redeemed >= worth);
+                    prop_assert_eq!(event.amounts[l], buffer + event.redeemed);
+                    prop_assert_eq!(after.ctokens, before.ctokens - burned);
+                    prop_assert_eq!(after.redeemed, before.redeemed + event.redeemed as u128);
+                    prop_assert_eq!(self.env.balance_or_zero(&lp_ctoken), ctokens_before);
+                    prop_assert_eq!(after.deposited, before.deposited);
+                }
+                // Per share, none of R, B and c falls: X' x N >= X x N'.
+                let n_after = n - shares;
+                for (now, was) in [
+                    (after.reserves[o], before.reserves[o]),
+                    (after.reserves[l], before.reserves[l]),
+                    (after.ctokens, before.ctokens),
+                ] {
+                    prop_assert!(now as u128 * n as u128 >= was as u128 * n_after as u128);
+                }
+                self.shares = n_after;
+                self.deposited = after.deposited;
+                self.ctokens = after.ctokens;
+                self.redeemed = after.redeemed;
+                self.removals[in_kind as usize] += 1;
+                Ok(1)
+            }
+            Err(refusal) => {
+                let expected = if shares == 0 || (other == 0 && buffer == 0 && ctokens == 0) {
+                    "ZeroRemoval"
+                } else if !in_kind && worth > 0 && worth > self.kamino_can_pay_for(ctokens) {
+                    "KaminoCannotPay"
+                } else {
+                    "an unexpected refusal"
+                };
+                prop_assert!(
+                    refusal.contains(&format!("Error Code: {expected}.")),
+                    "{} of {} shares, in kind {}: {}",
+                    expected,
+                    shares,
+                    in_kind,
+                    refusal
+                );
+                prop_assert_eq!(self.env.market_state(&self.market.market_state), before);
+                Ok(0)
+            }
+        }
+    }
+
     /// Anyone calls `rebalance`; checks it moved the buffer's share only towards its target, or
     /// was refused for a reason the rule gives and changed nothing.
     fn rebalance(&mut self) -> Result<u64, TestCaseError> {
@@ -554,10 +766,12 @@ impl World {
                 held += self.holding(&wallet.pubkey(), i) as u128;
             }
             held += self.with_donors[i];
-            // The lent mint `rebalance` deposited into Kamino and has not redeemed.
+            // The lent mint `rebalance` deposited into Kamino and has not redeemed, the part
+            // LPs took as cTokens included.
             let mut lent_to_kamino = 0i128;
             if i == market.lent_index {
-                lent_to_kamino = self.deposited as i128 - self.redeemed as i128;
+                lent_to_kamino =
+                    self.deposited as i128 - self.redeemed as i128 + self.taken_in_kind;
             }
             prop_assert_eq!(
                 held as i128 + lent_to_kamino,
@@ -567,8 +781,9 @@ impl World {
             );
         }
 
-        // Only rebalance and a swap's redeem move the recorded cTokens and the running totals, and
-        // the cToken account holds them plus what was donated: recorded never exceeds held.
+        // Only rebalance, a swap's redeem and a removal move the recorded cTokens and the running
+        // totals, and the cToken account holds them plus what was donated: recorded never
+        // exceeds held.
         prop_assert_eq!(state.ctokens, self.ctokens);
         prop_assert_eq!(
             (state.deposited, state.redeemed),
@@ -578,10 +793,12 @@ impl World {
         prop_assert_eq!(ctokens_held, self.ctokens + self.donated_ctokens);
         prop_assert!(state.ctokens <= ctokens_held);
 
-        // The share count changes only by add_liquidity.
+        // The share count changes only by add_liquidity, remove_liquidity and SPL burns, and the
+        // lock account's balance never falls.
         let n = env.share_count(market);
         prop_assert_eq!(n, self.shares);
-        prop_assert!(n > MINIMUM_LIQUIDITY);
+        prop_assert!(n >= MINIMUM_LIQUIDITY);
+        prop_assert_eq!(env.balance_or_zero(&env.lock_account(market)), self.locked);
 
         // The value of an LP share, R x L / N^2, never falls, but for Kamino's rounding of the
         // lent side in a rebalance: compare R'(L' + rounding) x N^2 >= R L x N'^2 in 256 bits.
@@ -596,7 +813,29 @@ impl World {
         );
         *value_per_share = (product, square);
 
-        // Every holder can exit: every trader can sell everything they hold of each mint.
+        // Every holder can exit: every LP can remove all their shares in kind, whatever Kamino's
+        // state, unless they hold too few to pay out anything...
+        for lp in &self.lps {
+            let held = env.lp_shares_of(market, &lp.pubkey());
+            if held == 0 {
+                continue;
+            }
+            let remove = env.remove_liquidity_instruction(
+                market,
+                &lp.pubkey(),
+                held,
+                [0, 0],
+                Payout::InKind,
+            );
+            if let Err(refusal) = env.simulate_signed(&[remove], &[lp]) {
+                prop_assert!(
+                    refusal.contains("Error Code: ZeroRemoval."),
+                    "an LP can't exit: {}",
+                    refusal
+                );
+            }
+        }
+        // ...and every trader can sell everything they hold of each mint.
         for trader in &self.traders {
             for input in 0..2 {
                 // All they hold, less Pipeline's fee on top.
@@ -651,9 +890,12 @@ proptest! {
             world.check(&mut value, rounding)?;
         }
         let [deposits, redeems, within, below] = world.rebalances;
+        let [cash, in_kind] = world.removals;
+        let [locks, burns] = world.locks_and_burns;
         println!(
             "rebalance: {deposits} deposits, {redeems} redeems, refused {within} inside the band \
-             and {below} below the floor; {} swaps redeemed their shortfall",
+             and {below} below the floor; {} swaps redeemed their shortfall; removals: {cash} in \
+             cash, {in_kind} in kind; {locks} locks and {burns} burns",
             world.redeeming_swaps
         );
     }

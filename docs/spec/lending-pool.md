@@ -299,10 +299,33 @@ With `in_kind = true` the cTokens' part is paid as cTokens into the LP's associa
 Aviary offers in kind whenever a cash removal would fail.
 Either way the buffer's share of the market is unchanged, so one LP leaving never drains the buffer traders rely on.
 
+How it is built ([Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82), 2026-11-16):
+
+- The maths is `shares::removal`: each part is `X x lp / N` rounded down, with `N` the LP mint's supply plus `MINIMUM_LIQUIDITY`, so a removal never pays more than the burned shares' part of any of the three and the locked minimum's part of each always stays behind; burning no shares, more shares than exist, or shares worth less than one unit of every part is refused with `ZeroRemoval` or `NotEnoughShares`.
+  Proptest, Kani (bounded, and full-domain behind `kani_full`) and Z3 (`proofs/removal_z3.py`) prove that, and that adding then removing at once never returns more than was put in of either side, the cTokens' part counted at its value at any rate.
+- The LP signs the burn of their own shares, from any token account of the LP mint they own; an account they are only a delegate of is refused with `WrongAccount`, as is any account of the market other than its own.
+- In cash, the program checks every Kamino account as `rebalance` does, then refuses with `KaminoCannotPay` before burning anything or calling Kamino unless the cTokens' part, valued at the stored rate, is within what Kamino can pay right now as a swap's redeem counts it, `KAMINO_RATE_HEADROOM_BPS` included; it redeems exactly that part into the market's buffer vault, measures what klend paid, and pays the LP the buffer's part plus all of it, at the rate klend refreshed to.
+  cTokens worth less than one unit at the stored rate are not redeemed, since klend would pay nothing for them; they stay in the market, as every part's rounding does, and a cash removal that would then pay nothing at all is refused with `ZeroRemoval` rather than burn the shares for nothing.
+- In kind, the cTokens' part goes to the LP's associated token account for the collateral mint, which the associated token program creates at the LP's expense only when it is missing; only an in-kind removal checks that account, so a cash removal pays for no address search it does not need.
+- cTokens paid in kind take their part of the net amount lent, `deposited - redeemed` times the share of the market's cTokens they are, rounded towards zero, off `deposited` (off `redeemed` while redeemed is the larger), so the market's lending yield `V + redeemed - deposited` keeps measuring the cTokens it still holds plus what it has redeemed, without the in-kind path valuing them.
+- `remove_liquidity` takes the lent mint's Kamino accounts last, as Anchor optional accounts: an in-kind removal passes the program's own id in their seven places, so it holds no Kamino account at all, and never reads one even when given; a cash removal that must redeem but lacks them fails with `KaminoAccountsMissing`.
+  The collateral mint is read-only among the shared accounts, where in kind only its decimals are read, so an in-kind removal never write-locks the mint every Kamino user of the reserve shares; a cash removal passes it again, writable, as the last Kamino account, since klend burns from its supply.
+- `min_other` bounds the other side's part, and `min_lent` the lent mint paid: the buffer's part, plus klend's payout in cash.
+- The market records exactly what left: the other side and the buffer lose their parts, the cTokens what was paid in kind or what klend burned, and the running total redeemed gains what klend paid; it emits `LiquidityRemoved` with the shares burned, the share count afterwards, what each mint paid, the cTokens that left, whether in kind, and klend's payout.
+- Per share none of `R`, `B` and `c` falls, but the market values the cTokens that remain rounded down, so a removal may lower `L x lp / N` by one unit of the lent mint, as Kamino's rounding may in a `rebalance`; the tests and the fuzzer allow that unit and no more.
+- With the hook and creating the LP's cToken account, a removal measured at most 76.1k compute units in cash, klend's redeem 31.3k of them, and 62.7k in kind; on 2026-11-16 an LP removed in kind on a reserve whose free liquidity, emergency modes, version or layout each stopped a removal in cash, and redeemed the cTokens at klend itself for at least what the market had valued them at.
+
 ### Locking
 
 `lock_lp { amount: u64 }`, signed by an LP, moves LP shares into the market's lock account and emits an event, so indexers can show how much of a market's liquidity is locked.
 Locked shares still count in `N` and still earn the LP fee and the yield, which stay in the market as depth for traders; this is MetalLegBob's protocol-owned liquidity.
+
+How it is built ([Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82), 2026-11-16):
+
+- The LP signs a transfer of `amount` shares, at least one (`ZeroLock`), from any token account of the LP mint they own into the lock account, which the first lock creates at that LP's expense through the associated token program.
+- The program checks the lock account against the vault authority's associated token address for the LP mint; nothing can close it, since only the vault authority could, and the vault authority signs only transfers out of the market's vaults and cToken account, its LP mint's mints and its Kamino calls, each from an account the program checks.
+- It emits `SharesLocked` with the shares locked, the lock account's balance afterwards and the share count, which locking leaves unchanged.
+- Metadata cannot describe the associated token account of a mint that is itself a PDA (a `pda:` source inside an `ata:` one, as under "Addresses"), so the `lock_lp` action takes the lock account as the named input `lock_account`, which Aviary's form fills in.
 
 ### Seeding
 
@@ -324,6 +347,7 @@ Locked shares still count in `N` and still earn the LP fee and the yield, which 
 | --- | --- | --- |
 | `add_liquidity` | `add_liquidity` | The LP |
 | `remove_liquidity` | `remove_liquidity` | The LP |
+| `remove_liquidity`, in kind (the form `remove_liquidity_in_kind`) | `remove_liquidity` | The LP |
 | `lock_lp` | `other` | The LP |
 | `rebalance` | `other` | Anyone |
 
@@ -335,6 +359,8 @@ Locked shares still count in `N` and still earn the LP fee and the yield, which 
 - The `add_liquidity` action takes the lent mint's reserve the same way, as the named input `reserve` after its other accounts, since adding values the lent side from it; the program refuses any reserve but the one `LENT_MINTS` names, and Aviary's form fills it in ([Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79), 2026-11-12).
 - The `rebalance` action takes the lent mint's Kamino accounts as named inputs, `lent_mint`, `reserve`, `lending_market`, `reserve_liquidity_supply` and `collateral_mint`, and the lending market authority as klend's PDA `["lma", lending_market]`; its caller is a read-only signer, and Aviary's form and the keeper fill the inputs in ([Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80), 2026-11-16).
   The program checks each before calling klend, each failure with `KaminoAccountWrong` unless the reserve check or the lending market check names it: klend's id, SPL Token, the instructions sysvar, the lent mint and the collateral mint against the lent mint's `LENT_MINTS` entry, the reserve as for every read, the liquidity supply against the reserve's own (offset 160), the lending market, and its authority against the PDA from the bump the lending market stores (offset 16); the buffer vault and the cToken account must be the market's own.
+- `remove_liquidity` has two metadata forms, because metadata gives each action one fixed list of accounts and arguments with no defaults (the schema at `5ad130d`): `remove_liquidity` in cash, with the lent mint's Kamino accounts as `rebalance` takes them, and `remove_liquidity_in_kind`, which names the instruction by its `discriminator` and puts `strategy_program` in place of each Kamino account, the second, writable copy of the collateral mint among them; each form's `in_kind` label says which value it takes, as `lent_index`'s does in `init`.
+  Both take the collateral mint as the named input `collateral_mint`, and the LP's cToken account as `ata:wallet,input:collateral_mint` ([Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82), 2026-11-16).
 - The `init` form also takes the lent mint's collateral mint as a named input, because a market creates its cToken account at creation and metadata has no source for a value that depends on which mint is lent; the program refuses any collateral mint but the one `LENT_MINTS` names, and Aviary's form fills it in ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78), 2026-11-12).
 
 ## Aviary's panel
@@ -369,6 +395,7 @@ The tests measure each on plain SPL Token and Token-2022 mints and on a mint wit
 With the reserve checked and read, on markets holding cTokens, they were `pipeline_quote` 8.5k, `pipeline_swap` 28.2k (paying out the hooked token), `pipeline_resolve_accounts` 6.2k and `add_liquidity` 43.1k, and the one-transaction creation 1,198 of the 1,232 bytes a transaction may hold ([Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)).
 `rebalance` measured at most 69.2k depositing and 56.5k redeeming on both builds, of which klend's own deposit took up to 54.3k and its redeem up to 31.4k; and since the PDA searches in `add_liquidity` cost 1,500 units for every bump they try, so that its cost depends on the LP's key and a hooked mint's (from 39k to 56k over 300 random runs for the hooked first deposit), the tests measure it on fixed keys ([Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80), 2026-11-16).
 A swap that redeems its shortfall measured at most 59.6k on both builds, klend's redeem 31.0k of it, its quote 15.8k and its two rounds of `pipeline_resolve_accounts` at most 18.7k, the second running the quote; the ceilings stand ([Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81), 2026-11-16).
+`remove_liquidity` measured at most 76.1k in cash (klend's redeem 31.3k of it) and 62.7k in kind, both with the hook, the second creating the LP's cToken account; `lock_lp` measured 12.5k into an existing lock account and 32.5k for the market's first lock, which creates the lock account through the associated token program, so its ceiling rises from 20,000, set for one transfer, to 40,000 ([Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82), 2026-11-16).
 
 | Instruction | Ceiling (compute units) | Main cost |
 | --- | --- | --- |
@@ -382,14 +409,14 @@ A swap that redeems its shortfall measured at most 59.6k on both builds, klend's
 | `remove_liquidity`, cash | 120,000 | Kamino's redeem, transfers out, an LP burn |
 | `remove_liquidity`, in kind | 90,000 | Transfers out, possibly creating the LP's cToken account |
 | `rebalance` | 100,000 | Kamino's deposit (mainnet median 43,704) or redeem |
-| `lock_lp` | 20,000 | One transfer |
+| `lock_lp` | 40,000 | One transfer, and the market's first lock creates the lock account |
 
 ### Invariants for test layer 3
 
 Beyond the shared three (value conserved, every holder can exit, each quote equals its swap), checked after every step of the generated sequences, with Kamino's rate moved up between steps and occasionally down by a write-off:
 
 - What the market has recorded never exceeds what it actually holds: the buffer and the other side against their vaults, the cTokens against the cToken account.
-- At a fixed Kamino rate, no swap lowers the product `R x L`, and no instruction lowers the value of an LP share; only a fall in Kamino's rate does, and a `rebalance` or a swap that redeems by Kamino's rounding, at most one unit of the lent side (see "The rule" and "Redeeming the shortfall").
+- At a fixed Kamino rate, no swap lowers the product `R x L`, and no instruction lowers the value of an LP share; only a fall in Kamino's rate does, and a `rebalance` or a swap that redeems by Kamino's rounding, at most one unit of the lent side (see "The rule" and "Redeeming the shortfall"), and a removal by the rounding down of the remaining cTokens' value, at most one unit too, while per share none of `R`, `B` and `c` falls (see "Removing").
 - A removal in kind succeeds for every LP in every Kamino state, emergency modes, a deprecated reserve and a failed layout check included.
 - A swap never deposits into Kamino, never redeems when the buffer covers its output, and never redeems more than its shortfall plus one rounding unit's worth of cTokens.
 - Outside withdraw mode `rebalance` only ever moves the buffer's share towards `BUFFER_TARGET_BPS`; in withdraw mode it only redeems; and it never deposits while cToken deposits are blocked.
