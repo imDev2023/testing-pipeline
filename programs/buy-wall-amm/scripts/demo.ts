@@ -56,7 +56,13 @@
 //      accounts; exactly the seed leaves the escrows, `SeedResult.taken` says so with
 //      `lp_amount` 0, the market state is open at the seeded PDA with the launchpad's PDA
 //      as its seeder and the parameters sent, and the market trades both ways through the
-//      router at the spec's prices, which are the worked example's.
+//      router at the spec's prices, which are the worked example's;
+//  15. run the release gate (programs/buy-wall-amm/gate) against this cluster: it downloads
+//      every market of the program, the demo's among them, and replays each with the
+//      program as built here and the cluster's own router, and must pass; then, when the
+//      stranding test builds have been built (`cargo run -p buy-wall-gate -- test-builds`),
+//      with the build that moves a field, which it must refuse, naming the markets and
+//      steps that failed. Its pass records go to a scratch folder, never the repo's.
 //
 // On the pattern of the tax AMM's demo (programs/tax-amm/scripts/demo.ts). Deploy the
 // program first; docs/toolchain.md says how, on a local validator and on devnet.
@@ -79,7 +85,11 @@
 // On a local cluster the script airdrops the SOL both keys need; on devnet it never does
 // (fund them with devnet-airdrop, docs/toolchain.md).
 
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import {
@@ -1715,9 +1725,43 @@ async function main() {
         info('skipped: the stand-in launchpad is a test program, never deployed to devnet');
     }
 
+    step('15. The release gate on this cluster');
+    runReleaseGate();
+
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));
     for (const [label, value] of record) info(`${label.padEnd(width)}  ${value}`);
+}
+
+// The release gate (docs/spec/pool4-for-solana.md, "A release gate"), run as its command
+// is: against this cluster, with the build in programs/target/deploy it must pass, and with
+// the stranding test build that moves a field, when built, it must refuse.
+function runReleaseGate() {
+    const programs = fileURLToPath(new URL('../../', import.meta.url));
+    const records = mkdtempSync(join(tmpdir(), 'buy-wall-gate-records-'));
+    const gate = (candidate: string) => {
+        const run = spawnSync(
+            'cargo',
+            ['run', '--quiet', '-p', 'buy-wall-gate', '--', 'run', '--cluster', cluster.url, '--candidate', candidate, '--records', records],
+            { cwd: programs, encoding: 'utf8' },
+        );
+        if (run.error) fail(`could not run the release gate: ${run.error.message}`);
+        for (const line of run.stdout.trimEnd().split('\n')) info(line);
+        if (run.status === 2) fail(`the release gate could not run: ${run.stderr.trim()}`);
+        return { passed: run.status === 0, output: run.stdout };
+    };
+    const built = join(programs, 'target/deploy/buy_wall_amm.so');
+    const unchanged = gate(built);
+    if (!unchanged.passed) fail('the release gate refused the program as built here');
+    record.push(['release gate, this build', 'passed on every market']);
+    const moved = join(programs, 'target/gate-test-builds/moved-field/buy_wall_amm.so');
+    if (!existsSync(moved)) {
+        info('the moved-field test build is not built (cargo run -p buy-wall-gate -- test-builds); skipped');
+        return;
+    }
+    const refused = gate(moved);
+    if (refused.passed || !refused.output.includes('REFUSED')) fail('the release gate passed the build that moves a field');
+    record.push(['release gate, moved-field build', 'refused']);
 }
 
 main().catch((error) => {
