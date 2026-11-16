@@ -139,6 +139,8 @@ jobs:
         run: cd programs && cargo fmt --all -- --check
       - name: Build each program by its own manifest
         run: source scripts/toolchain-env.sh && scripts/build-programs.sh
+      - name: The buy wall AMM release gate's test builds, which would strand a market (POOL4-44)
+        run: source scripts/toolchain-env.sh && cd programs && cargo run -p buy-wall-gate -- test-builds
       - name: Clippy
         run: cd programs && cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (LiteSVM through devnet's router, with pipeline-check)

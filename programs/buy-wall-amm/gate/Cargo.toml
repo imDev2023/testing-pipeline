@@ -1,0 +1,39 @@
+[package]
+name = "buy-wall-gate"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The buy wall AMM's release gate: replays every live market of the program against a candidate build and the real router in LiteSVM, and refuses a build that would strand one"
+publish = false
+
+# A host tool, never deployed: no `cdylib`, so scripts/workspace-programs.py and
+# scripts/build-programs.sh leave it out (docs/spec/pool4-for-solana.md, "A release gate").
+[[bin]]
+name = "buy-wall-gate"
+path = "src/main.rs"
+
+# Every dependency is left out of Kani's builds: `cargo kani --workspace` compiles each
+# member's normal dependencies with Kani's older nightly Rust, which LiteSVM's Solana crates
+# refuse, and the gate has no proofs of its own, so under Kani it compiles to nothing.
+[target.'cfg(not(kani))'.dependencies]
+anchor-lang.workspace = true
+base64.workspace = true
+borsh.workspace = true
+buy-wall-amm = { path = "..", features = ["no-entrypoint"] }
+bytemuck.workspace = true
+litesvm.workspace = true
+pipeline-check.workspace = true
+pipeline-client.workspace = true
+pipeline-strategy-interface.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+solana-account.workspace = true
+solana-clock.workspace = true
+solana-keypair.workspace = true
+solana-signer.workspace = true
+solana-transaction.workspace = true
+spl-token-2022-interface.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
