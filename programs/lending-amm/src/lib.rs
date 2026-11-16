@@ -47,6 +47,7 @@ pub mod pricing;
 pub mod shares;
 pub mod state;
 pub mod token;
+pub mod withdraw_mode;
 
 pub use errors::StrategyError;
 pub use instructions::*;

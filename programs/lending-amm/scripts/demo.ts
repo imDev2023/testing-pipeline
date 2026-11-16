@@ -1,6 +1,7 @@
 // The lending AMM's demo: lists the strategy on a Pipeline router, creates a WSOL-lent market
 // and makes its first deposit in one transaction, trades it both ways through the router, adds
-// liquidity again, lends the surplus to Kamino and sells beyond the buffer, step by step,
+// liquidity again, lends the surplus to Kamino and sells beyond the buffer, then brings Kamino
+// short into withdraw mode and out of it and through emergency mode, step by step,
 // building every transaction from metadata.json with Pipeline's TypeScript SDK, as Aviary will,
 // and reading the market back with the generated client (client/):
 //
@@ -61,7 +62,25 @@
 //  20. it redeems those cTokens at klend itself, for at least what the market valued them at
 //      when it paid them out, and exactly what klend's own maths gives;
 //  21. it locks a tenth of its shares into the market's lock account with the metadata's
-//      `lock_lp` action, the lock event reporting them and the share count unchanged.
+//      `lock_lp` action, the lock event reporting them and the share count unchanged;
+//  22. Kamino runs short: the test borrower of scripts/kamino-devnet borrows the WSOL reserve's
+//      free liquidity below WITHDRAW_MODE_ENTER times the market's exposure max(V, T);
+//  23. `rebalance` enters withdraw mode, its event carrying the free liquidity and the exposure
+//      it measured, and klend redeems every cToken the market holds, as its maths gives;
+//  24. a second `rebalance` is refused with `BelowMinRebalance`, in simulation: it neither
+//      deposits nor leaves, though V is now 0, since X is still the target lent value T;
+//  25. the borrower repays, the reserve is back above WITHDRAW_MODE_EXIT times X, and
+//      `rebalance` leaves withdraw mode and lends again by klend's own deposit;
+//  26. the lending market's owner turns the WSOL reserve's emergency mode on: a sale within
+//      the buffer trades, one beyond it is refused by the quote and by the swap with
+//      `BeyondBuffer`, `rebalance` is refused with `KaminoStopped` and a cash removal with
+//      `KaminoCannotPay`, and the second wallet removes the rest of its shares in kind;
+//  27. emergency mode off, a sale beyond the buffer redeems its shortfall from Kamino again.
+//
+// Steps 22 to 27 run the Kamino-side commands of scripts/kamino-devnet (`borrow`, `repay` and
+// `emergency on|off`), with the keys in ~/.config/testing-pipeline/devnet/ (KEYS_DIR); on a
+// local validator the script airdrops their wallet the SOL it funds the borrower with, and the
+// validator needs the Pyth prices and klend's global config fetch-accounts.sh copies.
 //
 // Grown from Pipeline's strategy template
 // (scripts/deploy-devnet.ts at 5ad130d). Deploy the program first; docs/toolchain.md says how,
@@ -88,7 +107,11 @@
 // a local validator runs devnet's klend with that lending market's accounts cloned from devnet
 // (programs/lending-amm/scripts/fetch-klend.sh and fetch-accounts.sh, docs/toolchain.md).
 
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import {
@@ -142,11 +165,15 @@ import {
     getLiquidityRemovedEventDecoder,
     getSharesLockedEventDecoder,
     getShortfallRedeemedEventDecoder,
+    getWithdrawModeEnteredEventDecoder,
+    getWithdrawModeLeftEventDecoder,
     LIQUIDITY_REMOVED_EVENT_DISCRIMINATOR,
     SHARES_LOCKED_EVENT_DISCRIMINATOR,
     SHORTFALL_REDEEMED_EVENT_DISCRIMINATOR,
+    WITHDRAW_MODE_ENTERED_EVENT_DISCRIMINATOR,
+    WITHDRAW_MODE_LEFT_EVENT_DISCRIMINATOR,
 } from './client/index.ts';
-import { decodeReserve, klendDeposit, klendRedeem, lentValue, rate, type ReserveView } from './kamino.ts';
+import { decodeReserve, freeLiquidity, klendDeposit, klendRedeem, lentValue, rate, type ReserveView } from './kamino.ts';
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
 const DEFAULT_PROGRAM_ID = 'Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG';
@@ -168,26 +195,37 @@ function idlConstant(name: string): bigint {
 
 // The demo market: the demo's own choices, in one place, not the program's policy values.
 // The other side is a fresh test token with 6 decimals; WSOL is lent.
+//
+// Sized for our devnet lending market's WSOL reserve, whose freely available liquidity the
+// second depositor keeps at about 5 SOL (scripts/kamino-devnet/src/policy.ts): the lent side
+// ends at about 0.4 SOL, so the market's exposure max(V, T) stays below 0.5 SOL and the reserve
+// stays above WITHDRAW_MODE_EXIT times it, until the test borrower borrows it down.
 const DEMO = {
     lpFeeBps: 30,
     tokenDecimals: 6,
     tokenMinted: 10_000_000_000_000n,
     // What the payer wraps into WSOL for the deposits and the trades.
-    wrapLamports: 6_000_000_000n,
-    firstDeposit: { token: 2_000_000_000_000n, wsol: 4_000_000_000n },
-    buyWithLamports: 250_000_000n,
-    sellTokens: 30_000_000_000n,
-    secondDeposit: { token: 500_000_000_000n, wsol: 2_000_000_000n },
+    wrapLamports: 1_000_000_000n,
+    firstDeposit: { token: 175_000_000_000n, wsol: 350_000_000n },
+    buyWithLamports: 20_000_000n,
+    sellTokens: 5_000_000_000n,
+    secondDeposit: { token: 100_000_000_000n, wsol: 150_000_000n },
     // The second wallet, an LP who adds, removes in cash and in kind, and locks: what the payer
     // gives it, what it offers to add, and what it removes and locks of the shares it gets.
     secondLp: {
         lamports: 100_000_000n,
-        wrapLamports: 1_000_000_000n,
-        tokens: 500_000_000_000n,
-        deposit: { token: 500_000_000_000n, wsol: 1_000_000_000n },
+        wrapLamports: 100_000_000n,
+        tokens: 50_000_000_000n,
+        deposit: { token: 50_000_000_000n, wsol: 50_000_000n },
         removeEachThird: 3n,
         lockTenth: 10n,
     },
+    // How far below WITHDRAW_MODE_ENTER times the market's exposure the test borrower takes the
+    // WSOL reserve's free liquidity.
+    borrowBelowEntry: 50_000_000n,
+    // What the Kamino-side commands' wallet (scripts/kamino-devnet) is given on a local
+    // validator, where it funds the test borrower and the lending market's owner.
+    kaminoWalletLamports: 5_000_000_000n,
 } as const;
 // The most SOL the strategy's setup may spend on rent; the router returns the rest.
 const MAX_CREATOR_LAMPORTS = 100_000_000n;
@@ -525,6 +563,23 @@ async function strategyEvents(signature: Signature, discriminator: ReadonlyUint8
         .map((line) => new Uint8Array(Buffer.from(line.slice('Program data: '.length), 'base64')))
         .filter((data) => discriminator.every((byte, i) => data[i] === byte));
 }
+
+/** scripts/kamino-devnet, whose commands play Kamino's side: the test borrower and the lending market's owner. */
+const KAMINO_DEVNET = fileURLToPath(new URL('../../../scripts/kamino-devnet/', import.meta.url));
+/** The key folder those commands read, as they default it: this project's devnet keys, never in the repo. */
+const KAMINO_KEYS = process.env.KEYS_DIR ?? join(homedir(), '.config', 'testing-pipeline', 'devnet');
+
+/** Runs one of scripts/kamino-devnet's commands against this cluster, its output shown as it runs. */
+function kaminoCommand(...args: string[]) {
+    info(`scripts/kamino-devnet: ${args.join(' ')}`);
+    execFileSync('npm', ['run', '--silent', '--prefix', KAMINO_DEVNET, 'cli', '--', ...args, '--url', cluster.url], {
+        stdio: ['ignore', 'inherit', 'inherit'],
+        env: { ...process.env, KEYS_DIR: KAMINO_KEYS },
+    });
+}
+
+/** Lamports as whole SOL with nine decimals, as scripts/kamino-devnet takes amounts. */
+const wholeSol = (amount: bigint) => `${amount / 1_000_000_000n}.${(amount % 1_000_000_000n).toString().padStart(9, '0')}`;
 
 const show = (value: unknown) => JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
 
@@ -1277,6 +1332,208 @@ async function main() {
     await checkMarket('after the lock');
     info(`${lockAmount} shares moved into the lock account ${lockAccount} for good; the share count ${shareCount} is unchanged`);
     record.push(['lock', `${lockAmount} shares in ${lockAccount}`]);
+
+    // Withdraw mode and Kamino's other states (docs/spec/lending-pool.md, "Withdraw mode" and
+    // "When Kamino can't pay"), with the Kamino-side commands of scripts/kamino-devnet.
+    const enterMultiple = idlConstant('WITHDRAW_MODE_ENTER');
+    const exitMultiple = idlConstant('WITHDRAW_MODE_EXIT');
+    /** The market's exposure X = max(V, T), T = L - floor(L x BUFFER_TARGET_BPS / 10,000), and Kamino's free liquidity. */
+    async function exposure() {
+        const side = await lentSide();
+        const targetLent = side.total - (side.total * targetBps) / BPS;
+        return { ...side, x: side.value > targetLent ? side.value : targetLent, free: freeLiquidity(await readReserve()) };
+    }
+    const withdrawMode = async () => (await fetchLendingAmmMarket(rpc, marketState, { commitment: 'confirmed' })).data.withdrawMode;
+    /** Sends `rebalance` and measures what moved at the buffer vault and the cToken account. */
+    async function rebalanceMeasured(label: string) {
+        const ctokensBefore = await tokenBalance(ctokenAccount);
+        const bufferBefore = await tokenBalance(vault1);
+        const signature = await send(label, payer, [await rebalanceInstruction()]);
+        const ctokensAfter = await tokenBalance(ctokenAccount);
+        const bufferAfter = await tokenBalance(vault1);
+        return { signature, ctokensBefore, ctokensAfter, bufferBefore, bufferAfter };
+    }
+    /** Simulates `instructions` by `feePayer` and stops unless the lending AMM refuses them with `error`. */
+    async function refusedWith(label: string, feePayer: KeyPairSigner, instructions: Instruction[], error: string) {
+        const result = await simulate(feePayer, instructions);
+        if (!result.err || !result.logs.some((line) => line.includes(`Error Code: ${error}`))) {
+            fail(`${label} was not refused with ${error}: ${show(result.err)}\n   ${result.logs.join('\n   ')}`);
+        }
+        info(`${label}: refused with ${error}, in simulation, so nothing was sent`);
+        record.push([label, `refused: ${error}`]);
+    }
+    /** The sale of the token that pays out at least `out` WSOL on the market as it is, by the formula. */
+    async function saleNow(out: bigint) {
+        const side = await lentSide();
+        return ceilDiv((ceilDiv(out * reserves[0], side.total - out) + 1n) * BPS, BPS - feeBps);
+    }
+    /**
+     * Sells `amount` of the token through the router with its own resolved accounts: the trader
+     * receives exactly the quote, the formula's output, and a sale beyond the buffer redeems its
+     * shortfall from Kamino inside the swap, anything klend paid above it staying in the buffer.
+     */
+    async function sellToken(label: string, amount: bigint) {
+        const trade = tradeOf(0, amount);
+        const accounts = await pipeline.resolveAccounts(rpc, routerView, trade, payer.address, simulation);
+        const { quote } = await pipeline.quoteStrategy(rpc, routerView, trade, accounts, payer.address, simulation);
+        const side = await lentSide();
+        const calculated = exactIn(reserves[0], side.total, amount, feeBps);
+        if (quote.amountOut !== calculated) fail(`${label}: the quote is ${quote.amountOut}; the formula gives ${calculated}`);
+        const before = await tokenBalance(holdings[1]!);
+        const signature = await send(label, payer, [await swapInstruction(0, amount, accounts, quote.amountOut)]);
+        const received = (await tokenBalance(holdings[1]!)) - before;
+        if (received !== quote.amountOut) fail(`${label}: received ${received}, quoted ${quote.amountOut}`);
+        const events = (await strategyEvents(signature, SHORTFALL_REDEEMED_EVENT_DISCRIMINATOR)).map((data) =>
+            getShortfallRedeemedEventDecoder().decode(data),
+        );
+        const beyond = quote.amountOut > side.buffer;
+        if (events.length !== (beyond ? 1 : 0)) fail(`${label}: ${events.length} ShortfallRedeemed events for a sale ${beyond ? 'beyond' : 'within'} the buffer`);
+        const redeem = events[0];
+        if (redeem) {
+            if (redeem.shortfall !== quote.amountOut - side.buffer || redeem.liquidity < redeem.shortfall) fail(`${label}: the redeem event carries ${show(redeem)}`);
+            reserves = [reserves[0] + amount, reserves[1] + redeem.liquidity - quote.amountOut];
+            lent = { ctokens: lent.ctokens - redeem.ctokens, deposited: lent.deposited, redeemed: lent.redeemed + redeem.liquidity };
+        } else {
+            reserves = [reserves[0] + amount, reserves[1] - quote.amountOut];
+        }
+        await checkMarket(`after "${label}"`);
+        info(`${label}: ${amount} in, ${received} WSOL out, equal to its quote and the formula${redeem ? `; klend redeemed ${redeem.liquidity} for ${redeem.ctokens} cTokens inside the swap` : ', from the buffer alone'}`);
+        record.push([label, `${amount} in, ${received} out${redeem ? `, ${redeem.shortfall} redeemed` : ''}`]);
+        return { amount, received, redeem };
+    }
+
+    step('22. Kamino runs short: the test borrower borrows the WSOL reserve below WITHDRAW_MODE_ENTER times max(V, T)');
+    if (cluster.local) {
+        const wallet = await loadKey(join(KAMINO_KEYS, 'wallet.json'));
+        await fundLocally("Kamino-side commands' wallet", wallet.address, DEMO.kaminoWalletLamports);
+    }
+    const beforeBorrow = await exposure();
+    if (beforeBorrow.free <= exitMultiple * beforeBorrow.x) {
+        fail(`the reserve's free liquidity ${beforeBorrow.free} is not above ${exitMultiple} x ${beforeBorrow.x}: the demo market is too large for it`);
+    }
+    if (await withdrawMode()) fail('the market is in withdraw mode before Kamino runs short');
+    const borrowAmount = beforeBorrow.free - enterMultiple * beforeBorrow.x + DEMO.borrowBelowEntry;
+    info(`Kamino has ${beforeBorrow.free} WSOL free against the market's X = max(V, T) = max(${beforeBorrow.value}, ${beforeBorrow.total - (beforeBorrow.total * targetBps) / BPS}) = ${beforeBorrow.x}: the borrower takes ${borrowAmount}`);
+    kaminoCommand('borrow', '--amount', wholeSol(borrowAmount));
+    const short = await exposure();
+    if (short.free >= enterMultiple * short.x) fail(`after the borrow Kamino has ${short.free} free, not below ${enterMultiple} x ${short.x}`);
+    info(`Kamino now has ${short.free} WSOL free, below ${enterMultiple} x ${short.x} = ${enterMultiple * short.x}`);
+
+    step('23. Rebalancing: the market enters withdraw mode and redeems everything Kamino can pay');
+    const reserveBeforeExit = await readReserve();
+    const entering = await rebalanceMeasured('rebalance into withdraw mode');
+    const entered = (await strategyEvents(entering.signature, WITHDRAW_MODE_ENTERED_EVENT_DISCRIMINATOR)).map((data) =>
+        getWithdrawModeEnteredEventDecoder().decode(data),
+    );
+    // klend refreshes the reserve inside the redeem, so the free liquidity the program measured
+    // is the stored one, before the call.
+    if (entered.length !== 1 || entered[0]!.freeLiquidity !== freeLiquidity(reserveBeforeExit) || entered[0]!.exposure !== short.x) {
+        fail(`the rebalance emitted ${show(entered)}, not one WithdrawModeEntered at ${freeLiquidity(reserveBeforeExit)} free and X ${short.x}`);
+    }
+    if (!(await withdrawMode())) fail('the market is not in withdraw mode after the rebalance');
+    const burnedAll = entering.ctokensBefore - entering.ctokensAfter;
+    const paidAll = entering.bufferAfter - entering.bufferBefore;
+    if (entering.ctokensAfter !== 0n || burnedAll !== lent.ctokens) fail(`the rebalance burned ${burnedAll} of ${lent.ctokens} cTokens, not all of them`);
+    const reserveAfterExit = await readReserve();
+    const paidByKlendAll = klendRedeem(burnedAll, reserveAfterExit.totalSupplySf + (paidAll << 60n), reserveAfterExit.mintTotalSupply + burnedAll);
+    if (paidAll !== paidByKlendAll || paidAll < short.value) {
+        fail(`klend paid ${paidAll} for ${burnedAll} cTokens; its maths gives ${paidByKlendAll}, and the market valued them at ${short.value}`);
+    }
+    reserves = [reserves[0], reserves[1] + paidAll];
+    lent = { ctokens: 0n, deposited: lent.deposited, redeemed: lent.redeemed + paidAll };
+    await checkMarket('after entering withdraw mode');
+    info(`WithdrawModeEntered at ${entered[0]!.freeLiquidity} free and X ${entered[0]!.exposure}; klend redeemed every one of the market's ${burnedAll} cTokens for ${paidAll} WSOL, as its maths gives`);
+    record.push(['withdraw mode entered', `redeemed ${burnedAll} cTokens for ${paidAll} WSOL`]);
+
+    step('24. Checking a second rebalance neither deposits nor leaves withdraw mode');
+    const stillShort = await exposure();
+    if (stillShort.free > exitMultiple * stillShort.x) fail(`Kamino has ${stillShort.free} free, above the exit threshold ${exitMultiple * stillShort.x}`);
+    await refusedWith('a second rebalance in withdraw mode', payer, [await rebalanceInstruction()], 'BelowMinRebalance');
+    if (!(await withdrawMode()) || (await tokenBalance(ctokenAccount)) !== 0n) fail('the market left withdraw mode or lent again');
+    info(`everything is redeemed, V = 0, but X is still T = ${stillShort.x}: Kamino's ${stillShort.free} free is at or below ${exitMultiple} x ${stillShort.x}, so it stays`);
+
+    step('25. The borrower repays, and rebalance leaves withdraw mode and lends again');
+    kaminoCommand('repay');
+    const repaid = await exposure();
+    if (repaid.free <= exitMultiple * repaid.x) fail(`after the repay Kamino has ${repaid.free} free, not above ${exitMultiple} x ${repaid.x}`);
+    info(`Kamino has ${repaid.free} WSOL free again, above ${exitMultiple} x ${repaid.x} = ${exitMultiple * repaid.x}`);
+    const reserveBeforeReturn = await readReserve();
+    const asked2 = repaid.buffer - (repaid.total * targetBps) / BPS;
+    const leaving = await rebalanceMeasured('rebalance out of withdraw mode');
+    const left = (await strategyEvents(leaving.signature, WITHDRAW_MODE_LEFT_EVENT_DISCRIMINATOR)).map((data) =>
+        getWithdrawModeLeftEventDecoder().decode(data),
+    );
+    if (left.length !== 1 || left[0]!.freeLiquidity !== freeLiquidity(reserveBeforeReturn) || left[0]!.exposure !== repaid.x) {
+        fail(`the rebalance emitted ${show(left)}, not one WithdrawModeLeft at ${freeLiquidity(reserveBeforeReturn)} free and X ${repaid.x}`);
+    }
+    if (await withdrawMode()) fail('the market is still in withdraw mode');
+    const minted2 = leaving.ctokensAfter - leaving.ctokensBefore;
+    const taken2 = leaving.bufferBefore - leaving.bufferAfter;
+    const reserveAfterReturn = await readReserve();
+    const byKlend2 = klendDeposit(asked2, reserveAfterReturn.totalSupplySf - (taken2 << 60n), reserveAfterReturn.mintTotalSupply - minted2);
+    if (minted2 === 0n || byKlend2.ctokens !== minted2 || byKlend2.taken !== taken2) {
+        fail(`klend minted ${minted2} cTokens for ${taken2}; its deposit maths gives ${byKlend2.ctokens} for ${byKlend2.taken} of the ${asked2} asked`);
+    }
+    reserves = [reserves[0], reserves[1] - taken2];
+    lent = { ctokens: minted2, deposited: lent.deposited + taken2, redeemed: lent.redeemed };
+    await checkMarket('after leaving withdraw mode');
+    info(`WithdrawModeLeft at ${left[0]!.freeLiquidity} free; the band applies again and klend took ${taken2} WSOL for ${minted2} cTokens, as its deposit maths gives`);
+    record.push(['withdraw mode left', `lent ${taken2} WSOL for ${minted2} cTokens`]);
+
+    step("26. The WSOL reserve's emergency mode on: buffer only, rebalance refuses, LPs leave in kind");
+    kaminoCommand('emergency', 'on');
+    const inEmergency = await lentSide();
+    await sellToken('sell within the buffer in emergency mode', await saleNow(inEmergency.buffer / 2n));
+    const afterWithin = await lentSide();
+    const beyondAmount = await saleNow(afterWithin.buffer + afterWithin.buffer / 2n);
+    const beyondTrade = tradeOf(0, beyondAmount);
+    const beyondAccounts = await pipeline.resolveAccounts(rpc, routerView, beyondTrade, payer.address, simulation);
+    if (beyondAccounts.length !== 3) fail(`a sale Kamino cannot pay resolved ${beyondAccounts.length} strategy accounts, not 3 without redeem accounts`);
+    try {
+        await pipeline.quoteStrategy(rpc, routerView, beyondTrade, beyondAccounts, payer.address, simulation);
+        fail('a sale beyond the buffer was quoted in emergency mode');
+    } catch (error) {
+        const logs = error instanceof pipeline.SimulationError ? error.logs : [];
+        if (!logs.some((line) => line.includes('Error Code: BeyondBuffer'))) throw error;
+        info(`a sale of ${beyondAmount}, beyond the buffer: the quote is refused with BeyondBuffer`);
+        record.push(['quote beyond the buffer in emergency mode', 'refused: BeyondBuffer']);
+    }
+    await refusedWith('a swap beyond the buffer in emergency mode', payer, [await swapInstruction(0, beyondAmount, beyondAccounts, 0n)], 'BeyondBuffer');
+    await refusedWith('rebalance in emergency mode', payer, [await rebalanceInstruction()], 'KaminoStopped');
+    const lp2Left = await tokenBalance(lp2Shares);
+    const leftParts = removalParts(lp2Left);
+    await refusedWith(
+        "the second wallet's removal in cash in emergency mode",
+        lp2,
+        [await removeInstruction('remove_liquidity', lp2Left, [0n, 0n], false)],
+        'KaminoCannotPay',
+    );
+    const lp2CtokensBefore = await tokenBalance(lp2Ctoken);
+    const lp2HeldBefore = await Promise.all(lp2Holdings.map(tokenBalance));
+    await send('the second wallet removes the rest in kind in emergency mode', lp2, [
+        await removeInstruction('remove_liquidity_in_kind', lp2Left, [leftParts.token, leftParts.buffer], true),
+    ]);
+    const lp2Got = await Promise.all(lp2Holdings.map(async (account, i) => (await tokenBalance(account)) - lp2HeldBefore[i]!));
+    if (lp2Got[0] !== leftParts.token || lp2Got[1] !== leftParts.buffer || (await tokenBalance(lp2Ctoken)) - lp2CtokensBefore !== leftParts.ctokens) {
+        fail(`the in-kind removal paid ${show(lp2Got)}; the formulas give ${show(leftParts)}`);
+    }
+    reserves = [reserves[0] - leftParts.token, reserves[1] - leftParts.buffer];
+    shareCount -= lp2Left;
+    const netLent = lent.deposited - lent.redeemed;
+    const takeLeft = ((netLent < 0n ? -netLent : netLent) * leftParts.ctokens) / lent.ctokens;
+    lent = {
+        ctokens: lent.ctokens - leftParts.ctokens,
+        deposited: netLent >= 0n ? lent.deposited - takeLeft : lent.deposited,
+        redeemed: netLent >= 0n ? lent.redeemed : lent.redeemed - takeLeft,
+    };
+    await checkMarket('after the in-kind removal in emergency mode');
+    info(`the second wallet burned its last ${lp2Left} shares for ${leftParts.token} token, ${leftParts.buffer} WSOL and ${leftParts.ctokens} cTokens`);
+
+    step("27. Emergency mode off: a sale beyond the buffer redeems from Kamino again");
+    kaminoCommand('emergency', 'off');
+    const sideNow = await lentSide();
+    const afterEmergency = await sellToken('sell beyond the buffer after emergency mode', await saleNow(sideNow.buffer + sideNow.buffer / 2n));
+    if (!afterEmergency.redeem) fail('the sale beyond the buffer did not redeem');
 
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));

@@ -68,6 +68,31 @@ pub struct Rebalanced {
     pub redeemed: u128,
 }
 
+/// `rebalance` put the market into withdraw mode: Kamino's freely available liquidity was below
+/// `WITHDRAW_MODE_ENTER` times the market's exposure (docs/spec/lending-pool.md, "Withdraw
+/// mode"). Emitted before the call's [`Rebalanced`], if it moved anything.
+#[event]
+pub struct WithdrawModeEntered {
+    pub market_state: Pubkey,
+    /// The reserve's freely available liquidity `rebalance` measured.
+    pub free_liquidity: u64,
+    /// The market's exposure `X = max(V, T)`: the larger of its lent value and its target lent
+    /// value.
+    pub exposure: u64,
+}
+
+/// `rebalance` took the market out of withdraw mode: Kamino's freely available liquidity was
+/// back above `WITHDRAW_MODE_EXIT` times the market's exposure, so the band applies again.
+/// Emitted before the call's [`Rebalanced`], if it moved anything.
+#[event]
+pub struct WithdrawModeLeft {
+    pub market_state: Pubkey,
+    /// The reserve's freely available liquidity `rebalance` measured.
+    pub free_liquidity: u64,
+    /// The market's exposure `X = max(V, T)`.
+    pub exposure: u64,
+}
+
 /// A swap redeemed its shortfall from Kamino before paying the trader
 /// (docs/spec/lending-pool.md, "Redeeming the shortfall").
 #[event]

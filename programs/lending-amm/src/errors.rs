@@ -100,4 +100,12 @@ pub enum StrategyError {
     KaminoCannotPay,
     #[msg("Locking needs at least one LP share")]
     ZeroLock,
+    #[msg("Kamino redeems nothing right now (reserve or lending market emergency mode, or a deprecated reserve): rebalance refuses")]
+    KaminoStopped,
+    #[msg("Kamino blocks cToken deposits into the reserve: rebalance skips the deposit")]
+    KaminoDepositsBlocked,
+    #[msg("The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only")]
+    ReserveDeprecated,
+    #[msg("rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls")]
+    RebalanceNotAlone,
 }

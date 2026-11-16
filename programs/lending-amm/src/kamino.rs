@@ -89,6 +89,9 @@ pub const DEPOSIT_RESERVE_LIQUIDITY: [u8; 8] = [169, 201, 30, 126, 6, 205, 102, 
 /// Anchor's instruction discriminator of klend's `redeem_reserve_collateral`,
 /// `sha256("global:redeem_reserve_collateral")[..8]`.
 pub const REDEEM_RESERVE_COLLATERAL: [u8; 8] = [234, 117, 181, 125, 185, 142, 220, 29];
+/// klend's `refresh_reserve`, `sha256("global:refresh_reserve")[..8]`: the one klend instruction
+/// `rebalance` allows in its transaction, which a keeper puts first when the stored rate is stale.
+pub const REFRESH_RESERVE: [u8; 8] = [2, 218, 138, 235, 79, 201, 25, 102];
 
 /// A reserve's deposit withdrawal cap: how much may leave it, net of deposits, per interval.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -280,10 +283,17 @@ impl Reserve {
         }
     }
 
+    /// Whether klend redeems nothing from this reserve right now: either emergency mode is on,
+    /// the reserve's or its lending market's, or the reserve is deprecated
+    /// (docs/spec/lending-pool.md, "When Kamino can't pay").
+    pub fn redeems_stopped(&self, market: &LendingMarket) -> bool {
+        market.emergency_mode || self.emergency_mode || self.deprecated()
+    }
+
     /// What Kamino can pay a market holding `ctokens` right now, at Unix time `now`
     /// (docs/spec/lending-pool.md, "Redeeming the shortfall").
     pub fn can_pay_now(&self, market: &LendingMarket, ctokens: u64, now: i64) -> u64 {
-        let stopped = market.emergency_mode || self.emergency_mode || self.deprecated();
+        let stopped = self.redeems_stopped(market);
         let Ok(supply) = self.total_supply_sf() else {
             return 0;
         };
@@ -308,7 +318,11 @@ impl Reserve {
     /// above the stored rate the redeem is planned at, and refuses a redeem that would pass either
     /// limit.
     pub fn can_pay_planned(&self, market: &LendingMarket, ctokens: u64, now: i64) -> u64 {
-        let stopped = market.emergency_mode || self.emergency_mode || self.deprecated();
+        self.can_pay_planned_unless(self.redeems_stopped(market), ctokens, now)
+    }
+
+    /// [`Reserve::can_pay_planned`], with whether Kamino redeems nothing (`stopped`) given.
+    fn can_pay_planned_unless(&self, stopped: bool, ctokens: u64, now: i64) -> u64 {
         let Ok(supply) = self.total_supply_sf() else {
             return 0;
         };
@@ -320,6 +334,17 @@ impl Reserve {
             own,
             stopped,
         )
+    }
+}
+
+impl Reserve {
+    /// What a market holding `ctokens` may plan to redeem at Unix time `now`, as far as the
+    /// reserve alone shows: [`Reserve::can_pay_planned`] stopped only by the reserve's own
+    /// emergency mode or deprecation. It is what account resolution counts, and a quote or swap
+    /// built without the redeem accounts, which have no lending market account to read; the
+    /// lending market's emergency mode can only lower it.
+    pub fn can_pay_by_itself(&self, ctokens: u64, now: i64) -> u64 {
+        self.can_pay_planned_unless(self.emergency_mode || self.deprecated(), ctokens, now)
     }
 }
 

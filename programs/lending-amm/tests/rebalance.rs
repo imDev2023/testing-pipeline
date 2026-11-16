@@ -607,8 +607,8 @@ fn a_capped_redeem_still_lands_when_the_reserves_stored_rate_is_stale() {
     // KAMINO_RATE_HEADROOM_BPS, must cover the interest since the last refresh. With real
     // borrowing that is a day of the mainnet reserves' own curves, and an hour of our devnet
     // reserves' curve, which is steep on purpose (LENDING-39) and accrues about 0.1% a day;
-    // longer, klend refuses the redeem and the call fails whole until
-    // [#83](https://github.com/imDev2023/testing-pipeline/issues/83) redeems what it can.
+    // longer, klend refuses the redeem, and a keeper puts klend's `refresh_reserve` first in the
+    // same transaction (the next test).
     for (lent, entry) in LENT_MINTS.iter().enumerate() {
         let mut env = Env::new();
         env.load_klend();
@@ -642,6 +642,63 @@ fn a_capped_redeem_still_lands_when_the_reserves_stored_rate_is_stale() {
         println!("lent {lent}: {stale} s stale, Kamino could pay {cap}, it paid {received}");
         assert!(received <= cap);
         // Within the headroom it leaves for the rate klend refreshes to.
+        let headroom = cap as u128 * lending_amm::config::KAMINO_RATE_HEADROOM_BPS as u128 / 10_000;
+        assert!((cap - received) as u128 <= headroom + one_ctoken(&env, &market) as u128 + 1);
+    }
+}
+
+#[test]
+fn a_capped_redeem_on_a_reserve_stale_beyond_the_headroom_lands_when_klends_refresh_comes_first() {
+    // A month without a refresh accrues more interest than KAMINO_RATE_HEADROOM_BPS covers on
+    // every reserve, so a redeem planned at the stored rate right up to Kamino's withdrawal cap
+    // overshoots it and klend refuses it. A keeper then puts klend's own `refresh_reserve` before
+    // `rebalance` in the same transaction: the redeem is planned at a rate refreshed in that
+    // slot, and lands within the headroom, as "redeems what it can" asks however stale the
+    // reserve was.
+    for (lent, entry) in LENT_MINTS.iter().enumerate() {
+        let mut env = Env::new();
+        env.load_klend();
+        ensure_borrowed(&mut env, lent);
+        let market = env.market_below_the_band(lent);
+        let stale: i64 = 30 * 86_400;
+        env.advance_clock(stale as u64 * 5 / 2, stale);
+        let state = env.market_state(&market.market_state);
+        let shortfall = env.lent_total(&market) * BUFFER_TARGET_BPS as u64 / 10_000
+            - state.reserves[market.lent_index];
+        let cap = (shortfall + entry.min_rebalance) / 2;
+        let address = env.reserve_of(&market);
+        let now = env.clock().unix_timestamp as u64;
+        let mut fields = Vec::new();
+        fields.extend_from_slice(&(cap as i64 + 1_000).to_le_bytes());
+        fields.extend_from_slice(&1_000i64.to_le_bytes());
+        fields.extend_from_slice(&now.to_le_bytes());
+        fields.extend_from_slice(&86_400u64.to_le_bytes());
+        env.patch(
+            &address,
+            lending_amm::kamino::offsets::WITHDRAWAL_CAP,
+            &fields,
+        );
+
+        // Alone, klend refuses the redeem: the stored rate is a month behind.
+        let before = env.market_state(&market.market_state);
+        let refused = env.rebalance(&market, None);
+        let logs = refused.clone().err().unwrap_or_default();
+        assert!(
+            refused.is_err(),
+            "lent {lent}: a month-stale redeem at the cap should overshoot"
+        );
+        assert!(logs.contains("WithdrawalCapReached"), "lent {lent}: {logs}");
+        assert_eq!(env.market_state(&market.market_state), before);
+
+        // With klend's refresh first, in the same transaction, it lands within the headroom.
+        let refresh = env.refresh_reserve_instruction(&market);
+        let caller = solana_keypair::Keypair::new();
+        env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
+        let rebalance = env.rebalance_instruction(&market, &caller.pubkey());
+        env.send_meta(&[refresh, rebalance], &[&caller]).unwrap();
+        let received = env.market_state(&market.market_state).redeemed as u64;
+        println!("lent {lent}: {stale} s stale, Kamino could pay {cap}, refreshed first it paid {received}");
+        assert!(received <= cap);
         let headroom = cap as u128 * lending_amm::config::KAMINO_RATE_HEADROOM_BPS as u128 / 10_000;
         assert!((cap - received) as u128 <= headroom + one_ctoken(&env, &market) as u128 + 1);
     }

@@ -1977,6 +1977,7 @@ dependencies = [
  "serde_json",
  "solana-account",
  "solana-clock 3.2.1",
+ "solana-instructions-sysvar 3.0.1",
  "solana-keypair",
  "solana-security-txt",
  "solana-signer",

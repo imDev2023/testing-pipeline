@@ -1043,6 +1043,32 @@
         140,
         24
       ]
+    },
+    {
+      "name": "WithdrawModeEntered",
+      "discriminator": [
+        66,
+        18,
+        123,
+        120,
+        231,
+        122,
+        170,
+        76
+      ]
+    },
+    {
+      "name": "WithdrawModeLeft",
+      "discriminator": [
+        118,
+        66,
+        87,
+        168,
+        200,
+        101,
+        236,
+        125
+      ]
     }
   ],
   "errors": [
@@ -1275,6 +1301,26 @@
       "code": 6045,
       "name": "ZeroLock",
       "msg": "Locking needs at least one LP share"
+    },
+    {
+      "code": 6046,
+      "name": "KaminoStopped",
+      "msg": "Kamino redeems nothing right now (reserve or lending market emergency mode, or a deprecated reserve): rebalance refuses"
+    },
+    {
+      "code": 6047,
+      "name": "KaminoDepositsBlocked",
+      "msg": "Kamino blocks cToken deposits into the reserve: rebalance skips the deposit"
+    },
+    {
+      "code": 6048,
+      "name": "ReserveDeprecated",
+      "msg": "The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only"
+    },
+    {
+      "code": 6049,
+      "name": "RebalanceNotAlone",
+      "msg": "rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls"
     }
   ],
   "types": [
@@ -1955,6 +2001,69 @@
           }
         ]
       }
+    },
+    {
+      "name": "WithdrawModeEntered",
+      "docs": [
+        "`rebalance` put the market into withdraw mode: Kamino's freely available liquidity was below",
+        "`WITHDRAW_MODE_ENTER` times the market's exposure (docs/spec/lending-pool.md, \"Withdraw",
+        "mode\"). Emitted before the call's [`Rebalanced`], if it moved anything."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "free_liquidity",
+            "docs": [
+              "The reserve's freely available liquidity `rebalance` measured."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "exposure",
+            "docs": [
+              "The market's exposure `X = max(V, T)`: the larger of its lent value and its target lent",
+              "value."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WithdrawModeLeft",
+      "docs": [
+        "`rebalance` took the market out of withdraw mode: Kamino's freely available liquidity was",
+        "back above `WITHDRAW_MODE_EXIT` times the market's exposure, so the band applies again.",
+        "Emitted before the call's [`Rebalanced`], if it moved anything."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "free_liquidity",
+            "docs": [
+              "The reserve's freely available liquidity `rebalance` measured."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "exposure",
+            "docs": [
+              "The market's exposure `X = max(V, T)`."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
     }
   ],
   "constants": [
@@ -2000,6 +2109,25 @@
       ],
       "type": "u64",
       "value": "1000"
+    },
+    {
+      "name": "WITHDRAW_MODE_ENTER",
+      "docs": [
+        "Enter withdraw mode when Kamino's freely available liquidity is below this many times",
+        "the larger of the market's lent value and its target lent value. Exported in the IDL, as is",
+        "the exit multiple, from which keepers and the demo read them. It must not be above",
+        "`WITHDRAW_MODE_EXIT`, which `crate::withdraw_mode` checks when the program is built."
+      ],
+      "type": "u64",
+      "value": "5"
+    },
+    {
+      "name": "WITHDRAW_MODE_EXIT",
+      "docs": [
+        "Leave withdraw mode when it is back above this many times that amount."
+      ],
+      "type": "u64",
+      "value": "10"
     }
   ]
 }

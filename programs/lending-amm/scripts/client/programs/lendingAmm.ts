@@ -128,12 +128,16 @@ export const LendingAmmEvent = {
   3: "Rebalanced",
   4: "SharesLocked",
   5: "ShortfallRedeemed",
+  6: "WithdrawModeEntered",
+  7: "WithdrawModeLeft",
   LiquidityAdded: 0,
   LiquidityRemoved: 1,
   MarketCreated: 2,
   Rebalanced: 3,
   SharesLocked: 4,
   ShortfallRedeemed: 5,
+  WithdrawModeEntered: 6,
+  WithdrawModeLeft: 7,
 } as const;
 
 export type LendingAmmEvent = (typeof LendingAmmEvent)[Exclude<
@@ -210,6 +214,28 @@ export function identifyLendingAmmEvent(
     )
   ) {
     return LendingAmmEvent.ShortfallRedeemed;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([66, 18, 123, 120, 231, 122, 170, 76]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.WithdrawModeEntered;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([118, 66, 87, 168, 200, 101, 236, 125]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.WithdrawModeLeft;
   }
   throw new Error(
     "The provided event could not be identified as a lendingAmm event.",

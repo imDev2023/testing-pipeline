@@ -153,15 +153,28 @@ impl<'a, 'info> StrategyAccounts<'a, 'info> {
     /// Prices `trade` with the one pricing function, [`pricing::quote`], reading Kamino's other
     /// accounts only when its output is the lent side and beyond the buffer; `output_mint` is the
     /// router's output mint account. `pipeline_quote` and `pipeline_swap` both price through it.
+    ///
+    /// Built without the redeem accounts, as account resolution builds a trade the reserve alone
+    /// shows Kamino cannot pay, it counts what Kamino can pay from the reserve alone, so such a
+    /// trade is refused with `BeyondBuffer`, the reason; one that would redeem fails with
+    /// `RedeemAccountsMissing`, and the integrator resolves again.
     pub fn quote(
         &self,
         market: &LendingAmmMarket,
         output_mint: &'a AccountInfo<'info>,
         trade: &TradeRequest,
     ) -> Result<Quote> {
-        pricing::quote(market, &self.reserve, trade, || {
-            self.kamino_can_pay(market, output_mint)
-        })
+        let quote = pricing::quote(market, &self.reserve, trade, || match self.redeem {
+            Some(_) => self.kamino_can_pay(market, output_mint),
+            None => Ok(self
+                .reserve
+                .can_pay_by_itself(market.ctokens, Clock::get()?.unix_timestamp)),
+        })?;
+        require!(
+            quote.shortfall == 0 || self.redeem.is_some(),
+            StrategyError::RedeemAccountsMissing
+        );
+        Ok(quote)
     }
 }
 

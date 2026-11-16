@@ -389,6 +389,191 @@ fn removals_in_cash_and_in_kind_and_lock_lp_stay_under_their_ceilings() {
 }
 
 #[test]
+fn the_ceilings_hold_in_every_state_of_kamino() {
+    // Each row of "When Kamino can't pay" but a failed layout check, where every call but an
+    // in-kind removal is refused, which the removal test above measures: on a market that has
+    // lent through klend's real deposit, at a fixed address and with LPs of fixed keys, every call
+    // the state allows is measured: quotes, account resolution and swaps within the buffer and
+    // beyond it, `rebalance` (entering withdraw mode and redeeming where Kamino is thin, then
+    // leaving it and depositing again), adding, and removing in cash and in kind.
+    use common::rebalance::{units, OTHER};
+    use common::remove::Payout;
+    use common::states::KaminoState;
+    for (lent, entry) in lending_amm::config::LENT_MINTS.iter().enumerate() {
+        let name = common::kamino::lent_name(lent);
+        let little = units(lent, 10);
+        for state in [
+            KaminoState::Normal,
+            KaminoState::LittleFreeLiquidity(little),
+            KaminoState::CapUsedUp,
+            KaminoState::BlockCtokenUsage,
+            KaminoState::ReserveEmergencyMode,
+            KaminoState::MarketEmergencyMode,
+            KaminoState::Deprecated,
+        ] {
+            let mut env = Env::new();
+            env.load_klend();
+            let options = MintOptions {
+                key: Some(fixed_key(&format!("the other mint, lending {name}"))),
+                ..MintOptions::default()
+            };
+            let other_mint = env.create_mint_with(&TOKEN, options);
+            let spec = MarketSpec {
+                mints: [(other_mint, TOKEN), (ck(&entry.mint), TOKEN)],
+                params: lending_amm::InitParams {
+                    lent_index: 1,
+                    lp_fee_bps: 30,
+                },
+            };
+            let lp = solana_keypair::Keypair::new_from_array(fixed_key(&format!(
+                "an LP lending {name}"
+            )));
+            let (market, lp) = env
+                .create_funded_market_by(&spec, [OTHER, units(lent, 50)], lp)
+                .unwrap();
+            env.rebalance(&market, None).unwrap();
+            let (other, lent_side) = (market.other_index(), market.lent_index);
+            let within = env.sell_paying(&market, env.buffer(&market) / 2);
+            let beyond = env.sell_paying(&market, env.buffer(&market) + little / 2);
+            let free = env.free_liquidity(&market);
+            env.set_kamino_state(&market, state);
+
+            let mut measured: Vec<(String, u64, u64)> = vec![];
+            let trader = env.funded_wallet(&market, [4 * beyond, 0]);
+            for (size, amount, ceiling) in [
+                ("within", within, ceilings::PIPELINE_SWAP_NO_REDEEM),
+                ("beyond", beyond, ceilings::PIPELINE_SWAP_WITH_REDEEM),
+            ] {
+                let trade = exact_in(other, lent_side, amount);
+                if let Ok(meta) = env.quote_meta(&market, &trade) {
+                    let cost = strategy_compute(&meta.logs)[0];
+                    measured.push((
+                        format!("pipeline_quote {size}"),
+                        cost,
+                        ceilings::PIPELINE_QUOTE,
+                    ));
+                }
+                if let Ok((_, rounds)) = env.resolve_rounds(&market, &trade) {
+                    let cost = rounds
+                        .iter()
+                        .map(|r| strategy_compute(&r.logs)[0])
+                        .max()
+                        .unwrap();
+                    measured.push((
+                        format!("pipeline_resolve_accounts {size}"),
+                        cost,
+                        ceilings::PIPELINE_RESOLVE_ACCOUNTS,
+                    ));
+                }
+                if let Ok(meta) = env.swap_meta(&market, &trader, (other, lent_side), amount) {
+                    let cost = *strategy_compute(&meta.logs).last().unwrap();
+                    measured.push((format!("pipeline_swap {size}"), cost, ceiling));
+                }
+            }
+            // The sells drained the buffer below its band.
+            if let Ok(meta) = env.rebalance(&market, None) {
+                let cost = strategy_compute(&meta.logs)[0];
+                measured.push(("rebalance".into(), cost, ceilings::REBALANCE));
+            }
+            if env.market_state(&market.market_state).withdraw_mode {
+                // Borrowers repay all they took: rebalance leaves withdraw mode and deposits.
+                let now_free = env.free_liquidity(&market);
+                env.set_free_liquidity(&market, now_free + (free - little));
+                let meta = env.rebalance(&market, None).unwrap();
+                let cost = strategy_compute(&meta.logs)[0];
+                measured.push((
+                    "rebalance leaving withdraw mode".into(),
+                    cost,
+                    ceilings::REBALANCE,
+                ));
+            }
+            let adder = solana_keypair::Keypair::new_from_array(fixed_key(&format!(
+                "an adder lending {name}"
+            )));
+            env.svm.airdrop(&adder.pubkey(), 10 * SOL).unwrap();
+            for (i, amount) in [OTHER, units(lent, 50)].into_iter().enumerate() {
+                write_token_account(
+                    &mut env.svm,
+                    &market.mints[i],
+                    &TOKEN,
+                    &adder.pubkey(),
+                    amount,
+                )
+                .unwrap();
+            }
+            if let Ok(meta) = env.add_liquidity(&market, &adder, [OTHER / 10, units(lent, 5)], 0) {
+                let cost = strategy_compute(&meta.logs)[0];
+                measured.push(("add_liquidity".into(), cost, ceilings::ADD_LIQUIDITY));
+            }
+            let shares = env.lp_shares_of(&market, &lp.pubkey()) / 100;
+            if let Ok(meta) = env.remove_liquidity(&market, &lp, shares, [0, 0], Payout::Cash) {
+                let cost = strategy_compute(&meta.logs)[0];
+                measured.push((
+                    "remove_liquidity, cash".into(),
+                    cost,
+                    ceilings::REMOVE_LIQUIDITY_CASH,
+                ));
+            }
+            let meta = env
+                .remove_liquidity(&market, &lp, shares, [0, 0], Payout::InKind)
+                .unwrap();
+            let cost = strategy_compute(&meta.logs)[0];
+            measured.push((
+                "remove_liquidity, in kind".into(),
+                cost,
+                ceilings::REMOVE_LIQUIDITY_IN_KIND,
+            ));
+
+            // Exactly the calls the state allows ran, so none of them escaped being measured.
+            let every_state = [
+                "pipeline_quote within",
+                "pipeline_resolve_accounts within",
+                "pipeline_swap within",
+                "pipeline_resolve_accounts beyond",
+                "remove_liquidity, in kind",
+            ];
+            let redeeming = [
+                "pipeline_quote beyond",
+                "pipeline_swap beyond",
+                "rebalance",
+                "remove_liquidity, cash",
+            ];
+            let mut allowed: Vec<&str> = every_state.to_vec();
+            match state {
+                KaminoState::Normal | KaminoState::BlockCtokenUsage => {
+                    allowed.extend(redeeming);
+                    allowed.push("add_liquidity");
+                }
+                KaminoState::LittleFreeLiquidity(_) => {
+                    allowed.extend(redeeming);
+                    allowed.extend(["add_liquidity", "rebalance leaving withdraw mode"]);
+                }
+                KaminoState::CapUsedUp
+                | KaminoState::ReserveEmergencyMode
+                | KaminoState::MarketEmergencyMode => allowed.push("add_liquidity"),
+                KaminoState::Deprecated | KaminoState::FailsLayoutCheck => {}
+            }
+            let mut ran: Vec<&str> = measured.iter().map(|(what, _, _)| what.as_str()).collect();
+            ran.sort_unstable();
+            allowed.sort_unstable();
+            assert_eq!(ran, allowed, "{name}, {state:?}: the calls that ran");
+
+            let line: Vec<String> = measured
+                .iter()
+                .map(|(what, cost, _)| format!("{what} {cost}"))
+                .collect();
+            println!("{name}, {state:?}: {}", line.join(", "));
+            for (what, cost, ceiling) in measured {
+                assert!(
+                    cost <= ceiling,
+                    "{name}, {state:?}: {what} {cost} CU, ceiling {ceiling}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn the_table_mirrors_the_spec() {
     let spec = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/lending-pool.md"),
