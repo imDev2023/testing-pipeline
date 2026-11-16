@@ -8,7 +8,10 @@
 mod common;
 
 use anchor_lang::Discriminator;
-use buy_wall_amm::events::{CapLowered, MarketCreated, MarketSeeded, Trimmed, WallPlaced};
+use buy_wall_amm::events::{
+    CapLowered, FeesSwept, MarketCreated, MarketSeeded, RecipientChanged, RewardsPaid, Settled,
+    Trimmed, WallPlaced,
+};
 use buy_wall_amm::state::MarketState;
 use common::*;
 use pipeline_client::interface::discriminator;
@@ -103,6 +106,26 @@ fn its_instructions_are_pipelines_and_the_custom_actions_with_their_discriminato
             "place_wall",
             pipeline_client::instruction_discriminator("place_wall"),
         ),
+        (
+            "settle",
+            pipeline_client::instruction_discriminator("settle"),
+        ),
+        (
+            "pay_rewards",
+            pipeline_client::instruction_discriminator("pay_rewards"),
+        ),
+        (
+            "sweep_fees",
+            pipeline_client::instruction_discriminator("sweep_fees"),
+        ),
+        (
+            "set_fee_recipient",
+            pipeline_client::instruction_discriminator("set_fee_recipient"),
+        ),
+        (
+            "set_rewards_recipient",
+            pipeline_client::instruction_discriminator("set_rewards_recipient"),
+        ),
     ];
     assert_eq!(
         idl["instructions"].as_array().unwrap().len(),
@@ -150,6 +173,28 @@ fn its_init_and_seed_accounts_and_arguments_are_the_metadatas() {
     let action = named(&metadata["actions"], "place_wall");
     assert_eq!(names(&place_wall["accounts"]), names(&action["accounts"]));
     assert!(names(&place_wall["args"]).is_empty() && names(&action["args"]).is_empty());
+
+    // The payouts and the handovers: the metadata's accounts and arguments, in order.
+    for name in [
+        "settle",
+        "pay_rewards",
+        "sweep_fees",
+        "set_fee_recipient",
+        "set_rewards_recipient",
+    ] {
+        let instruction = named(&idl["instructions"], name);
+        let action = named(&metadata["actions"], name);
+        assert_eq!(
+            names(&instruction["accounts"]),
+            names(&action["accounts"]),
+            "{name}"
+        );
+        assert_eq!(
+            names(&instruction["args"]),
+            names(&action["args"]),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -235,31 +280,48 @@ fn its_events_and_errors_are_the_programs() {
     // `place_wall` emits one.
     let placed = named(&idl["events"], "WallPlaced");
     assert_eq!(bytes(&placed["discriminator"]), WallPlaced::DISCRIMINATOR);
+    // The payouts and the handovers emit one each.
+    for (name, discriminator) in [
+        ("Settled", Settled::DISCRIMINATOR),
+        ("RewardsPaid", RewardsPaid::DISCRIMINATOR),
+        ("FeesSwept", FeesSwept::DISCRIMINATOR),
+        ("RecipientChanged", RecipientChanged::DISCRIMINATOR),
+    ] {
+        assert_eq!(
+            bytes(&named(&idl["events"], name)["discriminator"]),
+            discriminator
+        );
+    }
     assert_eq!(
         names(&idl["events"]),
         [
             "CapLowered",
+            "FeesSwept",
             "MarketCreated",
             "MarketSeeded",
+            "RecipientChanged",
+            "RewardsPaid",
+            "Settled",
             "Trimmed",
             "WallPlaced"
         ]
     );
 
-    // Errors are numbered from 6000 in the enum's order, the last being `WallBelowThreshold`.
+    // Errors are numbered from 6000 in the enum's order, the last being the payouts'.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "WallBelowThreshold");
-    let last_code: u32 = buy_wall_amm::errors::StrategyError::WallBelowThreshold.into();
+    assert_eq!(last["name"], "RecipientAccountNotTheirs");
+    let last_code: u32 = buy_wall_amm::errors::StrategyError::RecipientAccountNotTheirs.into();
     assert_eq!(last["code"].as_u64().unwrap() as u32, last_code);
     // The four trading refusals follow `Overflow`, then the seed request's, then
-    // `place_wall`'s, so every earlier error keeps its number.
+    // `place_wall`'s, then the payouts' and handovers', so every earlier error keeps its
+    // number.
     let names: Vec<_> = errors.iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert_eq!(
-        names[names.len() - 7..],
+        names[names.len() - 14..],
         [
             "Overflow",
             "ZeroInput",
@@ -267,7 +329,14 @@ fn its_events_and_errors_are_the_programs() {
             "NothingAfterFee",
             "PriceBoundReached",
             "BadSeedAmounts",
-            "WallBelowThreshold"
+            "WallBelowThreshold",
+            "NothingToSettle",
+            "NothingOwed",
+            "RecipientUnset",
+            "BadFeeSlot",
+            "NotRecipient",
+            "NewRecipientRequired",
+            "RecipientAccountNotTheirs"
         ]
     );
 }
@@ -297,4 +366,7 @@ fn it_publishes_the_constants_the_demo_reads() {
     assert_eq!(value("FLOOR_CRAWL_BPS"), FLOOR_CRAWL_BPS.to_string());
     assert_eq!(value("REF_STEP_BPS"), REF_STEP_BPS.to_string());
     assert_eq!(value("REF_STEP_WINDOW"), REF_STEP_WINDOW.to_string());
+    // The wallets fee slots 1 and 2 are paid to (`POOL4-40`).
+    assert_eq!(value("SUITE_TREASURY"), SUITE_TREASURY.to_string());
+    assert_eq!(value("DESIGNER_RECIPIENT"), DESIGNER_RECIPIENT.to_string());
 }

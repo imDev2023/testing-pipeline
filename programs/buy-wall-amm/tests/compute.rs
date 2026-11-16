@@ -24,6 +24,10 @@ const SWAP_ONE_STEP: u64 = 45_000;
 const SWAP_TRIM: u64 = 60_000;
 const SEED_LIQUIDITY: u64 = 180_000;
 const PLACE_WALL: u64 = 50_000;
+const SETTLE: u64 = 30_000;
+const PAY_REWARDS: u64 = 60_000;
+const SWEEP_FEES: u64 = 60_000;
+const HANDOVER: u64 = 10_000;
 
 const TOKENS: u64 = 1_000_000_000_000;
 const LAMPORTS: u64 = 10 * SOL;
@@ -433,5 +437,121 @@ fn place_wall_and_swaps_that_cross_into_the_wall_and_trim_stay_under_their_ceili
     println!(
         "worst: place_wall {} CU, a sell crossing into the wall and trimming {} CU, pipeline_quote {} CU",
         worst.0, worst.1, worst.2
+    );
+}
+
+#[test]
+fn payouts_and_handovers_stay_under_their_ceilings() {
+    use common::payouts::*;
+    // On each token program, the worked example's trades leave tokens retired and every fee
+    // ledger owed; `settle`, then `pay_rewards` and each `sweep_fees` slot into recipient
+    // accounts the payouts create, then the same again into accounts that exist, then both
+    // handovers.
+    let mut worst = [0u64; 4];
+    for (label, program, hook) in [
+        ("SPL Token", TOKEN, false),
+        ("Token-2022", TOKEN_2022, false),
+        ("Token-2022 with a transfer hook", TOKEN_2022, true),
+    ] {
+        let mut env = Env::new();
+        let token = if hook {
+            env.seedable_hooked_token()
+        } else {
+            env.seedable_token(&program)
+        };
+        // Recipients whose accounts have bump 255, so the address search a payout makes is
+        // the same on every run (`recipient_with_first_bump`).
+        let fee_recipient = recipient_with_first_bump(&WSOL, &TOKEN);
+        let rewards_recipient = recipient_with_first_bump(&token, &program);
+        let mut params = launch_params(env.admin.pubkey());
+        params.fee_recipient = fee_recipient.pubkey();
+        params.rewards_recipient = rewards_recipient.pubkey();
+        let market = if hook {
+            env.create_and_seed_hooked(token, &params, TOKENS, LAMPORTS)
+                .unwrap()
+        } else {
+            env.create_and_seed(token, program, &params, TOKENS, LAMPORTS)
+                .unwrap()
+                .0
+        };
+        set_supply(&mut env, &market.token_mint, u64::MAX / 2);
+        let trader = env.trader(&market, TOKENS / 2, LAMPORTS);
+        let keeper = env.keeper();
+        let cycle = |env: &mut Env| {
+            let clock = env.svm.get_sysvar::<anchor_lang::prelude::Clock>();
+            env.set_clock(clock.slot + 150, clock.unix_timestamp + 3_600);
+            let (bought, _) = env
+                .swap_logged(&market, &trader, (1, 0), TradeMode::ExactIn, SOL, 0)
+                .unwrap();
+            env.swap_logged(
+                &market,
+                &trader,
+                (0, 1),
+                TradeMode::ExactIn,
+                bought.received,
+                0,
+            )
+            .unwrap();
+            let _ = env.place_wall(&market, &keeper);
+            let (_, logs) = env.send_logged(&[settle_ix(&market)], &[]).unwrap();
+            let settling = strategy_units(&logs, 0);
+
+            let recipient = rewards_recipient.pubkey();
+            let to = client::pda::associated_token(&recipient, &market.token_mint, &program);
+            let hooks = env.hook_accounts(
+                &market.token_mint,
+                market.token_vault,
+                to,
+                market.vault_authority,
+            );
+            let ix = pay_rewards_ix(&market, &env.admin.pubkey(), &recipient, hooks);
+            let (_, logs) = env.send_logged(&[ix], &[]).unwrap();
+            let paying = strategy_units_without_hooks(&logs);
+
+            let mut sweeping = 0;
+            for (slot, wallet) in [
+                (0, fee_recipient.pubkey()),
+                (2, buy_wall_amm::config::SUITE_TREASURY.to_bytes().into()),
+            ] {
+                let ix = sweep_fees_ix(&market, &env.admin.pubkey(), &wallet, slot);
+                let (_, logs) = env.send_logged(&[ix], &[]).unwrap();
+                sweeping = sweeping.max(strategy_units(&logs, 0));
+            }
+            (settling, paying, sweeping)
+        };
+        let (settle_new, pay_new, sweep_new) = cycle(&mut env);
+        let (settle_again, pay_existing, sweep_existing) = cycle(&mut env);
+
+        let mut handing = 0;
+        for (rewards, signer) in [(false, &fee_recipient), (true, &rewards_recipient)] {
+            let ix = handover_ix(&market, rewards, &signer.pubkey(), &Pubkey::new_unique());
+            let (_, logs) = env.send_logged(&[ix], &[signer]).unwrap();
+            handing = handing.max(strategy_units(&logs, 0));
+        }
+        println!(
+            "{label}: settle {settle_new}, {settle_again} CU; pay_rewards creating the account \
+             {pay_new} CU, into it {pay_existing} CU; sweep_fees creating the account \
+             {sweep_new} CU, into it {sweep_existing} CU; a handover {handing} CU"
+        );
+        let settling = settle_new.max(settle_again);
+        let paying = pay_new.max(pay_existing);
+        let sweeping = sweep_new.max(sweep_existing);
+        assert!(settling <= SETTLE, "{label}: settle used {settling}");
+        assert!(paying <= PAY_REWARDS, "{label}: pay_rewards used {paying}");
+        assert!(
+            sweeping <= SWEEP_FEES,
+            "{label}: sweep_fees used {sweeping}"
+        );
+        assert!(handing <= HANDOVER, "{label}: a handover used {handing}");
+        worst = [
+            worst[0].max(settling),
+            worst[1].max(paying),
+            worst[2].max(sweeping),
+            worst[3].max(handing),
+        ];
+    }
+    println!(
+        "worst: settle {} CU, pay_rewards {} CU, sweep_fees {} CU, a handover {} CU",
+        worst[0], worst[1], worst[2], worst[3]
     );
 }

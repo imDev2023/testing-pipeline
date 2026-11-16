@@ -352,6 +352,29 @@ impl MarketState {
         self.set_tips_paid(books.tips_paid);
     }
 
+    /// What the payout keeper jobs read and write (`payouts.rs`).
+    pub fn owed(&self) -> crate::payouts::Owed {
+        crate::payouts::Owed {
+            retired_tokens: self.retired_tokens(),
+            rewards_owed: self.rewards_owed(),
+            fees_recipient: self.fees_recipient(),
+            fees_designer: self.fees_designer(),
+            fees_suite: self.fees_suite(),
+            tokens_burned: self.tokens_burned(),
+            rewards_paid: self.rewards_paid(),
+        }
+    }
+
+    pub fn set_owed(&mut self, owed: &crate::payouts::Owed) {
+        self.set_retired_tokens(owed.retired_tokens);
+        self.set_rewards_owed(owed.rewards_owed);
+        self.set_fees_recipient(owed.fees_recipient);
+        self.set_fees_designer(owed.fees_designer);
+        self.set_fees_suite(owed.fees_suite);
+        self.set_tokens_burned(owed.tokens_burned);
+        self.set_rewards_paid(owed.rewards_paid);
+    }
+
     /// What `place_wall` reads and never writes.
     pub fn wall_at(&self) -> crate::wall::At {
         crate::wall::At {
@@ -439,6 +462,32 @@ impl MarketState {
             _ => err!(StrategyError::WrongAccount),
         }
     }
+}
+
+/// The accounts a keeper job names for one of a market's vaults, checked against the market
+/// state: the vault and its mint are the market's for `side` (0 the token, 1 wrapped SOL),
+/// the market is open, and the vault authority is the PDA from the stored bump. Returns the
+/// bump, for the vault authority's signer seeds.
+pub fn check_vault_accounts(
+    state: &MarketState,
+    market_state: &Pubkey,
+    side: u8,
+    vault: &Pubkey,
+    mint: &Pubkey,
+    authority: &Pubkey,
+) -> Result<u8> {
+    require!(state.status == STATUS_OPEN, StrategyError::MarketNotOpen);
+    let (expected_vault, expected_mint) = match side {
+        0 => (state.token_vault, state.token_mint),
+        1 => (state.sol_vault, state.wsol_mint),
+        _ => return err!(StrategyError::WrongAccount),
+    };
+    require_keys_eq!(*mint, expected_mint, StrategyError::WrongAccount);
+    require_keys_eq!(*vault, expected_vault, StrategyError::WrongAccount);
+    let expected_authority =
+        vault_authority(market_state, state.authority_bump).ok_or(StrategyError::WrongAccount)?;
+    require_keys_eq!(*authority, expected_authority, StrategyError::WrongAccount);
+    Ok(state.authority_bump)
 }
 
 /// Whether `account` is a market state this program can read: owned by this program,

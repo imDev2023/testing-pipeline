@@ -295,6 +295,22 @@ _Avoid_: staking yield (the recipient need not be a staking program), tax
 The fixed tenth of every buy wall market's fee owed to IMD and Adam, who designed Pool4.
 _Avoid_: royalty, IMD tax
 
+**Fee recipient**:
+The wallet a buy wall market pays the part of its fee that goes neither to the designer share, the suite share nor the buy wall; a market whose wall takes all of that part may have none.
+_Avoid_: owner (it controls nothing), creator (it need not be)
+
+**Rewards recipient**:
+The wallet a buy wall market pays its reward share to; a market with no reward share has none.
+_Avoid_: staker, beneficiary
+
+**Fee slot**:
+One of a buy wall market's three fee ledgers, each paid whole to one wallet by `sweep_fees`: slot 0 the fee recipient, slot 1 the designer share, slot 2 the suite share.
+_Avoid_: bucket, tranche
+
+**Handover**:
+A buy wall market's fee recipient or rewards recipient handing its own role, and what the role is owed, to another wallet; the only change anyone can make to a market after its seed.
+_Avoid_: transfer (tokens are transferred), ownership change (nobody owns a market)
+
 **Lending AMM**:
 Our strategy that keeps a buffer of its liquidity for swaps and lends the rest to a lending market between them.
 _Avoid_: lending pool (the working name; it reads as a pool to lend to or borrow from, which is a lending market), vault (Meteora's Dynamic Vault is the prior art), yield pool

@@ -17,6 +17,7 @@
 
 pub mod exit;
 pub mod launchpad;
+pub mod payouts;
 
 use std::path::PathBuf;
 
