@@ -99,8 +99,18 @@ impl Env {
     /// A new launch on `mints` whose escrows hold `escrowed` of each, by a creator with SOL.
     /// An escrow of 0 is an empty token account.
     pub fn launch(&mut self, mints: [(Pubkey, Pubkey); 2], escrowed: [u64; 2]) -> Launch {
+        self.launch_by(Keypair::new(), mints, escrowed)
+    }
+
+    /// [`Env::launch`] by a given creator, whose address the launchpad's seeder PDA derives
+    /// from.
+    pub fn launch_by(
+        &mut self,
+        creator: Keypair,
+        mints: [(Pubkey, Pubkey); 2],
+        escrowed: [u64; 2],
+    ) -> Launch {
         self.add_launchpad();
-        let creator = Keypair::new();
         let seeder = ck(&stand_in_launchpad::seeder_address(&ak(&creator.pubkey())));
         self.launch_with_seeder(creator, seeder, mints, escrowed)
     }
