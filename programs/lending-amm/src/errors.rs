@@ -76,4 +76,10 @@ pub enum StrategyError {
     ReserveSupplyInvalid,
     #[msg("The Kamino lending market account is not the lent mint's lending market")]
     LendingMarketWrongAccount,
+    #[msg("The buffer's share of the lent side is inside its band: there is nothing to rebalance")]
+    WithinBand,
+    #[msg("The move is smaller than the lent mint's MIN_REBALANCE, so it is skipped")]
+    BelowMinRebalance,
+    #[msg("A Kamino account is not the one the lent mint's reserve names")]
+    KaminoAccountWrong,
 }

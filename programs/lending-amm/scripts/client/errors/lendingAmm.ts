@@ -83,16 +83,24 @@ export const LENDING_AMM_ERROR__RESERVE_WRONG_COLLATERAL_MINT = 0x178f; // 6031
 export const LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID = 0x1790; // 6032
 /** LendingMarketWrongAccount: The Kamino lending market account is not the lent mint's lending market */
 export const LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT = 0x1791; // 6033
+/** WithinBand: The buffer's share of the lent side is inside its band: there is nothing to rebalance */
+export const LENDING_AMM_ERROR__WITHIN_BAND = 0x1792; // 6034
+/** BelowMinRebalance: The move is smaller than the lent mint's MIN_REBALANCE, so it is skipped */
+export const LENDING_AMM_ERROR__BELOW_MIN_REBALANCE = 0x1793; // 6035
+/** KaminoAccountWrong: A Kamino account is not the one the lent mint's reserve names */
+export const LENDING_AMM_ERROR__KAMINO_ACCOUNT_WRONG = 0x1794; // 6036
 
 export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__BAD_INIT_DATA
   | typeof LENDING_AMM_ERROR__BAD_LENT_INDEX
   | typeof LENDING_AMM_ERROR__BELOW_MIN_LP
+  | typeof LENDING_AMM_ERROR__BELOW_MIN_REBALANCE
   | typeof LENDING_AMM_ERROR__BEYOND_BUFFER
   | typeof LENDING_AMM_ERROR__EMPTY_SIDE
   | typeof LENDING_AMM_ERROR__EQUAL_MINTS
   | typeof LENDING_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED
   | typeof LENDING_AMM_ERROR__FIRST_DEPOSIT_TOO_SMALL
+  | typeof LENDING_AMM_ERROR__KAMINO_ACCOUNT_WRONG
   | typeof LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT
   | typeof LENDING_AMM_ERROR__LENT_MINT_NOT_LISTED
   | typeof LENDING_AMM_ERROR__LENT_MINT_NOT_SPL_TOKEN
@@ -111,6 +119,7 @@ export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_LENDING_MARKET
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_LIQUIDITY_MINT
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_SIZE
+  | typeof LENDING_AMM_ERROR__WITHIN_BAND
   | typeof LENDING_AMM_ERROR__WOULD_EMPTY_SIDE
   | typeof LENDING_AMM_ERROR__WRONG_ACCOUNT
   | typeof LENDING_AMM_ERROR__WRONG_COLLATERAL_MINT
@@ -126,11 +135,13 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__BAD_INIT_DATA]: `Init data is not valid creation parameters`,
     [LENDING_AMM_ERROR__BAD_LENT_INDEX]: `The lent index must be 0 or 1`,
     [LENDING_AMM_ERROR__BELOW_MIN_LP]: `The deposit would mint fewer shares than min_lp`,
+    [LENDING_AMM_ERROR__BELOW_MIN_REBALANCE]: `The move is smaller than the lent mint's MIN_REBALANCE, so it is skipped`,
     [LENDING_AMM_ERROR__BEYOND_BUFFER]: `The trade would pay out more of the lent side than the buffer holds`,
     [LENDING_AMM_ERROR__EMPTY_SIDE]: `A side of the market holds nothing to price a deposit against`,
     [LENDING_AMM_ERROR__EQUAL_MINTS]: `A market's two mints must differ`,
     [LENDING_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED]: `Exact-out swaps are not supported`,
     [LENDING_AMM_ERROR__FIRST_DEPOSIT_TOO_SMALL]: `The first deposit is too small to mint any shares above the locked minimum`,
+    [LENDING_AMM_ERROR__KAMINO_ACCOUNT_WRONG]: `A Kamino account is not the one the lent mint's reserve names`,
     [LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT]: `The Kamino lending market account is not the lent mint's lending market`,
     [LENDING_AMM_ERROR__LENT_MINT_NOT_LISTED]: `The lent mint is not on this cluster's list of lent mints`,
     [LENDING_AMM_ERROR__LENT_MINT_NOT_SPL_TOKEN]: `The lent mint must be owned by SPL Token`,
@@ -149,6 +160,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__RESERVE_WRONG_LENDING_MARKET]: `The Kamino reserve belongs to another lending market`,
     [LENDING_AMM_ERROR__RESERVE_WRONG_LIQUIDITY_MINT]: `The Kamino reserve lends another mint`,
     [LENDING_AMM_ERROR__RESERVE_WRONG_SIZE]: `The Kamino reserve does not have a reserve's size`,
+    [LENDING_AMM_ERROR__WITHIN_BAND]: `The buffer's share of the lent side is inside its band: there is nothing to rebalance`,
     [LENDING_AMM_ERROR__WOULD_EMPTY_SIDE]: `The trade would pay out a side's whole reserve`,
     [LENDING_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,
     [LENDING_AMM_ERROR__WRONG_COLLATERAL_MINT]: `The collateral mint is not the lent mint's Kamino reserve's`,

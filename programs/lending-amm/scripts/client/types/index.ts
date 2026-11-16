@@ -7,5 +7,6 @@
  */
 
 export * from "./initParams.ts";
+export * from "./rebalanceDirection.ts";
 export * from "./tradeMode.ts";
 export * from "./tradeRequest.ts";

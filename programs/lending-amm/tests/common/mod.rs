@@ -17,6 +17,7 @@
 #![allow(dead_code)]
 
 pub mod kamino;
+pub mod rebalance;
 
 use std::path::PathBuf;
 
@@ -387,7 +388,10 @@ impl Env {
         use spl_token_2022_interface::extension::{transfer_fee, transfer_hook, ExtensionType};
         use spl_token_2022_interface::{instruction, state};
 
-        let mint = Keypair::new();
+        let mint = options
+            .key
+            .map(Keypair::new_from_array)
+            .unwrap_or_else(Keypair::new);
         let authority = self.admin.pubkey();
         let mut extensions = vec![];
         if options.transfer_fee_bps.is_some() {
@@ -470,6 +474,11 @@ impl Env {
     /// transfer, with the hook's validation account set up. Returns the mint and the
     /// accounts every transfer of it needs.
     pub fn create_hooked_mint(&mut self) -> (Pubkey, Vec<AccountMeta>) {
+        self.create_hooked_mint_with(MintOptions::default())
+    }
+
+    /// [`Env::create_hooked_mint`] with `options` besides the hook, such as a fixed key.
+    pub fn create_hooked_mint_with(&mut self, options: MintOptions) -> (Pubkey, Vec<AccountMeta>) {
         let hook = test_hook_id();
         if self.svm.get_account(&hook).is_none() {
             self.svm.add_program(hook, &test_hook_so()).unwrap();
@@ -478,7 +487,7 @@ impl Env {
             &TOKEN_2022,
             MintOptions {
                 transfer_hook: Some(hook),
-                ..MintOptions::default()
+                ..options
             },
         );
         let validation =
@@ -655,7 +664,16 @@ impl Env {
         spec: &MarketSpec,
         amounts: [u64; 2],
     ) -> Result<(Market, Keypair), String> {
-        let lp = Keypair::new();
+        self.create_funded_market_by(spec, amounts, Keypair::new())
+    }
+
+    /// [`Env::create_funded_market`], with `lp` making the first deposit.
+    pub fn create_funded_market_by(
+        &mut self,
+        spec: &MarketSpec,
+        amounts: [u64; 2],
+        lp: Keypair,
+    ) -> Result<(Market, Keypair), String> {
         self.svm.airdrop(&lp.pubkey(), 10 * SOL).unwrap();
         for (i, (mint, token_program)) in spec.mints.iter().enumerate() {
             write_token_account(&mut self.svm, mint, token_program, &lp.pubkey(), amounts[i])
@@ -1046,9 +1064,9 @@ impl Env {
     }
 
     /// Gives a market `ctokens` cTokens the way a lending instruction would leave them: in its
-    /// cToken account and recorded in its market state. No instruction lends yet
-    /// ([Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)),
-    /// so the tests write both.
+    /// cToken account and recorded in its market state, written directly so a test can choose
+    /// any amount. klend's cToken supply does not count them: a test that redeems should lend
+    /// through `rebalance` instead.
     pub fn give_ctokens(&mut self, market: &Market, ctokens: u64) {
         let account = market.addresses.ctoken_account;
         let held = self.balance(&account);
@@ -1092,6 +1110,8 @@ pub struct MintOptions {
     pub transfer_hook: Option<Pubkey>,
     pub transfer_fee_bps: Option<u16>,
     pub permanent_delegate: bool,
+    /// The mint's secret key, for a mint at a fixed address; a new random key when `None`.
+    pub key: Option<[u8; 32]>,
 }
 
 impl Default for MintOptions {
@@ -1102,6 +1122,7 @@ impl Default for MintOptions {
             transfer_hook: None,
             transfer_fee_bps: None,
             permanent_delegate: false,
+            key: None,
         }
     }
 }

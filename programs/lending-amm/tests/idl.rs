@@ -8,7 +8,7 @@ mod common;
 
 use anchor_lang::Discriminator;
 use common::*;
-use lending_amm::events::{LiquidityAdded, MarketCreated};
+use lending_amm::events::{LiquidityAdded, MarketCreated, Rebalanced};
 use lending_amm::state::layout;
 use lending_amm::LendingAmmMarket;
 use pipeline_client::interface::discriminator;
@@ -93,6 +93,7 @@ fn its_instructions_are_pipelines_and_the_custom_actions() {
         ("pipeline_resolve_accounts", discriminator::RESOLVE_ACCOUNTS),
         ("pipeline_swap", discriminator::SWAP),
         ("add_liquidity", anchor_discriminator("add_liquidity")),
+        ("rebalance", anchor_discriminator("rebalance")),
     ];
     assert_eq!(
         idl["instructions"].as_array().unwrap().len(),
@@ -205,7 +206,8 @@ fn its_events_and_errors_are_the_programs() {
         "LiquidityAdded".into(),
         LiquidityAdded::DISCRIMINATOR.to_vec()
     )));
-    assert_eq!(events.len(), 2);
+    assert!(events.contains(&("Rebalanced".into(), Rebalanced::DISCRIMINATOR.to_vec())));
+    assert_eq!(events.len(), 3);
 
     // Errors are numbered from 6000 in the enum's order, new ones only ever appended.
     let errors = idl["errors"].as_array().unwrap();
@@ -228,6 +230,15 @@ fn its_events_and_errors_are_the_programs() {
             "LendingMarketWrongAccount",
             lending_amm::StrategyError::LendingMarketWrongAccount,
         ),
+        ("WithinBand", lending_amm::StrategyError::WithinBand),
+        (
+            "BelowMinRebalance",
+            lending_amm::StrategyError::BelowMinRebalance,
+        ),
+        (
+            "KaminoAccountWrong",
+            lending_amm::StrategyError::KaminoAccountWrong,
+        ),
     ] {
         let listed = errors.iter().find(|e| e["name"] == name).unwrap();
         assert_eq!(
@@ -236,5 +247,5 @@ fn its_events_and_errors_are_the_programs() {
             "{name}"
         );
     }
-    assert_eq!(errors.last().unwrap()["name"], "LendingMarketWrongAccount");
+    assert_eq!(errors.last().unwrap()["name"], "KaminoAccountWrong");
 }
