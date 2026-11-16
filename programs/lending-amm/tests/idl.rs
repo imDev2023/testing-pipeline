@@ -216,6 +216,18 @@ fn its_events_and_errors_are_the_programs() {
         ("BadInitData", lending_amm::StrategyError::BadInitData),
         ("Overflow", lending_amm::StrategyError::Overflow),
         ("EmptySide", lending_amm::StrategyError::EmptySide),
+        (
+            "ReserveWrongAddress",
+            lending_amm::StrategyError::ReserveWrongAddress,
+        ),
+        (
+            "ReserveWrongCollateralMint",
+            lending_amm::StrategyError::ReserveWrongCollateralMint,
+        ),
+        (
+            "LendingMarketWrongAccount",
+            lending_amm::StrategyError::LendingMarketWrongAccount,
+        ),
     ] {
         let listed = errors.iter().find(|e| e["name"] == name).unwrap();
         assert_eq!(
@@ -224,5 +236,5 @@ fn its_events_and_errors_are_the_programs() {
             "{name}"
         );
     }
-    assert_eq!(errors.last().unwrap()["name"], "EmptySide");
+    assert_eq!(errors.last().unwrap()["name"], "LendingMarketWrongAccount");
 }

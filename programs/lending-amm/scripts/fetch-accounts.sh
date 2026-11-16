@@ -1,33 +1,35 @@
 #!/usr/bin/env bash
-# Copies the devnet accounts the lending AMM's local demo run needs into fixtures/accounts/,
-# where scripts/local-validator.sh loads every JSON file it finds, at its address:
+# Clones the accounts of our Kamino lending market on devnet into fixtures/accounts/, where
+# scripts/local-validator.sh loads every JSON file it finds, at its address, for the lending
+# AMM's local demo run (docs/toolchain.md, "Local demo run"):
 #
-#   - the collateral (cToken) mint of each reserve of our Kamino lending market on devnet,
-#     from deployments/kamino-devnet.json, since creating a market creates its cToken account
-#     for the lent mint's collateral mint.
+#   - for each reserve in deployments/kamino-devnet.json: the reserve, its liquidity and
+#     collateral mints, and its liquidity supply, fee vault and collateral supply token
+#     accounts; and the lending market (and its authority, when it holds an account), all read
+#     at one slot by scripts/kamino_accounts.py;
+#   - fixtures/accounts/warp-slot, the slot after that one, which scripts/local-validator.sh
+#     warps the validator to, so that Kamino's own slots are never in the validator's future.
 #
-#   bash programs/lending-amm/scripts/fetch-accounts.sh    # needs the Solana CLI and devnet RPC
+#   bash programs/lending-amm/scripts/fetch-accounts.sh    # needs python3, curl and devnet RPC
 #
-# The klend program and the rest of our lending market's accounts join these fixtures with
-# Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve (#79). Nothing
-# here is committed: fixtures/ is gitignored.
+# Devnet's klend itself comes from programs/lending-amm/scripts/fetch-klend.sh, checked against
+# its pinned hash. Nothing here is committed: fixtures/ is gitignored. RPC_URL overrides
+# devnet's public RPC.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 OUT="${FIXTURES_DIR:-$ROOT/fixtures}/accounts"
-RPC="${RPC_URL:-https://api.devnet.solana.com}"
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+python3 "$ROOT/programs/lending-amm/scripts/kamino_accounts.py" dump --cluster devnet --out "$work"
+
 mkdir -p "$OUT"
-python3 - "$ROOT/deployments/kamino-devnet.json" <<'PY' | while read -r label address; do
-import json, sys
-deployment = json.load(open(sys.argv[1]))
-for name, reserve in deployment["reserves"].items():
-    print(f"collateral-mint-{name} {reserve['collateralMint']}")
-PY
-  for attempt in 1 2 3 4 5; do
-    if solana account -u "$RPC" "$address" --output json-compact -o "$OUT/$label.json" >/dev/null; then
-      break
-    fi
-    [ "$attempt" -eq 5 ] && { echo "could not fetch $address" >&2; exit 1; }
-    sleep 3
-  done
-  echo "$label $address -> $OUT/$label.json"
+rm -f "$OUT"/kamino-*.json "$OUT"/collateral-mint-*.json "$OUT/warp-slot"
+for file in "$work"/*.json; do
+  name="$(basename "$file")"
+  [ "$name" = manifest.json ] && continue
+  cp "$file" "$OUT/kamino-$name"
 done
+slot="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["slot"] + 1)' "$work/manifest.json")"
+echo "$slot" > "$OUT/warp-slot"
+echo "Kamino accounts of our devnet lending market -> $OUT/kamino-*.json; the validator warps to slot $slot"

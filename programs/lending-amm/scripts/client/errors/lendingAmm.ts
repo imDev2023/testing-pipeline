@@ -65,6 +65,24 @@ export const LENDING_AMM_ERROR__LENT_VALUE_UNAVAILABLE = 0x1786; // 6022
 export const LENDING_AMM_ERROR__OVERFLOW = 0x1787; // 6023
 /** EmptySide: A side of the market holds nothing to price a deposit against */
 export const LENDING_AMM_ERROR__EMPTY_SIDE = 0x1788; // 6024
+/** ReserveWrongAddress: The Kamino reserve is not the one the market's lent mint lends to */
+export const LENDING_AMM_ERROR__RESERVE_WRONG_ADDRESS = 0x1789; // 6025
+/** ReserveNotKamino: The Kamino reserve is not owned by Kamino Lend */
+export const LENDING_AMM_ERROR__RESERVE_NOT_KAMINO = 0x178a; // 6026
+/** ReserveWrongSize: The Kamino reserve does not have a reserve's size */
+export const LENDING_AMM_ERROR__RESERVE_WRONG_SIZE = 0x178b; // 6027
+/** ReserveWrongDiscriminator: The Kamino reserve does not carry a reserve's discriminator */
+export const LENDING_AMM_ERROR__RESERVE_WRONG_DISCRIMINATOR = 0x178c; // 6028
+/** ReserveWrongLendingMarket: The Kamino reserve belongs to another lending market */
+export const LENDING_AMM_ERROR__RESERVE_WRONG_LENDING_MARKET = 0x178d; // 6029
+/** ReserveWrongLiquidityMint: The Kamino reserve lends another mint */
+export const LENDING_AMM_ERROR__RESERVE_WRONG_LIQUIDITY_MINT = 0x178e; // 6030
+/** ReserveWrongCollateralMint: The Kamino reserve has another collateral mint */
+export const LENDING_AMM_ERROR__RESERVE_WRONG_COLLATERAL_MINT = 0x178f; // 6031
+/** ReserveSupplyInvalid: The Kamino reserve's total supply cannot be computed */
+export const LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID = 0x1790; // 6032
+/** LendingMarketWrongAccount: The Kamino lending market account is not the lent mint's lending market */
+export const LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT = 0x1791; // 6033
 
 export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__BAD_INIT_DATA
@@ -75,6 +93,7 @@ export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__EQUAL_MINTS
   | typeof LENDING_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED
   | typeof LENDING_AMM_ERROR__FIRST_DEPOSIT_TOO_SMALL
+  | typeof LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT
   | typeof LENDING_AMM_ERROR__LENT_MINT_NOT_LISTED
   | typeof LENDING_AMM_ERROR__LENT_MINT_NOT_SPL_TOKEN
   | typeof LENDING_AMM_ERROR__LENT_VALUE_UNAVAILABLE
@@ -84,6 +103,14 @@ export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__NOT_A_MINT
   | typeof LENDING_AMM_ERROR__NOT_PIPELINE
   | typeof LENDING_AMM_ERROR__OVERFLOW
+  | typeof LENDING_AMM_ERROR__RESERVE_NOT_KAMINO
+  | typeof LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID
+  | typeof LENDING_AMM_ERROR__RESERVE_WRONG_ADDRESS
+  | typeof LENDING_AMM_ERROR__RESERVE_WRONG_COLLATERAL_MINT
+  | typeof LENDING_AMM_ERROR__RESERVE_WRONG_DISCRIMINATOR
+  | typeof LENDING_AMM_ERROR__RESERVE_WRONG_LENDING_MARKET
+  | typeof LENDING_AMM_ERROR__RESERVE_WRONG_LIQUIDITY_MINT
+  | typeof LENDING_AMM_ERROR__RESERVE_WRONG_SIZE
   | typeof LENDING_AMM_ERROR__WOULD_EMPTY_SIDE
   | typeof LENDING_AMM_ERROR__WRONG_ACCOUNT
   | typeof LENDING_AMM_ERROR__WRONG_COLLATERAL_MINT
@@ -104,6 +131,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__EQUAL_MINTS]: `A market's two mints must differ`,
     [LENDING_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED]: `Exact-out swaps are not supported`,
     [LENDING_AMM_ERROR__FIRST_DEPOSIT_TOO_SMALL]: `The first deposit is too small to mint any shares above the locked minimum`,
+    [LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT]: `The Kamino lending market account is not the lent mint's lending market`,
     [LENDING_AMM_ERROR__LENT_MINT_NOT_LISTED]: `The lent mint is not on this cluster's list of lent mints`,
     [LENDING_AMM_ERROR__LENT_MINT_NOT_SPL_TOKEN]: `The lent mint must be owned by SPL Token`,
     [LENDING_AMM_ERROR__LENT_VALUE_UNAVAILABLE]: `The market holds cTokens, which this version cannot value yet`,
@@ -113,6 +141,14 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__NOT_A_MINT]: `A market's mints must be SPL Token or Token-2022 mints`,
     [LENDING_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
     [LENDING_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
+    [LENDING_AMM_ERROR__RESERVE_NOT_KAMINO]: `The Kamino reserve is not owned by Kamino Lend`,
+    [LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID]: `The Kamino reserve's total supply cannot be computed`,
+    [LENDING_AMM_ERROR__RESERVE_WRONG_ADDRESS]: `The Kamino reserve is not the one the market's lent mint lends to`,
+    [LENDING_AMM_ERROR__RESERVE_WRONG_COLLATERAL_MINT]: `The Kamino reserve has another collateral mint`,
+    [LENDING_AMM_ERROR__RESERVE_WRONG_DISCRIMINATOR]: `The Kamino reserve does not carry a reserve's discriminator`,
+    [LENDING_AMM_ERROR__RESERVE_WRONG_LENDING_MARKET]: `The Kamino reserve belongs to another lending market`,
+    [LENDING_AMM_ERROR__RESERVE_WRONG_LIQUIDITY_MINT]: `The Kamino reserve lends another mint`,
+    [LENDING_AMM_ERROR__RESERVE_WRONG_SIZE]: `The Kamino reserve does not have a reserve's size`,
     [LENDING_AMM_ERROR__WOULD_EMPTY_SIDE]: `The trade would pay out a side's whole reserve`,
     [LENDING_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,
     [LENDING_AMM_ERROR__WRONG_COLLATERAL_MINT]: `The collateral mint is not the lent mint's Kamino reserve's`,

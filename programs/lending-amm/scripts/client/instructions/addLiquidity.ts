@@ -74,6 +74,7 @@ export type AddLiquidityInstruction<
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
   TAccountSystemProgram extends string | AccountMeta<string> =
     "11111111111111111111111111111111",
+  TAccountReserve extends string | AccountMeta<string> = string,
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
 > = Instruction<TProgram> &
   InstructionWithData<ReadonlyUint8Array> &
@@ -124,6 +125,9 @@ export type AddLiquidityInstruction<
       TAccountSystemProgram extends string
         ? ReadonlyAccount<TAccountSystemProgram>
         : TAccountSystemProgram,
+      TAccountReserve extends string
+        ? ReadonlyAccount<TAccountReserve>
+        : TAccountReserve,
       ...TRemainingAccounts,
     ]
   >;
@@ -192,6 +196,7 @@ export type AddLiquidityAsyncInput<
     InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
+  TAccountReserve extends InstructionAccountInput = InstructionAccountInput,
 > = {
   /** The LP, who pays for their shares account if it is missing. */
   lp: TAccountLp;
@@ -211,6 +216,8 @@ export type AddLiquidityAsyncInput<
   /** SPL Token, the LP mint's program. */
   tokenProgram?: TAccountTokenProgram;
   systemProgram?: TAccountSystemProgram;
+  /** The Kamino reserve the lent mint lends to, read-only, from which the lent side is valued. */
+  reserve: TAccountReserve;
   max0: AddLiquidityInstructionDataArgs["max0"];
   max1: AddLiquidityInstructionDataArgs["max1"];
   minLp: AddLiquidityInstructionDataArgs["minLp"];
@@ -232,6 +239,7 @@ export async function getAddLiquidityInstructionAsync<
   TAccountTokenProgram1 extends InstructionAccountInput,
   TAccountTokenProgram extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
+  TAccountReserve extends InstructionAccountInput,
   TProgramAddress extends Address = typeof LENDING_AMM_PROGRAM_ADDRESS,
 >(
   input: AddLiquidityAsyncInput<
@@ -249,7 +257,8 @@ export async function getAddLiquidityInstructionAsync<
     TAccountTokenProgram0,
     TAccountTokenProgram1,
     TAccountTokenProgram,
-    TAccountSystemProgram
+    TAccountSystemProgram,
+    TAccountReserve
   >,
   config?: {
     programAddress?: TProgramAddress | { readonly address: TProgramAddress };
@@ -316,6 +325,10 @@ export async function getAddLiquidityInstructionAsync<
     ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountReserve,
+      InstructionAccountInputAddress<TAccountReserve>
     >
   >
 > {
@@ -383,6 +396,11 @@ export async function getAddLiquidityInstructionAsync<
       isSigner: false,
       isWritable: false,
     },
+    reserve: {
+      value: input.reserve ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
   };
   const accounts = originalAccounts as Record<
     keyof typeof originalAccounts,
@@ -442,6 +460,7 @@ export async function getAddLiquidityInstructionAsync<
       getAccountMeta("tokenProgram1", accounts.tokenProgram1),
       getAccountMeta("tokenProgram", accounts.tokenProgram),
       getAccountMeta("systemProgram", accounts.systemProgram),
+      getAccountMeta("reserve", accounts.reserve),
     ],
     data: getAddLiquidityInstructionDataEncoder().encode(
       args as AddLiquidityInstructionDataArgs,
@@ -508,6 +527,10 @@ export async function getAddLiquidityInstructionAsync<
     ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountReserve,
+      InstructionAccountInputAddress<TAccountReserve>
     >
   >);
 }
@@ -532,6 +555,7 @@ export type AddLiquidityInput<
     InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
+  TAccountReserve extends InstructionAccountInput = InstructionAccountInput,
 > = {
   /** The LP, who pays for their shares account if it is missing. */
   lp: TAccountLp;
@@ -551,6 +575,8 @@ export type AddLiquidityInput<
   /** SPL Token, the LP mint's program. */
   tokenProgram?: TAccountTokenProgram;
   systemProgram?: TAccountSystemProgram;
+  /** The Kamino reserve the lent mint lends to, read-only, from which the lent side is valued. */
+  reserve: TAccountReserve;
   max0: AddLiquidityInstructionDataArgs["max0"];
   max1: AddLiquidityInstructionDataArgs["max1"];
   minLp: AddLiquidityInstructionDataArgs["minLp"];
@@ -572,6 +598,7 @@ export function getAddLiquidityInstruction<
   TAccountTokenProgram1 extends InstructionAccountInput,
   TAccountTokenProgram extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
+  TAccountReserve extends InstructionAccountInput,
   TProgramAddress extends Address = typeof LENDING_AMM_PROGRAM_ADDRESS,
 >(
   input: AddLiquidityInput<
@@ -589,7 +616,8 @@ export function getAddLiquidityInstruction<
     TAccountTokenProgram0,
     TAccountTokenProgram1,
     TAccountTokenProgram,
-    TAccountSystemProgram
+    TAccountSystemProgram,
+    TAccountReserve
   >,
   config?: {
     programAddress?: TProgramAddress | { readonly address: TProgramAddress };
@@ -655,6 +683,10 @@ export function getAddLiquidityInstruction<
   ResolvedInstructionAccountMeta<
     TAccountSystemProgram,
     InstructionAccountInputAddress<TAccountSystemProgram>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountReserve,
+    InstructionAccountInputAddress<TAccountReserve>
   >
 > {
   // Program address.
@@ -721,6 +753,11 @@ export function getAddLiquidityInstruction<
       isSigner: false,
       isWritable: false,
     },
+    reserve: {
+      value: input.reserve ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
   };
   const accounts = originalAccounts as Record<
     keyof typeof originalAccounts,
@@ -757,6 +794,7 @@ export function getAddLiquidityInstruction<
       getAccountMeta("tokenProgram1", accounts.tokenProgram1),
       getAccountMeta("tokenProgram", accounts.tokenProgram),
       getAccountMeta("systemProgram", accounts.systemProgram),
+      getAccountMeta("reserve", accounts.reserve),
     ],
     data: getAddLiquidityInstructionDataEncoder().encode(
       args as AddLiquidityInstructionDataArgs,
@@ -823,6 +861,10 @@ export function getAddLiquidityInstruction<
     ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountReserve,
+      InstructionAccountInputAddress<TAccountReserve>
     >
   >);
 }
@@ -851,6 +893,8 @@ export type ParsedAddLiquidityInstruction<
     /** SPL Token, the LP mint's program. */
     tokenProgram: TAccountMetas[13];
     systemProgram: TAccountMetas[14];
+    /** The Kamino reserve the lent mint lends to, read-only, from which the lent side is valued. */
+    reserve: TAccountMetas[15];
   };
   data: AddLiquidityInstructionData;
 };
@@ -863,12 +907,12 @@ export function parseAddLiquidityInstruction<
     InstructionWithAccounts<TAccountMetas> &
     InstructionWithData<ReadonlyUint8Array>,
 ): ParsedAddLiquidityInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 15) {
+  if (instruction.accounts.length < 16) {
     throw new SolanaError(
       SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
       {
         actualAccountMetas: instruction.accounts.length,
-        expectedAccountMetas: 15,
+        expectedAccountMetas: 16,
       },
     );
   }
@@ -896,6 +940,7 @@ export function parseAddLiquidityInstruction<
       tokenProgram1: getNextAccount(),
       tokenProgram: getNextAccount(),
       systemProgram: getNextAccount(),
+      reserve: getNextAccount(),
     },
     data: getAddLiquidityInstructionDataDecoder().decode(instruction.data),
   };

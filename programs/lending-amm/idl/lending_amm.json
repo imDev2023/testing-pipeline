@@ -139,6 +139,12 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "reserve",
+          "docs": [
+            "The Kamino reserve the lent mint lends to, read-only, from which the lent side is valued."
+          ]
         }
       ],
       "args": [
@@ -726,6 +732,51 @@
       "code": 6024,
       "name": "EmptySide",
       "msg": "A side of the market holds nothing to price a deposit against"
+    },
+    {
+      "code": 6025,
+      "name": "ReserveWrongAddress",
+      "msg": "The Kamino reserve is not the one the market's lent mint lends to"
+    },
+    {
+      "code": 6026,
+      "name": "ReserveNotKamino",
+      "msg": "The Kamino reserve is not owned by Kamino Lend"
+    },
+    {
+      "code": 6027,
+      "name": "ReserveWrongSize",
+      "msg": "The Kamino reserve does not have a reserve's size"
+    },
+    {
+      "code": 6028,
+      "name": "ReserveWrongDiscriminator",
+      "msg": "The Kamino reserve does not carry a reserve's discriminator"
+    },
+    {
+      "code": 6029,
+      "name": "ReserveWrongLendingMarket",
+      "msg": "The Kamino reserve belongs to another lending market"
+    },
+    {
+      "code": 6030,
+      "name": "ReserveWrongLiquidityMint",
+      "msg": "The Kamino reserve lends another mint"
+    },
+    {
+      "code": 6031,
+      "name": "ReserveWrongCollateralMint",
+      "msg": "The Kamino reserve has another collateral mint"
+    },
+    {
+      "code": 6032,
+      "name": "ReserveSupplyInvalid",
+      "msg": "The Kamino reserve's total supply cannot be computed"
+    },
+    {
+      "code": 6033,
+      "name": "LendingMarketWrongAccount",
+      "msg": "The Kamino lending market account is not the lent mint's lending market"
     }
   ],
   "types": [

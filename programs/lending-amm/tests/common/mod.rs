@@ -16,6 +16,8 @@
 
 #![allow(dead_code)]
 
+pub mod kamino;
+
 use std::path::PathBuf;
 
 use anchor_lang::{AccountDeserialize, AnchorDeserialize, Discriminator};
@@ -244,13 +246,16 @@ pub fn create_market_instruction(
     })
 }
 
-/// A VM with the router configured, this strategy deployed and registered, and the
-/// cluster's lent mints and their Kamino collateral mints in place.
+/// A VM with the router configured, this strategy deployed and registered, and the Kamino
+/// accounts of the cluster this build lends on, dumped from that cluster, with the clock
+/// just past the slot they were read at.
 pub struct Env {
     pub svm: LiteSVM,
     /// Pays for everything, is the router's admin and the strategy's upgrade authority, and
     /// is the mint authority of the mints the tests create.
     pub admin: Keypair,
+    /// The Kamino accounts in the VM, as dumped.
+    pub kamino: kamino::Fixtures,
 }
 
 impl Env {
@@ -262,17 +267,17 @@ impl Env {
         set_upgrade_authority(&mut svm, &client::PROGRAM_ID, &admin.pubkey());
         svm.add_program(strategy_id(), &strategy_so()).unwrap();
         set_upgrade_authority(&mut svm, &strategy_id(), &admin.pubkey());
-        let mut env = Env { svm, admin };
-
-        // The lent mints and their reserves' collateral mints, as SPL Token mints with the
-        // admin as mint authority, so the tests can mint them (WSOL is minted by writing
-        // token accounts, as its native mint has no authority).
-        for (i, entry) in LENT_MINTS.iter().enumerate() {
-            let decimals = if i == 0 { 9 } else { 6 };
-            let authority = (i != 0).then(|| env.admin.pubkey());
-            env.write_mint(&ck(&entry.mint), &TOKEN, decimals, authority);
-            env.write_mint(&ck(&entry.collateral_mint), &TOKEN, decimals, None);
-        }
+        let fixtures = kamino::Fixtures::of_build();
+        // The lent mints, their reserves, lending market, collateral mints and token
+        // accounts, as the cluster had them at one slot; the clock then starts one slot and
+        // one second after it, so Kamino's own timestamps are never in the future.
+        fixtures.install(&mut svm);
+        let mut env = Env {
+            svm,
+            admin,
+            kamino: fixtures,
+        };
+        env.set_clock(env.kamino.slot + 1, env.kamino.unix_timestamp + 1);
 
         // The router's one-time configuration, as on devnet: a 0.01 SOL listing fee.
         let fee_recipient = Pubkey::new_unique();
@@ -692,6 +697,7 @@ impl Env {
             AccountMeta::new_readonly(market.token_programs[1], false),
             AccountMeta::new_readonly(TOKEN, false),
             AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
+            AccountMeta::new_readonly(self.reserve_of(market), false),
         ];
         for hooks in &market.hook_accounts {
             accounts.extend(hooks.iter().cloned());
@@ -972,6 +978,93 @@ impl Env {
     /// A mint's decimals.
     pub fn mint_decimals(&self, mint: &Pubkey) -> u8 {
         self.svm.get_account(mint).expect("mint").data[44]
+    }
+
+    /// Sets the clock's slot and Unix time.
+    pub fn set_clock(&mut self, slot: u64, unix_timestamp: i64) {
+        self.svm.warp_to_slot(slot);
+        let mut clock: solana_clock::Clock = self.svm.get_sysvar();
+        clock.slot = slot;
+        clock.unix_timestamp = unix_timestamp;
+        self.svm.set_sysvar(&clock);
+    }
+
+    /// The clock.
+    pub fn clock(&self) -> solana_clock::Clock {
+        self.svm.get_sysvar()
+    }
+
+    /// Moves the clock on by `slots` slots and `seconds` seconds.
+    pub fn advance_clock(&mut self, slots: u64, seconds: i64) {
+        let clock = self.clock();
+        self.set_clock(clock.slot + slots, clock.unix_timestamp + seconds);
+    }
+
+    /// Deploys klend's program for this build's cluster, at its address.
+    pub fn load_klend(&mut self) {
+        if self
+            .svm
+            .get_account(&kamino::klend())
+            .is_none_or(|a| !a.executable)
+        {
+            self.svm
+                .add_program(kamino::klend(), &kamino::klend_so())
+                .unwrap();
+        }
+    }
+
+    /// The Kamino reserve a market's lent side lends to.
+    pub fn reserve_of(&self, market: &Market) -> Pubkey {
+        let lent_mint = market.mints[market.lent_index];
+        LENT_MINTS
+            .iter()
+            .find(|entry| ck(&entry.mint) == lent_mint)
+            .map(|entry| ck(&entry.reserve))
+            .expect("a listed lent mint")
+    }
+
+    /// The index in `LENT_MINTS` of a market's lent mint.
+    pub fn lent_entry_of(&self, market: &Market) -> usize {
+        let lent_mint = market.mints[market.lent_index];
+        LENT_MINTS
+            .iter()
+            .position(|entry| ck(&entry.mint) == lent_mint)
+            .expect("a listed lent mint")
+    }
+
+    /// The raw bytes of an account.
+    pub fn data(&self, address: &Pubkey) -> Vec<u8> {
+        self.svm.get_account(address).expect("account").data
+    }
+
+    /// Overwrites part of an account's data, as the tests make Kamino states by editing
+    /// cloned accounts.
+    pub fn patch(&mut self, address: &Pubkey, offset: usize, bytes: &[u8]) {
+        let mut account = self.svm.get_account(address).expect("account");
+        account.data[offset..offset + bytes.len()].copy_from_slice(bytes);
+        self.svm.set_account(*address, account).unwrap();
+    }
+
+    /// Gives a market `ctokens` cTokens the way a lending instruction would leave them: in its
+    /// cToken account and recorded in its market state. No instruction lends yet
+    /// ([Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)),
+    /// so the tests write both.
+    pub fn give_ctokens(&mut self, market: &Market, ctokens: u64) {
+        let account = market.addresses.ctoken_account;
+        let held = self.balance(&account);
+        self.patch(&account, 64, &(held + ctokens).to_le_bytes());
+        let state = market.market_state;
+        let recorded = self.market_state(&state).ctokens;
+        self.patch(
+            &state,
+            lending_amm::state::layout::CTOKENS,
+            &(recorded + ctokens).to_le_bytes(),
+        );
+    }
+
+    /// A wallet's token account of `mint` (SPL Token) holding `amount`, for Kamino's mints.
+    pub fn spl_account(&mut self, wallet: &Pubkey, mint: &Pubkey, amount: u64) -> Pubkey {
+        write_token_account(&mut self.svm, mint, &TOKEN, wallet, amount).unwrap()
     }
 }
 

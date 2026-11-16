@@ -79,3 +79,26 @@ fn a_funded_usdc_market_lending_at_index_0_passes_every_check() {
         .unwrap();
     assert_conforms(&env, &market);
 }
+
+#[test]
+fn a_funded_market_holding_ctokens_passes_every_check() {
+    // As if rebalance had lent three quarters of the lent side: quotes and swaps value the
+    // cTokens from the Kamino reserve dumped from this build's cluster.
+    for lent_entry in 0..2 {
+        let mut env = Env::new();
+        let other = env.create_mint(&TOKEN);
+        let (lent_mint, buffer) = [(wsol(), 50 * SOL), (lent(1).0, 50_000_000_000)][lent_entry];
+        let spec = MarketSpec {
+            mints: [(other, TOKEN), (lent_mint, TOKEN)],
+            params: lending_amm::InitParams {
+                lent_index: 1,
+                lp_fee_bps: 30,
+            },
+        };
+        let (market, _) = env
+            .create_funded_market(&spec, [1_000_000_000_000, buffer])
+            .unwrap();
+        env.give_ctokens(&market, 3 * buffer);
+        assert_conforms(&env, &market);
+    }
+}
