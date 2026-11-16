@@ -74,6 +74,20 @@ impl InitParams {
     }
 }
 
+/// Whether a rate (or a range's end) is inside the cap, `MAX_TAX_BPS`: the one place this
+/// rule is written, for the rules below and for the pricing, which re-checks it.
+pub fn within_cap(bps: u16) -> bool {
+    bps <= MAX_TAX_BPS
+}
+
+/// Whether the shares and the burn share sum to exactly 10,000, the whole of the creator's
+/// part of the tax (each is in basis points of it): the one place this rule is written,
+/// for the rules below and for the split, which re-checks it.
+pub fn shares_are_whole(shares: &[u16; MAX_RECIPIENTS], burn_share_bps: u16) -> bool {
+    let total: u32 = shares.iter().map(|&share| share as u32).sum::<u32>() + burn_share_bps as u32;
+    total as u64 == pipeline_strategy_interface::BPS_DENOMINATOR
+}
+
 /// The rules on the buy and sell tax (`rates`, in that order), each inside its `[min, max]`
 /// range, every range inside `[0, MAX_TAX_BPS]`: checked at creation and by `set_taxes`,
 /// so no sequence of calls can take a rate past its range or the cap.
@@ -82,7 +96,7 @@ pub fn check_rates(
     ranges: [[u16; 2]; 2],
 ) -> core::result::Result<(), StrategyError> {
     for (rate, [min, max]) in rates.into_iter().zip(ranges) {
-        if max > MAX_TAX_BPS {
+        if !within_cap(max) {
             return Err(StrategyError::TaxAboveCap);
         }
         if min > max {
@@ -120,9 +134,7 @@ pub fn check_split(
     if shares[used..].iter().any(|&share| share != 0) {
         return Err(StrategyError::ShareWithoutRecipient);
     }
-    let total: u32 = shares.iter().map(|&share| share as u32).sum::<u32>() + burn_share_bps as u32;
-    // Every share is in basis points of the creator's part of the tax.
-    if total as u64 != pipeline_strategy_interface::BPS_DENOMINATOR {
+    if !shares_are_whole(shares, burn_share_bps) {
         return Err(StrategyError::SharesNotWhole);
     }
     if burn_share_bps > 0 && NATIVE_MINTS.contains(tax_mint) {
@@ -137,4 +149,30 @@ pub fn used_slots(recipients: &[Pubkey; MAX_RECIPIENTS]) -> usize {
         .iter()
         .take_while(|recipient| **recipient != Pubkey::default())
         .count()
+}
+
+// Kani proof of the rule on rates (`cargo kani`, docs/toolchain.md), which creation and
+// `set_taxes` both apply; the property IDs are docs/security/tax-amm/maths-properties.md's.
+// The rule on shares has no harness: `check_split`'s slices at a symbolic number of used
+// slots did not finish in 30 minutes. The split itself refuses shares that are not whole for
+// every tax (`split::proofs`), which is what P1 rests on, and the LiteSVM tests check the
+// refusal at creation and in `set_recipients`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// T2 where rates are stored: for any rates and ranges, the rules accept them only
+    /// with every range inside `[0, MAX_TAX_BPS]` and each rate inside its range, so no
+    /// market state ever holds a rate above the cap, at creation or after `set_taxes`.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn the_rules_accept_only_capped_rates() {
+        let rates: [u16; 2] = kani::any();
+        let ranges: [[u16; 2]; 2] = kani::any();
+        if check_rates(rates, ranges).is_ok() {
+            for (rate, [min, max]) in rates.into_iter().zip(ranges) {
+                assert!(min <= rate && rate <= max && max <= MAX_TAX_BPS);
+            }
+        }
+    }
 }
