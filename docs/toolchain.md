@@ -450,7 +450,9 @@ The repo must be public before the first deploy of a program (`BAR-21`), since t
 - it records the program id, the executable hash, the commit, the image, the upgrade authority, the payer and the deploy slot under the program's name in `deployments/devnet.json` (on a local validator, only where `--record` says), moving the program's earlier deploy into its `history`, newest first, so a metadata still naming that deploy passes `tests/published.rs` until it is pinned again;
 - an uncommitted `deployments/devnet.json` alone does not count as a change, so several programs can be deployed before their records go through one PR.
 
-`--build-only` builds and prints the hash and sends nothing; `scripts/test-deploy-devnet.sh` tests the script without the network or Docker.
+`--build-only` builds and prints the hash and sends nothing, `--out <dir>` keeps the built program, and `scripts/test-deploy-devnet.sh` tests the script without the network or Docker.
+The Docker image builds with the Solana 4.3.0 release's cargo-build-sbf and CI with 4.6.0, both on platform tools v1.58, so before a deploy the program's tests run on the very bytes to be deployed: `scripts/deploy-devnet.sh tax-amm --build-only --out <dir>`, then `SBF_OUT_DIR=<dir> cargo test -p tax-amm` from `programs/`.
+On 2026-11-16 every tax AMM test, the fuzzer, the compute ceilings and `pipeline-check` among them, passed on the Docker build of `f691993`.
 It needs solana-verify 0.5.2 or later, which `bash scripts/install-toolchain.sh verify` installs beside the machine's older one and `toolchain-env.sh` puts first, and Docker Desktop running.
 A Docker build from a fresh export fetches and compiles every dependency, 10 to 12 minutes in all on the owner's Mac (the compile itself under 2 minutes), and the first one also pulls the image, 17 minutes then.
 Built from `main` at `f691993` on 2026-11-16, the tax AMM's executable hash was `6b92098a176ee863e2176a687e4bac60569348f077d9ae04b71f73a5643e8be5` (341,336 bytes), and two builds from later commits that left `programs/tax-amm` unchanged gave the same hash.
@@ -462,6 +464,8 @@ A program's metadata cannot name the commit that holds it, and a squash merge le
 
    ```sh
    source scripts/toolchain-env.sh
+   scripts/deploy-devnet.sh tax-amm --build-only --out <scratchpad>/verified
+   (cd programs && SBF_OUT_DIR=<scratchpad>/verified cargo test -p tax-amm)
    scripts/deploy-devnet.sh tax-amm
    cd programs/tax-amm/scripts
    pnpm demo --cluster devnet \

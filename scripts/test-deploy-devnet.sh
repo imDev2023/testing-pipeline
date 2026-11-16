@@ -155,6 +155,13 @@ else
   fail "--build-only: $(cat "$work/out") / $(cat "$work/calls")"
 fi
 
+# --out keeps the built program, so the tests can run on the very bytes that are deployed.
+if run toy --build-only --out "$work/built" && [ "$(cat "$work/built/toy.so")" = bytes ]; then
+  pass "--out keeps the built program"
+else
+  fail "--out: $(cat "$work/out")"
+fi
+
 # A deploy: paid by the wallet, under the upgrade authority, then checked and recorded.
 if run toy; then
   deploy_call="$(grep "program deploy" "$work/calls")"

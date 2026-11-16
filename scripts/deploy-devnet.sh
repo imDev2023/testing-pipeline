@@ -16,13 +16,15 @@
 #      program's earlier deploy into its `history`.
 #
 #   scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only]
-#                            [--record <file>]
+#                            [--record <file>] [--out <dir>]
 #
 #   <program>      a deployable workspace member, such as tax-amm
 #   --url          devnet (the default) or a local validator's RPC URL, for a rehearsal
 #   --build-only   build and print the executable hash; send nothing
 #   --record       where the record goes; required on a local validator, and on devnet it is
 #                  deployments/devnet.json
+#   --out          also copy the built program into this directory, so the program's tests
+#                  can run on the very bytes deployed (SBF_OUT_DIR=<dir> cargo test -p <program>)
 #
 # Keys come from $KEYS_DIR (default ~/.config/testing-pipeline/devnet): wallet.json,
 # upgrade-authority.json and <program>.json, the program's own keypair. Needs the toolchain
@@ -37,7 +39,7 @@ DEVNET_GENESIS=EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
 MIN_VERIFY_VERSION=0.5.2
 
 usage() {
-  echo "Usage: scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only] [--record <file>]" >&2
+  echo "Usage: scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only] [--record <file>] [--out <dir>]" >&2
   exit 2
 }
 stop() {
@@ -51,11 +53,13 @@ shift
 url=devnet
 build_only=false
 record=""
+out=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --url) url="${2:?--url needs a value}"; shift 2 ;;
     --build-only) build_only=true; shift ;;
     --record) record="${2:?--record needs a value}"; shift 2 ;;
+    --out) out="${2:?--out needs a value}"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -125,6 +129,11 @@ so="$build_dir/programs/target/deploy/$lib.so"
 [ -f "$so" ] || stop "the build wrote no $so"
 hash="$(solana-verify get-executable-hash "$so")"
 echo "Executable hash: $hash"
+if [ -n "$out" ]; then
+  mkdir -p "$out"
+  cp "$so" "$out/$lib.so"
+  echo "Copied to $out/$lib.so"
+fi
 if $build_only; then
   exit 0
 fi
