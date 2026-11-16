@@ -41,6 +41,7 @@ import {
   type MarketStateArgs,
 } from "../accounts/index.ts";
 import {
+  getPayRewardsInstruction,
   getPipelineInitMarketInstructionAsync,
   getPipelineMarketInfoInstruction,
   getPipelineQuoteInstruction,
@@ -49,6 +50,11 @@ import {
   getPipelineSwapInstruction,
   getPlaceWallInstruction,
   getSeedInstruction,
+  getSetFeeRecipientInstruction,
+  getSetRewardsRecipientInstruction,
+  getSettleInstruction,
+  getSweepFeesInstruction,
+  parsePayRewardsInstruction,
   parsePipelineInitMarketInstruction,
   parsePipelineMarketInfoInstruction,
   parsePipelineQuoteInstruction,
@@ -57,6 +63,11 @@ import {
   parsePipelineSwapInstruction,
   parsePlaceWallInstruction,
   parseSeedInstruction,
+  parseSetFeeRecipientInstruction,
+  parseSetRewardsRecipientInstruction,
+  parseSettleInstruction,
+  parseSweepFeesInstruction,
+  type ParsedPayRewardsInstruction,
   type ParsedPipelineInitMarketInstruction,
   type ParsedPipelineMarketInfoInstruction,
   type ParsedPipelineQuoteInstruction,
@@ -65,6 +76,11 @@ import {
   type ParsedPipelineSwapInstruction,
   type ParsedPlaceWallInstruction,
   type ParsedSeedInstruction,
+  type ParsedSetFeeRecipientInstruction,
+  type ParsedSetRewardsRecipientInstruction,
+  type ParsedSettleInstruction,
+  type ParsedSweepFeesInstruction,
+  type PayRewardsInput,
   type PipelineInitMarketAsyncInput,
   type PipelineMarketInfoInput,
   type PipelineQuoteInput,
@@ -73,6 +89,10 @@ import {
   type PipelineSwapInput,
   type PlaceWallInput,
   type SeedInput,
+  type SetFeeRecipientInput,
+  type SetRewardsRecipientInput,
+  type SettleInput,
+  type SweepFeesInput,
 } from "../instructions/index.ts";
 import {
   findMarketStatePda,
@@ -114,15 +134,23 @@ export function identifyBuyWallAmmAccount(
 
 export const BuyWallAmmEvent = {
   0: "CapLowered",
-  1: "MarketCreated",
-  2: "MarketSeeded",
-  3: "Trimmed",
-  4: "WallPlaced",
+  1: "FeesSwept",
+  2: "MarketCreated",
+  3: "MarketSeeded",
+  4: "RecipientChanged",
+  5: "RewardsPaid",
+  6: "Settled",
+  7: "Trimmed",
+  8: "WallPlaced",
   CapLowered: 0,
-  MarketCreated: 1,
-  MarketSeeded: 2,
-  Trimmed: 3,
-  WallPlaced: 4,
+  FeesSwept: 1,
+  MarketCreated: 2,
+  MarketSeeded: 3,
+  RecipientChanged: 4,
+  RewardsPaid: 5,
+  Settled: 6,
+  Trimmed: 7,
+  WallPlaced: 8,
 } as const;
 
 export type BuyWallAmmEvent = (typeof BuyWallAmmEvent)[Exclude<
@@ -149,6 +177,17 @@ export function identifyBuyWallAmmEvent(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([96, 218, 115, 136, 74, 170, 202, 172]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmEvent.FeesSwept;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
         new Uint8Array([88, 184, 130, 231, 226, 84, 6, 58]),
       ),
       0,
@@ -166,6 +205,39 @@ export function identifyBuyWallAmmEvent(
     )
   ) {
     return BuyWallAmmEvent.MarketSeeded;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([132, 32, 144, 4, 3, 105, 196, 194]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmEvent.RecipientChanged;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([131, 204, 160, 15, 132, 68, 29, 42]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmEvent.RewardsPaid;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([232, 210, 40, 17, 142, 124, 145, 238]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmEvent.Settled;
   }
   if (
     containsBytes(
@@ -195,22 +267,32 @@ export function identifyBuyWallAmmEvent(
 }
 
 export const BuyWallAmmInstruction = {
-  0: "PipelineInitMarket",
-  1: "PipelineMarketInfo",
-  2: "PipelineQuote",
-  3: "PipelineResolveAccounts",
-  4: "PipelineSeedLiquidity",
-  5: "PipelineSwap",
-  6: "PlaceWall",
-  7: "Seed",
-  PipelineInitMarket: 0,
-  PipelineMarketInfo: 1,
-  PipelineQuote: 2,
-  PipelineResolveAccounts: 3,
-  PipelineSeedLiquidity: 4,
-  PipelineSwap: 5,
-  PlaceWall: 6,
-  Seed: 7,
+  0: "PayRewards",
+  1: "PipelineInitMarket",
+  2: "PipelineMarketInfo",
+  3: "PipelineQuote",
+  4: "PipelineResolveAccounts",
+  5: "PipelineSeedLiquidity",
+  6: "PipelineSwap",
+  7: "PlaceWall",
+  8: "Seed",
+  9: "SetFeeRecipient",
+  10: "SetRewardsRecipient",
+  11: "Settle",
+  12: "SweepFees",
+  PayRewards: 0,
+  PipelineInitMarket: 1,
+  PipelineMarketInfo: 2,
+  PipelineQuote: 3,
+  PipelineResolveAccounts: 4,
+  PipelineSeedLiquidity: 5,
+  PipelineSwap: 6,
+  PlaceWall: 7,
+  Seed: 8,
+  SetFeeRecipient: 9,
+  SetRewardsRecipient: 10,
+  Settle: 11,
+  SweepFees: 12,
 } as const;
 
 export type BuyWallAmmInstruction = (typeof BuyWallAmmInstruction)[Exclude<
@@ -222,6 +304,17 @@ export function identifyBuyWallAmmInstruction(
   instruction: { data: ReadonlyUint8Array } | ReadonlyUint8Array,
 ): BuyWallAmmInstruction {
   const data = "data" in instruction ? instruction.data : instruction;
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([227, 33, 128, 1, 180, 240, 26, 140]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmInstruction.PayRewards;
+  }
   if (
     containsBytes(
       data,
@@ -310,6 +403,50 @@ export function identifyBuyWallAmmInstruction(
   ) {
     return BuyWallAmmInstruction.Seed;
   }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([227, 18, 215, 42, 237, 246, 151, 66]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmInstruction.SetFeeRecipient;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([46, 89, 180, 124, 15, 159, 54, 36]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmInstruction.SetRewardsRecipient;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([175, 42, 185, 87, 144, 131, 102, 212]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmInstruction.Settle;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([175, 225, 98, 71, 118, 66, 34, 148]),
+      ),
+      0,
+    )
+  ) {
+    return BuyWallAmmInstruction.SweepFees;
+  }
   throw new SolanaError(
     SOLANA_ERROR__PROGRAM_CLIENTS__FAILED_TO_IDENTIFY_INSTRUCTION,
     { instructionData: data, programName: "buyWallAmm" },
@@ -319,6 +456,9 @@ export function identifyBuyWallAmmInstruction(
 export type ParsedBuyWallAmmInstruction<
   TProgram extends string = "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
 > =
+  | ({
+      instructionType: typeof BuyWallAmmInstruction.PayRewards;
+    } & ParsedPayRewardsInstruction<TProgram>)
   | ({
       instructionType: typeof BuyWallAmmInstruction.PipelineInitMarket;
     } & ParsedPipelineInitMarketInstruction<TProgram>)
@@ -342,13 +482,32 @@ export type ParsedBuyWallAmmInstruction<
     } & ParsedPlaceWallInstruction<TProgram>)
   | ({
       instructionType: typeof BuyWallAmmInstruction.Seed;
-    } & ParsedSeedInstruction<TProgram>);
+    } & ParsedSeedInstruction<TProgram>)
+  | ({
+      instructionType: typeof BuyWallAmmInstruction.SetFeeRecipient;
+    } & ParsedSetFeeRecipientInstruction<TProgram>)
+  | ({
+      instructionType: typeof BuyWallAmmInstruction.SetRewardsRecipient;
+    } & ParsedSetRewardsRecipientInstruction<TProgram>)
+  | ({
+      instructionType: typeof BuyWallAmmInstruction.Settle;
+    } & ParsedSettleInstruction<TProgram>)
+  | ({
+      instructionType: typeof BuyWallAmmInstruction.SweepFees;
+    } & ParsedSweepFeesInstruction<TProgram>);
 
 export function parseBuyWallAmmInstruction<TProgram extends string>(
   instruction: Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array>,
 ): ParsedBuyWallAmmInstruction<TProgram> {
   const instructionType = identifyBuyWallAmmInstruction(instruction);
   switch (instructionType) {
+    case BuyWallAmmInstruction.PayRewards: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: BuyWallAmmInstruction.PayRewards,
+        ...parsePayRewardsInstruction(instruction),
+      };
+    }
     case BuyWallAmmInstruction.PipelineInitMarket: {
       assertIsInstructionWithAccounts(instruction);
       return {
@@ -405,6 +564,34 @@ export function parseBuyWallAmmInstruction<TProgram extends string>(
         ...parseSeedInstruction(instruction),
       };
     }
+    case BuyWallAmmInstruction.SetFeeRecipient: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: BuyWallAmmInstruction.SetFeeRecipient,
+        ...parseSetFeeRecipientInstruction(instruction),
+      };
+    }
+    case BuyWallAmmInstruction.SetRewardsRecipient: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: BuyWallAmmInstruction.SetRewardsRecipient,
+        ...parseSetRewardsRecipientInstruction(instruction),
+      };
+    }
+    case BuyWallAmmInstruction.Settle: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: BuyWallAmmInstruction.Settle,
+        ...parseSettleInstruction(instruction),
+      };
+    }
+    case BuyWallAmmInstruction.SweepFees: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: BuyWallAmmInstruction.SweepFees,
+        ...parseSweepFeesInstruction(instruction),
+      };
+    }
     default:
       throw new SolanaError(
         SOLANA_ERROR__PROGRAM_CLIENTS__UNRECOGNIZED_INSTRUCTION_TYPE,
@@ -431,6 +618,10 @@ export type BuyWallAmmPluginAccounts = {
 };
 
 export type BuyWallAmmPluginInstructions = {
+  payRewards: (
+    input: MakeOptional<PayRewardsInput, "payer">,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getPayRewardsInstruction> & SelfPlanAndSendFunctions;
   pipelineInitMarket: (
     input: MakeOptional<PipelineInitMarketAsyncInput, "payer">,
     config?: { programAddress?: Address | HasAddress },
@@ -468,6 +659,24 @@ export type BuyWallAmmPluginInstructions = {
     input: SeedInput,
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getSeedInstruction> & SelfPlanAndSendFunctions;
+  setFeeRecipient: (
+    input: SetFeeRecipientInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getSetFeeRecipientInstruction> &
+    SelfPlanAndSendFunctions;
+  setRewardsRecipient: (
+    input: SetRewardsRecipientInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getSetRewardsRecipientInstruction> &
+    SelfPlanAndSendFunctions;
+  settle: (
+    input: SettleInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getSettleInstruction> & SelfPlanAndSendFunctions;
+  sweepFees: (
+    input: MakeOptional<SweepFeesInput, "payer">,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getSweepFeesInstruction> & SelfPlanAndSendFunctions;
 };
 
 export type BuyWallAmmPluginPdas = {
@@ -496,6 +705,17 @@ export function buyWallAmmProgram(
           marketState: addSelfFetchFunctions(client, getMarketStateCodec()),
         },
         instructions: {
+          payRewards: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getPayRewardsInstruction(
+                { ...input, payer: input.payer ?? client.payer },
+                {
+                  programAddress:
+                    instructionConfig?.programAddress ?? config.programAddress,
+                },
+              ),
+            ),
           pipelineInitMarket: (input, instructionConfig) =>
             addSelfPlanAndSendFunctions(
               client,
@@ -565,6 +785,41 @@ export function buyWallAmmProgram(
                 programAddress:
                   instructionConfig?.programAddress ?? config.programAddress,
               }),
+            ),
+          setFeeRecipient: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getSetFeeRecipientInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          setRewardsRecipient: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getSetRewardsRecipientInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          settle: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getSettleInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          sweepFees: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getSweepFeesInstruction(
+                { ...input, payer: input.payer ?? client.payer },
+                {
+                  programAddress:
+                    instructionConfig?.programAddress ?? config.programAddress,
+                },
+              ),
             ),
         },
         pdas: {

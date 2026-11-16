@@ -7,7 +7,11 @@
  */
 
 export * from "./capLowered.ts";
+export * from "./feesSwept.ts";
 export * from "./marketCreated.ts";
 export * from "./marketSeeded.ts";
+export * from "./recipientChanged.ts";
+export * from "./rewardsPaid.ts";
+export * from "./settled.ts";
 export * from "./trimmed.ts";
 export * from "./wallPlaced.ts";
