@@ -314,6 +314,220 @@
       ]
     },
     {
+      "name": "pipeline_seed_liquidity",
+      "docs": [
+        "Pipeline's optional extension, called by another program such as a launchpad",
+        "graduating a token: creates a market at the PDA `[\"seeded\", seeder, token_mint,",
+        "wsol_mint]` from the creation parameters in `request.data` (with the signing seeder in",
+        "place of theirs), takes `request.amounts` from the seeder's escrows, opens it as",
+        "`seed` does and returns `SeedResult { taken, lp_amount: 0 }`. Remaining accounts are",
+        "the token's transfer-hook accounts."
+      ],
+      "discriminator": [
+        197,
+        81,
+        12,
+        118,
+        24,
+        65,
+        212,
+        81
+      ],
+      "accounts": [
+        {
+          "name": "seeder",
+          "docs": [
+            "A PDA of the calling program, signing; it owns the escrows and becomes the seeder."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  101,
+                  100,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "seeder"
+              },
+              {
+                "kind": "account",
+                "path": "token_mint"
+              },
+              {
+                "kind": "account",
+                "path": "wsol_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "A system account holding the SOL the caller allows for rent."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "lp_recipient"
+        },
+        {
+          "name": "token_mint",
+          "docs": [
+            "The token, index 0. Its extensions are checked against the allowlist before the",
+            "vaults are created."
+          ]
+        },
+        {
+          "name": "token_escrow",
+          "docs": [
+            "The seeder's own token account of the token (owned by the seeder, not merely",
+            "delegated to it), as the `seed` action requires of the seeder's accounts."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "The token's program, SPL Token or Token-2022."
+          ]
+        },
+        {
+          "name": "wsol_mint",
+          "docs": [
+            "Wrapped SOL, index 1."
+          ],
+          "address": "So11111111111111111111111111111111111111112"
+        },
+        {
+          "name": "sol_escrow",
+          "docs": [
+            "The seeder's own wrapped SOL account."
+          ],
+          "writable": true
+        },
+        {
+          "name": "sol_token_program",
+          "docs": [
+            "SPL Token, wrapped SOL's program."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "vault_authority",
+          "docs": [
+            "nothing itself."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_vault",
+          "docs": [
+            "handler (`vaults.rs`)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sol_vault",
+          "docs": [
+            "token vault."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "wsol_mint"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "SeedRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "pipeline_swap",
       "docs": [
         "Settles an exact-in trade the router sends: pays the trader from the output vault",
@@ -653,6 +867,11 @@
       "code": 6029,
       "name": "PriceBoundReached",
       "msg": "The trade reaches a price bound with input left over"
+    },
+    {
+      "code": 6030,
+      "name": "BadSeedAmounts",
+      "msg": "A seed request needs exactly one amount per mint: the token's, then wrapped SOL's"
     }
   ],
   "types": [
@@ -1462,6 +1681,29 @@
           {
             "name": "round",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SeedRequest",
+      "docs": [
+        "`pipeline_strategy_interface::SeedRequest`: the most to take from each escrow, in mint",
+        "order (the token, then wrapped SOL), and the creation parameters, Borsh-encoded as",
+        "[`crate::InitParams`]."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "amounts",
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "data",
+            "type": "bytes"
           }
         ]
       }

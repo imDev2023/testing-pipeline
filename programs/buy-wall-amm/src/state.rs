@@ -35,6 +35,9 @@ pub const STATUS_OPEN: u8 = 2;
 
 /// The first seed of the vault authority, `["authority", market_state]`.
 pub const AUTHORITY_SEED: &[u8] = b"authority";
+/// The first seed of a market state created by another program, `["seeded", seeder,
+/// token_mint, wsol_mint]`.
+pub const SEEDED_SEED: &[u8] = b"seeded";
 
 /// The vault authority of `market_state` from its stored bump, or `None` if that bump does
 /// not give a PDA.
