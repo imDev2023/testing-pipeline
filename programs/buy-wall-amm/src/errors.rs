@@ -69,4 +69,6 @@ pub enum StrategyError {
     PriceBoundReached,
     #[msg("A seed request needs exactly one amount per mint: the token's, then wrapped SOL's")]
     BadSeedAmounts,
+    #[msg("Neither idle SOL nor the SOL the wall has spent reaches WALL_THRESHOLD")]
+    WallBelowThreshold,
 }

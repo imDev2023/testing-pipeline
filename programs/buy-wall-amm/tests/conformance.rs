@@ -2,7 +2,8 @@
 //! "Accepted `pipeline-check` warnings"): Pipeline's `check_market` reports zero Fail and
 //! zero Warn on seeded buy wall markets, with `exact_out_refund` skipped because exact-out
 //! is refused by design; every other check runs and passes, including on a market whose
-//! inventory cap is falling and whose sells are trimmed.
+//! inventory cap is falling and whose sells are trimmed, and on a market with a placed buy
+//! wall, at its top, above it and inside it, with trades crossing it.
 
 mod common;
 
@@ -11,6 +12,23 @@ use common::*;
 use pipeline_check::{check_market, CheckOptions, Status};
 use pipeline_client::TradeMode;
 use solana_signer::Signer;
+
+/// The price the program's own pricing gives a trade on `market`'s current state.
+fn quoted_sqrt_price(env: &Env, market: &Market, input: u8, amount: u64) -> Option<u128> {
+    buy_wall_amm::pricing::quote(
+        &env.state(market),
+        &buy_wall_amm::interface::TradeRequest {
+            mode: buy_wall_amm::interface::TradeMode::ExactIn,
+            input_index: input,
+            output_index: 1 - input,
+            amount,
+            trader: None,
+            extra: vec![],
+        },
+    )
+    .ok()
+    .map(|priced| priced.sqrt_price)
+}
 
 fn check(env: &Env, market: &Market, what: &str) {
     let report = check_market(&env.svm, market.market, &CheckOptions::default());
@@ -94,6 +112,80 @@ fn a_seeded_market_of_a_token_with_a_transfer_hook_passes_every_check() {
         )
         .unwrap();
     check(&env, &market, "a token with Pipeline's test-hook");
+}
+
+#[test]
+fn a_market_with_a_placed_wall_passes_every_check_at_above_and_inside_it() {
+    // The worked example's market through `place_wall`: the wall sits at the price, so the
+    // checker's sells go through the curve and the wall together.
+    let mut env = Env::new();
+    let token = env.seedable_token(&TOKEN);
+    let (market, _) = env
+        .create_and_seed(
+            token,
+            TOKEN,
+            &launch_params(env.admin.pubkey()),
+            1_000_000_000_000,
+            10 * SOL,
+        )
+        .unwrap();
+    let trader = env.trader(&market, 500_000_000_000, 20 * SOL);
+    let keeper = env.keeper();
+    let advance = |env: &mut Env, seconds: i64| {
+        let clock = env.svm.get_sysvar::<anchor_lang::prelude::Clock>();
+        env.set_clock(
+            clock.slot + seconds as u64 * 5 / 2 + 1,
+            clock.unix_timestamp + seconds,
+        );
+    };
+    let swap = |env: &mut Env, direction: (usize, usize), amount: u64| {
+        env.swap(&market, &trader, direction, TradeMode::ExactIn, amount)
+            .unwrap()
+            .received
+    };
+    advance(&mut env, 3_600);
+    let bought = swap(&mut env, (1, 0), SOL);
+    advance(&mut env, 60);
+    swap(&mut env, (0, 1), bought);
+    env.place_wall(&market, &keeper).unwrap();
+    let top = env.state(&market).wall_top();
+    assert!(env.state(&market).wall_liquidity() > 0);
+    assert_eq!(env.state(&market).sqrt_price(), top);
+    check(&env, &market, "a market at its wall's top");
+
+    // A small buy lifts the price just above the wall, so every sell the checker makes
+    // crosses into it, in two steps.
+    advance(&mut env, 60);
+    swap(&mut env, (1, 0), SOL / 1_000);
+    assert!(env.state(&market).sqrt_price() > top);
+    let smallest_sell = 1_000_000_000;
+    assert!(
+        quoted_sqrt_price(&env, &market, 0, smallest_sell).unwrap() < top,
+        "even a sell of {smallest_sell} units crosses"
+    );
+    check(&env, &market, "a market above its wall");
+
+    // The least sell that crosses into the wall leaves the price just below its top, so
+    // every buy the checker makes crosses out of it, in two steps.
+    advance(&mut env, 60);
+    let (mut lo, mut hi) = (1u64, smallest_sell);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if quoted_sqrt_price(&env, &market, 0, mid).is_some_and(|price| price < top) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    swap(&mut env, (0, 1), lo);
+    let state = env.state(&market);
+    assert!(state.sqrt_price() < top, "inside the wall");
+    let smallest_buy = 1_000;
+    assert!(
+        quoted_sqrt_price(&env, &market, 1, smallest_buy).unwrap() > top,
+        "even a buy of {smallest_buy} lamports crosses"
+    );
+    check(&env, &market, "a market inside its wall");
 }
 
 #[test]

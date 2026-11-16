@@ -3732,6 +3732,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49)
 
+### POOL4-32: When the floor's clock moves
+
+- Question: Does the wall's floor reset its clock (`floor_time`) on every swap, or only on a swap where it crawls toward the reference?
+- Answer: On every swap, as step 4 of "After pricing" reads ("Then `floor_time = now`"), so the floor crawls only by the time since the last swap and never by a whole day at once when the reference first rises above it after a quiet spell.
+- Alternatives: Only when the floor crawls, which would let a floor that sat at the reference for a long time jump a full day's crawl on the first swap after the reference moved up.
+- Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
+
+### POOL4-33: When a wall counts as placed
+
+- Question: When does pricing treat the buy wall as placed, given that `place_wall` can leave a top with no liquidity when almost nothing is idle?
+- Answer: Exactly when `wall_liquidity` is above 0; a top with no liquidity trades as no wall, so every trade moves along the curve alone in one step.
+- Alternatives: Whenever `wall_top` is set, which would split such trades into two steps along the same liquidity for nothing but an extra rounding.
+- Specified in: [`docs/spec/pool4-for-solana.md`, What is stored](spec/pool4-for-solana.md#what-is-stored)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
+
+### POOL4-34: What `place_wall` takes and reports
+
+- Question: Which accounts does `place_wall` take, where may its tip go, and what does it report?
+- Answer: The caller signs; the tip goes to any wrapped SOL account the caller names except the market's own SOL vault (the metadata form names the caller's own); it emits `WallPlaced` with the caller, the tip account, the old wall's spent SOL, what closing it moved, the dust swept, the tip and the new wall; and the lifetime total of tokens the wall bought grows when a wall is closed, by what that wall bought.
+- Alternatives: No signer, since the tip goes wherever the caller says anyway; a tip only to the caller's associated token account, created if missing, which costs more compute and rent on every call.
+- Specified in: [`docs/spec/pool4-for-solana.md`, `place_wall`](spec/pool4-for-solana.md#place_wall)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
+
+### POOL4-35: The wall's constants in the IDL
+
+- Question: How does the demo's model of the wall and its guard learn the constants it needs without restating them?
+- Answer: The program publishes `WALL_THRESHOLD`, `KEEPER_TIP_CAP`, `FLOOR_CRAWL_BPS`, `REF_STEP_BPS` and `REF_STEP_WINDOW` in its IDL with Anchor's `#[constant]`, as it does the fee shares (`POOL4-25`) and the cap's constants (`POOL4-30`), and the demo reads them from the generated client.
+- Alternatives: Restating them in the demo, which the one-place rule forbids.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Constants](spec/pool4-for-solana.md#constants)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
@@ -4287,6 +4327,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-25` to `POOL4-27`: set by the session of [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-24` is the owner's answer to that session's question.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.

@@ -65,3 +65,34 @@ pub struct Trimmed {
     /// The inventory cap, unchanged by a trim.
     pub cap: u64,
 }
+
+/// `place_wall` closed the old wall at the current price and placed the new one with
+/// everything idle (docs/spec/pool4-for-solana.md, "`place_wall`").
+#[event]
+#[derive(Debug, PartialEq, Eq)]
+pub struct WallPlaced {
+    pub market_state: Pubkey,
+    /// Whoever called it.
+    pub caller: Pubkey,
+    /// The wrapped SOL account the tip was paid to.
+    pub tip_account: Pubkey,
+    /// The SOL the old wall had spent buying tokens, in lamports.
+    pub converted: u64,
+    /// Lamports the old wall still held, moved to idle SOL.
+    pub closed_sol: u64,
+    /// Token units the old wall had bought, moved to the retired tokens.
+    pub closed_tokens: u64,
+    /// Lamports the pool held beyond the curve's own holdings, moved to idle SOL.
+    pub dust_sol: u64,
+    /// Token units the pool held beyond the curve's own holdings, moved to the retired
+    /// tokens.
+    pub dust_tokens: u64,
+    /// The caller's tip, in lamports.
+    pub tip: u64,
+    /// The new wall's top, a Q64.64 square-root price.
+    pub wall_top: u128,
+    /// The new wall's liquidity.
+    pub wall_liquidity: u128,
+    /// The lamports the new wall holds.
+    pub wall_sol_placed: u64,
+}
