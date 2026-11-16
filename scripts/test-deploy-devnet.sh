@@ -189,6 +189,8 @@ echo "// local" >> "$repo/programs/toy/src/lib.rs"
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q -am "local only"
 if run toy --url http://127.0.0.1:8999 --record "$work/local.json" && [ -f "$work/local.json" ] \
   && [ ! -f "$repo/deployments/devnet.json" ]; then
+  python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["cluster"] == "http://127.0.0.1:8999"' "$work/local.json" \
+    || fail "a local record names its cluster"
   pass "a local validator deploys a commit not on main and records it where --record says"
 else
   fail "local: $(cat "$work/out")"

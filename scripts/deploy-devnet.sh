@@ -171,11 +171,15 @@ done
 echo "On-chain hash matches the build: $onchain_hash; upgrade authority $onchain_authority; deployed in slot $slot"
 
 # 5. The record.
-python3 - "$record" "$program" "$program_id" "$hash" "$commit" "$VERIFY_IMAGE" "$authority" "$payer" "$slot" <<'EOF'
+cluster_label=devnet
+$local_cluster && cluster_label="$url"
+python3 - "$record" "$cluster_label" "$program" "$program_id" "$hash" "$commit" "$VERIFY_IMAGE" "$authority" "$payer" "$slot" <<'EOF'
 import datetime, json, os, sys
 
-path, program, program_id, hash_, commit, image, authority, payer, slot = sys.argv[1:]
-record = json.load(open(path)) if os.path.exists(path) else {"cluster": "devnet", "programs": {}}
+path, cluster, program, program_id, hash_, commit, image, authority, payer, slot = sys.argv[1:]
+record = json.load(open(path)) if os.path.exists(path) else {"cluster": cluster, "programs": {}}
+if record.get("cluster") != cluster:
+    sys.exit(f"{path} records {record.get('cluster')}, not {cluster}")
 record["programs"][program] = {
     "programId": program_id,
     "executableHash": hash_,
