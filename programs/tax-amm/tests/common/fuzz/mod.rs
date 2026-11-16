@@ -51,7 +51,7 @@ use std::fmt::Debug;
 
 use proptest::prelude::*;
 use proptest::strategy::BoxedStrategy;
-use proptest::test_runner::{Config, TestCaseError, TestError, TestRunner};
+use proptest::test_runner::{Config, RngSeed, TestCaseError, TestError, TestRunner};
 
 /// One product under the fuzzer.
 pub trait Product: 'static {
@@ -238,6 +238,12 @@ pub fn sizes(default_cases: u32, default_steps: usize) -> (u32, usize) {
 /// replayed by [`replay`] in a regression test. `each` sees every world after its sequence
 /// passed, so a test can read what was measured across the run.
 pub fn fuzz<P: Product>(cases: u32, max_steps: usize, each: impl FnMut(&P::World)) {
+    fuzz_from::<P>(cases, max_steps, 0, each)
+}
+
+/// [`fuzz`], with `PROPTEST_RNG_SEED`, when it is set, moved on by `stream`, so the threads
+/// of [`fuzz_in_parallel`] reproduce a fixed seed's run without repeating each other.
+fn fuzz_from<P: Product>(cases: u32, max_steps: usize, stream: u64, each: impl FnMut(&P::World)) {
     // Proptest runs cases through a `Fn`.
     let each = std::cell::RefCell::new(each);
     let invariants = enabled::<P>();
@@ -245,12 +251,16 @@ pub fn fuzz<P: Product>(cases: u32, max_steps: usize, each: impl FnMut(&P::World
         .ok()
         .and_then(|iters| iters.parse().ok())
         .unwrap_or(1_024);
-    let mut runner = TestRunner::new(Config {
+    let mut config = Config {
         cases,
         max_shrink_iters,
         failure_persistence: None,
         ..Config::default()
-    });
+    };
+    if let RngSeed::Fixed(seed) = config.rng_seed {
+        config.rng_seed = RngSeed::Fixed(seed.wrapping_add(stream));
+    }
+    let mut runner = TestRunner::new(config);
     let strategy = (
         P::shapes(),
         prop::collection::vec(P::steps(), 1..=max_steps),
@@ -303,7 +313,9 @@ pub fn fuzz_in_parallel<P: Product>(
                 let share = cases / threads + u32::from(k < cases % threads);
                 std::thread::Builder::new()
                     .name(format!("fuzz-{k}"))
-                    .spawn_scoped(scope, move || fuzz::<P>(share, max_steps, each))
+                    .spawn_scoped(scope, move || {
+                        fuzz_from::<P>(share, max_steps, k as u64, each)
+                    })
                     .expect("a fuzzing thread")
             })
             .collect();

@@ -268,17 +268,18 @@ By the deadline, in 80 seconds, most of them waiting: with 54,635,805 of the goa
 The validator's own parser (`getAccountInfo` with `jsonParsed`, at `confirmed`; `finalized` trails a fresh validator by about 30 slots) then showed each mint's `transferHook` with `authority` and `programId` both unset.
 
 Since [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71), each launch also sweeps Pipeline's fee in the token from the fee account to Pipeline's treasury with the router's `sweep_fees` and the hook accounts (step 9), and giving `--goal` and `--deadline` again launches another token in the same run, `--unlock` then given for every token or for none.
-The rehearsal of the devnet launch is one run with two tokens, one unlocked by a small goal and one by a short deadline:
+The rehearsal of the devnet launch is one run with two tokens, the one unlocked by a short deadline first, since every deadline is checked against the cluster's time when its own token's launch starts and a token whose deadline the earlier launches outlasted stops before it sends anything:
 
 ```sh
 NOW=$(date +%s)
 pnpm launch --cluster localnet --launcher ~/.config/testing-pipeline/devnet/wallet.json \
-  --goal 100000000 --deadline $((NOW + 86400)) --unlock goal \
-  --goal 5000000000 --deadline $((NOW + 150)) --unlock deadline
+  --goal 5000000000 --deadline $((NOW + 90)) --unlock deadline \
+  --goal 100000000 --deadline $((NOW + 86400)) --unlock goal
 ```
 
-That passed on 2026-11-16 in one run of 2 minutes 58 seconds, most of it waiting for the second token's deadline, from a fresh validator on other ports (`scripts/local-validator.sh fixtures/test-ledger-71 --rpc-port 8971 --faucet-port 9971 --gossip-port 8972 --dynamic-port-range 8441-8480`) after the tax AMM's demo.
-Both tokens were launched, bought and sold through the router, swept 31,320,632,871 of the token each from their fee accounts to the treasury, and had a wallet-to-wallet transfer and a sell with an integrator fee refused by the hook; the first unlocked by its goal with 133,135,805 of 100,000,000 collected (13,225 units), the second by its deadline with 54,635,805 of 5,000,000,000 collected (12,873 units), and each then sent and traded without hook accounts.
+That passed on 2026-11-16 in one run of 2 minutes 14 seconds, most of it waiting for the first token's deadline, from a fresh validator on other ports (`scripts/local-validator.sh fixtures/test-ledger-71 --rpc-port 8971 --faucet-port 9971 --gossip-port 8972 --dynamic-port-range 8441-8480`) after the tax AMM's demo.
+Both tokens were launched, bought and sold through the router, swept 31,320,632,871 of the token each from their fee accounts to the treasury, and had a wallet-to-wallet transfer and a sell with an integrator fee refused by the hook; the first unlocked by its deadline with 54,635,805 of 5,000,000,000 collected (12,873 units), the second by its goal with 133,135,805 of 100,000,000 collected (13,225 units), and each then sent and traded without hook accounts.
+The other order, with the deadline only 70 seconds away, stopped as it should before the second token sent anything, its deadline 37 seconds away by then.
 
 ### CI
 

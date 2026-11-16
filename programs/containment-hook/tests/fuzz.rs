@@ -142,9 +142,10 @@ fn regression_a_transfer_to_the_same_account_moves_nothing_and_skips_the_hook() 
 
 /// The fuzzer's second failure (2026-11-16), minimised: on a market created without its seed,
 /// the deadline came and went, the token was unlocked, and the seeder sent away part of what
-/// it was to seed, so the seed failed for want of funds where the tax AMM's model expects it
-/// to settle. The hook's transfers now leave the seeder's holdings alone until the seed; the
-/// hook decides by the accounts alone, so no case of its rule goes untested.
+/// it was to seed, so the seed failed for want of funds where the tax AMM's model expected it
+/// to settle. The model now expects a seed bigger than the seeder holds to be refused with
+/// `InsufficientFunds`, which only a product built on the tax AMM, whose transfers let the
+/// seeder spend its seed first, can reach.
 #[test]
 fn regression_the_seeder_keeps_its_seed_until_the_seed() {
     replay::<ContainmentHook>(
@@ -184,6 +185,51 @@ fn regression_the_seeder_keeps_its_seed_until_the_seed() {
             Tax(Seed {
                 who: Seeder,
                 empty_side: None,
+            }),
+        ],
+    );
+}
+
+/// The fuzzer's third failure (2026-11-16), minimised: the seeder sent one unit of its seed
+/// straight into the home vault while the token was contained, as the hook allows, then
+/// seeded with its quote side left empty, and the token program refused the first side for
+/// want of funds where the tax AMM's model expected `ZeroSeed` for the second. The model now
+/// takes the sides in the program's order, each side's transfer before its check that
+/// something arrived.
+#[test]
+fn regression_a_seed_is_judged_side_by_side() {
+    replay::<ContainmentHook>(
+        &HookShape {
+            tax: Shape {
+                mints: [Outside, SplToken],
+                tax_side: 1,
+                ranges: [[0, 0], [0, 0]],
+                rates: [0, 0],
+                recipients: 1,
+                weights: [1, 1, 1, 1, 1],
+                burn: false,
+                tax_authority: false,
+                virtual_side: 0,
+                virtual_reserve: 0,
+                seed: [1000, 1000],
+                creation: CreateOnly,
+                keys: 0,
+            },
+            contained: 0,
+            unlock_goal: 1,
+            deadline_after: 1,
+        },
+        &[
+            Transfer {
+                from: 76,
+                own: false,
+                to: HomeVault,
+                size: Dust(1),
+                tail: Complete,
+            },
+            Tax(Seed {
+                who: Seeder,
+                empty_side: Some(1),
             }),
         ],
     );

@@ -7,6 +7,9 @@
 
 mod support;
 
+use pipeline_client::Pubkey;
+use solana_keypair::Keypair;
+use solana_signer::Signer;
 use support::*;
 
 #[test]
@@ -35,22 +38,45 @@ fn bind_stays_under_its_ceiling() {
 fn each_further_bump_costs_bind_the_same() {
     // What bind costs once its bump searches beyond the first bumps are taken out is the same
     // on every mint, within what comparing keys costs, so the rule its ceiling leaves out is
-    // the one its cost follows. The fuzzer measured 55,416 units in all on one mint.
+    // the one its cost follows. The fuzzer measured 55,416 units in all on one mint. The mints
+    // and market states are fixed keys, so the run is the same every time, and they span
+    // searches from a few bumps to many.
     let mut net = vec![];
-    for _ in 0..12 {
+    let mut searches = vec![];
+    for k in 1..=12u8 {
         let mut env = hook_env();
-        let mint = contained_mint(&mut env);
-        let market = home_market(&mut env, mint, 0);
+        let at = Keypair::new_from_array([k; 32]);
+        let options = MintOptions {
+            transfer_hook: Some(hook_id()),
+            transfer_hook_authority: Some(unlock_pda(&at.pubkey())),
+            ..MintOptions::default()
+        };
+        let mint = env.create_mint_at(&at, &TOKEN_2022, options);
+        let quote = env.create_mint(&TOKEN);
+        let params = quote_taxed_params(&Pubkey::new_unique(), 1);
+        let market = env
+            .create_tax_market_with(
+                &Keypair::new_from_array([k + 100; 32]),
+                [(mint, TOKEN_2022), (quote, TOKEN)],
+                init_data(&params),
+            )
+            .unwrap();
         let meta = bind(&mut env, mint, &market).unwrap();
         let cost = hook_compute(&meta.logs)[0];
         let search = ceilings::bind_bump_search(&mint, &market);
         net.push(cost - search);
+        searches.push(search);
         println!("bind: {cost} CU, {search} of them beyond the first bumps");
     }
     let (low, high) = (net.iter().min().unwrap(), net.iter().max().unwrap());
     assert!(
         high - low <= 200,
         "bind less its bump searches ranged from {low} to {high} CU"
+    );
+    let spread = searches.iter().max().unwrap() - searches.iter().min().unwrap();
+    assert!(
+        spread >= 5 * ceilings::BUMP_TRY,
+        "the mints span too few bumps: {searches:?}"
     );
 }
 

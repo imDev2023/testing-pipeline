@@ -526,13 +526,19 @@ fn shares_of(used: usize, weights: &[u16; 5], burn: bool) -> ([u16; MAX_RECIPIEN
     (shares, burn_share)
 }
 
-/// The error's name from a refused transaction's logs, or the whole failure.
+/// The error's name from a refused transaction's logs, or the whole failure. A token
+/// program's refusal of a transfer bigger than its source holds is `InsufficientFunds`.
 pub fn refusal(failure: &str) -> String {
     failure
         .split("Error Code: ")
         .nth(1)
         .and_then(|rest| rest.split('.').next())
         .map(str::to_string)
+        .or_else(|| {
+            failure
+                .contains("Program log: Error: insufficient funds")
+                .then(|| "InsufficientFunds".to_string())
+        })
         .unwrap_or_else(|| failure.to_string())
 }
 
@@ -938,10 +944,22 @@ impl TaxWorld {
                     Err("NotSeeder".into())
                 } else if state.status != MarketStatus::Created {
                     Err("AlreadySeeded".into())
-                } else if (0..2).any(|i| amounts[i] == 0 && !may_be_empty(i)) {
-                    Err("ZeroSeed".into())
                 } else {
-                    Ok(())
+                    // Side by side, as the program takes them: a side's transfer, then its
+                    // check that something arrived. A seeder holding less than its seed is
+                    // refused by the token program, which only a product built on this one
+                    // allows, as the containment hook's transfers let the seeder spend first.
+                    (0..2)
+                        .find_map(|i| {
+                            if amounts[i] > 0 && self.holding(&signer.pubkey(), i) < amounts[i] {
+                                Some("InsufficientFunds")
+                            } else if amounts[i] == 0 && !may_be_empty(i) {
+                                Some("ZeroSeed")
+                            } else {
+                                None
+                            }
+                        })
+                        .map_or(Ok(()), |refusal| Err(refusal.into()))
                 };
                 let sent = self.env.seed(&self.market, &signer, amounts);
                 let mut outcome = Outcome::of(Action::Seed, expected, named(&sent));
@@ -1312,7 +1330,7 @@ impl TaxWorld {
 
 /// The associated token program's `CreateIdempotent`: `owner`'s token account for `mint`,
 /// paid for by `payer`, created unless it exists.
-fn create_token_account_idempotent(
+pub fn create_token_account_idempotent(
     payer: &Pubkey,
     owner: &Pubkey,
     mint: &Pubkey,

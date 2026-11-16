@@ -345,6 +345,11 @@ pub struct HookWorld {
     /// Copies of the config and the validation account at other addresses, owned by the hook.
     pub config_copy: Pubkey,
     pub validation_copy: Pubkey,
+    /// The config's and the validation account's addresses.
+    pub config: Pubkey,
+    pub validation: Pubkey,
+    /// [`HookWorld::accounts`], which never changes once the world is built.
+    known: Vec<Pubkey>,
     /// The most compute each hook instruction took.
     pub max_costs: BTreeMap<&'static str, u64>,
     /// How many hook steps did what, by [`HookResult::label`].
@@ -484,9 +489,13 @@ impl HookWorld {
             treasury,
             config_copy,
             validation_copy,
+            config: config_pda(&mint),
+            validation: validation_pda(&mint),
+            known: vec![],
             max_costs: BTreeMap::new(),
             tally: BTreeMap::new(),
         };
+        world.known = world.list_accounts();
         let bind_cost = containment.bind_cost.get().ok_or("bind ran no hook")?;
         world.record(&[("bind", bind_cost)]);
         Ok(world)
@@ -495,7 +504,11 @@ impl HookWorld {
     /// Every account of the contained token the world knows, each once: the home vault and
     /// the fee account (the [`INSIDE`] ones), then every wallet's associated token account,
     /// the second accounts, the other market's vault and fee account, and the treasury's.
-    pub fn accounts(&self) -> Vec<Pubkey> {
+    pub fn accounts(&self) -> &[Pubkey] {
+        &self.known
+    }
+
+    fn list_accounts(&self) -> Vec<Pubkey> {
         let mut seen = BTreeSet::new();
         let mut accounts = vec![];
         let market = &self.tax.market;
@@ -542,8 +555,8 @@ impl HookWorld {
     /// The hook accounts `tail` describes.
     fn tail(&self, tail: Tail) -> Vec<AccountMeta> {
         let program = read_only(hook_id());
-        let validation = read_only(validation_pda(&self.mint));
-        let config = read_only(config_pda(&self.mint));
+        let validation = read_only(self.validation);
+        let config = read_only(self.config);
         match tail {
             Tail::Complete => vec![program, validation, config],
             Tail::Missing => vec![],
@@ -636,18 +649,11 @@ impl HookWorld {
     /// paid for by the admin, as a terminal puts it before a swap.
     fn create_account(&self, owner: &Pubkey, i: usize) -> Instruction {
         let market = &self.tax.market;
-        let (mint, token_program) = (market.mints[i], market.token_programs[i]);
-        Instruction::new_with_bytes(
-            client::ASSOCIATED_TOKEN_PROGRAM_ID,
-            &[1],
-            vec![
-                AccountMeta::new(self.tax.env.admin.pubkey(), true),
-                AccountMeta::new(pda::associated_token(owner, &mint, &token_program), false),
-                read_only(*owner),
-                read_only(mint),
-                read_only(client::SYSTEM_PROGRAM_ID),
-                read_only(token_program),
-            ],
+        tax::create_token_account_idempotent(
+            &self.tax.env.admin.pubkey(),
+            owner,
+            &market.mints[i],
+            &market.token_programs[i],
         )
     }
 
@@ -690,8 +696,8 @@ impl HookWorld {
         let data = |address: &Pubkey| env.svm.get_account(address).expect("account").data;
         HookSnapshot {
             tax: TaxAmm::snapshot(&self.tax),
-            config: data(&config_pda(&self.mint)),
-            validation: data(&validation_pda(&self.mint)),
+            config: data(&self.config),
+            validation: data(&self.validation),
             hook: self.mint_hook(),
             balances: self
                 .accounts()
@@ -780,13 +786,6 @@ impl HookWorld {
                 tail,
             } => {
                 let owner = self.signer(from);
-                // The seeder keeps what it seeds until the seed, which the tax AMM's model
-                // expects to find it; the hook decides by the accounts alone, never by who
-                // sends, so nothing of it goes untested.
-                let awaiting_seed = self.tax.state().status == MarketStatus::Created;
-                if awaiting_seed && owner.pubkey() == self.tax.seeder.pubkey() {
-                    return (HookResult::skip(), vec![]);
-                }
                 let index = from as usize % self.tax.signers().len();
                 let source = match self.own_accounts.get(index) {
                     Some(account) if own => *account,
@@ -860,6 +859,7 @@ impl HookWorld {
                 if !contained {
                     return (HookResult::skip(), vec![]);
                 }
+                let seller = wallet as usize % self.tax.signers().len();
                 let trader = self.signer(wallet);
                 let budget =
                     amount_for_budget(self.tax.holding(&trader.pubkey(), self.contained), bps);
@@ -871,8 +871,14 @@ impl HookWorld {
                 }
                 // A trader's or the stranger's account, which exists, and never the seller's
                 // own, which the router refuses as the fee's destination.
-                let other = (wallet as usize % OWN_ACCOUNTS + 1) % OWN_ACCOUNTS;
+                let other = (seller % OWN_ACCOUNTS + 1) % OWN_ACCOUNTS;
                 let integrator = self.ata(&self.signer(other as u8).pubkey());
+                // A sale the tax AMM would settle is refused by the hook, for the fee paid in
+                // the token into the integrator's account; any other is refused anyway.
+                let expected = match self.tax.quote(self.contained, amount).0 {
+                    Ok(_) => Expected::RefusedWith("TransferRefused"),
+                    Err(_) => Expected::Refused,
+                };
                 let sent = self
                     .router_swap(
                         &trader.pubkey(),
@@ -886,7 +892,7 @@ impl HookWorld {
                         let create = self.create_account(&trader.pubkey(), self.quote);
                         self.tax.env.send_meta(&[create, swap], &[&trader])
                     });
-                outcome(HookAction::IntegratorSell, Expected::Refused, &sent)
+                outcome(HookAction::IntegratorSell, expected, &sent)
             }
             HookStep::SweepFees { tail } => {
                 if self.tax.env.balance_or_zero(&self.home_fees()) == 0 {
@@ -957,8 +963,8 @@ impl HookWorld {
                     self.mint,
                     self.target(to),
                     owner,
-                    validation_pda(&self.mint),
-                    config_pda(&self.mint),
+                    self.validation,
+                    self.config,
                 );
                 let sent = self.tax.env.send_meta(&[instruction], &[]);
                 outcome(

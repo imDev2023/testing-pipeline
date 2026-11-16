@@ -68,9 +68,11 @@
 //                 the script stops after step 10 and the token stays contained
 //
 // Giving `--goal` and `--deadline` again launches another token after the first, the nth of
-// each flag being the nth token's; `--unlock` is then given for every token or for none. The
-// rehearsal of the devnet launch gives two: one unlocked by a small goal, one by a short
-// deadline (docs/toolchain.md, "Containment hook").
+// each flag being the nth token's; `--unlock` is then given for every token or for none. Each
+// token's terms are checked again when its launch starts, so one whose deadline the tokens
+// before it outlasted stops before it sends anything. The rehearsal of the devnet launch
+// gives two: first one unlocked by a short deadline, then one by a small goal
+// (docs/toolchain.md, "Containment hook").
 //
 // On a local cluster the script airdrops the SOL the launcher needs; on devnet it never does
 // (fund it with devnet-airdrop, docs/toolchain.md).
@@ -637,28 +639,14 @@ async function main() {
     );
     if (!metadata.ok || !metadata.value.init) fail("the tax AMM's metadata.json has no valid `init` form");
     const init = metadata.value.init;
-    // The hook enforces the terms; these checks only stop a launch that would leave an
-    // unbound mint behind. The longest deadline is the hook's own constant, read from its IDL
-    // through the client.
+    // Every token's terms are checked before anything is sent, and each token's again just
+    // before its own launch, since the tokens launch one after another and its deadline may
+    // have come closer meanwhile.
     const startTime = await clusterTime();
-    for (const [i, { unlockGoal, unlockDeadline, unlockBy }] of tokens.entries()) {
-        const which = tokens.length > 1 ? `token ${i + 1}: ` : '';
-        if (unlockGoal === 0n) fail(`${which}--goal must be above zero`);
-        if (unlockDeadline <= startTime) {
-            fail(`${which}--deadline must be later than the cluster's time, ${new Date(Number(startTime) * 1000).toISOString()}`);
-        }
-        if (unlockDeadline > startTime + MAX_UNLOCK_DEADLINE_SECS) {
-            fail(`${which}--deadline may be at most ${MAX_UNLOCK_DEADLINE_SECS} seconds after the binding (MAX_UNLOCK_DEADLINE_SECS), ${new Date(Number(startTime + MAX_UNLOCK_DEADLINE_SECS) * 1000).toISOString()} at the cluster's time now`);
-        }
-        if (unlockBy === 'deadline') {
-            const lead = unlockDeadline - startTime;
-            if (lead < UNLOCKING.minDeadlineLeadSecs || lead > UNLOCKING.maxDeadlineWaitSecs) {
-                fail(`${which}--unlock deadline needs a deadline ${UNLOCKING.minDeadlineLeadSecs} to ${UNLOCKING.maxDeadlineWaitSecs} seconds away, so the launch finishes before it and the wait stays short, not ${lead}`);
-            }
-        }
-    }
+    for (const [i, terms] of tokens.entries()) checkTerms(i, terms, startTime);
 
     for (const [i, terms] of tokens.entries()) {
+        if (i > 0) checkTerms(i, terms, await clusterTime());
         stepPrefix = tokens.length > 1 ? `Token ${i + 1}, ` : '';
         if (tokens.length > 1) {
             record.push([`token ${i + 1}`, `goal ${terms.unlockGoal}, deadline ${terms.unlockDeadline}${terms.unlockBy ? `, unlocked by the ${terms.unlockBy}` : ''}`]);
@@ -670,6 +658,29 @@ async function main() {
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));
     for (const [label, value] of record) info(`${label.padEnd(width)}  ${value}`);
+}
+
+/**
+ * Stops the launch, before anything is sent for the token, if its terms would leave an
+ * unbound mint behind or its unlock could not be shown: the hook enforces the terms, and the
+ * longest deadline is the hook's own constant, read from its IDL through the client.
+ */
+function checkTerms(i: number, { unlockGoal, unlockDeadline, unlockBy }: Terms, now: bigint) {
+    const which = tokens.length > 1 ? `token ${i + 1}: ` : '';
+    const earlier = i > 0 ? ' (the tokens before it launched first; launch it first or give it a later deadline)' : '';
+    if (unlockGoal === 0n) fail(`${which}--goal must be above zero`);
+    if (unlockDeadline <= now) {
+        fail(`${which}--deadline must be later than the cluster's time, ${new Date(Number(now) * 1000).toISOString()}${earlier}`);
+    }
+    if (unlockDeadline > now + MAX_UNLOCK_DEADLINE_SECS) {
+        fail(`${which}--deadline may be at most ${MAX_UNLOCK_DEADLINE_SECS} seconds after the binding (MAX_UNLOCK_DEADLINE_SECS), ${new Date(Number(now + MAX_UNLOCK_DEADLINE_SECS) * 1000).toISOString()} at the cluster's time now`);
+    }
+    if (unlockBy === 'deadline') {
+        const lead = unlockDeadline - now;
+        if (lead < UNLOCKING.minDeadlineLeadSecs || lead > UNLOCKING.maxDeadlineWaitSecs) {
+            fail(`${which}--unlock deadline needs a deadline ${UNLOCKING.minDeadlineLeadSecs} to ${UNLOCKING.maxDeadlineWaitSecs} seconds away when its launch starts, so the launch finishes before it and the wait stays short, not ${lead}${earlier}`);
+        }
+    }
 }
 
 /** What every token's launch shares, worked out once before anything is sent. */
