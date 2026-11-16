@@ -547,6 +547,7 @@ What `README.md` asks each product's file to add; the mainnet upgrade policy is 
 Asserted per instruction in test layer 5; the build ticket measures each one and may lower it, and raising one needs a written reason here.
 They start from another Pool4 port's swaps on devnet, measured at 13,000 to 29,000 units, with room for 256-bit maths.
 A transfer hook's own compute is outside them.
+So is Token-2022's search for a hooked mint's validation account on each transfer the strategy makes, which costs 1,500 units for every bump it tries and depends only on the mint's address; the tests measure with hooked mints whose validation account has bump 255, so their numbers repeat.
 
 | Instruction | Ceiling (compute units) | Main cost |
 | --- | --- | --- |
@@ -575,6 +576,9 @@ Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://git
 Beyond the shared three (value conserved, every holder can exit, each quote equals its swap), checked after every step of generated sequences of swaps, keeper jobs and clock jumps, including several trades in one slot:
 
 - Every invariant in "Ledgers".
+- "Every holder can exit" means, at a price bound ([`POOL4-36`](../decisions.md#pool4-36-every-holder-can-exit-at-a-price-bound)): a holder's whole holding sells, or it pays nothing (worth less than one lamport), or it is more than the curve can take before `MIN_SQRT_PRICE` and is refused whole, as "Rules for both" says, and then the most the curve can take sells or pays nothing, and one token unit more is refused for the bound.
+  A trim can leave a curve of `MIN_LIQUIDITY` close to the bound, which takes fewer tokens than some holdings; what such a holding cannot sell could only sell below the bound, for the `(L + W) × MIN_SQRT_PRICE / Q` lamports the curve and the wall keep there, which no sell reaches for anyone, with or without the cap.
+  A trim lowers `L`, so it only shrinks that amount, which is less than one lamport whenever `L + W` is below 2^32.
 - A trim never changes `sqrt_price`.
 - A buy sold straight back never returns more than it cost, whatever keeper jobs run in between.
 - The reference never moves on a trade in the slot it was last updated in.
