@@ -2613,7 +2613,7 @@
         "The wallet the designer share is paid to. Unset (the all-zero key) while IMD and Adam",
         "have no known Solana address; an upgrade sets it before the program is frozen.",
         "Published in the IDL (`#[constant]`), where the demo script reads it, as is the suite",
-        "treasury below (`POOL4-39`)."
+        "treasury below (`POOL4-40`)."
       ],
       "type": "pubkey",
       "value": "11111111111111111111111111111111"
