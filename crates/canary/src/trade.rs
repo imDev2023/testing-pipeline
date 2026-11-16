@@ -5,7 +5,7 @@
 
 use borsh::BorshDeserialize;
 use litesvm::LiteSVM;
-use pipeline_check::{hooks, write_token_account};
+use pipeline_check::write_token_account;
 use pipeline_client::{AccountMeta, Instruction, Pubkey};
 use pipeline_quoter::{QuoteRequest, Quoter};
 use pipeline_strategy_interface::{self as psi, discriminator, fees, TradeMode};
@@ -15,7 +15,7 @@ use solana_transaction::Transaction;
 
 use crate::config::QUOTE_COMPUTE_LIMIT;
 use crate::failure::{Failure, FailureClass, Stage};
-use crate::market::{fund_lamports, program_elf, token_amount, token_owner, Market, Session};
+use crate::market::{fund_lamports, program_elf, token_amount, Market, Session};
 use crate::swap::{compute_limit, SwapPath, SwapReceipt, SwapRequest};
 
 /// A quote in the trader's terms, as `pipeline-quoter` gives it.
@@ -256,6 +256,8 @@ impl Session<'_> {
             let keys: Vec<Pubkey> = known.iter().map(|m| m.pubkey).collect();
             self.load(svm, &keys);
             if result.complete {
+                self.resolutions.count += 1;
+                self.resolutions.accounts.extend(keys);
                 return Ok(known);
             }
         }
@@ -403,11 +405,9 @@ impl Session<'_> {
         output: usize,
         amount_in: u64,
     ) -> Leg {
-        let extra = self.extra.clone();
-        let request = trade_request(input, output, amount_in, Some(*trader), &extra);
         let clock = clock_position(svm);
-        let resolved = match self.resolve(svm, &request) {
-            Ok(resolved) => resolved,
+        let prepared = match self.prepare(svm, trader, input, output, amount_in) {
+            Ok(prepared) => prepared,
             Err(failure) => {
                 return Leg {
                     input,
@@ -419,15 +419,7 @@ impl Session<'_> {
                 }
             }
         };
-        let quote = self.quote(svm, &request, &resolved);
-        let (source, vault) = (self.market.ata(trader, input), self.market.vault(input));
-        let input_hooks = self.hook_accounts(svm, input, &source, &vault, trader, amount_in);
-        let (vault, destination) = (self.market.vault(output), self.market.ata(trader, output));
-        let vault_owner = token_owner(svm, &vault).unwrap_or_default();
-        // A hook may derive its accounts from the amount; the strategy pays what it quoted.
-        let paid = quote.as_ref().map_or(0, |q| q.strategy_amount_out);
-        let output_hooks =
-            self.hook_accounts(svm, output, &vault, &destination, &vault_owner, paid);
+        let extra = self.extra.clone();
         let swap = path.swap(
             svm,
             &self.market,
@@ -436,12 +428,12 @@ impl Session<'_> {
                 input,
                 output,
                 amount_in,
-                strategy_accounts: &resolved,
+                strategy_accounts: &prepared.resolved,
                 extra: &extra,
-                input_hook_accounts: &input_hooks,
-                output_hook_accounts: &output_hooks,
+                hooks: &prepared.hooks,
             },
         );
+        let quote = prepared.quote;
         Leg {
             input,
             output,
@@ -587,7 +579,17 @@ impl Session<'_> {
             AccountMeta::new(destination, false),
             AccountMeta::new_readonly(*from, true),
         ];
-        accounts.extend(self.hook_accounts(svm, token, &source, &destination, from, amount));
+        accounts.extend(self.transfer_hook_accounts(
+            svm,
+            token,
+            pipeline_check::hooks::Transfer {
+                source,
+                mint: mint.address,
+                destination,
+                authority: *from,
+                amount,
+            },
+        ));
         let mut data = vec![TRANSFER_CHECKED];
         data.extend_from_slice(&amount.to_le_bytes());
         data.push(mint.decimals);
@@ -602,55 +604,6 @@ impl Session<'_> {
         Ok(token_amount(svm, &destination)
             .unwrap_or(0)
             .saturating_sub(before))
-    }
-}
-
-impl Session<'_> {
-    /// The accounts mint `i`'s transfer hook needs to move `amount` from `source` to
-    /// `destination` under `authority`: the hook's extra accounts in its list's order, then the
-    /// hook program and the list itself, as Token-2022 is handed them. Each account the list
-    /// names is read from the source before the next pass, because an entry can be derived
-    /// from another account's data, so an account the copy lacks is fetched or, from a
-    /// snapshot, noted as lacking. Empty for a mint without a hook; when the list cannot be
-    /// read, also empty, and the transfer then fails with the token program's own words.
-    pub fn hook_accounts(
-        &mut self,
-        svm: &mut LiteSVM,
-        i: usize,
-        source: &Pubkey,
-        destination: &Pubkey,
-        authority: &Pubkey,
-        amount: u64,
-    ) -> Vec<AccountMeta> {
-        let Some(hook) = self.market.mints[i].transfer_hook else {
-            return vec![];
-        };
-        let transfer = hooks::Transfer {
-            source: *source,
-            mint: self.market.mint(i),
-            destination: *destination,
-            authority: *authority,
-            amount,
-        };
-        self.load(
-            svm,
-            &[hook, hooks::validation_address(&hook, &transfer.mint)],
-        );
-        let mut found: Vec<AccountMeta> = vec![];
-        for _ in 0..psi::MAX_RESOLVE_ROUNDS {
-            let Ok(metas) =
-                hooks::resolve(&hook, &transfer, |key| svm.get_account(key).map(|a| a.data))
-            else {
-                return vec![];
-            };
-            let keys: Vec<Pubkey> = metas.iter().map(|m| m.pubkey).collect();
-            self.load(svm, &keys);
-            if metas == found {
-                break;
-            }
-            found = metas;
-        }
-        found
     }
 }
 

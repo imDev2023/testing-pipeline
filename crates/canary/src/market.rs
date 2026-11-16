@@ -16,6 +16,8 @@ use pipeline_client::{self as client, pda, pubkey, Pubkey};
 use pipeline_quoter::MarketView;
 use serde::Serialize;
 use solana_account::Account;
+use spl_token_2022_interface::extension::pausable::PausableConfig;
+use spl_token_2022_interface::extension::permanent_delegate::PermanentDelegate;
 use spl_token_2022_interface::extension::transfer_fee::TransferFeeConfig;
 use spl_token_2022_interface::extension::transfer_hook::TransferHook;
 use spl_token_2022_interface::extension::{BaseStateWithExtensions, StateWithExtensions};
@@ -37,8 +39,10 @@ const PROGRAM_DATA_SLOT: std::ops::Range<usize> = 4..12;
 /// SPL token account and mint layouts (the same base in Token-2022).
 const TOKEN_OWNER: std::ops::Range<usize> = 32..64;
 const TOKEN_AMOUNT: std::ops::Range<usize> = 64..72;
+const MINT_AUTHORITY: std::ops::Range<usize> = 0..36;
 const MINT_SUPPLY: std::ops::Range<usize> = 36..44;
 const MINT_DECIMALS: usize = 44;
+const MINT_FREEZE_AUTHORITY: std::ops::Range<usize> = 46..82;
 
 /// A program version: its ProgramData deploy slot and executable hash.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -78,6 +82,14 @@ pub fn program_elf(svm: &LiteSVM, program: &Pubkey) -> Option<Vec<u8>> {
     Some(account.data)
 }
 
+/// A mint's transfer hook extension: the program Token-2022 calls on every transfer, and
+/// the authority that can change it; both unset once a contained token unlocks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HookExtension {
+    pub program: Option<Pubkey>,
+    pub authority: Option<Pubkey>,
+}
+
 /// What a run needs to know about one of the market's mints.
 #[derive(Clone, Debug)]
 pub struct MintFacts {
@@ -85,38 +97,67 @@ pub struct MintFacts {
     pub token_program: Pubkey,
     pub decimals: u8,
     pub supply: u64,
+    pub mint_authority: Option<Pubkey>,
+    pub freeze_authority: Option<Pubkey>,
     pub transfer_fee: Option<TransferFeeConfig>,
-    /// The Token-2022 transfer hook program, when the mint names one.
-    pub transfer_hook: Option<Pubkey>,
+    pub transfer_hook: Option<HookExtension>,
+    pub permanent_delegate: Option<Pubkey>,
+    pub pause_authority: Option<Pubkey>,
+}
+
+/// A `COption<Pubkey>` as the token programs lay it out: a 4-byte tag, then the key.
+fn coption_key(bytes: &[u8]) -> Option<Pubkey> {
+    (bytes.first() == Some(&1))
+        .then(|| bytes.get(4..36))
+        .flatten()
+        .map(|key| Pubkey::new_from_array(key.try_into().expect("32 bytes")))
 }
 
 impl MintFacts {
     fn read(address: Pubkey, account: &Account) -> Result<Self, String> {
         let data = &account.data;
-        if data.len() <= MINT_DECIMALS {
+        if data.len() < MINT_FREEZE_AUTHORITY.end {
             return Err(format!("mint {address} is too short to be a mint"));
         }
-        let (transfer_fee, transfer_hook) = if account.owner == client::TOKEN_2022_PROGRAM_ID {
-            let state = StateWithExtensions::<Mint>::unpack(data)
-                .map_err(|e| format!("mint {address} does not unpack: {e}"))?;
-            (
-                state.get_extension::<TransferFeeConfig>().ok().copied(),
-                state
-                    .get_extension::<TransferHook>()
-                    .ok()
-                    .and_then(|hook| Option::<Pubkey>::from(hook.program_id)),
-            )
-        } else {
-            (None, None)
-        };
-        Ok(MintFacts {
+        let mut facts = MintFacts {
             address,
             token_program: account.owner,
             decimals: data[MINT_DECIMALS],
             supply: u64::from_le_bytes(data[MINT_SUPPLY].try_into().expect("8 bytes")),
-            transfer_fee,
-            transfer_hook,
-        })
+            mint_authority: coption_key(&data[MINT_AUTHORITY]),
+            freeze_authority: coption_key(&data[MINT_FREEZE_AUTHORITY]),
+            transfer_fee: None,
+            transfer_hook: None,
+            permanent_delegate: None,
+            pause_authority: None,
+        };
+        if account.owner == client::TOKEN_2022_PROGRAM_ID {
+            let state = StateWithExtensions::<Mint>::unpack(data)
+                .map_err(|e| format!("mint {address} does not unpack: {e}"))?;
+            facts.transfer_fee = state.get_extension::<TransferFeeConfig>().ok().copied();
+            facts.transfer_hook =
+                state
+                    .get_extension::<TransferHook>()
+                    .ok()
+                    .map(|hook| HookExtension {
+                        program: Option::<Pubkey>::from(hook.program_id),
+                        authority: Option::<Pubkey>::from(hook.authority),
+                    });
+            facts.permanent_delegate = state
+                .get_extension::<PermanentDelegate>()
+                .ok()
+                .and_then(|d| Option::<Pubkey>::from(d.delegate));
+            facts.pause_authority = state
+                .get_extension::<PausableConfig>()
+                .ok()
+                .and_then(|p| Option::<Pubkey>::from(p.authority));
+        }
+        Ok(facts)
+    }
+
+    /// The program Token-2022 calls on every transfer of this mint, if any.
+    pub fn transfer_hook_program(&self) -> Option<Pubkey> {
+        self.transfer_hook.and_then(|hook| hook.program)
     }
 
     pub fn is_wrapped_sol(&self) -> bool {
@@ -275,6 +316,8 @@ pub struct Session<'a> {
     pub extra: Vec<u8>,
     /// The run's seed, from which every wallet comes.
     pub seed: crate::wallets::Seed,
+    /// Every account the strategy listed in the run's completed account resolutions.
+    pub resolutions: crate::checks::transaction_accounts::Resolutions,
     pub notes: Vec<String>,
 }
 
@@ -334,6 +377,7 @@ impl<'a> Session<'a> {
             payer,
             extra,
             seed,
+            resolutions: Default::default(),
             notes,
         }
     }
