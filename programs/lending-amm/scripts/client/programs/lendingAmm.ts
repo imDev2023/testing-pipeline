@@ -47,12 +47,14 @@ import {
   getPipelineQuoteInstruction,
   getPipelineResolveAccountsInstruction,
   getPipelineSwapInstruction,
+  getRebalanceInstructionAsync,
   parseAddLiquidityInstruction,
   parsePipelineInitMarketInstruction,
   parsePipelineMarketInfoInstruction,
   parsePipelineQuoteInstruction,
   parsePipelineResolveAccountsInstruction,
   parsePipelineSwapInstruction,
+  parseRebalanceInstruction,
   type AddLiquidityAsyncInput,
   type ParsedAddLiquidityInstruction,
   type ParsedPipelineInitMarketInstruction,
@@ -60,11 +62,13 @@ import {
   type ParsedPipelineQuoteInstruction,
   type ParsedPipelineResolveAccountsInstruction,
   type ParsedPipelineSwapInstruction,
+  type ParsedRebalanceInstruction,
   type PipelineInitMarketAsyncInput,
   type PipelineMarketInfoInput,
   type PipelineQuoteInput,
   type PipelineResolveAccountsInput,
   type PipelineSwapInput,
+  type RebalanceAsyncInput,
 } from "../instructions/index.ts";
 import {
   findAuthorityPda,
@@ -112,8 +116,10 @@ export function identifyLendingAmmAccount(
 export const LendingAmmEvent = {
   0: "LiquidityAdded",
   1: "MarketCreated",
+  2: "Rebalanced",
   LiquidityAdded: 0,
   MarketCreated: 1,
+  Rebalanced: 2,
 } as const;
 
 export type LendingAmmEvent = (typeof LendingAmmEvent)[Exclude<
@@ -147,6 +153,17 @@ export function identifyLendingAmmEvent(
   ) {
     return LendingAmmEvent.MarketCreated;
   }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([74, 101, 57, 244, 181, 179, 52, 182]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.Rebalanced;
+  }
   throw new Error(
     "The provided event could not be identified as a lendingAmm event.",
   );
@@ -159,12 +176,14 @@ export const LendingAmmInstruction = {
   3: "PipelineQuote",
   4: "PipelineResolveAccounts",
   5: "PipelineSwap",
+  6: "Rebalance",
   AddLiquidity: 0,
   PipelineInitMarket: 1,
   PipelineMarketInfo: 2,
   PipelineQuote: 3,
   PipelineResolveAccounts: 4,
   PipelineSwap: 5,
+  Rebalance: 6,
 } as const;
 
 export type LendingAmmInstruction = (typeof LendingAmmInstruction)[Exclude<
@@ -242,6 +261,17 @@ export function identifyLendingAmmInstruction(
   ) {
     return LendingAmmInstruction.PipelineSwap;
   }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([108, 158, 77, 9, 210, 52, 88, 62]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmInstruction.Rebalance;
+  }
   throw new SolanaError(
     SOLANA_ERROR__PROGRAM_CLIENTS__FAILED_TO_IDENTIFY_INSTRUCTION,
     { instructionData: data, programName: "lendingAmm" },
@@ -268,7 +298,10 @@ export type ParsedLendingAmmInstruction<
     } & ParsedPipelineResolveAccountsInstruction<TProgram>)
   | ({
       instructionType: typeof LendingAmmInstruction.PipelineSwap;
-    } & ParsedPipelineSwapInstruction<TProgram>);
+    } & ParsedPipelineSwapInstruction<TProgram>)
+  | ({
+      instructionType: typeof LendingAmmInstruction.Rebalance;
+    } & ParsedRebalanceInstruction<TProgram>);
 
 export function parseLendingAmmInstruction<TProgram extends string>(
   instruction: Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array>,
@@ -315,6 +348,13 @@ export function parseLendingAmmInstruction<TProgram extends string>(
       return {
         instructionType: LendingAmmInstruction.PipelineSwap,
         ...parsePipelineSwapInstruction(instruction),
+      };
+    }
+    case LendingAmmInstruction.Rebalance: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: LendingAmmInstruction.Rebalance,
+        ...parseRebalanceInstruction(instruction),
       };
     }
     default:
@@ -372,6 +412,11 @@ export type LendingAmmPluginInstructions = {
     input: PipelineSwapInput,
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getPipelineSwapInstruction> & SelfPlanAndSendFunctions;
+  rebalance: (
+    input: RebalanceAsyncInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getRebalanceInstructionAsync> &
+    SelfPlanAndSendFunctions;
 };
 
 export type LendingAmmPluginPdas = {
@@ -452,6 +497,14 @@ export function lendingAmmProgram(
             addSelfPlanAndSendFunctions(
               client,
               getPipelineSwapInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          rebalance: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getRebalanceInstructionAsync(input, {
                 programAddress:
                   instructionConfig?.programAddress ?? config.programAddress,
               }),

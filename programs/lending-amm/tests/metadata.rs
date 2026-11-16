@@ -1,9 +1,9 @@
 //! `metadata.json` against the program (docs/spec/lending-pool.md, "Custom actions and
 //! metadata"; docs/spec/README.md, "Metadata, IDL and conformance report"): it passes
 //! `pipeline-client`'s validator with zero warnings, its `init` form takes the other mint
-//! and then the lent mint (so `lent_index` is 1), and `create_market` and `add_liquidity`
-//! built from it, as a desk builds them, carry exactly the accounts and data the program
-//! expects, and work.
+//! and then the lent mint (so `lent_index` is 1), and `create_market`, `add_liquidity` and
+//! `rebalance` built from it, as a desk or a keeper builds them, carry exactly the accounts and
+//! data the program expects, and work.
 
 mod common;
 
@@ -55,7 +55,21 @@ fn the_metadata_describes_a_lending_amm() {
         .iter()
         .map(|a| (a["name"].as_str().unwrap(), a["kind"].as_str().unwrap()))
         .collect();
-    assert_eq!(actions, [("add_liquidity", "add_liquidity")]);
+    assert_eq!(
+        actions,
+        [("add_liquidity", "add_liquidity"), ("rebalance", "other")]
+    );
+    // rebalance is signed by anyone: the wallet that calls it, read-only, and nothing else.
+    let rebalance = &m["actions"][1];
+    let signers: Vec<&Value> = rebalance["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| a["signer"].as_bool().unwrap_or(false))
+        .collect();
+    assert_eq!(signers.len(), 1);
+    assert_eq!(signers[0]["source"], "wallet");
+    assert!(!signers[0]["writable"].as_bool().unwrap_or(false));
 }
 
 #[test]
@@ -109,7 +123,9 @@ fn resolve(source: &AccountSource, cx: &Context) -> Pubkey {
             other => panic!("unexpected mint source {other:?}"),
         },
         AccountSource::Pda { program, seeds } => {
-            assert!(program.is_none(), "the lending AMM's PDAs are its own");
+            // The lending AMM's own PDAs, and klend's lending market authority.
+            let program = program.unwrap_or_else(strategy_id);
+            assert!(program == strategy_id() || program == common::kamino::klend());
             let bytes: Vec<Vec<u8>> = seeds
                 .iter()
                 .map(|seed| match seed {
@@ -120,7 +136,7 @@ fn resolve(source: &AccountSource, cx: &Context) -> Pubkey {
                 })
                 .collect();
             let refs: Vec<&[u8]> = bytes.iter().map(Vec::as_slice).collect();
-            Pubkey::find_program_address(&refs, &strategy_id()).0
+            Pubkey::find_program_address(&refs, &program).0
         }
         other => panic!("unexpected source {other:?}"),
     }
@@ -254,4 +270,54 @@ fn create_market_and_add_liquidity_built_from_the_metadata_are_what_the_program_
     instructions.push(add);
     env.send(&instructions, &[&lp]).unwrap();
     assert_eq!(env.market_state(&cx.market_state).reserves, amounts);
+}
+
+#[test]
+fn rebalance_built_from_the_metadata_is_the_programs_and_works() {
+    let m = metadata();
+    let mut env = Env::new();
+    let spec = env.wsol_market_spec(30);
+    let (market, _) = env.create_funded_market(&spec, [SOL, 2 * SOL]).unwrap();
+    let k = &env.kamino;
+    let keeper = solana_keypair::Keypair::new();
+    // The inputs a keeper, or Aviary's form, fills in for the market's lent mint.
+    let cx = Context {
+        wallet: keeper.pubkey(),
+        market_state: market.market_state,
+        inputs: HashMap::from([
+            ("lent_mint".to_string(), (wsol(), TOKEN)),
+            ("reserve".to_string(), (k.address("reserve-sol"), TOKEN)),
+            (
+                "lending_market".to_string(),
+                (k.address("lending-market"), TOKEN),
+            ),
+            (
+                "reserve_liquidity_supply".to_string(),
+                (k.address("liquidity-supply-sol"), TOKEN),
+            ),
+            (
+                "collateral_mint".to_string(),
+                (k.address("collateral-mint-sol"), TOKEN),
+            ),
+        ]),
+        args: HashMap::new(),
+        market: Some(market.clone()),
+    };
+    let action = &m["actions"][1];
+    assert_eq!(action["name"], "rebalance");
+    assert!(action["args"].as_array().unwrap().is_empty());
+    let rebalance = Instruction::new_with_bytes(
+        strategy_id(),
+        &anchor_discriminator("rebalance"),
+        metas(&action["accounts"], &cx),
+    );
+    assert_eq!(
+        rebalance,
+        env.rebalance_instruction(&market, &keeper.pubkey())
+    );
+    // And it lends the surplus.
+    env.load_klend();
+    env.svm.airdrop(&keeper.pubkey(), SOL).unwrap();
+    env.send(&[rebalance], &[&keeper]).unwrap();
+    assert!(env.market_state(&market.market_state).ctokens > 0);
 }

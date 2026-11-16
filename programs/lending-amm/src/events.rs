@@ -36,3 +36,32 @@ pub struct LiquidityAdded {
     /// Whether this was the first deposit, which set the price.
     pub first: bool,
 }
+
+/// Which way a `rebalance` moved the lent mint.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RebalanceDirection {
+    /// From the buffer into Kamino, for cTokens.
+    Deposit,
+    /// From Kamino into the buffer, for cTokens burned.
+    Redeem,
+}
+
+/// `rebalance` moved the buffer back towards its target.
+#[event]
+pub struct Rebalanced {
+    pub market_state: Pubkey,
+    pub direction: RebalanceDirection,
+    /// The lent mint that actually left or joined the buffer, as measured at the vault.
+    pub liquidity: u64,
+    /// The cTokens that were actually minted to or burned from the market, as measured at its
+    /// cToken account.
+    pub ctokens: u64,
+    /// The buffer `B` the market has recorded afterwards.
+    pub buffer: u64,
+    /// The cTokens `c` the market has recorded afterwards.
+    pub ctokens_held: u64,
+    /// The running totals of the lent mint deposited into and redeemed from Kamino
+    /// afterwards; the lending yield so far is `V + redeemed - deposited`.
+    pub deposited: u128,
+    pub redeemed: u128,
+}

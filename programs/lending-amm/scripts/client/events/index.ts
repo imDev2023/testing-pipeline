@@ -8,3 +8,4 @@
 
 export * from "./liquidityAdded.ts";
 export * from "./marketCreated.ts";
+export * from "./rebalanced.ts";
