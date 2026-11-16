@@ -79,6 +79,9 @@ pub enum MintKind {
     Hooked,
     /// SPL Token's native SOL mint, which can't be burned.
     NativeSol,
+    /// A Token-2022 mint a product built on this one creates through its [`Surroundings`],
+    /// such as the containment hook's contained mint; this product's shapes never choose it.
+    Outside,
 }
 
 /// How the market comes to be.
@@ -170,6 +173,32 @@ pub enum Flaw {
 // `use common::fuzz::tax::*` as printed.
 #[allow(unused_imports)]
 pub use {Creation::*, Flaw::*, MintKind::*, Rate::*, Size::*, Step::*, Who::*};
+
+/// What a product built on this one adds to a world as [`TaxWorld::new_in`] builds it: the
+/// mint of each side whose kind is [`MintKind::Outside`], and what happens between the
+/// market's creation and its seed (for the containment hook, the contained mint and `bind`,
+/// which must come before any of the token moves). A launchpad seeds its market in the
+/// transaction that creates it, so a shape with an outside mint is never a launchpad's.
+pub trait Surroundings {
+    /// Creates the mint of a side whose kind is [`MintKind::Outside`] at `at`'s address, a
+    /// Token-2022 mint.
+    fn create_mint(&self, env: &mut Env, at: &Keypair) -> Pubkey;
+    /// Runs once the market exists, before its seed.
+    fn before_seed(&self, env: &mut Env, market: &Market) -> Result<(), String>;
+}
+
+/// The tax AMM's own worlds, with nothing built around them.
+pub struct Nothing;
+
+impl Surroundings for Nothing {
+    fn create_mint(&self, _: &mut Env, _: &Keypair) -> Pubkey {
+        panic!("the tax AMM's shapes never choose an outside mint")
+    }
+
+    fn before_seed(&self, _: &mut Env, _: &Market) -> Result<(), String> {
+        Ok(())
+    }
+}
 
 /// One thing anyone can do to a tax market.
 #[derive(Clone, Debug)]
@@ -277,6 +306,9 @@ pub struct Outcome {
     pub costs: Vec<(&'static str, u64)>,
     /// What those bump searches spent beyond each address's first bump.
     pub bump_search: u64,
+    /// The logs of the last transaction the step sent, for a product built on this one to
+    /// read (the containment hook reads its own compute from them).
+    pub logs: Vec<String>,
 }
 
 impl Outcome {
@@ -294,6 +326,7 @@ impl Outcome {
             swap: None,
             costs: vec![],
             bump_search: 0,
+            logs: vec![],
         }
     }
 
@@ -335,7 +368,7 @@ pub struct Snapshot {
     pub state: TaxMarket,
     pub vaults: [u64; 2],
     /// Everything every known account holds, by mint: wallets, vaults, Pipeline's fee
-    /// accounts and the launchpad's escrows.
+    /// accounts, the launchpad's escrows and [`TaxWorld::other_accounts`].
     pub held: [u128; 2],
     pub supply: [u64; 2],
     /// What each of [`TaxWorld::wallets`] holds of each mint.
@@ -370,6 +403,9 @@ pub struct TaxWorld {
     pub paid_out: u128,
     /// The market state as created.
     pub created_state: TaxMarket,
+    /// Token accounts a product built on this one adds, each with the index of its mint,
+    /// counted among the known accounts that value conservation sums.
+    pub other_accounts: Vec<(usize, Pubkey)>,
     /// The strategy accounts a swap in each direction needs, `[0 -> 1, 1 -> 0]`.
     resolved: [Vec<AccountMeta>; 2],
     /// The most compute each instruction took, on markets without a hooked mint.
@@ -385,7 +421,7 @@ thread_local! {
 }
 
 /// A copy of the thread's base VM.
-fn fresh_env() -> Env {
+pub fn fresh_env() -> Env {
     BASE.with(|base| {
         let mut base = base.borrow_mut();
         let base = base.get_or_insert_with(|| {
@@ -401,8 +437,9 @@ fn fresh_env() -> Env {
     })
 }
 
-/// The keypair a world of `keys` gives the `index`th holder of `role`.
-fn key(keys: u64, role: u8, index: usize) -> Keypair {
+/// The keypair a world of `keys` gives the `index`th holder of `role`. The roles below 64
+/// are this product's ([`role`]); a product built on this one takes its own from 64 up.
+pub fn key(keys: u64, role: u8, index: usize) -> Keypair {
     let mut secret = [0u8; 32];
     secret[..8].copy_from_slice(&keys.to_le_bytes());
     secret[8] = role;
@@ -596,7 +633,17 @@ fn total_owed(state: &TaxMarket) -> u128 {
 impl TaxWorld {
     /// Builds a world of `shape`.
     pub fn new(shape: &Shape) -> Result<TaxWorld, String> {
-        let mut env = fresh_env();
+        Self::new_in(fresh_env(), shape, &Nothing)
+    }
+
+    /// Builds a world of `shape` in `env` (a copy of [`fresh_env`] with whatever else a
+    /// product built on this one loads), with `surroundings` creating its outside mints and
+    /// acting before the seed.
+    pub fn new_in(
+        mut env: Env,
+        shape: &Shape,
+        surroundings: &dyn Surroundings,
+    ) -> Result<TaxWorld, String> {
         let keys = shape.keys;
         let mut mint_index = 0;
         let mints = shape.mints.map(|kind| {
@@ -613,6 +660,7 @@ impl TaxWorld {
                 ),
                 MintKind::Hooked => (env.create_mint_with_test_hook_at(&at), TOKEN_2022),
                 MintKind::NativeSol => (env.write_native_mint(&NATIVE_MINTS[0], &TOKEN), TOKEN),
+                MintKind::Outside => (surroundings.create_mint(&mut env, &at), TOKEN_2022),
             }
         });
         let traders: Vec<Keypair> = (0..TRADERS).map(|k| key(keys, role::TRADER, k)).collect();
@@ -646,7 +694,10 @@ impl TaxWorld {
             virtual_side: shape.virtual_side,
             virtual_reserve: shape.virtual_reserve,
         };
-        let hooked = shape.mints.contains(&MintKind::Hooked);
+        let hooked = shape
+            .mints
+            .iter()
+            .any(|kind| matches!(kind, MintKind::Hooked | MintKind::Outside));
         let mut created = shape.seed.map(|seed| seed as u128);
         let mut costs = vec![];
         let mut launch_seeder = None;
@@ -658,6 +709,7 @@ impl TaxWorld {
                     init_data(&params),
                 )?;
                 costs.extend(creation_costs(&market.created.logs, "pipeline_init_market"));
+                surroundings.before_seed(&mut env, &market)?;
                 env.fund(&seeder.pubkey(), &market, shape.seed);
                 if shape.creation == Creation::CreateAndSeed {
                     let seeded = env.seed(&market, &seeder, shape.seed)?;
@@ -668,6 +720,12 @@ impl TaxWorld {
                     );
                 }
                 market
+            }
+            Creation::Launchpad if shape.mints.contains(&MintKind::Outside) => {
+                return Err(
+                    "a launchpad seeds in creation, before an outside mint's surroundings can act"
+                        .into(),
+                );
             }
             Creation::Launchpad => {
                 let launch = env.launch_by(key(keys, role::LAUNCH_CREATOR, 0), mints, shape.seed);
@@ -735,6 +793,7 @@ impl TaxWorld {
             donated: [0, 0],
             paid_out: 0,
             created_state,
+            other_accounts: vec![],
             resolved,
             max_costs: BTreeMap::new(),
             tally: BTreeMap::new(),
@@ -845,7 +904,8 @@ impl TaxWorld {
         real as u128 + virtual_part as u128
     }
 
-    fn sized(size: Size, reserve: u128, holding: u64) -> u64 {
+    /// How much `size` is of `reserve`, at most `holding`.
+    pub fn sized(size: Size, reserve: u128, holding: u64) -> u64 {
         let amount = match size {
             Size::Dust(units) => units as u64,
             Size::Part { mantissa, exp } => {
@@ -887,6 +947,7 @@ impl TaxWorld {
                 let mut outcome = Outcome::of(Action::Seed, expected, named(&sent));
                 if let Ok(meta) = &sent {
                     outcome.costs = costs_of(&meta.logs, "seed");
+                    outcome.logs = meta.logs.clone();
                 }
                 outcome
             }
@@ -944,6 +1005,7 @@ impl TaxWorld {
                         .map(|(name, cost)| (name, cost.saturating_sub(search)))
                         .collect();
                     outcome.bump_search = search;
+                    outcome.logs = meta.logs.clone();
                     let vault_after = self.env.balance(&self.market.vaults[tax_side]);
                     self.paid_out += vault_before.saturating_sub(vault_after) as u128;
                     if slot == BURN_SLOT {
@@ -1064,10 +1126,12 @@ impl TaxWorld {
                 let sent = self
                     .env
                     .transfer(&self.market, &stranger, side, vault, amount);
-                if sent.is_ok() {
+                let mut outcome = Outcome::of(Action::Donate { side }, Ok(()), named(&sent));
+                if let Ok(meta) = &sent {
                     self.donated[side] += amount as u128;
+                    outcome.logs = meta.logs.clone();
                 }
-                Outcome::of(Action::Donate { side }, Ok(()), named(&sent))
+                outcome
             }
             Step::Warp { slots, seconds } => {
                 let mut clock: solana_clock::Clock = self.env.svm.get_sysvar();
@@ -1134,6 +1198,7 @@ impl TaxWorld {
         let mut outcome = Outcome::of(action, expected, named(&sent));
         if let Ok(meta) = &sent {
             outcome.costs = costs_of(&meta.logs, name);
+            outcome.logs = meta.logs.clone();
         }
         outcome
     }
@@ -1183,6 +1248,10 @@ impl TaxWorld {
                 );
                 self.env.send_meta(&[create, swap], &[&trader])
             });
+        let logs = sent
+            .as_ref()
+            .map(|meta| meta.logs.clone())
+            .unwrap_or_default();
         if let Ok(meta) = &sent {
             costs.extend(costs_of(&meta.logs, "pipeline_swap"));
         }
@@ -1202,6 +1271,7 @@ impl TaxWorld {
         );
         outcome.swap = Some(SwapOutcome { quote, swap, model });
         outcome.costs = costs;
+        outcome.logs = logs;
         outcome
     }
 
@@ -1218,6 +1288,12 @@ impl TaxWorld {
             vaults[i] as u128
                 + env.balance_or_zero(&self.fee_account(i)) as u128
                 + holdings.iter().map(|h| h[i] as u128).sum::<u128>()
+                + self
+                    .other_accounts
+                    .iter()
+                    .filter(|(mint, _)| *mint == i)
+                    .map(|(_, account)| env.balance_or_zero(account) as u128)
+                    .sum::<u128>()
         });
         Snapshot {
             state: self.state(),

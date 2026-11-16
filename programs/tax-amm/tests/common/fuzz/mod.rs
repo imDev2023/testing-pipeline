@@ -39,7 +39,9 @@
 //!
 //! `PROPTEST_CASES` sets how many sequences run and `FUZZ_STEPS` the most steps in one
 //! (each product sets its defaults). `FUZZ_INVARIANTS`, a comma-separated list of invariant
-//! names, checks only those: how each invariant is shown to catch a fault on its own.
+//! names, checks only those: how each invariant is shown to catch a fault on its own. A
+//! product whose sequences are slow runs them with [`fuzz_in_parallel`], on as many threads
+//! as `FUZZ_THREADS` says, or every core.
 
 #![allow(dead_code)]
 
@@ -271,6 +273,50 @@ pub fn fuzz<P: Product>(cases: u32, max_steps: usize, each: impl FnMut(&P::World
         }
         Err(TestError::Abort(reason)) => panic!("the fuzzer aborted: {reason}"),
     }
+}
+
+/// How many threads [`fuzz_in_parallel`] runs on: `FUZZ_THREADS`, or every core.
+pub fn threads() -> usize {
+    std::env::var("FUZZ_THREADS")
+        .ok()
+        .and_then(|threads| threads.parse().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+        .max(1)
+}
+
+/// [`fuzz`] split across `threads` threads, each running its share of the `cases` on worlds
+/// of its own (a product keeps its base VM per thread), for a product whose sequences are
+/// too slow to run one after another. A failure is shrunk and printed by the thread that
+/// found it, as [`fuzz`] prints it, and fails the run once every thread has finished.
+pub fn fuzz_in_parallel<P: Product>(
+    cases: u32,
+    max_steps: usize,
+    threads: usize,
+    each: impl Fn(&P::World) + Sync,
+) {
+    let threads = threads.clamp(1, cases.max(1) as usize) as u32;
+    std::thread::scope(|scope| {
+        let each = &each;
+        let runs: Vec<_> = (0..threads)
+            .map(|k| {
+                // The first `cases % threads` threads take one case more.
+                let share = cases / threads + u32::from(k < cases % threads);
+                std::thread::Builder::new()
+                    .name(format!("fuzz-{k}"))
+                    .spawn_scoped(scope, move || fuzz::<P>(share, max_steps, each))
+                    .expect("a fuzzing thread")
+            })
+            .collect();
+        let failed = runs
+            .into_iter()
+            .map(|run| run.join())
+            .filter(Result::is_err)
+            .count();
+        assert!(
+            failed == 0,
+            "{failed} of {threads} fuzzing threads found a failing case, printed above"
+        );
+    });
 }
 
 /// Replays one sequence on one shape with every invariant: a regression test made from a
