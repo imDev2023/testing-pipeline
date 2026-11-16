@@ -67,4 +67,6 @@ pub enum StrategyError {
     NothingAfterFee,
     #[msg("The trade reaches a price bound with input left over")]
     PriceBoundReached,
+    #[msg("A seed request needs exactly one amount per mint: the token's, then wrapped SOL's")]
+    BadSeedAmounts,
 }

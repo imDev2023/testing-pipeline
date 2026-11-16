@@ -48,4 +48,5 @@ solana-keypair.workspace = true
 solana-message.workspace = true
 solana-signer.workspace = true
 solana-transaction.workspace = true
+stand-in-launchpad.workspace = true
 spl-token-2022-interface.workspace = true

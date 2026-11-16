@@ -1,7 +1,8 @@
 //! Stateful invariant fuzzing (docs/spec/README.md, "Test layers" 3): Proptest generates
 //! sequences of the instructions built so far (creation with any parameters, the seed by
-//! the seeder or anyone else with any amounts, donations to the vaults, buys and sells
-//! through the router) and clock jumps, several trades often landing in one slot, sends
+//! the seeder or anyone else with any amounts, a launchpad's graduation through
+//! `pipeline_seed_liquidity` with any parameters and amounts, donations to the vaults, buys
+//! and sells through the router) and clock jumps, several trades often landing in one slot, sends
 //! each through the router in LiteSVM, and checks after every step:
 //!
 //! - value is conserved: no token unit or lamport of wrapped SOL is created or lost, across
@@ -49,6 +50,20 @@ enum Step {
         lamports: u64,
         by_seeder: bool,
     },
+    /// Graduate a new token through the stand-in launchpad's `pipeline_seed_liquidity`,
+    /// recording the market with the router in the same transaction; parameters as for
+    /// `Create`, and any amounts.
+    Graduate {
+        token_2022: bool,
+        valid: bool,
+        fee_bps: u16,
+        wall_split_bps: u16,
+        reward_share_bps: u16,
+        cap_floor_bps: u16,
+        cap_decay_bps: u16,
+        tokens: u64,
+        lamports: u64,
+    },
     /// Send tokens or wrapped SOL straight to a vault.
     Donate {
         market: usize,
@@ -70,6 +85,10 @@ fn step() -> impl Strategy<Value = Step> {
         2 => (any::<bool>(), prop::bool::weighted(0.8), 0..400u16, 0..10_500u16, 0..3_500u16, 0..10_500u16, 0..10_500u16)
             .prop_map(|(token_2022, valid, fee_bps, wall_split_bps, reward_share_bps, cap_floor_bps, cap_decay_bps)| {
                 Step::Create { token_2022, valid, fee_bps, wall_split_bps, reward_share_bps, cap_floor_bps, cap_decay_bps }
+            }),
+        1 => ((any::<bool>(), prop::bool::weighted(0.8), 0..400u16, 0..10_500u16, 0..3_500u16, 0..10_500u16, 0..10_500u16), seed_tokens(), seed_lamports())
+            .prop_map(|((token_2022, valid, fee_bps, wall_split_bps, reward_share_bps, cap_floor_bps, cap_decay_bps), tokens, lamports)| {
+                Step::Graduate { token_2022, valid, fee_bps, wall_split_bps, reward_share_bps, cap_floor_bps, cap_decay_bps, tokens, lamports }
             }),
         3 => (any::<usize>(), seed_tokens(), seed_lamports(), prop::bool::weighted(0.85))
             .prop_map(|(market, tokens, lamports, by_seeder)| Step::Seed { market, tokens, lamports, by_seeder }),
@@ -179,20 +198,17 @@ impl World {
                 let token = self.env.seedable_token(&program);
                 let seeder = Keypair::new();
                 self.env.svm.airdrop(&seeder.pubkey(), SOL).unwrap();
-                let mut params = launch_params(seeder.pubkey());
-                if valid {
-                    params.fee_bps = 25 + fee_bps % 276;
-                    params.wall_split_bps = wall_split_bps % 10_001;
-                    params.reward_share_bps = 1 + reward_share_bps % 3_000;
-                    params.cap_floor_bps = 10 + cap_floor_bps % 9_991;
-                    params.cap_decay_bps = cap_decay_bps % 10_001;
-                } else {
-                    params.fee_bps = fee_bps;
-                    params.wall_split_bps = wall_split_bps;
-                    params.reward_share_bps = reward_share_bps;
-                    params.cap_floor_bps = cap_floor_bps;
-                    params.cap_decay_bps = cap_decay_bps;
-                }
+                let params = creation_params(
+                    seeder.pubkey(),
+                    valid,
+                    [
+                        fee_bps,
+                        wall_split_bps,
+                        reward_share_bps,
+                        cap_floor_bps,
+                        cap_decay_bps,
+                    ],
+                );
                 let accepted = params.validate().is_ok();
                 let result = self.env.create_market(token, program, &params);
                 assert_eq!(
@@ -253,6 +269,72 @@ impl World {
                         assert_eq!((after.pool_tokens(), after.pool_sol()), (tokens, lamports));
                         assert_eq!(after.cap(), tokens);
                     }
+                }
+            }
+            Step::Graduate {
+                token_2022,
+                valid,
+                fee_bps,
+                wall_split_bps,
+                reward_share_bps,
+                cap_floor_bps,
+                cap_decay_bps,
+                tokens,
+                lamports,
+            } => {
+                let program = if token_2022 { TOKEN_2022 } else { TOKEN };
+                let token = self.env.seedable_token(&program);
+                let launch = self.env.launch(token, program, 0, 0);
+                self.give(&launch.seeder, &token, &program, tokens);
+                self.give(&launch.seeder, &WSOL, &TOKEN, lamports);
+                // The seeder named here is ignored for the launchpad's PDA.
+                let params = creation_params(
+                    Pubkey::new_unique(),
+                    valid,
+                    [
+                        fee_bps,
+                        wall_split_bps,
+                        reward_share_bps,
+                        cap_floor_bps,
+                        cap_decay_bps,
+                    ],
+                );
+                let expected = params.validate().ok().map(|()| {
+                    buy_wall_amm::opening::open(
+                        tokens,
+                        lamports,
+                        params.cap_floor_bps,
+                        params.cap_decay_bps,
+                    )
+                });
+                let result = self.env.graduate(&launch, &params, tokens, lamports);
+                match (&result, expected) {
+                    (Ok(graduated), Some(Ok(opened))) => {
+                        assert_eq!(graduated.graduation.taken, vec![tokens, lamports]);
+                        assert_eq!(graduated.graduation.lp_amount, 0);
+                        let m = graduated.market.clone();
+                        let after = self.env.state(&m);
+                        assert_eq!(after.status, STATUS_OPEN);
+                        assert_eq!(after.seeder, launch.seeder);
+                        assert_eq!(after.sqrt_price(), opened.sqrt_price);
+                        assert_eq!(after.liquidity(), opened.liquidity);
+                        assert_eq!((after.pool_tokens(), after.pool_sol()), (tokens, lamports));
+                        assert_eq!(after.cap(), tokens);
+                        // The launch's creator stands in for the seeder, which is a PDA:
+                        // a later `Seed` step by it is refused, as by anyone.
+                        self.markets.push(Tracked {
+                            market: m,
+                            seeder: launch.creator,
+                            last: after,
+                        });
+                    }
+                    (Err(_), None | Some(Err(_))) => {
+                        assert!(self.env.svm.get_account(&launch.market_state()).is_none());
+                    }
+                    _ => panic!(
+                        "graduation of {params:?} with {tokens}/{lamports}: {:?}",
+                        result.map(|_| ())
+                    ),
                 }
             }
             Step::Donate {
@@ -500,6 +582,28 @@ impl World {
             }
         }
     }
+}
+
+/// Creation parameters from generated values: with `valid`, folded into the ranges the
+/// rules accept, otherwise as they come. In order: the fee, the wall split, the reward share,
+/// the cap floor and the cap decay, in basis points.
+fn creation_params(seeder: Pubkey, valid: bool, bps: [u16; 5]) -> buy_wall_amm::InitParams {
+    let [fee_bps, wall_split_bps, reward_share_bps, cap_floor_bps, cap_decay_bps] = bps;
+    let mut params = launch_params(seeder);
+    if valid {
+        params.fee_bps = 25 + fee_bps % 276;
+        params.wall_split_bps = wall_split_bps % 10_001;
+        params.reward_share_bps = 1 + reward_share_bps % 3_000;
+        params.cap_floor_bps = 10 + cap_floor_bps % 9_991;
+        params.cap_decay_bps = cap_decay_bps % 10_001;
+    } else {
+        params.fee_bps = fee_bps;
+        params.wall_split_bps = wall_split_bps;
+        params.reward_share_bps = reward_share_bps;
+        params.cap_floor_bps = cap_floor_bps;
+        params.cap_decay_bps = cap_decay_bps;
+    }
+    params
 }
 
 fn cases() -> u32 {
