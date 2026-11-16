@@ -2967,6 +2967,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61)
 
+### TAX-49: The maths re-checks the creation rules
+
+- Question: Should the pricing and the split refuse a rate above the cap and shares that are not the whole themselves, when creation and the tax authority's changes already refuse them?
+- Answer: Yes: the pricing refuses a rate above `MAX_TAX_BPS` and the split refuses shares that do not sum to 10,000 with the burn share, for every input, so the proven properties hold for the maths on its own and not only for the market states creation allows.
+- Alternatives: Relying on the creation rules alone, which left the pricing applying any rate up to 100% and the split booking shares past the whole on small taxes if a market state ever held them.
+- Specified in: [`docs/spec/tax-amm.md`, Pricing and the tax](spec/tax-amm.md#pricing-and-the-tax)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: proofs of the pricing, tax and split maths](https://github.com/imDev2023/testing-pipeline/issues/64)
+
+### TAX-50: How the tax AMM's maths is proven
+
+- Question: Which properties of the pricing, tax and split maths are proven, and how is each established?
+- Answer: The property list in `docs/security/tax-amm/maths-properties.md`, chosen with Book of Knowledge: Kani proves for every input what needs no quotient and the rest for small inputs, Z3 proves every quotient claim for every input from lemmas proven on their own, and Proptest checks each property of the tax, a swap, the split and the curve on the compiled code, on at least 10,000 cases that exercise it.
+- Alternatives: Kani alone, whose full-domain proofs about quotients do not finish; Z3 on whole trades directly, which does not finish either.
+- Specified in: [`docs/spec/tax-amm.md`, Maths proofs](spec/tax-amm.md#maths-proofs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Tax AMM: proofs of the pricing, tax and split maths](https://github.com/imDev2023/testing-pipeline/issues/64)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained

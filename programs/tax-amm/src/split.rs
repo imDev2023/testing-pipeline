@@ -11,6 +11,7 @@
 
 use crate::config::{MAX_RECIPIENTS, SUITE_SHARE_BPS};
 use crate::errors::StrategyError;
+use crate::params::shares_are_whole;
 use crate::state::{BURN_SLOT, OWED_SLOTS, SUITE_SLOT};
 
 /// Basis points in a whole, Pipeline's denominator.
@@ -18,12 +19,16 @@ const BPS: u128 = pipeline_strategy_interface::BPS_DENOMINATOR as u128;
 
 /// Splits `tax` into what each slot is owed, by slot index: the tax recipients, then the
 /// burn, then the suite share. The shares are a market's, which its creation rules make
-/// sum to 10,000 with the burn share; shares that sum to more are refused.
+/// sum to 10,000 with the burn share; shares that do not are refused for every tax, so the
+/// parts always add up to the tax and none exceeds it (docs/security/tax-amm, P1).
 pub fn split_tax(
     tax: u64,
     shares: &[u16; MAX_RECIPIENTS],
     burn_share_bps: u16,
 ) -> Result<[u64; OWED_SLOTS], StrategyError> {
+    if !shares_are_whole(shares, burn_share_bps) {
+        return Err(StrategyError::SharesNotWhole);
+    }
     let tax = tax as u128;
     let suite = tax * SUITE_SHARE_BPS as u128 / BPS;
     let rest = tax - suite;
@@ -38,7 +43,8 @@ pub fn split_tax(
     booked += burn;
     slots[BURN_SLOT as usize] = burn as u64;
     slots[SUITE_SLOT as usize] = suite as u64;
-    // Each part rounds down, so what is left over is under one unit per part.
+    // Each part rounds down, so what is left over is under one unit per part; with whole
+    // shares this never fails (proofs/pricing_z3.py, P1).
     let remainder = rest.checked_sub(booked).ok_or(StrategyError::Overflow)?;
     slots[0] = slots[0]
         .checked_add(remainder as u64)
@@ -61,10 +67,102 @@ mod tests {
     }
 
     #[test]
-    fn shares_that_sum_past_the_whole_are_refused() {
+    fn shares_that_are_not_the_whole_are_refused_whatever_the_tax() {
+        for tax in [0, 1, 9, 1_000, u64::MAX] {
+            for (shares, burn) in [
+                ([10_000, 10_000, 0, 0], 0),
+                ([10_001, 0, 0, 0], 0),
+                ([5_000, 0, 0, 0], 4_999),
+                ([u16::MAX; 4], u16::MAX),
+            ] {
+                assert!(
+                    matches!(
+                        split_tax(tax, &shares, burn),
+                        Err(StrategyError::SharesNotWhole)
+                    ),
+                    "tax {tax}, shares {shares:?}, burn {burn}"
+                );
+            }
+        }
+    }
+}
+
+// Kani proofs of the split (`cargo kani`, docs/toolchain.md), in the pricing's tiers
+// (`crate::pricing`); the property IDs are docs/security/tax-amm/maths-properties.md's.
+// The arithmetic of the parts needs six 128-bit divisions by symbolic shares, which CBMC
+// did not finish in 30 minutes even for taxes below 2^8, so the default tier proves only the
+// refusal before it; Z3 proves the parts for every tax (`proofs/pricing_z3.py`), and Proptest
+// checks them on the compiled code.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// The shares of a valid market: each recipient's share and the burn share, summing to
+    /// 10,000 (the creation rules also put used slots first, which the maths does not need).
+    #[cfg(kani_full)]
+    fn whole_shares() -> ([u16; MAX_RECIPIENTS], u16) {
+        let shares: [u16; MAX_RECIPIENTS] = kani::any();
+        let burn: u16 = kani::any();
+        kani::assume(
+            shares.iter().map(|&share| share as u32).sum::<u32>() + burn as u32 == BPS as u32,
+        );
+        (shares, burn)
+    }
+
+    /// P1 and N1: for every tax, shares that are not the whole are refused before any
+    /// arithmetic, so the split's arithmetic only ever runs on whole shares, which Z3 proves
+    /// it books exactly for every tax (`proofs/pricing_z3.py`).
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn shares_that_are_not_the_whole_are_always_refused() {
+        let shares: [u16; MAX_RECIPIENTS] = kani::any();
+        let burn: u16 = kani::any();
+        kani::assume(!shares_are_whole(&shares, burn));
         assert!(matches!(
-            split_tax(1_000, &[10_000, 10_000, 0, 0], 0),
-            Err(StrategyError::Overflow)
+            split_tax(kani::any(), &shares, burn),
+            Err(StrategyError::SharesNotWhole)
         ));
+    }
+
+    /// P1: for every tax and any shares, when the split books the tax, the suite share, the
+    /// recipients' parts and the burn add up to exactly the tax and none exceeds it. Behind
+    /// `kani_full`: the parts' six 128-bit divisions by symbolic shares do not finish.
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn the_split_adds_up_to_the_tax_or_is_refused() {
+        let tax: u64 = kani::any();
+        let shares: [u16; MAX_RECIPIENTS] = kani::any();
+        let burn: u16 = kani::any();
+        if let Ok(slots) = split_tax(tax, &shares, burn) {
+            assert!(shares_are_whole(&shares, burn));
+            assert!(slots.iter().map(|&part| part as u128).sum::<u128>() == tax as u128);
+            assert!(slots.iter().all(|&part| part <= tax));
+        }
+    }
+
+    /// P1: with whole shares the split always books the tax: each part is its share rounded
+    /// down, the suite share first, and what rounding leaves, under one unit a part, goes to
+    /// the first recipient.
+    #[cfg(kani_full)]
+    fn assert_whole_shares_always_split(tax: u64) {
+        let (shares, burn) = whole_shares();
+        let slots = split_tax(tax, &shares, burn).unwrap();
+        let suite = tax as u128 * SUITE_SHARE_BPS as u128 / BPS;
+        assert!(slots[SUITE_SLOT as usize] as u128 == suite);
+        let rest = tax as u128 - suite;
+        assert!(slots[BURN_SLOT as usize] as u128 == rest * burn as u128 / BPS);
+        for i in 1..MAX_RECIPIENTS {
+            assert!(slots[i] as u128 == rest * shares[i] as u128 / BPS);
+        }
+        let first = rest * shares[0] as u128 / BPS;
+        assert!(slots[0] as u128 >= first && (slots[0] as u128) < first + OWED_SLOTS as u128 - 1);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn whole_shares_always_split() {
+        assert_whole_shares_always_split(kani::any());
     }
 }
