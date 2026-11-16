@@ -464,6 +464,32 @@ impl MarketState {
     }
 }
 
+/// The accounts a keeper job names for one of a market's vaults, checked against the market
+/// state: the vault and its mint are the market's for `side` (0 the token, 1 wrapped SOL),
+/// the market is open, and the vault authority is the PDA from the stored bump. Returns the
+/// bump, for the vault authority's signer seeds.
+pub fn check_vault_accounts(
+    state: &MarketState,
+    market_state: &Pubkey,
+    side: u8,
+    vault: &Pubkey,
+    mint: &Pubkey,
+    authority: &Pubkey,
+) -> Result<u8> {
+    require!(state.status == STATUS_OPEN, StrategyError::MarketNotOpen);
+    let (expected_vault, expected_mint) = match side {
+        0 => (state.token_vault, state.token_mint),
+        1 => (state.sol_vault, state.wsol_mint),
+        _ => return err!(StrategyError::WrongAccount),
+    };
+    require_keys_eq!(*mint, expected_mint, StrategyError::WrongAccount);
+    require_keys_eq!(*vault, expected_vault, StrategyError::WrongAccount);
+    let expected_authority =
+        vault_authority(market_state, state.authority_bump).ok_or(StrategyError::WrongAccount)?;
+    require_keys_eq!(*authority, expected_authority, StrategyError::WrongAccount);
+    Ok(state.authority_bump)
+}
+
 /// Whether `account` is a market state this program can read: owned by this program,
 /// exactly `MARKET_STATE_SIZE` bytes, with the discriminator and a deployed layout version.
 /// Anchor's `AccountLoader` checks the owner and the discriminator; this adds the size and

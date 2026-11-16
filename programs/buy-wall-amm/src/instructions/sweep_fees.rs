@@ -15,7 +15,7 @@ use anchor_spl::token_interface::Mint;
 use crate::errors::StrategyError;
 use crate::events::FeesSwept;
 use crate::recipient::{ensure, RecipientAccounts};
-use crate::state::{is_market_state, vault_authority, MarketState, AUTHORITY_SEED};
+use crate::state::{check_vault_accounts, is_market_state, MarketState, AUTHORITY_SEED};
 use crate::token::{transfer_checked, Transfer};
 
 /// The order is part of `metadata.json`'s `sweep_fees` action; keep them in step.
@@ -49,28 +49,19 @@ pub fn handle_sweep_fees(ctx: Context<SweepFees>, slot: u8) -> Result<()> {
     let market_state = accounts.market_state.key();
     let (owed, wallet, amount, authority_bump) = {
         let state = accounts.market_state.load()?;
-        require_keys_eq!(
-            accounts.wsol_mint.key(),
-            state.wsol_mint,
-            StrategyError::WrongAccount
-        );
-        require_keys_eq!(
-            accounts.sol_vault.key(),
-            state.sol_vault,
-            StrategyError::WrongAccount
-        );
-        let authority = vault_authority(&market_state, state.authority_bump)
-            .ok_or(StrategyError::WrongAccount)?;
-        require_keys_eq!(
-            accounts.vault_authority.key(),
-            authority,
-            StrategyError::WrongAccount
-        );
+        let authority_bump = check_vault_accounts(
+            &state,
+            &market_state,
+            1,
+            &accounts.sol_vault.key(),
+            &accounts.wsol_mint.key(),
+            &accounts.vault_authority.key(),
+        )?;
         let (owed, wallet, amount) = state
             .owed()
             .sweep(slot, &state.fee_recipient)
             .map_err(|refusal| error!(StrategyError::from(refusal)))?;
-        (owed, wallet, amount, state.authority_bump)
+        (owed, wallet, amount, authority_bump)
     };
     require_keys_eq!(
         accounts.recipient.key(),

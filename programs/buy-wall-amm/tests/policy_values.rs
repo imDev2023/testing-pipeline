@@ -38,15 +38,17 @@ fn program_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Every source file of the program, skipping build output, installed packages and the
-/// client generated from its IDL.
+/// Every source file of the program, skipping build output, installed packages, and the
+/// IDL and the client generated from the program, which publish some constants on purpose
+/// (`POOL4-25`, `POOL4-30`, `POOL4-35`, `POOL4-39`) and which `tests/idl.rs` and `pnpm
+/// typecheck` hold to the program.
 fn source_files() -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             let name = path.file_name().unwrap().to_string_lossy().to_string();
             if path.is_dir() {
-                if !["target", "node_modules", "client"].contains(&name.as_str()) {
+                if !["target", "node_modules", "client", "idl"].contains(&name.as_str()) {
                     walk(&path, out);
                 }
             } else if ["rs", "ts", "json", "toml", "py"]

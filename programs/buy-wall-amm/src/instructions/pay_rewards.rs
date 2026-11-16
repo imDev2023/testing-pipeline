@@ -14,7 +14,7 @@ use anchor_spl::token_interface::{Mint, TokenInterface};
 use crate::errors::StrategyError;
 use crate::events::RewardsPaid;
 use crate::recipient::{ensure, RecipientAccounts};
-use crate::state::{is_market_state, vault_authority, MarketState, AUTHORITY_SEED};
+use crate::state::{check_vault_accounts, is_market_state, MarketState, AUTHORITY_SEED};
 use crate::token::{transfer_checked, Transfer};
 
 /// The order is part of `metadata.json`'s `pay_rewards` action; keep them in step. The
@@ -49,23 +49,14 @@ pub fn handle_pay_rewards<'info>(ctx: Context<'info, PayRewards<'info>>) -> Resu
     let market_state = accounts.market_state.key();
     let (owed, amount, authority_bump) = {
         let state = accounts.market_state.load()?;
-        require_keys_eq!(
-            accounts.token_mint.key(),
-            state.token_mint,
-            StrategyError::WrongAccount
-        );
-        require_keys_eq!(
-            accounts.token_vault.key(),
-            state.token_vault,
-            StrategyError::WrongAccount
-        );
-        let authority = vault_authority(&market_state, state.authority_bump)
-            .ok_or(StrategyError::WrongAccount)?;
-        require_keys_eq!(
-            accounts.vault_authority.key(),
-            authority,
-            StrategyError::WrongAccount
-        );
+        let authority_bump = check_vault_accounts(
+            &state,
+            &market_state,
+            0,
+            &accounts.token_vault.key(),
+            &accounts.token_mint.key(),
+            &accounts.vault_authority.key(),
+        )?;
         let (owed, amount) = state
             .owed()
             .pay_rewards(&state.rewards_recipient)
@@ -75,7 +66,7 @@ pub fn handle_pay_rewards<'info>(ctx: Context<'info, PayRewards<'info>>) -> Resu
             state.rewards_recipient,
             StrategyError::WrongAccount
         );
-        (owed, amount, state.authority_bump)
+        (owed, amount, authority_bump)
     };
 
     ensure(RecipientAccounts {

@@ -126,7 +126,8 @@ impl Owed {
         let ledger = match slot {
             0 => &mut after.fees_recipient,
             1 => &mut after.fees_designer,
-            _ => &mut after.fees_suite,
+            2 => &mut after.fees_suite,
+            _ => return Err(Refusal::BadSlot),
         };
         let amount = core::mem::take(ledger);
         if amount == 0 {
@@ -189,36 +190,34 @@ impl From<HandoverRefusal> for crate::errors::StrategyError {
 
 // Kani proofs of the settlement split, in the tiers Pipeline uses (see `opening.rs`): it
 // needs no division loop, so like the fee split (`books.rs`) and the tip (`wall.rs`) it is
-// bounded in the default tier and unbounded in the full tier. Proptest checks it on 10,000
-// cases (below), and the invariant fuzzer after every `settle` through the router.
+// bounded in the default tier and unbounded in the full tier. Z3 proves the same for every
+// input (`proofs/payouts_z3.py`), Proptest checks it on 10,000 cases (below), and the
+// invariant fuzzer states it independently after every `settle` through the router.
 #[cfg(kani)]
 mod proofs {
     use super::*;
     use crate::config::MAX_REWARD_SHARE_BPS;
 
-    /// Bound of the default tier, for the retired tokens, as for the tip (`wall.rs`).
-    const SMALL: u64 = 1 << 12;
+    /// Bound of the default tier, for the retired tokens, as Pipeline bounds its own
+    /// `ceil_bps`: below 2^12 CBMC ran over 13 minutes without finishing, and below 2^10 it
+    /// verified the harness in 764 seconds, beside a test run, on the owner's Mac
+    /// (2026-11-16).
+    const SMALL: u64 = 1 << 10;
 
-    fn check(retired: u64, bps: u16) {
-        let split = settle(retired, bps).unwrap();
-        // Nothing is created or lost: the two parts add up to the retired tokens.
-        assert!(split.to_rewards as u128 + split.burned as u128 == retired as u128);
-        // The reward share is exactly floor(retired × bps / 10,000), stated without a
-        // division, which CBMC handles slowly: to_rewards × 10,000 <= retired × bps <
-        // (to_rewards + 1) × 10,000.
-        let product = retired as u128 * bps as u128;
-        let floor = split.to_rewards as u128 * 10_000;
-        assert!(floor <= product && product < floor + 10_000);
-        // A market's reward share never takes it all: anything retired burns something.
-        assert!(retired == 0 || split.burned > 0);
-    }
-
-    /// The split for every reward share a market may choose, below `SMALL` retired.
+    /// The split for every reward share a market may choose, below `SMALL` retired, where
+    /// every product fits in 64 bits: nothing is created or lost, the reward share is exactly
+    /// `floor(retired × bps / 10,000)` (stated without a division, which CBMC handles slowly:
+    /// `to_rewards × 10,000 <= retired × bps < (to_rewards + 1) × 10,000`), and anything
+    /// retired burns something, since a market's reward share never takes it all.
     #[kani::proof]
     fn the_settlement_split_adds_up_and_always_burns_bounded() {
         let (retired, bps): (u64, u16) = (kani::any(), kani::any());
         kani::assume(retired < SMALL && bps <= MAX_REWARD_SHARE_BPS);
-        check(retired, bps);
+        let split = settle(retired, bps).unwrap();
+        assert!(split.to_rewards + split.burned == retired);
+        let product = retired * bps as u64;
+        assert!(split.to_rewards * 10_000 <= product && product < (split.to_rewards + 1) * 10_000);
+        assert!(retired == 0 || split.burned > 0);
     }
 
     /// The same for every u64 retired.
@@ -227,7 +226,14 @@ mod proofs {
     fn the_settlement_split_adds_up_and_always_burns() {
         let (retired, bps): (u64, u16) = (kani::any(), kani::any());
         kani::assume(bps <= MAX_REWARD_SHARE_BPS);
-        check(retired, bps);
+        let split = settle(retired, bps).unwrap();
+        assert!(split.to_rewards as u128 + split.burned as u128 == retired as u128);
+        let (product, floor) = (
+            retired as u128 * bps as u128,
+            split.to_rewards as u128 * 10_000,
+        );
+        assert!(floor <= product && product < floor + 10_000);
+        assert!(retired == 0 || split.burned > 0);
     }
 }
 

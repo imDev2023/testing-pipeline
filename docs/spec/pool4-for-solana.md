@@ -72,7 +72,7 @@ Changing a fee, cap, split, limit or default is then one edit in one of those pl
 `DESIGNER_RECIPIENT` is unset because IMD and Adam have no known Solana address (2026-11-10).
 The designer share builds up in each market from its first swap and waits there; the owner asks Adam for an address, and a program upgrade sets the constant, which must happen before the program is frozen.
 `DESIGNER_RECIPIENT` and `SUITE_TREASURY` are published in the IDL as well, where the demo reads the wallets fee slots 1 and 2 are paid to ([`POOL4-39`](../decisions.md#pool4-39-the-fee-slots-wallets-in-the-idl)).
-So that slot 1's payout is tested before the constant is set, the program has a `test-designer-recipient` feature that sets it to a test key nobody holds; only CI's extra test build turns it on, and no build that is deployed ever does ([`POOL4-38`](../decisions.md#pool4-38-testing-the-designer-slot-before-its-wallet-is-set)).
+So that slot 1's payout is tested before the constant is set, the program has a `test-designer-recipient` feature that sets it to a test key nobody holds; only CI's extra test build turns it on, and that build has a program id of its own, so deployed at the program's address it would refuse every instruction ([`POOL4-38`](../decisions.md#pool4-38-testing-the-designer-slot-before-its-wallet-is-set)).
 
 ## Markets
 
@@ -307,6 +307,7 @@ It emits `WallPlaced` (the caller, the tip account, `converted`, what closing th
 - No tip.
 - A burn calls no transfer hook, so no hook can refuse it.
 - Nobody signs it but whoever pays the transaction fee, since it pays nobody ([`POOL4-37`](../decisions.md#pool4-37-who-signs-the-payouts-and-what-they-report)).
+- Like `pay_rewards` and `sweep_fees`, it is refused with `MarketNotOpen` until the market is seeded.
 - It emits `Settled` (what was retired, burned and added to the rewards owed, the rewards owed after and the lifetime total burned), and the lifetime total of tokens burned grows by what it burns.
 
 ### `pay_rewards`
@@ -345,6 +346,8 @@ The runner is not specified yet (the map's "Not yet specified"); what it needs f
 | `settle` | `retired_tokens` is above 0, at most hourly for each market |
 | `pay_rewards` | `rewards_owed` is above 0, daily |
 | `sweep_fees` | A slot's ledger is above 0, daily; slot 1 only once `DESIGNER_RECIPIENT` is set |
+
+A payout into a recipient account that does not exist makes the caller pay its rent, and a recipient that closes its account after each payout gets that rent back each time, so the runner should skip a payout whose ledger is worth less than that rent while the account is missing.
 
 ## Recipients
 

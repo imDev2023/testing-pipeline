@@ -10,7 +10,7 @@ use anchor_spl::token_interface::{burn_checked, BurnChecked, Mint, TokenInterfac
 
 use crate::errors::StrategyError;
 use crate::events::Settled;
-use crate::state::{is_market_state, vault_authority, MarketState, AUTHORITY_SEED};
+use crate::state::{check_vault_accounts, is_market_state, MarketState, AUTHORITY_SEED};
 
 /// The order is part of `metadata.json`'s `settle` action; keep them in step.
 #[derive(Accounts)]
@@ -31,30 +31,21 @@ pub struct Settle<'info> {
 pub fn handle_settle(ctx: Context<Settle>) -> Result<()> {
     let accounts = &ctx.accounts;
     let market_state = accounts.market_state.key();
-    let (owed, split, authority_bump) = {
+    let (owed, split, retired, authority_bump) = {
         let state = accounts.market_state.load()?;
-        require_keys_eq!(
-            accounts.token_mint.key(),
-            state.token_mint,
-            StrategyError::WrongAccount
-        );
-        require_keys_eq!(
-            accounts.token_vault.key(),
-            state.token_vault,
-            StrategyError::WrongAccount
-        );
-        let authority = vault_authority(&market_state, state.authority_bump)
-            .ok_or(StrategyError::WrongAccount)?;
-        require_keys_eq!(
-            accounts.vault_authority.key(),
-            authority,
-            StrategyError::WrongAccount
-        );
+        let authority_bump = check_vault_accounts(
+            &state,
+            &market_state,
+            0,
+            &accounts.token_vault.key(),
+            &accounts.token_mint.key(),
+            &accounts.vault_authority.key(),
+        )?;
         let (owed, split) = state
             .owed()
             .settle(state.reward_share_bps())
             .map_err(|refusal| error!(StrategyError::from(refusal)))?;
-        (owed, split, state.authority_bump)
+        (owed, split, state.retired_tokens(), authority_bump)
     };
 
     if split.burned > 0 {
@@ -78,7 +69,7 @@ pub fn handle_settle(ctx: Context<Settle>) -> Result<()> {
     accounts.market_state.load_mut()?.set_owed(&owed);
     emit!(Settled {
         market_state,
-        retired: split.to_rewards.saturating_add(split.burned),
+        retired,
         burned: split.burned,
         to_rewards: split.to_rewards,
         rewards_owed: owed.rewards_owed,

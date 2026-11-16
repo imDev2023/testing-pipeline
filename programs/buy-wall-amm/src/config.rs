@@ -31,7 +31,8 @@ pub const SUITE_SHARE_BPS: u16 = 1_000;
 pub const DESIGNER_RECIPIENT: Pubkey = Pubkey::new_from_array([0; 32]);
 /// A test build's designer wallet, a key nobody holds, so the tests can show `sweep_fees`
 /// paying slot 1 once `DESIGNER_RECIPIENT` is set (`POOL4-38`). Only CI's extra test build
-/// turns this feature on; no build that is deployed ever does.
+/// turns this feature on, and that build has a program id of its own (`lib.rs`), so deployed
+/// at the program's address it would refuse every instruction.
 #[cfg(feature = "test-designer-recipient")]
 #[constant]
 pub const DESIGNER_RECIPIENT: Pubkey = pubkey!("DesignerRecipientTestKey11111111111111111111");

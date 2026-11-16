@@ -868,3 +868,52 @@ fn a_missing_closed_or_reassigned_recipient_account_blocks_nothing_else() {
     pay_rewards(&mut env, &market, &payer, &prefunded.pubkey()).unwrap();
     assert_eq!(env.balance(&address), rewards);
 }
+
+#[test]
+fn payouts_wait_for_the_seed_and_handovers_do_not() {
+    use buy_wall_amm::errors::StrategyError;
+    let mut env = Env::new();
+    let (fee_recipient, rewards_recipient) = (wallet(&mut env), wallet(&mut env));
+    let params = params_with(&env, fee_recipient.pubkey(), rewards_recipient.pubkey());
+    let token = env.seedable_token(&TOKEN);
+    let market = env.create_market(token, TOKEN, &params).unwrap();
+    let payer = wallet(&mut env);
+    assert_refused(
+        env.send(&[settle_ix(&market)], &[]),
+        StrategyError::MarketNotOpen,
+    );
+    assert_refused(
+        pay_rewards(&mut env, &market, &payer, &rewards_recipient.pubkey()),
+        StrategyError::MarketNotOpen,
+    );
+    assert_refused(
+        sweep(&mut env, &market, &payer, &fee_recipient.pubkey(), 0),
+        StrategyError::MarketNotOpen,
+    );
+    // A recipient may hand its role over before the seed (`POOL4-37`).
+    let new = Pubkey::new_unique();
+    let ix = handover_ix(&market, false, &fee_recipient.pubkey(), &new);
+    env.send(&[ix], &[&fee_recipient]).unwrap();
+    assert_eq!(env.state(&market).fee_recipient.to_bytes(), new.to_bytes());
+}
+
+/// The `test-designer-recipient` build pays fee slot 1 to a key nobody holds, so it has a
+/// program id of its own: deployed at the program's real address it refuses every
+/// instruction (`POOL4-38`).
+#[cfg(feature = "test-designer-recipient")]
+#[test]
+fn the_designer_test_build_refuses_everything_at_the_real_address() {
+    let real: Pubkey = pipeline_client::pubkey!("BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6");
+    assert_ne!(strategy_id(), real);
+    let mut env = Env::new();
+    env.svm.add_program(real, &strategy_so()).unwrap();
+    let mut ix = settle_ix(&Market::addresses(
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        TOKEN,
+    ));
+    ix.program_id = real;
+    let message = env.send(&[ix], &[]).expect_err("refused");
+    // Anchor's DeclaredProgramIdMismatch.
+    assert!(message.contains("Custom(4100)"), "{message}");
+}

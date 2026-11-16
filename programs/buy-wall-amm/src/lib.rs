@@ -49,7 +49,15 @@ pub use instructions::*;
 pub use params::InitParams;
 
 // Replaced with this program's address by `scripts/new-strategy.sh`.
+#[cfg(not(feature = "test-designer-recipient"))]
 declare_id!("BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6");
+// The `test-designer-recipient` build, which pays fee slot 1 to a test key (`config.rs`),
+// runs only at an address of its own, so it refuses every instruction if it is ever deployed
+// at the program's real address (Anchor checks the program id on entry, `POOL4-38`). Written
+// path-qualified so that tools reading the program's address from the line above
+// (`scripts/local-validator.sh`) find exactly one.
+#[cfg(feature = "test-designer-recipient")]
+anchor_lang::declare_id!("DesignerTestBui1d111111111111111111111111111");
 
 #[program]
 pub mod buy_wall_amm {
