@@ -150,7 +150,7 @@ jobs:
           cd programs
           cargo clippy -p lending-amm --no-default-features --features mainnet --all-targets -- -D warnings
           SBF_OUT_DIR="$PWD/target/deploy-mainnet" cargo test -p lending-amm --no-default-features --features mainnet
-      - name: The buy wall AMM with DESIGNER_RECIPIENT set to a test key, so the designer slot's payout is tested (POOL4-38)
+      - name: The buy wall AMM with DESIGNER_RECIPIENT set to a test key, so the designer slot's payout is tested (POOL4-39)
         run: |
           source scripts/toolchain-env.sh
           cargo build-sbf --manifest-path programs/buy-wall-amm/Cargo.toml --features test-designer-recipient --sbf-out-dir programs/target/deploy-designer

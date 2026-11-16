@@ -3772,7 +3772,17 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
 
-### POOL4-36: How a payout names and checks its recipient's account
+### POOL4-36: Every holder can exit, at a price bound
+
+- Question: When a holding is more than the curve can take before `MIN_SQRT_PRICE`, as a trim down to `MIN_LIQUIDITY` near the bound can make it, should the pricing sell what it can, or is the whole holding refused, and what does the invariant "every holder can exit" then ask?
+- Answer: The whole holding is refused with `PriceBoundReached`, as the pricing's rules already say, since an exact-in swap keeps all its input and cannot fill in part; the holder exits by selling the most the curve can take, so the invariant asks that the whole holding sells, or pays nothing, or that the most the curve can take sells or pays nothing while one token unit more is refused for the bound.
+- Alternatives: A partial fill that pays for what the curve can take and keeps the rest of the input, which takes the rest from the trader; refusing such a holding with `ZeroOutput` when the curve holds less than a lamport above the bound, which changes a program error for no holder's gain; keeping trims from shrinking the curve below what every holding needs, which no market can know.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Invariants for test layer 3](spec/pool4-for-solana.md#invariants-for-test-layer-3)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152)
+
+### POOL4-37: How a payout names and checks its recipient's account
 
 - Question: Which account do `pay_rewards` and `sweep_fees` pay, and what do they do when it is missing or no longer the recipient's?
 - Answer: The caller names the recipient's wallet, which must be the one the market or the program names, and only that wallet's associated token account for the mint is paid: created at the caller's expense when it does not exist (never created, closed, or holding only lamports sent to its address), and refused with `RecipientAccountNotTheirs` when it exists but its owner was reassigned, so only that payout waits until the recipient hands its role over.
@@ -3782,7 +3792,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
 
-### POOL4-37: Who signs the payouts and what they report
+### POOL4-38: Who signs the payouts and what they report
 
 - Question: Who signs `settle`, `pay_rewards`, `sweep_fees` and the handovers, when may a handover happen, and what does each report?
 - Answer: `settle` needs no signature but the fee payer's, since it pays nobody; `pay_rewards` and `sweep_fees` are signed by the caller, who pays for a missing recipient account; the payouts are refused until the market is seeded, while a handover, signed by the role's current recipient, may happen at any time, before the seed too; they emit `Settled`, `RewardsPaid`, `FeesSwept` and `RecipientChanged`, and the lifetime totals of tokens burned and rewards paid grow with each.
@@ -3792,7 +3802,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
 
-### POOL4-38: Testing the designer slot before its wallet is set
+### POOL4-39: Testing the designer slot before its wallet is set
 
 - Question: How is fee slot 1's payout tested while `DESIGNER_RECIPIENT` is unset in every build that is deployed?
 - Answer: A `test-designer-recipient` feature of the program sets the constant to a test key nobody holds, in `config.rs` beside the real value, and gives that build a program id of its own, so deployed at the program's address it would refuse every instruction; CI builds the program a second time with it and runs the payout tests against that build.
@@ -3802,7 +3812,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
 
-### POOL4-39: The fee slots' wallets in the IDL
+### POOL4-40: The fee slots' wallets in the IDL
 
 - Question: How does the demo learn the wallets fee slots 1 and 2 are paid to without restating them?
 - Answer: The program publishes `DESIGNER_RECIPIENT` and `SUITE_TREASURY` in its IDL with Anchor's `#[constant]`, as the tax AMM publishes its suite treasury, and the demo reads them from the generated client.
@@ -4439,6 +4449,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-53` to `LENDING-59`: set by the session of [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-36`: set by the session of [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152) from the spec's existing rule that a trade reaching a price bound is refused, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.

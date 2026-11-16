@@ -890,7 +890,7 @@ fn payouts_wait_for_the_seed_and_handovers_do_not() {
         sweep(&mut env, &market, &payer, &fee_recipient.pubkey(), 0),
         StrategyError::MarketNotOpen,
     );
-    // A recipient may hand its role over before the seed (`POOL4-37`).
+    // A recipient may hand its role over before the seed (`POOL4-38`).
     let new = Pubkey::new_unique();
     let ix = handover_ix(&market, false, &fee_recipient.pubkey(), &new);
     env.send(&[ix], &[&fee_recipient]).unwrap();
@@ -899,7 +899,7 @@ fn payouts_wait_for_the_seed_and_handovers_do_not() {
 
 /// The `test-designer-recipient` build pays fee slot 1 to a key nobody holds, so it has a
 /// program id of its own: deployed at the program's real address it refuses every
-/// instruction (`POOL4-38`).
+/// instruction (`POOL4-39`).
 #[cfg(feature = "test-designer-recipient")]
 #[test]
 fn the_designer_test_build_refuses_everything_at_the_real_address() {

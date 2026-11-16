@@ -71,8 +71,8 @@ Changing a fee, cap, split, limit or default is then one edit in one of those pl
 
 `DESIGNER_RECIPIENT` is unset because IMD and Adam have no known Solana address (2026-11-10).
 The designer share builds up in each market from its first swap and waits there; the owner asks Adam for an address, and a program upgrade sets the constant, which must happen before the program is frozen.
-`DESIGNER_RECIPIENT` and `SUITE_TREASURY` are published in the IDL as well, where the demo reads the wallets fee slots 1 and 2 are paid to ([`POOL4-39`](../decisions.md#pool4-39-the-fee-slots-wallets-in-the-idl)).
-So that slot 1's payout is tested before the constant is set, the program has a `test-designer-recipient` feature that sets it to a test key nobody holds; only CI's extra test build turns it on, and that build has a program id of its own, so deployed at the program's address it would refuse every instruction ([`POOL4-38`](../decisions.md#pool4-38-testing-the-designer-slot-before-its-wallet-is-set)).
+`DESIGNER_RECIPIENT` and `SUITE_TREASURY` are published in the IDL as well, where the demo reads the wallets fee slots 1 and 2 are paid to ([`POOL4-40`](../decisions.md#pool4-40-the-fee-slots-wallets-in-the-idl)).
+So that slot 1's payout is tested before the constant is set, the program has a `test-designer-recipient` feature that sets it to a test key nobody holds; only CI's extra test build turns it on, and that build has a program id of its own, so deployed at the program's address it would refuse every instruction ([`POOL4-39`](../decisions.md#pool4-39-testing-the-designer-slot-before-its-wallet-is-set)).
 
 ## Markets
 
@@ -306,7 +306,7 @@ It emits `WallPlaced` (the caller, the tip account, `converted`, what closing th
 - Refused when there is nothing retired.
 - No tip.
 - A burn calls no transfer hook, so no hook can refuse it.
-- Nobody signs it but whoever pays the transaction fee, since it pays nobody ([`POOL4-37`](../decisions.md#pool4-37-who-signs-the-payouts-and-what-they-report)).
+- Nobody signs it but whoever pays the transaction fee, since it pays nobody ([`POOL4-38`](../decisions.md#pool4-38-who-signs-the-payouts-and-what-they-report)).
 - Like `pay_rewards` and `sweep_fees`, it is refused with `MarketNotOpen` until the market is seeded.
 - It emits `Settled` (what was retired, burned and added to the rewards owed, the rewards owed after and the lifetime total burned), and the lifetime total of tokens burned grows by what it burns.
 
@@ -329,7 +329,7 @@ It emits `WallPlaced` (the caller, the tip account, `converted`, what closing th
 
 ### The recipient's token account
 
-How `pay_rewards` and `sweep_fees` name and check the account they pay ([`POOL4-36`](../decisions.md#pool4-36-how-a-payout-names-and-checks-its-recipients-account)):
+How `pay_rewards` and `sweep_fees` name and check the account they pay ([`POOL4-37`](../decisions.md#pool4-37-how-a-payout-names-and-checks-its-recipients-account)):
 
 - The caller signs and names the recipient's wallet, which must be the one the market (or, for slots 1 and 2, the program) names; metadata forms cannot read a market state, so the forms take it as an input.
 - Only the wallet's associated token account for the mint is paid, the address every wallet and Aviary compute.
@@ -355,7 +355,7 @@ A payout into a recipient account that does not exist makes the caller pay its r
 - What the role is owed follows it to the new wallet.
 - A market created with no fee recipient or no rewards recipient never gets one.
 - Nobody else can change a recipient, and nothing else about a market can change.
-- A handover may happen at any time, before the seed as well, and emits `RecipientChanged` (which role, the old wallet and the new) ([`POOL4-37`](../decisions.md#pool4-37-who-signs-the-payouts-and-what-they-report)).
+- A handover may happen at any time, before the seed as well, and emits `RecipientChanged` (which role, the old wallet and the new) ([`POOL4-38`](../decisions.md#pool4-38-who-signs-the-payouts-and-what-they-report)).
 
 ## Counters
 
@@ -566,6 +566,7 @@ What `README.md` asks each product's file to add; the mainnet upgrade policy is 
 Asserted per instruction in test layer 5; the build ticket measures each one and may lower it, and raising one needs a written reason here.
 They start from another Pool4 port's swaps on devnet, measured at 13,000 to 29,000 units, with room for 256-bit maths.
 A transfer hook's own compute is outside them.
+So is Token-2022's search for a hooked mint's validation account on each transfer the strategy makes, which costs 1,500 units for every bump it tries and depends only on the mint's address; the tests measure with hooked mints whose validation account has bump 255, so their numbers repeat.
 
 | Instruction | Ceiling (compute units) | Main cost |
 | --- | --- | --- |
@@ -595,6 +596,9 @@ Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://git
 Beyond the shared three (value conserved, every holder can exit, each quote equals its swap), checked after every step of generated sequences of swaps, keeper jobs and clock jumps, including several trades in one slot:
 
 - Every invariant in "Ledgers".
+- "Every holder can exit" means, at a price bound ([`POOL4-36`](../decisions.md#pool4-36-every-holder-can-exit-at-a-price-bound)): a holder's whole holding sells, or it pays nothing (worth less than one lamport), or it is more than the curve can take before `MIN_SQRT_PRICE` and is refused whole, as "Rules for both" says, and then the most the curve can take sells or pays nothing, and one token unit more is refused for the bound.
+  A trim can leave a curve of `MIN_LIQUIDITY` close to the bound, which takes fewer tokens than some holdings; what such a holding cannot sell could only sell below the bound, for the `(L + W) × MIN_SQRT_PRICE / Q` lamports the curve and the wall keep there, which no sell reaches for anyone, with or without the cap.
+  A trim lowers `L`, so it only shrinks that amount, which is less than one lamport whenever `L + W` is below 2^32.
 - A trim never changes `sqrt_price`.
 - A buy sold straight back never returns more than it cost, whatever keeper jobs run in between.
 - The reference never moves on a trade in the slot it was last updated in.

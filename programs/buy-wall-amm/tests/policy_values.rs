@@ -40,7 +40,7 @@ fn program_dir() -> PathBuf {
 
 /// Every source file of the program, skipping build output, installed packages, and the
 /// IDL and the client generated from the program, which publish some constants on purpose
-/// (`POOL4-25`, `POOL4-30`, `POOL4-35`, `POOL4-39`) and which `tests/idl.rs` and `pnpm
+/// (`POOL4-25`, `POOL4-30`, `POOL4-35`, `POOL4-40`) and which `tests/idl.rs` and `pnpm
 /// typecheck` hold to the program.
 fn source_files() -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {

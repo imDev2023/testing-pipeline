@@ -25,12 +25,12 @@ pub const SUITE_SHARE_BPS: u16 = 1_000;
 /// The wallet the designer share is paid to. Unset (the all-zero key) while IMD and Adam
 /// have no known Solana address; an upgrade sets it before the program is frozen.
 /// Published in the IDL (`#[constant]`), where the demo script reads it, as is the suite
-/// treasury below (`POOL4-39`).
+/// treasury below (`POOL4-40`).
 #[cfg(not(feature = "test-designer-recipient"))]
 #[constant]
 pub const DESIGNER_RECIPIENT: Pubkey = Pubkey::new_from_array([0; 32]);
 /// A test build's designer wallet, a key nobody holds, so the tests can show `sweep_fees`
-/// paying slot 1 once `DESIGNER_RECIPIENT` is set (`POOL4-38`). Only CI's extra test build
+/// paying slot 1 once `DESIGNER_RECIPIENT` is set (`POOL4-39`). Only CI's extra test build
 /// turns this feature on, and that build has a program id of its own (`lib.rs`), so deployed
 /// at the program's address it would refuse every instruction.
 #[cfg(feature = "test-designer-recipient")]

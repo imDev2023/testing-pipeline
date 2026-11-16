@@ -53,7 +53,7 @@ pub use params::InitParams;
 declare_id!("BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6");
 // The `test-designer-recipient` build, which pays fee slot 1 to a test key (`config.rs`),
 // runs only at an address of its own, so it refuses every instruction if it is ever deployed
-// at the program's real address (Anchor checks the program id on entry, `POOL4-38`). Written
+// at the program's real address (Anchor checks the program id on entry, `POOL4-39`). Written
 // path-qualified so that tools reading the program's address from the line above
 // (`scripts/local-validator.sh`) find exactly one.
 #[cfg(feature = "test-designer-recipient")]

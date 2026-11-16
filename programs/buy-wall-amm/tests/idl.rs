@@ -366,7 +366,7 @@ fn it_publishes_the_constants_the_demo_reads() {
     assert_eq!(value("FLOOR_CRAWL_BPS"), FLOOR_CRAWL_BPS.to_string());
     assert_eq!(value("REF_STEP_BPS"), REF_STEP_BPS.to_string());
     assert_eq!(value("REF_STEP_WINDOW"), REF_STEP_WINDOW.to_string());
-    // The wallets fee slots 1 and 2 are paid to (`POOL4-39`).
+    // The wallets fee slots 1 and 2 are paid to (`POOL4-40`).
     assert_eq!(value("SUITE_TREASURY"), SUITE_TREASURY.to_string());
     assert_eq!(value("DESIGNER_RECIPIENT"), DESIGNER_RECIPIENT.to_string());
 }

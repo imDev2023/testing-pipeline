@@ -15,6 +15,7 @@
 // Each test binary uses its own part of this module.
 #![allow(dead_code, unused_imports)]
 
+pub mod exit;
 pub mod launchpad;
 pub mod payouts;
 
@@ -196,6 +197,30 @@ pub fn launch_params(seeder: Pubkey) -> InitParams {
     }
 }
 
+/// A new mint's keypair. A mint with a transfer hook gets one whose hook validation account
+/// (`["extra-account-metas", mint]` of the hook program) has bump 255: Token-2022 finds that
+/// account with `find_program_address` on every transfer of the mint, at 1,500 compute units
+/// for each bump it tries, so a random mint would add a random multiple of 1,500 to every
+/// hooked transfer the strategy makes, which the compute tests count as the strategy's own
+/// (#152, seen as a CI failure at bump 247). That cost belongs to the mint, not the strategy.
+fn mint_keypair(extensions: &[RealExtension]) -> Keypair {
+    let hook = extensions.iter().find_map(|extension| match extension {
+        RealExtension::TransferHook { program } => Some(*program),
+        RealExtension::TransferFee { .. } => None,
+    });
+    loop {
+        let mint = Keypair::new();
+        let address = mint.pubkey();
+        let first_bump = |program: &Pubkey| {
+            let seeds: &[&[u8]] = &[b"extra-account-metas", address.as_ref()];
+            Pubkey::find_program_address(seeds, program).1 == u8::MAX
+        };
+        if hook.as_ref().is_none_or(first_bump) {
+            return mint;
+        }
+    }
+}
+
 /// A Token-2022 mint extension for `Env::create_mint`, set up with real instructions.
 #[derive(Clone, Copy, Debug)]
 pub enum RealExtension {
@@ -314,7 +339,7 @@ impl Env {
         use spl_token_2022_interface::extension::{transfer_fee, transfer_hook, ExtensionType};
         use spl_token_2022_interface::{instruction, state};
 
-        let mint = Keypair::new();
+        let mint = mint_keypair(extensions);
         let authority = self.admin.pubkey();
         let types: Vec<ExtensionType> = extensions
             .iter()
