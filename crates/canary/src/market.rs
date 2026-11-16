@@ -37,6 +37,7 @@ const NATIVE_LOADER: Pubkey = pubkey!("NativeLoader11111111111111111111111111111
 const PROGRAM_DATA_HEADER_LEN: usize = 45;
 const PROGRAM_DATA_SLOT: std::ops::Range<usize> = 4..12;
 /// SPL token account and mint layouts (the same base in Token-2022).
+const TOKEN_OWNER: std::ops::Range<usize> = 32..64;
 const TOKEN_AMOUNT: std::ops::Range<usize> = 64..72;
 const MINT_AUTHORITY: std::ops::Range<usize> = 0..36;
 const MINT_SUPPLY: std::ops::Range<usize> = 36..44;
@@ -177,6 +178,15 @@ pub fn token_amount(svm: &LiteSVM, account: &Pubkey) -> Option<u64> {
         a.data
             .get(TOKEN_AMOUNT)
             .map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")))
+    })
+}
+
+/// A token account's owner, if the account is one.
+pub fn token_owner(svm: &LiteSVM, account: &Pubkey) -> Option<Pubkey> {
+    svm.get_account(account).and_then(|a| {
+        a.data
+            .get(TOKEN_OWNER)
+            .map(|b| Pubkey::new_from_array(b.try_into().expect("32 bytes")))
     })
 }
 

@@ -3,147 +3,17 @@
 //! made to land on 950,000 parts per million). The end-to-end tests beside this file drive
 //! the same functions through the router.
 
+mod common;
+
 use canary::bands::{band, Band};
-use canary::checks::exit_sizes::{Measured, Pair};
 use canary::checks::readable::Trading;
 use canary::checks::{cost, exit_sizes, quote_matches_swap};
-use canary::config::{FAIL_BAND_BELOW_PPM, PASS_BAND_MIN_PPM, PPM, SOL_REFERENCE_SIZE, SOL_SIZES};
+use canary::config::{FAIL_BAND_BELOW_PPM, PASS_BAND_MIN_PPM, SOL_REFERENCE_SIZE, SOL_SIZES};
 use canary::failure::{Failure, FailureClass, Stage};
-use canary::market::MintFacts;
-use canary::sizes::{Basis, Ladder};
-use canary::swap::SwapReceipt;
-use canary::trade::{ClockPosition, Leg, Quote, RoundTrip};
+use canary::trade::RoundTrip;
 use canary::Outcome;
+use common::rows::*;
 use pipeline_client::Pubkey;
-
-const CLOCK: ClockPosition = ClockPosition {
-    slot: 1,
-    epoch: 1,
-    unix_timestamp: 1,
-};
-
-fn receipt(spent: u64, received: u64) -> SwapReceipt {
-    SwapReceipt {
-        trader_spent: spent,
-        trader_received: received,
-        net_sent: spent,
-        received,
-        pipeline_fee: 0,
-        compute_units: 1,
-        strategy_compute_units: None,
-    }
-}
-
-fn quote_for(r: &SwapReceipt) -> Quote {
-    Quote {
-        amount_in: r.net_sent,
-        net_sent: r.net_sent,
-        pipeline_fee: r.pipeline_fee,
-        total_spend: r.trader_spent,
-        amount_out: r.received,
-        strategy_amount_out: r.received,
-        compute_units: 1,
-    }
-}
-
-fn leg(amount_in: u64, swap: Result<SwapReceipt, Failure>) -> Leg {
-    let quote = match &swap {
-        Ok(r) => Ok(quote_for(r)),
-        Err(f) => Err(f.clone()),
-    };
-    Leg {
-        input: 0,
-        output: 1,
-        amount_in,
-        clock: CLOCK,
-        quote,
-        swap,
-    }
-}
-
-fn refused(stage: Stage) -> Failure {
-    Failure::plain(
-        stage,
-        FailureClass::StrategyRefused,
-        &Pubkey::new_unique(),
-        "WrongStatus",
-    )
-}
-
-/// A round trip of `amount` that put `amount` in and got back `return_ppm` of it.
-fn sold(amount: u64, return_ppm: u64) -> RoundTrip {
-    let back = (amount as u128 * return_ppm as u128 / PPM as u128) as u64;
-    RoundTrip {
-        amount,
-        wallet: Pubkey::new_unique(),
-        buy: leg(amount, Ok(receipt(amount, amount))),
-        sell: Some(leg(amount, Ok(receipt(amount, back)))),
-    }
-}
-
-/// A round trip whose buy worked and whose sale failed.
-fn stuck(amount: u64) -> RoundTrip {
-    RoundTrip {
-        amount,
-        wallet: Pubkey::new_unique(),
-        buy: leg(amount, Ok(receipt(amount, amount))),
-        sell: Some(leg(amount, Err(refused(Stage::Swap)))),
-    }
-}
-
-/// A round trip whose buy failed.
-fn unbought(amount: u64) -> RoundTrip {
-    RoundTrip {
-        amount,
-        wallet: Pubkey::new_unique(),
-        buy: leg(amount, Err(refused(Stage::Swap))),
-        sell: None,
-    }
-}
-
-fn mint() -> MintFacts {
-    MintFacts {
-        address: Pubkey::new_unique(),
-        token_program: pipeline_client::TOKEN_PROGRAM_ID,
-        decimals: 9,
-        supply: 0,
-        mint_authority: None,
-        freeze_authority: None,
-        transfer_fee: None,
-        transfer_hook: None,
-        permanent_delegate: None,
-        pause_authority: None,
-    }
-}
-
-/// The wrapped SOL ladder, with one row per size.
-fn measured(rows: Vec<RoundTrip>) -> Measured {
-    assert_eq!(rows.len(), SOL_SIZES.len());
-    Measured {
-        money: 0,
-        ladder: Ladder {
-            basis: Basis::Sol,
-            sizes: SOL_SIZES.to_vec(),
-            reference: SOL_REFERENCE_SIZE,
-        },
-        money_vault: 1_000 * SOL_SIZES[4],
-        money_decimals: 9,
-        mints: vec![mint(), mint()],
-        pairs: vec![Pair { token: 1, rows }],
-    }
-}
-
-/// Every size at `ppm`, except those `edit` changes.
-fn ladder_at(ppm: u64, edit: impl Fn(u64) -> Option<RoundTrip>) -> Measured {
-    measured(
-        SOL_SIZES
-            .iter()
-            .map(|a| edit(*a).unwrap_or_else(|| sold(*a, ppm)))
-            .collect(),
-    )
-}
-
-const OPEN: Trading = Trading::Open;
 
 #[test]
 fn the_bands_meet_at_their_edges() {
@@ -268,13 +138,14 @@ fn quote_matches_swap_fails_in_the_ordinary_trade_and_warns_elsewhere() {
         quote_matches_swap::judge(
             &ladder_at(PASS_BAND_MIN_PPM, |a| (a == size).then(|| differing(a))),
             &OPEN,
+            &[],
         )
     };
     assert_eq!(at(SOL_SIZES[0]).outcome, Outcome::Fail);
     assert_eq!(at(SOL_REFERENCE_SIZE).outcome, Outcome::Fail);
     let elsewhere = at(SOL_SIZES[5]);
     assert_eq!(elsewhere.outcome, Outcome::Warn, "{}", elsewhere.reason);
-    let all = quote_matches_swap::judge(&ladder_at(PASS_BAND_MIN_PPM, |_| None), &OPEN);
+    let all = quote_matches_swap::judge(&ladder_at(PASS_BAND_MIN_PPM, |_| None), &OPEN, &[]);
     assert_eq!(all.outcome, Outcome::Pass);
     assert_eq!(all.numbers["compared"], 12);
 }
@@ -295,5 +166,8 @@ fn a_crash_anywhere_is_at_least_a_warn() {
     });
     assert_eq!(exit_sizes::judge(&m, &OPEN).outcome, Outcome::Warn);
     assert_eq!(cost::judge(&m, &OPEN).outcome, Outcome::Warn);
-    assert_eq!(quote_matches_swap::judge(&m, &OPEN).outcome, Outcome::Warn);
+    assert_eq!(
+        quote_matches_swap::judge(&m, &OPEN, &[]).outcome,
+        Outcome::Warn
+    );
 }

@@ -40,7 +40,7 @@ use spl_token_2022_interface::instruction as token;
 use crate::bands::{band, Band};
 use crate::checks::readable::Trading;
 use crate::config::{
-    MINT_AUTHORITY_MULTIPLE, PPM, SLOTS_PER_EPOCH, SLOTS_PER_SECOND_DENOMINATOR,
+    Wait, MINT_AUTHORITY_MULTIPLE, PPM, SLOTS_PER_EPOCH, SLOTS_PER_SECOND_DENOMINATOR,
     SLOTS_PER_SECOND_NUMERATOR, TRANSFER_FEE_ACTING_BPS, TRANSFER_FEE_EPOCHS_ON,
 };
 use crate::failure::{Failure, Stage};
@@ -195,15 +195,12 @@ fn act(
     })
 }
 
-/// Moves the clock `epochs` on, slot and Unix time with it at the configured clock rates.
+/// Moves the clock `epochs` on, slot, epoch and Unix time together (`crate::clock`).
 fn move_epochs(svm: &mut LiteSVM, epochs: u64) {
-    let mut clock: Clock = svm.get_sysvar();
-    let slots = epochs * SLOTS_PER_EPOCH;
-    clock.slot += slots;
-    clock.epoch += epochs;
-    clock.unix_timestamp +=
-        (slots * SLOTS_PER_SECOND_DENOMINATOR / SLOTS_PER_SECOND_NUMERATOR) as i64;
-    svm.set_sysvar(&clock);
+    let seconds =
+        epochs * SLOTS_PER_EPOCH * SLOTS_PER_SECOND_DENOMINATOR / SLOTS_PER_SECOND_NUMERATOR;
+    let now: Clock = svm.get_sysvar();
+    crate::clock::set(svm, &crate::clock::after(&now, Wait::Seconds(seconds)));
 }
 
 fn share_ppm(part: u64, whole: u64) -> Option<u64> {
@@ -429,12 +426,11 @@ fn act_in_round_trip(
         _ => Moment::AfterBuy,
     };
     let mut svm = session.fresh();
-    let buyer = session.funded_trader(
-        &mut svm,
+    let buyer = session.seed.wallet(
+        &session.market.address,
         &format!("{} of mint {i}", power.words()),
-        money,
-        reference,
     );
+    session.fund(&mut svm, &buyer, money, token, reference);
     // Acts as the authority; `amount` is what a permanent delegate moves (all the buyer
     // holds when `None`). Errs with why the action is "not run".
     let acted = |session: &mut Session,

@@ -2233,17 +2233,76 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
 
-### CANARY-37: Which token authority is a wallet
+### CANARY-37: A transferred token's return when the buyer's is low too
+
+- Question: How does `exit_transferred` judge a second wallet's return below the pass band when the buyer's own return from the same round trip is below it too?
+- Answer: By the tolerance: a warn when the second wallet's return is more than `TOLERANCE_PPM` (1 point) below the buyer's own, otherwise a pass, because the low return is the market's own and `cost` reports it.
+- Alternatives: A warn whenever the second wallet's return is below the pass band; a pass whenever the buyer's own is below it too.
+- Specified in: [`docs/spec/pipescope-canary.md`, Exit test](spec/pipescope-canary.md#exit-test)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary over time and across wallets (holding, later, launch clock, insiders, transferred tokens, a queue of buyers)](https://github.com/imDev2023/testing-pipeline/issues/114)
+
+### CANARY-38: Each exit record says whether it counts as "could not sell back"
+
+- Question: How does the trade box know which exit records count as "a buyer could not sell back"?
+- Answer: Every exit record carries `could_not_sell_back` in its numbers, true exactly when a wallet's buy worked and the sale of what it bought then failed in that record, never for a refused wallet-to-wallet transfer alone, and always false in `exit_late` and `exit_launch_clock`.
+- Alternatives: The terminal working the condition out from each check's numbers.
+- Specified in: [`docs/spec/pipescope-canary.md`, What counts as "a buyer could not sell back"](spec/pipescope-canary.md#what-counts-as-a-buyer-could-not-sell-back)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary over time and across wallets (holding, later, launch clock, insiders, transferred tokens, a queue of buyers)](https://github.com/imDev2023/testing-pipeline/issues/114)
+
+### CANARY-39: What makes an insider a program's address
+
+- Question: When is a market creator, upgrade authority or mint authority a program's address that `exit_wallets` skips and names, rather than a wallet it trades as?
+- Answer: When the key is off the Ed25519 curve (a program-derived address), is a program, or is an account a program other than the System Program holds; each skip names the role, the address and which of the three it is.
+- Alternatives: Only an account a program holds, as the prototype skipped, which would trade as a program-derived address that has no account.
+- Specified in: [`docs/spec/pipescope-canary.md`, Exit test](spec/pipescope-canary.md#exit-test)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary over time and across wallets (holding, later, launch clock, insiders, transferred tokens, a queue of buyers)](https://github.com/imDev2023/testing-pipeline/issues/114)
+
+### CANARY-40: What the checks over time and across wallets trade and compare with
+
+- Question: Which amount do `exit_hold`, `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred` and `exit_queue` trade, and what is "now" for the checks over time?
+- Answer: The reference size, or the largest size that stood in for it in `exit_sizes`, named as a stand-in; each check over time measures its own round trip at the cluster's clock and judges every other position against it, and a market whose launch-clock positions are all still ahead is "not run" in `exit_launch_clock`.
+- Alternatives: Comparing with `exit_sizes`'s reference row, which a different wallet traded.
+- Specified in: [`docs/spec/pipescope-canary.md`, Exit test](spec/pipescope-canary.md#exit-test)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary over time and across wallets (holding, later, launch clock, insiders, transferred tokens, a queue of buyers)](https://github.com/imDev2023/testing-pipeline/issues/114)
+
+### CANARY-41: The exit checks' swaps in `quote_matches_swap`
+
+- Question: Which of the swaps the exit checks commit does `quote_matches_swap` compare, and which of them are the ordinary trade, whose differences fail?
+- Answer: Every swap of every exit check; the ordinary trade is a swap of the reference size by a fresh wallet in the copy's own state at the cluster's clock or the next slot, and any other swap's difference is a warn.
+- Alternatives: Only `exit_sizes`'s swaps, as the first Canary ticket compared.
+- Specified in: [`docs/spec/pipescope-canary.md`, Quote against swap](spec/pipescope-canary.md#quote-against-swap)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary over time and across wallets (holding, later, launch clock, insiders, transferred tokens, a queue of buyers)](https://github.com/imDev2023/testing-pipeline/issues/114)
+
+### CANARY-42: Which checks an account the snapshot lacks affects, over time and across wallets
+
+- Question: When the last snapshot still lacks an account that one of the checks over time and across wallets named, which checks are "not run"?
+- Answer: That check, every check over time and across wallets when `exit_sizes`'s trades named it (they trade its reference amount), and `quote_matches_swap`, which compares every swap; the record names the accounts, as `CANARY-31` does for the others.
+- Alternatives: Every check whenever anything is lacking.
+- Specified in: [the ticket, Aviary: Canary over time and across wallets (holding, later, launch clock, insiders, transferred tokens, a queue of buyers)](https://github.com/imDev2023/testing-pipeline/issues/114)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-12 in [Aviary: Canary over time and across wallets (holding, later, launch clock, insiders, transferred tokens, a queue of buyers)](https://github.com/imDev2023/testing-pipeline/issues/114)
+### CANARY-43: Which token authority is a wallet
 
 - Question: When does `token_authorities` act as an authority, and when is it a program's address that is "not run"?
-- Answer: It acts when the authority's address is on the curve and holds no account or a system-owned one; a program-derived address, or an account a program owns such as a market's own state or an SPL multisig, is "not run", naming the owner program.
+- Answer: By the rule `exit_wallets` uses for insiders (`CANARY-39`): a key off the Ed25519 curve, a program, or an account a program holds, such as a market's own state or an SPL multisig, is "not run", naming the owner program; any other authority is a wallet Canary acts as.
 - Alternatives: Acting as every authority, which the copy's switched-off signature checks would allow even for addresses only a program can sign for; signing as an SPL multisig's members.
 - Specified in: [`docs/spec/pipescope-canary.md`, Control](spec/pipescope-canary.md#control)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
 
-### CANARY-38: Authorities of the money side's mint
+### CANARY-44: Authorities of the money side's mint
 
 - Question: How does `token_authorities` act as an authority of the money side's mint, which the trader spends rather than holds?
 - Answer: In the same round trip as for a token: freezing the buyer's account or pausing the mint between the buy and the sale, setting the transfer fee before the buy, and, as permanent delegate, taking what the sale returned; a mint authority sells what it minted into each other mint, each sale from the same state.
@@ -2253,7 +2312,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
 
-### CANARY-39: What the direct swap refuses
+### CANARY-45: What the direct swap refuses
 
 - Question: Which of the router's rules does the swap implementation that calls the strategy directly keep?
 - Answer: Those a trader can meet: a paused router, a trader account that is not a token account of its mint, and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router.
@@ -2263,7 +2322,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
 
-### CANARY-40: The instruction list in the snapshot
+### CANARY-46: The instruction list in the snapshot
 
 - Question: How does `custom_instructions` get the list `terminal-api` works out, and what does it do without one?
 - Answer: The snapshot's optional `instructions` field carries whether the program is built with Anchor and each instruction's name, call count and signers; Canary drops Pipeline's six by name, notes the rest, and records "not run" when the field is absent.

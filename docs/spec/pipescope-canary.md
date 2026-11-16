@@ -135,11 +135,12 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | `exit_late` | Moves the clock forward by each wait, then buys and sells the reference size | Never: it is not the present | A later round trip fails, or returns more than the tolerance less than now | Every later round trip is within the tolerance of now |
 | `exit_launch_clock` | Sets the clock to each launch-clock position, then buys and sells the reference size | Never: it is not the present | A launch-clock round trip fails, or returns more than the tolerance less than now | Every one is within the tolerance of now |
 | `exit_wallets` | Round-trips the reference size from five fresh wallets, the market creator, the strategy's upgrade authority and each mint authority, each from the same starting state | Fresh wallets get different results from the same state, or an insider gets more back than a fresh wallet | An insider gets less back than a fresh wallet | All get the same |
-| `exit_transferred` | One wallet buys the reference size and sends the tokens to a second wallet, which sells them | The transfer went through and the second wallet cannot sell | The transfer is refused (for any token, ours or anyone's: the result says the token could not be sent to another wallet, and what the buyer got back by selling it), or the second wallet's return is below the pass band while the buyer's own is not | The second wallet's return is in the pass band |
+| `exit_transferred` | One wallet buys the reference size and sends the tokens to a second wallet, which sells them | The transfer went through and the second wallet cannot sell | The transfer is refused (for any token, ours or anyone's: the result says the token could not be sent to another wallet, and what the buyer got back by selling it), or the second wallet's return is below the pass band while the buyer's own is not, or, when the buyer's own is below it too, more than the tolerance below the buyer's own (`CANARY-37`) | The second wallet's return is in the pass band, or no more than the tolerance below a buyer's own return that is also below it |
 | `exit_queue` | Five wallets buy the reference size one after another, then sell in the same order | Any of the five cannot sell, or together they get back within the fail band | Together they get back less than the pass band | All five sell and together get back within the pass band |
 
-- Wallets that are a program's address, not a wallet, are skipped and named.
+- Wallets that are a program's address, not a wallet, are skipped and named: a key off the Ed25519 curve, a program, or an account a program holds (`CANARY-39`).
 - In `exit_queue` only the total is judged: in a thin pool the first buyer out gains what the last one loses, which is ordinary price movement.
+- Every row but `exit_sizes` trades the reference size, or the size that stands in for it in `exit_sizes`, and judges a later or earlier time against a round trip measured in the same row at the cluster's clock, from the same kind of starting state (`CANARY-40`).
 
 ### Quote against swap
 
@@ -148,6 +149,7 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | `quote_matches_swap` | Compares every swap the run commits with the quote taken in the same state just before it: output received, input sent, Pipeline fee, and the trader's own balance changes | In the ordinary trade, any difference, a quoted swap that fails, or a swap that works when its quote failed | The same at another size or clock position | Every compared swap equals its quote; the count is reported |
 
 - Exact-out quoting stays with `pipeline-check`'s `quotes`, `quote_matches_swap` and `exact_out_refund` checks, carried in the conformance report; Canary trades exact-in only.
+- Of the exit checks' own swaps, the ordinary trade is a buy or sale of the reference size by a fresh wallet in the copy's own state, at the cluster's clock or the next slot: `exit_hold`'s buy and its sales in the same and the next slot, `exit_late`'s round trips now and a slot later, `exit_launch_clock`'s round trip now, the fresh wallets' round trips in `exit_wallets`, the buy in `exit_transferred` and the first buy in `exit_queue` (`CANARY-41`).
 
 ### Fee honesty
 
@@ -176,8 +178,8 @@ What `token_authorities` does with each authority, when the authority is a walle
 - **Permanent delegate**: after a buy, moves the buyer's tokens away.
 - **Pause authority**: pauses the mint, then tries the sale.
 - An authority that is a program's address is "not run" and named with the program that owns it, because only that program's own instructions can use it.
-- An authority is a wallet when its address is on the curve and holds no account or a system-owned one; any other address, a program-derived address or an account a program owns (a market's own state, an SPL multisig), is a program's address (`CANARY-37`).
-- An authority of the money side's mint acts in the same round trip: freezing the buyer's account of it or pausing it between the buy and the sale, setting its transfer fee before the buy, and, as permanent delegate, taking what the sale returned once the buyer holds it; a mint authority sells what it minted into each other mint, each sale from the same state (`CANARY-38`).
+- An authority is a program's address by the same rule as an insider in `exit_wallets` (`CANARY-39`): a key off the Ed25519 curve, a program, or an account a program holds, such as a market's own state or an SPL multisig (`CANARY-43`).
+- An authority of the money side's mint acts in the same round trip: freezing the buyer's account of it or pausing it between the buy and the sale, setting its transfer fee before the buy, and, as permanent delegate, taking what the sale returned once the buyer holds it; a mint authority sells what it minted into each other mint, each sale from the same state (`CANARY-44`).
 
 The prototype ran the first and third on devnet and built the second; no devnet mint has a freeze authority, a permanent delegate or a pause authority.
 
@@ -185,7 +187,7 @@ The prototype ran the first and third on devnet and built the second; no devnet 
 
 - Instruction names come from the strategy's code: each "Instruction: Name" string Anchor compiles in is kept only when the discriminator of that name is also in the code, which also cuts names that run on into the next string.
 - That list is worked out once per strategy version, by `terminal-api` when the indexer records the version, and stored with it; the facts panel, the forms' instruction check and the explainer read it from there, and the `CanaryRun` Durable Object posts it in the snapshot, so one implementation serves all four.
-- The snapshot carries it in an optional `instructions` field, whether the program is built with Anchor and each instruction's name, call count and signers; Canary drops Pipeline's six by name and notes the rest, and a run given no list records `custom_instructions` as "not run" (`CANARY-40`).
+- The snapshot carries it in an optional `instructions` field, whether the program is built with Anchor and each instruction's name, call count and signers; Canary drops Pipeline's six by name and notes the rest, and a run given no list records `custom_instructions` as "not run" (`CANARY-46`).
 - A program that is not built with Anchor gets "none found", worded as such and not as "none".
 - Who has called each instruction, and how often, comes from the indexer's history of the strategy program.
 - Canary v1 does not call custom instructions: the prototype can name them and cannot build their arguments without each strategy's own layout (owner, 2026-11-10).
@@ -242,6 +244,7 @@ Each check on each market produces one **Canary result**, a record the facts pan
 
 - It is any latest result of `exit_sizes`, `exit_hold`, `exit_wallets`, `exit_transferred` or `exit_queue`, for the market's current strategy version, in which a wallet's buy worked and the sale of what it bought then failed.
 - A refused wallet-to-wallet transfer in `exit_transferred` is never "could not sell back": the buyer could still sell, so it raises no notice (`CANARY-27`).
+- Every exit record carries `could_not_sell_back` in its numbers, true exactly when this definition holds for it, so the trade box reads one field (`CANARY-38`); `exit_late` and `exit_launch_clock` carry it as false.
 - It counts whether the result is a fail or a warn, and the notice states the condition from the record: the size, the wait or the wallet's role, and the refusing program's own error message.
   On devnet today that is the three open bonding curves: "a wallet that bought 1 SOL or more could not sell back; buys of 0.1 SOL and less sold back".
 - `exit_late` and `exit_launch_clock` do not count: they describe another time, and the scheduled runs see that time when it comes.
@@ -291,7 +294,7 @@ A change to any of them changes the `harness` version that every Canary result c
 - Pipeline's Apache-2.0 crates, from crates.io at exact versions (published 2026-11-10 at Pipeline's `5ac3121`; see [`pipescope-architecture.md`](pipescope-architecture.md#pipelines-packages)): `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
 - The router's program is loaded from the cluster's own bytes, never built or copied into this repo; `pipeline-check` does the same.
 - Every trade in the checks goes through one swap function, so the architecture's licence seam holds: on devnet it calls the router, and it can be replaced by a direct call to the strategy plus Pipeline's Apache-2.0 settlement code if running the router's bytes in production is not allowed.
-  The direct implementation refuses what the router's own rules refuse a trader (a paused router, an account that is not a token account of its mint, and every refusal of the settlement code, named in that code's words), undoes the swap on any refusal, and is chosen in one place, Canary's config module; the strategy then runs one call level higher than under the router, the one difference (`CANARY-39`).
+  The direct implementation refuses what the router's own rules refuse a trader (a paused router, an account that is not a token account of its mint, and every refusal of the settlement code, named in that code's words), undoes the swap on any refusal, and is chosen in one place, Canary's config module; the strategy then runs one call level higher than under the router, the one difference (`CANARY-45`).
   `conformance` is the exception, because `pipeline-check` itself runs the router; without the router it is "not run".
 
 ## A correction to earlier research

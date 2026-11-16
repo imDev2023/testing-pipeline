@@ -22,6 +22,8 @@ pub enum Stage {
     Swap,
     /// A token authority's own instruction, in `token_authorities`.
     AuthorityAction,
+    /// One wallet sending the token to another, outside the market.
+    Transfer,
 }
 
 impl Stage {
@@ -32,6 +34,7 @@ impl Stage {
             Stage::Quote => "quoting",
             Stage::Swap => "the swap",
             Stage::AuthorityAction => "the authority's own instruction",
+            Stage::Transfer => "sending the token to another wallet",
         }
     }
 }

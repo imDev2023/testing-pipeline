@@ -5,6 +5,7 @@
 
 use borsh::BorshDeserialize;
 use litesvm::LiteSVM;
+use pipeline_check::write_token_account;
 use pipeline_client::{AccountMeta, Instruction, Pubkey};
 use pipeline_quoter::{QuoteRequest, Quoter};
 use pipeline_strategy_interface::{self as psi, discriminator, fees, TradeMode};
@@ -14,7 +15,7 @@ use solana_transaction::Transaction;
 
 use crate::config::QUOTE_COMPUTE_LIMIT;
 use crate::failure::{Failure, FailureClass, Stage};
-use crate::market::{program_elf, token_amount, Market, Session};
+use crate::market::{fund_lamports, program_elf, token_amount, Market, Session};
 use crate::swap::{compute_limit, SwapPath, SwapReceipt, SwapRequest};
 
 /// A quote in the trader's terms, as `pipeline-quoter` gives it.
@@ -453,29 +454,161 @@ impl Session<'_> {
         amount: u64,
     ) -> RoundTrip {
         let mut svm = self.fresh();
-        let trader = self.funded_trader(
-            &mut svm,
+        let trader = self.seed.wallet(
+            &self.market.address,
             &format!("round trip {money} to {token}, {amount}"),
-            money,
-            amount,
         );
-        let buy = self.leg(&mut svm, path, &trader, money, token, amount);
-        let held = token_amount(&svm, &self.market.ata(&trader, token)).unwrap_or(0);
-        let sell_amount = fees::amount_for_budget(held, 0);
-        let sell = match &buy.swap {
-            Ok(receipt) if receipt.trader_received > 0 && sell_amount > 0 => {
-                Some(self.leg(&mut svm, path, &trader, token, money, sell_amount))
-            }
-            _ => None,
-        };
+        self.round_trip_in(&mut svm, path, &trader, money, token, amount)
+    }
+
+    /// Funds `trader` in `svm`, buys `amount` of `token` with `money`, then sells everything
+    /// bought in the same slot.
+    pub fn round_trip_in(
+        &mut self,
+        svm: &mut LiteSVM,
+        path: &dyn SwapPath,
+        trader: &Pubkey,
+        money: usize,
+        token: usize,
+        amount: u64,
+    ) -> RoundTrip {
+        self.fund(svm, trader, money, token, amount);
+        let buy = self.leg(svm, path, trader, money, token, amount);
+        let sell = self.sell_all(svm, path, &buy, trader, token, money);
         RoundTrip {
             amount,
-            wallet: trader,
+            wallet: *trader,
             buy,
             sell,
         }
     }
+
+    /// Gives `trader` SOL for fees, enough of the money mint to buy `amount` with Pipeline's
+    /// fee on top, and an empty account of `token`, replacing whatever it held of either.
+    pub fn fund(
+        &mut self,
+        svm: &mut LiteSVM,
+        trader: &Pubkey,
+        money: usize,
+        token: usize,
+        amount: u64,
+    ) {
+        fund_lamports(svm, trader);
+        let budget = fees::max_total_spend(amount, 0).unwrap_or(u64::MAX);
+        let funded = write_token_account(
+            svm,
+            &self.market.mint(money),
+            &self.market.token_program(money),
+            trader,
+            budget,
+        )
+        .and_then(|_| {
+            write_token_account(
+                svm,
+                &self.market.mint(token),
+                &self.market.token_program(token),
+                trader,
+                0,
+            )
+        });
+        if let Err(error) = funded {
+            self.notes
+                .push(format!("could not fund a trader for {amount}: {error}"));
+        }
+    }
+
+    /// Gives `owner` SOL for fees and an empty account of mint `i`, leaving its other token
+    /// accounts as they are.
+    pub fn open_wallet(&mut self, svm: &mut LiteSVM, owner: &Pubkey, i: usize) {
+        fund_lamports(svm, owner);
+        if let Err(error) = write_token_account(
+            svm,
+            &self.market.mint(i),
+            &self.market.token_program(i),
+            owner,
+            0,
+        ) {
+            self.notes.push(format!(
+                "could not open a wallet's account of mint {i}: {error}"
+            ));
+        }
+    }
+
+    /// Sells everything `trader` holds of `token` for `money`, when `buy` delivered something;
+    /// `None` when there is nothing to sell.
+    pub fn sell_all(
+        &mut self,
+        svm: &mut LiteSVM,
+        path: &dyn SwapPath,
+        buy: &Leg,
+        trader: &Pubkey,
+        token: usize,
+        money: usize,
+    ) -> Option<Leg> {
+        let held = token_amount(svm, &self.market.ata(trader, token)).unwrap_or(0);
+        let sell_amount = fees::amount_for_budget(held, 0);
+        match &buy.swap {
+            Ok(receipt) if receipt.trader_received > 0 && sell_amount > 0 => {
+                Some(self.leg(svm, path, trader, token, money, sell_amount))
+            }
+            _ => None,
+        }
+    }
+
+    /// Sends `amount` of mint `token` from `from`'s token account to `to`'s, as one wallet
+    /// sends a token to another, with the mint's transfer-hook accounts resolved; `to`'s
+    /// account is created empty first. Returns what arrived.
+    pub fn transfer(
+        &mut self,
+        svm: &mut LiteSVM,
+        token: usize,
+        from: &Pubkey,
+        to: &Pubkey,
+        amount: u64,
+    ) -> Result<u64, Failure> {
+        let mint = self.market.mints[token].clone();
+        let (source, destination) = (self.market.ata(from, token), self.market.ata(to, token));
+        if let Err(error) = write_token_account(svm, &mint.address, &mint.token_program, to, 0) {
+            self.notes.push(format!(
+                "could not open the receiving wallet's account: {error}"
+            ));
+        }
+        let mut accounts = vec![
+            AccountMeta::new(source, false),
+            AccountMeta::new_readonly(mint.address, false),
+            AccountMeta::new(destination, false),
+            AccountMeta::new_readonly(*from, true),
+        ];
+        accounts.extend(self.transfer_hook_accounts(
+            svm,
+            token,
+            pipeline_check::hooks::Transfer {
+                source,
+                mint: mint.address,
+                destination,
+                authority: *from,
+                amount,
+            },
+        ));
+        let mut data = vec![TRANSFER_CHECKED];
+        data.extend_from_slice(&amount.to_le_bytes());
+        data.push(mint.decimals);
+        let ix = Instruction::new_with_bytes(mint.token_program, &data, accounts);
+        let before = token_amount(svm, &destination).unwrap_or(0);
+        fund_lamports(svm, from);
+        let mut tx = Transaction::new_with_payer(&[ix], Some(from));
+        tx.message.recent_blockhash = svm.latest_blockhash();
+        svm.send_transaction(tx).map_err(|failed| {
+            Failure::from_transaction(Stage::Transfer, &self.market.strategy(), &failed)
+        })?;
+        Ok(token_amount(svm, &destination)
+            .unwrap_or(0)
+            .saturating_sub(before))
+    }
 }
+
+/// The token programs' `TransferChecked` instruction.
+const TRANSFER_CHECKED: u8 = 12;
 
 /// A buy and the sale of everything it bought.
 #[derive(Clone, Debug, Serialize)]
@@ -523,6 +656,6 @@ impl RoundTrip {
 }
 
 /// Serializes an address as its base58 text.
-fn address<S: serde::Serializer>(key: &Pubkey, serializer: S) -> Result<S::Ok, S::Error> {
+pub fn address<S: serde::Serializer>(key: &Pubkey, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(&key.to_string())
 }

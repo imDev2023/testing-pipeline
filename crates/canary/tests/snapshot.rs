@@ -34,6 +34,8 @@ fn a_snapshot_recorded_from_a_full_run_answers_with_results_identical_in_outcome
     let market = cluster.sol_cp_market(30);
     // No authority left to act as, so every check that can pass does.
     cluster.renounce_mint_authority(&market.mint_b, &common::TOKEN);
+    // Two days on, so every launch-clock position is in the past.
+    cluster.pass_time(2 * 86_400);
     let snapshot =
         record_snapshot(&mut SvmSource::new(cluster.svm.clone()), market.market).unwrap();
     assert!(snapshot.accounts.len() > 10, "{}", snapshot.accounts.len());

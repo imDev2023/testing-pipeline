@@ -52,7 +52,8 @@ const AS_THE_ROUTER: &str = "the market signer signing, as the router passes it"
 /// the same fresh copy.
 pub fn measure(session: &mut Session, money: usize, token: usize, amount: u64) -> Measured {
     let mut svm = session.fresh();
-    let trader = session.funded_trader(&mut svm, "direct call", money, amount);
+    let trader = session.seed.wallet(&session.market.address, "direct call");
+    session.fund(&mut svm, &trader, money, token, amount);
     let mut measured = Measured {
         input: money,
         output: token,

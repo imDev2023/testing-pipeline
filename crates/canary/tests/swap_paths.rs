@@ -169,3 +169,40 @@ fn a_strategy_that_tries_to_pull_more_from_the_trader_fails_the_same_way_on_both
     assert_eq!(outcome(&direct, "exit_sizes").outcome, Outcome::NotRun);
     assert_same_results(&router, &direct);
 }
+
+#[test]
+fn the_checks_over_time_and_across_wallets_give_the_same_results_on_both_paths() {
+    // Canary's fixture strategy, in the three behaviours those checks exist to catch: an
+    // insider paid more (exit_wallets fails), a launch tax (exit_launch_clock warns) and a
+    // market that closes a day later (exit_hold and exit_late warn).
+    const DAY: u64 = 86_400;
+    for (mode, age, check, expected) in [
+        (
+            common::mode::INSIDER_PAID_MORE,
+            0,
+            "exit_wallets",
+            Outcome::Fail,
+        ),
+        (
+            common::mode::LAUNCH_TAX,
+            2 * DAY,
+            "exit_launch_clock",
+            Outcome::Warn,
+        ),
+        (common::mode::CLOSES, DAY, "exit_hold", Outcome::Warn),
+    ] {
+        let mut cluster = Cluster::new();
+        let insider = cluster.admin_key();
+        let market = cluster.fixture_market(mode, insider);
+        if age > 0 {
+            cluster.pass_time(age);
+        }
+
+        let router = run(&cluster, market.market, &ThroughRouter, vec![]);
+        let direct = run(&cluster, market.market, &DirectToStrategy, vec![]);
+
+        let record = outcome(&direct, check);
+        assert_eq!(record.outcome, expected, "mode {mode}: {}", record.reason);
+        assert_same_results(&router, &direct);
+    }
+}

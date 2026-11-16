@@ -19,6 +19,7 @@ pipeline-strategy-interface.workspace = true
 litesvm.workspace = true
 solana-account.workspace = true
 solana-clock.workspace = true
+solana-epoch-schedule.workspace = true
 solana-keypair.workspace = true
 solana-signer.workspace = true
 solana-transaction.workspace = true
