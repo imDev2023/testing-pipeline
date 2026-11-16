@@ -117,9 +117,11 @@ export const LendingAmmEvent = {
   0: "LiquidityAdded",
   1: "MarketCreated",
   2: "Rebalanced",
+  3: "ShortfallRedeemed",
   LiquidityAdded: 0,
   MarketCreated: 1,
   Rebalanced: 2,
+  ShortfallRedeemed: 3,
 } as const;
 
 export type LendingAmmEvent = (typeof LendingAmmEvent)[Exclude<
@@ -163,6 +165,17 @@ export function identifyLendingAmmEvent(
     )
   ) {
     return LendingAmmEvent.Rebalanced;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([208, 206, 3, 143, 152, 189, 140, 24]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.ShortfallRedeemed;
   }
   throw new Error(
     "The provided event could not be identified as a lendingAmm event.",

@@ -5081,6 +5081,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stand-in-smart-wallet"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

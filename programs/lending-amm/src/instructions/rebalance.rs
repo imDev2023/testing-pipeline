@@ -93,8 +93,7 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
     let lent_total = buffer
         .checked_add(reserve.lent_value(held)?)
         .ok_or(StrategyError::Overflow)?;
-    let can_pay =
-        reserve.can_pay_for_rebalance(&lending_market, held, Clock::get()?.unix_timestamp);
+    let can_pay = reserve.can_pay_planned(&lending_market, held, Clock::get()?.unix_timestamp);
     let planned = buffer::plan(buffer, lent_total, can_pay, lent.min_rebalance)?;
 
     let market_key = market.key();
