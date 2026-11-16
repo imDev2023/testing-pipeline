@@ -13,7 +13,8 @@
 //   5. check the mint, and read back from the config exactly the market, market state,
 //      vault, fee account, quote mint, goal and deadline expected;
 //   6. seed the market through the metadata's `seed` action, single-sided on its virtual
-//      quote reserve, with the hook accounts after the action's own;
+//      quote reserve, with the hook accounts after the action's own, and show in simulation
+//      `unlock` refused while neither the goal nor the deadline is reached;
 //   7. buy the token through the router with the SDK, the hook accounts after the strategy's
 //      accounts, and stop unless the buy delivered its quote;
 //   8. sell some of it back the same way, the hook accounts as the router's input hook
@@ -21,6 +22,18 @@
 //      went into the market's fee account;
 //   9. show, in simulation, the hook refusing a wallet-to-wallet `transfer_checked` and a sell
 //      that carries an integrator fee above zero.
+//
+// With `--unlock`, it goes on to unlock the token (docs/spec/containment-hook.md, "Unlock"):
+//
+//  10. wait for the unlock to fall due: with `--unlock goal`, buy and sell back through the
+//      router until the home market's `tax_collected` reaches the goal; with
+//      `--unlock deadline`, wait until the cluster's clock reaches the deadline;
+//  11. send `unlock` from a fresh wallet with no tie to the token, and stop unless it was
+//      unlocked by what step 10 waited for, the mint's transfer hook program and hook
+//      authority are both unset, the config records the unlock time, and a second `unlock`
+//      is refused in simulation;
+//  12. show the token free of the hook: a wallet-to-wallet `transfer_checked`, a buy and a
+//      sell, each sent without hook accounts, all succeed without the hook running.
 //
 // The hook accounts (the config, the hook program and the validation account) are resolved
 // from the validation account with Token-2022's own client, `resolveExtraAccountMetasForExecute`
@@ -32,7 +45,7 @@
 //
 //   node launch.ts --cluster <localnet|devnet|URL> --launcher <keypair.json> \
 //     --goal <quote-mint base units> --deadline <ISO 8601 time or Unix seconds> \
-//     [--quote-mint <address>]
+//     [--quote-mint <address>] [--unlock <goal|deadline>]
 //
 //   --cluster     localnet (http://127.0.0.1:8899), devnet, or an RPC URL of either; the
 //                 cluster's genesis hash must be devnet's, or the URL a local validator's
@@ -44,6 +57,9 @@
 //                 not in the future or too far away
 //   --quote-mint  the SPL Token mint the token trades against and its tax is taken in
 //                 (default: wrapped SOL)
+//   --unlock      unlock the token after the launch, by the goal (the script trades until
+//                 it is reached) or by the deadline (the script waits for it); without it,
+//                 the script stops after step 9 and the token stays contained
 //
 // On a local cluster the script airdrops the SOL the launcher needs; on devnet it never does
 // (fund it with devnet-airdrop, docs/toolchain.md).
@@ -92,13 +108,16 @@ import { resolveExtraAccountMetasForExecute } from '@solana-program/token-2022';
 import * as pipeline from '@pipeline-placeholder/sdk';
 
 import {
+    CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED,
     CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED,
+    CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE,
     CONTAINMENT_HOOK_PROGRAM_ADDRESS,
     fetchConfig,
     findConfigPda,
     findExtraAccountMetasPda,
     findUnlockPda,
     getBindInstructionAsync,
+    getUnlockInstructionAsync,
     MAX_UNLOCK_DEADLINE_SECS,
 } from './client/index.ts';
 import { fetchTaxMarket, findAuthorityPda, findVault0Pda, findVault1Pda, MarketStatus, TAX_AMM_PROGRAM_ADDRESS } from '../../tax-amm/scripts/client/index.ts';
@@ -131,6 +150,14 @@ const HOME_MARKET = {
 // quote mint (1 SOL with wrapped SOL), then a sell of half of what it bought; and the
 // integrator fee of the sell the hook refuses.
 const TRADES = { buyUnits: 1n, integratorFeeBps: 50 } as const;
+// How `--unlock` waits for the unlock and sends it. By the goal, the script buys with
+// `TRADES.buyUnits` and sells the same amount of the token back, round after round, and
+// refuses up front a goal that would take more rounds than `maxGoalRounds`, counting only each
+// round's buy tax; each round's cost is estimated as both taxes plus `roundMarginBps` for
+// Pipeline's fees. By the deadline, it refuses up front a deadline further than
+// `maxDeadlineWaitSecs` away. The unlock is sent by a fresh wallet the launcher gives
+// `unlockerLamports`, enough for its fee and a system account's rent.
+const UNLOCKING = { maxGoalRounds: 10, roundMarginBps: 100n, maxDeadlineWaitSecs: 600n, unlockerLamports: 2_000_000n } as const;
 // What the launch's rents and fees may cost beyond the market's setup and the buy, which the
 // launcher must hold before anything is sent, so a launch never stops halfway for want of SOL.
 const RENT_AND_FEES = 200_000_000n;
@@ -163,6 +190,7 @@ const { values: options } = parseArgs({
         goal: { type: 'string' },
         deadline: { type: 'string' },
         'quote-mint': { type: 'string', default: WRAPPED_SOL },
+        unlock: { type: 'string' },
     },
     strict: true,
 });
@@ -170,7 +198,7 @@ const { values: options } = parseArgs({
 function usage(message: string): never {
     console.error(`${message}\n`);
     console.error(
-        'Usage: node launch.ts --cluster <localnet|devnet|URL> --launcher <keypair.json> --goal <quote-mint base units> --deadline <ISO 8601 time or Unix seconds> [--quote-mint <address>]',
+        'Usage: node launch.ts --cluster <localnet|devnet|URL> --launcher <keypair.json> --goal <quote-mint base units> --deadline <ISO 8601 time or Unix seconds> [--quote-mint <address>] [--unlock <goal|deadline>]',
     );
     process.exit(2);
 }
@@ -211,6 +239,10 @@ const launcherPath = options.launcher ?? usage('--launcher is required');
 const unlockGoal = parseGoal(options.goal);
 const unlockDeadline = parseDeadline(options.deadline);
 const quoteMint = address(options['quote-mint']);
+if (options.unlock !== undefined && options.unlock !== 'goal' && options.unlock !== 'deadline') {
+    usage(`--unlock must be goal or deadline, not "${options.unlock}"`);
+}
+const unlockBy = options.unlock as 'goal' | 'deadline' | undefined;
 const onDevnet = !cluster.local;
 
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
@@ -422,6 +454,7 @@ async function trade(
     tokenHolder: Address,
     quoteHolder: Address,
     hookAccounts: HookAccountsFor,
+    hooked = true,
 ) {
     const label = `swap ${amount} of ${input === CONTAINED_INDEX ? 'the token' : 'the quote mint'} for ${output === CONTAINED_INDEX ? 'the token' : 'the quote mint'}`;
     const { instruction, quote, traderOutput } = await swapInstruction(trader, view, input, output, amount, tokenHolder, quoteHolder, hookAccounts);
@@ -441,23 +474,49 @@ async function trade(
     }
     const consumed = `Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} consumed `;
     const hookUnits = (tx.meta.logMessages ?? []).filter((line) => line.startsWith(consumed)).map((line) => Number(line.slice(consumed.length).split(' ')[0]));
-    const expected = output === CONTAINED_INDEX ? 1 : 2;
+    // While contained, the hook runs on the vault's transfer of a buy, and on both of a sell's
+    // transfers into the vault and the fee account; after the unlock, never.
+    const expected = hooked ? (output === CONTAINED_INDEX ? 1 : 2) : 0;
     if (hookUnits.length !== expected) fail(`${label}: the hook ran ${hookUnits.length} times, not ${expected}`);
-    info(`${label}: received exactly the quote, Pipeline's fee ${event.data.pipelineFee}; the hook's Execute took ${hookUnits.join(' and ')} CU`);
+    const hook = hooked ? `the hook's Execute took ${hookUnits.join(' and ')} CU` : 'the hook did not run';
+    info(`${label}: received exactly the quote, Pipeline's fee ${event.data.pipelineFee}; ${hook}`);
     return { received, pipelineFee: event.data.pipelineFee, hookUnits };
 }
 
-/** Simulates `instruction` and stops unless the hook refuses it with `TransferRefused`. */
-async function expectRefused(label: string, feePayer: KeyPairSigner, instruction: Instruction) {
+/** Simulates `instruction` and returns whether it failed, with its logs. */
+async function simulate(feePayer: KeyPairSigner, instruction: Instruction) {
     const signed = await signTransactionMessageWithSigners(message(feePayer, [instruction], [], await latestBlockhash()));
     const { value } = await rpc
         .simulateTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64', commitment: 'confirmed' })
         .send();
-    const logs = value.logs ?? [];
-    const refusal = `Error Code: TransferRefused. Error Number: ${CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED}.`;
-    const byTheHook = logs.some((line) => line.includes(refusal)) && logs.some((line) => line.startsWith(`Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} failed`));
-    if (!value.err || !byTheHook) fail(`${label} was not refused by the hook: ${show(value.err)}\n${logs.join('\n')}`);
-    info(`${label}: refused by the hook with TransferRefused (${CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED})`);
+    return { err: value.err, logs: value.logs ?? [] };
+}
+
+/** Whether `logs` show the hook failing with the error `name`, number `code`. */
+function refusedByTheHook(logs: readonly string[], name: string, code: number) {
+    return (
+        logs.some((line) => line.includes(`Error Code: ${name}. Error Number: ${code}.`)) &&
+        logs.some((line) => line.startsWith(`Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} failed`))
+    );
+}
+
+/** Simulates `instruction` and stops unless the hook refuses it with the error `name`. */
+async function expectRefused(
+    label: string,
+    feePayer: KeyPairSigner,
+    instruction: Instruction,
+    [name, code]: [string, number] = ['TransferRefused', CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED],
+) {
+    const { err, logs } = await simulate(feePayer, instruction);
+    if (!err || !refusedByTheHook(logs, name, code)) fail(`${label} was not refused by the hook: ${show(err)}\n${logs.join('\n')}`);
+    info(`${label}: refused by the hook with ${name} (${code})`);
+}
+
+/** The cluster's clock, as the latest confirmed block's time. */
+async function clusterTime(): Promise<bigint> {
+    const time = await rpc.getBlockTime(await rpc.getSlot({ commitment: 'confirmed' }).send()).send();
+    if (time === null) fail('the cluster did not give its time');
+    return BigInt(time);
 }
 
 async function main() {
@@ -490,14 +549,27 @@ async function main() {
     const buy = TRADES.buyUnits * 10n ** BigInt(quote.data[44]!);
     const buySpend = pipeline.maxTotalSpend(buy, 0) ?? fail('the buy overflows');
     const [quoteHolder] = await findAssociatedTokenPda({ owner: launcher.address, mint: quoteMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+    // By the goal, the rounds of trades it takes, counting only each round's buy tax, and
+    // what they may cost: both taxes and Pipeline's fees on each round's buy.
+    let goalRounds = 0;
+    let roundsCost = 0n;
+    if (unlockBy === 'goal') {
+        const buyTax = (buy * BigInt(HOME_MARKET.buyTaxBps)) / 10_000n;
+        goalRounds = Number((unlockGoal + buyTax - 1n) / buyTax);
+        if (goalRounds > UNLOCKING.maxGoalRounds) {
+            fail(`--goal ${unlockGoal} would take about ${goalRounds} rounds of trades of ${buy} to collect, more than the ${UNLOCKING.maxGoalRounds} --unlock goal makes; give a smaller goal or use --unlock deadline`);
+        }
+        roundsCost = (BigInt(goalRounds) * buySpend * (BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps) + UNLOCKING.roundMarginBps)) / 10_000n;
+        info(`--unlock goal: at most ${goalRounds} rounds of a buy of ${buy} and a sell back, costing about ${roundsCost} of the quote mint`);
+    }
     // Everything the launch spends is checked before it sends anything: the binding and the
     // seed cannot be undone, so a launch that ran out halfway would leave a market untraded.
-    let solNeeded = MAX_CREATOR_LAMPORTS + RENT_AND_FEES;
+    let solNeeded = MAX_CREATOR_LAMPORTS + RENT_AND_FEES + (unlockBy ? UNLOCKING.unlockerLamports : 0n);
     if (quoteMint === WRAPPED_SOL) {
-        solNeeded += buySpend;
+        solNeeded += buySpend + roundsCost;
     } else {
         const held = (await account(quoteHolder)) ? await tokenBalance(quoteHolder) : 0n;
-        if (held < buySpend) fail(`the launcher's ${quoteMint} account ${quoteHolder} holds ${held}, but the buy needs ${buySpend} with Pipeline's fee`);
+        if (held < buySpend + roundsCost) fail(`the launcher's ${quoteMint} account ${quoteHolder} holds ${held}, but the trades need ${buySpend + roundsCost} with Pipeline's fee`);
     }
     const { value: solHeld } = await rpc.getBalance(launcher.address, { commitment: 'confirmed' }).send();
     if (solHeld < solNeeded) fail(`the launcher holds ${Number(solHeld) / 1e9} SOL, but the launch needs ${Number(solNeeded) / 1e9}`);
@@ -511,13 +583,15 @@ async function main() {
     // unbound mint behind. The longest deadline is the hook's alone to check.
     if (unlockGoal === 0n) fail('--goal must be above zero');
     // The longest deadline is the hook's own constant, read from its IDL through the client.
-    const clusterTime = await rpc.getBlockTime(await rpc.getSlot({ commitment: 'confirmed' }).send()).send();
-    if (clusterTime === null) fail("the cluster did not give its time");
-    if (unlockDeadline <= clusterTime) {
-        fail(`--deadline must be later than the cluster's time, ${new Date(Number(clusterTime) * 1000).toISOString()}`);
+    const startTime = await clusterTime();
+    if (unlockDeadline <= startTime) {
+        fail(`--deadline must be later than the cluster's time, ${new Date(Number(startTime) * 1000).toISOString()}`);
     }
-    if (unlockDeadline > clusterTime + MAX_UNLOCK_DEADLINE_SECS) {
-        fail(`--deadline may be at most ${MAX_UNLOCK_DEADLINE_SECS} seconds after the binding (MAX_UNLOCK_DEADLINE_SECS), ${new Date(Number(clusterTime + MAX_UNLOCK_DEADLINE_SECS) * 1000).toISOString()} at the cluster's time now`);
+    if (unlockDeadline > startTime + MAX_UNLOCK_DEADLINE_SECS) {
+        fail(`--deadline may be at most ${MAX_UNLOCK_DEADLINE_SECS} seconds after the binding (MAX_UNLOCK_DEADLINE_SECS), ${new Date(Number(startTime + MAX_UNLOCK_DEADLINE_SECS) * 1000).toISOString()} at the cluster's time now`);
+    }
+    if (unlockBy === 'deadline' && unlockDeadline > startTime + UNLOCKING.maxDeadlineWaitSecs) {
+        fail(`--unlock deadline waits for the deadline, so it must be at most ${UNLOCKING.maxDeadlineWaitSecs} seconds away, not ${unlockDeadline - startTime}`);
     }
 
     step('2. Computing every address the launch will use, before sending anything');
@@ -748,6 +822,11 @@ async function main() {
     info(`the token's vault holds the seed, ${HOME_MARKET.seed[CONTAINED_INDEX]}, and the market is open`);
     info(`hook accounts: ${seedTail.map((meta) => meta.address).join(', ')}`);
     record.push(['seeded', `${HOME_MARKET.seed[CONTAINED_INDEX]} of the token into its vault, through the hook`]);
+    // Nothing collected yet; the deadline is what could have passed, if it was very close.
+    const unlockInstruction = await getUnlockInstructionAsync({ mint, marketState });
+    if ((await clusterTime()) >= unlockDeadline) fail('the deadline passed before the unlock could be shown refused; give a later --deadline');
+    await expectRefused('unlock before the goal or the deadline', launcher, unlockInstruction, ['UnlockNotDue', CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE]);
+    record.push(['unlock before either', 'refused by the hook with UnlockNotDue']);
 
     step('7. Buying the token through the router with the SDK');
     if (quoteMint === WRAPPED_SOL) {
@@ -799,6 +878,93 @@ async function main() {
     });
     await expectRefused(`a sell with an integrator fee of ${TRADES.integratorFeeBps} basis points`, launcher, sellWithFee.instruction);
     record.push(['refused by the hook', 'a wallet-to-wallet transfer_checked, and a sell with an integrator fee above zero']);
+
+    if (unlockBy) {
+        const taxCollected = async () => (await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' })).data.taxCollected;
+        if (unlockBy === 'goal') {
+            step('10. Trading until the home market has collected the goal in tax');
+            for (let round = 1; (await taxCollected()) < unlockGoal; round++) {
+                if (round > goalRounds) fail(`the home market collected ${await taxCollected()} of the goal ${unlockGoal} in ${goalRounds} rounds`);
+                if (quoteMint === WRAPPED_SOL) {
+                    const held = await tokenBalance(quoteHolder);
+                    if (held < buySpend) {
+                        await send(`wrap ${buySpend - held} lamports`, launcher, [
+                            getTransferSolInstruction({ source: launcher, destination: quoteHolder, amount: buySpend - held }),
+                            getSyncNativeInstruction({ account: quoteHolder }),
+                        ]);
+                    }
+                }
+                const roundBuy = await trade(launcher, view, QUOTE_INDEX, CONTAINED_INDEX, buy, holder, quoteHolder, hookAccounts);
+                await trade(launcher, view, CONTAINED_INDEX, QUOTE_INDEX, roundBuy.received, holder, quoteHolder, hookAccounts);
+                info(`round ${round}: tax collected ${await taxCollected()} of the goal ${unlockGoal}`);
+            }
+            if ((await clusterTime()) >= unlockDeadline) fail('the deadline passed while trading, so the unlock would not show the goal');
+        } else {
+            step('10. Waiting for the deadline');
+            for (let time = await clusterTime(); time < unlockDeadline; time = await clusterTime()) {
+                info(`the cluster's clock is ${new Date(Number(time) * 1000).toISOString()}, ${unlockDeadline - time} s before the deadline`);
+                await sleep(Number(unlockDeadline - time > 10n ? 10_000n : (unlockDeadline - time) * 1000n));
+            }
+            if ((await taxCollected()) >= unlockGoal) fail('the home market has collected the goal, so the unlock would not show the deadline');
+        }
+        const collected = await taxCollected();
+        info(`tax collected ${collected} of the goal ${unlockGoal}; the cluster's clock ${new Date(Number(await clusterTime()) * 1000).toISOString()}, the deadline ${new Date(Number(unlockDeadline) * 1000).toISOString()}`);
+
+        step(`11. Unlocking by the ${unlockBy}, from a wallet with no tie to the token`);
+        const unlocker = await generateKeyPairSigner();
+        await send('fund a fresh wallet for its transaction fee', launcher, [
+            getTransferSolInstruction({ source: launcher, destination: unlocker.address, amount: UNLOCKING.unlockerLamports }),
+        ]);
+        // A block can carry a clock a little behind the latest confirmed block's time: retry
+        // a refusal for not being due, a few seconds at most, before sending it.
+        for (let attempt = 0; ; attempt++) {
+            const { err, logs } = await simulate(unlocker, unlockInstruction);
+            if (!err) break;
+            if (attempt >= 10 || !refusedByTheHook(logs, 'UnlockNotDue', CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE)) fail(`unlock fails in simulation: ${show(err)}\n${logs.join('\n')}`);
+            await sleep(1_000);
+        }
+        const unlockSignature = await send('unlock', unlocker, [unlockInstruction]);
+        const unlockTx = await rpc
+            .getTransaction(unlockSignature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
+            .send();
+        const unlockLogs = unlockTx?.meta?.logMessages ?? [];
+        const reason = unlockBy === 'goal' ? 'Program log: Unlocked by the goal' : 'Program log: Unlocked by the deadline';
+        if (!unlockLogs.some((line) => line.startsWith(reason))) fail(`the unlock's logs do not say "${reason}":\n${unlockLogs.join('\n')}`);
+        const consumed = `Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} consumed `;
+        const unlockUnits = unlockLogs.find((line) => line.startsWith(consumed))?.slice(consumed.length).split(' ')[0];
+        info(`${unlockLogs.find((line) => line.startsWith(reason))!.slice('Program log: '.length)}; unlock took ${unlockUnits} CU`);
+        const unlockedMint = await account(mint);
+        const freed = unlockedMint && pipeline.decodeMint(mint, TOKEN_2022_PROGRAM_ADDRESS, unlockedMint.data);
+        if (!freed) fail(`no mint at ${mint}`);
+        if (freed.extensions.transferHook?.programId !== null || freed.extensions.transferHook.authority !== null) {
+            fail(`after the unlock the mint's transfer hook is ${JSON.stringify(freed.extensions.transferHook)}`);
+        }
+        info(`mint: the transfer hook extension stays, with its program and its authority both unset; trust flags: ${freed.flags.join(', ') || 'none'}`);
+        const { data: unlocked } = await fetchConfig(rpc, config, { commitment: 'confirmed' });
+        if (unlocked.unlockedAt.__option !== 'Some') fail('the config does not record the unlock');
+        const readAgain = { ...unlocked, unlockedAt: bound.unlockedAt };
+        if (show(readAgain) !== show(bound)) fail(`the unlock changed more of the config than its unlock time: ${show(unlocked)}`);
+        info(`config: unlocked at ${new Date(Number(unlocked.unlockedAt.value) * 1000).toISOString()}, and nothing else in it changed`);
+        await expectRefused('a second unlock', launcher, unlockInstruction, ['AlreadyUnlocked', CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED]);
+        record.push(
+            ['unlocked', `by the ${unlockBy}, by ${unlocker.address}, with ${collected} of the goal ${unlockGoal} collected; ${unlockUnits} CU`],
+            ['mint after the unlock', 'transfer hook program and hook authority both unset'],
+            ['a second unlock', 'refused by the hook with AlreadyUnlocked'],
+        );
+
+        step('12. Sending and trading the token without hook accounts');
+        const before = await tokenBalance(strangerAccount);
+        await send('a wallet-to-wallet transfer_checked without hook accounts', launcher, [walletToWallet]);
+        if ((await tokenBalance(strangerAccount)) - before !== 1_000_000n) fail("the transfer did not reach the other wallet's account");
+        info("1,000,000 of the token reached the other wallet's account");
+        const noHookAccounts: HookAccountsFor = async () => [];
+        const freeBuy = await trade(launcher, view, QUOTE_INDEX, CONTAINED_INDEX, buy / 10n, holder, quoteHolder, noHookAccounts, false);
+        const freeSell = await trade(launcher, view, CONTAINED_INDEX, QUOTE_INDEX, freeBuy.received, holder, quoteHolder, noHookAccounts, false);
+        record.push(
+            ['transfer after the unlock', '1,000,000 of the token from the launcher to another wallet, without hook accounts'],
+            ['swaps after the unlock', `a buy of ${buy / 10n} and a sell of ${freeBuy.received} (for ${freeSell.received}), without hook accounts; the hook never ran`],
+        );
+    }
 
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));

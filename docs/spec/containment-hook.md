@@ -95,13 +95,14 @@ This includes another market's vault: a buy can deliver into it, since the hook 
 
 ## Unlock (`unlock`)
 
-- Permissionless: any signer can call it and pays the transaction fee.
+- Permissionless: it takes no signer of its own, so anyone can send it and pays only the transaction fee.
 - Due when either holds:
   - the home market's `tax_collected`, read from the tax AMM market state recorded at binding (owner and address checked), is at least the unlock goal;
   - the clock's Unix timestamp is at or past the unlock deadline.
 - Signed by the unlock PDA, it calls Token-2022's `TransferHookInstruction::Update` with no program id, then `SetAuthority(TransferHookProgramId, None)`, and records the unlock time in the config.
 - Both fields must be cleared: Meteora's DAMM v2 and DLMM accept a mint with the transfer hook extension permissionlessly only when the hook program and the hook authority are both unset.
-- A second call fails, because the authority is gone.
+- It logs whether the goal or the deadline made it due (the goal when both hold), for Aviary's panel and indexers.
+- A second call fails: the config already records the unlock (`AlreadyUnlocked`), and the hook authority that would have to sign is gone.
 
 There is no keeper job for the unlock in v1.
 Nothing breaks while an unlock waits, since sells into the home market keep working, and whoever wants out or wants the token trading elsewhere can press Aviary's Unlock button.
@@ -309,3 +310,13 @@ By [Containment hook: a contained token moves only through its home market](http
 
 - Every one is under the 10,000 ceiling, so `Execute` stays in Anchor (see "Starting point"); `tests/compute.rs` asserts the ceiling on each, and the launch script prints the cost of each from its transactions' logs.
 - On a buy the hook runs at the fourth call level (router, tax AMM, Token-2022, hook), the deepest a swap reaches, under devnet's limit, which does not have SIMD-0268's deeper calls; the whole buy costs 64,438 units.
+
+By [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) on 2026-11-16, against devnet's router bytes:
+
+| Unlock | `unlock` (CU), LiteSVM | `unlock` (CU), local validator |
+| --- | --- | --- |
+| By the goal | 13,211 | 13,224 |
+| By the deadline | 12,910 | 12,871 |
+
+- Both are under the 30,000 ceiling; the cost does not move from mint to mint, since `unlock` uses the bumps the config stores, and differs between runs only by the length of the numbers it logs.
+  `tests/compute.rs` asserts the ceiling, and the launch script prints the cost from the unlock's logs.
