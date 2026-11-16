@@ -247,6 +247,8 @@ jobs:
         run: source scripts/toolchain-env.sh && scripts/fetch-router.sh
       - name: Build Pipeline's test programs (test-strategy-cp and test-strategy-evil)
         run: source scripts/toolchain-env.sh && scripts/fetch-pipeline.sh programs
+      - name: Build Canary's own fixture programs (crates/canary/tests/fixtures)
+        run: source scripts/toolchain-env.sh && crates/canary/tests/fixtures/build.sh
       - name: Formatting
         run: cd crates && cargo fmt --all -- --check
       - name: Clippy

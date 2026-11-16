@@ -9,7 +9,7 @@
 //! change in one PR.
 
 /// The Canary version that produced a result (`harness` on every record).
-pub const HARNESS: &str = "canary/0.1.0";
+pub const HARNESS: &str = "canary/0.2.0";
 
 // ---------------------------------------------------------------------------------------
 // Units (not policy, but written only here so the policy grep has no false friends)
