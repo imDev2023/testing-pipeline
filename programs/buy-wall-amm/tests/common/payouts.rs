@@ -105,3 +105,21 @@ pub fn set_supply(env: &mut Env, mint: &Pubkey, value: u64) {
     account.data[36..44].copy_from_slice(&value.to_le_bytes());
     env.svm.set_account(*mint, account).unwrap();
 }
+
+/// A recipient wallet whose associated token account for `mint` has bump 255. A payout
+/// derives that address with `find_program_address`, and the associated token program does
+/// again when it creates the account, each at 1,500 compute units for every bump below 255
+/// tried, so a random recipient would add a random multiple of 3,000 to what the compute
+/// tests count as the strategy's own (as a random hooked mint did, #152). That cost belongs to
+/// the recipient's address, not the strategy.
+pub fn recipient_with_first_bump(mint: &Pubkey, token_program: &Pubkey) -> solana_keypair::Keypair {
+    use solana_signer::Signer;
+    loop {
+        let wallet = solana_keypair::Keypair::new();
+        let owner = wallet.pubkey();
+        let seeds: &[&[u8]] = &[owner.as_ref(), token_program.as_ref(), mint.as_ref()];
+        if Pubkey::find_program_address(seeds, &ATA_PROGRAM).1 == u8::MAX {
+            return wallet;
+        }
+    }
+}

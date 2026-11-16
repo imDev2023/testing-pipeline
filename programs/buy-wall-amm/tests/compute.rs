@@ -454,16 +454,22 @@ fn payouts_and_handovers_stay_under_their_ceilings() {
         ("Token-2022 with a transfer hook", TOKEN_2022, true),
     ] {
         let mut env = Env::new();
-        let (fee_recipient, rewards_recipient) = (Keypair::new(), Keypair::new());
+        let token = if hook {
+            env.seedable_hooked_token()
+        } else {
+            env.seedable_token(&program)
+        };
+        // Recipients whose accounts have bump 255, so the address search a payout makes is
+        // the same on every run (`recipient_with_first_bump`).
+        let fee_recipient = recipient_with_first_bump(&WSOL, &TOKEN);
+        let rewards_recipient = recipient_with_first_bump(&token, &program);
         let mut params = launch_params(env.admin.pubkey());
         params.fee_recipient = fee_recipient.pubkey();
         params.rewards_recipient = rewards_recipient.pubkey();
         let market = if hook {
-            let token = env.seedable_hooked_token();
             env.create_and_seed_hooked(token, &params, TOKENS, LAMPORTS)
                 .unwrap()
         } else {
-            let token = env.seedable_token(&program);
             env.create_and_seed(token, program, &params, TOKENS, LAMPORTS)
                 .unwrap()
                 .0
