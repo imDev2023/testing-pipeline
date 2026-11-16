@@ -909,6 +909,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
 
+### BAR-41: How a program is deployed to devnet
+
+- Question: How does a program of ours get from a commit to devnet, so that the deploy can be checked and repeated?
+- Answer: One script for every program, `scripts/deploy-devnet.sh <program>`: it refuses any cluster but devnet or a local validator, and on devnet any commit not on `origin/main` or a worktree with changes; it builds that commit, exported with `git archive`, with solana-verify in the Docker image pinned in `fixtures/pins.env` and `--arch v3`; it deploys paid by `wallet.json` with `upgrade-authority.json` as the upgrade authority; it stops unless the cluster's program hash equals the build's and the upgrade authority is that key; and it records the program id, the hash, the commit, the image, the authority, the payer and the slot under the program's name in `deployments/devnet.json`.
+- Alternatives: Each program's devnet ticket writing its own deploy steps; building in the worktree, where an uncommitted file could reach the bytes; letting solana-verify choose the image without recording which.
+- Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -3076,6 +3086,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
 
+### TAX-53: The devnet demo market
+
+- Question: Which market does the demo create on devnet, where Pipeline's registry and anyone looking will see it?
+- Answer: One, the demo market: a fresh demo token against wrapped SOL, taxed in wrapped SOL as Aviary's launch form defaults it, with a buy tax of 3% and a sell tax of 5% inside ranges its tax authority can move them in, two tax recipients and no virtual reserve, so `pipeline-check` checks it at its default amounts; all its parameters are in one block of the demo script, `SOL_MARKET`. The token-taxed market, the tax authority's changes and the launchpad stay on local validators.
+- Alternatives: The whole local demo on devnet, which would leave a renounced market and a burn-taxed market of throwaway tokens in the registry beside the one the ticket publishes; a market with a virtual reserve, which `pipeline-check` can check only with explicit amounts.
+- Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
+
+### TAX-54: Links that stay at commits on main
+
+- Question: How do the registered metadata URI and every link inside the metadata point at commits that stay reachable from `main`, when a squash merge leaves a branch's commits off it and a file cannot name the commit that holds it?
+- Answer: Three merges. The first lands the deploy tooling, and its merge commit is what is deployed and registered, at a metadata URI at that commit. The second records the deploy in `deployments/devnet.json` and commits the demo market's conformance report and the README that says where the program is. The third pins `metadata.json` with `publish.ts pin`: the source and the IDL at the deployed commit, the report and the README at the second merge's commit; then `update_metadata` points the router at the metadata at the third merge's commit, and `publish.ts verify` checks every link resolves at a commit on `main`. A test fails when the metadata names a commit other than the deployed one, or a report other than the committed one.
+- Alternatives: Two merges with the report linked at a branch commit, which a squash merge leaves off `main`; links at `main`, whose content can change after the report was taken; merge commits instead of squash merges, against the repo's convention.
+- Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
@@ -4279,6 +4309,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-20`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
 - `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `BAR-41`, `TAX-53`, `TAX-54`: set by the session of [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.

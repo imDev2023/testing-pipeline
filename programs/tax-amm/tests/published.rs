@@ -1,8 +1,9 @@
 //! What the metadata publishes about the deployed program (docs/spec/README.md, "Metadata, IDL
 //! and conformance report"): `security.audits` is empty, `links.docs` is the program's README,
-//! and once the metadata names a commit, every link into this repo is at that commit, the
-//! commit is the one `deployments/devnet.json` records for the program, and the conformance
-//! report it names is the one committed beside the program, with its SHA-256.
+//! and once the metadata names a commit, the source and IDL links are at that commit, which is
+//! the one `deployments/devnet.json` records for the program; once it names a conformance
+//! report, the report is the one committed beside the program, with its SHA-256, and the
+//! README is linked at the report's commit, the one that records the deploy.
 //!
 //! Before the first deploy the links point at `main` and name no commit; the devnet ticket
 //! pins them (docs/toolchain.md, "Deploy to devnet").
@@ -55,7 +56,11 @@ fn check_published(
     let commit = match metadata["source"].get("commit") {
         None => None,
         Some(Value::String(commit)) if is_commit(commit) => Some(commit.as_str()),
-        Some(other) => return Err(format!("source.commit must be a full commit hash, not {other}")),
+        Some(other) => {
+            return Err(format!(
+                "source.commit must be a full commit hash, not {other}"
+            ))
+        }
     };
     match (commit, deployed_commit) {
         (Some(commit), Some(deployed)) if commit != deployed => {
@@ -71,34 +76,29 @@ fn check_published(
         _ => {}
     }
     let at = commit.unwrap_or("main");
-    let expected = [
-        ("source", format!("{REPO}/tree/{at}/{DIR}")),
-        ("idl", format!("{RAW}/{at}/{DIR}/idl/tax_amm.json")),
-        ("docs", format!("{REPO}/blob/{at}/{DIR}/README.md")),
-    ];
-    for (key, want) in expected {
-        if metadata["links"][key] != want.as_str() {
-            return Err(format!("links.{key} must be {want}, not {}", metadata["links"][key]));
-        }
-    }
     let Some(conformance) = metadata.get("conformance") else {
-        return Ok(());
+        return check_links(metadata, at, at);
     };
     if commit.is_none() {
-        return Err("conformance is published only with the deployed commit in source.commit".into());
+        return Err(
+            "conformance is published only with the deployed commit in source.commit".into(),
+        );
     }
     let url = conformance["report"].as_str().unwrap_or_default();
-    let report_commit = url
+    let Some(report_commit) = url
         .strip_prefix(&format!("{RAW}/"))
         .and_then(|rest| rest.strip_suffix(&format!("/{DIR}/{REPORT}")))
-        .filter(|c| is_commit(c));
-    if report_commit.is_none() {
+        .filter(|c| is_commit(c))
+    else {
         return Err(format!(
             "conformance.report must be {RAW}/<commit>/{DIR}/{REPORT}, not {url}"
         ));
-    }
+    };
+    check_links(metadata, at, report_commit)?;
     let Some(report) = report else {
-        return Err(format!("conformance names a report, but {DIR}/{REPORT} is not committed"));
+        return Err(format!(
+            "conformance names a report, but {DIR}/{REPORT} is not committed"
+        ));
     };
     let sha = sha256_hex(report);
     if conformance["sha256"] != sha.as_str() {
@@ -106,6 +106,25 @@ fn check_published(
             "conformance.sha256 is {}, but {DIR}/{REPORT} hashes to {sha}",
             conformance["sha256"]
         ));
+    }
+    Ok(())
+}
+
+/// The source and IDL links at `code` (the deployed commit, or `main` before the deploy), and
+/// the README at `docs` (the commit that records the deploy, once there is one).
+fn check_links(metadata: &Value, code: &str, docs: &str) -> Result<(), String> {
+    let expected = [
+        ("source", format!("{REPO}/tree/{code}/{DIR}")),
+        ("idl", format!("{RAW}/{code}/{DIR}/idl/tax_amm.json")),
+        ("docs", format!("{REPO}/blob/{docs}/{DIR}/README.md")),
+    ];
+    for (key, want) in expected {
+        if metadata["links"][key] != want.as_str() {
+            return Err(format!(
+                "links.{key} must be {want}, not {}",
+                metadata["links"][key]
+            ));
+        }
     }
     Ok(())
 }
@@ -159,6 +178,7 @@ fn pinned(at: &str) -> Value {
 }
 
 fn with_report(mut m: Value, report_commit: &str, report: &[u8]) -> Value {
+    m["links"]["docs"] = json!(format!("{REPO}/blob/{report_commit}/{DIR}/README.md"));
     m["conformance"] = json!({
         "report": format!("{RAW}/{report_commit}/{DIR}/{REPORT}"),
         "sha256": sha256_hex(report),
@@ -177,7 +197,12 @@ fn before_the_deploy_the_links_point_at_main() {
 fn pinned_links_are_at_the_deployed_commit() {
     check_published(&pinned(COMMIT), Some(COMMIT), None).unwrap();
     let report = br#"{"checks":[]}"#;
-    check_published(&with_report(pinned(COMMIT), OTHER, report), Some(COMMIT), Some(report)).unwrap();
+    check_published(
+        &with_report(pinned(COMMIT), OTHER, report),
+        Some(COMMIT),
+        Some(report),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -195,10 +220,20 @@ fn a_commit_that_is_not_the_deployed_one_is_refused() {
 fn a_link_left_at_another_commit_or_at_main_is_refused() {
     let mut m = pinned(COMMIT);
     m["links"]["idl"] = json!(format!("{RAW}/{OTHER}/{DIR}/idl/tax_amm.json"));
-    assert!(check_published(&m, Some(COMMIT), None).unwrap_err().contains("links.idl"));
+    assert!(check_published(&m, Some(COMMIT), None)
+        .unwrap_err()
+        .contains("links.idl"));
     let mut m = pinned(COMMIT);
     m["links"]["docs"] = json!(format!("{REPO}/blob/main/{DIR}/README.md"));
-    assert!(check_published(&m, Some(COMMIT), None).unwrap_err().contains("links.docs"));
+    assert!(check_published(&m, Some(COMMIT), None)
+        .unwrap_err()
+        .contains("links.docs"));
+    // With a report, the README is the one at the report's commit, which records the deploy.
+    let report = b"r";
+    let mut m = with_report(pinned(COMMIT), OTHER, report);
+    m["links"]["docs"] = json!(format!("{REPO}/blob/{COMMIT}/{DIR}/README.md"));
+    let err = check_published(&m, Some(COMMIT), Some(report)).unwrap_err();
+    assert!(err.contains("links.docs"), "{err}");
 }
 
 #[test]
@@ -216,7 +251,8 @@ fn a_report_that_does_not_match_its_hash_is_refused() {
 #[test]
 fn a_report_without_the_deployed_commit_is_refused() {
     let report = b"r";
-    let err = check_published(&with_report(unpinned(), OTHER, report), None, Some(report)).unwrap_err();
+    let err =
+        check_published(&with_report(unpinned(), OTHER, report), None, Some(report)).unwrap_err();
     assert!(err.contains("source.commit"), "{err}");
 }
 
@@ -224,7 +260,9 @@ fn a_report_without_the_deployed_commit_is_refused() {
 fn an_audit_listed_is_refused() {
     let mut m = unpinned();
     m["security"]["audits"] = json!([{ "by": "anyone" }]);
-    assert!(check_published(&m, None, None).unwrap_err().contains("audits"));
+    assert!(check_published(&m, None, None)
+        .unwrap_err()
+        .contains("audits"));
     let mut m = unpinned();
     m["security"].as_object_mut().unwrap().remove("audits");
     assert!(check_published(&m, None, None).is_err());

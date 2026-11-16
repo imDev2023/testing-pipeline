@@ -4,9 +4,10 @@
 //   node publish.ts pin [--report-commit <commit>]
 //
 //     Pins metadata.json to the commit deployments/devnet.json records for the tax AMM: the
-//     source, IDL and README links at that commit and `source.commit`; with --report-commit,
-//     also `conformance`, naming conformance/devnet.json at the commit that holds it, with the
-//     SHA-256 of the copy committed here. Then checks the result with Pipeline's validator.
+//     source and IDL links at that commit, and `source.commit`; with --report-commit, the
+//     commit that records the deploy, also `conformance`, naming conformance/devnet.json at
+//     that commit with the SHA-256 of the copy committed here, and the README at that commit,
+//     which says where the program is. Then checks the result with Pipeline's validator.
 //
 //   node publish.ts verify --uri <metadata URI> [--market <router market>]
 //
@@ -51,12 +52,15 @@ function sha256(bytes: Uint8Array) {
 
 const isCommit = (text: string) => /^[0-9a-f]{40}$/.test(text);
 
-/** The links metadata.json carries into this repo, at `at` (a commit, or `main`). */
-function repoLinks(at: string) {
+/**
+ * The links metadata.json carries into this repo: the source and the IDL at `code` (the
+ * deployed commit), the README at `docs` (the commit that records the deploy).
+ */
+function repoLinks(code: string, docs: string) {
     return {
-        source: `${REPO}/tree/${at}/${DIR}`,
-        idl: `${RAW}/${at}/${DIR}/idl/tax_amm.json`,
-        docs: `${REPO}/blob/${at}/${DIR}/README.md`,
+        source: `${REPO}/tree/${code}/${DIR}`,
+        idl: `${RAW}/${code}/${DIR}/idl/tax_amm.json`,
+        docs: `${REPO}/blob/${docs}/${DIR}/README.md`,
     };
 }
 
@@ -72,7 +76,7 @@ function pin(reportCommit: string | undefined) {
     if (!isCommit(commit)) fail(`deployments/devnet.json's commit ${commit} is not a full commit hash`);
     const path = here('../metadata.json');
     const metadata = JSON.parse(readFileSync(path, 'utf8'));
-    metadata.links = { ...metadata.links, ...repoLinks(commit) };
+    metadata.links = { ...metadata.links, ...repoLinks(commit, reportCommit ?? commit) };
     metadata.source = { ...metadata.source, commit };
     if (reportCommit !== undefined) {
         if (!isCommit(reportCommit)) fail(`--report-commit must be a full commit hash, not ${reportCommit}`);
@@ -136,7 +140,9 @@ async function verify(uri: string, market: string | undefined) {
     console.log('ok: security.audits is empty');
 
     const commit: string = metadata.source?.commit ?? fail('the metadata names no source.commit');
-    const want = repoLinks(commit);
+    const reportCommit = /^https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/([0-9a-f]{40})\//.exec(metadata.conformance?.report ?? '')?.[1];
+    if (!reportCommit) fail(`the conformance report ${metadata.conformance?.report} is not linked at a commit`);
+    const want = repoLinks(commit, reportCommit);
     for (const [key, url] of Object.entries(want)) {
         if (metadata.links?.[key] !== url) fail(`links.${key} is ${metadata.links?.[key]}, not ${url}`);
     }
@@ -149,7 +155,6 @@ async function verify(uri: string, market: string | undefined) {
     if (sha256(report) !== metadata.conformance.sha256) fail(`the report hashes to ${sha256(report)}, not ${metadata.conformance.sha256}`);
     console.log(`ok: the report's SHA-256 is ${metadata.conformance.sha256}, as the metadata says`);
     const uriCommit = /^https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/([0-9a-f]{40})\//.exec(uri)?.[1];
-    const reportCommit = /\/([0-9a-f]{40})\//.exec(metadata.conformance.report)?.[1];
     for (const [what, c] of [['the deployed commit', commit], ['the report commit', reportCommit], ['the metadata URI commit', uriCommit]] as const) {
         if (!c || !onMain(c)) fail(`${what} (${c ?? 'none'}) is not a commit on origin/main`);
         console.log(`ok: ${what} ${c} is on origin/main`);

@@ -26,6 +26,8 @@
 # Keys come from $KEYS_DIR (default ~/.config/testing-pipeline/devnet): wallet.json,
 # upgrade-authority.json and <program>.json, the program's own keypair. Needs the toolchain
 # (source scripts/toolchain-env.sh) and Docker running. Never deploys to mainnet.
+# DEPLOY_CHECK_TRIES (default 30, two seconds apart) bounds the wait for the cluster to serve
+# the new program after the deploy.
 set -euo pipefail
 ROOT="${TESTING_PIPELINE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 KEYS_DIR="${KEYS_DIR:-$HOME/.config/testing-pipeline/devnet}"
@@ -141,13 +143,30 @@ $local_cluster || deploy_flags+=(--use-rpc)
 solana program deploy -u "$url" -k "$wallet" --program-id "$program_key" \
   --upgrade-authority "$authority_key" ${deploy_flags[@]+"${deploy_flags[@]}"} "$so"
 
-# 4. What the cluster now runs, and who may change it.
-show="$(solana program show -u "$url" "$program_id" --output json)"
+# 4. What the cluster now runs, and who may change it. A cluster can answer from a slot before
+# the deploy for a few seconds after it, so each read is retried for up to a minute.
+retry() {
+  local out
+  for _ in $(seq 1 "${DEPLOY_CHECK_TRIES:-30}"); do
+    if out="$("$@" 2>/dev/null)" && [ -n "$out" ]; then
+      echo "$out"
+      return 0
+    fi
+    sleep 2
+  done
+  "$@"
+}
+show="$(retry solana program show -u "$url" --commitment confirmed "$program_id" --output json)"
 onchain_authority="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["authority"])' "$show")"
 slot="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["lastDeploySlot"])' "$show")"
 [ "$onchain_authority" = "$authority" ] \
   || stop "the program's upgrade authority is $onchain_authority, not upgrade-authority.json's $authority"
-onchain_hash="$(solana-verify get-program-hash -u "$url" "$program_id")"
+# Right after an upgrade a cluster can still answer with the old bytes, so wait for the new.
+for _ in $(seq 1 "${DEPLOY_CHECK_TRIES:-30}"); do
+  onchain_hash="$(retry solana-verify get-program-hash -u "$url" "$program_id")"
+  [ "$onchain_hash" = "$hash" ] && break
+  sleep 2
+done
 [ "$onchain_hash" = "$hash" ] || stop "the cluster's program hash $onchain_hash does not match the build's $hash"
 echo "On-chain hash matches the build: $onchain_hash; upgrade authority $onchain_authority; deployed in slot $slot"
 

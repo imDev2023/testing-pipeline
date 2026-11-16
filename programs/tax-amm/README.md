@@ -1,6 +1,6 @@
-# Aviary Tax AMM
+# Tax AMM
 
-A strategy for [Pipeline](https://github.com/MetalLegBob/pipeline)'s router: constant-product markets that take a buy tax and a sell tax in one chosen mint, the tax side, whichever way a trade goes.
+The tax AMM, published under the name in [`metadata.json`](metadata.json) and in the program's embedded `security.txt`, the only two places it lives ([SUITE-20](../../docs/decisions.md#suite-20-names-of-the-on-chain-products)), is a strategy for [Pipeline](https://github.com/MetalLegBob/pipeline)'s router: constant-product markets that take a buy tax and a sell tax in one chosen mint, the tax side, whichever way a trade goes.
 Every tax is capped by a limit compiled into the program and can only move inside a range fixed when the market is created, by an optional tax authority that can also renounce.
 Liquidity is seeded once and locked for good.
 The tax is booked in the market's vault and paid out with `distribute` to the market's tax recipients and its burn, after the suite share.
