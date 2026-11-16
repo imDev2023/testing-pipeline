@@ -71,6 +71,8 @@ Changing a fee, cap, split, limit or default is then one edit in one of those pl
 
 `DESIGNER_RECIPIENT` is unset because IMD and Adam have no known Solana address (2026-11-10).
 The designer share builds up in each market from its first swap and waits there; the owner asks Adam for an address, and a program upgrade sets the constant, which must happen before the program is frozen.
+`DESIGNER_RECIPIENT` and `SUITE_TREASURY` are published in the IDL as well, where the demo reads the wallets fee slots 1 and 2 are paid to ([`POOL4-40`](../decisions.md#pool4-40-the-fee-slots-wallets-in-the-idl)).
+So that slot 1's payout is tested before the constant is set, the program has a `test-designer-recipient` feature that sets it to a test key nobody holds; only CI's extra test build turns it on, and that build has a program id of its own, so deployed at the program's address it would refuse every instruction ([`POOL4-39`](../decisions.md#pool4-39-testing-the-designer-slot-before-its-wallet-is-set)).
 
 ## Markets
 
@@ -304,6 +306,9 @@ It emits `WallPlaced` (the caller, the tip account, `converted`, what closing th
 - Refused when there is nothing retired.
 - No tip.
 - A burn calls no transfer hook, so no hook can refuse it.
+- Nobody signs it but whoever pays the transaction fee, since it pays nobody ([`POOL4-38`](../decisions.md#pool4-38-who-signs-the-payouts-and-what-they-report)).
+- Like `pay_rewards` and `sweep_fees`, it is refused with `MarketNotOpen` until the market is seeded.
+- It emits `Settled` (what was retired, burned and added to the rewards owed, the rewards owed after and the lifetime total burned), and the lifetime total of tokens burned grows by what it burns.
 
 ### `pay_rewards`
 
@@ -311,6 +316,7 @@ It emits `WallPlaced` (the caller, the tip account, `converted`, what closing th
 - Refused when nothing is owed.
 - No tip.
 - It is separate from `settle` so that burns never wait on a transfer a hook or a broken recipient account might refuse.
+- It emits `RewardsPaid` (the recipient, its token account, the amount and the lifetime total paid), and the lifetime total of rewards paid grows by what it pays.
 
 ### `sweep_fees { slot }`
 
@@ -319,6 +325,16 @@ It emits `WallPlaced` (the caller, the tip account, `converted`, what closing th
 - Each slot is paid separately, so one broken account never holds up the others.
 - No tip.
 - A recipient unwraps by closing the account (Aviary offers this).
+- It emits `FeesSwept` (the slot, the wallet, its token account and the amount).
+
+### The recipient's token account
+
+How `pay_rewards` and `sweep_fees` name and check the account they pay ([`POOL4-37`](../decisions.md#pool4-37-how-a-payout-names-and-checks-its-recipients-account)):
+
+- The caller signs and names the recipient's wallet, which must be the one the market (or, for slots 1 and 2, the program) names; metadata forms cannot read a market state, so the forms take it as an input.
+- Only the wallet's associated token account for the mint is paid, the address every wallet and Aviary compute.
+- One that does not exist, because it was never created, was closed, or only holds lamports someone sent to its address, is created at the caller's expense.
+- One that exists but whose owner is no longer the wallet (SPL Token lets an account's owner hand it to another wallet) is refused with `RecipientAccountNotTheirs`, since paying it would pay someone else; only that payout waits, and the recipient can hand its role to another wallet.
 
 ### For the keeper runner
 
@@ -331,12 +347,15 @@ The runner is not specified yet (the map's "Not yet specified"); what it needs f
 | `pay_rewards` | `rewards_owed` is above 0, daily |
 | `sweep_fees` | A slot's ledger is above 0, daily; slot 1 only once `DESIGNER_RECIPIENT` is set |
 
+A payout into a recipient account that does not exist makes the caller pay its rent, and a recipient that closes its account after each payout gets that rent back each time, so the runner should skip a payout whose ledger is worth less than that rent while the account is missing.
+
 ## Recipients
 
 - `set_fee_recipient { new }` is signed by the current fee recipient, and `set_rewards_recipient { new }` by the current rewards recipient; `new` must not be the default key.
 - What the role is owed follows it to the new wallet.
 - A market created with no fee recipient or no rewards recipient never gets one.
 - Nobody else can change a recipient, and nothing else about a market can change.
+- A handover may happen at any time, before the seed as well, and emits `RecipientChanged` (which role, the old wallet and the new) ([`POOL4-38`](../decisions.md#pool4-38-who-signs-the-payouts-and-what-they-report)).
 
 ## Counters
 
@@ -569,6 +588,7 @@ Measured on 2026-11-12 by [Buy wall AMM: plain trading through the router](https
 The ceilings stay as they are for the wall's second step and the trim.
 Measured on 2026-11-12 by [Buy wall AMM: the inventory cap](https://github.com/imDev2023/testing-pipeline/issues/49), on the same five markets: a buy that lowers the cap 22,240 to 35,480 units and a sell that trims 26,649 to 33,223, within their ceilings of 45,000 and 60,000 (a hook's own compute left out); with the cap's steps on every swap, the costliest one-step swap of the earlier measurement is now 36,396.
 Measured on 2026-11-16 by [Buy wall AMM: the buy wall](https://github.com/imDev2023/testing-pipeline/issues/50), on the same five markets: `place_wall` 16,858 to 29,143 units (the most when it closes a wall that has bought tokens, on the market of 10^-7 lamports a unit), a sell that crosses into the wall and trims 41,013 to 48,388, and its quote 25,886 to 28,534; the ceilings stay as they are.
+Measured on 2026-11-16 by [Buy wall AMM: payouts and recipient handovers](https://github.com/imDev2023/testing-pipeline/issues/51), on SPL Token, Token-2022 and Token-2022 with a transfer hook: `settle` 6,883 to 8,594 units, `pay_rewards` 10,349 to 23,856 into an account that exists and 27,320 to 53,679 when it creates one (the most for the hooked Token-2022 token, the hook's own compute left out), `sweep_fees` 10,374 to 14,874 into an account that exists and 27,340 to 40,840 when it creates one, and a handover 1,590; the ceilings stay as they are.
 Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53), inside the stand-in launchpad's call in LiteSVM: `pipeline_seed_liquidity` 48,850 units for an SPL Token token, 59,716 for a Token-2022 one and 65,802 for one with a transfer hook (the hook's own compute left out), and 60,847 for an SPL Token token on a local validator; its ceiling stays at 180,000, room for what later tickets add to creation and the seed.
 
 ### Invariants for test layer 3

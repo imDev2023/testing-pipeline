@@ -20,6 +20,8 @@ custom-heap = []
 custom-panic = []
 anchor-debug = []
 no-log-ix-name = []
+# Sets `DESIGNER_RECIPIENT` to a test key, for CI's extra test build only (`config.rs`).
+test-designer-recipient = []
 
 [dependencies]
 anchor-lang = { workspace = true, features = ["init-if-needed"] }
