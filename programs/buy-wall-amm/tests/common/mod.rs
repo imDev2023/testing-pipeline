@@ -15,6 +15,8 @@
 // Each test binary uses its own part of this module.
 #![allow(dead_code, unused_imports)]
 
+pub mod launchpad;
+
 use std::path::PathBuf;
 
 use buy_wall_amm::InitParams;

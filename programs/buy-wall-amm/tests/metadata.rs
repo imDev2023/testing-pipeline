@@ -1,6 +1,6 @@
 //! `metadata.json` (docs/spec/pool4-for-solana.md, "Custom actions and metadata") passes
-//! Pipeline's validator with zero warnings, and its `init` and `seed` forms describe exactly
-//! the instructions the program takes: the same arguments in the same order and Borsh
+//! Pipeline's validator with zero warnings, and its `init`, `seed_liquidity` and `seed` forms
+//! describe exactly the instructions the program takes: the same arguments in the same order and Borsh
 //! encoding, and the same accounts, resolved here from each form's account sources.
 
 mod common;
@@ -209,5 +209,53 @@ fn the_seed_action_builds_exactly_what_seed_takes() {
             ],
         ));
         assert_eq!(data, expected.data);
+    }
+}
+
+#[test]
+fn the_seed_liquidity_form_describes_exactly_what_pipeline_seed_liquidity_takes() {
+    // Pipeline's metadata standard has no field for pipeline_seed_liquidity, so the form is
+    // shaped as `init` is (the validator allows unknown keys, as the zero-warning test
+    // shows), which the SDK's `resolveInit` resolves for a launcher.
+    let metadata = metadata();
+    let form = &metadata["seed_liquidity"];
+    assert_eq!(form["idl_type"], "InitParams");
+    // `data` is the creation parameters: init's arguments, word for word and in order, but
+    // for the seeder's description, which says it is ignored.
+    let init_args = metadata["init"]["args"].as_array().unwrap();
+    let form_args = form["args"].as_array().unwrap();
+    assert_eq!(form_args.len(), init_args.len());
+    for (ours, init) in form_args.iter().zip(init_args) {
+        let (mut ours, mut init) = (ours.clone(), init.clone());
+        if init["name"] == "seeder" {
+            let description = ours["description"].as_str().unwrap();
+            assert!(description.starts_with("Ignored"), "{description}");
+            ours.as_object_mut().unwrap().remove("description");
+            init.as_object_mut().unwrap().remove("description");
+        }
+        assert_eq!(ours, init);
+    }
+
+    // The market state is the seeded PDA of the seeder and the token, and the accounts after
+    // Pipeline's fixed ones and the three per mint are the program's own: the vault authority
+    // and both vaults.
+    for token_program in [TOKEN, TOKEN_2022] {
+        let seeder = Pubkey::new_unique();
+        let token = Pubkey::new_unique();
+        let inputs = [("seeder", seeder), ("token_mint", token)];
+        let expected = common::launchpad::seeded_market_state(&seeder, &token);
+        let market = Market::addresses(expected, token, token_program);
+        let source = parse_account_source(form["market_state"].as_str().unwrap()).unwrap();
+        let unseeded = Market::addresses(Pubkey::default(), token, token_program);
+        assert_eq!(resolve(&source, &unseeded, &seeder, &inputs), expected);
+        let accounts = resolve_accounts(form, &market, &seeder, &inputs);
+        assert_eq!(
+            accounts,
+            [
+                AccountMeta::new_readonly(market.vault_authority, false),
+                AccountMeta::new(market.token_vault, false),
+                AccountMeta::new(market.sol_vault, false),
+            ]
+        );
     }
 }
