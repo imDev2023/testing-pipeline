@@ -547,6 +547,7 @@ What `README.md` asks each product's file to add; the mainnet upgrade policy is 
 Asserted per instruction in test layer 5; the build ticket measures each one and may lower it, and raising one needs a written reason here.
 They start from another Pool4 port's swaps on devnet, measured at 13,000 to 29,000 units, with room for 256-bit maths.
 A transfer hook's own compute is outside them.
+So is Token-2022's search for a hooked mint's validation account on each transfer the strategy makes, which costs 1,500 units for every bump it tries and depends only on the mint's address; the tests measure with hooked mints whose validation account has bump 255, so their numbers repeat.
 
 | Instruction | Ceiling (compute units) | Main cost |
 | --- | --- | --- |
