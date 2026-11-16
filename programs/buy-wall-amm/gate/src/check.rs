@@ -14,6 +14,7 @@ use crate::release::Release;
 use crate::session::{first_line, spendable, MarketView, Session};
 use crate::snapshot::{parse_key, Cluster, QuoteOutcome, Snapshot};
 use crate::world;
+use buy_wall_amm::state::{MarketState, STATUS_CREATED, STATUS_OPEN};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Report {
@@ -24,6 +25,8 @@ pub struct Report {
     pub baseline_sha256: Option<String>,
     /// Why the snapshot could not even be loaded with the candidate, if it could not.
     pub setup_error: Option<String>,
+    /// Whether a quote passed only because the release declares a pricing change.
+    pub relied_on_pricing_change: bool,
     pub markets: Vec<MarketReport>,
 }
 
@@ -140,6 +143,7 @@ pub fn run(
         candidate_sha256: pipeline_check::executable_sha256(candidate).0,
         baseline_sha256: snapshot.baseline.executable_sha256.clone(),
         setup_error: None,
+        relied_on_pricing_change: false,
         markets: vec![],
     };
     let loaded = snapshot
@@ -154,26 +158,31 @@ pub fn run(
     };
     let mut session = Session::new(svm, program);
     for saved in &snapshot.markets {
-        let mut steps = Steps(vec![]);
+        let mut steps = Steps::default();
         match parse_key(&saved.market_state) {
             Ok(market_state) => {
                 check_market(&mut session, snapshot, &market_state, release, &mut steps)
             }
             Err(error) => steps.fail("read the snapshot", error),
         }
+        report.relied_on_pricing_change |= steps.relied_on_pricing_change;
         report.markets.push(MarketReport {
             market_state: saved.market_state.clone(),
-            steps: steps.0,
+            steps: steps.steps,
         });
     }
     report
 }
 
-struct Steps(Vec<Step>);
+#[derive(Default)]
+struct Steps {
+    steps: Vec<Step>,
+    relied_on_pricing_change: bool,
+}
 
 impl Steps {
     fn pass(&mut self, name: impl Into<String>, detail: impl Into<String>) {
-        self.0.push(Step {
+        self.steps.push(Step {
             name: name.into(),
             passed: true,
             detail: detail.into(),
@@ -181,7 +190,7 @@ impl Steps {
     }
 
     fn fail(&mut self, name: impl Into<String>, detail: impl Into<String>) {
-        self.0.push(Step {
+        self.steps.push(Step {
             name: name.into(),
             passed: false,
             detail: detail.into(),
@@ -262,9 +271,14 @@ fn check_market(
             q.output_index as usize,
             q.amount,
         );
+        // A declared pricing change lets amounts differ, never a quote the baseline served
+        // turn into a refusal.
+        let now_refused = matches!(q.result, QuoteOutcome::AmountOut(_))
+            && matches!(candidate, QuoteOutcome::Refused(_));
         if candidate == q.result {
             steps.pass(name, format!("{candidate}, as the baseline build"));
-        } else if release.changes_pricing_of(baseline) {
+        } else if release.changes_pricing_of(baseline) && !now_refused {
+            steps.relied_on_pricing_change = true;
             steps.pass(
                 name,
                 format!(
@@ -273,11 +287,16 @@ fn check_market(
                 ),
             );
         } else {
+            let why = if now_refused {
+                "and no pricing change covers refusing a quote the baseline served"
+            } else {
+                "and the release declares no pricing change from it"
+            };
             steps.fail(
                 name,
                 format!(
                     "the candidate quotes {candidate}; the baseline build {} quoted {} on the same \
-                     state, and the release declares no pricing change from it",
+                     state, {why}",
                     baseline.unwrap_or("(unknown)"),
                     q.result
                 ),
@@ -285,18 +304,27 @@ fn check_market(
         }
     }
 
-    // What follows needs the market open; a market waiting for its seed refuses it all.
-    let state = match session.state(market_state) {
+    // A market waiting for its seed is seeded as its seeder would seed it, so a build that
+    // could not seed it is refused; then it is traded like every open market.
+    let mut state = match session.state(market_state) {
         Ok(state) => state,
         Err(error) => return steps.fail("read the market state", error),
     };
-    if state.status != buy_wall_amm::state::STATUS_OPEN {
-        return steps.pass(
-            "trade",
-            format!(
-                "not open (status {}), so no trade or keeper job is due",
-                state.status
-            ),
+    if state.status == STATUS_CREATED {
+        let name = "seed (as its seeder would)";
+        match seed_pending(session, &view, &state)
+            .and_then(|detail| Ok((detail, session.state(market_state)?)))
+        {
+            Ok((detail, seeded)) => {
+                steps.pass(name, detail);
+                state = seeded;
+            }
+            Err(error) => return steps.fail(name, error),
+        }
+    } else if state.status != STATUS_OPEN {
+        return steps.fail(
+            "read the market state",
+            format!("status {} is neither created nor open", state.status),
         );
     }
 
@@ -381,4 +409,53 @@ fn trade(
             None
         }
     }
+}
+
+/// The seed the gate gives a market waiting for one: the worked example's, 1,000,000 tokens
+/// of 6 decimals against 10 SOL.
+pub const PENDING_SEED_TOKENS: u64 = 1_000_000_000_000;
+pub const PENDING_SEED_LAMPORTS: u64 = 10 * crate::session::SOL;
+
+/// Seeds a market waiting for its seed, as its seeder would: funded with the gate's seed, the
+/// mint's authorities removed as a seed requires, in the replay only. The replay does not
+/// check signatures, so the seeder's own signature is not needed.
+fn seed_pending(
+    session: &mut Session,
+    view: &MarketView,
+    state: &MarketState,
+) -> Result<String, String> {
+    use crate::session::{key, seed_ix, TOKEN, WSOL};
+    let seeder = key(&state.seeder);
+    let token = view.token_index();
+    let (mint, program) = (view.mints[token], view.token_programs[token]);
+    session.remove_mint_authorities(&mint)?;
+    pipeline_check::write_token_account(
+        &mut session.svm,
+        &mint,
+        &program,
+        &seeder,
+        PENDING_SEED_TOKENS,
+    )?;
+    pipeline_check::write_token_account(
+        &mut session.svm,
+        &WSOL,
+        &TOKEN,
+        &seeder,
+        PENDING_SEED_LAMPORTS,
+    )?;
+    session.add_supply(&mint, PENDING_SEED_TOKENS)?;
+    let from = pipeline_client::pda::associated_token(&seeder, &mint, &program);
+    let hooks = session.hook_accounts(&mint, from, view.vaults[token], seeder)?;
+    let ix = seed_ix(
+        &session.program,
+        view,
+        &seeder,
+        PENDING_SEED_TOKENS,
+        PENDING_SEED_LAMPORTS,
+        hooks,
+    );
+    session.send_as(&[ix], &[seeder])?;
+    Ok(format!(
+        "seeded with {PENDING_SEED_TOKENS} units and {PENDING_SEED_LAMPORTS} lamports"
+    ))
 }

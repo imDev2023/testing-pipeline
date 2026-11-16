@@ -107,6 +107,65 @@ impl Session {
             .map_err(|failed| failure(&failed.err, &failed.meta.logs))
     }
 
+    /// Sends `instructions` paid for by the payer, with `signers` named as signers but not
+    /// signing: the replay's LiteSVM does not check signatures (`world::load`), so the gate can
+    /// act as a market's seeder, whose key it does not hold.
+    pub fn send_as(
+        &mut self,
+        instructions: &[Instruction],
+        signers: &[Pubkey],
+    ) -> Result<(Vec<u8>, Vec<String>), String> {
+        self.svm.expire_blockhash();
+        let message = solana_message::Message::new(instructions, Some(&self.payer.pubkey()));
+        let mut tx = Transaction::new_unsigned(message);
+        tx.try_partial_sign(&[&self.payer], self.svm.latest_blockhash())
+            .map_err(|e| e.to_string())?;
+        debug_assert!(signers.iter().all(|s| tx.message.account_keys.contains(s)));
+        self.svm
+            .send_transaction(tx)
+            .map(|meta| (meta.return_data.data, meta.logs))
+            .map_err(|failed| failure(&failed.err, &failed.meta.logs))
+    }
+
+    /// Clears a mint's mint and freeze authorities, in the replay only.
+    pub fn remove_mint_authorities(&mut self, mint: &Pubkey) -> Result<(), String> {
+        let mut account = self
+            .svm
+            .get_account(mint)
+            .ok_or_else(|| format!("the mint {mint} is missing"))?;
+        // COption tags: the mint authority at byte 0, the freeze authority at byte 46.
+        for (tag, key) in [(0usize, 4usize), (46, 50)] {
+            account
+                .data
+                .get_mut(tag..tag + 4)
+                .ok_or("a short mint")?
+                .fill(0);
+            account
+                .data
+                .get_mut(key..key + 32)
+                .ok_or("a short mint")?
+                .fill(0);
+        }
+        self.svm
+            .set_account(*mint, account)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Adds `amount` to a mint's supply, in the replay only, for tokens written into an
+    /// account rather than minted.
+    pub fn add_supply(&mut self, mint: &Pubkey, amount: u64) -> Result<(), String> {
+        let mut account = self
+            .svm
+            .get_account(mint)
+            .ok_or_else(|| format!("the mint {mint} is missing"))?;
+        let bytes = account.data.get_mut(36..44).ok_or("a short mint")?;
+        let supply = u64::from_le_bytes(bytes.try_into().map_err(|_| "a short mint")?);
+        bytes.copy_from_slice(&supply.saturating_add(amount).to_le_bytes());
+        self.svm
+            .set_account(*mint, account)
+            .map_err(|e| e.to_string())
+    }
+
     /// Runs one instruction in simulation: its return data, or the error and the logs.
     pub fn simulate(&self, instruction: Instruction) -> Result<Vec<u8>, String> {
         let tx = Transaction::new_signed_with_payer(
@@ -422,6 +481,39 @@ pub fn exact_in(input: usize, output: usize, amount: u64) -> psi::TradeRequest {
         trader: None,
         extra: vec![],
     }
+}
+
+/// The strategy's `seed` action, signed by `seeder`, from `seeder`'s associated token
+/// accounts, in the account order `metadata.json` lists, with `hook_accounts` after.
+pub fn seed_ix(
+    program: &Pubkey,
+    view: &MarketView,
+    seeder: &Pubkey,
+    token_amount: u64,
+    sol_amount: u64,
+    hook_accounts: Vec<AccountMeta>,
+) -> Instruction {
+    let (token, sol) = (view.token_index(), view.sol_index());
+    let mut data = client::instruction_discriminator("seed").to_vec();
+    data.extend_from_slice(&token_amount.to_le_bytes());
+    data.extend_from_slice(&sol_amount.to_le_bytes());
+    let mut accounts = vec![
+        AccountMeta::new_readonly(*seeder, true),
+        AccountMeta::new(view.market_state, false),
+        AccountMeta::new(
+            pda::associated_token(seeder, &view.mints[token], &view.token_programs[token]),
+            false,
+        ),
+        AccountMeta::new(pda::associated_token(seeder, &WSOL, &TOKEN), false),
+        AccountMeta::new(view.vaults[token], false),
+        AccountMeta::new(view.vaults[sol], false),
+        AccountMeta::new_readonly(view.mints[token], false),
+        AccountMeta::new_readonly(WSOL, false),
+        AccountMeta::new_readonly(view.token_programs[token], false),
+        AccountMeta::new_readonly(TOKEN, false),
+    ];
+    accounts.extend(hook_accounts);
+    Instruction::new_with_bytes(*program, &data, accounts)
 }
 
 /// `place_wall`, called by `caller`, tipping `tip_account`.

@@ -12,6 +12,7 @@ fn a_market_traded_in_litesvm_passes_the_gate_with_the_build_that_made_it() {
     assert!(snapshot.synthetic);
     let report = check::run(&snapshot, &build, Some(&router), &Release::default());
     assert!(report.passed(), "{report}");
+    assert!(!report.relied_on_pricing_change);
 }
 
 /// The names of the steps the gate ran on each market, without their amounts.
@@ -54,6 +55,15 @@ fn the_gate_resolves_quotes_runs_every_due_keeper_job_buys_and_sells_on_every_ma
     ]
     .concat();
     let b: Vec<String> = [resolve(), quotes(), trades()].concat();
-    assert_eq!(steps(&report), vec![a, b], "{report}");
+    // Market C waits for its seed: its empty vaults are quoted at 1 each way (refused alike by
+    // both builds), then the gate seeds it as its seeder would and trades it.
+    let c: Vec<String> = [
+        resolve(),
+        vec!["quote".to_string(); 2],
+        vec!["seed".to_string()],
+        trades(),
+    ]
+    .concat();
+    assert_eq!(steps(&report), vec![a, b, c], "{report}");
     assert!(report.passed(), "{report}");
 }

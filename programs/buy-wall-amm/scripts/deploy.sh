@@ -41,16 +41,28 @@ done
 [ -n "$url" ] && [ -n "$so" ] || { echo "deploy.sh: --url and --so are required" >&2; exit 2; }
 [ "$url" = devnet ] && url="https://api.devnet.solana.com"
 so="$(cd "$(dirname "$so")" && pwd)/$(basename "$so")"
+# What is printed: the URL without its path, query or user part, where an RPC key sits.
+shown="$(printf '%s' "$url" | sed -E 's#^([a-z]+://)([^/@?#]*@)?([^/?#]*).*#\1\3#')"
 
 # Devnet or a local validator only (CLAUDE.md: devnet only until Pipeline's router is on mainnet).
 genesis="$(curl --silent --show-error --max-time 30 -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"getGenesisHash"}' "$url" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+MAINNET_GENESIS="5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+TESTNET_GENESIS="4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY"
 case "$url" in
-  http://127.0.0.1:* | http://localhost:*) cluster="a local validator" ;;
+  http://127.0.0.1:* | http://localhost:*)
+    # A local port can be a tunnel or a proxy to a real cluster: only devnet's or a local
+    # validator's own genesis will do.
+    if [ "$genesis" = "$MAINNET_GENESIS" ] || [ "$genesis" = "$TESTNET_GENESIS" ]; then
+      echo "deploy.sh: refused: $shown answers as mainnet or testnet (genesis $genesis)" >&2
+      exit 1
+    fi
+    if [ "$genesis" = "$DEVNET_GENESIS" ]; then cluster="devnet"; else cluster="a local validator"; fi
+    ;;
   *)
     if [ "$genesis" != "$DEVNET_GENESIS" ]; then
-      echo "deploy.sh: refused: $url is not devnet (genesis $genesis)" >&2
+      echo "deploy.sh: refused: $shown is not devnet (genesis $genesis)" >&2
       exit 1
     fi
     cluster="devnet"
@@ -66,7 +78,7 @@ candidate="$work/buy_wall_amm.so"
 gate() { (cd "$ROOT/programs" && cargo run --quiet -p buy-wall-gate -- "$@"); }
 hash="$(gate hash "$candidate")"
 program="$(solana-keygen pubkey "$program_id" 2>/dev/null || echo "$program_id")"
-echo "Deploying build $hash of $program to $cluster ($url)."
+echo "Deploying build $hash of $program to $cluster ($shown)."
 
 verify=(verify-record --cluster "$url" --candidate "$candidate" --program "$program")
 [ -n "$records" ] && verify+=(--records "$records")
@@ -81,7 +93,7 @@ solana-keygen new --no-bip39-passphrase --silent --outfile "$work/buffer.json" >
 buffer="$(solana-keygen pubkey "$work/buffer.json")"
 if ! solana program deploy --url "$url" --keypair "$payer" --program-id "$program_id" \
   --upgrade-authority "$upgrade_authority" --buffer "$work/buffer.json" "$candidate"; then
-  echo "deploy.sh: the deploy failed; close its buffer with: solana program close $buffer --url $url --keypair $upgrade_authority" >&2
+  echo "deploy.sh: the deploy failed; close its buffer with: solana program close $buffer --url <the cluster> --keypair $upgrade_authority" >&2
   exit 1
 fi
 

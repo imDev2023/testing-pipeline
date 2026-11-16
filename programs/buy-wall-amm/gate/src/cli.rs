@@ -9,7 +9,7 @@ use crate::record::{self, Record, Target};
 use crate::release::Release;
 use crate::session::Session;
 use crate::snapshot::{parse_key, Snapshot};
-use crate::source::{cluster_url, Rpc};
+use crate::source::{cluster_url, redacted, Rpc};
 use crate::{check, download, programs, quotes, stranding, synthetic, world};
 use pipeline_check::AccountSource;
 use pipeline_client::{pda, Pubkey};
@@ -158,7 +158,7 @@ fn run(args: &[String]) -> Result<bool, String> {
                     "Layout version(s) {}: {} market(s) saved from {} at slot {}.",
                     versions.join(", "),
                     snapshot.markets.len(),
-                    snapshot.cluster.name.as_deref().unwrap_or(&url),
+                    snapshot.cluster.name.as_deref().unwrap_or(&redacted(&url)),
                     snapshot.cluster.slot
                 ),
                 ..snapshot
@@ -244,7 +244,8 @@ fn run(args: &[String]) -> Result<bool, String> {
 fn gate_run(options: &Options) -> Result<bool, String> {
     let url = cluster_url(options.required("cluster")?)?;
     let candidate = read(Path::new(options.required("candidate")?))?;
-    let release = Release::read(&options.path_or("release", programs::release_path()))?;
+    let release_path = options.path_or("release", programs::release_path());
+    let release = Release::read(&release_path)?;
     let program = options.program()?;
     let mut rpc = Rpc::new(&url);
     let markets = match download::find_markets(&mut rpc, &program) {
@@ -254,7 +255,8 @@ fn gate_run(options: &Options) -> Result<bool, String> {
             return Ok(false);
         }
     };
-    println!("{} market state(s) of {program} on {url}", markets.len());
+    let shown = redacted(&url);
+    println!("{} market state(s) of {program} on {shown}", markets.len());
     let snapshot = download::snapshot(
         &mut rpc,
         &program,
@@ -272,6 +274,13 @@ fn gate_run(options: &Options) -> Result<bool, String> {
     if !report.passed() {
         return Ok(false);
     }
+    // A pricing change unlocks a deploy only as committed with the release (POOL4-42).
+    if report.relied_on_pricing_change {
+        if let Err(why) = committed_unchanged(&release_path) {
+            println!("REFUSED to record the pass: it relied on a pricing change that {why}");
+            return Ok(false);
+        }
+    }
     let record = Record {
         program: program.to_string(),
         genesis_hash: snapshot
@@ -280,7 +289,7 @@ fn gate_run(options: &Options) -> Result<bool, String> {
             .clone()
             .ok_or("the cluster gave no genesis hash")?,
         cluster: snapshot.cluster.name.clone(),
-        url,
+        url: shown,
         slot: snapshot.cluster.slot,
         unix_timestamp: snapshot.cluster.unix_timestamp,
         recorded_at: now(),
@@ -291,7 +300,7 @@ fn gate_run(options: &Options) -> Result<bool, String> {
             .iter()
             .map(|m| m.market_state.clone())
             .collect(),
-        pricing_change_declared: release.changes_pricing_of(report.baseline_sha256.as_deref()),
+        pricing_change_declared: report.relied_on_pricing_change,
     };
     let path = record::append(&options.path_or("records", records_dir()), &record)?;
     println!("recorded the pass in {}", path.display());
@@ -326,7 +335,23 @@ fn verify_record(options: &Options) -> Result<bool, String> {
         deployed_sha256: deployed,
         market_states,
     };
-    match record::find(&options.path_or("records", records_dir()), &target) {
+    let found =
+        record::find(&options.path_or("records", records_dir()), &target).and_then(|record| {
+            // A pass that relied on a pricing change counts only while the committed release still
+            // declares it from the build deployed now.
+            if record.pricing_change_declared
+                && !committed_release()?.changes_pricing_of(target.deployed_sha256.as_deref())
+            {
+                return Err(format!(
+                    "the pass relied on a pricing change from build {}, which the committed {} no \
+                 longer declares",
+                    target.deployed_sha256.as_deref().unwrap_or("(none)"),
+                    RELEASE_IN_REPO
+                ));
+            }
+            Ok(record)
+        });
+    match found {
         Ok(record) => {
             println!(
                 "build {} passed the release gate on this cluster at slot {} against deployed build {}, \
@@ -345,8 +370,70 @@ fn verify_record(options: &Options) -> Result<bool, String> {
     }
 }
 
+/// The release declaration's path in the repo.
+const RELEASE_IN_REPO: &str = "programs/buy-wall-amm/release.json";
+
+/// Why `path` is not the release declaration as committed, if it is not: another file, or
+/// the repo's with changes git has not committed.
+fn committed_unchanged(path: &Path) -> Result<(), String> {
+    let repo = programs::repo_root().join(RELEASE_IN_REPO);
+    let same = |a: &Path, b: &Path| a.canonicalize().ok() == b.canonicalize().ok();
+    if !same(path, &repo) {
+        return Err(format!(
+            "is declared in {}, not in {RELEASE_IN_REPO}",
+            path.display()
+        ));
+    }
+    let status = git(&["status", "--porcelain", "--", RELEASE_IN_REPO])?;
+    if !status.trim().is_empty() {
+        return Err(format!(
+            "is not committed: {RELEASE_IN_REPO} has changes git has not committed"
+        ));
+    }
+    Ok(())
+}
+
+/// The release declaration as committed at `HEAD`.
+fn committed_release() -> Result<Release, String> {
+    let text = git(&["show", &format!("HEAD:{RELEASE_IN_REPO}")])?;
+    serde_json::from_str(&text).map_err(|e| format!("the committed {RELEASE_IN_REPO}: {e}"))
+}
+
+fn git(args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(programs::repo_root())
+        .output()
+        .map_err(|e| format!("cannot run git: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_repos_committed_declaration_can_unlock_a_deploy() {
+        let elsewhere = std::env::temp_dir().join("release.json");
+        let error = committed_unchanged(&elsewhere).unwrap_err();
+        assert!(
+            error.contains("not in programs/buy-wall-amm/release.json"),
+            "{error}"
+        );
+        // The repo's own, as committed, declares no pricing change.
+        assert_eq!(committed_release().unwrap(), Release::default());
+    }
 }

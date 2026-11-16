@@ -15,7 +15,9 @@ pub fn load(
     router_elf: Option<&[u8]>,
 ) -> Result<LiteSVM, String> {
     let program = snapshot.program_id()?;
-    let mut svm = LiteSVM::new();
+    // The replay checks no signatures, so the gate can act as a market's seeder; the programs
+    // still see who the message says signed, which is what they check.
+    let mut svm = LiteSVM::new().with_sigverify(false);
     set_clock(&mut svm, snapshot);
 
     let router = match router_elf {

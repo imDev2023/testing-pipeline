@@ -53,6 +53,9 @@ impl AccountSource for Recording<'_> {
 /// `getMultipleAccounts` takes at most this many addresses a call.
 const MAX_ACCOUNTS_PER_CALL: usize = 100;
 const ATTEMPTS: u32 = 6;
+/// JSON-RPC errors that pass once the node catches up: "minimum context slot has not been
+/// reached" (-32016) and "node is unhealthy" or behind (-32005).
+const RETRIED_ERRORS: [i64; 2] = [-32016, -32005];
 
 /// A cluster, over read-only JSON-RPC.
 pub struct Rpc {
@@ -76,6 +79,22 @@ pub fn cluster_url(name: &str) -> Result<String, String> {
             ))
         }
     })
+}
+
+/// `url` with only its scheme and host (and port): what the gate prints and saves, since an
+/// RPC provider's key sits in the path (`/v2/<key>`), the query (`?api-key=<key>`) or the
+/// user part, and the records are committed to a public repo.
+pub fn redacted(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if scheme.is_empty() {
+        host.to_string()
+    } else {
+        format!("{scheme}://{host}")
+    }
 }
 
 impl Rpc {
@@ -134,6 +153,12 @@ impl Rpc {
             let value: Value = serde_json::from_str(response)
                 .map_err(|e| format!("{method}: unreadable response (HTTP {status}): {e}"))?;
             if let Some(error) = value.get("error") {
+                // A node behind the others (behind a load balancer, say) answers these until
+                // it catches up; anything else is an answer.
+                if RETRIED_ERRORS.contains(&error["code"].as_i64().unwrap_or_default()) {
+                    last_error = format!("{method}: {error}");
+                    continue;
+                }
                 return Err(format!("{method}: {error}"));
             }
             return value
@@ -272,4 +297,30 @@ fn parse_account(value: &Value) -> Result<Option<Account>, String> {
             .or_else(|| value["rentEpoch"].as_f64().map(|f| f as u64))
             .unwrap_or(0),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_or_printed_url_keeps_only_its_scheme_and_host() {
+        for (url, shown) in [
+            (
+                "https://devnet.helius-rpc.com/?api-key=SECRET",
+                "https://devnet.helius-rpc.com",
+            ),
+            (
+                "https://solana-devnet.g.alchemy.com/v2/SECRET",
+                "https://solana-devnet.g.alchemy.com",
+            ),
+            (
+                "https://user:SECRET@rpc.example.com:8443/x",
+                "https://rpc.example.com:8443",
+            ),
+            ("http://127.0.0.1:8954", "http://127.0.0.1:8954"),
+        ] {
+            assert_eq!(redacted(url), shown);
+        }
+    }
 }

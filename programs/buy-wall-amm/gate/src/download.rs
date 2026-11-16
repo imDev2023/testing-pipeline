@@ -43,7 +43,6 @@ pub fn snapshot(
     note: &str,
 ) -> Result<Snapshot, String> {
     let mut recording = Recording::new(source);
-    let info = recording.cluster_info()?;
     // The program and the router, even when no market exists yet.
     recording.get_accounts(&[
         *program,
@@ -70,6 +69,34 @@ pub fn snapshot(
         });
     }
 
+    // Cloning read the accounts over many calls, at slots that can differ; read them all again
+    // in as few calls as there can be (a hundred accounts a call), so the market states, their
+    // vaults and the rest agree, and only then the clock, so it is no earlier than the state.
+    let keys: Vec<Pubkey> = recording.served.values().map(|(key, _)| *key).collect();
+    for (key, account) in keys.iter().zip(recording.get_accounts(&keys)?) {
+        if account.is_none() {
+            recording.served.remove(&key.to_string());
+        }
+    }
+    let mut info = recording.cluster_info()?;
+    for market_state in market_states {
+        if let Some(state) = recording
+            .served
+            .get(&market_state.to_string())
+            .and_then(|(_, account)| read_state(&account.data))
+        {
+            info.slot = info.slot.max(state.last_slot());
+            for time in [
+                state.seed_time(),
+                state.decay_time(),
+                state.ref_time(),
+                state.floor_time(),
+            ] {
+                info.unix_timestamp = info.unix_timestamp.max(time);
+            }
+        }
+    }
+
     let mut snapshot = Snapshot {
         format: FORMAT.into(),
         program: program.to_string(),
@@ -80,7 +107,7 @@ pub fn snapshot(
                 .and_then(pipeline_check::clone::cluster_name)
                 .map(str::to_string),
             genesis_hash: info.genesis_hash,
-            url,
+            url: url.as_deref().map(crate::source::redacted),
             slot: info.slot,
             epoch: info.epoch,
             unix_timestamp: info.unix_timestamp,

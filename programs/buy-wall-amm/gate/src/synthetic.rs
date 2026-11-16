@@ -2,7 +2,8 @@
 //! version 1 is represented by markets made in a LiteSVM run through the real router, then
 //! snapshotted exactly as a cluster is, through pipeline-check's cloning from that LiteSVM.
 //!
-//! Two markets, so the gate meets a market with every keeper job due and one with none:
+//! Three markets, so the gate meets a market with every keeper job due, one with none, and
+//! one waiting for its seed:
 //!
 //! - market A, an SPL Token at IMD's launch values, is the worked example's market traded on
 //!   past its first wall and settlement: an hour after the seed a buy of 1 SOL, a minute
@@ -12,7 +13,9 @@
 //!   fees in slots 0, 1 and 2, so `place_wall`, `settle`, `pay_rewards` and `sweep_fees`
 //!   slots 0 and 2 are due (slot 1 waits for `DESIGNER_RECIPIENT`);
 //! - market B, a Token-2022 token with other parameters (a 2.5% fee all to the wall, no
-//!   rewards, the ratchet off), is only seeded, so nothing is due.
+//!   rewards, the ratchet off), is only seeded, so nothing is due;
+//! - market C, an SPL Token at the launch values, is created but not seeded, its mint
+//!   authority still set, so the gate seeds it as its seeder would before trading it.
 
 use borsh::BorshSerialize;
 use buy_wall_amm::InitParams;
@@ -24,7 +27,7 @@ use solana_signer::Signer;
 
 use crate::download;
 use crate::keeper::{self, Job};
-use crate::session::{spendable, MarketView, Session, SOL, TOKEN, TOKEN_2022, WSOL};
+use crate::session::{seed_ix, spendable, MarketView, Session, SOL, TOKEN, TOKEN_2022, WSOL};
 use crate::snapshot::Snapshot;
 
 /// The clock the run starts at: devnet's slot and time on 2026-11-16, roughly.
@@ -32,7 +35,8 @@ const START_SLOT: u64 = 523_000_000;
 const START_TIME: i64 = 1_763_280_000;
 const EPOCH: u64 = 1_210;
 
-pub const NOTE: &str = "Layout version 1, synthetic (POOL4-20): two markets made by a LiteSVM run \
+pub const NOTE: &str =
+    "Layout version 1, synthetic (POOL4-20): three markets made by a LiteSVM run \
 through devnet's router (gate/src/synthetic.rs), until the devnet deploy saves one from a real \
 market.";
 
@@ -59,14 +63,13 @@ pub fn build(build: &[u8], router: &[u8]) -> Result<Snapshot, String> {
         cap_decay_bps: 2_000,
         seeder: anchor(admin.pubkey()),
     };
-    let a = create_and_seed(
+    let a = create(
         &mut session,
         &admin,
         token_a,
         TOKEN,
         &params_a,
-        1_000_000_000_000,
-        10 * SOL,
+        Some((1_000_000_000_000, 10 * SOL)),
     )?;
     later(&mut session, 3_600);
     let bought = swap(&mut session, &a, true, SOL)?;
@@ -91,22 +94,31 @@ pub fn build(build: &[u8], router: &[u8]) -> Result<Snapshot, String> {
         cap_decay_bps: 0,
         seeder: anchor(admin.pubkey()),
     };
-    let b = create_and_seed(
+    let b = create(
         &mut session,
         &admin,
         token_b,
         TOKEN_2022,
         &params_b,
-        500_000_000_000_000,
-        5 * SOL,
+        Some((500_000_000_000_000, 5 * SOL)),
     )?;
+
+    // Market C: an SPL Token at the launch values, created and waiting for its seed, its mint
+    // authority still set.
+    let token_c = mint(&mut session, &admin, TOKEN)?;
+    let params_c = InitParams {
+        fee_recipient: anchor(Pubkey::new_unique()),
+        rewards_recipient: anchor(Pubkey::new_unique()),
+        ..params_a.clone()
+    };
+    let c = create(&mut session, &admin, token_c, TOKEN, &params_c, None)?;
     later(&mut session, 600);
 
     let mut source = SvmSource::new(session.svm);
     download::snapshot(
         &mut source,
         &program,
-        &[a.market_state, b.market_state],
+        &[a.market_state, b.market_state, c.market_state],
         None,
         true,
         NOTE,
@@ -229,18 +241,87 @@ fn system_create_account(
     )
 }
 
-/// Mints `tokens` to `admin` and gives it `lamports` of wrapped SOL, removes the mint
-/// authority, then creates the market from the `init` form with both fee accounts and seeds
-/// it through the `seed` action, in one transaction, as a creator would.
-fn create_and_seed(
+/// Creates a market from the `init` form with both fee accounts, as a creator would, and,
+/// given a seed of `(tokens, lamports)`, seeds it through the `seed` action in the same
+/// transaction, after minting the tokens to `admin`, giving it the wrapped SOL and removing
+/// the mint authority. Without a seed the market waits for one, its mint authority kept.
+fn create(
     session: &mut Session,
     admin: &Keypair,
     token_mint: Pubkey,
     token_program: Pubkey,
     params: &InitParams,
+    seed: Option<(u64, u64)>,
+) -> Result<MarketView, String> {
+    let market_state = Keypair::new();
+    let program = session.program;
+    let ms = market_state.pubkey();
+    let pdas = |seeds: &[&[u8]]| Pubkey::find_program_address(seeds, &program).0;
+    let view = MarketView {
+        market: pda::market(&program, &ms),
+        market_state: ms,
+        mints: vec![token_mint, WSOL],
+        vaults: vec![
+            pdas(&[b"vault", ms.as_ref(), token_mint.as_ref()]),
+            pdas(&[b"vault", ms.as_ref(), WSOL.as_ref()]),
+        ],
+        token_programs: vec![token_program, TOKEN],
+        vault_authority: pdas(&[b"authority", ms.as_ref()]),
+    };
+    let mut init_data = vec![];
+    params
+        .serialize(&mut init_data)
+        .map_err(|e| e.to_string())?;
+    let payer = session.payer.pubkey();
+    let mut instructions = vec![client::create_market(&client::CreateMarket {
+        creator: payer,
+        strategy_program: program,
+        market_state: ms,
+        market_state_signs: true,
+        init_data,
+        max_creator_lamports: SOL,
+        strategy_accounts: vec![
+            AccountMeta::new_readonly(token_mint, false),
+            AccountMeta::new_readonly(WSOL, false),
+            AccountMeta::new_readonly(view.vault_authority, false),
+            AccountMeta::new(view.vaults[0], false),
+            AccountMeta::new(view.vaults[1], false),
+            AccountMeta::new_readonly(token_program, false),
+            AccountMeta::new_readonly(TOKEN, false),
+        ],
+    })];
+    instructions.extend(
+        [(token_mint, token_program), (WSOL, TOKEN)]
+            .map(|(mint, program)| client::init_fee_account(&payer, &view.market, &mint, &program)),
+    );
+    // The admin signs only the seed.
+    let mut signers = vec![&market_state];
+    if let Some((tokens, lamports)) = seed {
+        fund_seeder(session, admin, token_mint, token_program, tokens, lamports)?;
+        instructions.push(seed_ix(
+            &program,
+            &view,
+            &admin.pubkey(),
+            tokens,
+            lamports,
+            vec![],
+        ));
+        signers.push(admin);
+    }
+    session.send(&instructions, &signers)?;
+    session.market(&ms)
+}
+
+/// Mints `tokens` to `admin`, gives it `lamports` of wrapped SOL and removes the mint
+/// authority, as a seed requires.
+fn fund_seeder(
+    session: &mut Session,
+    admin: &Keypair,
+    token_mint: Pubkey,
+    token_program: Pubkey,
     tokens: u64,
     lamports: u64,
-) -> Result<MarketView, String> {
+) -> Result<(), String> {
     use spl_token_2022_interface::instruction::{mint_to, set_authority, AuthorityType};
     let owner = admin.pubkey();
     pipeline_check::write_token_account(&mut session.svm, &token_mint, &token_program, &owner, 0)?;
@@ -257,64 +338,7 @@ fn create_and_seed(
         &[],
     )
     .map_err(|e| e.to_string())?;
-    session.send(&[mint, revoke], &[admin])?;
-
-    let market_state = Keypair::new();
-    let program = session.program;
-    let pdas = |seeds: &[&[u8]]| Pubkey::find_program_address(seeds, &program).0;
-    let ms = market_state.pubkey();
-    let vault_authority = pdas(&[b"authority", ms.as_ref()]);
-    let token_vault = pdas(&[b"vault", ms.as_ref(), token_mint.as_ref()]);
-    let sol_vault = pdas(&[b"vault", ms.as_ref(), WSOL.as_ref()]);
-    let market = pda::market(&program, &ms);
-    let mut init_data = vec![];
-    params
-        .serialize(&mut init_data)
-        .map_err(|e| e.to_string())?;
-    let create = client::create_market(&client::CreateMarket {
-        creator: session.payer.pubkey(),
-        strategy_program: program,
-        market_state: ms,
-        market_state_signs: true,
-        init_data,
-        max_creator_lamports: SOL,
-        strategy_accounts: vec![
-            AccountMeta::new_readonly(token_mint, false),
-            AccountMeta::new_readonly(WSOL, false),
-            AccountMeta::new_readonly(vault_authority, false),
-            AccountMeta::new(token_vault, false),
-            AccountMeta::new(sol_vault, false),
-            AccountMeta::new_readonly(token_program, false),
-            AccountMeta::new_readonly(TOKEN, false),
-        ],
-    });
-    let payer = session.payer.pubkey();
-    let fee_accounts = [(token_mint, token_program), (WSOL, TOKEN)]
-        .map(|(mint, program)| client::init_fee_account(&payer, &market, &mint, &program));
-    let mut seed_data = client::instruction_discriminator("seed").to_vec();
-    seed_data.extend_from_slice(&tokens.to_le_bytes());
-    seed_data.extend_from_slice(&lamports.to_le_bytes());
-    let seed = Instruction::new_with_bytes(
-        program,
-        &seed_data,
-        vec![
-            AccountMeta::new_readonly(owner, true),
-            AccountMeta::new(ms, false),
-            AccountMeta::new(to, false),
-            AccountMeta::new(pda::associated_token(&owner, &WSOL, &TOKEN), false),
-            AccountMeta::new(token_vault, false),
-            AccountMeta::new(sol_vault, false),
-            AccountMeta::new_readonly(token_mint, false),
-            AccountMeta::new_readonly(WSOL, false),
-            AccountMeta::new_readonly(token_program, false),
-            AccountMeta::new_readonly(TOKEN, false),
-        ],
-    );
-    let mut instructions = vec![create];
-    instructions.extend(fee_accounts);
-    instructions.push(seed);
-    session.send(&instructions, &[admin, &market_state])?;
-    session.market(&ms)
+    session.send(&[mint, revoke], &[admin]).map(|_| ())
 }
 
 /// Moves the clock `seconds` on, with slots to match.

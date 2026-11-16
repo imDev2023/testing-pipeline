@@ -496,11 +496,13 @@ Square-root prices (`sqrt_price`, `wall_top`, `ref`, `floor`, `last_close`) are 
 How it does each of these ([`POOL4-41`](../decisions.md#pool4-41-what-the-release-gate-runs-on-each-market) to [`POOL4-45`](../decisions.md#pool4-45-how-the-gate-reads-a-cluster)):
 
 - It finds the market states as the accounts the program owns that start with the discriminator, and refuses outright if one of them is not `MARKET_STATE_SIZE` bytes.
-- It copies each market as `pipeline-check` does (the router and its config, the Market, the strategy's registration, program and ProgramData, the mints, vaults, fee accounts, transfer hooks and every account `pipeline_resolve_accounts` lists), adds the token accounts the payouts pay into, and saves it all in one snapshot file at the cluster's slot and clock.
+- It copies each market as `pipeline-check` does (the router and its config, the Market, the strategy's registration, program and ProgramData, the mints, vaults, fee accounts, transfer hooks and every account `pipeline_resolve_accounts` lists), adds the token accounts the payouts pay into, reads them all again in as few calls as it can so they agree, and saves them in one snapshot file with the cluster's clock read last.
 - On every market, with the candidate and the router copied from the cluster, it resolves the accounts of a buy and a sell, quotes exact-in both ways at a tenth, a hundredth and a thousandth of the input vault and compares each quote with the deployed build's on the same state, runs each keeper job that is due, judged by the program's own rules on the state as downloaded, then buys with a hundredth of the SOL vault and sells what that bought, each swap with the candidate's quote as its minimum and delivering exactly it.
+- A market waiting for its seed is seeded first, as its seeder would seed it (the replay checks no signatures, and removes the mint's authorities as a seed requires), then traded like the rest, so a build that could not seed it is refused.
 - A release declares a pricing change in `programs/buy-wall-amm/release.json`, committed with it, by naming the executable hash of each build whose quotes it changes, so a declaration left behind after its release stops covering anything once the build it named is no longer deployed.
+- A declaration lets amounts differ, never a quote the deployed build served turn into a refusal, and a pass that relied on one is recorded only from the committed `release.json` with no uncommitted change, and counts for a deploy only while the committed file still declares it.
 - A passing run against a cluster is recorded in `deployments/release-gate/buy-wall-amm/<cluster>.json` (a local validator's records are kept out of git); the deploy script accepts a build only with a record for that cluster and that executable hash, made against the build deployed there now and covering every market there now, so an upgrade or a new market since the run means running the gate again.
-- It reads a cluster only through read-only JSON-RPC calls, sent with `curl`, and can send nothing.
+- It reads a cluster only through read-only JSON-RPC calls, sent with `curl`, and can send nothing; it prints and saves an RPC URL without its path, query or user part, where a provider's key sits.
 
 #### How to run it
 
@@ -523,9 +525,9 @@ buy-wall-amm/scripts/deploy.sh --url devnet --so target/deploy/buy_wall_amm.so
 
 - The repo keeps a saved market state for every layout version ever deployed, taken from a real market.
 - CI runs the release gate's checks on each of them against every build.
-- Until the devnet deploy saves one from a real market (`cargo run -p buy-wall-gate -- snapshot --cluster devnet --out <file>`), layout version 1 is represented by two markets made by a LiteSVM run through devnet's router, marked synthetic, and CI keeps both once both exist ([`POOL4-20`](../decisions.md#pool4-20-the-first-layout-fixture)).
+- Until the devnet deploy saves one from a real market (`cargo run -p buy-wall-gate -- snapshot --cluster devnet --out <file>`), layout version 1 is represented by three markets made by a LiteSVM run through devnet's router (one with every keeper job due, one with none, one waiting for its seed), marked synthetic, and CI keeps both once both exist ([`POOL4-20`](../decisions.md#pool4-20-the-first-layout-fixture)).
 - Fixtures are snapshots in `programs/buy-wall-amm/gate/fixtures/`, without the programs: CI replays each with the pinned router and the build under test, and compares its quotes with the ones the fixture records.
-- CI also builds four test builds from edited copies of the workspace, never from the program's own source ([`POOL4-44`](../decisions.md#pool4-44-how-the-gate-is-proved-to-catch-stranding)): one moving a field, one renaming the market state type with its discriminator left to Anchor, one growing the account, each of which the gate must refuse on every fixture, and one appending a field into the reserve as layout version 2, which it must pass.
+- CI also builds four test builds from edited copies of the workspace, never from the program's own source ([`POOL4-44`](../decisions.md#pool4-44-how-the-gate-is-proved-to-catch-stranding)): one moving a field, one renaming the market state type with its discriminator left to Anchor, one growing the account, each of which the gate must refuse on every fixture, failing on every open market, and one appending a field into the reserve as layout version 2, which it must pass.
 
 ## Upgrades and freezing
 

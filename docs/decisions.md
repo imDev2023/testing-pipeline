@@ -3825,7 +3825,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-41: What the release gate runs on each market
 
 - Question: What exactly does the release gate run on each market, and which quotes does it compare?
-- Answer: With the candidate and the cluster's router it resolves a buy and a sell, compares exact-in quotes both ways at a tenth, a hundredth and a thousandth of the input vault with the deployed build's on the same state, runs each keeper job the program's own rules say is due on the state as downloaded, then buys with a hundredth of the SOL vault and sells what that bought, each delivering exactly the candidate's quote.
+- Answer: With the candidate and the cluster's router it resolves a buy and a sell, compares exact-in quotes both ways at a tenth, a hundredth and a thousandth of the input vault with the deployed build's on the same state, runs each keeper job the program's own rules say is due on the state as downloaded, seeds a market waiting for its seed as its seeder would, then buys with a hundredth of the SOL vault and sells what that bought, each delivering exactly the candidate's quote.
 - Alternatives: One quote each way; judging keeper jobs due after the trades; comparing whole market states after the trades.
 - Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
 - Changes by: spec only
@@ -3835,7 +3835,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-42: How a release declares a pricing change
 
 - Question: How does a release declare the pricing change that lets its quotes differ from the deployed build's?
-- Answer: In `programs/buy-wall-amm/release.json`, committed with it, by naming the executable hash of each build whose quotes it changes, so a declaration left in place after its release deploys covers nothing more.
+- Answer: In `programs/buy-wall-amm/release.json`, committed with it, by naming the executable hash of each build whose quotes it changes, so a declaration left in place after its release deploys covers nothing more; it lets amounts differ but never a served quote become a refusal, and unlocks a deploy only as committed.
 - Alternatives: A yes or no flag, which would keep covering later releases until someone reset it.
 - Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
 - Changes by: spec only
@@ -3865,7 +3865,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-45: How the gate reads a cluster
 
 - Question: How does the gate read accounts from a cluster?
-- Answer: Through read-only JSON-RPC calls sent with `curl`, so it can send nothing, and so the owner's firewall, which holds back every freshly built binary's network calls until allowed by hand, never stalls it after a rebuild.
+- Answer: Through read-only JSON-RPC calls sent with `curl`, so it can send nothing, and so the owner's firewall, which holds back every freshly built binary's network calls until allowed by hand, never stalls it after a rebuild; it keeps only an RPC URL's scheme and host in what it prints and saves.
 - Alternatives: `pipeline-check`'s own HTTP client, which would add an HTTP stack to the on-chain workspace and be held back after every rebuild.
 - Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
 - Changes by: spec only

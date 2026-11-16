@@ -59,6 +59,7 @@ fn a_release_declaring_a_pricing_change_from_the_baseline_build_lets_its_quotes_
         &declaring(&baseline),
     );
     assert!(report.passed(), "{report}");
+    assert!(report.relied_on_pricing_change);
     assert!(report
         .to_string()
         .contains("a pricing change the release declares"));
@@ -77,7 +78,36 @@ fn a_pricing_change_declared_from_another_build_does_not_cover_this_one() {
 }
 
 #[test]
-fn the_committed_release_declares_no_pricing_change() {
-    let release = Release::read(&programs::release_path()).unwrap();
-    assert_eq!(release, Release::default());
+fn a_declared_pricing_change_never_covers_a_quote_the_candidate_refuses() {
+    // As if the baseline build had served a buy of nothing, which the current build refuses.
+    let mut snapshot =
+        synthetic::build(&programs::current_build(), &programs::pinned_router()).unwrap();
+    let quote = &mut snapshot.baseline.quotes[0];
+    quote.amount = 0;
+    quote.result = QuoteOutcome::AmountOut(1);
+    let (market_state, amount) = (quote.market_state.clone(), quote.amount);
+    let baseline = snapshot.baseline.executable_sha256.clone().unwrap();
+    let report = check::run(
+        &snapshot,
+        &programs::current_build(),
+        Some(&programs::pinned_router()),
+        &declaring(&baseline),
+    );
+    let failures = report.failures();
+    assert_eq!(failures.len(), 1, "{report}");
+    assert_eq!(failures[0].market_state, market_state);
+    assert_eq!(failures[0].step, format!("quote (buy {amount})"));
+    assert!(
+        failures[0]
+            .detail
+            .contains("refusing a quote the baseline served"),
+        "{report}"
+    );
+}
+
+#[test]
+fn the_committed_release_declaration_is_valid() {
+    // It may declare a pricing change, from the PR that makes one until the release deploys;
+    // `Release::read` refuses one that names no build or gives no reason.
+    Release::read(&programs::release_path()).unwrap();
 }

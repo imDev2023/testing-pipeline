@@ -233,12 +233,21 @@ pub fn path(out: &Path, build: TestBuild) -> PathBuf {
 /// build. Each build rewrites every source file of the copy, so cargo rebuilds the program,
 /// and the builds are checked to differ from one another and from the real build.
 pub fn build_all(workspace: &Path, out: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let out = out
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", out.display()))?;
+    let out = out.as_path();
     let copy = out.join("workspace");
-    copy_tree(workspace, &copy)?;
+    // A fresh copy each run, so nothing deleted from the workspace lives on in it.
+    if copy.exists() {
+        std::fs::remove_dir_all(&copy).map_err(|e| format!("{}: {e}", copy.display()))?;
+    }
+    copy_tree(workspace, &copy, out)?;
     let real = Sources::read(&workspace.join("buy-wall-amm/src"))?;
     let src = copy.join("buy-wall-amm/src");
     let mut hashes: Vec<(String, String)> = vec![];
-    if let Ok(elf) = std::fs::read(workspace.join("target/deploy/buy_wall_amm.so")) {
+    if let Ok(elf) = std::fs::read(crate::programs::current_build_path()) {
         hashes.push((
             "the real build".into(),
             pipeline_check::executable_sha256(&elf).0,
@@ -283,20 +292,28 @@ pub fn build_all(workspace: &Path, out: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Copies the workspace's sources, leaving out build outputs and installed packages.
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+/// Copies the workspace's sources, leaving out build outputs, installed packages and `skip`
+/// (the test builds' own folder, wherever it is), each file written anew so its time is
+/// now and cargo never takes it for an older build's.
+fn copy_tree(from: &Path, to: &Path, skip: &Path) -> Result<(), String> {
     std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
     for entry in std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name();
-        if name == "target" || name == "node_modules" || name.to_string_lossy().starts_with('.') {
+        let path = entry.path();
+        if name == "target"
+            || name == "node_modules"
+            || name.to_string_lossy().starts_with('.')
+            || path.canonicalize().is_ok_and(|p| p == skip)
+        {
             continue;
         }
-        let path = entry.path();
         if path.is_dir() {
-            copy_tree(&path, &to.join(&name))?;
+            copy_tree(&path, &to.join(&name), skip)?;
         } else {
-            std::fs::copy(&path, to.join(&name)).map_err(|e| format!("{}: {e}", path.display()))?;
+            let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            std::fs::write(to.join(&name), bytes)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
         }
     }
     Ok(())
