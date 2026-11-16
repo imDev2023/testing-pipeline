@@ -58,7 +58,7 @@ Terms are as in `GLOSSARY.md`: inventory cap, cap floor, cap decay, trim, retire
 | `MARKET_STATE_SIZE` | 1,024 bytes | The size of every market state, for good |
 
 The constants are compiled into the program; changing one is a program upgrade, which ends when the program is frozen.
-`DESIGNER_SHARE_BPS` and `SUITE_SHARE_BPS` are also published in the program's IDL (Anchor's `#[constant]`), where the generated client and the demo script read them ([`POOL4-25`](../decisions.md#pool4-25-the-fee-shares-in-the-idl)).
+`DESIGNER_SHARE_BPS` and `SUITE_SHARE_BPS` are also published in the program's IDL (Anchor's `#[constant]`), where the generated client and the demo script read them ([`POOL4-25`](../decisions.md#pool4-25-the-fee-shares-in-the-idl)), and so are `DECAY_CREDIT_WINDOW` and `MIN_LIQUIDITY`, which the demo's model of the cap reads ([`POOL4-30`](../decisions.md#pool4-30-what-a-swap-that-moves-the-cap-reports)).
 There is no admin and no settings account.
 
 Every decision here is a default that MetalLegBob may change (the map's standing rule of 2026-11-10), so each policy value lives in exactly one place:
@@ -233,6 +233,7 @@ None of it changes the trade just priced.
 6. **The cap.**
    With `held = floor(L × Q / s)`:
    - **Ratchet**, when `held < cap`: the cap falls to `max(held, cap - floor(decay_credit / 86,400), cap_floor)`, with the subtraction saturating at 0, and `decay_credit` drops by 86,400 for every token unit the cap fell.
+     This runs after a sell as well as a buy, whenever the curve ends below the cap ([`POOL4-31`](../decisions.md#pool4-31-the-ratchet-after-a-sell)).
    - **Trim**, when `held > cap`: `new_L = max(floor(cap × s / Q), MIN_LIQUIDITY)`, and if that is below `L`, the curve gives up `held - ceil(new_L × Q / s)` token units and `floor(L × s / Q) - ceil(new_L × s / Q)` lamports (0 if negative).
      Both leave the pool ledgers: the tokens join `retired_tokens`, the SOL joins `idle_sol`, and `L` becomes `new_L`.
      `sqrt_price` is untouched, so a trim never moves the price.
@@ -495,7 +496,7 @@ Square-root prices (`sqrt_price`, `wall_top`, `ref`, `floor`, `last_close`) are 
 
 - Every action that moves the token forwards transfer-hook accounts after its own, as the template's swap does.
   Metadata actions cannot describe those extra accounts, so generic forms work for tokens without a hook and Aviary builds the hooked ones itself.
-- Each instruction emits an event (market created, seeded, wall placed, settled, rewards paid, fees swept, recipient changed), and a swap emits one when it trims or lowers the cap, so Aviary's indexer can show a market's history; Aviary reads current values from the market state, not from events.
+- Each instruction emits an event (market created, seeded, wall placed, settled, rewards paid, fees swept, recipient changed), and a swap emits one when it trims or lowers the cap (`Trimmed` or `CapLowered`, [`POOL4-30`](../decisions.md#pool4-30-what-a-swap-that-moves-the-cap-reports)), so Aviary's indexer can show a market's history; Aviary reads current values from the market state, not from events.
 - `pipeline_seed_liquidity` is described in a top-level `seed_liquidity` form shaped as `init` is, which Pipeline's validator allows as an unknown key: the seeded market state as a `pda:` source keyed by `input:seeder`, `input:token_mint` and wrapped SOL, `data` as init's arguments under the same IDL type with the seeder marked ignored, and the vault authority and both vaults after Pipeline's fixed seed accounts, so the SDK's `resolveInit` resolves it ([`POOL4-28`](../decisions.md#pool4-28-how-metadata-describes-seeding-from-another-program)).
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, a description that credits IMD's Pool4, category `amm`, tags including `pool4`, links including `source` and the IDL, `init` as above with `market_state: new_keypair`, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256; where they are published is in `README.md`.
 - The trust flags describe programs and mints, not markets, so nothing there says a market trims or burns: the metadata declares it, and Aviary reads each market's parameters, ledgers and cap from its market state.
@@ -561,6 +562,7 @@ A transfer hook's own compute is outside them.
 
 Measured on 2026-11-12 by [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48), on markets from 10^-7 to 10^9 lamports a unit and trades from dust to a third of a pool: `pipeline_quote` at most 15,682 units, a one-step `pipeline_swap` 14,837 to 27,630 (a hook's own compute left out), and `pipeline_resolve_accounts` 5,181 to 5,372.
 The ceilings stay as they are for the wall's second step and the trim.
+Measured on 2026-11-12 by [Buy wall AMM: the inventory cap](https://github.com/imDev2023/testing-pipeline/issues/49), on the same five markets: a buy that lowers the cap 22,240 to 35,480 units and a sell that trims 26,649 to 33,223, within their ceilings of 45,000 and 60,000 (a hook's own compute left out); with the cap's steps on every swap, the costliest one-step swap of the earlier measurement is now 36,396.
 Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53), inside the stand-in launchpad's call in LiteSVM: `pipeline_seed_liquidity` 48,850 units for an SPL Token token, 59,716 for a Token-2022 one and 65,802 for one with a transfer hook (the hook's own compute left out), and 60,847 for an SPL Token token on a local validator; its ceiling stays at 180,000, room for what later tickets add to creation and the seed.
 
 ### Invariants for test layer 3
