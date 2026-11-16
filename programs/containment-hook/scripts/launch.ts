@@ -154,10 +154,18 @@ const TRADES = { buyUnits: 1n, integratorFeeBps: 50 } as const;
 // `TRADES.buyUnits` and sells the same amount of the token back, round after round, and
 // refuses up front a goal that would take more rounds than `maxGoalRounds`, counting only each
 // round's buy tax; each round's cost is estimated as both taxes plus `roundMarginBps` for
-// Pipeline's fees. By the deadline, it refuses up front a deadline further than
-// `maxDeadlineWaitSecs` away. The unlock is sent by a fresh wallet the launcher gives
-// `unlockerLamports`, enough for its fee and a system account's rent.
-const UNLOCKING = { maxGoalRounds: 10, roundMarginBps: 100n, maxDeadlineWaitSecs: 600n, unlockerLamports: 2_000_000n } as const;
+// Pipeline's fees. By the deadline, it refuses up front a deadline less than
+// `minDeadlineLeadSecs` away, which the launch's setup could outlast, or further than
+// `maxDeadlineWaitSecs`, and a goal the launch's own buy and sell could reach, both taxes on
+// the whole buy. The unlock is sent by a fresh wallet the launcher gives `unlockerLamports`,
+// enough for its fee and a system account's rent.
+const UNLOCKING = {
+    maxGoalRounds: 10,
+    roundMarginBps: 100n,
+    minDeadlineLeadSecs: 60n,
+    maxDeadlineWaitSecs: 600n,
+    unlockerLamports: 2_000_000n,
+} as const;
 // What the launch's rents and fees may cost beyond the market's setup and the buy, which the
 // launcher must hold before anything is sent, so a launch never stops halfway for want of SOL.
 const RENT_AND_FEES = 200_000_000n;
@@ -472,8 +480,7 @@ async function trade(
     if (received !== quote.amountOut || event.data.received !== quote.amountOut) {
         fail(`${label}: received ${received} (event: ${event.data.received}), quoted ${quote.amountOut}`);
     }
-    const consumed = `Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} consumed `;
-    const hookUnits = (tx.meta.logMessages ?? []).filter((line) => line.startsWith(consumed)).map((line) => Number(line.slice(consumed.length).split(' ')[0]));
+    const hookUnits = hookCompute(tx.meta.logMessages ?? []);
     // While contained, the hook runs on the vault's transfer of a buy, and on both of a sell's
     // transfers into the vault and the fee account; after the unlock, never.
     const expected = hooked ? (output === CONTAINED_INDEX ? 1 : 2) : 0;
@@ -481,6 +488,12 @@ async function trade(
     const hook = hooked ? `the hook's Execute took ${hookUnits.join(' and ')} CU` : 'the hook did not run';
     info(`${label}: received exactly the quote, Pipeline's fee ${event.data.pipelineFee}; ${hook}`);
     return { received, pipelineFee: event.data.pipelineFee, hookUnits };
+}
+
+/** The compute units each invocation of the hook consumed, in order, from a transaction's logs. */
+function hookCompute(logs: readonly string[]): number[] {
+    const consumed = `Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} consumed `;
+    return logs.filter((line) => line.startsWith(consumed)).map((line) => Number(line.slice(consumed.length).split(' ')[0]));
 }
 
 /** Simulates `instruction` and returns whether it failed, with its logs. */
@@ -553,14 +566,21 @@ async function main() {
     // what they may cost: both taxes and Pipeline's fees on each round's buy.
     let goalRounds = 0;
     let roundsCost = 0n;
+    const buyTax = (buy * BigInt(HOME_MARKET.buyTaxBps)) / 10_000n;
     if (unlockBy === 'goal') {
-        const buyTax = (buy * BigInt(HOME_MARKET.buyTaxBps)) / 10_000n;
+        if (buyTax === 0n) fail(`a buy of ${buy} base units of the quote mint pays no tax, so --unlock goal could never reach the goal; use --unlock deadline`);
         goalRounds = Number((unlockGoal + buyTax - 1n) / buyTax);
         if (goalRounds > UNLOCKING.maxGoalRounds) {
             fail(`--goal ${unlockGoal} would take about ${goalRounds} rounds of trades of ${buy} to collect, more than the ${UNLOCKING.maxGoalRounds} --unlock goal makes; give a smaller goal or use --unlock deadline`);
         }
         roundsCost = (BigInt(goalRounds) * buySpend * (BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps) + UNLOCKING.roundMarginBps)) / 10_000n;
         info(`--unlock goal: at most ${goalRounds} rounds of a buy of ${buy} and a sell back, costing about ${roundsCost} of the quote mint`);
+    }
+    if (unlockBy === 'deadline') {
+        const launchTax = (buy * BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps)) / 10_000n;
+        if (unlockGoal <= launchTax) {
+            fail(`--unlock deadline needs a goal the launch's own buy and sell cannot reach, above ${launchTax}, not ${unlockGoal}`);
+        }
     }
     // Everything the launch spends is checked before it sends anything: the binding and the
     // seed cannot be undone, so a launch that ran out halfway would leave a market untraded.
@@ -590,8 +610,11 @@ async function main() {
     if (unlockDeadline > startTime + MAX_UNLOCK_DEADLINE_SECS) {
         fail(`--deadline may be at most ${MAX_UNLOCK_DEADLINE_SECS} seconds after the binding (MAX_UNLOCK_DEADLINE_SECS), ${new Date(Number(startTime + MAX_UNLOCK_DEADLINE_SECS) * 1000).toISOString()} at the cluster's time now`);
     }
-    if (unlockBy === 'deadline' && unlockDeadline > startTime + UNLOCKING.maxDeadlineWaitSecs) {
-        fail(`--unlock deadline waits for the deadline, so it must be at most ${UNLOCKING.maxDeadlineWaitSecs} seconds away, not ${unlockDeadline - startTime}`);
+    if (unlockBy === 'deadline') {
+        const lead = unlockDeadline - startTime;
+        if (lead < UNLOCKING.minDeadlineLeadSecs || lead > UNLOCKING.maxDeadlineWaitSecs) {
+            fail(`--unlock deadline needs a deadline ${UNLOCKING.minDeadlineLeadSecs} to ${UNLOCKING.maxDeadlineWaitSecs} seconds away, so the launch finishes before it and the wait stays short, not ${lead}`);
+        }
     }
 
     step('2. Computing every address the launch will use, before sending anything');
@@ -885,6 +908,7 @@ async function main() {
             step('10. Trading until the home market has collected the goal in tax');
             for (let round = 1; (await taxCollected()) < unlockGoal; round++) {
                 if (round > goalRounds) fail(`the home market collected ${await taxCollected()} of the goal ${unlockGoal} in ${goalRounds} rounds`);
+                if ((await clusterTime()) >= unlockDeadline) fail('the deadline passed while trading, so the unlock would not show the goal');
                 if (quoteMint === WRAPPED_SOL) {
                     const held = await tokenBalance(quoteHolder);
                     if (held < buySpend) {
@@ -930,8 +954,7 @@ async function main() {
         const unlockLogs = unlockTx?.meta?.logMessages ?? [];
         const reason = unlockBy === 'goal' ? 'Program log: Unlocked by the goal' : 'Program log: Unlocked by the deadline';
         if (!unlockLogs.some((line) => line.startsWith(reason))) fail(`the unlock's logs do not say "${reason}":\n${unlockLogs.join('\n')}`);
-        const consumed = `Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} consumed `;
-        const unlockUnits = unlockLogs.find((line) => line.startsWith(consumed))?.slice(consumed.length).split(' ')[0];
+        const [unlockUnits] = hookCompute(unlockLogs);
         info(`${unlockLogs.find((line) => line.startsWith(reason))!.slice('Program log: '.length)}; unlock took ${unlockUnits} CU`);
         const unlockedMint = await account(mint);
         const freed = unlockedMint && pipeline.decodeMint(mint, TOKEN_2022_PROGRAM_ADDRESS, unlockedMint.data);

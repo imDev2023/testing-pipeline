@@ -8,6 +8,11 @@
 //! `SetAuthority(TransferHookProgramId, None)`, and records the unlock time in the config,
 //! the one field `bind` leaves for it. Token-2022 calls no hook for the mint afterwards.
 //!
+//! Past the deadline the unlock does not need the counter: a market state that can no longer
+//! be read as the tax AMM's, after an upgrade changed it or the account was closed, leaves the
+//! goal unreached and the deadline still unlocks, because the deadline caps how long holders
+//! can be stuck when the home market stops working. Its address is always checked.
+//!
 //! A second `unlock` is refused because the config records the first, and would fail anyway
 //! because the mint has no hook authority left to sign.
 
@@ -50,13 +55,13 @@ pub fn process_unlock(ctx: Context<Unlock>) -> Result<()> {
         config.market_state,
         HookError::WrongMarketState
     );
-    require_keys_eq!(
-        *accounts.market_state.owner,
-        TAX_AMM_PROGRAM_ID,
-        HookError::NotATaxMarketState
-    );
-    let tax_collected = tax_market::tax_collected(&accounts.market_state.try_borrow_data()?)
-        .ok_or(HookError::NotATaxMarketState)?;
+    // The counter, unless the market state can no longer be read as the tax AMM's; past the
+    // deadline the unlock does not need it (docs/spec/containment-hook.md, "Unlock deadline").
+    let tax_collected = if *accounts.market_state.owner == TAX_AMM_PROGRAM_ID {
+        tax_market::tax_collected(&accounts.market_state.try_borrow_data()?)
+    } else {
+        None
+    };
 
     let now = Clock::get()?.unix_timestamp;
     let due = unlock_due(
@@ -64,12 +69,18 @@ pub fn process_unlock(ctx: Context<Unlock>) -> Result<()> {
         config.unlock_goal,
         now,
         config.unlock_deadline,
-    )
-    .ok_or(HookError::UnlockNotDue)?;
+    );
+    let Some(due) = due else {
+        // Before the deadline, an unreadable market state is the reason, not the goal.
+        return match tax_collected {
+            Some(_) => err!(HookError::UnlockNotDue),
+            None => err!(HookError::NotATaxMarketState),
+        };
+    };
     match due {
         DueBy::Goal => msg!(
             "Unlocked by the goal: {} of {} collected",
-            tax_collected,
+            tax_collected.unwrap_or_default(),
             config.unlock_goal
         ),
         DueBy::Deadline => msg!("Unlocked by the deadline {}", config.unlock_deadline),

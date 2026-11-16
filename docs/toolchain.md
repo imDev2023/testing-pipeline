@@ -236,20 +236,21 @@ The buy is one whole unit of the quote mint; before sending anything the script 
 It stops unless the seed lands in the vault and opens the market, each swap delivers its quote, Pipeline's fee on the sell, in the token, lands in the fee account, and both refusals come from the hook with `TransferRefused`.
 That passed on 2026-11-12 from a fresh validator, after the tax AMM's demo, in 12 seconds: the buy of 1,000,000,000 lamports delivered 25,056,506,296,415 of the token, the sell of 12,528,253,148,207 delivered 468,080,284 lamports with Pipeline's fee of 31,320,632,871 in the token, and the hook's `Execute` took 5,578 units on the buy and 5,602 and 5,603 on the sell.
 Since [unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70), it shows `unlock` refused in simulation with `UnlockNotDue` right after the seed, and `--unlock goal` or `--unlock deadline` makes it go on to unlock the token.
-By the goal, it buys with one whole unit of the quote mint and sells as much of the token back, round after round, until the home market's `tax_collected` reaches the goal, refusing up front a goal that would take more than 10 rounds; by the deadline, it waits for the cluster's clock, refusing up front a deadline more than 600 seconds away.
+By the goal, it buys with one whole unit of the quote mint and sells as much of the token back, round after round, until the home market's `tax_collected` reaches the goal, refusing up front a goal that would take more than 10 rounds.
+By the deadline, it waits for the cluster's clock, refusing up front a deadline less than 60 or more than 600 seconds away, or a goal the launch's own buy and sell could reach (80,000,000 with wrapped SOL).
 Then a fresh wallet the launcher funds with 0.002 SOL sends `unlock`, and the script stops unless the logs name what it waited for, the mint keeps its transfer hook extension with the program and the authority both unset, the config changed only by its unlock time, and a second `unlock` is refused in simulation with `AlreadyUnlocked`; a wallet-to-wallet `transfer_checked`, a buy and a sell, each without hook accounts, must then succeed without the hook running.
 
 ```sh
 pnpm launch --cluster localnet --launcher ~/.config/testing-pipeline/devnet/wallet.json \
   --goal 100000000 --deadline <a day away> --unlock goal
 pnpm launch --cluster localnet --launcher ~/.config/testing-pipeline/devnet/wallet.json \
-  --goal 5000000000 --deadline <a minute away> --unlock deadline
+  --goal 5000000000 --deadline <75 seconds away> --unlock deadline
 ```
 
-Both passed on 2026-11-16 from a fresh validator on other ports (`scripts/local-validator.sh fixtures/test-ledger-70 --rpc-port 8979 --faucet-port 9979 --gossip-port 8970 --dynamic-port-range 8401-8440`, the script given `--cluster http://127.0.0.1:8979`), after the tax AMM's demo.
-By the goal, in 14 seconds: one round after the launch's own two trades took the tax collected to 133,135,805 of the goal of 100,000,000, and `unlock` took 13,224 units.
-By the deadline, in 64 seconds, 60 of them waiting: with 54,635,805 of the goal of 5,000,000,000 collected, `unlock` took 12,871 units.
-The validator's own parser then showed each mint's `transferHook` with `authority` and `programId` both unset.
+Both passed on 2026-11-16 from a fresh validator on other ports (`scripts/local-validator.sh fixtures/test-ledger-70b --rpc-port 8979 --faucet-port 9979 --gossip-port 8970 --dynamic-port-range 8401-8440`, the script given `--cluster http://127.0.0.1:8979`), after the tax AMM's demo.
+By the goal, in 13 seconds: one round after the launch's own two trades took the tax collected to 133,135,805 of the goal of 100,000,000, and `unlock` took 13,225 units.
+By the deadline, in 80 seconds, most of them waiting: with 54,635,805 of the goal of 5,000,000,000 collected, `unlock` took 12,873 units.
+The validator's own parser (`getAccountInfo` with `jsonParsed`, at `confirmed`; `finalized` trails a fresh validator by about 30 slots) then showed each mint's `transferHook` with `authority` and `programId` both unset.
 
 ### CI
 

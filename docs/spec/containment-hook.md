@@ -99,6 +99,8 @@ This includes another market's vault: a buy can deliver into it, since the hook 
 - Due when either holds:
   - the home market's `tax_collected`, read from the tax AMM market state recorded at binding (owner and address checked), is at least the unlock goal;
   - the clock's Unix timestamp is at or past the unlock deadline.
+- Past the deadline the unlock does not need the market state: one that can no longer be read as the tax AMM's, after an upgrade changed it or the account was closed, counts as the goal not reached, and the deadline still unlocks, since it exists for a home market that stopped working (see "Unlock deadline").
+  Before the deadline such a market state is refused, and its address is always checked against the one recorded at binding.
 - Signed by the unlock PDA, it calls Token-2022's `TransferHookInstruction::Update` with no program id, then `SetAuthority(TransferHookProgramId, None)`, and records the unlock time in the config.
 - Both fields must be cleared: Meteora's DAMM v2 and DLMM accept a mint with the transfer hook extension permissionlessly only when the hook program and the hook authority are both unset.
 - It logs whether the goal or the deadline made it due (the goal when both hold), for Aviary's panel and indexers.
@@ -315,8 +317,8 @@ By [Containment hook: unlock by the goal or the deadline](https://github.com/imD
 
 | Unlock | `unlock` (CU), LiteSVM | `unlock` (CU), local validator |
 | --- | --- | --- |
-| By the goal | 13,211 | 13,224 |
-| By the deadline | 12,910 | 12,871 |
+| By the goal | 13,212 | 13,225 |
+| By the deadline | 12,912 | 12,873 |
 
 - Both are under the 30,000 ceiling; the cost does not move from mint to mint, since `unlock` uses the bumps the config stores, and differs between runs only by the length of the numbers it logs.
   `tests/compute.rs` asserts the ceiling, and the launch script prints the cost from the unlock's logs.

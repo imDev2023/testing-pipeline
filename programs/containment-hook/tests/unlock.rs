@@ -314,3 +314,52 @@ fn another_mints_config_or_unlock_pda_is_refused() {
         assert_eq!(config(&env, &mint).unlocked_at, None);
     }
 }
+
+/// A change to the market state account that leaves it unreadable as the tax AMM's.
+type Breakage = fn(&mut solana_account::Account);
+
+#[test]
+fn the_deadline_unlocks_even_when_the_market_state_can_no_longer_be_read() {
+    // docs/spec/containment-hook.md, "Unlock deadline": the deadline caps how long holders
+    // are stuck if the home market stops working, a bad tax AMM upgrade included, so past
+    // it the unlock must not depend on reading the market state. Only its address, the one
+    // recorded at binding, is still checked.
+    let at = tax_amm::state::layout::TAX_COLLECTED;
+    let breakages: [(&str, Breakage); 4] = [
+        ("owned by another program", |account| {
+            account.owner = pipeline_client::SYSTEM_PROGRAM_ID
+        }),
+        ("grown by an upgrade", |account| {
+            account.data.resize(account.data.len() + 64, 0)
+        }),
+        ("another discriminator", |account| account.data[0] ^= 1),
+        ("closed", |account| {
+            account.owner = pipeline_client::SYSTEM_PROGRAM_ID;
+            account.data.clear();
+        }),
+    ];
+    for (what, break_it) in breakages {
+        let mut env = hook_env();
+        let launched = launch_with_goal_of_one(&mut env);
+        let state = launched.market.market_state;
+        edit_account(&mut env, &state, |account| {
+            if account.data.len() >= at + 16 {
+                account.data[at..at + 16].copy_from_slice(&u128::MAX.to_le_bytes());
+            }
+            break_it(account);
+        });
+        // Before the deadline it is refused, since the goal cannot be read.
+        assert_hook_refused(unlock(&mut env, &launched), HookError::NotATaxMarketState);
+        let deadline = config(&env, &launched.mint).unlock_deadline;
+        warp_to(&mut env, deadline);
+        let meta = unlock(&mut env, &launched).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert!(
+            meta.logs
+                .iter()
+                .any(|line| line.contains("Unlocked by the deadline")),
+            "{what}: {:?}",
+            meta.logs
+        );
+        assert_hook_cleared(&env, &launched.mint);
+    }
+}
