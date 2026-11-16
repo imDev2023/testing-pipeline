@@ -120,15 +120,15 @@ fn its_config_and_errors_are_the_programs() {
     assert_eq!(account["name"], "Config");
     assert_eq!(bytes(&account["discriminator"]), Config::DISCRIMINATOR);
 
-    // Errors are numbered from 6000 in the enum's order, the last being `TaxSideNotQuote`.
+    // Errors are numbered from 6000 in the enum's order, the last being `WrongValidationAccount`.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "TaxSideNotQuote");
+    assert_eq!(last["name"], "WrongValidationAccount");
     assert_eq!(
         last["code"].as_u64().unwrap() as u32,
-        anchor_lang::error::ERROR_CODE_OFFSET + HookError::TaxSideNotQuote as u32
+        anchor_lang::error::ERROR_CODE_OFFSET + HookError::WrongValidationAccount as u32
     );
 }

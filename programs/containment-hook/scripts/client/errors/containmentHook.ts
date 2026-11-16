@@ -51,6 +51,12 @@ export const CONTAINMENT_HOOK_ERROR__WRONG_MARKET_STATE = 0x177f; // 6015
 export const CONTAINMENT_HOOK_ERROR__NOT_A_TAX_MARKET_STATE = 0x1780; // 6016
 /** TaxSideNotQuote: The home market's tax must be taken in the quote mint */
 export const CONTAINMENT_HOOK_ERROR__TAX_SIDE_NOT_QUOTE = 0x1781; // 6017
+/** NotTransferring: Execute runs only inside a Token-2022 transfer of this mint */
+export const CONTAINMENT_HOOK_ERROR__NOT_TRANSFERRING = 0x1782; // 6018
+/** WrongConfig: The config is not this mint's, at its address and owned by the hook */
+export const CONTAINMENT_HOOK_ERROR__WRONG_CONFIG = 0x1783; // 6019
+/** WrongValidationAccount: The validation account is not this mint's, at its address and owned by the hook */
+export const CONTAINMENT_HOOK_ERROR__WRONG_VALIDATION_ACCOUNT = 0x1784; // 6020
 
 export type ContainmentHookError =
   | typeof CONTAINMENT_HOOK_ERROR__DEADLINE_NOT_IN_FUTURE
@@ -65,11 +71,14 @@ export type ContainmentHookError =
   | typeof CONTAINMENT_HOOK_ERROR__NOT_A_TAX_MARKET
   | typeof CONTAINMENT_HOOK_ERROR__NOT_A_TAX_MARKET_STATE
   | typeof CONTAINMENT_HOOK_ERROR__NOT_MINT_AUTHORITY
+  | typeof CONTAINMENT_HOOK_ERROR__NOT_TRANSFERRING
   | typeof CONTAINMENT_HOOK_ERROR__TAX_SIDE_NOT_QUOTE
   | typeof CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED
+  | typeof CONTAINMENT_HOOK_ERROR__WRONG_CONFIG
   | typeof CONTAINMENT_HOOK_ERROR__WRONG_HOOK_AUTHORITY
   | typeof CONTAINMENT_HOOK_ERROR__WRONG_HOOK_PROGRAM
   | typeof CONTAINMENT_HOOK_ERROR__WRONG_MARKET_STATE
+  | typeof CONTAINMENT_HOOK_ERROR__WRONG_VALIDATION_ACCOUNT
   | typeof CONTAINMENT_HOOK_ERROR__ZERO_GOAL;
 
 let containmentHookErrorMessages:
@@ -88,11 +97,14 @@ if (process.env["NODE_ENV"] !== "production") {
     [CONTAINMENT_HOOK_ERROR__NOT_A_TAX_MARKET]: `The home market must run on the tax AMM`,
     [CONTAINMENT_HOOK_ERROR__NOT_A_TAX_MARKET_STATE]: `The market state is not a tax AMM market state`,
     [CONTAINMENT_HOOK_ERROR__NOT_MINT_AUTHORITY]: `The signer is not the mint's mint authority`,
+    [CONTAINMENT_HOOK_ERROR__NOT_TRANSFERRING]: `Execute runs only inside a Token-2022 transfer of this mint`,
     [CONTAINMENT_HOOK_ERROR__TAX_SIDE_NOT_QUOTE]: `The home market's tax must be taken in the quote mint`,
     [CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED]: `A contained token can't be transferred there`,
+    [CONTAINMENT_HOOK_ERROR__WRONG_CONFIG]: `The config is not this mint's, at its address and owned by the hook`,
     [CONTAINMENT_HOOK_ERROR__WRONG_HOOK_AUTHORITY]: `The mint's transfer hook authority is not its unlock PDA`,
     [CONTAINMENT_HOOK_ERROR__WRONG_HOOK_PROGRAM]: `The mint's transfer hook program is not this program`,
     [CONTAINMENT_HOOK_ERROR__WRONG_MARKET_STATE]: `The market state is not the one the Market records`,
+    [CONTAINMENT_HOOK_ERROR__WRONG_VALIDATION_ACCOUNT]: `The validation account is not this mint's, at its address and owned by the hook`,
     [CONTAINMENT_HOOK_ERROR__ZERO_GOAL]: `The unlock goal must be above zero`,
   };
 }
