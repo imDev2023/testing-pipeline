@@ -11,12 +11,22 @@
 //      and `bind` with the goal and the deadline, in the same transaction when it fits
 //      (measured each run), otherwise in the next one;
 //   5. check the mint, and read back from the config exactly the market, market state,
-//      vault, fee account, quote mint, goal and deadline expected.
+//      vault, fee account, quote mint, goal and deadline expected;
+//   6. seed the market through the metadata's `seed` action, single-sided on its virtual
+//      quote reserve, with the hook accounts after the action's own;
+//   7. buy the token through the router with the SDK, the hook accounts after the strategy's
+//      accounts, and stop unless the buy delivered its quote;
+//   8. sell some of it back the same way, the hook accounts as the router's input hook
+//      accounts, and stop unless it delivered its quote and Pipeline's fee, in the token,
+//      went into the market's fee account;
+//   9. show, in simulation, the hook refusing a wallet-to-wallet `transfer_checked` and a sell
+//      that carries an integrator fee above zero.
 //
-// Seeding the market arrives with the tax AMM's seed; it comes after `bind`, which nothing
-// can move the token before. Revoking the mint authority, an optional last step, must come
-// after `bind` too. Deploy both programs and register the tax AMM first; docs/toolchain.md
-// says how, on a local validator and on devnet.
+// The hook accounts (the config, the hook program and the validation account) are resolved
+// from the validation account with Token-2022's own client, `resolveExtraAccountMetasForExecute`
+// from @solana-program/token-2022, because neither Pipeline client resolves them. Revoking the mint authority, an optional last step, must come after `bind`. Deploy
+// both programs and register the tax AMM first; docs/toolchain.md says how, on a local
+// validator and on devnet.
 //
 // Usage, from this directory after `pnpm install` (docs/toolchain.md, "Containment hook"):
 //
@@ -26,8 +36,8 @@
 //
 //   --cluster     localnet (http://127.0.0.1:8899), devnet, or an RPC URL of either; the
 //                 cluster's genesis hash must be devnet's, or the URL a local validator's
-//   --launcher    pays for everything, is the mint authority, signs `bind`, and is the
-//                 market's seeder, tax authority and tax recipient
+//   --launcher    pays for everything, is the mint authority, signs `bind`, is the market's
+//                 seeder, tax authority and tax recipient, and makes the buy and the sell
 //   --goal        the unlock goal: tax the home market must collect, in quote-mint base
 //                 units (lamports for wrapped SOL); required, no default
 //   --deadline    the unlock deadline; required, no default; the hook refuses one that is
@@ -62,22 +72,27 @@ import {
     setTransactionMessageFeePayerSigner,
     setTransactionMessageLifetimeUsingBlockhash,
     signTransactionMessageWithSigners,
+    type AccountMeta,
     type Address,
     type Instruction,
     type KeyPairSigner,
     type Signature,
 } from '@solana/kit';
-import { getCreateAccountInstruction } from '@solana-program/system';
+import { getCreateAccountInstruction, getTransferSolInstruction } from '@solana-program/system';
 import {
     findAssociatedTokenPda,
     getCreateAssociatedTokenIdempotentInstructionAsync,
     getInitializeMint2Instruction,
     getMintToInstruction,
+    getSyncNativeInstruction,
+    getTransferCheckedInstruction,
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
+import { resolveExtraAccountMetasForExecute } from '@solana-program/token-2022';
 import * as pipeline from '@pipeline-placeholder/sdk';
 
 import {
+    CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED,
     CONTAINMENT_HOOK_PROGRAM_ADDRESS,
     fetchConfig,
     findConfigPda,
@@ -86,7 +101,7 @@ import {
     getBindInstructionAsync,
     MAX_UNLOCK_DEADLINE_SECS,
 } from './client/index.ts';
-import { findVault0Pda, findVault1Pda, TAX_AMM_PROGRAM_ADDRESS } from '../../tax-amm/scripts/client/index.ts';
+import { fetchTaxMarket, findAuthorityPda, findVault0Pda, findVault1Pda, MarketStatus, TAX_AMM_PROGRAM_ADDRESS } from '../../tax-amm/scripts/client/index.ts';
 
 const TOKEN_2022_PROGRAM_ADDRESS = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
 const WRAPPED_SOL = address('So11111111111111111111111111111111111111112');
@@ -109,7 +124,16 @@ const HOME_MARKET = {
     burnShareBps: 0,
     // Prices the token against a virtual quote reserve until real quote liquidity arrives.
     virtualReserve: 30_000_000_000n,
+    // The seed: this much of the token, and no quote mint, which the virtual reserve prices.
+    seed: [800_000_000_000_000n, 0n],
 } as const;
+// The trades the launch makes after the seed: a buy spending this many whole units of the
+// quote mint (1 SOL with wrapped SOL), then a sell of half of what it bought; and the
+// integrator fee of the sell the hook refuses.
+const TRADES = { buyUnits: 1n, integratorFeeBps: 50 } as const;
+// What the launch's rents and fees may cost beyond the market's setup and the buy, which the
+// launcher must hold before anything is sent, so a launch never stops halfway for want of SOL.
+const RENT_AND_FEES = 200_000_000n;
 const CONTAINED_INDEX = 0;
 const QUOTE_INDEX = 1;
 // The most SOL the tax AMM's setup may spend on rent; the router returns the rest.
@@ -316,6 +340,126 @@ function initializeTransferHook(mint: Address, authority: Address, program: Addr
     };
 }
 
+const show = (value: unknown) => JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
+
+/** A token account's balance. */
+async function tokenBalance(account: Address): Promise<bigint> {
+    const { value } = await rpc.getTokenAccountBalance(account, { commitment: 'confirmed' }).send();
+    return BigInt(value.amount);
+}
+
+type HookAccountsFor = (source: Address, destination: Address, authority: Address) => Promise<AccountMeta[]>;
+
+/**
+ * The router's `swap` of `amount` of mint `input` for mint `output` by `trader`, built with
+ * the SDK as a terminal builds it, with the contained token's hook accounts: after the
+ * strategy's accounts when it is the output, which the tax AMM moves out of its vault, and as
+ * the router's input hook accounts when it is the input, which the router moves into the
+ * vault and, for its fee, into the fee account. Quoted at `confirmed`, the commitment the
+ * launch confirms at.
+ */
+async function swapInstruction(
+    trader: KeyPairSigner,
+    view: pipeline.MarketView,
+    input: number,
+    output: number,
+    amount: bigint,
+    tokenHolder: Address,
+    quoteHolder: Address,
+    hookAccounts: HookAccountsFor,
+    options: { integratorFeeAccount?: Address; integratorFeeBps?: number; minAmountOut?: bigint } = {},
+) {
+    const holders = input === CONTAINED_INDEX ? [tokenHolder, quoteHolder] : [quoteHolder, tokenHolder];
+    const [traderInput, traderOutput] = holders as [Address, Address];
+    const request = { mode: pipeline.TradeMode.ExactIn, inputIndex: input, outputIndex: output, amount, trader: trader.address, extra: new Uint8Array() };
+    const simulation = { commitment: 'confirmed' } as const;
+    const strategyAccounts = await pipeline.resolveAccounts(rpc, view, request, trader.address, simulation);
+    const { quote } = await pipeline.quoteStrategy(rpc, view, request, strategyAccounts, trader.address, simulation);
+    const buying = output === CONTAINED_INDEX;
+    // On a buy the tax AMM pays out of its vault, signed by its vault authority.
+    const tail = buying
+        ? await hookAccounts(view.vaults[output]!, traderOutput, (await findAuthorityPda({ marketState: view.marketState }))[0])
+        : await hookAccounts(traderInput, view.vaults[input]!, trader.address);
+    const instruction = await pipeline.swap(
+        {
+            trader: trader.address,
+            strategyProgram: view.strategyProgram,
+            marketState: view.marketState,
+            traderInput,
+            traderOutput,
+            inputVault: view.vaults[input]!,
+            inputMint: view.mints[input]!,
+            outputMint: view.mints[output]!,
+            inputTokenProgram: view.tokenPrograms[input]!,
+            outputTokenProgram: view.tokenPrograms[output]!,
+            integratorFeeAccount: options.integratorFeeAccount ?? null,
+            strategyAccounts: buying ? [...strategyAccounts, ...tail] : strategyAccounts,
+            inputHookAccounts: buying ? [] : tail,
+        },
+        {
+            mode: pipeline.TradeMode.ExactIn,
+            amountIn: amount,
+            amountOut: 0n,
+            minAmountOut: options.minAmountOut ?? quote.amountOut,
+            integratorFeeBps: options.integratorFeeBps ?? 0,
+            extra: new Uint8Array(),
+        },
+    );
+    return { instruction, quote, traderOutput };
+}
+
+/**
+ * Swaps through the router with [`swapInstruction`], and stops unless the swap delivered its
+ * quote; returns what it delivered, Pipeline's fee and what the hook's `Execute` cost on each
+ * hooked transfer, from the transaction's logs.
+ */
+async function trade(
+    trader: KeyPairSigner,
+    view: pipeline.MarketView,
+    input: number,
+    output: number,
+    amount: bigint,
+    tokenHolder: Address,
+    quoteHolder: Address,
+    hookAccounts: HookAccountsFor,
+) {
+    const label = `swap ${amount} of ${input === CONTAINED_INDEX ? 'the token' : 'the quote mint'} for ${output === CONTAINED_INDEX ? 'the token' : 'the quote mint'}`;
+    const { instruction, quote, traderOutput } = await swapInstruction(trader, view, input, output, amount, tokenHolder, quoteHolder, hookAccounts);
+    info(`${label}: quoted ${quote.amountOut}`);
+    const before = await tokenBalance(traderOutput);
+    const signature = await send(label, trader, [instruction]);
+    const received = (await tokenBalance(traderOutput)) - before;
+    const tx = await rpc
+        .getTransaction(signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
+        .send();
+    if (!tx?.meta?.innerInstructions) fail(`transaction ${signature} not found`);
+    const keys = [...tx.transaction.message.accountKeys, ...(tx.meta.loadedAddresses?.writable ?? []), ...(tx.meta.loadedAddresses?.readonly ?? [])];
+    const event = pipeline.extractEventsFromInnerInstructions(keys, tx.meta.innerInstructions).find((candidate) => candidate.type === 'Swap');
+    if (!event || event.type !== 'Swap') fail(`transaction ${signature} has no swap event`);
+    if (received !== quote.amountOut || event.data.received !== quote.amountOut) {
+        fail(`${label}: received ${received} (event: ${event.data.received}), quoted ${quote.amountOut}`);
+    }
+    const consumed = `Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} consumed `;
+    const hookUnits = (tx.meta.logMessages ?? []).filter((line) => line.startsWith(consumed)).map((line) => Number(line.slice(consumed.length).split(' ')[0]));
+    const expected = output === CONTAINED_INDEX ? 1 : 2;
+    if (hookUnits.length !== expected) fail(`${label}: the hook ran ${hookUnits.length} times, not ${expected}`);
+    info(`${label}: received exactly the quote, Pipeline's fee ${event.data.pipelineFee}; the hook's Execute took ${hookUnits.join(' and ')} CU`);
+    return { received, pipelineFee: event.data.pipelineFee, hookUnits };
+}
+
+/** Simulates `instruction` and stops unless the hook refuses it with `TransferRefused`. */
+async function expectRefused(label: string, feePayer: KeyPairSigner, instruction: Instruction) {
+    const signed = await signTransactionMessageWithSigners(message(feePayer, [instruction], [], await latestBlockhash()));
+    const { value } = await rpc
+        .simulateTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64', commitment: 'confirmed' })
+        .send();
+    const logs = value.logs ?? [];
+    const refusal = `Error Code: TransferRefused. Error Number: ${CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED}.`;
+    const byTheHook = logs.some((line) => line.includes(refusal)) && logs.some((line) => line.startsWith(`Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} failed`));
+    if (!value.err || !byTheHook) fail(`${label} was not refused by the hook: ${show(value.err)}\n${logs.join('\n')}`);
+    info(`${label}: refused by the hook with TransferRefused (${CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED})`);
+}
+
 async function main() {
     const launcher = await loadKey(launcherPath);
     const hookProgram = CONTAINMENT_HOOK_PROGRAM_ADDRESS;
@@ -342,6 +486,22 @@ async function main() {
     info('the tax AMM is registered with the router');
     const quote = await account(quoteMint);
     if (quote?.owner !== TOKEN_PROGRAM_ADDRESS) fail(`the quote mint ${quoteMint} is not an SPL Token mint on this cluster`);
+    // The buy is sized in whole units of the quote mint; a mint's decimals are its byte 44.
+    const buy = TRADES.buyUnits * 10n ** BigInt(quote.data[44]!);
+    const buySpend = pipeline.maxTotalSpend(buy, 0) ?? fail('the buy overflows');
+    const [quoteHolder] = await findAssociatedTokenPda({ owner: launcher.address, mint: quoteMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+    // Everything the launch spends is checked before it sends anything: the binding and the
+    // seed cannot be undone, so a launch that ran out halfway would leave a market untraded.
+    let solNeeded = MAX_CREATOR_LAMPORTS + RENT_AND_FEES;
+    if (quoteMint === WRAPPED_SOL) {
+        solNeeded += buySpend;
+    } else {
+        const held = (await account(quoteHolder)) ? await tokenBalance(quoteHolder) : 0n;
+        if (held < buySpend) fail(`the launcher's ${quoteMint} account ${quoteHolder} holds ${held}, but the buy needs ${buySpend} with Pipeline's fee`);
+    }
+    const { value: solHeld } = await rpc.getBalance(launcher.address, { commitment: 'confirmed' }).send();
+    if (solHeld < solNeeded) fail(`the launcher holds ${Number(solHeld) / 1e9} SOL, but the launch needs ${Number(solNeeded) / 1e9}`);
+    info(`the launcher holds ${Number(solHeld) / 1e9} SOL of the ${Number(solNeeded) / 1e9} the launch needs`);
     const metadata = pipeline.parseStrategyMetadata(
         JSON.parse(readFileSync(new URL('../../tax-amm/metadata.json', import.meta.url), 'utf8')),
     );
@@ -555,6 +715,90 @@ async function main() {
     if (bound.unlockedAt.__option !== 'None') fail('the config says the token is already unlocked');
     info(`bound at ${new Date(Number(bound.boundAt) * 1000).toISOString()}; not unlocked`);
     record.push(['config read back', 'market, market state, vault, fee account, quote mint, goal and deadline as expected']);
+
+    // Every hooked transfer of the token from here on carries the hook accounts, resolved
+    // from the validation account just read.
+    const hookAccounts: HookAccountsFor = (source, destination, owner) =>
+        resolveExtraAccountMetasForExecute({ rpc, transferHookProgramAddress: hookProgram, source, mint, destination, owner, amount: 0n });
+    const view: pipeline.MarketView = {
+        market,
+        strategyProgram: taxAmm,
+        marketState,
+        mints: mints.map(({ mint }) => mint),
+        vaults,
+        tokenPrograms: mints.map(({ tokenProgram }) => tokenProgram),
+        supportsExactOut: false,
+    };
+
+    step("6. Seeding the home market through the metadata's seed action, with the hook accounts");
+    const seedAction = metadata.value.actions?.find((action) => action.name === 'seed') ?? fail('metadata.json has no seed action');
+    const seed = await pipeline.buildActionInstruction({
+        action: seedAction,
+        market: view,
+        wallet: launcher.address,
+        args: { amount_0: HOME_MARKET.seed[0], amount_1: HOME_MARKET.seed[1] },
+    });
+    const seedTail = await hookAccounts(holder, vaults[CONTAINED_INDEX]!, launcher.address);
+    await send('seed', launcher, [{ ...seed, accounts: [...(seed.accounts ?? []), ...seedTail] }]);
+    const { data: seeded } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
+    if (seeded.status !== MarketStatus.Open || show(seeded.reserves) !== show(HOME_MARKET.seed)) {
+        fail(`the market state's status is ${seeded.status} and its reserves ${show(seeded.reserves)} after the seed`);
+    }
+    if ((await tokenBalance(vaults[CONTAINED_INDEX]!)) !== HOME_MARKET.seed[CONTAINED_INDEX]) fail("the token's vault does not hold the seed");
+    info(`the token's vault holds the seed, ${HOME_MARKET.seed[CONTAINED_INDEX]}, and the market is open`);
+    info(`hook accounts: ${seedTail.map((meta) => meta.address).join(', ')}`);
+    record.push(['seeded', `${HOME_MARKET.seed[CONTAINED_INDEX]} of the token into its vault, through the hook`]);
+
+    step('7. Buying the token through the router with the SDK');
+    if (quoteMint === WRAPPED_SOL) {
+        // Wrap the buy and Pipeline's fee on it.
+        const wrap = buySpend;
+        await send(`wrap ${Number(wrap) / 1e9} SOL`, launcher, [
+            await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: launcher.address, mint: WRAPPED_SOL }),
+            getTransferSolInstruction({ source: launcher, destination: quoteHolder, amount: wrap }),
+            getSyncNativeInstruction({ account: quoteHolder }),
+        ]);
+    }
+    const bought = await trade(launcher, view, QUOTE_INDEX, CONTAINED_INDEX, buy, holder, quoteHolder, hookAccounts);
+    record.push(['buy', `${buy} of the quote mint bought ${bought.received} of the token, its quote; Execute ${bought.hookUnits.join(' and ')} CU`]);
+
+    step('8. Selling half of it back the same way');
+    const feeBefore = await tokenBalance(feeAccounts[CONTAINED_INDEX]!);
+    const sold = await trade(launcher, view, CONTAINED_INDEX, QUOTE_INDEX, bought.received / 2n, holder, quoteHolder, hookAccounts);
+    const feeAfter = await tokenBalance(feeAccounts[CONTAINED_INDEX]!);
+    if (sold.pipelineFee === 0n || feeAfter - feeBefore !== sold.pipelineFee) {
+        fail(`the fee account grew by ${feeAfter - feeBefore}, but the sell paid Pipeline ${sold.pipelineFee}`);
+    }
+    info(`Pipeline's fee of ${sold.pipelineFee}, in the token, went into the fee account through the hook`);
+    record.push(['sell', `${bought.received / 2n} of the token sold for ${sold.received}, its quote; fee ${sold.pipelineFee} into the fee account; Execute ${sold.hookUnits.join(' and ')} CU`]);
+
+    step('9. Showing the hook refusing what containment refuses, in simulation');
+    const stranger = (await generateKeyPairSigner()).address;
+    const [strangerAccount] = await findAssociatedTokenPda({ owner: stranger, mint, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS });
+    await send("create another wallet's token account", launcher, [
+        await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: stranger, mint, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS }),
+    ]);
+    const walletToWallet = getTransferCheckedInstruction(
+        { source: holder, mint, destination: strangerAccount, authority: launcher, amount: 1_000_000n, decimals: TOKEN.decimals },
+        { programAddress: TOKEN_2022_PROGRAM_ADDRESS },
+    );
+    const transferTail = await hookAccounts(holder, strangerAccount, launcher.address);
+    await expectRefused('a wallet-to-wallet transfer_checked', launcher, {
+        ...walletToWallet,
+        accounts: [...walletToWallet.accounts, ...transferTail],
+    });
+    const integrator = (await generateKeyPairSigner()).address;
+    const [integratorAccount] = await findAssociatedTokenPda({ owner: integrator, mint, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS });
+    await send("create an integrator's token account", launcher, [
+        await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: integrator, mint, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS }),
+    ]);
+    const sellWithFee = await swapInstruction(launcher, view, CONTAINED_INDEX, QUOTE_INDEX, bought.received / 4n, holder, quoteHolder, hookAccounts, {
+        integratorFeeAccount: integratorAccount,
+        integratorFeeBps: TRADES.integratorFeeBps,
+        minAmountOut: 0n,
+    });
+    await expectRefused(`a sell with an integrator fee of ${TRADES.integratorFeeBps} basis points`, launcher, sellWithFee.instruction);
+    record.push(['refused by the hook', 'a wallet-to-wallet transfer_checked, and a sell with an integrator fee above zero']);
 
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));
