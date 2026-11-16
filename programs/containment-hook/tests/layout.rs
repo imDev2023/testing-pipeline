@@ -6,13 +6,13 @@
 //!   (`tax-amm/tests/layout.rs`): the tax side the hook reads is the one the tax AMM wrote;
 //! - the router's `Market`, against `pipeline-client`'s decoder, on markets the real router
 //!   created;
-//! - a Token-2022 mint, against Token-2022's own state code.
+//! - a Token-2022 mint and a Token-2022 token account, against Token-2022's own state code.
 
 mod support;
 
 use anchor_lang::prelude::Pubkey as AnchorKey;
 use anchor_lang::{AccountSerialize, Discriminator};
-use containment_hook::{mint, router, tax_market};
+use containment_hook::{mint, router, tax_market, token_account};
 use pipeline_client::Pubkey;
 use support::*;
 use tax_amm::state::{layout, MarketStatus, RESERVED_LEN};
@@ -185,4 +185,36 @@ fn the_hook_reads_mints_as_token_2022_lays_them_out() {
     let hook = mint::read_mint(&data).unwrap().transfer_hook.unwrap();
     assert_eq!(hook.program, Some(hook_id().to_bytes()));
     assert_eq!(hook.authority, Some(unlock_pda(&contained).to_bytes()));
+}
+
+#[test]
+fn the_hook_reads_the_transferring_flag_as_token_2022_lays_it_out() {
+    use spl_token_2022_interface::extension::{
+        transfer_hook::TransferHookAccount, BaseStateWithExtensionsMut, StateWithExtensionsMut,
+    };
+    use spl_token_2022_interface::state::Account;
+
+    let mut env = hook_env();
+    let contained = contained_mint(&mut env);
+    let other = contained_mint(&mut env);
+    let owner = Pubkey::new_unique();
+    let address = token_2022_account(&mut env, &owner, &contained);
+    let second = second_token_account(&mut env, &owner, &contained);
+    for address in [address, second] {
+        let mut data = env.svm.get_account(&address).unwrap().data;
+        let ours =
+            |data: &[u8], mint: &Pubkey| token_account::is_mid_transfer_data(data, &ak(mint));
+        assert!(!ours(&data, &contained), "an account at rest");
+        // Token-2022's own code sets the flag, as it does for the length of a transfer.
+        StateWithExtensionsMut::<Account>::unpack(&mut data)
+            .unwrap()
+            .get_extension_mut::<TransferHookAccount>()
+            .unwrap()
+            .transferring = true.into();
+        assert!(ours(&data, &contained), "an account mid-transfer");
+        assert!(!ours(&data, &other), "another mint's");
+        // A mint's bytes are never a token account's, whatever follows its account type.
+        let mint = env.svm.get_account(&contained).unwrap().data;
+        assert!(!ours(&mint, &contained));
+    }
 }
