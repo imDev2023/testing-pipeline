@@ -22,21 +22,43 @@ mod ceilings {
     pub const PIPELINE_RESOLVE_ACCOUNTS: u64 = 40_000;
     pub const PIPELINE_INIT_MARKET: u64 = 150_000;
     pub const ADD_LIQUIDITY: u64 = 60_000;
+    pub const REBALANCE: u64 = 100_000;
 }
 
 /// Solana's limit on a serialized transaction, in bytes.
 const PACKET_DATA_SIZE: usize = 1_232;
 
+/// A fixed secret key for the account a test names `label`.
+///
+/// A program's cost moves by 1,500 compute units for every bump a PDA search tries, and the
+/// LP's shares account (from the LP's key) and a hooked mint's validation account (from the
+/// mint's key) are both searched for in `add_liquidity`: with random keys the hooked first
+/// deposit measured from 39,135 to 55,635 units over 300 runs on 2026-11-16, and once 67,138
+/// in CI. Fixed keys make each measurement the same on every run; these labels give keys whose
+/// costs sit at those runs' medians.
+fn fixed_key(label: &str) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    for (i, byte) in label.bytes().enumerate() {
+        key[i % 32] = key[i % 32].wrapping_mul(31).wrapping_add(byte);
+    }
+    key
+}
+
 /// Funded WSOL-lent markets holding cTokens, whose other side is plain SPL Token, plain
-/// Token-2022 and a Token-2022 mint with Pipeline's test-hook.
+/// Token-2022 and a Token-2022 mint with Pipeline's test-hook, each at a fixed address and
+/// funded by an LP with a fixed key, so their costs are the same on every run.
 fn markets() -> Vec<(&'static str, Env, Market, solana_keypair::Keypair)> {
     let mut out = vec![];
     for name in ["SPL Token", "Token-2022", "hooked Token-2022"] {
         let mut env = Env::new();
+        let options = MintOptions {
+            key: Some(fixed_key(&format!("the mint on {name}"))),
+            ..MintOptions::default()
+        };
         let (mint, token_program) = match name {
-            "SPL Token" => (env.create_mint(&TOKEN), TOKEN),
-            "Token-2022" => (env.create_mint(&TOKEN_2022), TOKEN_2022),
-            _ => (env.create_hooked_mint().0, TOKEN_2022),
+            "SPL Token" => (env.create_mint_with(&TOKEN, options), TOKEN),
+            "Token-2022" => (env.create_mint_with(&TOKEN_2022, options), TOKEN_2022),
+            _ => (env.create_hooked_mint_with(options).0, TOKEN_2022),
         };
         let spec = MarketSpec {
             mints: [(mint, token_program), (wsol(), TOKEN)],
@@ -45,8 +67,9 @@ fn markets() -> Vec<(&'static str, Env, Market, solana_keypair::Keypair)> {
                 lp_fee_bps: 30,
             },
         };
+        let lp = solana_keypair::Keypair::new_from_array(fixed_key(&format!("an LP on {name}")));
         let (market, lp) = env
-            .create_funded_market(&spec, [1_000_000_000_000, 50 * SOL])
+            .create_funded_market_by(&spec, [1_000_000_000_000, 50 * SOL], lp)
             .unwrap();
         // cTokens worth about 150 SOL, as if rebalance had lent three quarters of the lent
         // side: valuing them is the dearest part of reading the reserve.
@@ -197,6 +220,40 @@ fn quotes_account_resolution_and_swaps_stay_under_their_ceilings() {
     }
 }
 
+/// What klend's own invocation consumed, from a transaction's logs.
+fn klend_compute(logs: &[String]) -> u64 {
+    let prefix = format!("Program {} consumed ", common::kamino::klend());
+    logs.iter()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .map(|rest| rest.split(' ').next().unwrap().parse().unwrap())
+        .expect("klend ran")
+}
+
+#[test]
+fn rebalance_stays_under_its_ceiling_depositing_and_redeeming() {
+    use common::rebalance::{lent_spec, units, OTHER};
+    for lent in 0..lending_amm::config::LENT_MINTS.len() {
+        let name = common::kamino::lent_name(lent);
+        // Depositing: a market whose whole lent side is in its buffer.
+        let mut env = Env::new();
+        let spec = lent_spec(&mut env, lent, 30);
+        let (market, _) = env
+            .create_funded_market(&spec, [OTHER, units(lent, 50)])
+            .unwrap();
+        let logs = env.rebalance(&market, None).unwrap().logs;
+        let (deposit, klend_deposit) = (strategy_compute(&logs)[0], klend_compute(&logs));
+        // Redeeming: a market whose buffer a swap has drained below the band.
+        let market = env.market_below_the_band(lent);
+        let logs = env.rebalance(&market, None).unwrap().logs;
+        let (redeem, klend_redeem) = (strategy_compute(&logs)[0], klend_compute(&logs));
+        println!(
+            "rebalance on {name}: depositing {deposit} CU (klend {klend_deposit}), redeeming {redeem} CU (klend {klend_redeem})"
+        );
+        assert!(deposit <= ceilings::REBALANCE, "{name}: {deposit}");
+        assert!(redeem <= ceilings::REBALANCE, "{name}: {redeem}");
+    }
+}
+
 #[test]
 fn the_table_mirrors_the_spec() {
     let spec = std::fs::read_to_string(
@@ -222,6 +279,7 @@ fn the_table_mirrors_the_spec() {
     row("`pipeline_resolve_accounts`", PIPELINE_RESOLVE_ACCOUNTS);
     row("`pipeline_init_market`", PIPELINE_INIT_MARKET);
     row("`add_liquidity`", ADD_LIQUIDITY);
+    row("`rebalance`", REBALANCE);
     let _ = Pubkey::default();
 }
 

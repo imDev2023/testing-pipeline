@@ -211,6 +211,14 @@ For a trade from side `i` to side `o`, with effective reserves `E` (`R` for the 
 - The market state also keeps running totals of the liquidity it has deposited into Kamino and redeemed from it, in swaps and removals as well, so its lending yield so far is `V + redeemed - deposited`.
 - With 20% held back, a sell that drops the price by about a third is paid from the buffer alone.
 
+How it is built ([Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80), 2026-11-16):
+
+- The target is `t = floor(L x BUFFER_TARGET_BPS / 10,000)`, and the band is compared exactly in 128-bit integers, `B x 10,000` against `L x BUFFER_MIN_BPS` and `L x BUFFER_MAX_BPS`, with both edges inside it; so above the band it deposits `B - t` and below it redeems `min(t - B, what Kamino can pay right now)`.
+- A move below the lent mint's `MIN_REBALANCE`, and a redeem Kamino can pay nothing of, fail with `BelowMinRebalance` and change nothing, as inside the band they fail with `WithinBand`, so a keeper's simulation shows either and nobody pays for a no-op.
+- A redeem burns as many cTokens as are worth at most the shortfall at the stored rate, `floor(s x S_ctoken / S_total)`, or every cToken the market holds once the shortfall reaches their whole value, so at the stored rate the buffer never passes its target and lands less than one cToken's worth short of it.
+- klend rounds both calls its own way: a deposit mints `floor(d x S_ctoken / S_total)` cTokens and takes back what they are worth rounded up, and a redeem pays at the rate it refreshes to; so a `rebalance` may lower the lent side's total by one unit, and no more, which is the only way it can move the price or an LP share's value.
+- `rebalance` checks every account it passes to klend before calling it (see "Custom actions and metadata"), and a call klend refuses fails whole until [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83).
+
 ### Withdraw mode
 
 - `rebalance` checks Kamino's freely available liquidity against `X = max(V, T)`: the larger of the market's lent value `V` and its target lent value `T = L x (10,000 - BUFFER_TARGET_BPS) / 10,000`, what it would lend with the buffer at its target.
@@ -307,6 +315,8 @@ Locked shares still count in `N` and still earn the LP fee and the yield, which 
 - A `pda:` source lists its seeds in a fixed order and metadata arguments have no default values (the schema at `5ad130d`), so the `init` form takes the two mints as named inputs in the order of the market state's seeds, the other mint and then the lent mint, and that order makes `lent_index` 1; the form's label for `lent_index` says so, and Aviary's own form fills it in.
   A caller that builds `create_market` itself, and a launchpad seeding a market, may give the mints in either order.
 - The `add_liquidity` action takes the lent mint's reserve the same way, as the named input `reserve` after its other accounts, since adding values the lent side from it; the program refuses any reserve but the one `LENT_MINTS` names, and Aviary's form fills it in ([Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79), 2026-11-12).
+- The `rebalance` action takes the lent mint's Kamino accounts as named inputs, `lent_mint`, `reserve`, `lending_market`, `reserve_liquidity_supply` and `collateral_mint`, and the lending market authority as klend's PDA `["lma", lending_market]`; its caller is a read-only signer, and Aviary's form and the keeper fill the inputs in ([Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80), 2026-11-16).
+  The program checks each before calling klend, each failure with `KaminoAccountWrong` unless the reserve check or the lending market check names it: klend's id, SPL Token, the instructions sysvar, the lent mint and the collateral mint against the lent mint's `LENT_MINTS` entry, the reserve as for every read, the liquidity supply against the reserve's own (offset 160), the lending market, and its authority against the PDA from the bump the lending market stores (offset 16); the buffer vault and the cToken account must be the market's own.
 - The `init` form also takes the lent mint's collateral mint as a named input, because a market creates its cToken account at creation and metadata has no source for a value that depends on which mint is lent; the program refuses any collateral mint but the one `LENT_MINTS` names, and Aviary's form fills it in ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78), 2026-11-12).
 
 ## Aviary's panel
@@ -339,6 +349,7 @@ What `docs/spec/README.md` asks each product's file to add.
 Asserted per instruction in test layer 5; the build ticket measures each one and may lower it, and raising one needs a written reason here.
 The tests measure each on plain SPL Token and Token-2022 mints and on a mint with Pipeline's `test-hook`; on 2026-11-12 the highest were `pipeline_init_market` 65k, `add_liquidity` 45k (a first deposit that creates the LP's shares account, with the hook), `pipeline_swap` 24k (paying out the hooked token), and `pipeline_quote` and `pipeline_resolve_accounts` 6k ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78)).
 With the reserve checked and read, on markets holding cTokens, they were `pipeline_quote` 8.5k, `pipeline_swap` 28.2k (paying out the hooked token), `pipeline_resolve_accounts` 6.2k and `add_liquidity` 43.1k, and the one-transaction creation 1,198 of the 1,232 bytes a transaction may hold ([Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)).
+`rebalance` measured at most 69.2k depositing and 56.5k redeeming on both builds, of which klend's own deposit took up to 54.3k and its redeem up to 31.4k; and since the PDA searches in `add_liquidity` cost 1,500 units for every bump they try, so that its cost depends on the LP's key and a hooked mint's (from 39k to 56k over 300 random runs for the hooked first deposit), the tests measure it on fixed keys ([Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80), 2026-11-16).
 
 | Instruction | Ceiling (compute units) | Main cost |
 | --- | --- | --- |
@@ -359,7 +370,7 @@ With the reserve checked and read, on markets holding cTokens, they were `pipeli
 Beyond the shared three (value conserved, every holder can exit, each quote equals its swap), checked after every step of the generated sequences, with Kamino's rate moved up between steps and occasionally down by a write-off:
 
 - What the market has recorded never exceeds what it actually holds: the buffer and the other side against their vaults, the cTokens against the cToken account.
-- At a fixed Kamino rate, no swap lowers the product `R x L`, and no instruction lowers the value of an LP share; only a fall in Kamino's rate does.
+- At a fixed Kamino rate, no swap lowers the product `R x L`, and no instruction lowers the value of an LP share; only a fall in Kamino's rate does, and a `rebalance` by Kamino's rounding, at most one unit of the lent side (see "The rule").
 - A removal in kind succeeds for every LP in every Kamino state, emergency modes, a deprecated reserve and a failed layout check included.
 - A swap never deposits into Kamino, never redeems when the buffer covers its output, and never redeems more than its shortfall plus one rounding unit's worth of cTokens.
 - Outside withdraw mode `rebalance` only ever moves the buffer's share towards `BUFFER_TARGET_BPS`; in withdraw mode it only redeems; and it never deposits while cToken deposits are blocked.

@@ -1,14 +1,15 @@
 //! The stateful invariant fuzzer (docs/spec/README.md, "Test layers" 3): Proptest generates
-//! markets holding cTokens of the Kamino reserve dumped from the cluster this build lends on
-//! (none, or up to several times the buffer's worth, given directly since no instruction lends
-//! yet), and sequences of swaps, deposits, donations of tokens and cTokens and clock jumps,
-//! sent as real transactions
-//! through the router copied from devnet in LiteSVM, and after every step checks the bar's
-//! three shared invariants and the lending AMM's own that this build makes checkable
+//! WSOL-lent markets, which may lend from the start, and sequences of swaps, deposits,
+//! `rebalance` calls, donations of tokens and cTokens and clock jumps, sent as real
+//! transactions through the router copied from devnet and klend's deployed bytes, against the
+//! Kamino reserve dumped from the cluster this build lends on, in LiteSVM. A market holds only
+//! the cTokens klend's own deposits minted it. After every step it checks the bar's three
+//! shared invariants and the lending AMM's own that this build makes checkable
 //! (docs/spec/lending-pool.md, "Invariants for test layer 3"):
 //!
-//! - value is conserved: every token any step created is held by a known account, and each
-//!   vault holds exactly what the market has recorded plus what was donated to it;
+//! - value is conserved: every token any step created is held by a known account or was lent
+//!   to Kamino by `rebalance` (net of what it redeemed), and each vault holds exactly what the
+//!   market has recorded plus what was donated to it;
 //! - every holder can exit: every trader can sell all they hold of either mint, Pipeline's
 //!   fee included (a holding too small to buy one unit is refused as dust, cleanly, and a sell
 //!   paying out more of the lent side than the buffer holds is refused until
@@ -20,9 +21,14 @@
 //! - what the market has recorded never exceeds what it holds: the buffer and the other side
 //!   against their vaults, the cTokens against the cToken account;
 //! - no swap lowers `R x L`, and no step lowers the value of an LP share (`R x L / N^2`), with
-//!   `L = B + V`, the cTokens valued at the reserve's stored rate, which no step moves;
+//!   `L = B + V`, the cTokens valued at the reserve's stored rate, which only klend's own calls
+//!   move, and only up; a `rebalance` may lower `L` by Kamino's rounding, one unit;
 //! - the share count changes only by `add_liquidity`;
-//! - no step deposits into or redeems from Kamino, and none moves the recorded cTokens.
+//! - only `rebalance` deposits into or redeems from Kamino or moves the recorded cTokens, and
+//!   it only ever moves the buffer's share towards `BUFFER_TARGET_BPS`: a deposit only from
+//!   above the band, landing on the target within Kamino's rounding, a redeem only from below
+//!   it, never past the target by more than that rounding; refused, it was inside the band or
+//!   its move was below the floor, and nothing changed.
 //!
 //! Each case runs in a fresh VM. `PROPTEST_CASES` sets how many cases run (default 24, of
 //! up to 32 steps each).
@@ -30,7 +36,7 @@
 mod common;
 
 use common::*;
-use lending_amm::config::MINIMUM_LIQUIDITY;
+use lending_amm::config::{BUFFER_TARGET_BPS, MINIMUM_LIQUIDITY};
 use lending_amm::StrategyError;
 use pipeline_client::{pda, Pubkey};
 use pipeline_strategy_interface::fees::amount_for_budget;
@@ -54,6 +60,8 @@ enum Step {
     DonateCtokens { amount: u64 },
     /// Time passes.
     Wait { slots: u64 },
+    /// Anyone calls `rebalance`.
+    Rebalance,
 }
 
 fn step() -> impl Strategy<Value = Step> {
@@ -65,6 +73,7 @@ fn step() -> impl Strategy<Value = Step> {
         1 => (0..2usize, 1..1_000_000_000u64).prop_map(|(side, amount)| Step::Donate { side, amount }),
         1 => (1..100_000_000_000u64).prop_map(|amount| Step::DonateCtokens { amount }),
         1 => (1..1_000_000u64).prop_map(|slots| Step::Wait { slots }),
+        3 => Just(Step::Rebalance),
     ]
 }
 
@@ -80,23 +89,34 @@ struct World {
     donated: [u64; 2],
     /// Tokens held by donors, whom the world does not enumerate.
     with_donors: [u128; 2],
-    /// The cTokens the market recorded when it was given them.
+    /// The cTokens the market should have recorded, from klend's deposits and redeems.
     ctokens: u64,
+    /// The running totals the market should have recorded of the lent mint deposited into
+    /// Kamino and redeemed from it.
+    deposited: u128,
+    redeemed: u128,
     /// Every cToken donated to the cToken account.
     donated_ctokens: u64,
     /// The share count the market should have.
     shares: u64,
+    /// How the case's `rebalance` calls went: deposits, redeems, and refusals inside the band
+    /// and below the floor, printed with `--nocapture` to show what the fuzzer reached.
+    rebalances: [usize; 4],
 }
 
 const SEED: [u64; 2] = [2_000_000_000_000, 40 * SOL];
 const HOLDING: [u64; 2] = [5_000_000_000_000, 100 * SOL];
 
 impl World {
-    fn new(lp_fee_bps: u16, ctokens: u64) -> Self {
+    fn new(lp_fee_bps: u16, lend_first: bool) -> Self {
         let mut env = Env::new();
+        env.load_klend();
         let spec = env.wsol_market_spec(lp_fee_bps);
         let (market, first) = env.create_funded_market(&spec, SEED).unwrap();
-        env.give_ctokens(&market, ctokens);
+        if lend_first {
+            env.rebalance(&market, None).unwrap();
+        }
+        let state = env.market_state(&market.market_state);
         let shares = env.share_count(&market);
         let traders: Vec<Keypair> = (0..2)
             .map(|_| env.funded_wallet(&market, HOLDING))
@@ -119,9 +139,12 @@ impl World {
             created,
             donated: [0, 0],
             with_donors: [0, 0],
-            ctokens,
+            ctokens: state.ctokens,
+            deposited: state.deposited,
+            redeemed: state.redeemed,
             donated_ctokens: 0,
             shares,
+            rebalances: [0; 4],
         }
     }
 
@@ -154,7 +177,9 @@ impl World {
         self.env.market_state(&self.market.market_state).reserves
     }
 
-    fn run(&mut self, step: &Step) -> Result<(), TestCaseError> {
+    /// Runs `step`, and returns how far it may have lowered the lent side's total by Kamino's
+    /// rounding: one unit after a `rebalance` that moved, and nothing after any other step.
+    fn run(&mut self, step: &Step) -> Result<u64, TestCaseError> {
         let before = self.reserves();
         let effective_before = self.effective();
         match *step {
@@ -250,11 +275,109 @@ impl World {
                 self.env.svm.set_sysvar(&clock);
                 prop_assert_eq!(self.reserves(), before);
             }
+            Step::Rebalance => return self.rebalance(),
         }
-        Ok(())
+        Ok(0)
     }
 
-    fn check(&self, value_per_share: &mut (u128, u128)) -> Result<(), TestCaseError> {
+    /// Anyone calls `rebalance`; checks it moved the buffer's share only towards its target, or
+    /// was refused for a reason the rule gives and changed nothing.
+    fn rebalance(&mut self) -> Result<u64, TestCaseError> {
+        use lending_amm::buffer::{band, plan, target, Band, Move};
+        let lent = self.market.lent_index;
+        let before = self.env.market_state(&self.market.market_state);
+        let reserve = self.reserve();
+        let total = self.effective()[lent];
+        let buffer = before.reserves[lent];
+        let entry = &lending_amm::config::LENT_MINTS[self.env.lent_entry_of(&self.market)];
+        let lending_market = {
+            let address = ck(&entry.lending_market);
+            let data = self.env.data(&address);
+            lending_amm::kamino::read_lending_market(
+                &entry.lending_market,
+                &lending_amm::config::KLEND_PROGRAM,
+                &data,
+                entry,
+            )
+            .unwrap()
+        };
+        let can_pay = reserve.can_pay_now(
+            &lending_market,
+            before.ctokens,
+            self.env.clock().unix_timestamp,
+        );
+        let planned = plan(buffer, total, can_pay, entry.min_rebalance);
+        let result = self.env.rebalance(&self.market, None);
+        let after = self.env.market_state(&self.market.market_state);
+        match (planned, result) {
+            (Ok(planned), Ok(_)) => {
+                let total_after = self.effective()[lent];
+                let buffer_after = after.reserves[lent];
+                // Within Kamino's rounding: one cToken's worth, rounded up, and a unit.
+                let one_ctoken = reserve
+                    .total_supply_sf()
+                    .unwrap()
+                    .div_ceil((reserve.mint_total_supply as u128) << 60)
+                    as u64
+                    + 1;
+                match planned {
+                    Move::Deposit(asked) => {
+                        prop_assert_eq!(band(buffer, total), Band::Above);
+                        let taken = buffer - buffer_after;
+                        prop_assert!(taken <= asked && asked - taken <= one_ctoken);
+                        prop_assert!(after.ctokens > before.ctokens);
+                        prop_assert_eq!(after.deposited, before.deposited + taken as u128);
+                        prop_assert_eq!(after.redeemed, before.redeemed);
+                        prop_assert!(buffer_after + one_ctoken >= target(total_after));
+                    }
+                    Move::Redeem(asked) => {
+                        prop_assert_eq!(band(buffer, total), Band::Below);
+                        let received = buffer_after - buffer;
+                        prop_assert!(received <= asked + one_ctoken);
+                        prop_assert!(after.ctokens < before.ctokens);
+                        prop_assert_eq!(after.redeemed, before.redeemed + received as u128);
+                        prop_assert_eq!(after.deposited, before.deposited);
+                        prop_assert!(buffer_after <= target(total_after) + one_ctoken);
+                    }
+                }
+                // Towards the target: the distance from it in basis points of the lent side
+                // never grows.
+                let distance = |b: u64, l: u64| {
+                    (b as i128 * 10_000 - l as i128 * BUFFER_TARGET_BPS as i128).abs() * 1_000_000
+                        / (l as i128).max(1)
+                };
+                prop_assert!(distance(buffer_after, total_after) <= distance(buffer, total));
+                self.ctokens = after.ctokens;
+                self.deposited = after.deposited;
+                self.redeemed = after.redeemed;
+                self.rebalances[matches!(planned, Move::Redeem(_)) as usize] += 1;
+                Ok(1)
+            }
+            (Err(rule), Err(refusal)) => {
+                prop_assert!(
+                    refusal.contains(&format!("Error Code: {rule:?}.")),
+                    "planned {:?}, refused with {}",
+                    rule,
+                    refusal
+                );
+                prop_assert_eq!(after, before);
+                self.rebalances[2 + matches!(rule, StrategyError::BelowMinRebalance) as usize] += 1;
+                Ok(0)
+            }
+            (planned, result) => {
+                prop_assert!(false, "planned {:?}, got {:?}", planned, result.map(|_| ()));
+                Ok(0)
+            }
+        }
+    }
+
+    /// Checks every invariant; `rounding` is how far the last step may have lowered the lent
+    /// side's total by Kamino's rounding.
+    fn check(
+        &self,
+        value_per_share: &mut (u128, u128),
+        rounding: u64,
+    ) -> Result<(), TestCaseError> {
         let env = &self.env;
         let market = &self.market;
         let state = env.market_state(&market.market_state);
@@ -276,13 +399,26 @@ impl World {
                 held += self.holding(&wallet.pubkey(), i) as u128;
             }
             held += self.with_donors[i];
-            prop_assert_eq!(held, self.created[i], "mint {} conserved", i);
+            // The lent mint `rebalance` deposited into Kamino and has not redeemed.
+            let mut lent_to_kamino = 0i128;
+            if i == market.lent_index {
+                lent_to_kamino = self.deposited as i128 - self.redeemed as i128;
+            }
+            prop_assert_eq!(
+                held as i128 + lent_to_kamino,
+                self.created[i] as i128,
+                "mint {} conserved",
+                i
+            );
         }
 
-        // Nothing deposited into or redeemed from Kamino, the recorded cTokens never move, and
+        // Only rebalance deposits into or redeems from Kamino or moves the recorded cTokens, and
         // the cToken account holds them plus what was donated: recorded never exceeds held.
         prop_assert_eq!(state.ctokens, self.ctokens);
-        prop_assert_eq!((state.deposited, state.redeemed), (0, 0));
+        prop_assert_eq!(
+            (state.deposited, state.redeemed),
+            (self.deposited, self.redeemed)
+        );
         let ctokens_held = env.balance(&market.addresses.ctoken_account);
         prop_assert_eq!(ctokens_held, self.ctokens + self.donated_ctokens);
         prop_assert!(state.ctokens <= ctokens_held);
@@ -292,14 +428,15 @@ impl World {
         prop_assert_eq!(n, self.shares);
         prop_assert!(n > MINIMUM_LIQUIDITY);
 
-        // The value of an LP share, R x L / N^2, never falls: compare
-        // R'L' x N^2 >= R L x N'^2 in 256 bits.
+        // The value of an LP share, R x L / N^2, never falls, but for Kamino's rounding of the
+        // lent side in a rebalance: compare R'(L' + rounding) x N^2 >= R L x N'^2 in 256 bits.
         let effective = self.effective();
         let product = effective[0] as u128 * effective[1] as u128;
+        let allowed = effective[0] as u128 * (effective[1] + rounding) as u128;
         let square = n as u128 * n as u128;
         let (old_product, old_square) = *value_per_share;
         prop_assert!(
-            wide_mul(product, old_square) >= wide_mul(old_product, square),
+            wide_mul(allowed, old_square) >= wide_mul(old_product, square),
             "an LP share lost value"
         );
         *value_per_share = (product, square);
@@ -347,18 +484,23 @@ proptest! {
     #[test]
     fn the_invariants_hold_after_every_step(
         lp_fee_bps in prop_oneof![Just(0u16), Just(30), Just(200), 0u16..=200],
-        ctokens in prop_oneof![Just(0u64), 1..200 * SOL],
+        lend_first: bool,
         steps in proptest::collection::vec(step(), 1..32),
     ) {
-        let mut world = World::new(lp_fee_bps, ctokens);
+        let mut world = World::new(lp_fee_bps, lend_first);
         let reserves = world.effective();
         let n = world.env.share_count(&world.market);
         let mut value = (reserves[0] as u128 * reserves[1] as u128, n as u128 * n as u128);
-        world.check(&mut value)?;
+        world.check(&mut value, 0)?;
         for step in &steps {
-            world.run(step)?;
-            world.check(&mut value)?;
+            let rounding = world.run(step)?;
+            world.check(&mut value, rounding)?;
         }
+        let [deposits, redeems, within, below] = world.rebalances;
+        println!(
+            "rebalance: {deposits} deposits, {redeems} redeems, refused {within} inside the band \
+             and {below} below the floor"
+        );
     }
 }
 

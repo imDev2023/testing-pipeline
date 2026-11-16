@@ -1,16 +1,16 @@
-//! Every read of Kamino Lend (klend), in one place (docs/spec/lending-pool.md, "Building it"):
-//! the reserve check, the reserve's total supply and stored exchange rate, its flags, and what
-//! Kamino can pay right now. [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
-//! adds Kamino's deposit and redeem calls here too, so a later strategy version can add
-//! another lending market without touching the pool's maths.
+//! Every read of and call to Kamino Lend (klend), in one place (docs/spec/lending-pool.md,
+//! "Building it"): the reserve check, the reserve's total supply and stored exchange rate, its
+//! flags, what Kamino can pay right now, the cTokens a redeem burns, the check of every Kamino
+//! account a call passes, and the deposit and redeem calls themselves ([`KaminoAccounts`]), so
+//! a later strategy version can add another lending market without touching the pool's maths.
 //!
 //! The offsets, discriminators and formulas are written by hand from klend release 1.28.0
 //! (`686913e`), as the Kamino facts, section 4, list them; the program never depends on
 //! klend's crate, which is BSL 1.1 (docs/spec/lending-pool.md, "Building it").
 //!
 //! The maths is in pure functions of numbers ([`total_supply_sf`], [`collateral_value`],
-//! [`withdrawal_cap_remaining`], [`can_pay`]), which Proptest, Kani and Z3 check on their
-//! own; the account functions only check and decode.
+//! [`ctokens_for_value`], [`withdrawal_cap_remaining`], [`can_pay`]), which Proptest, Kani and
+//! Z3 check on their own; the account functions only check, decode and call.
 //!
 //! # Valuing cTokens
 //!
@@ -24,6 +24,8 @@
 //! payout (docs/spec/lending-pool.md, "The stored rate, everywhere").
 
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
+use anchor_lang::solana_program::program::invoke_signed;
 
 use crate::config::{LentMint, KLEND_PROGRAM};
 use crate::errors::StrategyError;
@@ -50,6 +52,8 @@ pub mod offsets {
     pub const VERSION: usize = 8;
     pub const LENDING_MARKET: usize = 32;
     pub const LIQUIDITY_MINT: usize = 128;
+    /// `liquidity.supply_vault`, the token account holding the reserve's liquidity.
+    pub const LIQUIDITY_SUPPLY: usize = 160;
     pub const TOTAL_AVAILABLE_AMOUNT: usize = 224;
     pub const BORROWED_AMOUNT_SF: usize = 232;
     pub const ACCUMULATED_PROTOCOL_FEES_SF: usize = 344;
@@ -67,8 +71,24 @@ pub mod offsets {
 
 /// Byte offsets in a klend `LendingMarket` at 1.28.0, discriminator included.
 pub mod lending_market_offsets {
+    /// `bump_seed`, a u64 holding the lending market authority PDA's bump.
+    pub const BUMP_SEED: usize = 16;
     pub const EMERGENCY_MODE: usize = 122;
 }
+
+/// Seed of klend's lending market authority PDA, `["lma", lending_market]`, which owns every
+/// reserve's liquidity supply and mints its cTokens.
+pub const LENDING_MARKET_AUTHORITY_SEED: &[u8] = b"lma";
+
+/// The instructions sysvar, which klend's deposit and redeem take for introspection.
+pub const INSTRUCTIONS_SYSVAR: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
+
+/// Anchor's instruction discriminator of klend's `deposit_reserve_liquidity`,
+/// `sha256("global:deposit_reserve_liquidity")[..8]`.
+pub const DEPOSIT_RESERVE_LIQUIDITY: [u8; 8] = [169, 201, 30, 126, 6, 205, 102, 68];
+/// Anchor's instruction discriminator of klend's `redeem_reserve_collateral`,
+/// `sha256("global:redeem_reserve_collateral")[..8]`.
+pub const REDEEM_RESERVE_COLLATERAL: [u8; 8] = [234, 117, 181, 125, 185, 142, 220, 29];
 
 /// A reserve's deposit withdrawal cap: how much may leave it, net of deposits, per interval.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -370,6 +390,223 @@ pub fn can_pay(freely_available: u64, cap_remaining: u64, own_value: u64, stoppe
     freely_available.min(cap_remaining).min(own_value)
 }
 
+/// How many cTokens are worth at most `liquidity`: `floor(liquidity x mint_total_supply x
+/// 2^60 / total_supply_sf)`, exactly, or `None` when the reserve has no supply or that does not
+/// fit in a u64. By klend's own rounding they then redeem for at most `liquidity` at the same
+/// rate, and for less than one cToken's worth below it.
+///
+/// Every intermediate fits: `liquidity x mint_total_supply` is below 2^128, so the numerator
+/// `x x 2^60` is held as `(x >> 4) x 2^64 + (x mod 16) x 2^60`; a quotient of 2^64 or more is
+/// refused before dividing; and the long division keeps the bit a doubled remainder would carry
+/// out of 128 bits, since the divisor may use all 128.
+pub fn ctokens_for_value(
+    liquidity: u64,
+    total_supply_sf: u128,
+    mint_total_supply: u64,
+) -> Option<u64> {
+    if total_supply_sf == 0 {
+        return None;
+    }
+    let product = liquidity as u128 * mint_total_supply as u128;
+    let top = product >> 4;
+    let low = ((product & 0xf) as u64) << FRACTION_BITS;
+    // The quotient is below 2^64 exactly when top x 2^64 + low < divisor x 2^64.
+    if top >= total_supply_sf {
+        return None;
+    }
+    let mut remainder = top;
+    let mut quotient: u64 = 0;
+    for bit in (0..64).rev() {
+        // The remainder is below the divisor, so doubling it and adding a bit stays below
+        // 2^129: `carry` is its 129th bit.
+        let carry = remainder >> 127;
+        remainder = (remainder << 1) | ((low >> bit) & 1) as u128;
+        quotient <<= 1;
+        if carry == 1 || remainder >= total_supply_sf {
+            // The true remainder is below twice the divisor, so this is below the divisor and
+            // the wrapped difference is exact.
+            remainder = remainder.wrapping_sub(total_supply_sf);
+            quotient |= 1;
+        }
+    }
+    Some(quotient)
+}
+
+impl Reserve {
+    /// The cTokens to burn to redeem `liquidity` from a market holding `ctokens`: all of them
+    /// when `liquidity` is at least their whole value, otherwise as many as are worth at most
+    /// `liquidity` at the stored rate ([`ctokens_for_value`]), so a redeem never carries the
+    /// buffer past its target at that rate. klend refreshes the reserve inside the redeem, and
+    /// interest only raises the rate, so they fetch at least their value at the stored rate.
+    pub fn ctokens_to_redeem(
+        &self,
+        liquidity: u64,
+        ctokens: u64,
+    ) -> core::result::Result<u64, StrategyError> {
+        if liquidity >= self.lent_value(ctokens)? {
+            return Ok(ctokens);
+        }
+        let burn = ctokens_for_value(liquidity, self.total_supply_sf()?, self.mint_total_supply)
+            .ok_or(StrategyError::Overflow)?;
+        Ok(burn.min(ctokens))
+    }
+}
+
+/// The accounts klend's `deposit_reserve_liquidity` and `redeem_reserve_collateral` take besides
+/// the depositor and its two token accounts.
+pub struct KaminoAccounts<'a, 'info> {
+    pub klend_program: &'a AccountInfo<'info>,
+    pub reserve: &'a AccountInfo<'info>,
+    pub lending_market: &'a AccountInfo<'info>,
+    pub lending_market_authority: &'a AccountInfo<'info>,
+    pub liquidity_mint: &'a AccountInfo<'info>,
+    pub liquidity_supply: &'a AccountInfo<'info>,
+    pub collateral_mint: &'a AccountInfo<'info>,
+    /// SPL Token, the program of the lent mint and of every cToken mint.
+    pub token_program: &'a AccountInfo<'info>,
+    pub instructions_sysvar: &'a AccountInfo<'info>,
+}
+
+impl<'info> KaminoAccounts<'_, 'info> {
+    /// Checks every account against the reserve `lent` names, before any is passed to klend,
+    /// and reads the reserve and its lending market: the reserve passes [`check_reserve`], the
+    /// lending market is the reserve's, the lending market authority is its PDA, the mints are
+    /// the reserve's, the liquidity supply is the one the reserve records, and the programs and
+    /// the sysvar are what they claim to be. So klend can never be handed another reserve's
+    /// accounts, and nothing that is not klend is ever called as klend.
+    pub fn check(&self, lent: &LentMint) -> Result<(Reserve, LendingMarket)> {
+        let wrong = StrategyError::KaminoAccountWrong;
+        require_keys_eq!(*self.klend_program.key, KLEND_PROGRAM, wrong);
+        require_keys_eq!(*self.token_program.key, anchor_spl::token::ID, wrong);
+        require_keys_eq!(*self.instructions_sysvar.key, INSTRUCTIONS_SYSVAR, wrong);
+        require_keys_eq!(*self.liquidity_mint.key, lent.mint, wrong);
+        require_keys_eq!(*self.collateral_mint.key, lent.collateral_mint, wrong);
+        let reserve = reserve_of(&lent.mint, self.reserve)?;
+        let supply_vault = key_at(&self.reserve.try_borrow_data()?, offsets::LIQUIDITY_SUPPLY);
+        require!(
+            supply_vault == Some(*self.liquidity_supply.key),
+            StrategyError::KaminoAccountWrong
+        );
+
+        let data = self.lending_market.try_borrow_data()?;
+        let market = read_lending_market(
+            self.lending_market.key,
+            self.lending_market.owner,
+            &data,
+            lent,
+        )
+        .map_err(|refusal| error!(refusal))?;
+        let bump = *data.get(lending_market_offsets::BUMP_SEED).ok_or(wrong)?;
+        let authority = Pubkey::create_program_address(
+            &[
+                LENDING_MARKET_AUTHORITY_SEED,
+                self.lending_market.key.as_ref(),
+                &[bump],
+            ],
+            &KLEND_PROGRAM,
+        )
+        .map_err(|_| error!(wrong))?;
+        require_keys_eq!(*self.lending_market_authority.key, authority, wrong);
+        Ok((reserve, market))
+    }
+
+    /// klend's `deposit_reserve_liquidity { liquidity_amount }`: `owner`, signing with
+    /// `signer_seeds`, moves up to `liquidity` of the lent mint from `source` into the reserve,
+    /// and klend mints cTokens into `destination`. The accounts in the order klend 1.28.0
+    /// declares them.
+    pub fn deposit(
+        &self,
+        owner: &AccountInfo<'info>,
+        source: &AccountInfo<'info>,
+        destination: &AccountInfo<'info>,
+        liquidity: u64,
+        signer_seeds: &[&[&[u8]]],
+    ) -> Result<()> {
+        let accounts = [
+            (owner, false, true),
+            (self.reserve, true, false),
+            (self.lending_market, false, false),
+            (self.lending_market_authority, false, false),
+            (self.liquidity_mint, false, false),
+            (self.liquidity_supply, true, false),
+            (self.collateral_mint, true, false),
+            (source, true, false),
+            (destination, true, false),
+            (self.token_program, false, false),
+            (self.token_program, false, false),
+            (self.instructions_sysvar, false, false),
+        ];
+        self.invoke(
+            DEPOSIT_RESERVE_LIQUIDITY,
+            liquidity,
+            &accounts,
+            signer_seeds,
+        )
+    }
+
+    /// klend's `redeem_reserve_collateral { collateral_amount }`: `owner`, signing with
+    /// `signer_seeds`, burns `ctokens` from `source`, and klend pays the lent mint into
+    /// `destination` at the reserve's rate, refreshed in the call. The accounts in the order
+    /// klend 1.28.0 declares them.
+    pub fn redeem(
+        &self,
+        owner: &AccountInfo<'info>,
+        source: &AccountInfo<'info>,
+        destination: &AccountInfo<'info>,
+        ctokens: u64,
+        signer_seeds: &[&[&[u8]]],
+    ) -> Result<()> {
+        let accounts = [
+            (owner, false, true),
+            (self.lending_market, false, false),
+            (self.reserve, true, false),
+            (self.lending_market_authority, false, false),
+            (self.liquidity_mint, false, false),
+            (self.collateral_mint, true, false),
+            (self.liquidity_supply, true, false),
+            (source, true, false),
+            (destination, true, false),
+            (self.token_program, false, false),
+            (self.token_program, false, false),
+            (self.instructions_sysvar, false, false),
+        ];
+        self.invoke(REDEEM_RESERVE_COLLATERAL, ctokens, &accounts, signer_seeds)
+    }
+
+    /// Calls klend's instruction `discriminator` with one u64 argument and `accounts` as
+    /// (account, writable, signer), signed by the PDA `signer_seeds` names.
+    fn invoke(
+        &self,
+        discriminator: [u8; 8],
+        amount: u64,
+        accounts: &[(&AccountInfo<'info>, bool, bool)],
+        signer_seeds: &[&[&[u8]]],
+    ) -> Result<()> {
+        let mut data = discriminator.to_vec();
+        data.extend_from_slice(&amount.to_le_bytes());
+        let metas = accounts
+            .iter()
+            .map(|(account, writable, signer)| AccountMeta {
+                pubkey: *account.key,
+                is_writable: *writable,
+                is_signer: *signer,
+            })
+            .collect();
+        let mut infos: Vec<AccountInfo<'info>> = accounts
+            .iter()
+            .map(|(account, _, _)| (*account).clone())
+            .collect();
+        infos.push(self.klend_program.clone());
+        let instruction = Instruction {
+            program_id: KLEND_PROGRAM,
+            accounts: metas,
+            data,
+        };
+        invoke_signed(&instruction, &infos, signer_seeds)?;
+        Ok(())
+    }
+}
+
 fn u64_at(data: &[u8], offset: usize) -> Option<u64> {
     Some(u64::from_le_bytes(
         data.get(offset..offset + 8)?.try_into().ok()?,
@@ -542,6 +779,89 @@ mod tests {
         assert_eq!(can_pay(7, 9, 5, true), 0);
     }
 
+    /// The exact floor of `x x N x 2^60 / S` if it fits a u64, by the reference: a 256-bit
+    /// numerator divided by a 128-bit divisor one bit at a time.
+    fn exact_ctokens(x: u64, s: u128, n: u64) -> Option<u64> {
+        if s == 0 {
+            return None;
+        }
+        let numerator = mul(mul(wide(x as u128), wide(n as u128)), wide(1u128 << 60));
+        let mut remainder = [0u64; 4];
+        let mut quotient = [0u64; 4];
+        let divisor = wide(s);
+        let ge = |a: &Wide, b: &Wide| {
+            (0..4)
+                .rev()
+                .find(|&i| a[i] != b[i])
+                .is_none_or(|i| a[i] > b[i])
+        };
+        for bit in (0..256).rev() {
+            remainder = mul(remainder, wide(2));
+            remainder[0] |= (numerator[bit / 64] >> (bit % 64)) & 1;
+            if ge(&remainder, &divisor) {
+                let mut borrow = 0u128;
+                for i in 0..4 {
+                    let t = (remainder[i] as u128).wrapping_sub(divisor[i] as u128 + borrow);
+                    borrow = ((remainder[i] as u128) < divisor[i] as u128 + borrow) as u128;
+                    remainder[i] = t as u64;
+                }
+                quotient[bit / 64] |= 1 << (bit % 64);
+            }
+        }
+        (quotient[1] == 0 && quotient[2] == 0 && quotient[3] == 0).then_some(quotient[0])
+    }
+
+    #[test]
+    fn the_ctokens_for_a_value_are_the_examples() {
+        // At a rate of exactly 1.5: 1,500 is worth 1,000 cTokens, and 1,501 still 1,000.
+        let s = 3u128 << 60;
+        assert_eq!(ctokens_for_value(1_500, s, 2), Some(1_000));
+        assert_eq!(ctokens_for_value(1_501, s, 2), Some(1_000));
+        assert_eq!(ctokens_for_value(1, s, 2), Some(0));
+        assert_eq!(ctokens_for_value(0, s, 2), Some(0));
+        // No supply: nothing can be computed.
+        assert_eq!(ctokens_for_value(5, 0, 2), None);
+        // The divisor may use all 128 bits.
+        assert_eq!(
+            ctokens_for_value(u64::MAX, u128::MAX, u64::MAX),
+            exact_ctokens(u64::MAX, u128::MAX, u64::MAX)
+        );
+        // A quotient of 2^64 or more is refused.
+        assert_eq!(ctokens_for_value(u64::MAX, 1 << 60, 2), None);
+    }
+
+    #[test]
+    fn a_redeem_burns_everything_once_it_asks_for_the_whole_value() {
+        let reserve = Reserve {
+            total_available_amount: 3,
+            mint_total_supply: 2,
+            ..Reserve::default()
+        };
+        // 1,000 cTokens at 1.5 are worth 1,500.
+        assert_eq!(
+            reserve
+                .ctokens_to_redeem(1_500, 1_000)
+                .map_err(|e| e as u32),
+            Ok(1_000)
+        );
+        assert_eq!(
+            reserve
+                .ctokens_to_redeem(9_999, 1_000)
+                .map_err(|e| e as u32),
+            Ok(1_000)
+        );
+        assert_eq!(
+            reserve
+                .ctokens_to_redeem(1_499, 1_000)
+                .map_err(|e| e as u32),
+            Ok(999)
+        );
+        assert_eq!(
+            reserve.ctokens_to_redeem(0, 1_000).map_err(|e| e as u32),
+            Ok(0)
+        );
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10_000))]
 
@@ -594,6 +914,30 @@ mod tests {
             prop_assert!(paid <= free && paid <= cap && paid <= own);
             prop_assert!(stopped || paid == free || paid == cap || paid == own);
             prop_assert!(!stopped || paid == 0);
+        }
+
+        /// The cTokens for a value are exactly floor(x x N x 2^60 / S), refused exactly when
+        /// that does not fit a u64 or there is no supply.
+        #[test]
+        fn the_ctokens_for_a_value_are_the_exact_floor(x: u64, s: u128, n: u64) {
+            prop_assert_eq!(ctokens_for_value(x, s, n), exact_ctokens(x, s, n));
+        }
+
+        /// They are worth at most the value asked for, and less than one cToken's worth
+        /// below it: a redeem lands within one cToken of its amount and never past it.
+        #[test]
+        fn the_ctokens_for_a_value_are_worth_it_within_one_ctoken(
+            x: u64,
+            n in 1u64..(1 << 50),
+            rate_sf in (1u128 << 60)..(4u128 << 60),
+        ) {
+            let s = n as u128 * rate_sf;
+            if let Some(k) = ctokens_for_value(x, s, n) {
+                let value = collateral_value(k, s, n).unwrap();
+                prop_assert!(value <= x);
+                let one_ctoken = s.div_ceil((n as u128) << 60);
+                prop_assert!((x - value) as u128 <= one_ctoken);
+            }
         }
     }
 }
@@ -679,5 +1023,49 @@ mod proofs {
         let (c, n): (u64, u64) = (kani::any(), kani::any());
         let s: u128 = kani::any_where(|&s: &u128| s < (1u128 << 64));
         assert_never_above_klend(c, s, n);
+    }
+
+    /// For any value, total supply and cToken supply, the cTokens for the value are computed
+    /// without panicking or overflowing.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn ctokens_for_value_never_panics() {
+        let _ = ctokens_for_value(kani::any(), kani::any(), kani::any());
+    }
+
+    fn assert_worth_at_most_and_within_one_ctoken(x: u64, s: u128, n: u64) {
+        if let Some(k) = ctokens_for_value(x, s, n) {
+            if n > 0 {
+                let value = collateral_value(k, s, n).unwrap();
+                assert!(value <= x);
+                assert!(
+                    ((x - value) as u128) << FRACTION_BITS
+                        <= s.div_ceil(n as u128) + (1u128 << FRACTION_BITS)
+                );
+            }
+        }
+    }
+
+    /// The cTokens for a value are worth at most it, within one cToken's worth, for small
+    /// amounts at any fractional rate.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_ctokens_for_a_value_are_worth_it_within_one_ctoken_bounded() {
+        let x: u64 = kani::any_where(|&x| x < SMALL);
+        let n: u64 = kani::any_where(|&n| n > 0 && n < SMALL);
+        let whole: u64 = kani::any_where(|&w| w > 0 && w < SMALL);
+        let fraction: u64 = kani::any_where(|&f| f < (1 << FRACTION_BITS));
+        let s = ((whole as u128) << FRACTION_BITS) | fraction as u128;
+        assert_worth_at_most_and_within_one_ctoken(x, s, n);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_ctokens_for_a_value_are_worth_it_within_one_ctoken() {
+        assert_worth_at_most_and_within_one_ctoken(kani::any(), kani::any(), kani::any());
     }
 }

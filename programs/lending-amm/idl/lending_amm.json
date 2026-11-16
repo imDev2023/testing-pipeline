@@ -562,6 +562,100 @@
           }
         }
       ]
+    },
+    {
+      "name": "rebalance",
+      "docs": [
+        "Moves the buffer back to its target by depositing into Kamino or redeeming from it,",
+        "when its share of the lent side has left its band. Anyone may call it."
+      ],
+      "discriminator": [
+        108,
+        158,
+        77,
+        9,
+        210,
+        52,
+        88,
+        62
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone. Read-only, so nothing can be taken from it beyond the transaction fee."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "buffer_vault",
+          "writable": true
+        },
+        {
+          "name": "ctoken_account",
+          "writable": true
+        },
+        {
+          "name": "lent_mint"
+        },
+        {
+          "name": "reserve",
+          "writable": true
+        },
+        {
+          "name": "lending_market"
+        },
+        {
+          "name": "lending_market_authority"
+        },
+        {
+          "name": "reserve_liquidity_supply",
+          "writable": true
+        },
+        {
+          "name": "collateral_mint",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "klend_program"
+        },
+        {
+          "name": "instructions_sysvar"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -604,6 +698,19 @@
         84,
         6,
         58
+      ]
+    },
+    {
+      "name": "Rebalanced",
+      "discriminator": [
+        74,
+        101,
+        57,
+        244,
+        181,
+        179,
+        52,
+        182
       ]
     }
   ],
@@ -777,6 +884,21 @@
       "code": 6033,
       "name": "LendingMarketWrongAccount",
       "msg": "The Kamino lending market account is not the lent mint's lending market"
+    },
+    {
+      "code": 6034,
+      "name": "WithinBand",
+      "msg": "The buffer's share of the lent side is inside its band: there is nothing to rebalance"
+    },
+    {
+      "code": 6035,
+      "name": "BelowMinRebalance",
+      "msg": "The move is smaller than the lent mint's MIN_REBALANCE, so it is skipped"
+    },
+    {
+      "code": 6036,
+      "name": "KaminoAccountWrong",
+      "msg": "A Kamino account is not the one the lent mint's reserve names"
     }
   ],
   "types": [
@@ -1099,6 +1221,87 @@
       }
     },
     {
+      "name": "RebalanceDirection",
+      "docs": [
+        "Which way a `rebalance` moved the lent mint."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Deposit"
+          },
+          {
+            "name": "Redeem"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Rebalanced",
+      "docs": [
+        "`rebalance` moved the buffer back towards its target."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "direction",
+            "type": {
+              "defined": {
+                "name": "RebalanceDirection"
+              }
+            }
+          },
+          {
+            "name": "liquidity",
+            "docs": [
+              "The lent mint that actually left or joined the buffer, as measured at the vault."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ctokens",
+            "docs": [
+              "The cTokens that were actually minted to or burned from the market, as measured at its",
+              "cToken account."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "buffer",
+            "docs": [
+              "The buffer `B` the market has recorded afterwards."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ctokens_held",
+            "docs": [
+              "The cTokens `c` the market has recorded afterwards."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "deposited",
+            "docs": [
+              "The running totals of the lent mint deposited into and redeemed from Kamino",
+              "afterwards; the lending yield so far is `V + redeemed - deposited`."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "redeemed",
+            "type": "u128"
+          }
+        ]
+      }
+    },
+    {
       "name": "ResolveRequest",
       "docs": [
         "`pipeline_strategy_interface::ResolveRequest`."
@@ -1210,6 +1413,31 @@
     }
   ],
   "constants": [
+    {
+      "name": "BUFFER_MAX_BPS",
+      "docs": [
+        "...or above this."
+      ],
+      "type": "u16",
+      "value": "3000"
+    },
+    {
+      "name": "BUFFER_MIN_BPS",
+      "docs": [
+        "The band: `rebalance` acts only when the buffer's share is below this..."
+      ],
+      "type": "u16",
+      "value": "1000"
+    },
+    {
+      "name": "BUFFER_TARGET_BPS",
+      "docs": [
+        "The buffer's target share of the lent side's total, in basis points: 20%. Exported in the",
+        "IDL, as is the band, from which forms, keepers and the demo read them."
+      ],
+      "type": "u16",
+      "value": "2000"
+    },
     {
       "name": "MAX_LP_FEE_BPS",
       "docs": [

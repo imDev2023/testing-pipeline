@@ -4224,6 +4224,66 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
 
+### LENDING-53: How the target and the band round
+
+- Question: How is the target buffer rounded, and is a share exactly at an edge of the band inside it or outside it?
+- Answer: The target is `floor(L x BUFFER_TARGET_BPS / 10,000)`, and the band is compared exactly in 128-bit integers with both edges inside it, so a deposit leaves exactly the target and an uncapped redeem asks for exactly the target.
+- Alternatives: The target rounded up; the edges outside the band; comparing shares rounded to whole basis points.
+- Specified in: [`docs/spec/lending-pool.md`, The rule](spec/lending-pool.md#the-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-54: What a rebalance with nothing to do does
+
+- Question: What does `rebalance` do inside the band, below the floor, or when Kamino can pay nothing of a redeem?
+- Answer: It fails and changes nothing, with `WithinBand` inside the band and `BelowMinRebalance` below the lent mint's `MIN_REBALANCE` or when Kamino can pay nothing, so a keeper's simulation shows there is nothing to do and nobody pays for a no-op.
+- Alternatives: Succeeding without moving anything, which a keeper would pay for; one error for both cases.
+- Specified in: [`docs/spec/lending-pool.md`, The rule](spec/lending-pool.md#the-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-55: How many cTokens a rebalance redeems
+
+- Question: How many cTokens does `rebalance` burn to redeem a shortfall?
+- Answer: As many as are worth at most the shortfall at the stored rate, `floor(s x S_ctoken / S_total)`, or all the market holds once the shortfall reaches their whole value, so the buffer never passes its target at that rate and lands less than one cToken's worth short of it.
+- Alternatives: Rounding up, as the in-swap redeem does to cover a payout, which could carry the buffer one cToken's worth past its target.
+- Specified in: [`docs/spec/lending-pool.md`, The rule](spec/lending-pool.md#the-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-56: How rebalance checks Kamino's accounts
+
+- Question: Which of the accounts `rebalance` passes to klend does the program check itself, rather than leave to klend?
+- Answer: All of them, before calling klend: klend's id, SPL Token, the instructions sysvar, the lent and collateral mints, the reserve, its liquidity supply, its lending market and that market's authority PDA, each failing with `KaminoAccountWrong` unless the reserve or lending market check names it, and its own buffer vault and cToken account by address.
+- Alternatives: Checking only the reserve and the klend program and leaving the rest to klend's own constraints, which would also refuse them but with klend's errors and only for the accounts klend constrains.
+- Specified in: [`docs/spec/lending-pool.md`, Custom actions and metadata](spec/lending-pool.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-57: How rebalance takes its Kamino accounts
+
+- Question: How does a keeper or Aviary's form give `rebalance` the Kamino accounts of a market's lent mint?
+- Answer: As the metadata's named inputs `lent_mint`, `reserve`, `lending_market`, `reserve_liquidity_supply` and `collateral_mint`, with the lending market authority as klend's PDA of the lending market and the caller a read-only signer, and the band's three constants exported in the IDL for forms and keepers to read.
+- Alternatives: A metadata source reading them from the market state or the reserve, which the metadata schema at `5ad130d` does not have.
+- Specified in: [`docs/spec/lending-pool.md`, Custom actions and metadata](spec/lending-pool.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-58: Kamino's rounding in a rebalance
+
+- Question: May a `rebalance` lower the lent side's total, and so an LP share's value, by Kamino's own rounding?
+- Answer: Yes, by at most one unit of the lent mint, since klend takes back a deposit's cTokens rounded up and the market values its cTokens rounded down; the tests and the fuzzer allow exactly that unit and no more.
+- Alternatives: Depositing one unit less so the total can never fall, which leaves the buffer a unit above its target and still cannot cover a redeem's rounding.
+- Specified in: [`docs/spec/lending-pool.md`, The rule](spec/lending-pool.md#the-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -4256,6 +4316,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-25` to `POOL4-27`: set by the session of [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-24` is the owner's answer to that session's question.
+- `LENDING-53` to `LENDING-58`: set by the session of [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.

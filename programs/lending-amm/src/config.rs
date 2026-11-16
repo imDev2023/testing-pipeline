@@ -21,11 +21,15 @@ compile_error!(
 #[cfg(not(any(feature = "devnet", feature = "mainnet")))]
 compile_error!("build the lending AMM for a cluster: the `devnet` or the `mainnet` feature");
 
-/// The buffer's target share of the lent side's total, in basis points: 20%.
+/// The buffer's target share of the lent side's total, in basis points: 20%. Exported in the
+/// IDL, as is the band, from which forms, keepers and the demo read them.
+#[constant]
 pub const BUFFER_TARGET_BPS: u16 = 2_000;
 /// The band: `rebalance` acts only when the buffer's share is below this...
+#[constant]
 pub const BUFFER_MIN_BPS: u16 = 1_000;
 /// ...or above this.
+#[constant]
 pub const BUFFER_MAX_BPS: u16 = 3_000;
 /// Enter withdraw mode when Kamino's freely available liquidity is below this many times
 /// the larger of the market's lent value and its target lent value.
