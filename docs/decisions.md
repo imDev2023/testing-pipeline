@@ -3418,6 +3418,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
 
+### HOOK-35: The launch script's rehearsal of the devnet launch
+
+- Question: How does one run of the launch script rehearse the devnet launch, with its two contained tokens and the sweep of Pipeline's fee?
+- Answer: Each `--goal` and `--deadline` pair launches one token, one after another in the same run, with `--unlock` given for every token or for none, and every launch sweeps Pipeline's fee in the token from its fee account to Pipeline's treasury with the router's `sweep_fees` and the hook accounts.
+- Alternatives: Two runs of the script, one per token; a separate rehearsal script, which would repeat the launch's setup.
+- Specified in: [the ticket, Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+
+### HOOK-36: How the fuzzer judges the hook's invariants
+
+- Question: How does the containment hook's invariant fuzzer check its five invariants?
+- Answer: On every market shape the tax AMM's fuzzer builds, with the contained mint at either index and the tax AMM's own invariants lifted beside the hook's, it checks invariant 1 by the balances of every account of the token the world knows (what leaves the outside accounts must reach the home vault or the fee account, and the reverse), invariant 5 by simulating a sale of every signer's whole holding through the router with the hook accounts, and runs 1,000 sequences of up to 50 steps in CI, spread over every core.
+- Alternatives: Reading each transaction's token transfers for invariant 1, which would miss a token moved by an instruction the reader does not know; checking only quotes for invariant 5, which never runs the hook.
+- Specified in: [the ticket, Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+
+### HOOK-37: What `bind`'s ceiling counts
+
+- Question: Does `bind`'s compute ceiling count what its bump searches spend, which depends on the mint's address?
+- Answer: No: like the tax AMM's ceilings, it leaves out the 1,500 units each of its four searches spends for every bump tried after the first, so `bind` costs the same 20,916 units on every mint against its 60,000.
+- Alternatives: Counting the whole cost, which reached 55,416 units in the fuzzer and would fail on a rare mint; passing the bumps to `bind` as arguments, which would change its instruction.
+- Specified in: [`docs/spec/containment-hook.md`, Compute ceilings](spec/containment-hook.md#compute-ceilings)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+
 ## Buy wall AMM (POOL4)
 
 `POOL4-01` to `POOL4-21` keep the numbers their tickets proposed, which the buy wall AMM's build tickets already cite.
@@ -4620,6 +4650,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
 - `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `HOOK-35` to `HOOK-37`: set by the session of [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.

@@ -1,22 +1,21 @@
 //! Compute ceilings (docs/spec/containment-hook.md, "Compute ceilings"; docs/spec/README.md,
-//! "Test layers" 5). This module mirrors the spec's table, and is its one place in the
-//! tests: a ceiling changes only by a PR to the spec file and this table together.
+//! "Test layers" 5), each measured on a typical launch against `support/ceilings.rs`, the
+//! spec's table and its one place in the tests, and the call depth of a buy. The invariant
+//! fuzzer (`tests/fuzz.rs`) measures the same ceilings on every step it runs.
 //!
 //! A cost is what the hook's own invocation consumes. Each test prints what it measured.
 
 mod support;
 
+use pipeline_client::Pubkey;
+use solana_keypair::Keypair;
+use solana_signer::Signer;
 use support::*;
-
-/// The spec's table, in compute units.
-mod ceilings {
-    pub const EXECUTE: u64 = 10_000;
-    pub const BIND: u64 = 60_000;
-    pub const UNLOCK: u64 = 30_000;
-}
 
 #[test]
 fn bind_stays_under_its_ceiling() {
+    // Less what its bump searches spend beyond each address's first bump, which the ceiling
+    // leaves out (docs/spec/containment-hook.md, "Compute ceilings").
     let mut most = 0;
     for contained_index in [0, 1] {
         let mut env = hook_env();
@@ -25,13 +24,60 @@ fn bind_stays_under_its_ceiling() {
         let meta = bind(&mut env, mint, &market).unwrap();
         let costs = hook_compute(&meta.logs);
         assert_eq!(costs.len(), 1, "{:?}", meta.logs);
+        let search = ceilings::bind_bump_search(&mint, &market);
         println!(
-            "bind, contained mint at index {contained_index}: {} CU",
+            "bind, contained mint at index {contained_index}: {} CU, {search} of them searching for bumps",
             costs[0]
         );
-        most = most.max(costs[0]);
+        most = most.max(costs[0] - search);
     }
     assert!(most <= ceilings::BIND, "bind took {most} CU");
+}
+
+#[test]
+fn each_further_bump_costs_bind_the_same() {
+    // What bind costs once its bump searches beyond the first bumps are taken out is the same
+    // on every mint, within what comparing keys costs, so the rule its ceiling leaves out is
+    // the one its cost follows. The fuzzer measured 55,416 units in all on one mint. The mints
+    // and market states are fixed keys, so the run is the same every time, and they span
+    // searches from a few bumps to many.
+    let mut net = vec![];
+    let mut searches = vec![];
+    for k in 1..=12u8 {
+        let mut env = hook_env();
+        let at = Keypair::new_from_array([k; 32]);
+        let options = MintOptions {
+            transfer_hook: Some(hook_id()),
+            transfer_hook_authority: Some(unlock_pda(&at.pubkey())),
+            ..MintOptions::default()
+        };
+        let mint = env.create_mint_at(&at, &TOKEN_2022, options);
+        let quote = env.create_mint(&TOKEN);
+        let params = quote_taxed_params(&Pubkey::new_unique(), 1);
+        let market = env
+            .create_tax_market_with(
+                &Keypair::new_from_array([k + 100; 32]),
+                [(mint, TOKEN_2022), (quote, TOKEN)],
+                init_data(&params),
+            )
+            .unwrap();
+        let meta = bind(&mut env, mint, &market).unwrap();
+        let cost = hook_compute(&meta.logs)[0];
+        let search = ceilings::bind_bump_search(&mint, &market);
+        net.push(cost - search);
+        searches.push(search);
+        println!("bind: {cost} CU, {search} of them beyond the first bumps");
+    }
+    let (low, high) = (net.iter().min().unwrap(), net.iter().max().unwrap());
+    assert!(
+        high - low <= 200,
+        "bind less its bump searches ranged from {low} to {high} CU"
+    );
+    let spread = searches.iter().max().unwrap() - searches.iter().min().unwrap();
+    assert!(
+        spread >= 5 * ceilings::BUMP_TRY,
+        "the mints span too few bumps: {searches:?}"
+    );
 }
 
 #[test]
