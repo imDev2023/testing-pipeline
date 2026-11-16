@@ -3,8 +3,8 @@
 The Canary checks' binary: it copies one Pipeline market into LiteSVM and trades it the way a trader would, then writes one Canary result per check.
 What the checks are and why is [`docs/spec/pipescope-canary.md`](../../docs/spec/pipescope-canary.md); where the binary runs is [`docs/spec/pipescope-architecture.md`](../../docs/spec/pipescope-architecture.md), "Canary runner".
 
-This crate runs `readable`, `conformance`, `exit_sizes`, `quote_matches_swap` and `cost`.
-The checks over time and across wallets, and the control checks, come with their own tickets.
+This crate runs `readable`, `conformance`, the exit test (`exit_sizes`, `exit_hold`, `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred` and `exit_queue`), `quote_matches_swap` and `cost`.
+The control checks come with their own ticket.
 
 ## Run it
 
@@ -43,7 +43,9 @@ The seed is chosen at random once per run and every wallet of the run comes from
 - `src/swap.rs`: the one swap function behind the licence seam (`CANARY-26`) and its router implementation; the direct implementation comes with the control checks.
 - `src/trade.rs`: a trader's legs: resolve the strategy's accounts in the current state, quote with `pipeline-quoter` holding only what an integrator holds, swap, compare.
 - `src/sizes.rs`: the money side and the sizes; `src/bands.rs`: the pass and fail bands.
+- `src/clock.rs`: the clock positions, waits forward and the launch clock back, moving slot, epoch and Unix time together at the rates in `config.rs`.
 - `src/checks/`: each check as a measurement in the copy and a judgement that is a pure function of it.
+  `exits.rs` holds what the checks over time and across wallets share: the reference amount they trade (the reference size, or its stand-in from `exit_sizes`), the swaps they commit for `quote_matches_swap`, and `could_not_sell_back`, which every exit record carries in its numbers (`CANARY-21`, `CANARY-38`); `timed.rs` judges the three checks over time against the present.
 - `src/failure.rs`: how a failure is named; `src/record.rs`: the records and the roll-up.
 - `src/http.rs`: the endpoint; `src/main.rs`: the command.
 
@@ -51,13 +53,14 @@ Pipeline's crates come from crates.io at exact versions in `../Cargo.toml` (`PIP
 
 ## Test it
 
-The tests build a small cluster in LiteSVM from devnet's router, checked against the hash in `fixtures/pins.env`, and Pipeline's Apache-2.0 `test-strategy-cp` and `test-strategy-evil`, then copy markets out of it exactly as Canary copies them from devnet.
+The tests build a small cluster in LiteSVM from devnet's router, checked against the hash in `fixtures/pins.env`, Pipeline's Apache-2.0 `test-strategy-cp`, `test-strategy-evil` and `test-hook`, and Canary's own fixture strategy (`tests/fixtures/strategy`: a constant-product market that can pay one insider more or less, tax buys by the time since its creation, or close two days after it), then copy markets out of it exactly as Canary copies them from devnet.
 From the repo root:
 
 ```sh
 source scripts/toolchain-env.sh
 scripts/fetch-router.sh              # fixtures/router/pipeline.so
 scripts/fetch-pipeline.sh programs   # fixtures/pipeline/programs/target/deploy/*.so
+crates/canary/tests/fixtures/build.sh   # Canary's own fixture programs
 cd crates
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings

@@ -10,6 +10,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::checks::exits::could_not_sell_back;
 use crate::checks::readable::Trading;
 use crate::failure::Failure;
 use crate::market::{MintFacts, Session};
@@ -128,6 +129,7 @@ fn size_numbers(m: &Measured, row: &RoundTrip) -> Value {
 
 pub fn numbers(m: &Measured) -> Value {
     json!({
+        "could_not_sell_back": m.pairs.iter().flat_map(|p| p.rows.iter()).any(could_not_sell_back),
         "money": m.money,
         "basis": m.ladder.basis,
         "money_vault": m.money_vault,

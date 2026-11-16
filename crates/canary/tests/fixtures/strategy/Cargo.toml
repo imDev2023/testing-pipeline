@@ -1,0 +1,40 @@
+# A strategy for Canary's tests only: a constant-product market whose behaviour over time and
+# towards one insider wallet is chosen when the market is created (see src/lib.rs). It is
+# never deployed anywhere but the tests' LiteSVM cluster.
+#
+#   crates/canary/tests/fixtures/build.sh      # builds target/deploy/canary_fixture_strategy.so
+[package]
+name = "canary-fixture-strategy"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "canary_fixture_strategy"
+
+[dependencies]
+borsh = { version = "1.5", features = ["derive"] }
+pipeline-strategy-interface = "=0.1.0"
+solana-program = "3"
+
+# The cfgs solana-program's `entrypoint!` reads.
+[features]
+custom-heap = []
+custom-panic = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
+# Its own workspace, apart from crates/, so it builds for SBF on its own, with the release
+# profile and platform tools of programs/Cargo.toml (sBPF v3), as Pipeline builds its own.
+[workspace]
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+[workspace.metadata.solana]
+tools-version = "v1.58"
