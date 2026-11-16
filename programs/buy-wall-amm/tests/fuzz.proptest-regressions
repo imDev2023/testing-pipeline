@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 6de48c99f789049b5df30eb707cc25f7be543e99e1edbef3f0f029a66e2a29d3 # shrinks to steps = [Seed { market: 1, tokens: 3921196638939414857, lamports: 234075397905, by_seeder: true }]
+cc 7cba70f360461e8f95ba6c33f856cac88b9c2beb7aaf7c3f8b4b60b167159e5a # shrinks to steps = [Seed { market: 0, tokens: 58087, lamports: 462190129035, by_seeder: true }, Trade { market: 13136, buy: false, amount: 703735834527060442 }]
