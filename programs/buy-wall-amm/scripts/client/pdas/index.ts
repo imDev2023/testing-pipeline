@@ -6,6 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from "./marketState.ts";
 export * from "./solVault.ts";
 export * from "./tokenVault.ts";
 export * from "./vaultAuthority.ts";
