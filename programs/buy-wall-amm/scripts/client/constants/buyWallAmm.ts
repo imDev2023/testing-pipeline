@@ -6,6 +6,10 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export const DECAY_CREDIT_WINDOW: bigint = 86400n;
+
 export const DESIGNER_SHARE_BPS: number = 1000;
+
+export const MIN_LIQUIDITY: bigint = 1000000n;
 
 export const SUITE_SHARE_BPS: number = 1000;

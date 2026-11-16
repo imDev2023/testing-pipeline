@@ -287,6 +287,45 @@ impl MarketState {
         self.set_fees_suite(books.fees_suite);
     }
 
+    /// What the inventory cap's steps read and write (`cap.rs`).
+    pub fn inventory(&self) -> crate::cap::Inventory {
+        crate::cap::Inventory {
+            sqrt_price: self.sqrt_price(),
+            liquidity: self.liquidity(),
+            pool_tokens: self.pool_tokens(),
+            pool_sol: self.pool_sol(),
+            retired_tokens: self.retired_tokens(),
+            idle_sol: self.idle_sol(),
+            cap: self.cap(),
+            decay_credit: self.decay_credit(),
+            decay_time: self.decay_time(),
+            tokens_trimmed: self.tokens_trimmed(),
+            sol_trimmed: self.sol_trimmed(),
+        }
+    }
+
+    /// Writes back what the cap's steps change; they never change the price.
+    pub fn set_inventory(&mut self, inventory: &crate::cap::Inventory) {
+        self.set_liquidity(inventory.liquidity);
+        self.set_pool_tokens(inventory.pool_tokens);
+        self.set_pool_sol(inventory.pool_sol);
+        self.set_retired_tokens(inventory.retired_tokens);
+        self.set_idle_sol(inventory.idle_sol);
+        self.set_cap(inventory.cap);
+        self.set_decay_credit(inventory.decay_credit);
+        self.set_decay_time(inventory.decay_time);
+        self.set_tokens_trimmed(inventory.tokens_trimmed);
+        self.set_sol_trimmed(inventory.sol_trimmed);
+    }
+
+    /// The market's cap rules, fixed at its seed.
+    pub fn cap_rules(&self) -> crate::cap::CapRules {
+        crate::cap::CapRules {
+            cap_floor: self.cap_floor(),
+            cap_decay_per_day: self.cap_decay_per_day(),
+        }
+    }
+
     /// The counters a swap changes.
     pub fn counters(&self) -> Option<crate::books::Counters> {
         Some(crate::books::Counters {
