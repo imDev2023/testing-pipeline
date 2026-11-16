@@ -1,5 +1,6 @@
 //! The stateful invariant fuzzer (docs/spec/README.md, "Test layers" 3): Proptest generates
-//! WSOL-lent markets, which may lend from the start, and sequences of swaps (some redeeming
+//! WSOL-lent markets, created through the router or seeded by a launchpad with their first
+//! deposit's shares locked, which may lend from the start, and sequences of swaps (some redeeming
 //! their shortfall from Kamino), deposits, removals in cash and in kind, locks and SPL burns of
 //! LP shares, `rebalance` calls, donations of tokens and cTokens and clock jumps, and moves of
 //! Kamino's own state (borrowers borrowing and repaying its free liquidity to anywhere from 0 to
@@ -29,8 +30,8 @@
 //! - a removal pays exactly `R x lp / N`, `B x lp / N` and `c x lp / N`, rounded down, the last
 //!   redeemed by klend in cash for at least its value at the stored rate, or paid as cTokens in
 //!   kind;
-//! - the share count changes only by `add_liquidity`, `remove_liquidity` and SPL burns, and the
-//!   lock account's balance never falls;
+//! - the share count changes only by `add_liquidity`, `remove_liquidity`, seeding and SPL burns,
+//!   and the lock account's balance never falls from what seeding and `lock_lp` put there;
 //! - a swap never deposits into Kamino, never redeems when the buffer covers its output, and
 //!   otherwise redeems exactly `ceil(s x S_ctoken / S_total)` cTokens for its shortfall `s`, never
 //!   more than one cToken beyond what is worth `s`, receives at least `s` and keeps the rest in
@@ -170,11 +171,26 @@ const SEED: [u64; 2] = [2_000_000_000_000, 40 * SOL];
 const HOLDING: [u64; 2] = [5_000_000_000_000, 100 * SOL];
 
 impl World {
-    fn new(lp_fee_bps: u16, lend_first: bool) -> Self {
+    /// A market at `lp_fee_bps`, created through the router with its first deposit by the first
+    /// LP, or, when `seeded`, seeded by the stand-in launchpad from its escrows with the shares
+    /// locked (the vault authority as the LP recipient), and recorded with the router in the
+    /// same transaction; it lends straight away when `lend_first`.
+    fn new(lp_fee_bps: u16, lend_first: bool, seeded: bool) -> Self {
         let mut env = Env::new();
         env.load_klend();
         let spec = env.wsol_market_spec(lp_fee_bps);
-        let (market, first) = env.create_funded_market(&spec, SEED).unwrap();
+        let (market, first, locked) = if seeded {
+            let launch = env.launch(spec.mints, SEED);
+            let authority = launch.addresses(&spec.params).authority;
+            let graduated = env
+                .graduate(&launch, &spec.params, SEED, &authority)
+                .unwrap();
+            let first = env.funded_wallet(&graduated.market, [0, 0]);
+            (graduated.market, first, graduated.graduation.lp_amount)
+        } else {
+            let (market, first) = env.create_funded_market(&spec, SEED).unwrap();
+            (market, first, 0)
+        };
         if lend_first {
             env.rebalance(&market, None).unwrap();
         }
@@ -184,7 +200,8 @@ impl World {
             .map(|_| env.funded_wallet(&market, HOLDING))
             .collect();
         let second = env.funded_wallet(&market, HOLDING);
-        // The first LP spent everything on the seed; give them more to add later.
+        // The first LP spent everything on the seed, or holds nothing of a seeded market; give
+        // them more to add later.
         for ((mint, token_program), amount) in
             market.mints.iter().zip(&market.token_programs).zip(HOLDING)
         {
@@ -208,7 +225,7 @@ impl World {
             shares,
             rebalances: [0; 8],
             redeeming_swaps: 0,
-            locked: 0,
+            locked,
             taken_in_kind: 0,
             removals: [0; 2],
             locks_and_burns: [0; 2],
@@ -1058,9 +1075,10 @@ proptest! {
     fn the_invariants_hold_after_every_step(
         lp_fee_bps in prop_oneof![Just(0u16), Just(30), Just(200), 0u16..=200],
         lend_first: bool,
+        seeded: bool,
         steps in proptest::collection::vec(step(), 1..32),
     ) {
-        let mut world = World::new(lp_fee_bps, lend_first);
+        let mut world = World::new(lp_fee_bps, lend_first, seeded);
         let reserves = world.effective();
         let n = world.env.share_count(&world.market);
         let mut value = (reserves[0] as u128 * reserves[1] as u128, n as u128 * n as u128);
@@ -1074,11 +1092,12 @@ proptest! {
         let [cash, in_kind] = world.removals;
         let [locks, burns] = world.locks_and_burns;
         println!(
-            "rebalance: {deposits} deposits, {redeems} redeems, refused {within} inside the band, \
+            "{}: rebalance: {deposits} deposits, {redeems} redeems, refused {within} inside the band, \
              {below} below the floor, {stopped} while Kamino redeemed nothing and {blocked} while it \
              blocked deposits, {mode_changes} withdraw mode changes, {stale} stale redeems retried with \
              klend's refresh first; {} swaps redeemed their \
              shortfall; removals: {cash} in cash, {in_kind} in kind; {locks} locks and {burns} burns",
+            if seeded { "seeded" } else { "created" },
             world.redeeming_swaps
         );
     }

@@ -18,6 +18,10 @@ pub const STATE_VERSION: u8 = 1;
 
 /// Seeds of the market state PDA, `["market", other_mint, lent_mint, lp_fee_bps as u16 LE]`.
 pub const MARKET_SEED: &[u8] = b"market";
+/// Seeds of a market state created by `pipeline_seed_liquidity`,
+/// `["seeded", seeder, other_mint, lent_mint, lp_fee_bps as u16 LE]`: only the seeder's own
+/// program can sign as the seeder, so nobody else can create or fund a market there.
+pub const SEEDED_SEED: &[u8] = b"seeded";
 /// Seeds of the vault authority PDA, `["authority", market_state]`: signs every transfer out
 /// of the vaults, owns the cToken account and is the LP mint's mint authority.
 pub const AUTHORITY_SEED: &[u8] = b"authority";
@@ -164,6 +168,26 @@ pub fn market_state_address(
     Pubkey::find_program_address(
         &[
             MARKET_SEED,
+            other_mint.as_ref(),
+            lent_mint.as_ref(),
+            &lp_fee_bps.to_le_bytes(),
+        ],
+        &crate::ID,
+    )
+}
+
+/// The address of the market state `seeder` creates through `pipeline_seed_liquidity` for a
+/// pair, a lent side and a fee, with its bump.
+pub fn seeded_market_state_address(
+    seeder: &Pubkey,
+    other_mint: &Pubkey,
+    lent_mint: &Pubkey,
+    lp_fee_bps: u16,
+) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[
+            SEEDED_SEED,
+            seeder.as_ref(),
             other_mint.as_ref(),
             lent_mint.as_ref(),
             &lp_fee_bps.to_le_bytes(),

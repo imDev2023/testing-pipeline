@@ -12,6 +12,7 @@ export * from "./pipelineInitMarket.ts";
 export * from "./pipelineMarketInfo.ts";
 export * from "./pipelineQuote.ts";
 export * from "./pipelineResolveAccounts.ts";
+export * from "./pipelineSeedLiquidity.ts";
 export * from "./pipelineSwap.ts";
 export * from "./rebalance.ts";
 export * from "./removeLiquidity.ts";

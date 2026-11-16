@@ -9,8 +9,8 @@ mod common;
 use anchor_lang::Discriminator;
 use common::*;
 use lending_amm::events::{
-    LiquidityAdded, LiquidityRemoved, MarketCreated, Rebalanced, SharesLocked, ShortfallRedeemed,
-    WithdrawModeEntered, WithdrawModeLeft,
+    LiquidityAdded, LiquidityRemoved, MarketCreated, MarketSeeded, Rebalanced, SharesLocked,
+    ShortfallRedeemed, WithdrawModeEntered, WithdrawModeLeft,
 };
 use lending_amm::state::layout;
 use lending_amm::LendingAmmMarket;
@@ -95,6 +95,7 @@ fn its_instructions_are_pipelines_and_the_custom_actions() {
         ("pipeline_quote", discriminator::QUOTE),
         ("pipeline_resolve_accounts", discriminator::RESOLVE_ACCOUNTS),
         ("pipeline_swap", discriminator::SWAP),
+        ("pipeline_seed_liquidity", discriminator::SEED_LIQUIDITY),
         ("add_liquidity", anchor_discriminator("add_liquidity")),
         ("rebalance", anchor_discriminator("rebalance")),
         ("remove_liquidity", anchor_discriminator("remove_liquidity")),
@@ -253,7 +254,8 @@ fn its_events_and_errors_are_the_programs() {
         "WithdrawModeLeft".into(),
         WithdrawModeLeft::DISCRIMINATOR.to_vec()
     )));
-    assert_eq!(events.len(), 8);
+    assert!(events.contains(&("MarketSeeded".into(), MarketSeeded::DISCRIMINATOR.to_vec())));
+    assert_eq!(events.len(), 9);
 
     // Errors are numbered from 6000 in the enum's order, new ones only ever appended.
     let errors = idl["errors"].as_array().unwrap();
@@ -322,6 +324,7 @@ fn its_events_and_errors_are_the_programs() {
             "RebalanceNotAlone",
             lending_amm::StrategyError::RebalanceNotAlone,
         ),
+        ("BadSeedAmounts", lending_amm::StrategyError::BadSeedAmounts),
     ] {
         let listed = errors.iter().find(|e| e["name"] == name).unwrap();
         assert_eq!(
@@ -330,5 +333,5 @@ fn its_events_and_errors_are_the_programs() {
             "{name}"
         );
     }
-    assert_eq!(errors.last().unwrap()["name"], "RebalanceNotAlone");
+    assert_eq!(errors.last().unwrap()["name"], "BadSeedAmounts");
 }

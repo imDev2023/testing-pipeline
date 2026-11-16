@@ -13,6 +13,8 @@
 //! | `pipeline_resolve_accounts` | quoters and SDKs, in simulation  | lists the accounts a swap needs          |
 //! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices a trade, read-only                |
 //! | `pipeline_swap`             | the router, from `swap`          | settles a trade                          |
+//! | `pipeline_seed_liquidity`   | a launchpad's program, by CPI    | creates a market and makes its first     |
+//! |                             |                                  | deposit from the launchpad's escrows     |
 //! | `add_liquidity`             | LPs, directly                    | adds both mints for LP shares            |
 //! | `remove_liquidity`          | LPs, directly                    | burns LP shares for both mints, in cash  |
 //! |                             |                                  | or with the cTokens' part in kind        |
@@ -96,6 +98,18 @@ pub mod lending_amm {
         request: interface::SwapRequest,
     ) -> Result<()> {
         instructions::swap(ctx, request)
+    }
+
+    /// For a launchpad graduating a token: creates a market at the PDA `["seeded", seeder,
+    /// other_mint, lent_mint, lp_fee_bps]` with the creation parameters in `request.data`,
+    /// makes its first deposit of `request.amounts` from the seeder's escrows, mints the shares
+    /// to the LP recipient's associated token account for the LP mint, and returns
+    /// `SeedResult`. The caller then records the market with the router.
+    pub fn pipeline_seed_liquidity<'info>(
+        ctx: Context<'info, SeedLiquidity<'info>>,
+        request: interface::SeedRequest,
+    ) -> Result<()> {
+        instructions::seed_liquidity(ctx, request)
     }
 
     /// Adds both mints to a market for LP shares; the first deposit opens it.

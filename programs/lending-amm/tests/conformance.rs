@@ -172,3 +172,33 @@ fn a_market_whose_reserve_or_lending_market_is_in_emergency_mode_passes_every_ch
         }
     }
 }
+
+#[test]
+fn a_market_seeded_by_a_launchpad_passes_every_check_and_again_once_it_has_lent() {
+    // Seeded by the stand-in launchpad and recorded with the router in the same transaction,
+    // its shares locked, on a plain token and a hooked one; then rebalance lends.
+    for hooked in [false, true] {
+        let mut env = Env::new();
+        env.load_klend();
+        let token = if hooked {
+            (env.create_hooked_mint().0, TOKEN_2022)
+        } else {
+            (env.create_mint(&TOKEN), TOKEN)
+        };
+        let seed = [1_000_000_000_000, 50 * SOL];
+        let launch = env.launch([token, (wsol(), TOKEN)], seed);
+        let params = lending_amm::InitParams {
+            lent_index: 1,
+            lp_fee_bps: 30,
+        };
+        let authority = launch.addresses(&params).authority;
+        let market = env
+            .graduate(&launch, &params, seed, &authority)
+            .unwrap()
+            .market;
+        assert_conforms(&env, &market);
+        env.rebalance(&market, None).unwrap();
+        assert!(env.market_state(&market.market_state).ctokens > 0);
+        assert_conforms(&env, &market);
+    }
+}

@@ -466,3 +466,102 @@ fn removals_and_lock_lp_built_from_the_metadata_are_the_programs_and_work() {
         assert_eq!(env.balance(&env.lock_account(&market)), shares);
     }
 }
+
+#[test]
+fn seed_liquidity_built_from_the_metadata_form_is_what_the_program_takes_and_works() {
+    // Pipeline's metadata standard has no field for pipeline_seed_liquidity, so the lending AMM
+    // describes it in a `seed_liquidity` form shaped as `init` is (the validator allows unknown
+    // keys), which the SDK's `resolveInit` resolves for a launchpad.
+    let m = metadata();
+    let form = &m["seed_liquidity"];
+    assert_eq!(form["idl_type"], "InitParams");
+    // `data` is the creation parameters: init's arguments, word for word, in order.
+    assert_eq!(form["args"], m["init"]["args"]);
+    let description = form["description"].as_str().unwrap();
+    for needed in [
+        "SeedRequest.data",
+        "lent_index",
+        "lp_fee_bps",
+        "Borsh",
+        "LP recipient",
+        "lock account",
+        "register_existing_market",
+        "init_fee_account",
+        "SeedResult",
+    ] {
+        assert!(
+            description.contains(needed),
+            "the description names {needed}"
+        );
+    }
+
+    let mut env = Env::new();
+    let token = env.create_mint(&TOKEN);
+    let seed = [1_000_000_000_000, 10 * SOL];
+    let launch = env.launch([(token, TOKEN), (wsol(), TOKEN)], seed);
+    let values = HashMap::from([("lent_index", 1u64), ("lp_fee_bps", 30)]);
+    let args = encoded_args(&form["args"], &values);
+    let params = lending_amm::InitParams {
+        lent_index: 1,
+        lp_fee_bps: 30,
+    };
+    let lp_recipient = solana_keypair::Keypair::new().pubkey();
+    let lp_mint = launch.addresses(&params).lp_mint;
+    let cx = Context {
+        wallet: launch.creator.pubkey(),
+        market_state: Pubkey::default(),
+        inputs: HashMap::from([
+            ("seeder".to_string(), (launch.seeder, Pubkey::default())),
+            ("other_mint".to_string(), (token, TOKEN)),
+            ("lent_mint".to_string(), (wsol(), TOKEN)),
+            ("collateral_mint".to_string(), (lent(0).1, TOKEN)),
+            ("reserve".to_string(), (lent(0).2, Pubkey::default())),
+            (
+                "lp_recipient".to_string(),
+                (lp_recipient, Pubkey::default()),
+            ),
+            (
+                "lp_recipient_shares".to_string(),
+                (
+                    common::launchpad::lp_recipient_account(&lp_recipient, &lp_mint),
+                    Pubkey::default(),
+                ),
+            ),
+        ]),
+        args,
+        market: None,
+    };
+    let source = parse_account_source(form["market_state"].as_str().unwrap()).unwrap();
+    let market_state = resolve(&source, &cx);
+    assert_eq!(market_state, launch.market_state(&params));
+    let cx = Context { market_state, ..cx };
+    let own = metas(&form["accounts"], &cx);
+    // The launchpad's accounts: the market state and the LP recipient, mint, escrow and token
+    // program per mint, then the form's own, exactly as the program takes them.
+    let mut accounts = vec![
+        AccountMeta::new(market_state, false),
+        AccountMeta::new_readonly(lp_recipient, false),
+    ];
+    for i in 0..2 {
+        accounts.push(AccountMeta::new_readonly(launch.mints[i], false));
+        accounts.push(AccountMeta::new(launch.escrows[i], false));
+        accounts.push(AccountMeta::new_readonly(launch.token_programs[i], false));
+    }
+    accounts.extend(own);
+    assert_eq!(
+        accounts,
+        env.seed_liquidity_accounts(&launch, &params, &lp_recipient)
+    );
+
+    // And it works: graduated with those accounts and recorded in the same transaction.
+    let graduate = env.graduate_instruction(&launch, seed, init_data(&params), accounts);
+    let mut instructions = vec![graduate];
+    instructions.extend(env.register_instructions(
+        &launch.creator.pubkey(),
+        &market_state,
+        launch.mints,
+        launch.token_programs,
+    ));
+    env.send_as_creator(&launch, &instructions).unwrap();
+    assert_eq!(env.market_state(&market_state).reserves, seed);
+}

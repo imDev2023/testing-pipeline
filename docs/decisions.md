@@ -4734,6 +4734,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
 
+### LENDING-84: Seeding checks the Kamino reserve
+
+- Question: Does `pipeline_seed_liquidity` check the lent mint's Kamino reserve, which creation alone never reads?
+- Answer: Yes: the reserve is one of its accounts, and it refuses one that fails the reserve check or is deprecated, exactly as the first deposit through `add_liquidity` does, so a seeded market and a created one refuse the same openings.
+- Alternatives: Leaving the reserve out, which saves 33 bytes of the graduation transaction but lets a launchpad open a market against a deprecated reserve that would never lend.
+- Specified in: [`docs/spec/lending-pool.md`, Seeding](spec/lending-pool.md#seeding)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84)
+
+### LENDING-85: Where a seed's shares go, and how a launchpad names that account
+
+- Question: How does `pipeline_seed_liquidity` reach the LP recipient's associated token account for the LP mint, which metadata cannot describe because the LP mint is itself a PDA?
+- Answer: The strategy creates that account itself, idempotently, through the associated token program from the payer's SOL, and checks its address, and the metadata's `seed_liquidity` form takes it as the named input `lp_recipient_shares`, which is the lock account when the LP recipient is the market's vault authority.
+- Alternatives: The LP's shares PDA `["lp_shares", market_state, lp_recipient]` that `add_liquidity` uses, which metadata can describe but which would put a locked seed outside the lock account indexers read; asking the launchpad to create the account first, which it cannot before the LP mint exists.
+- Specified in: [`docs/spec/lending-pool.md`, Seeding](spec/lending-pool.md#seeding)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84)
+
+### LENDING-86: Graduation transactions on hooked tokens use a lookup table
+
+- Question: Does a launchpad's graduation, with `register_existing_market` and both `init_fee_account` calls in the same transaction, fit Solana's 1,232 bytes?
+- Answer: As a legacy transaction signed by the creator alone it does on SPL Token and plain Token-2022 tokens (at most 1,221 bytes), and with a transfer hook's two accounts it does not (1,287), so a launchpad graduating a hooked token sends a version 0 transaction with an address lookup table of the accounts every graduation shares (1,044 bytes in the tests).
+- Alternatives: Dropping accounts from `pipeline_seed_liquidity` (the reserve, the associated token program), which saves at most 66 bytes and gives up LENDING-84 or LENDING-85; recording the market in a second transaction, which the ticket's same-transaction rule excludes.
+- Specified in: [`docs/spec/lending-pool.md`, Seeding](spec/lending-pool.md#seeding)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84)
+
+### LENDING-87: Seeding's events
+
+- Question: What does `pipeline_seed_liquidity` emit for indexers?
+- Answer: `MarketCreated`, as every creation does, then `MarketSeeded` with the seeder, the LP recipient, the account the shares went to, the amounts taken, the shares minted and the share count afterwards.
+- Alternatives: `LiquidityAdded` with the LP recipient as the LP, which would hide that the deposit came from a launchpad's escrows and not from the recipient's wallet.
+- Specified in: [`docs/spec/lending-pool.md`, Seeding](spec/lending-pool.md#seeding)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.

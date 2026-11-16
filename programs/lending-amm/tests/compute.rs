@@ -10,6 +10,7 @@
 
 mod common;
 
+use common::launchpad::wire_size;
 use common::*;
 use pipeline_client::Pubkey;
 use solana_signer::Signer;
@@ -22,6 +23,7 @@ mod ceilings {
     pub const PIPELINE_SWAP_WITH_REDEEM: u64 = 80_000;
     pub const PIPELINE_RESOLVE_ACCOUNTS: u64 = 40_000;
     pub const PIPELINE_INIT_MARKET: u64 = 150_000;
+    pub const PIPELINE_SEED_LIQUIDITY: u64 = 200_000;
     pub const ADD_LIQUIDITY: u64 = 60_000;
     pub const REBALANCE: u64 = 100_000;
     pub const REMOVE_LIQUIDITY_CASH: u64 = 120_000;
@@ -161,6 +163,83 @@ fn the_one_transaction_creation_succeeds_and_its_instructions_stay_under_their_c
             costs[0]
         );
         assert!(costs[2] <= ceilings::ADD_LIQUIDITY, "{name}: {}", costs[2]);
+    }
+}
+
+/// A launchpad graduating a token into a WSOL-lent market, recorded with the router in the
+/// same transaction, the token on plain SPL Token, plain Token-2022 and a Token-2022 mint with
+/// Pipeline's test-hook, the shares to a wallet or to the lock account, at fixed addresses.
+#[test]
+fn seeding_by_a_launchpad_fits_one_transaction_and_stays_under_its_ceiling() {
+    for name in ["SPL Token", "Token-2022", "hooked Token-2022"] {
+        for locked in [false, true] {
+            let mut env = Env::new();
+            let options = MintOptions {
+                key: Some(fixed_key(&format!("the mint on {name}"))),
+                ..MintOptions::default()
+            };
+            let (mint, token_program) = match name {
+                "SPL Token" => (env.create_mint_with(&TOKEN, options), TOKEN),
+                "Token-2022" => (env.create_mint_with(&TOKEN_2022, options), TOKEN_2022),
+                _ => (env.create_hooked_mint_with(options).0, TOKEN_2022),
+            };
+            let creator =
+                solana_keypair::Keypair::new_from_array(fixed_key(&format!("a launch on {name}")));
+            let seed = [1_000_000_000_000, 50 * SOL];
+            let launch = env.launch_by(creator, [(mint, token_program), (wsol(), TOKEN)], seed);
+            let params = lending_amm::InitParams {
+                lent_index: 1,
+                lp_fee_bps: 30,
+            };
+            let recipient = if locked {
+                launch.addresses(&params).authority
+            } else {
+                Pubkey::new_from_array(fixed_key(&format!("a recipient on {name}")))
+            };
+
+            // graduate, register_existing_market and init_fee_account for each mint, signed by
+            // the creator alone, who pays. A legacy transaction holds it unless the token has a
+            // transfer hook, whose two accounts take it past the limit; then a lookup table of
+            // the accounts every graduation shares does, as launchpads use.
+            let what = format!(
+                "on {name}, shares {}",
+                if locked { "locked" } else { "to a wallet" }
+            );
+            let legacy = env.graduation_transaction(&launch, &params, seed, &recipient, None);
+            let legacy_size = wire_size(&legacy);
+            let table = env.graduation_lookup_table(&params, &launch);
+            let compressed =
+                env.graduation_transaction(&launch, &params, seed, &recipient, Some(&table));
+            let compressed_size = wire_size(&compressed);
+            println!(
+                "{what}: graduate + register_existing_market + init_fee_account x2: {legacy_size} of {PACKET_DATA_SIZE} bytes as a legacy transaction, {compressed_size} as v0 with a lookup table"
+            );
+            assert!(
+                compressed_size <= PACKET_DATA_SIZE,
+                "{what}: {compressed_size} bytes"
+            );
+            let hooked = name == "hooked Token-2022";
+            assert_eq!(
+                legacy_size <= PACKET_DATA_SIZE,
+                !hooked,
+                "{what}: {legacy_size} bytes"
+            );
+            let tx = if hooked { compressed } else { legacy };
+            let created = env.svm.send_transaction(tx).unwrap_or_else(|failed| {
+                panic!("{what}: {:?}\n{}", failed.err, failed.meta.logs.join("\n"))
+            });
+            let graduation = common::launchpad::graduation_of(&created);
+            assert_eq!(graduation.taken, seed.to_vec(), "{what}");
+            // pipeline_seed_liquidity, then pipeline_market_info from register_existing_market.
+            let costs = strategy_compute(&created.logs);
+            assert_eq!(costs.len(), 2, "{what}: {:?}", created.logs);
+            println!("{what}: pipeline_seed_liquidity {} CU", costs[0]);
+            assert!(
+                costs[0] <= ceilings::PIPELINE_SEED_LIQUIDITY,
+                "{what}: {}",
+                costs[0]
+            );
+        }
     }
 }
 
@@ -598,6 +677,7 @@ fn the_table_mirrors_the_spec() {
     row("`pipeline_swap`, with a redeem", PIPELINE_SWAP_WITH_REDEEM);
     row("`pipeline_resolve_accounts`", PIPELINE_RESOLVE_ACCOUNTS);
     row("`pipeline_init_market`", PIPELINE_INIT_MARKET);
+    row("`pipeline_seed_liquidity`", PIPELINE_SEED_LIQUIDITY);
     row("`add_liquidity`", ADD_LIQUIDITY);
     row("`rebalance`", REBALANCE);
     row("`remove_liquidity`, cash", REMOVE_LIQUIDITY_CASH);

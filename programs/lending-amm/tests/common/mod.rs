@@ -17,6 +17,7 @@
 #![allow(dead_code)]
 
 pub mod kamino;
+pub mod launchpad;
 pub mod rebalance;
 pub mod redeem;
 pub mod remove;

@@ -108,4 +108,6 @@ pub enum StrategyError {
     ReserveDeprecated,
     #[msg("rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls")]
     RebalanceNotAlone,
+    #[msg("SeedRequest.amounts must hold exactly one amount for each of the market's two mints")]
+    BadSeedAmounts,
 }
