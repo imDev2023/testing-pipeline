@@ -62,7 +62,10 @@
 //  20. it redeems those cTokens at klend itself, for at least what the market valued them at
 //      when it paid them out, and exactly what klend's own maths gives;
 //  21. it locks a tenth of its shares into the market's lock account with the metadata's
-//      `lock_lp` action, the lock event reporting them and the share count unchanged;
+//      `lock_lp` action, the lock event reporting them and the share count unchanged, then
+//      leaves with the lent side alone for a twentieth, from the metadata's `remove_lent_side`
+//      form, as an LP would whose other token can no longer move: the buffer's part in WSOL,
+//      the cTokens' part as cTokens, and nothing of the other token, whose part stays recorded;
 //  22. Kamino runs short: the test borrower of scripts/kamino-devnet borrows the WSOL reserve's
 //      free liquidity below WITHDRAW_MODE_ENTER times the market's exposure max(V, T);
 //  23. `rebalance` enters withdraw mode, its event carrying the free liquidity and the exposure
@@ -70,7 +73,10 @@
 //  24. a second `rebalance` is refused with `BelowMinRebalance`, in simulation: it neither
 //      deposits nor leaves, though V is now 0, since X is still the target lent value T;
 //  25. the borrower repays, the reserve is back above WITHDRAW_MODE_EXIT times X, and
-//      `rebalance` leaves withdraw mode and lends again by klend's own deposit;
+//      `rebalance` starts the market's wait to leave, recording the slot; once the free
+//      liquidity has stayed there WITHDRAW_MODE_EXIT_DELAY_SLOTS (on a local validator started
+//      with `--ticks-per-slot 2`, about two minutes), `rebalance` leaves withdraw mode and lends
+//      again by klend's own deposit;
 //  26. the lending market's owner turns the WSOL reserve's emergency mode on: a sale within
 //      the buffer trades, one beyond it is refused by the quote and by the swap with
 //      `BeyondBuffer`, `rebalance` is refused with `KaminoStopped` and a cash removal with
@@ -1642,7 +1648,7 @@ async function main() {
     info(`klend paid ${redeemedAtKlend} WSOL for ${kindParts.ctokens} cTokens the market valued at ${kindWorth} when it paid them out, as klend's maths gives`);
     record.push(['redeem at klend', `${kindParts.ctokens} cTokens for ${redeemedAtKlend} WSOL, valued by the market at ${kindWorth}`]);
 
-    step('21. The second wallet locks a tenth of its shares');
+    step('21. The second wallet locks a tenth of its shares, and leaves with the lent side alone for a twentieth');
     const lockAmount = lp2Deposit.shares / lp2Plan.lockTenth;
     const [lockAccount] = await findAssociatedTokenPda({ owner: authority, mint: lpMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
     const lp2SharesBefore = await tokenBalance(lp2Shares);
@@ -1668,6 +1674,41 @@ async function main() {
     await checkMarket('after the lock');
     info(`${lockAmount} shares moved into the lock account ${lockAccount} for good; the share count ${shareCount} is unchanged`);
     record.push(['lock', `${lockAmount} shares in ${lockAccount}`]);
+
+    // The way out when the other token cannot move (a frozen vault or a hook refusing it): here
+    // it can, so the wallet simply gives up its part of it.
+    const lentOnly = lp2Deposit.shares / 20n;
+    const lentParts = removalParts(lentOnly);
+    const lentOnlyInstruction = await pipeline.buildActionInstruction({
+        action: removeAction('remove_lent_side'),
+        market: view,
+        wallet: lp2.address,
+        args: { lp: lentOnly, min_lent: lentParts.buffer },
+        inputs: { collateral_mint: collateralMint },
+        tokenPrograms: removeTokenPrograms,
+    });
+    const heldBeforeLentOnly = await Promise.all(lp2Holdings.map(tokenBalance));
+    const ctokensBeforeLentOnly = await tokenBalance(lp2Ctoken);
+    await send('remove_lent_side', lp2, [lentOnlyInstruction]);
+    const lentOnlyReceived = await Promise.all(lp2Holdings.map(async (account, i) => (await tokenBalance(account)) - heldBeforeLentOnly[i]!));
+    const lentOnlyCtokens = (await tokenBalance(lp2Ctoken)) - ctokensBeforeLentOnly;
+    if (lentOnlyReceived[0] !== 0n || lentOnlyReceived[1] !== lentParts.buffer || lentOnlyCtokens !== lentParts.ctokens) {
+        fail(`remove_lent_side paid ${show(lentOnlyReceived)} and ${lentOnlyCtokens} cTokens; the formulas give 0 token, ${lentParts.buffer} WSOL and ${lentParts.ctokens} cTokens`);
+    }
+    reserves = [reserves[0], reserves[1] - lentParts.buffer];
+    shareCount -= lentOnly;
+    {
+        const net = lent.deposited - lent.redeemed;
+        const take = ((net < 0n ? -net : net) * lentParts.ctokens) / lent.ctokens;
+        lent = {
+            ctokens: lent.ctokens - lentParts.ctokens,
+            deposited: net >= 0n ? lent.deposited - take : lent.deposited,
+            redeemed: net >= 0n ? lent.redeemed : lent.redeemed - take,
+        };
+    }
+    await checkMarket('after leaving with the lent side alone');
+    info(`burned ${lentOnly} shares for ${lentParts.buffer} WSOL and ${lentParts.ctokens} cTokens; the ${lentParts.token} token they were worth stay recorded for the LPs who stay`);
+    record.push(['remove the lent side alone', `${lentOnly} shares for ${lentParts.buffer} WSOL and ${lentParts.ctokens} cTokens, ${lentParts.token} token left`]);
 
     // Withdraw mode and Kamino's other states (docs/spec/lending-pool.md, "Withdraw mode" and
     // "When Kamino can't pay"), with the Kamino-side commands of scripts/kamino-devnet.
@@ -1788,11 +1829,33 @@ async function main() {
     if (!(await withdrawMode()) || (await tokenBalance(ctokenAccount)) !== 0n) fail('the market left withdraw mode or lent again');
     info(`everything is redeemed, V = 0, but X is still T = ${stillShort.x}: Kamino's ${stillShort.free} free is at or below ${exitMultiple} x ${stillShort.x}, so it stays`);
 
-    step('25. The borrower repays, and rebalance leaves withdraw mode and lends again');
+    step('25. The borrower repays, and rebalance leaves withdraw mode after its wait and lends again');
     kaminoCommand('repay');
     const repaid = await exposure();
     if (repaid.free <= exitMultiple * repaid.x) fail(`after the repay Kamino has ${repaid.free} free, not above ${exitMultiple} x ${repaid.x}`);
     info(`Kamino has ${repaid.free} WSOL free again, above ${exitMultiple} x ${repaid.x} = ${exitMultiple * repaid.x}`);
+    // One reading could be a bundle's deposit held for a moment, so the first call only starts
+    // the wait (docs/spec/lending-pool.md, "Withdraw mode").
+    const exitDelay = idlConstant('WITHDRAW_MODE_EXIT_DELAY_SLOTS');
+    const waitStart = await send('rebalance starts the wait to leave withdraw mode', payer, [await rebalanceInstruction()]);
+    const waiting = (await fetchLendingAmmMarket(rpc, marketState, { commitment: 'confirmed' })).data;
+    const startedAt = (await rpc.getTransaction(waitStart, { commitment: 'confirmed', maxSupportedTransactionVersion: 0, encoding: 'json' }).send())?.slot ?? fail('no slot for the wait');
+    if (!waiting.withdrawMode || waiting.exitSeenSlot !== startedAt || (await tokenBalance(ctokenAccount)) !== 0n) {
+        fail(`the first rebalance above the exit threshold left withdraw mode, lent, or recorded ${waiting.exitSeenSlot}, not slot ${startedAt}`);
+    }
+    info(`still in withdraw mode, waiting since slot ${startedAt} for ${exitDelay} slots of free liquidity above the exit threshold`);
+    record.push(['wait to leave withdraw mode', `from slot ${startedAt}`]);
+    await refusedWith('rebalance before the wait is over', payer, [await rebalanceInstruction()], 'BelowMinRebalance');
+    let lastShown = 0n;
+    for (;;) {
+        const now = await rpc.getSlot({ commitment: 'confirmed' }).send();
+        if (now >= startedAt + exitDelay) break;
+        if (now - lastShown >= exitDelay / 10n) {
+            info(`slot ${now}: ${startedAt + exitDelay - now} slots to go`);
+            lastShown = now;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
     const reserveBeforeReturn = await readReserve();
     const asked2 = repaid.buffer - (repaid.total * targetBps) / BPS;
     const leaving = await rebalanceMeasured('rebalance out of withdraw mode');

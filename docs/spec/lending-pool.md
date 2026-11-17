@@ -41,6 +41,9 @@ Terms are as in `GLOSSARY.md`: lending AMM, buffer, lent side, lending market, c
 | `KAMINO_RATE_HEADROOM_BPS` | 10 (0.1%) | Headroom `rebalance` leaves below Kamino's freely available liquidity and withdrawal cap when it plans a redeem, for the interest klend accrues when it refreshes the reserve inside the redeem (see "The rule") |
 | `WITHDRAW_MODE_ENTER` | 5 | Enter withdraw mode when Kamino's freely available liquidity is below 5 times the larger of the market's lent value and its target lent value (see "Withdraw mode") |
 | `WITHDRAW_MODE_EXIT` | 10 | Leave withdraw mode when it is back above 10 times that amount |
+| `WITHDRAW_MODE_EXIT_DELAY_SLOTS` | 9,000 (about an hour) | How long a market must keep seeing the free liquidity above the exit threshold before it leaves withdraw mode (see "Withdraw mode") |
+| `ADD_MAX_RESERVE_AGE_SLOTS` | 0 | How many slots old the reserve's last refresh may be when adding values a market's cTokens: refreshed in the same slot (see "The stored rate, everywhere") |
+| `TRADE_MAX_RESERVE_AGE_SLOTS` | 9,000 (about an hour) | How many slots old the reserve's last refresh may be when a quote or a swap values a market's cTokens |
 | `MAX_LP_FEE_BPS` | 200 (2%) | The highest LP fee a market may charge |
 | `MINIMUM_LIQUIDITY` | 1,000 LP base units | Locked for good by the first deposit |
 | `LP_DECIMALS` | 9 | Decimals of every market's LP mint |
@@ -102,6 +105,7 @@ Terms are as in `GLOSSARY.md`: lending AMM, buffer, lent side, lending market, c
 The market state has its final layout from the first build ([Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78), 2026-11-12), because on 2026-11-08 an upgrade of another strategy on devnet stranded most of its markets when the new program could no longer read what older versions had written.
 
 - Anchor's discriminator, then a version byte (1), then fixed-size fields only, so each sits at a fixed offset: the bumps of the market state and the vault authority, `lent_index`, `lp_fee_bps`, withdraw mode, the two mints and vaults in the creator's order, the market signer, the LP mint, the cToken account, the reserve and its collateral mint, the seeder (the default key for a market created through the router), the recorded reserves by mint index (`R`, and the buffer `B` on the lent side), the recorded cTokens `c`, the running totals deposited into and redeemed from Kamino (u128), the creation slot and time, and 256 reserved bytes; 663 bytes in all.
+- The hardening ticket took the first field from the reserved space, before any deploy: `exit_seen_slot` (u64, offset 407), the slot from which a market in withdraw mode has seen Kamino's free liquidity above the exit threshold, 0 when it has not (see "Withdraw mode"), leaving 248 reserved bytes at offset 415 and the account its size ([Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86), 2026-11-17).
 - No field ever moves, resizes or disappears; a new field takes reserved space, with a zeroed value meaning the old behaviour.
 - `programs/lending-amm/src/state.rs` publishes the offsets and `tests/layout.rs` pins every one.
 
@@ -145,6 +149,17 @@ Until the first deposit, quotes and swaps are refused, because an empty side can
 - Quotes, swaps, adding liquidity and `rebalance` all value cTokens at the rate stored in the reserve account, with no projection to the current slot.
 - The stored rate lagged 2 to 68 seconds behind on 2026-11-09, which understates the value by about 0.05 bps an hour of lag, far below any fee; it is always an understatement, because interest only raises the rate.
 - Projecting it would mean copying Kamino's interest maths into our program, where any drift from Kamino's own would misprice.
+- The stored rate is only as fresh as the reserve's last refresh (its `last_update.slot`, offset 16), and klend's refresh, or any deposit or redeem, adds every slot's interest since at once.
+  So the program reads it only from a reserve refreshed recently enough, once the market holds cTokens; a market that holds none values nothing at the rate and needs no fresh reserve ([Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86), 2026-11-17, findings H001 and H002 in `docs/security/lending-amm/`):
+  - Adding needs the reserve refreshed in the same slot (`ADD_MAX_RESERVE_AGE_SLOTS`, 0), as klend itself asks before it states its exchange rate, and refuses with `ReserveStale` otherwise.
+    Adding and removing charge no fee, so a deposit at a stale rate followed by a removal would take, out of the LPs' yield, nearly all the interest not yet counted: on our devnet WSOL reserve, left 800,000 slots without a refresh as devnet left it, ten times a 50 SOL market added and removed at once took 2.84 SOL of it.
+    A depositor puts klend's `refresh_reserve`, with the reserve's oracle accounts, first in the same transaction; klend refreshes interest even on a stale price.
+  - Quotes and swaps need the reserve refreshed within `TRADE_MAX_RESERVE_AGE_SLOTS` (9,000 slots, about an hour), and refuse with `ReserveStale` beyond it.
+    A trade at the stored rate and one back after a refresh pay Pipeline's fee twice, 0.5%, and the LP fee may be 0; on the stalest state the deploy sees a round trip would pay, while an hour of interest at our devnet reserves' steepest rate, 1,000% a year, raised the lent value by 8 to 11 bps and the round trip lost.
+    Beyond the bound a trader, Aviary or a keeper puts klend's `refresh_reserve` first; our keeper runner refreshes our devnet reserves within the hour (see "When it runs"), and Kamino's mainnet reserves refresh about every minute.
+  - A deprecated reserve's rate never moves again, so it is never stale: a market whose reserve a total write-off deprecated keeps trading from its buffer.
+  - While the lending market's emergency mode is on, klend refuses to refresh any of its reserves, so a market holding cTokens stops trading an hour after the reserve's last refresh, and adding stops at once, until Kamino lifts it; LPs leave in kind meanwhile (see "When Kamino can't pay").
+  - `rebalance` and removals need no fresh reserve: klend refreshes the reserve inside every deposit and redeem, and the market measures what moved; a removal pays its parts by units, not at the rate.
 
 ### Kamino's losses fall on LPs
 
@@ -157,9 +172,11 @@ Until the first deposit, quotes and swaps are refused, because an empty side can
 
 ### Checking the reserve before reading it
 
-- Every instruction that reads the reserve first checks its address (the constant for the lent mint), owner (`KLEND_PROGRAM`), size (8624 bytes), Anchor account discriminator, lending market, liquidity mint and collateral mint.
+- Every instruction that reads the reserve first checks its address (the constant for the lent mint), owner (`KLEND_PROGRAM`), size (8624 bytes), Anchor account discriminator, lending market, liquidity mint, collateral mint and version (1, or `u64::MAX` for a reserve a total write-off deprecated).
 - On any mismatch, such as a Kamino upgrade that changes the layout, it refuses rather than misprices: quotes, swaps, adding liquidity and `rebalance` fail.
-- Each part has its own error, in the order above (`ReserveWrongAddress`, `ReserveNotKamino`, `ReserveWrongSize`, `ReserveWrongDiscriminator`, `ReserveWrongLendingMarket`, `ReserveWrongLiquidityMint`, `ReserveWrongCollateralMint`), so a trade built without the reserve fails with `ReserveWrongAddress` whatever account sits in its place.
+- Each part has its own error, in the order above (`ReserveWrongAddress`, `ReserveNotKamino`, `ReserveWrongSize`, `ReserveWrongDiscriminator`, `ReserveWrongLendingMarket`, `ReserveWrongLiquidityMint`, `ReserveWrongCollateralMint`, `ReserveWrongVersion`), so a trade built without the reserve fails with `ReserveWrongAddress` whatever account sits in its place.
+- Any other version is a klend this program was not written for, whose fields may have moved while the size and discriminator stayed, so it is refused like any other layout change rather than read as deprecated (finding H008).
+- The reserve is the one the lent mint's `LENT_MINTS` entry names, and that entry must still name the reserve and collateral mint the market recorded at creation, or every instruction that reads Kamino refuses with `ReserveWrongAddress`: an upgrade that edits a row stops the market rather than pointing it at another reserve, and its LPs leave in kind (finding H007).
 - The check runs whether or not the market holds cTokens, so a Kamino change stops trading in every market at once rather than only in those that have lent.
 - Removing liquidity in kind never reads the reserve, so a Kamino change can stop trading but can never trap LPs.
 
@@ -261,15 +278,21 @@ How it is built ([Lending AMM: withdraw mode and Kamino's other states](https://
 - A call that enters or leaves withdraw mode succeeds and records the mode even when it moves nothing, for example entering with nothing Kamino can pay, or leaving with the buffer inside its band or deposits blocked; a call that neither moves nor changes the mode fails as before, with `BelowMinRebalance` in withdraw mode when there is nothing left to redeem, so a keeper's simulation still shows a no-op.
 - Leaving and lending happen in the same call: once above the exit threshold the band applies at once.
 - `rebalance` emits `WithdrawModeEntered` or `WithdrawModeLeft` with the free liquidity and the exposure `X` it measured, before its `Rebalanced`, if it moved anything.
-- Since withdraw mode measures Kamino's free liquidity at the moment `rebalance` runs, `rebalance` refuses with `RebalanceNotAlone` unless it is called directly, at the transaction's level, beside nothing but compute budget instructions, klend's `refresh_reserve` and other `rebalance` calls, as the instructions sysvar shows; otherwise a deposit before it and a redeem after it, by klend's instructions or by another program calling klend, could force a market out of withdraw mode and lend its liquidity into a crunch, and a klend flash loan around it could force one in.
+- Since withdraw mode measures Kamino's free liquidity at the moment `rebalance` runs, `rebalance` refuses with `RebalanceNotAlone` unless it is called directly, at the transaction's level, beside nothing but compute budget instructions and klend's `refresh_reserve`, and once per transaction, as the instructions sysvar shows; otherwise a deposit before it and a redeem after it, by klend's instructions or by another program calling klend, could force a market out of withdraw mode and lend its liquidity into a crunch, and a klend flash loan around it could force one in.
+  Another market's `rebalance` is such a program: one market's deposit before the call and a third's redeem after it would move Kamino's liquidity around it as klend's own instructions would, so a second `rebalance` in the transaction, on any market, is refused too (finding H003, [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86), 2026-11-17).
   Moving Kamino's liquidity across separate transactions stays possible for whoever bears it: a real borrow held around a `rebalance` can put a market into withdraw mode, where it stays until Kamino's free liquidity is back above the exit threshold, which costs the borrower interest and the market only its lending yield meanwhile, and a real deposit held around one can take a market out, which leaves that depositor's own liquidity in the same reserve; the program cannot see past its own transaction.
+- A deposit before `rebalance` and a redeem after it in separate transactions of one Jito bundle, which lands whole or not at all, costs whoever does it nothing, so one reading of the free liquidity above the exit threshold never takes a market out of withdraw mode (finding H004).
+  The first `rebalance` that sees it so stays in withdraw mode and records its slot in `exit_seen_slot`; the market leaves only at a `rebalance` at least `WITHDRAW_MODE_EXIT_DELAY_SLOTS` (9,000 slots, about an hour) later that sees it so too, and any `rebalance` in between that sees it at or below the threshold sets `exit_seen_slot` back to 0, so the wait starts again.
+  A call that records or forgets a sighting succeeds even when it moves nothing, as one that changes the mode does, so the keeper's sweeps every 10 minutes (see "When it runs") are honest readings in between: to force an exit one would have to hold the liquidity in Kamino through every reading of the hour, which is the real deposit the point above accepts.
+  A sighting is recorded as slot 1 at the earliest, since 0 means none, and the wait applies only to leaving: entering withdraw mode, which protects the market, still happens at the first reading below the entry threshold.
 - On 2026-11-16 the local demo run brought the demo market into withdraw mode with devnet's klend: the test borrower took the WSOL reserve's free liquidity to 1.42 SOL, below 5 times the market's exposure of 0.29 SOL, and `rebalance` redeemed every one of its cTokens; a second call was refused with `BelowMinRebalance`, and after the repay `rebalance` left withdraw mode and lent 0.29 SOL again.
 
 ### When it runs
 
 - `rebalance {}` is a permissionless custom action: anyone may call it at any time, and inside the band it does nothing, so it cannot be used to grief a market.
 - It creates no accounts, so the caller pays only the transaction fee, and gets no tip.
-- Our keeper runner calls it when Aviary's indexer sees a swap or an LP action leave a market outside its band, and sweeps every lending AMM market every 10 minutes for withdraw mode and anything missed.
+- Our keeper runner calls it when Aviary's indexer sees a swap or an LP action leave a market outside its band, and sweeps every lending AMM market every 10 minutes for withdraw mode and anything missed; in withdraw mode a sweep's `rebalance` also records or forgets the market's wait to leave (see "Withdraw mode"), so the keeper sends it whenever its simulation succeeds.
+- The keeper runner also refreshes each reserve a lending AMM market lends to with klend's `refresh_reserve` whenever its last refresh is more than half of `TRADE_MAX_RESERVE_AGE_SLOTS` old, so markets keep quoting on reserves Kamino's own users leave idle, as our devnet reserves are for days at a time (see "The stored rate, everywhere").
 - That is the lending AMM's whole answer for the map's keeper runner: one keeper job per market, triggered by events, a few calls an hour at most.
   Kamino's `withdraw_queued_liquidity` is not needed, since the program never holds a withdrawal ticket.
 
@@ -282,9 +305,11 @@ The program has no switches of its own; it reads Kamino's state at each call.
 | Normal | Buffer, then redeem the shortfall | Band and withdraw mode as above | Allowed | Cash or in kind |
 | Little free liquidity, or withdrawal cap used up | Up to the buffer plus what Kamino can pay | Redeems what it can; withdraw mode if below the threshold | Allowed | Cash if Kamino can pay the LP's share, else in kind |
 | `block_ctoken_usage` set (only Kamino's global admin can) | As normal | Skips deposits, still redeems | Allowed | Cash or in kind |
-| Reserve or market emergency mode | Buffer only | Refuses | Allowed | In kind |
+| Reserve emergency mode | Buffer only | Refuses | Allowed | In kind |
+| Lending market emergency mode | Buffer only, until the reserve is an hour stale, since klend then refreshes none of its reserves | Refuses | Allowed only into a market holding no cTokens | In kind |
 | Reserve deprecated after a total write-off | Buffer only, for good | Refuses | Refused | In kind |
-| Reserve fails the layout check | Refused | Refuses | Refused | In kind |
+| Reserve fails the layout check, or is of another version | Refused | Refuses | Refused | In kind |
+| The other mint's vault frozen, or its hook refusing | Refused | As normal | Refused | The lent side alone, with `remove_lent_side` |
 
 - Kamino has used reserve emergency mode on its main market once in the period checked: the ETH reserve's redeems were blocked for about 16 hours from 2026-04-23 19:58 UTC, during the Kelp exploit; SOL and USDC were never touched.
 - Our own devnet lending market lets the demo turn emergency mode on and off for real.
@@ -344,6 +369,15 @@ How it is built ([Lending AMM: remove liquidity in cash or in kind, and lock LP 
 - Per share none of `R`, `B` and `c` falls, but the market values the cTokens that remain rounded down, so a removal may lower `L x lp / N` by one unit of the lent mint, as Kamino's rounding may in a `rebalance`; the tests and the fuzzer allow that unit and no more.
 - With the hook and creating the LP's cToken account, a removal measured at most 76.1k compute units in cash, klend's redeem 31.3k of them, and 62.7k in kind; on 2026-11-16 an LP removed in kind on a reserve whose free liquidity, emergency modes, version or layout each stopped a removal in cash, and redeemed the cTokens at klend itself for at least what the market had valued them at.
 
+### Leaving with the lent side alone
+
+`remove_lent_side { lp: u64, min_lent: u64 }`, signed by the LP, who burns `lp` shares and receives the buffer's part `B x lp / N` in the lent mint and the cTokens' part `c x lp / N` as cTokens, each rounded down, exactly as a removal in kind pays them, and gives up the other side's part `R x lp / N`, which stays in the market, recorded, for the LPs who stay ([Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86), 2026-11-17, finding H006):
+
+- The other mint may keep a freeze authority or a transfer hook, which the mint rules allow; if its authority freezes the market's vault, or its hook refuses transfers out of it, every `remove_liquidity` fails, since it pays the other side, and would trap the lent side with it.
+- `remove_lent_side` moves nothing of the other mint and reads no Kamino account, so neither can stop it; it takes `remove_liquidity`'s first nineteen accounts, both mints by mint index as metadata describes them, and never touches the other mint's.
+- It refuses with `ZeroRemoval` when the lent side's parts both round to nothing and with `BelowMinLent` when the buffer's part is below `min_lent`; the cTokens take their part of the running totals as in kind; it emits `LentSideRemoved` with the shares, the share count, both parts paid and the other side's part left.
+- It is for when the other side cannot be paid; Aviary offers it only then.
+
 ### Locking
 
 `lock_lp { amount: u64 }`, signed by an LP, moves LP shares into the market's lock account and emits an event, so indexers can show how much of a market's liquidity is locked.
@@ -388,6 +422,7 @@ How it is built ([Lending AMM: seeding by a launchpad](https://github.com/imDev2
 | `add_liquidity` | `add_liquidity` | The LP |
 | `remove_liquidity` | `remove_liquidity` | The LP |
 | `remove_liquidity`, in kind (the form `remove_liquidity_in_kind`) | `remove_liquidity` | The LP |
+| `remove_lent_side` | `remove_liquidity` | The LP |
 | `lock_lp` | `other` | The LP |
 | `rebalance` | `other` | Anyone |
 
