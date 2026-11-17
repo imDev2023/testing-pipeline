@@ -1658,7 +1658,10 @@ async function main() {
     });
     let topUp = 0n;
     if (specPlaceWall(wallBooks(), books.curve, books.guard.floor, feeBps) === null) {
-        // Below WALL_THRESHOLD, `place_wall` is refused; anyone may simulate it to see so.
+        // Below WALL_THRESHOLD, `place_wall` is refused; anyone may simulate it to see so, in
+        // a slot after the last swap, since in that slot it is refused first for the swap
+        // (`POOL4-50`).
+        await waitForSlotAfter(books.guard.lastSlot);
         await expectRefused('place_wall below the threshold', payer, [await placeWall()], BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD, 'WallBelowThreshold');
         info(`place_wall with ${books.idleSol} lamports idle, below WALL_THRESHOLD (${WALL_THRESHOLD}): refused with WallBelowThreshold, as the spec says`);
         // One more buy's fee takes idle SOL past the threshold.
