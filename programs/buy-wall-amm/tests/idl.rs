@@ -323,7 +323,7 @@ fn its_events_and_errors_are_the_programs() {
     // error keeps its number.
     let names: Vec<_> = errors.iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert_eq!(
-        names[names.len() - 17..],
+        names[names.len() - 18..],
         [
             "Overflow",
             "ZeroInput",
