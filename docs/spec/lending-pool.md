@@ -480,6 +480,17 @@ How it is built ([Lending AMM: the fuzzer against a moving Kamino, and the proof
 - `PROPTEST_CASES` sets how many sequences run (24 in a plain `cargo test`, which CI runs on every push with the broken builds), and `FUZZ_SEED` the seed, which every run prints so it can be repeated.
 - On 2026-11-16 a long run of 10,000 sequences of up to 32 steps found no violation on either build: the `devnet` build with `FUZZ_SEED=20261116` in 39 minutes, the `mainnet` build with `FUZZ_SEED=20261117` in 33, on the owner's Mac; the devnet run made 4,757 deposits and 2,709 redeems by `rebalance`, 1,478 withdraw mode changes, 7,522 swaps that redeemed, 3,248 removals in cash and 3,900 in kind, 12,972 rises of the rate, 3,927 write-offs of part of the supply and 416 of all of it, and ran 12,656 steps with the layout check failing.
 
+### Proofs (test layer 2)
+
+Every pure function of the program's maths (`pricing.rs`, `shares.rs`, `buffer.rs`, `withdraw_mode.rs` and the maths of `kamino.rs`) has a Kani harness, and every Proptest property a Kani or Z3 counterpart ([Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85), 2026-11-16).
+
+- The default tier, 42 harnesses, which CI runs, proves over every input every property that needs no reasoning about a quotient (nothing panics or overflows, the band, the shortfall, what Kamino can pay, the withdrawal cap, the total supply, the share count, and that cTokens of no value are worth nothing), and the quotient properties for bounded inputs.
+- Behind `--cfg kani_full` the same properties are stated for every input; run once on 2026-11-16 for 3 hours on a loaded machine, 44 harnesses verified, none failed, and 17 did not finish, the divisions and the 64-step loops.
+- Each of those 17 is proven for every input by Z3, in six files and 32 claims under `proofs/`, which CI runs: among them isqrt's loop invariant, the running totals cTokens paid in kind take with them, withdraw mode's exposure and thresholds, the rate headroom, and that a higher rate never values the cTokens lower, which is why only a fall in Kamino's rate can lower an LP share's value.
+- Every Z3 claim added then was shown able to fail by a deliberate mutation.
+- `quote` itself has a harness only in the full tier, because CBMC also encodes the Anchor errors it can build; the default tier proves its parts (`exact_in`, `lent_total`, `shortfall`), and the fuzzer checks that each quote equals its swap.
+- The byte decoding of Kamino's accounts and the account checks are left to the LiteSVM, layout and hostile tests.
+
 ### Accepted `pipeline-check` warnings
 
 None.

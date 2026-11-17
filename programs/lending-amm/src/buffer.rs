@@ -237,10 +237,66 @@ mod proofs {
             }
             Err(StrategyError::WithinBand) => assert!(band(buffer, lent_total) == Band::Within),
             Err(StrategyError::BelowMinRebalance) => {
-                assert!(band(buffer, lent_total) != Band::Within)
+                assert!(band(buffer, lent_total) != Band::Within);
+                // The move it would have made is nothing or below the floor.
+                let wanted = if buffer > t {
+                    buffer - t
+                } else {
+                    (t - buffer).min(can_pay)
+                };
+                assert!(wanted == 0 || wanted < min_rebalance);
             }
             Err(_) => panic!("plan only refuses inside the band or below the floor"),
         }
+    }
+
+    /// The band is the buffer's share in basis points, compared exactly, both edges inside:
+    /// bounded below 2^16, since CBMC checks the products' equality slowly over every u64; the
+    /// full domain behind `kani_full`, and `proofs/buffer_z3.py` for every input.
+    #[kani::proof]
+    fn the_band_is_the_share_in_basis_points_bounded() {
+        assert_band_is_the_share(
+            kani::any_where(|&b| b < (1 << 16)),
+            kani::any_where(|&l| l < (1 << 16)),
+        );
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    fn the_band_is_the_share_in_basis_points() {
+        assert_band_is_the_share(kani::any(), kani::any());
+    }
+
+    fn assert_band_is_the_share(buffer: u64, lent_total: u64) {
+        let share = buffer as u128 * BPS;
+        let low = lent_total as u128 * BUFFER_MIN_BPS as u128;
+        let high = lent_total as u128 * BUFFER_MAX_BPS as u128;
+        match band(buffer, lent_total) {
+            Band::Below => assert!(share < low),
+            Band::Within => assert!(low <= share && share <= high),
+            Band::Above => assert!(share > high),
+        }
+    }
+
+    fn assert_target_is_the_floor(lent_total: u64) {
+        let t = target(lent_total) as u128;
+        let scaled = lent_total as u128 * BUFFER_TARGET_BPS as u128;
+        // t = floor(L x BUFFER_TARGET_BPS / 10,000), stated without a division, and at most L.
+        assert!(t * BPS <= scaled && scaled < (t + 1) * BPS);
+        assert!(t <= lent_total as u128);
+    }
+
+    /// The target is exactly `floor(L x BUFFER_TARGET_BPS / 10,000)`, at most `L`: bounded
+    /// below 2^16; `proofs/buffer_z3.py` proves it for every input.
+    #[kani::proof]
+    fn the_target_is_the_floor_of_its_share_bounded() {
+        assert_target_is_the_floor(kani::any_where(|&l| l < (1 << 16)));
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    fn the_target_is_the_floor_of_its_share() {
+        assert_target_is_the_floor(kani::any());
     }
 
     #[kani::proof]

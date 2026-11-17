@@ -547,7 +547,141 @@ mod proofs {
             assert!(r.buffer as u128 * n <= buffer as u128 * lp as u128);
             assert!(r.ctokens as u128 * n <= ctokens as u128 * lp as u128);
             assert!(r.other <= other && r.buffer <= buffer && r.ctokens <= ctokens);
+            // The locked minimum's part of each side always stays behind.
+            for (part, whole) in [(r.other, other), (r.buffer, buffer), (r.ctokens, ctokens)] {
+                assert!((whole - part) as u128 * n >= whole as u128 * MINIMUM_LIQUIDITY as u128);
+            }
         }
+    }
+
+    /// For every LP mint supply, the share count is the supply plus the locked minimum, or
+    /// refused exactly when that passes a u64.
+    #[kani::proof]
+    fn the_share_count_is_the_supply_plus_the_locked_minimum() {
+        let supply: u64 = kani::any();
+        match share_count(supply) {
+            Ok(n) => assert!(n as u128 == supply as u128 + MINIMUM_LIQUIDITY as u128),
+            Err(_) => assert!(supply as u128 + MINIMUM_LIQUIDITY as u128 > u64::MAX as u128),
+        }
+    }
+
+    /// For every pair of amounts, the first deposit refuses an empty side, and a product whose
+    /// root is not above the locked minimum, and otherwise takes both amounts in full.
+    #[kani::proof]
+    #[kani::unwind(66)]
+    #[kani::solver(cadical)]
+    fn the_first_deposit_takes_both_amounts_and_refuses_empty_sides() {
+        let near =
+            |x: &u64| (MINIMUM_LIQUIDITY - 32..MINIMUM_LIQUIDITY + 32).contains(x) || *x == 0;
+        let (other, lent): (u64, u64) = (kani::any_where(near), kani::any_where(near));
+        match first_deposit(other, lent) {
+            Ok(d) => assert!(d.other == other && d.lent == lent && other > 0 && lent > 0),
+            Err(StrategyError::ZeroDeposit) => assert!(other == 0 || lent == 0),
+            Err(StrategyError::FirstDepositTooSmall) => {
+                let m = MINIMUM_LIQUIDITY as u128 + 1;
+                assert!(other > 0 && lent > 0 && (other as u128 * lent as u128) < m * m);
+            }
+            Err(_) => panic!("only the two refusals"),
+        }
+    }
+
+    fn assert_isqrt_is_the_floor(n: u128) {
+        let r = isqrt(n) as u128;
+        assert!(r * r <= n);
+        // (r + 1)^2 > n, in 129 bits: r < 2^64, so (r + 1)^2 <= 2^128 only at r = 2^64 - 1.
+        let next = (r + 1).checked_mul(r + 1);
+        assert!(next.is_none_or(|square| square > n));
+    }
+
+    /// The integer square root is the floor of the square root: bounded below 2^20;
+    /// `proofs/shares_z3.py` proves each round of its loop keeps the invariant that makes it so,
+    /// for every u128.
+    #[kani::proof]
+    #[kani::unwind(66)]
+    #[kani::solver(cadical)]
+    fn isqrt_is_the_floor_of_the_square_root_bounded() {
+        assert_isqrt_is_the_floor(kani::any_where(|&n: &u128| n < (1 << 20)));
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(66)]
+    #[kani::solver(cadical)]
+    fn isqrt_is_the_floor_of_the_square_root() {
+        assert_isqrt_is_the_floor(kani::any());
+    }
+
+    /// For any running totals and cTokens, moving cTokens out in kind never panics: a u128
+    /// product divided by a symbolic u64 is beyond CBMC in the default tier, where the bounded
+    /// property below proves it for small inputs; `proofs/shares_z3.py` for every input.
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn totals_after_in_kind_never_panic() {
+        let _ = totals_after_in_kind(kani::any(), kani::any(), kani::any(), kani::any());
+    }
+
+    fn assert_in_kind_takes_its_part_of_the_net(
+        deposited: u128,
+        redeemed: u128,
+        paid: u64,
+        held: u64,
+    ) {
+        match totals_after_in_kind(deposited, redeemed, paid, held) {
+            Ok((d, r)) => {
+                assert!(paid > 0 && paid <= held);
+                // Only the larger total moves, and the net amount lent keeps its sign.
+                let (net, net_after) = if deposited >= redeemed {
+                    assert!(r == redeemed && d <= deposited && d >= redeemed);
+                    (deposited - redeemed, d - r)
+                } else {
+                    assert!(d == deposited && r <= redeemed && r >= deposited);
+                    (redeemed - deposited, r - d)
+                };
+                // The cTokens left take `floor(net x paid / held)` off it: what is left is at
+                // least the remaining cTokens' part of the net, and less than a unit above it.
+                let take = net - net_after;
+                assert!(take * held as u128 <= net * paid as u128);
+                let above = take
+                    .checked_add(1)
+                    .and_then(|t| t.checked_mul(held as u128));
+                assert!(above.is_none_or(|above| net * (paid as u128) < above));
+            }
+            Err(_) => assert!(
+                paid == 0
+                    || held == 0
+                    || paid > held
+                    || (deposited.abs_diff(redeemed))
+                        .checked_mul(paid as u128)
+                        .is_none()
+            ),
+        }
+    }
+
+    /// cTokens paid in kind take their part of the net amount lent, rounded towards zero, off
+    /// the larger running total: bounded below 2^4; `proofs/shares_z3.py` for every input.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn ctokens_paid_in_kind_take_their_part_of_the_net_amount_lent_bounded() {
+        let small = |x: &u64| *x < (1 << 4);
+        assert_in_kind_takes_its_part_of_the_net(
+            kani::any_where(|&d: &u128| d < (1 << 4)),
+            kani::any_where(|&r: &u128| r < (1 << 4)),
+            kani::any_where(small),
+            kani::any_where(small),
+        );
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn ctokens_paid_in_kind_take_their_part_of_the_net_amount_lent() {
+        assert_in_kind_takes_its_part_of_the_net(
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
     }
 
     /// A removal never pays more than the burned shares' part of any of the three: bounded,
