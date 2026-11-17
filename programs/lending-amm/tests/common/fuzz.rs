@@ -769,9 +769,13 @@ impl World {
         // the trader puts klend's refresh first, when klend will refresh it.
         if !self.layout_failed && self.stale(TRADE_MAX_RESERVE_AGE_SLOTS) {
             let before = self.env.market_state(&self.market.market_state);
-            let quote = self.env.quote(&self.market, &exact_in(input, output, amount));
+            let quote = self
+                .env
+                .quote(&self.market, &exact_in(input, output, amount));
             let wallet = self.traders[trader].insecure_clone();
-            let swapped = self.env.swap_meta(&self.market, &wallet, (input, output), amount);
+            let swapped = self
+                .env
+                .swap_meta(&self.market, &wallet, (input, output), amount);
             for refusal in [quote.map(|_| ()), swapped.map(|_| ())] {
                 prop_assert!(
                     refusal.is_err_and(|e| e.contains("Error Code: ReserveStale.")),

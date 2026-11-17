@@ -582,7 +582,10 @@ fn the_stored_rate_is_used_as_it_is() {
     );
     // Up to an hour after it, nothing has refreshed it: quotes and swaps both price at the stored
     // rate, so each swap delivers its quote.
-    env.set_clock(start.slot + AGE, start.unix_timestamp + (AGE * 2 / 5) as i64);
+    env.set_clock(
+        start.slot + AGE,
+        start.unix_timestamp + (AGE * 2 / 5) as i64,
+    );
     for (sides, amount) in [((0, 1), OTHER / 100), ((1, 0), SOL)] {
         let quote = env
             .quote(&market, &exact_in(sides.0, sides.1, amount))

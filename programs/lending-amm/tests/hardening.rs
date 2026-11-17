@@ -51,7 +51,7 @@ fn sos_stale_entry_adding_at_the_stored_rate_then_leaving_takes_no_interest_from
         let attacker = env.funded_wallet(&market, amounts);
         let add = env.add_liquidity_instruction(&market, &attacker.pubkey(), amounts, 0);
         assert_refused(
-            env.send_meta(&[add.clone()], &[&attacker]),
+            env.send_meta(std::slice::from_ref(&add), &[&attacker]),
             StrategyError::ReserveStale,
         );
         // A refresh earlier in the same slot but not in the transaction would do as well; a
@@ -60,7 +60,7 @@ fn sos_stale_entry_adding_at_the_stored_rate_then_leaving_takes_no_interest_from
         env.send(&[refresh], &[]).unwrap();
         env.advance_clock(1, 1);
         assert_refused(
-            env.send_meta(&[add.clone()], &[&attacker]),
+            env.send_meta(std::slice::from_ref(&add), &[&attacker]),
             StrategyError::ReserveStale,
         );
 
@@ -75,11 +75,17 @@ fn sos_stale_entry_adding_at_the_stored_rate_then_leaving_takes_no_interest_from
         let fresh = env.program_reserve(&market);
         let wallet = attacker.pubkey();
         let ctokens = env.balance_or_zero(&env.lp_ctoken_account(&market, &wallet));
-        let paid_other = amounts[other] - env.balance(&env.wallet_token_account(&market, &wallet, other));
-        let paid_lent = amounts[lent_side] - env.balance(&env.wallet_token_account(&market, &wallet, lent_side));
+        let paid_other =
+            amounts[other] - env.balance(&env.wallet_token_account(&market, &wallet, other));
+        let paid_lent = amounts[lent_side]
+            - env.balance(&env.wallet_token_account(&market, &wallet, lent_side));
         let ctoken_value = fresh.lent_value(ctokens).unwrap();
         println!("lent {lent}: paid {paid_other} other and {paid_lent} lent net, got back {ctoken_value} in cTokens");
-        assert!(ctoken_value <= paid_lent, "lent {lent}: took {} of the LPs' interest", ctoken_value - paid_lent);
+        assert!(
+            ctoken_value <= paid_lent,
+            "lent {lent}: took {} of the LPs' interest",
+            ctoken_value - paid_lent
+        );
         assert!(paid_other < u64::MAX);
     }
 }
@@ -92,8 +98,8 @@ fn sos_rebalance_alone_no_other_rebalance_can_move_kamino_around_a_market_in_wit
     // B's exit threshold for B's `rebalance` alone, so B would lend into the crunch, and a third
     // market's redeem after it could take that liquidity straight back out: the very move
     // `rebalance`'s rule against sharing its transaction exists to stop.
-    use solana_keypair::Keypair;
     use lending_amm::config::{WITHDRAW_MODE_ENTER, WITHDRAW_MODE_EXIT};
+    use solana_keypair::Keypair;
     let lent = 0;
     let mut env = Env::new();
     env.load_klend();
@@ -133,8 +139,8 @@ fn sos_rebalance_alone_no_other_rebalance_can_move_kamino_around_a_market_in_wit
 }
 
 #[test]
-fn sos_stale_trade_a_quote_or_swap_refuses_a_reserve_more_than_an_hour_stale_and_no_round_trip_pays()
-{
+fn sos_stale_trade_a_quote_or_swap_refuses_a_reserve_more_than_an_hour_stale_and_no_round_trip_pays(
+) {
     use lending_amm::config::TRADE_MAX_RESERVE_AGE_SLOTS;
     for lent in 0..LENT_MINTS.len() {
         let mut env = Env::new();
@@ -152,13 +158,22 @@ fn sos_stale_trade_a_quote_or_swap_refuses_a_reserve_more_than_an_hour_stale_and
         // klend's refresh first in the same transaction, and the trade goes through.
         let refresh = env.refresh_reserve_instruction(&market);
         let swap = env
-            .swap_instruction(&market, &trader.pubkey(), (lent_side, other), size, TradeMode::ExactIn)
+            .swap_instruction(
+                &market,
+                &trader.pubkey(),
+                (lent_side, other),
+                size,
+                TradeMode::ExactIn,
+            )
             .unwrap();
         env.send_meta(&[refresh, swap], &[&trader]).unwrap();
 
         // At the bound's edge it trades, a slot later it refuses: the most interest a trade at the
         // stored rate can leave out is `TRADE_MAX_RESERVE_AGE_SLOTS` slots' worth.
-        env.advance_clock(TRADE_MAX_RESERVE_AGE_SLOTS, (TRADE_MAX_RESERVE_AGE_SLOTS * 2 / 5) as i64);
+        env.advance_clock(
+            TRADE_MAX_RESERVE_AGE_SLOTS,
+            (TRADE_MAX_RESERVE_AGE_SLOTS * 2 / 5) as i64,
+        );
         env.quote(&market, &sell).unwrap();
         env.advance_clock(1, 1);
         assert_refused(env.quote(&market, &sell), StrategyError::ReserveStale);
@@ -168,18 +183,29 @@ fn sos_stale_trade_a_quote_or_swap_refuses_a_reserve_more_than_an_hour_stale_and
         // rate, refresh, buy it back. Pipeline's fee on both legs outweighs the interest.
         let refresh = env.refresh_reserve_instruction(&market);
         env.send(&[refresh], &[]).unwrap();
-        env.advance_clock(TRADE_MAX_RESERVE_AGE_SLOTS, (TRADE_MAX_RESERVE_AGE_SLOTS * 2 / 5) as i64);
+        env.advance_clock(
+            TRADE_MAX_RESERVE_AGE_SLOTS,
+            (TRADE_MAX_RESERVE_AGE_SLOTS * 2 / 5) as i64,
+        );
         let wallet = trader.pubkey();
         let lent_account = env.wallet_token_account(&market, &wallet, lent_side);
         let other_account = env.wallet_token_account(&market, &wallet, other);
         let (lent_before, other_before) = (env.balance(&lent_account), env.balance(&other_account));
-        let stale_value = env.program_reserve(&market).lent_value(env.market_state(&market.market_state).ctokens).unwrap();
-        env.swap(&market, &trader, (lent_side, other), size).unwrap();
+        let stale_value = env
+            .program_reserve(&market)
+            .lent_value(env.market_state(&market.market_state).ctokens)
+            .unwrap();
+        env.swap(&market, &trader, (lent_side, other), size)
+            .unwrap();
         let refresh = env.refresh_reserve_instruction(&market);
         env.send(&[refresh], &[]).unwrap();
-        let fresh_value = env.program_reserve(&market).lent_value(env.market_state(&market.market_state).ctokens).unwrap();
+        let fresh_value = env
+            .program_reserve(&market)
+            .lent_value(env.market_state(&market.market_state).ctokens)
+            .unwrap();
         let received = env.balance(&other_account) - other_before;
-        env.swap(&market, &trader, (other, lent_side), received).unwrap();
+        env.swap(&market, &trader, (other, lent_side), received)
+            .unwrap();
         let back = env.balance(&lent_account) as i128 - lent_before as i128;
         println!(
             "lent {lent}: an hour's interest raised V by {} bps; the round trip of {size} returned {back}",

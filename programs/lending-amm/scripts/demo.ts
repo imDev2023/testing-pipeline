@@ -1474,17 +1474,21 @@ async function main() {
     // raises its rate by the interest since its last refresh: the shares are fewer than at the
     // stored rate, so the wallet allows 1% less, then checks the spec's formula at the rate klend
     // refreshed to, which nothing else in the transaction changes.
-    await send('refresh_reserve + add_liquidity by the second wallet', lp2, [
-        refreshReserve(),
-        await pipeline.buildActionInstruction({
-            action: addLiquidity,
-            market: view,
-            wallet: lp2.address,
-            args: { max_0: lp2Plan.deposit.token, max_1: lp2Plan.deposit.wsol, min_lp: (atStoredRate.shares * 99n) / 100n },
-            inputs: { reserve: RESERVE },
-            tokenPrograms,
-        }),
-    ]);
+    const lp2Add = await pipeline.buildActionInstruction({
+        action: addLiquidity,
+        market: view,
+        wallet: lp2.address,
+        args: { max_0: lp2Plan.deposit.token, max_1: lp2Plan.deposit.wsol, min_lp: (atStoredRate.shares * 99n) / 100n },
+        inputs: { reserve: RESERVE },
+        tokenPrograms,
+    });
+    const unrefreshed = await simulate(lp2, [lp2Add]);
+    if (!unrefreshed.err || !unrefreshed.logs.some((line) => line.includes('Error Code: ReserveStale'))) {
+        fail(`a deposit without klend's refresh was not refused with ReserveStale: ${show(unrefreshed.err)}\n   ${unrefreshed.logs.join('\n   ')}`);
+    }
+    info(`without klend's refresh first, the deposit is refused with ReserveStale (the reserve was last refreshed ${(await rpc.getSlot({ commitment: 'confirmed' }).send()) - (await readReserve()).lastUpdateSlot} slots before), in simulation`);
+    record.push(['deposit without a refresh', 'refused: ReserveStale']);
+    await send('refresh_reserve + add_liquidity by the second wallet', lp2, [refreshReserve(), lp2Add]);
     const refreshedTotal = beforeLp2.buffer + lentValue(beforeLp2.ctokens, await readReserve());
     const lp2Deposit = laterDeposit([lp2Plan.deposit.token, lp2Plan.deposit.wsol], [reserves[0], refreshedTotal], shareCount);
     info(`klend's refresh raised the lent side from ${beforeLp2.total} to ${refreshedTotal}: ${lp2Deposit.shares} shares, not the ${atStoredRate.shares} the stored rate gave`);
