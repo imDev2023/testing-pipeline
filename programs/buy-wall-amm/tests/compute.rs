@@ -362,6 +362,7 @@ fn place_wall_and_swaps_that_cross_into_the_wall_and_trim_stay_under_their_ceili
         later(&mut env, 60);
         swap(&mut env, (0, 1), bought.received + tokens / 100);
 
+        env.next_slot();
         let (_, logs) = env.place_wall(&market, &keeper).unwrap();
         assert_eq!(events::<WallPlaced>(&logs).len(), 1);
         let placing = strategy_units(&logs, 0);
@@ -382,6 +383,7 @@ fn place_wall_and_swaps_that_cross_into_the_wall_and_trim_stay_under_their_ceili
         assert_eq!(events::<Trimmed>(&logs).len(), 1, "{label}: the sell trims");
         let crossing = strategy_units(&logs, 0);
 
+        env.next_slot();
         let (_, logs) = env.place_wall(&market, &keeper).unwrap();
         let [placed] = events::<WallPlaced>(&logs).try_into().unwrap();
         assert!(
@@ -466,6 +468,7 @@ fn payouts_and_handovers_stay_under_their_ceilings() {
                 0,
             )
             .unwrap();
+            env.next_slot();
             let _ = env.place_wall(&market, &keeper);
             let (_, logs) = env.send_logged(&[settle_ix(&market)], &[]).unwrap();
             let settling = strategy_units(&logs, 0);

@@ -3535,11 +3535,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-12: The buy wall's guard
 
 - Question: How is the buy wall kept from being placed at a pumped price?
-- Answer: By IMD's guard: the wall's floor drops at once with the price and rises about 4% a day (`FLOOR_CRAWL_BPS`) toward a reference that follows the price by at most 2% per 12 seconds (`REF_STEP_BPS`, `REF_STEP_WINDOW`).
-- Alternatives: Refusing to place the wall when the price is far above a reference.
+- Answer: By IMD's guard, per slot ([`POOL4-50`](#pool4-50-when-the-walls-floor-moves)): at a slot's first update the wall's floor drops to the previous slot's close and rises about 4% a day (`FLOOR_CRAWL_BPS`) toward a reference that follows the price by at most 2% per 12 seconds (`REF_STEP_BPS`, `REF_STEP_WINDOW`).
+- Alternatives: The earlier default, the floor dropping at once with every swap's price; refusing to place the wall when the price is far above a reference.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Constants](spec/pool4-for-solana.md#constants)
 - Changes by: build-time constant
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20)
 
 ### POOL4-13: Cap decay while idle
@@ -3735,11 +3735,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-32: When the floor's clock moves
 
 - Question: Does the wall's floor reset its clock (`floor_time`) on every swap, or only on a swap where it crawls toward the reference?
-- Answer: On every swap, as step 4 of "After pricing" reads ("Then `floor_time = now`"), so the floor crawls only by the time since the last swap and never by a whole day at once when the reference first rises above it after a quiet spell.
-- Alternatives: Only when the floor crawls, which would let a floor that sat at the reference for a long time jump a full day's crawl on the first swap after the reference moved up.
+- Answer: At every slot's first update, a swap's or `place_wall`'s, whether or not the floor crawled, as step 4 of "After pricing" reads ([`POOL4-50`](#pool4-50-when-the-walls-floor-moves)), so the floor crawls only by the time since that update and never by a whole day at once when the reference first rises above it after a quiet spell.
+- Alternatives: The earlier default, on every swap, which the floor's slot rule replaced since the floor no longer changes inside a slot; only when the floor crawls, which would let a floor that sat at the reference for a long time jump a full day's crawl on the first swap after the reference moved up.
 - Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
 
 ### POOL4-33: When a wall counts as placed
@@ -3898,6 +3898,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Answer: No: both seeding paths refuse with `TransferHookLive` a token whose transfer hook extension still names a hook program or a hook authority, so a hooked token is seeded only with both unset (all 64 bytes of the extension zero), the state a contained token reaches after its unlock, and a token without the extension is unaffected.
 - Alternatives: Requiring only the hook authority removed, which leaves a hook program that can be upgraded or that reads an admin account of its own; accepting any hook and disclosing the risk, the earlier rule, under which a live hook could turn a market into a honeypot.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Mint rules](spec/pool4-for-solana.md#mint-rules)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-50: When the wall's floor moves
+
+- Question: When may the wall's floor change, and when may `place_wall` run, so that neither a price that lasts only inside one transaction or slot nor a quiet spell's crawl can move the buy wall?
+- Answer: Only at a slot's first update, as the reference already moves (a swap's in "After pricing" step 4, or `place_wall`'s own when no swap has run in the slot yet, which leaves the slot unmarked): the floor crawls toward the reference, never above it nor the previous slot's close `last_close`, and drops to that close if it is lower, so it never changes inside a slot and is never above the price the slot opened at; `place_wall` is refused with `SwapThisSlot` in a slot a swap already ran in, and places the wall at `min(price, floor)` with the floor brought up to date.
+- Alternatives: The earlier default, the floor crawling and dropping to every swap's own price, which let a sell to a dip bought straight back in one transaction drag the whole wall down for days (SOS finding H003) and a buy after a quiet day capture the crawl by placing the wall above its own starting price and selling into it (H004, H050); a field for the current slot's lowest close that caps a placement made in that slot; keeping the earlier rule and disclosing both risks.
+- Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
 - Changes by: fixed on-chain once deployed
 - Status: default
 - Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)

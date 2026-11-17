@@ -485,7 +485,8 @@ fn check_market(session: &mut Session, market_state: &Pubkey, mode: &Mode, steps
         let jobs: Vec<Job> = match mode {
             Mode::Record => Job::ALL.to_vec(),
             Mode::Check { baseline, .. } => {
-                let due = keeper::due(&state);
+                let clock: solana_clock::Clock = session.svm.get_sysvar();
+                let due = keeper::due(&state, clock.slot, clock.unix_timestamp);
                 Job::ALL
                     .into_iter()
                     .filter(|job| {

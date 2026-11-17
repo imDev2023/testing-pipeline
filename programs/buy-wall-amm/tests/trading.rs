@@ -148,12 +148,14 @@ fn the_worked_example_trades_at_the_spec_numbers_through_the_router() {
     assert_eq!(state.cap(), 991_666_666_667);
     // The wall's guard (tests/wall.rs checks it in full): the sell, a minute after the buy,
     // moved the reference a whole window's step, ref / 100, toward the buy's price, and the
-    // floor dropped to the sell's price; no wall is placed until `place_wall` runs.
+    // floor crawled a minute's worth toward it, never above the buy's price, the price the
+    // sell's slot opened at; the sell's own price reaches the floor only at the next slot's
+    // first update (`POOL4-50`); no wall is placed until `place_wall` runs.
     assert_eq!(
         (state.reference(), state.floor(), state.wall_liquidity()),
         (
             opened.reference() + opened.reference() / 100,
-            1_844_674_407_372_029_099,
+            1_844_700_027_848_835_313,
             0
         )
     );

@@ -87,4 +87,8 @@ pub enum StrategyError {
     RecipientAccountNotTheirs,
     #[msg("The token's transfer hook program and authority must both be removed before the seed")]
     TransferHookLive,
+    #[msg(
+        "A swap or the seed already ran in this slot; the wall can be placed from the next slot"
+    )]
+    SwapThisSlot,
 }

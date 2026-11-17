@@ -95,6 +95,8 @@ export const BUY_WALL_AMM_ERROR__NEW_RECIPIENT_REQUIRED = 0x1795; // 6037
 export const BUY_WALL_AMM_ERROR__RECIPIENT_ACCOUNT_NOT_THEIRS = 0x1796; // 6038
 /** TransferHookLive: The token's transfer hook program and authority must both be removed before the seed */
 export const BUY_WALL_AMM_ERROR__TRANSFER_HOOK_LIVE = 0x1797; // 6039
+/** SwapThisSlot: A swap or the seed already ran in this slot; the wall can be placed from the next slot */
+export const BUY_WALL_AMM_ERROR__SWAP_THIS_SLOT = 0x1798; // 6040
 
 export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__ALREADY_SEEDED
@@ -130,6 +132,7 @@ export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__SAME_MINT
   | typeof BUY_WALL_AMM_ERROR__SEEDER_REQUIRED
   | typeof BUY_WALL_AMM_ERROR__SEED_TOO_SMALL
+  | typeof BUY_WALL_AMM_ERROR__SWAP_THIS_SLOT
   | typeof BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE
   | typeof BUY_WALL_AMM_ERROR__TRANSFER_HOOK_LIVE
   | typeof BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD
@@ -174,6 +177,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [BUY_WALL_AMM_ERROR__SAME_MINT]: `The token must not be wrapped SOL, SPL Token's or Token-2022's`,
     [BUY_WALL_AMM_ERROR__SEEDER_REQUIRED]: `The seeder must not be the default key`,
     [BUY_WALL_AMM_ERROR__SEED_TOO_SMALL]: `The seed must bring at least MIN_SEED_LAMPORTS`,
+    [BUY_WALL_AMM_ERROR__SWAP_THIS_SLOT]: `A swap or the seed already ran in this slot; the wall can be placed from the next slot`,
     [BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE]: `Trading is not available in this build`,
     [BUY_WALL_AMM_ERROR__TRANSFER_HOOK_LIVE]: `The token's transfer hook program and authority must both be removed before the seed`,
     [BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD]: `Neither idle SOL nor the SOL the wall has spent reaches WALL_THRESHOLD`,

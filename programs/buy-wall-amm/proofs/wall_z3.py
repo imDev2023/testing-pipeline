@@ -251,6 +251,9 @@ results.append(
 # wall (V = W × Q, top `t`); `m` is min(s, t). Step 2 closes the wall with floors `ct`, `cs`;
 # step 3 keeps the curve's holdings rounded up, `Ct`, `Cs`; step 4 tips `tip` from what is
 # idle; step 5 places W' = floor(idle × Q / top') at top' = min(s, floor), at or below s.
+# The floor is the one `place_in_slot` brought up to date for its slot, which `guard_z3.py`
+# proves is at or below the last close `lc` (`POOL4-50`); the last close is the price, since
+# only a swap moves either, so here the floor is assumed at or below `lc = s`.
 Pt, Ps, R, I, ct, cs, Ct, Cs = (Int(n) for n in ["Pt", "Ps", "R", "I", "ct", "cs", "Ct", "Cs"])
 iL, iW, iP, iV, i_s, i_t, m, top2, W2, floor_ = (
     Int(n) for n in ["L", "W", "P", "V", "s", "t", "m", "top2", "W2", "floor"]
@@ -286,6 +289,7 @@ results.append(
         before,
     )
 )
+lc = Int("last_close")
 placed = And(
     before,
     tip >= 0,
@@ -294,6 +298,7 @@ placed = And(
     top2 == If(i_s < floor_, i_s, floor_),
     floor_of(W2, I3 * Q, top2),
 )
+in_slot = And(placed, lc == i_s, floor_ <= lc)
 Pt2, Ps2, R2, I_after = Ct, Cs + I3, R + ct + dust_t, 0
 results.append(
     prove(
@@ -316,9 +321,18 @@ results.append(
     )
 )
 
+results.append(
+    prove(
+        "place_wall in a slot (POOL4-50): under the floor brought up to date, the new wall's top is the floor, at or below the last close, the price at placement",
+        And(top2 == floor_, top2 <= lc, top2 <= i_s),
+        in_slot,
+    )
+)
+
 # --- WG-5: place_wall cannot be called twice for two tips ----------------------------------
-# Right after a placement, with no swap in between (only a swap moves the price, the floor or
-# the curve, and only a swap or a placement changes `idle_sol` or the wall; the payouts touch
+# Right after a placement, with no swap in between (only a swap moves the price or the curve,
+# only a swap or a placement changes `idle_sol` or the wall, and a second placement's floor
+# update changes nothing at the same time and never matters to step 1; the payouts touch
 # neither, `src/payouts.rs`), a second `place` sees `idle_sol = 0` and the new wall's
 # `converted = wall_sol_placed - floor(W' × min(s, top') / Q)`, with `wall_sol_placed =
 # floor(W' × top' / Q)` (`sol_at(top)`). Since top' <= s, both floors are the same, so

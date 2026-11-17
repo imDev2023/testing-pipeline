@@ -224,7 +224,7 @@ None of it changes the trade just priced.
 `now` is the Clock's Unix time and every time difference saturates at 0.
 
 1. **Reference.**
-   If the Clock's slot is later than `last_slot`: `dt = min(now - ref_time, REF_STEP_WINDOW)`, `step = floor(ref × REF_STEP_BPS × dt / (2 × 10,000 × REF_STEP_WINDOW))`, and `ref` moves toward `last_close` by at most `step`; then `ref_time = now` and `last_slot` is the slot.
+   If the Clock's slot is later than `last_slot`: `dt = min(now - ref_time, REF_STEP_WINDOW)`, `step = floor(ref × REF_STEP_BPS × dt / (2 × 10,000 × REF_STEP_WINDOW))`, and `ref` moves toward `last_close` by at most `step`; then `ref_time = max(ref_time, now)` and `last_slot` is the slot.
    `last_close` is still the price the previous slot's trading ended at, so no trade in this slot can move the reference.
 2. **Books.**
    A sell adds `a` to `pool_tokens` and takes `gross` from `pool_sol`; a buy adds `a - fee` to `pool_sol` and takes `out` from `pool_tokens`.
@@ -232,8 +232,10 @@ None of it changes the trade just priced.
 3. **Price.**
    `sqrt_price` and `last_close` become the new price.
 4. **Floor.**
-   If `floor < ref`: `dt = min(now - floor_time, 86,400)` and `floor` rises by `floor(floor × FLOOR_CRAWL_BPS × dt / (2 × 10,000 × 86,400))`, but not above `ref`.
-   Then `floor_time = now`, on every swap whether or not the floor crawled ([`POOL4-32`](../decisions.md#pool4-32-when-the-floors-clock-moves)), and `floor` drops to the new price if that is lower.
+   The floor changes only at the slot's first update, when step 1 found the Clock's slot later than `last_slot`, with the `ref` step 1 left and the `last_close` step 1 read, the previous slot's close from before step 3 replaced it ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
+   If `floor < ref`, `dt = min(now - floor_time, 86,400)` and `floor` rises by `floor(floor × FLOOR_CRAWL_BPS × dt / (2 × 10,000 × 86,400))`, but not above `ref`.
+   Then `floor` drops to that `last_close` if it is lower, and `floor_time = max(floor_time, now)`, at every slot's first update whether or not the floor crawled ([`POOL4-32`](../decisions.md#pool4-32-when-the-floors-clock-moves)).
+   In a slot already brought up to date the floor and `floor_time` stay as they are, so no trade can move the floor in its own slot, and the floor is never above the price the slot opened at.
 5. **Decay credit.**
    `decay_credit = min(decay_credit + cap_decay_per_day × (now - decay_time), cap_decay_per_day × DECAY_CREDIT_WINDOW)` and `decay_time = now`.
    The credit is in token-seconds, so nothing is lost to rounding, and at most one day's allowance ever builds up.
@@ -252,8 +254,8 @@ The halving in steps 1 and 4 turns a rate on the price into a rate on its square
 
 - The ratchet is IMD's at its deployed setting: a buy lowers the cap by all the room it opens, limited by the cap decay and the cap floor.
 - IMD's hook lets decay allowance build up without limit while a market is idle; ours stops at one day's worth, so a long-idle market's cap can never drop many days at once.
-- The wall's floor follows IMD's guard: it drops at once to any price the market trades at, and rises about 4% a day toward a reference that lags the price.
-  The wall can never be placed above the floor, so pumping the price and placing the wall high earns nothing.
+- The wall's floor follows IMD's guard, slot by slot: at a slot's first update it drops to the price the slot opened at, the previous slot's close, and it rises about 4% a day toward a reference that lags the price, but never above that close.
+  The wall can never be placed above the floor, nor in a slot a swap has already run in, so pumping the price and placing the wall high earns nothing, a dip bought straight back inside one slot never drags the wall down, and no trade can lift the floor in its own slot, so a quiet spell's crawl never lifts it above the price a buy started from when that buy opens its slot ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
 - IMD's rates are per Ethereum block; ours are per second, because Solana's slot times vary.
 
 ## The fee
@@ -283,7 +285,8 @@ These always hold, and the tests check them after every instruction:
 - `pool_tokens` and `pool_sol` cover everything the curve and the wall could ever pay out at the current price.
 - The curve never holds more tokens than the inventory cap after a swap, except where `MIN_LIQUIDITY` stopped a trim.
 - The inventory cap never rises and never falls below the cap floor.
-- The wall's floor is never above the current price, and a placed wall's top is never above the floor it was placed under.
+- The wall's floor is never above the reference, and never above the previous slot's close (`last_close` at the slot's first update); it changes only at a slot's first update.
+- A placed wall's top is never above the price at placement nor the floor it was placed under.
 
 ## Keeper jobs
 
@@ -291,6 +294,11 @@ Four permissionless custom actions; anyone may call them at any time, and our ke
 None moves the price.
 
 ### `place_wall`
+
+It runs only in a slot no swap has run in yet, and is refused with `SwapThisSlot` when `last_slot` is the Clock's slot, that is when a swap, or the seed, ran in it ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
+In a later slot it first brings the floor up to date as "After pricing" step 4 does at a slot's first update, with `ref` and `last_close` as they are, but leaves `last_slot`, `ref` and `ref_time` alone, so a swap later in the same slot still runs steps 1 and 4, where the floor's update then changes nothing.
+Since only a swap moves the price, `last_close` is the price at placement, so the floor it places under is never above it.
+Then:
 
 1. `converted` is the SOL the placed wall has spent buying tokens: `wall_sol_placed - floor(W × min(s, wall_top) / Q)`, or 0 with no wall.
    The call is refused unless `idle_sol` or `converted` is at least `WALL_THRESHOLD`.
@@ -346,7 +354,7 @@ The runner is not specified yet (the map's "Not yet specified"); what it needs f
 
 | Job | Run it when |
 | --- | --- |
-| `place_wall` | `idle_sol` or the wall's `converted` reaches `WALL_THRESHOLD`, checked after each swap event on the market |
+| `place_wall` | `idle_sol` or the wall's `converted` reaches `WALL_THRESHOLD`, checked after each swap event on the market, and sent so it lands in a later slot than that swap, since in the swap's own slot it is refused with `SwapThisSlot` |
 | `settle` | `retired_tokens` is above 0, at most hourly for each market |
 | `pay_rewards` | `rewards_owed` is above 0, daily |
 | `sweep_fees` | A slot's ledger is above 0, daily; slot 1 only once `DESIGNER_RECIPIENT` is set |
@@ -581,11 +589,11 @@ A market is seeded with 1,000,000 tokens of 6 decimals (1,000,000,000,000 units)
 | Seed | `sqrt_price` 1,844,674,407,370,955,161; `liquidity` 99,999,999,999; cap 1,000,000,000,000 |
 | One hour later, a buy of 1 SOL | Fee 10,000,000: designer 1,000,000, suite 1,000,000, fee recipient 4,000,000, wall 4,000,000. Out 90,081,892,629 units; `sqrt_price` 2,027,297,173,702,505,949. The cap falls by one hour's allowance to 991,666,666,667 |
 | 60 seconds later, a sell of those 90,081,892,629 units | Gross 989,999,999; fee 9,900,000 (3,960,000 of it to the wall); out 980,099,999. `sqrt_price` 1,844,674,407,372,029,099. The trim retires 8,333,333,329 units and moves 83,333,332 lamports to idle SOL, leaving `liquidity` 99,166,666,666, `pool_tokens` 991,666,666,671, `pool_sol` 9,916,666,669 and `idle_sol` 91,293,332 |
-| `place_wall` | Tip 912,933. `wall_top` 1,844,674,407,372,029,099; `wall_liquidity` 903,804,009; `wall_sol_placed` 90,380,400; `pool_sol` 10,007,047,068; 11 units of dust join the retired tokens (8,333,333,340), leaving `pool_tokens` 991,666,666,660 |
+| `place_wall`, in a later slot | Tip 912,933. `wall_top` 1,844,674,407,372,029,099; `wall_liquidity` 903,804,009; `wall_sol_placed` 90,380,400; `pool_sol` 10,007,047,068; 11 units of dust join the retired tokens (8,333,333,340), leaving `pool_tokens` 991,666,666,660 |
 | `settle` | Burns 7,083,333,339 units; `rewards_owed` 1,250,000,001 |
 | 60 seconds later, a sell of 20,000,000,000 units | Gross 196,081,138; fee 1,960,812; out 194,120,326, through the curve and the wall together. `sqrt_price` 1,808,529,293,213,661,729. The wall has spent 1,770,941 lamports on 180,633,508 units |
 
-In the same model, on a market seeded the same way with 5 SOL idle, buying with 30 SOL, placing the wall in the same slot and selling everything back loses 0.595 SOL, and the wall's top ends no higher than the price before the buy.
+In the same model, on a market seeded the same way with 5 SOL idle, buying with 30 SOL, placing the wall in the next slot (it is refused in the buy's own slot) and selling everything back loses 0.595 SOL, and the wall's top ends no higher than the price before the buy.
 
 ## Aviary's panel
 
@@ -632,6 +640,7 @@ Measured on 2026-11-12 by [Buy wall AMM: plain trading through the router](https
 The ceilings stay as they are for the wall's second step and the trim.
 Measured on 2026-11-12 by [Buy wall AMM: the inventory cap](https://github.com/imDev2023/testing-pipeline/issues/49), on the same five markets: a buy that lowers the cap 22,240 to 35,480 units and a sell that trims 26,649 to 33,223, within their ceilings of 45,000 and 60,000 (a hook's own compute left out); with the cap's steps on every swap, the costliest one-step swap of the earlier measurement is now 36,396.
 Measured on 2026-11-16 by [Buy wall AMM: the buy wall](https://github.com/imDev2023/testing-pipeline/issues/50), on the same five markets: `place_wall` 16,858 to 29,143 units (the most when it closes a wall that has bought tokens, on the market of 10^-7 lamports a unit), a sell that crosses into the wall and trims 41,013 to 48,388, and its quote 25,886 to 28,534; the ceilings stay as they are.
+Measured on 2026-11-17 by [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55), with the floor's slot rule ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)), on the same five markets: `place_wall` 17,611 to 29,889 units, about 750 more for reading the Clock and bringing the floor up to date; the ceilings stay as they are.
 Measured on 2026-11-16 by [Buy wall AMM: payouts and recipient handovers](https://github.com/imDev2023/testing-pipeline/issues/51), on SPL Token, Token-2022 and Token-2022 with a transfer hook, with recipients whose associated token accounts have bump 255 (a payout derives that address twice, once itself and once in the associated token program, at 1,500 units for each bump below 255, a cost of the recipient's address and not of the program): `settle` 6,894 to 8,605 units, `pay_rewards` 10,383 to 19,390 into an account that exists and 27,354 to 40,213 when it creates one (the most for the hooked Token-2022 token, the hook's own compute left out), `sweep_fees` 10,381 into an account that exists and 27,347 when it creates one, and a handover 1,590; the ceilings stay as they are.
 Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53), inside the stand-in launchpad's call in LiteSVM: `pipeline_seed_liquidity` 48,850 units for an SPL Token token, 59,716 for a Token-2022 one and 65,802 for one with a transfer hook (the hook's own compute left out), and 60,847 for an SPL Token token on a local validator; its ceiling stays at 180,000, room for what later tickets add to creation and the seed.
 
@@ -644,8 +653,8 @@ Beyond the shared three (value conserved, every holder can exit, each quote equa
   A trim can leave a curve of `MIN_LIQUIDITY` close to the bound, which takes fewer tokens than some holdings; what such a holding cannot sell could only sell below the bound, for the `(L + W) × MIN_SQRT_PRICE / Q` lamports the curve and the wall keep there, which no sell reaches for anyone, with or without the cap.
   A trim lowers `L`, so it only shrinks that amount, which is less than one lamport whenever `L + W` is below 2^32.
 - A trim never changes `sqrt_price`.
-- A buy sold straight back never returns more than it cost, whatever keeper jobs run in between.
-- The reference never moves on a trade in the slot it was last updated in.
+- A buy sold straight back never returns more than it cost, whatever keeper jobs run in between: in its own slot `place_wall` is refused, and a buy that opens its slot and is sold back after `place_wall` in a later slot with no time passed in between never returns more either.
+- The reference and the floor never move on a trade in the slot they were last updated in, and `place_wall` is refused in a slot a swap has run in.
 - No instruction other than `pipeline_swap` changes `sqrt_price` or the counters.
 
 ### Accepted `pipeline-check` warnings

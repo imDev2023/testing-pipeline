@@ -25,13 +25,17 @@
 //!   vault holds at least the sum of its ledgers, the pool ledgers cover what the curve
 //!   could pay out, the curve and the wall together, the curve holds no more tokens than
 //!   the cap after a swap except where `MIN_LIQUIDITY` stopped a trim, the cap never rises
-//!   and never falls below the cap floor, the wall's floor is never above the price, and a
-//!   placed wall's top is never above the floor it was placed under;
-//! - `place_wall` succeeds exactly when the program's own `wall::place` allows it, leaves
-//!   the books it computes, tips exactly what it computes, and moves value only between the
-//!   ledgers of each vault but for the tip;
-//! - the reference never moves on a trade in the slot it was last updated in, and in a later
-//!   slot moves only toward the last close, by at most `REF_STEP_BPS / 2` of itself;
+//!   and never falls below the cap floor, the wall's floor is never above the reference and
+//!   changes only at a slot's first update, then never above the previous slot's close, and
+//!   a placed wall's top is never above the price at placement nor the floor it was placed
+//!   under (`POOL4-50`);
+//! - `place_wall` succeeds exactly when the program's own `wall::place_in_slot` allows it at
+//!   the Clock's slot and time (refused with `SwapThisSlot` in a slot a swap ran in), leaves
+//!   the books and the guard it computes, tips exactly what it computes, and moves value
+//!   only between the ledgers of each vault but for the tip;
+//! - the reference and the floor never move on a trade in the slot they were last updated
+//!   in, and in a later slot the reference moves only toward the last close, by at most
+//!   `REF_STEP_BPS / 2` of itself;
 //! - the decay credit never exceeds one day's allowance;
 //! - a trim never changes `sqrt_price`: after a swap the price is exactly where the pricing
 //!   function, run on the market as it was, put it;
@@ -42,12 +46,13 @@
 //!   straight back never returns more than it cost once everything the trader received is
 //!   counted, the SOL it sold for, the keeper tip it took and, as a recipient, the fees it
 //!   swept and the rewards it paid itself (sold too), less only the part of the tip that was
-//!   already there before its buy; and a sell bought straight back with `place_wall` in
-//!   between, spending what it sold for and its own share of the tip, never buys back more
-//!   than it sold;
+//!   already there before its buy (with `place_wall` in between, the buy opens its slot and
+//!   the wall is placed in the next, since in the buy's slot it is refused); and a sell
+//!   bought straight back with `place_wall` in between (in the next slot), spending what it
+//!   sold for and its own share of the tip, never buys back more than it sold;
 //! - no instruction other than `pipeline_swap` changes `sqrt_price`, the counters, the
-//!   cap, the curve's liquidity or the wall's guard, and a swap changes the counters by
-//!   exactly the trade it made;
+//!   cap, the curve's liquidity or the wall's guard, but `place_wall`, which moves only the
+//!   floor and its clock, and a swap changes the counters by exactly the trade it made;
 //! - every lifetime total (the tokens and SOL trimmed, the tokens the wall bought, burned
 //!   and paid as rewards, the tips, the fees, both volumes and the swap count) never falls,
 //!   and grows by exactly what moved (`INV-FB-15`): the burn measured on the mint, the
@@ -61,7 +66,7 @@
 //!   or pay exactly what they compute into exactly that account, and otherwise change
 //!   nothing; every retired token is accounted for as burned, owed or paid as rewards;
 //! - `place_wall` and a handover are refused with exactly the error the program's own
-//!   `wall::place` and `payouts::handover` give;
+//!   `wall::place_in_slot` and `payouts::handover` give;
 //! - a handover succeeds exactly when the role's current recipient signs it to a wallet,
 //!   recipients change only so, and what a role is owed follows it.
 //!
@@ -134,11 +139,13 @@ enum Step {
         buy: bool,
         amount: u64,
     },
-    /// Buy with `amount` lamports and sell everything bought straight back, in one slot,
+    /// Buy with `amount` lamports and sell everything bought straight back, in one slot, or,
     /// with `place_wall` in between when `place_wall` says so (by the trader when
-    /// `by_trader`, so the trader also takes the tip), as `role`: a recipient first claims
-    /// what it is already owed, then after the sell claims again (the rewards recipient
-    /// settling, paying itself and selling its rewards; the fee recipient sweeping slot 0).
+    /// `by_trader`, so the trader also takes the tip), a buy that opens its slot, then
+    /// `place_wall` refused in that slot and run in the next at the same time, then the sell
+    /// (`POOL4-50`); as `role`: a recipient first claims what it is already owed, then after
+    /// the sell claims again (the rewards recipient settling, paying itself and selling its
+    /// rewards; the fee recipient sweeping slot 0).
     RoundTrip {
         market: usize,
         amount: u64,
@@ -146,15 +153,22 @@ enum Step {
         by_trader: bool,
         role: Role,
     },
-    /// Sell `amount` tokens, `place_wall` (by the trader when `by_trader`), and buy straight
-    /// back with what the sell paid and the trader's own share of the tip, in one slot.
+    /// Sell `amount` tokens, `place_wall` (by the trader when `by_trader`), refused in the
+    /// sell's slot and run in the next at the same time (`POOL4-50`), and buy straight back
+    /// with what the sell paid and the trader's own share of the tip.
     DumpBuyBack {
         market: usize,
         amount: u64,
         by_trader: bool,
     },
-    /// `place_wall`, by a fresh keeper or by a trader who already holds wrapped SOL.
-    PlaceWall { market: usize, by_trader: bool },
+    /// `place_wall`, by a fresh keeper or by a trader who already holds wrapped SOL, in the
+    /// clock's slot or, when `next_slot`, in the next one at the same time, as our keeper
+    /// runner sends it after a swap (`POOL4-50`).
+    PlaceWall {
+        market: usize,
+        by_trader: bool,
+        next_slot: bool,
+    },
     /// `settle`.
     Settle { market: usize },
     /// `pay_rewards`, to the rewards recipient or, without `right_wallet`, to a stranger.
@@ -274,8 +288,8 @@ fn step() -> impl Strategy<Value = Step> {
             .prop_map(|(market, amount, place_wall, by_trader, role)| Step::RoundTrip { market, amount, place_wall, by_trader, role }),
         1 => (any::<usize>(), trade_amount(), prop::bool::weighted(0.8))
             .prop_map(|(market, amount, by_trader)| Step::DumpBuyBack { market, amount, by_trader }),
-        3 => (any::<usize>(), any::<bool>())
-            .prop_map(|(market, by_trader)| Step::PlaceWall { market, by_trader }),
+        3 => (any::<usize>(), any::<bool>(), prop::bool::weighted(0.7))
+            .prop_map(|(market, by_trader, next_slot)| Step::PlaceWall { market, by_trader, next_slot }),
         2 => (clock_jump(), 0..1_000u64).prop_map(|(seconds, slots)| Step::Warp { seconds, slots }),
         3 => any::<usize>().prop_map(|market| Step::Settle { market }),
         3 => (any::<usize>(), prop::bool::weighted(0.85))
@@ -708,12 +722,19 @@ impl World {
                 let Some(i) = self.pick(market) else { return };
                 self.dump_buy_back(i, amount, by_trader);
             }
-            Step::PlaceWall { market, by_trader } => {
+            Step::PlaceWall {
+                market,
+                by_trader,
+                next_slot,
+            } => {
                 let Some(i) = self.pick(market) else { return };
                 let keeper = match self.traders.get(&i) {
                     Some(trader) if by_trader => trader.insecure_clone(),
                     _ => Keypair::new(),
                 };
+                if next_slot {
+                    self.env.next_slot();
+                }
                 self.place_wall(i, &keeper);
             }
             Step::Warp { seconds, slots } => {
@@ -787,8 +808,10 @@ impl World {
         }
     }
 
-    /// A buy of `amount` lamports on market `i` sold straight back, in one slot, with
-    /// `place_wall` in between when `place_wall` says so, as `role` (`INV-WG-7`). Whatever
+    /// A buy of `amount` lamports on market `i` sold straight back, in one slot, or with
+    /// `place_wall` in between when `place_wall` says so (the buy opening its slot, and the
+    /// wall placed in the next at the same time, since in the buy's slot it is refused,
+    /// `POOL4-50`), as `role` (`INV-WG-7`). Whatever
     /// the trader receives, the SOL its sells pay, the tip it takes and what it claims as a
     /// recipient, never exceeds what its buy cost plus the part of the tip that was already
     /// there before its buy (`tip_free`): the naive bound without it is false, since a small
@@ -838,6 +861,11 @@ impl World {
             }
         }
         let free = tip_free(&self.env.state(&m));
+        // With `place_wall` in between, the buy opens its slot, so the floor it brings up to
+        // date is at most the price before it (`POOL4-50`).
+        if place_wall {
+            self.env.next_slot();
+        }
         let Some(bought) = self.trade(i, true, amount, trader.insecure_clone()) else {
             return;
         };
@@ -849,6 +877,11 @@ impl World {
             } else {
                 Keypair::new()
             };
+            // In the buy's slot it is refused (the model says so); from the next slot, at the
+            // same time, it runs.
+            assert_eq!(self.place_wall(i, &keeper), None);
+            self.check_markets();
+            self.env.next_slot();
             let tipped = self.place_wall(i, &keeper);
             if by_trader {
                 tip = tipped.unwrap_or(0);
@@ -889,9 +922,9 @@ impl World {
     }
 
     /// A sell of `amount` tokens on market `i`, `place_wall` (by the trader when
-    /// `by_trader`), and a buy straight back with what the sell paid and the part of the
-    /// tip the trader's own trade created, in one slot (`INV-WG-7` (b)): never more tokens
-    /// back than it sold.
+    /// `by_trader`; refused in the sell's slot, so in the next at the same time, `POOL4-50`),
+    /// and a buy straight back with what the sell paid and the part of the tip the trader's
+    /// own trade created (`INV-WG-7` (b)): never more tokens back than it sold.
     fn dump_buy_back(&mut self, i: usize, amount: u64, by_trader: bool) {
         let trader = Keypair::new();
         let free = tip_free(&self.env.state(&self.markets[i].market));
@@ -904,6 +937,10 @@ impl World {
         } else {
             Keypair::new()
         };
+        // Refused in the sell's slot; from the next slot, at the same time, it runs.
+        assert_eq!(self.place_wall(i, &keeper), None);
+        self.check_markets();
+        self.env.next_slot();
         let tipped = self.place_wall(i, &keeper);
         self.check_markets();
         let tip = if by_trader { tipped.unwrap_or(0) } else { 0 };
@@ -1135,9 +1172,10 @@ impl World {
     }
 
     /// `place_wall` on market `i` by `keeper`, tipping its wrapped SOL account: checked
-    /// against the program's own `wall::place` on the market as it was, which it must equal
-    /// exactly, accepted or refused with exactly its error. Returns the tip, measured on the
-    /// keeper's account.
+    /// against the program's own `wall::place_in_slot` on the market as it was, at the
+    /// Clock's slot and time, which it must equal exactly, accepted or refused with exactly
+    /// its error (`SwapThisSlot` in a slot a swap ran in, `POOL4-50`). Returns the tip,
+    /// measured on the keeper's account.
     fn place_wall(&mut self, i: usize, keeper: &Keypair) -> Option<u64> {
         let m = self.markets[i].market.clone();
         if self.env.svm.get_account(&keeper.pubkey()).is_none() {
@@ -1145,27 +1183,40 @@ impl World {
         }
         self.give(&keeper.pubkey(), &WSOL, &TOKEN, 0);
         let before = self.env.state(&m);
+        let clock = self.env.svm.get_sysvar::<anchor_lang::prelude::Clock>();
         let expected = if before.status == STATUS_OPEN {
-            buy_wall_amm::wall::place(before.wall_books(), before.wall_at())
-                .map_err(StrategyError::from)
+            buy_wall_amm::wall::place_in_slot(
+                before.wall_books(),
+                before.wall_at(),
+                before.guard(),
+                clock.slot,
+                clock.unix_timestamp,
+            )
+            .map_err(StrategyError::from)
         } else {
             Err(StrategyError::MarketNotOpen)
         };
         let result = self.env.place_wall(&m, keeper);
         assert_outcome("place_wall", &expected, &result);
-        let (Ok((books, placement)), Ok((tip, logs))) = (expected, &result) else {
+        let (Ok((books, placement, guard)), Ok((tip, logs))) = (expected, &result) else {
             return None;
         };
         let after = self.env.state(&m);
         assert_eq!(after.wall_books(), books);
+        assert_eq!(after.guard(), guard);
         assert_eq!(*tip, placement.tip);
         assert_eq!(events::<buy_wall_amm::events::WallPlaced>(logs).len(), 1);
-        // Never above the floor, and so never above the price.
-        assert!(after.wall_top() <= before.floor());
+        // Only in a slot no swap ran in; the floor it brought up to date is never above the
+        // price that slot opened at, the last close, which is the price at placement; the
+        // wall's top is never above that floor nor the price.
+        assert!(clock.slot > before.last_slot());
+        assert_eq!(before.last_close(), before.sqrt_price());
+        assert!(after.floor() <= before.last_close());
+        assert!(after.wall_top() <= after.floor());
         assert!(after.wall_top() <= after.sqrt_price());
         self.placed.push((i, placement));
         let tracked = &mut self.markets[i];
-        tracked.placed_under = Some(before.floor());
+        tracked.placed_under = Some(after.floor());
         tracked.dust_tokens += placement.dust_tokens as u128;
         tracked.tipped += *tip as u128;
         Some(*tip)
@@ -1431,7 +1482,20 @@ impl World {
                                 sol_ledgers_before
                             )
                         );
-                        assert_eq!(state.guard(), last.guard());
+                        // Of the guard, only `place_wall` moves anything, and then only the
+                        // floor and its clock (`POOL4-50`).
+                        if placements.is_empty() {
+                            assert_eq!(state.guard(), last.guard());
+                        } else {
+                            assert_eq!(
+                                state.guard(),
+                                buy_wall_amm::guard::Guard {
+                                    floor: state.floor(),
+                                    floor_time: state.floor_time(),
+                                    ..last.guard()
+                                }
+                            );
+                        }
                         assert_eq!(
                             (state.tokens_trimmed(), state.sol_trimmed()),
                             (last.tokens_trimmed(), last.sol_trimmed())
@@ -1529,6 +1593,21 @@ impl World {
                     // first trade moves it toward the last close, by at most
                     // `REF_STEP_BPS / 2` of itself, and the rest of the slot's trades never.
                     let (reference, before) = (state.reference(), last.reference());
+                    // The floor likewise (`POOL4-50`): in the slot last updated in it never
+                    // moves; in a later slot the first trade brings it up to date, never above
+                    // the price that slot opened at, the last close before the step.
+                    if slot <= last.last_slot() {
+                        assert_eq!(
+                            (state.floor(), state.floor_time()),
+                            (last.floor(), last.floor_time()),
+                            "the floor moved on a trade in its own slot"
+                        );
+                    } else {
+                        assert!(
+                            state.floor() <= last.last_close(),
+                            "the floor is above the price its slot opened at"
+                        );
+                    }
                     if slot <= last.last_slot() {
                         assert_eq!(
                             (reference, state.ref_time(), state.last_slot()),
@@ -1595,9 +1674,14 @@ impl World {
                         ),
                         "the pool ledgers cover the curve and the wall"
                     );
-                    // The wall's floor is never above the price, and a placed wall's top is
-                    // never above the floor it was placed under.
-                    assert!(state.floor() <= s, "the floor is above the price");
+                    // The wall's floor is never above the reference (SOS finding H091; it may
+                    // be above the price, which a sell lowers at once and the floor only at
+                    // the next slot's first update), and a placed wall's top is never above the
+                    // floor it was placed under.
+                    assert!(
+                        state.floor() <= state.reference(),
+                        "the floor is above the reference"
+                    );
                     if w > 0 {
                         let under = tracked.placed_under.expect("placed by place_wall");
                         assert!(top <= under, "the wall's top is above its floor");

@@ -1,5 +1,5 @@
 //! A LiteSVM holding a snapshot: every saved account, the router and a build of the
-//! program, at the cluster's clock when the snapshot was taken.
+//! program, at the cluster's clock when the snapshot was taken, one slot on.
 
 use litesvm::LiteSVM;
 use pipeline_client::{self as client, pda, Pubkey};
@@ -69,10 +69,13 @@ fn install(svm: &mut LiteSVM, address: Pubkey, account: Account) -> Result<(), S
         .map_err(|e| format!("account {address} does not load: {e}"))
 }
 
+/// The cluster's clock, one slot on: the keeper runner sends its jobs after a swap's event,
+/// so in a later slot, and `place_wall` is refused in a slot a swap already ran in
+/// (`POOL4-50`); the time stays the snapshot's.
 fn set_clock(svm: &mut LiteSVM, snapshot: &Snapshot) {
     let cluster = &snapshot.cluster;
     if cluster.slot > 0 {
-        svm.warp_to_slot(cluster.slot);
+        svm.warp_to_slot(cluster.slot + 1);
     }
     let mut clock: solana_clock::Clock = svm.get_sysvar();
     clock.epoch = cluster.epoch;

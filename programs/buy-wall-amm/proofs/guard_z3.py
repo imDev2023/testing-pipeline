@@ -4,40 +4,43 @@ Kani proves the guard in `src/guard.rs` (its `proofs` module) only for prices be
 the default tier: its steps divide a u128 by a constant, which CBMC finishes only for bounded
 inputs, and the full-tier harnesses (prices up to `MAX_SQRT_PRICE`) are not recorded as
 finishing. Trading prices sit near 2^64. Here Z3 proves the guard's properties for every
-input, modelling `Guard::follow`, `Guard::close_at` and the helpers they call as written, over
-the integers, with each floor given by its defining inequalities (`q = floor(n / d)` exactly
-when `q × d <= n < (q + 1) × d`) and every checked product given the bound its `checked_mul`
-needs (docs/spec/pool4-for-solana.md, "After pricing" steps 1, 3 and 4; the Book of Knowledge
-invariants WG-1, WG-2 and WG-3, `.bok/confirmed-invariants/CONFIRMED.md`):
+input, modelling `Guard::follow`, `Guard::open_floor`, `Guard::close_at` and the helpers they
+call as written, over the integers, with each floor given by its defining inequalities (`q =
+floor(n / d)` exactly when `q × d <= n < (q + 1) × d`) and every checked product given the
+bound its `checked_mul` needs (docs/spec/pool4-for-solana.md, "After pricing" steps 1, 3 and
+4 and "`place_wall`"; the Book of Knowledge invariants WG-1, WG-2 and WG-3,
+`.bok/confirmed-invariants/CONFIRMED.md`, as `POOL4-50` restates them):
 
 - WG-1: `follow` never returns `None` (which `handle_swap` would turn into a refusal of every
-  swap, for good) for any reference and last close up to `MAX_SQRT_PRICE` and any clock; in the
-  slot it was last brought up to date in it changes nothing; in a later slot the reference
-  moves toward the last close, never past it, by at most `REF_STEP_BPS / 2` of itself.
-- WG-2: `close_at` never returns `None`; the floor ends at or below the swap's price, at or
-  below the larger of its old value and the reference, and rises by at most `FLOOR_CRAWL_BPS /
-  2` of itself; and the swap's price cannot lift it: the floor at any price is the floor at the
-  highest price, capped by the price, so a pump earns exactly the floor a one-lamport trade
-  would.
-- WG-3: the state invariant `MIN_SQRT_PRICE <= floor <= reference <= MAX_SQRT_PRICE`, `floor
-  <= last_close`, `MIN_SQRT_PRICE <= last_close <= MAX_SQRT_PRICE` holds at the seed and is
-  kept by every swap (`follow`, then `close_at` at a price within the bounds, as `handle_swap`
-  calls them), so every reachable state meets the preconditions of WG-1 and WG-2, and the wall,
-  placed at `min(s, floor)`, never divides by 0.
+  swap, for good) for any reference, floor and last close up to `MAX_SQRT_PRICE` and any
+  clock; in the slot it was last brought up to date in it changes nothing, the floor
+  included; in a later slot the reference moves toward the last close, never past it, by at
+  most `REF_STEP_BPS / 2` of itself, and the floor is brought up to date (`open_floor`).
+- WG-2: `open_floor`, a slot's first update of the floor (a swap's, inside `follow`, or
+  `place_wall`'s), never returns `None`; the floor ends at or below the last close, the price
+  the slot opened at, at or below the larger of its old value and the reference, and rises by
+  at most `FLOOR_CRAWL_BPS / 2` of itself; it is idempotent at one time, and a swap's update
+  after `place_wall`'s in the same slot leaves the floor as `place_wall` left it. `close_at`
+  changes only the last close, so a swap's own price never moves the floor: no pump lifts
+  it and no dip drags it down in the swap's slot (SOS findings H003 and H004).
+- WG-3: the state invariant `MIN_SQRT_PRICE <= floor <= reference <= MAX_SQRT_PRICE`,
+  `MIN_SQRT_PRICE <= last_close <= MAX_SQRT_PRICE` holds at the seed and is kept by every
+  swap (`follow`, then `close_at` at a price within the bounds, as `handle_swap` calls them)
+  and every `place_wall` (`open_floor` in a slot later than `last_slot`), so every reachable
+  state meets the preconditions of WG-1 and WG-2; and the floor `place_wall` places under is
+  at or below the price at placement (the last close, since only a swap moves either), so the
+  wall, placed at `min(s, floor)`, never divides by 0 and never sits above the price.
 
-ASSUMPTION, the clock rule: this model writes each of the guard's clocks as `max(stored,
-now)`: `follow` sets `ref_time = max(ref_time, now)` and `close_at` sets `floor_time =
-max(floor_time, now)`, so neither clock ever moves backwards. That is the rule a separate fix
-brings to `src/guard.rs` (and to the cap's `decay_time`, `cap_z3.py`); today the code writes
-`now` unconditionally. The time claims below are stated for a forward clock (`now` at or after
-the stored time, where both rules agree: the clock becomes `now`) and for an arbitrary clock,
-including one that went backwards and the i64 extremes; against today's code the arbitrary-clock
-claims fail (a backward clock rewinds the stored time, so the same seconds are counted twice).
-Every other claim reads no stored time back, so it holds under either rule.
+The clock rule: each of the guard's clocks is written as `max(stored, now)`: `follow` sets
+`ref_time = max(ref_time, now)` and `open_floor` sets `floor_time = max(floor_time, now)`, so
+neither clock ever moves backwards (SOS finding H009's hardening; the cap's `decay_time` is
+`cap_z3.py`'s). The time claims below are stated for a forward clock (`now` at or after the
+stored time, where the clock becomes `now`) and for an arbitrary clock, including one that
+went backwards and the i64 extremes, where the same seconds are never counted twice.
 
 The link between this model and the compiled Rust is checked by tests: Kani proves the same
 statements for small prices, Proptest checks them over every price trading can reach
-(`src/guard.rs`), and the invariant fuzzer checks the floor against the price after every step
+(`src/guard.rs`), and the invariant fuzzer checks the floor and the wall after every step
 through the router.
 
 Run: `pip install z3-solver==5.4.1.0` (in a virtualenv), then
@@ -153,27 +156,11 @@ class After:
         self.__dict__.update(fields)
 
 
-def follow(g, slot, now, name):
-    """`Guard::follow` as written (with the clock rule). Returns the guard after, the facts
-    tying the step's quotient, the condition for `Some`, and the step's elapsed seconds."""
-    dt = elapsed(g.ref_time, now)
-    step, facts, some = halved_rate(f"{name}_step", g.reference, REF_STEP_BPS, minimum(dt, REF_STEP_WINDOW), REF_STEP_WINDOW)
-    later = slot > g.last_slot
-    after = After(
-        reference=If(later, toward(g.reference, g.last_close, step), g.reference),
-        ref_time=If(later, clock(g.ref_time, now), g.ref_time),
-        floor=g.floor,
-        floor_time=g.floor_time,
-        last_slot=If(later, slot, g.last_slot),
-        last_close=g.last_close,
-    )
-    return after, facts, Or(Not(later), some), step, dt
-
-
-def close_at(g, price, now, name):
-    """`Guard::close_at` as written (with the clock rule). Returns the guard after, the floor
-    before the price caps it, the crawl's facts, the condition for `Some`, and the crawl's
-    elapsed seconds."""
+def open_floor(g, now, name):
+    """`Guard::open_floor` as written (with the clock rule), on the guard `g` (expressions):
+    the floor crawls toward the reference, never above it, then drops to the last close if
+    that is lower. Returns the guard after, the crawl's facts, the condition for `Some`, and
+    the crawl's elapsed seconds."""
     dt = elapsed(g.floor_time, now)
     crawl, facts, some = halved_rate(f"{name}_crawl", g.floor, FLOOR_CRAWL_BPS, minimum(dt, SECONDS_PER_DAY), SECONDS_PER_DAY)
     crawls = g.floor < g.reference
@@ -181,12 +168,45 @@ def close_at(g, price, now, name):
     after = After(
         reference=g.reference,
         ref_time=g.ref_time,
-        floor=minimum(capped, price),
+        floor=minimum(capped, g.last_close),
         floor_time=clock(g.floor_time, now),
         last_slot=g.last_slot,
-        last_close=price,
+        last_close=g.last_close,
     )
-    return after, capped, facts, Or(Not(crawls), some), dt
+    return after, facts, Or(Not(crawls), some), dt
+
+
+FIELDS = ["reference", "ref_time", "floor", "floor_time", "last_slot", "last_close"]
+
+
+def follow(g, slot, now, name):
+    """`Guard::follow` as written (with the clock rule): in a slot later than `last_slot`, the
+    reference steps toward the last close, then `open_floor` with that reference. Returns the
+    guard after, the facts tying both quotients, the condition for `Some`, the step's elapsed
+    seconds and the crawl's."""
+    dt = elapsed(g.ref_time, now)
+    step, facts, some = halved_rate(f"{name}_step", g.reference, REF_STEP_BPS, minimum(dt, REF_STEP_WINDOW), REF_STEP_WINDOW)
+    later = slot > g.last_slot
+    stepped = After(
+        reference=toward(g.reference, g.last_close, step),
+        ref_time=clock(g.ref_time, now),
+        floor=g.floor,
+        floor_time=g.floor_time,
+        last_slot=slot,
+        last_close=g.last_close,
+    )
+    opened, o_facts, o_some, floor_dt = open_floor(stepped, now, f"{name}_open")
+    after = After(**{k: If(later, getattr(opened, k), getattr(g, k)) for k in FIELDS})
+    return after, And(facts, o_facts), Or(Not(later), And(some, o_some)), dt, floor_dt
+
+
+def close_at(g, price):
+    """`Guard::close_at` as written: only the last close changes."""
+    return After(**{**{k: getattr(g, k) for k in FIELDS}, "last_close": price})
+
+
+def same(a, b, fields=FIELDS):
+    return And(*[getattr(a, k) == getattr(b, k) for k in fields])
 
 
 def i64(v):
@@ -200,10 +220,10 @@ inputs = [g.ranges(), 0 <= slot, slot < U64, i64(now)]
 prices_ok = [g.reference <= MAX_SQRT_PRICE, g.last_close <= MAX_SQRT_PRICE, g.floor <= MAX_SQRT_PRICE]
 
 # --- WG-1: follow ---------------------------------------------------------------------------
-f1, f1_facts, f1_some, step, ref_dt = follow(g, slot, now, "f1")
+f1, f1_facts, f1_some, ref_dt, f1_floor_dt = follow(g, slot, now, "f1")
 results.append(
     prove(
-        "follow: never None for every reference and last close up to MAX_SQRT_PRICE, any slots and any i64 clock",
+        "follow: never None for every reference, floor and last close up to MAX_SQRT_PRICE, any slots and any i64 clock",
         f1_some,
         *inputs,
         *prices_ok,
@@ -212,11 +232,8 @@ results.append(
 )
 results.append(
     prove(
-        "follow: in the slot last brought up to date in, or an earlier one, nothing changes",
-        Implies(
-            slot <= g.last_slot,
-            And(f1.reference == g.reference, f1.ref_time == g.ref_time, f1.last_slot == g.last_slot),
-        ),
+        "follow: in the slot last brought up to date in, or an earlier one, nothing changes, the floor and its clock included",
+        Implies(slot <= g.last_slot, same(f1, g)),
         *inputs,
         f1_facts,
     )
@@ -232,6 +249,7 @@ results.append(
                 (f1.reference - g.reference) * 2 * BPS <= g.reference * REF_STEP_BPS,
                 (g.reference - f1.reference) * 2 * BPS <= g.reference * REF_STEP_BPS,
                 f1.last_slot == slot,
+                f1.last_close == g.last_close,
             ),
         ),
         *inputs,
@@ -239,19 +257,37 @@ results.append(
         f1_facts,
     )
 )
-# Time, under the clock rule. For a forward clock the reference's clock becomes now, and the
-# step is charged exactly the seconds since it last moved; for any clock it never moves
-# backwards, the seconds charged are never more than it moved, and a clock at or before the
-# stored time moves nothing. Over any sequence of swaps the seconds charged therefore sum to
-# at most the time the clock truly advanced.
 results.append(
     prove(
-        "follow, forward clock (now >= ref_time): ref_time becomes now and the step is charged min(now - ref_time, REF_STEP_WINDOW) seconds (i64 saturation never changes it)",
+        "follow: in a later slot the floor ends at or below the last close (the price the slot opened at) and the new reference, rising by at most FLOOR_CRAWL_BPS / 2 of itself",
         Implies(
-            And(slot > g.last_slot, now >= g.ref_time),
+            And(slot > g.last_slot, g.floor <= g.reference),
+            And(
+                f1.floor <= g.last_close,
+                f1.floor <= f1.reference,
+                Implies(f1.floor > g.floor, (f1.floor - g.floor) * 2 * BPS <= g.floor * FLOOR_CRAWL_BPS),
+            ),
+        ),
+        *inputs,
+        *prices_ok,
+        f1_facts,
+    )
+)
+# Time, under the clock rule. For a forward clock each clock becomes now, and each step is
+# charged exactly the seconds since that clock last moved; for any clock neither moves
+# backwards, the seconds charged are never more than it moved, and a clock at or before the
+# stored time moves nothing. Over any sequence of updates the seconds charged therefore sum
+# to at most the time the clock truly advanced.
+results.append(
+    prove(
+        "follow, forward clock (now >= ref_time, now >= floor_time): in a later slot both clocks become now and each step is charged min(now - its clock, its window) seconds (i64 saturation never changes it)",
+        Implies(
+            And(slot > g.last_slot, now >= g.ref_time, now >= g.floor_time),
             And(
                 f1.ref_time == now,
+                f1.floor_time == now,
                 minimum(ref_dt, REF_STEP_WINDOW) == minimum(now - g.ref_time, REF_STEP_WINDOW),
+                minimum(f1_floor_dt, SECONDS_PER_DAY) == minimum(now - g.floor_time, SECONDS_PER_DAY),
             ),
         ),
         *inputs,
@@ -260,10 +296,12 @@ results.append(
 )
 results.append(
     prove(
-        "follow, any clock (clock rule): ref_time never moves backwards, the seconds charged are at most how far it moved, and a clock at or before ref_time moves nothing",
+        "follow, any clock (clock rule): neither clock moves backwards, the seconds charged are at most how far each moved, and a clock at or before ref_time moves no reference",
         And(
             f1.ref_time >= g.ref_time,
+            f1.floor_time >= g.floor_time,
             Implies(slot > g.last_slot, ref_dt <= f1.ref_time - g.ref_time),
+            Implies(slot > g.last_slot, f1_floor_dt <= f1.floor_time - g.floor_time),
             Implies(now <= g.ref_time, f1.reference == g.reference),
         ),
         *inputs,
@@ -272,99 +310,127 @@ results.append(
     )
 )
 
-# --- WG-2: close_at -------------------------------------------------------------------------
-price = Int("price")
-c1, capped, c1_facts, c1_some, floor_dt = close_at(g, price, now, "c1")
-price_ok = [0 <= price, price < U128]
+# --- WG-2: open_floor (place_wall's update, and a swap's inside follow) and close_at --------
+o1, o1_facts, o1_some, o1_dt = open_floor(g, now, "o1")
 results.append(
     prove(
-        "close_at: never None for every floor and reference up to MAX_SQRT_PRICE, any price and any i64 clock",
-        c1_some,
+        "open_floor: never None for every floor and reference up to MAX_SQRT_PRICE and any i64 clock",
+        o1_some,
         *inputs,
         *prices_ok,
-        *price_ok,
-        c1_facts,
+        o1_facts,
     )
 )
 results.append(
     prove(
-        "close_at: the floor ends at or below the price and the larger of the old floor and the reference, rising by at most FLOOR_CRAWL_BPS / 2 of itself",
+        "open_floor: the floor ends at or below the last close and the larger of the old floor and the reference, rising by at most FLOOR_CRAWL_BPS / 2 of itself; only the floor and its clock change",
         And(
-            c1.floor <= price,
-            c1.floor <= maximum(g.floor, g.reference),
-            Implies(c1.floor > g.floor, (c1.floor - g.floor) * 2 * BPS <= g.floor * FLOOR_CRAWL_BPS),
-            c1.last_close == price,
+            o1.floor <= g.last_close,
+            o1.floor <= maximum(g.floor, g.reference),
+            Implies(g.floor <= g.reference, o1.floor <= g.reference),
+            Implies(o1.floor > g.floor, (o1.floor - g.floor) * 2 * BPS <= g.floor * FLOOR_CRAWL_BPS),
+            same(o1, g, ["reference", "ref_time", "last_slot", "last_close"]),
         ),
         *inputs,
         *prices_ok,
-        *price_ok,
-        c1_facts,
+        o1_facts,
     )
 )
-# Independence from the swap's price: two closes of the same guard at the same time, one at
-# any price and one at u128::MAX (the highest a pump could reach).
-c_top, _, top_facts, _, _ = close_at(g, U128 - 1, now, "c_top")
-p1, p2 = Int("p1"), Int("p2")
-c_p1, _, p1_facts, _, _ = close_at(g, p1, now, "c_p1")
-c_p2, _, p2_facts, _, _ = close_at(g, p2, now, "c_p2")
+# Idempotent at one time: `place_wall` twice in a slot, and a swap after `place_wall` in the
+# same slot, leave the floor where the first update put it.
+oo, oo_facts, _, _ = open_floor(o1, now, "oo")
 results.append(
     prove(
-        "close_at: the floor at any price is the floor at the highest price capped by the price, so no pump lifts it",
-        c1.floor == minimum(c_top.floor, price),
+        "open_floor: idempotent at one time (a second update at the same time changes nothing)",
+        same(oo, o1),
         *inputs,
         *prices_ok,
-        *price_ok,
-        c1_facts,
-        top_facts,
+        o1_facts,
+        oo_facts,
+    )
+)
+of, of_facts, of_some, _, _ = follow(o1, slot, now, "of")
+results.append(
+    prove(
+        "place_wall then a swap in the same slot at the same time: the swap's follow is Some and leaves the floor and its clock as place_wall left them",
+        And(of_some, of.floor == o1.floor, of.floor_time == o1.floor_time),
+        *inputs,
+        *prices_ok,
+        g.floor <= g.reference,
+        slot > g.last_slot,
+        o1_facts,
+        of_facts,
     )
 )
 results.append(
     prove(
-        "close_at: a higher price never gives a lower floor, and every price at or above max(floor, reference) gives the same floor",
-        And(
-            Implies(p1 <= p2, c_p1.floor <= c_p2.floor),
-            Implies(
-                And(p1 >= maximum(g.floor, g.reference), p2 >= maximum(g.floor, g.reference)),
-                c_p1.floor == c_p2.floor,
+        "open_floor, forward clock (now >= floor_time): floor_time becomes now and the crawl is charged min(now - floor_time, 86,400) seconds (i64 saturation never changes it)",
+        Implies(
+            now >= g.floor_time,
+            And(
+                o1.floor_time == now,
+                minimum(o1_dt, SECONDS_PER_DAY) == minimum(now - g.floor_time, SECONDS_PER_DAY),
             ),
         ),
         *inputs,
+        o1_facts,
+    )
+)
+results.append(
+    prove(
+        "open_floor, any clock (clock rule): floor_time never moves backwards, the crawl's seconds are at most how far it moved, and a clock at or before floor_time crawls nothing",
+        And(
+            o1.floor_time >= g.floor_time,
+            o1_dt <= o1.floor_time - g.floor_time,
+            Implies(now <= g.floor_time, o1.floor == minimum(g.floor, g.last_close)),
+        ),
+        *inputs,
         *prices_ok,
+        o1_facts,
+    )
+)
+# A swap: `follow` at (slot, now), then `close_at` at the swap's price. The swap's own price
+# never reaches the floor: swaps at any two prices leave the same floor, the one brought up
+# to date with the price the slot opened at, so no pump lifts it and no dip drags it down.
+price, p1, p2 = Int("price"), Int("p1"), Int("p2")
+price_ok = [0 <= price, price < U128]
+results.append(
+    prove(
+        "close_at: only the last close changes, to the price",
+        And(close_at(g, price).last_close == price, same(close_at(g, price), g, FIELDS[:5])),
+        *inputs,
+        *price_ok,
+    )
+)
+results.append(
+    prove(
+        "a swap's own price never moves the floor: swaps at any two prices leave the same floor and floor clock",
+        And(
+            close_at(f1, p1).floor == close_at(f1, p2).floor,
+            close_at(f1, p1).floor_time == close_at(f1, p2).floor_time,
+        ),
+        *inputs,
+        *prices_ok,
+        f1_facts,
         0 <= p1,
         p1 < U128,
         0 <= p2,
         p2 < U128,
-        p1_facts,
-        p2_facts,
     )
 )
+# Two swaps in one slot: the second leaves the floor where the first did, whatever prices.
+first = Guard("first")
+f2, f2_facts, _, _, _ = follow(first, slot, now, "f2")
 results.append(
     prove(
-        "close_at, forward clock (now >= floor_time): floor_time becomes now and the crawl is charged min(now - floor_time, 86,400) seconds (i64 saturation never changes it)",
-        Implies(
-            now >= g.floor_time,
-            And(
-                c1.floor_time == now,
-                minimum(floor_dt, SECONDS_PER_DAY) == minimum(now - g.floor_time, SECONDS_PER_DAY),
-            ),
-        ),
-        *inputs,
-        *price_ok,
-        c1_facts,
-    )
-)
-results.append(
-    prove(
-        "close_at, any clock (clock rule): floor_time never moves backwards, the crawl's seconds are at most how far it moved, and a clock at or before floor_time crawls nothing",
-        And(
-            c1.floor_time >= g.floor_time,
-            floor_dt <= c1.floor_time - g.floor_time,
-            Implies(now <= g.floor_time, c1.floor == minimum(g.floor, price)),
-        ),
-        *inputs,
-        *prices_ok,
-        *price_ok,
-        c1_facts,
+        "a second swap in the slot the first brought up to date leaves the floor, its clock and the reference as they are",
+        same(f2, first, ["reference", "ref_time", "floor", "floor_time", "last_slot"]),
+        first.ranges(),
+        0 <= slot,
+        slot < U64,
+        i64(now),
+        first.last_slot == slot,
+        f2_facts,
     )
 )
 
@@ -376,7 +442,6 @@ def invariant(floor, reference, last_close):
         MIN_SQRT_PRICE <= floor,
         floor <= reference,
         reference <= MAX_SQRT_PRICE,
-        floor <= last_close,
         MIN_SQRT_PRICE <= last_close,
         last_close <= MAX_SQRT_PRICE,
     )
@@ -391,30 +456,29 @@ results.append(
         s0 <= MAX_OPENING_SQRT_PRICE,
     )
 )
-# A swap: `follow` at (slot, now), then `close_at` of what it returned at the swap's price.
-followed = Guard("followed")
-closed, _, closed_facts, closed_some, _ = close_at(followed, price, now, "closed")
+closed = close_at(f1, price)
 results.append(
     prove(
-        "guard invariant: kept by every swap (follow, then close_at at a price within the bounds), any slot and clock, and both steps are Some",
-        And(
-            f1_some,
-            closed_some,
-            invariant(closed.floor, closed.reference, closed.last_close),
-        ),
+        "guard invariant: kept by every swap (follow, then close_at at a price within the bounds), any slot and clock, and follow is Some",
+        And(f1_some, invariant(closed.floor, closed.reference, closed.last_close)),
         *inputs,
         invariant(g.floor, g.reference, g.last_close),
         MIN_SQRT_PRICE <= price,
         price <= MAX_SQRT_PRICE,
         f1_facts,
-        # The guard `follow` returns, field by field.
-        followed.reference == f1.reference,
-        followed.ref_time == f1.ref_time,
-        followed.floor == f1.floor,
-        followed.floor_time == f1.floor_time,
-        followed.last_slot == f1.last_slot,
-        followed.last_close == f1.last_close,
-        closed_facts,
+    )
+)
+results.append(
+    prove(
+        "guard invariant: kept by every place_wall (open_floor in a slot later than last_slot), any clock, and the floor it places under is at or below the price at placement (the last close)",
+        And(
+            o1_some,
+            invariant(o1.floor, o1.reference, o1.last_close),
+            o1.floor <= g.last_close,
+        ),
+        *inputs,
+        invariant(g.floor, g.reference, g.last_close),
+        o1_facts,
     )
 )
 

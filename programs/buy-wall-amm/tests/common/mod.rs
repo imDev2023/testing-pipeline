@@ -710,6 +710,14 @@ impl Env {
         clock.unix_timestamp = unix_timestamp;
         self.svm.set_sysvar(&clock);
     }
+
+    /// Moves the clock to the next slot, keeping its Unix time: a slot is shorter than a
+    /// second, so consecutive slots often share one. `place_wall` is refused in a slot a swap
+    /// already ran in (`POOL4-50`), so a test places the wall after a swap from the next slot.
+    pub fn next_slot(&mut self) {
+        let clock = self.svm.get_sysvar::<anchor_lang::prelude::Clock>();
+        self.set_clock(clock.slot + 1, clock.unix_timestamp);
+    }
 }
 
 /// The events of type `E` the program emitted in `logs` ("Program data:" lines).
