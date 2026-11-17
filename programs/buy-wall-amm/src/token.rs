@@ -14,6 +14,8 @@ const MINT_LEN: usize = 82;
 /// Token-2022's account type byte, at `TOKEN_ACCOUNT_LEN` in an account with extensions.
 const ACCOUNT_TYPE_MINT: u8 = 1;
 const ACCOUNT_TYPE_ACCOUNT: u8 = 2;
+/// The length of an SPL Token or Token-2022 multisig account, which carries no account type.
+const MULTISIG_LEN: usize = 355;
 
 /// Whether `data`, owned by `owner`, is laid out as a token program's account of `kind`
 /// (`ACCOUNT_TYPE_MINT` or `ACCOUNT_TYPE_ACCOUNT`): owned by SPL Token or Token-2022, of the
@@ -28,9 +30,14 @@ fn is_token_layout(owner: &Pubkey, data: &[u8], kind: u8) -> bool {
     if *owner == anchor_spl::token::ID {
         return data.len() == base;
     }
+    // A Token-2022 account or mint with extensions is longer than a token account and says
+    // what it is at byte 165; a multisig is exactly `MULTISIG_LEN` bytes and has no such byte
+    // (review finding R2-05), as `mint-rules` also refuses.
     *owner == anchor_spl::token_2022::ID
         && (data.len() == base
-            || (data.len() > TOKEN_ACCOUNT_LEN && data[TOKEN_ACCOUNT_LEN] == kind))
+            || (data.len() > TOKEN_ACCOUNT_LEN
+                && data.len() != MULTISIG_LEN
+                && data[TOKEN_ACCOUNT_LEN] == kind))
 }
 
 /// The amount field of an SPL Token or Token-2022 account, at byte 64. Refused as
@@ -229,5 +236,26 @@ mod tests {
         // And the refusal is `WrongAccount`.
         let error = with_account(&stranger, mint(82, 6, 0), mint_decimals).unwrap_err();
         assert_eq!(error, error!(StrategyError::WrongAccount));
+    }
+
+    /// Round 2 finding R2-05: a Token-2022 multisig account is 355 bytes, longer than a token
+    /// account, so its byte 165 could read as an account type; the raw reads refuse that
+    /// length whatever byte 165 holds, as `mint-rules` does.
+    #[test]
+    fn sos_r2_05_raw_reads_refuse_a_token_2022_multisig() {
+        let token_2022 = anchor_spl::token_2022::ID;
+        let balance = |data| with_account(&token_2022, data, token_balance).ok();
+        let decimals = |data| with_account(&token_2022, data, mint_decimals).ok();
+        assert_eq!(balance(token_account(355, 7, ACCOUNT_TYPE_ACCOUNT)), None);
+        assert_eq!(decimals(mint(355, 6, ACCOUNT_TYPE_MINT)), None);
+        // One byte either side, a token account or a mint with extensions, is read.
+        assert_eq!(
+            balance(token_account(354, 7, ACCOUNT_TYPE_ACCOUNT)),
+            Some(7)
+        );
+        assert_eq!(
+            balance(token_account(356, 7, ACCOUNT_TYPE_ACCOUNT)),
+            Some(7)
+        );
     }
 }

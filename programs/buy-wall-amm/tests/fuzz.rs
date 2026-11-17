@@ -1810,17 +1810,23 @@ impl World {
                             + state.rewards_paid(),
                         state.tokens_trimmed() + state.wall_tokens_bought() + tracked.dust_tokens
                     );
-                    // POOL4-49: the rewardable part is a part of the retired tokens; every
-                    // unit the cap has fallen since the seed (which set it to the seeded
-                    // tokens) is still unmatched, rewardable or settled as rewardable; so the
-                    // rewards owed and paid never exceed the reward share of the cap's fall.
+                    // POOL4-49: the rewardable part is a part of the retired tokens; at most
+                    // one day's allowance of the cap's fall waits unmatched (R2-01); every
+                    // unit unmatched, rewardable or settled as rewardable is a unit the cap
+                    // has fallen since the seed (which set it to the seeded tokens), the rest
+                    // of the fall cut at the one-day limit; so the rewards owed and paid never
+                    // exceed the reward share of the cap's fall.
                     assert!(state.retired_rewardable() <= state.retired_tokens());
-                    assert_eq!(
+                    assert!(
+                        state.cap_fall_unmatched() <= state.cap_decay_per_day(),
+                        "more than one day's allowance of the cap's fall waits unmatched"
+                    );
+                    assert!(
                         tracked.rewardable_settled
                             + state.retired_rewardable() as u128
-                            + state.cap_fall_unmatched() as u128,
-                        (state.seeded_tokens() - state.cap()) as u128,
-                        "the cap's fall is not all unmatched, rewardable or settled"
+                            + state.cap_fall_unmatched() as u128
+                            <= (state.seeded_tokens() - state.cap()) as u128,
+                        "more is unmatched, rewardable or settled than the cap has fallen"
                     );
                     let booked = state.rewards_owed() as u128 + state.rewards_paid();
                     assert!(

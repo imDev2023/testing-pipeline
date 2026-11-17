@@ -174,7 +174,7 @@ fn check_authorities_removed(token_mint: &InterfaceAccount<'_, Mint>) -> Result<
     let info = token_mint.to_account_info();
     let data = info.try_borrow_data()?;
     require!(
-        transfer_hook_cleared(&data),
+        transfer_hook_cleared(&info.owner.to_bytes(), &data),
         StrategyError::TransferHookLive
     );
     Ok(())
@@ -184,9 +184,13 @@ fn check_authorities_removed(token_mint: &InterfaceAccount<'_, Mint>) -> Result<
 /// (an SPL Token mint, or a Token-2022 mint without one), or one whose value, the hook
 /// authority then the hook program (32 bytes each, zero for none), is all zeros, the state
 /// a contained token reaches after its unlock. Once both are unset Token-2022 can never set
-/// them again. The extension is read through the shared `mint-rules` crate, which already
-/// walked this mint's entries at creation.
-fn transfer_hook_cleared(data: &[u8]) -> bool {
+/// them again. The extension is read through the shared `mint-rules` crate, after walking
+/// the mint's entries again with it as creation did, so a malformed walk, in which no entry
+/// can be found, is refused rather than taken for "no hook" (review finding R2-06).
+fn transfer_hook_cleared(owner: &[u8; 32], data: &[u8]) -> bool {
+    if mint_rules::check_mint(owner, data).is_err() {
+        return false;
+    }
     match mint_rules::find_extension(data, mint_rules::extension::TRANSFER_HOOK) {
         None => true,
         Some(hook) => hook.len() == TRANSFER_HOOK_LEN && hook.iter().all(|&b| b == 0),
@@ -241,4 +245,56 @@ pub fn open_market(
         seed_time: now,
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Token-2022 mint initialised with no authorities, padded to 165 bytes, its account
+    /// type at 165, then `entries` (type-length-value) after it.
+    fn token_2022_mint(entries: &[u8]) -> Vec<u8> {
+        let mut data = vec![0; 166];
+        data[45] = 1; // is_initialized
+        data[165] = 1; // AccountType::Mint
+        data.extend_from_slice(entries);
+        data
+    }
+
+    /// A TransferHook entry (type 14) with `value`.
+    fn hook_entry(value: &[u8]) -> Vec<u8> {
+        let mut entry = 14u16.to_le_bytes().to_vec();
+        entry.extend_from_slice(&(value.len() as u16).to_le_bytes());
+        entry.extend_from_slice(value);
+        entry
+    }
+
+    /// Round 2 finding R2-06: the seed reads the transfer hook only from a mint whose
+    /// extension entries walk cleanly, so a malformed walk, which finds no entry, is refused
+    /// as a hook that cannot be shown cleared rather than taken for "no hook".
+    #[test]
+    fn sos_r2_06_a_malformed_extension_walk_is_not_taken_for_no_hook() {
+        let token_2022 = anchor_spl::token_2022::ID.to_bytes();
+        // A cleared hook, and no hook at all, pass.
+        assert!(transfer_hook_cleared(
+            &token_2022,
+            &token_2022_mint(&hook_entry(&[0; 64]))
+        ));
+        assert!(transfer_hook_cleared(&token_2022, &token_2022_mint(&[])));
+        // A live hook is refused.
+        let mut live = [0; 64];
+        live[40] = 7;
+        assert!(!transfer_hook_cleared(
+            &token_2022,
+            &token_2022_mint(&hook_entry(&live))
+        ));
+        // An entry whose length runs past the account is malformed: refused.
+        let mut malformed = 14u16.to_le_bytes().to_vec();
+        malformed.extend_from_slice(&200u16.to_le_bytes());
+        malformed.extend_from_slice(&[1; 64]);
+        assert!(!transfer_hook_cleared(
+            &token_2022,
+            &token_2022_mint(&malformed)
+        ));
+    }
 }

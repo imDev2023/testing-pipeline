@@ -244,7 +244,7 @@ Every stored time (`ref_time`, `floor_time`, `decay_time`) becomes the later of 
    With `held = floor(L × Q / s)`:
    - **Ratchet**, when `held < cap`: the cap falls to `max(held, cap - floor(decay_credit / 86,400), cap_floor)`, with the subtraction saturating at 0, and `decay_credit` drops by 86,400 for every token unit the cap fell.
      This runs after a sell as well as a buy, whenever the curve ends below the cap ([`POOL4-31`](../decisions.md#pool4-31-the-ratchet-after-a-sell)).
-     Every unit the cap fell joins `cap_fall_unmatched`, the cap's fall that no trim has matched yet.
+     Every unit the cap fell joins `cap_fall_unmatched`, the cap's fall that no trim has matched yet, which never holds more than one day's allowance, `cap_decay_per_day`, as the decay credit never builds up more (review finding R2-01): what a fall would add beyond it is never rewarded, so no single trim draws on days of others' buying.
    - **Trim**, when `held > cap`: `new_L = max(floor(cap × s / Q), MIN_LIQUIDITY)`, and if that is below `L`, the curve gives up `held - ceil(new_L × Q / s)` token units and `floor(L × s / Q) - ceil(new_L × s / Q)` lamports (0 if negative).
      Both leave the pool ledgers: the tokens join `retired_tokens`, the SOL joins `idle_sol`, and `L` becomes `new_L`.
      Of the tokens, `min(tokens, cap_fall_unmatched)` are matched by the cap's fall: they move from `cap_fall_unmatched` into `retired_rewardable`, the part of `retired_tokens` that earns the reward share ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
@@ -289,7 +289,7 @@ These always hold, and the tests check them after every instruction:
 - `pool_tokens` and `pool_sol` cover everything the curve and the wall could ever pay out at the current price.
 - The curve never holds more tokens than the inventory cap after a swap, except where `MIN_LIQUIDITY` stopped a trim.
 - The inventory cap never rises and never falls below the cap floor.
-- `retired_rewardable` never exceeds `retired_tokens`, and every unit the cap has fallen since the seed is either still in `cap_fall_unmatched` or was matched by a trim, so the rewards owed and paid never exceed `reward_share_bps` of how far the cap has fallen.
+- `retired_rewardable` never exceeds `retired_tokens`, `cap_fall_unmatched` never exceeds `cap_decay_per_day`, and every unit in `cap_fall_unmatched`, in `retired_rewardable` or settled as rewardable is a unit the cap has fallen since the seed, so the rewards owed and paid never exceed `reward_share_bps` of how far the cap has fallen.
 - The wall's floor is never above the reference, and never above the previous slot's close (`last_close` at the slot's first update); it changes only at a slot's first update.
 - A placed wall's top is never above the price at placement nor the floor it was placed under.
 

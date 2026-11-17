@@ -334,3 +334,70 @@ fn sos_h007_a_wall_closure_pays_no_reward_share() {
     let (tokens_after, _) = balances(&env, &market, &recipient.pubkey());
     assert!(tokens_after < tokens_before);
 }
+
+/// Round 2 finding R2-01: the cap's fall that no trim has matched yet waits in
+/// `cap_fall_unmatched`, but never more than one day's allowance of it, as the decay credit
+/// never builds up more than one day's worth (`POOL4-49`). After three days of organic buying
+/// lower the cap by three days' allowance, the rewards recipient sells into a tight cap and
+/// settles in one transaction: the dip's trim is matched by at most one day's allowance, so
+/// the reward share it earns is at most `reward_share_bps` of one day's decay, not of the
+/// whole backlog.
+#[test]
+fn sos_r2_01_a_dip_trim_draws_on_at_most_one_days_unmatched_cap_fall() {
+    let mut env = Env::new();
+    let sold = 700_000_000_000;
+    // With Pipeline's 0.25% on the sell, which the router takes on top.
+    let (market, recipient) = seeded(&mut env, 3_000, sold + sold / 200, 0);
+    let per_day = env.state(&market).cap_decay_per_day();
+    assert!(per_day > 0);
+    // Organic buying: one large buy, then a small one a day for three days, each lowering
+    // the cap by the day's allowance, none trimmed.
+    let trader = env.trader(&market, 0, 100 * SOL);
+    env.swap(&market, &trader, BUY, TradeMode::ExactIn, 25 * SOL)
+        .unwrap();
+    for _ in 0..3 {
+        later(&mut env, SECONDS_PER_DAY as i64);
+        env.swap(&market, &trader, BUY, TradeMode::ExactIn, SOL / 100)
+            .unwrap();
+    }
+    let before = env.state(&market);
+    assert!(
+        before.cap() <= before.seeded_tokens() - 3 * per_day,
+        "the cap fell by three days' allowance"
+    );
+    assert_eq!(before.tokens_trimmed(), 0, "nothing was trimmed yet");
+    assert_eq!(
+        before.cap_fall_unmatched(),
+        per_day,
+        "only one day's allowance of the fall waits unmatched"
+    );
+
+    // The recipient's dip: a sell well past the cap, trimmed, then settled.
+    later(&mut env, 60);
+    let (_, logs) = env
+        .send_logged(
+            &[
+                swap_ix(&env, &market, &recipient, SELL, sold),
+                settle_ix(&market),
+            ],
+            &[&recipient],
+        )
+        .unwrap();
+    let after = env.state(&market);
+    let trimmed = (after.tokens_trimmed() - before.tokens_trimmed()) as u64;
+    assert!(
+        trimmed > per_day,
+        "the dip trimmed more than one day's allowance"
+    );
+    let [settled] = events::<Settled>(&logs).try_into().unwrap();
+    assert!(
+        settled.rewardable <= per_day,
+        "the dip drew on {} units of unmatched fall, more than one day's allowance {per_day}",
+        settled.rewardable
+    );
+    assert_eq!(
+        settled.to_rewards,
+        settled.rewardable * 3_000 / 10_000,
+        "the reward share of the matched part only"
+    );
+}
