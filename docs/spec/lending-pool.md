@@ -488,7 +488,7 @@ These figures are measured on fixed keys; a caller sizing a compute limit for an
 Account resolution still answers while the reserve fails its layout check, since it reads the reserve only to choose the redeem accounts; the quote and the swap are what refuse.
 The hardening ticket measured every row again on both builds after its fixes ([Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86), 2026-11-17): the reserve's age and version checks, and the check that the lent mint's entry still names the reserve the market recorded, add a few hundred units to every call that reads Kamino.
 `pipeline_swap` with a redeem measured 60,154, a quarter above which is 75,193, so its ceiling rises from 75,000 to 80,000 by the rule.
-`remove_lent_side`, new with the hardening, measured at most 57,895, creating the LP's cToken account for an LP on a hooked market (it touches no account of the other mint, but its address search for the LP's cToken account depends on the LP's key), and 27,386 into an account that exists; its ceiling is 75,000 by the rule.
+`remove_lent_side`, new with the hardening, measured at most 57,912, creating the LP's cToken account for an LP on a hooked market (it touches no account of the other mint, but its address search for the LP's cToken account depends on the LP's key), and 27,386 into an account that exists; its ceiling is 75,000 by the rule.
 A `rebalance` that only starts or forgets withdraw mode's wait to leave costs less than one that moves anything.
 
 | Instruction | Measured (compute units) | Ceiling (compute units) | Main cost |
@@ -502,8 +502,8 @@ A `rebalance` that only starts or forgets withdraw mode's wait to leave costs le
 | `add_liquidity` | 40,822 | 60,000 | Two transfers in, an LP mint |
 | `remove_liquidity`, cash | 76,114 | 100,000 | Kamino's redeem, transfers out, an LP burn |
 | `remove_liquidity`, in kind | 62,831 | 80,000 | Transfers out, possibly creating the LP's cToken account |
-| `rebalance` | 71,013 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
-| `remove_lent_side` | 57,895 | 75,000 | Transfers out, possibly creating the LP's cToken account |
+| `rebalance` | 71,016 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
+| `remove_lent_side` | 57,912 | 75,000 | Transfers out, possibly creating the LP's cToken account |
 | `lock_lp` | 36,978 | 50,000 | One transfer, and the market's first lock creates the lock account |
 
 ### Invariants for test layer 3
