@@ -3912,6 +3912,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
+### POOL4-52: Which wallets a role may be handed to
+
+- Question: Besides the default key, which wallets does a handover refuse?
+- Answer: The role's current wallet, refused with `SameRecipient` so every `RecipientChanged` reports a change, and the market's own addresses (its market state, its vault authority, either vault and the program), refused with `NotAWallet`, since no key signs for a token account any of them owns and the role's income would be stranded there; any other key is still accepted in one step, so a typo stays the holder's own risk.
+- Alternatives: The earlier default, refusing only the default key, which let a holder strand a role's income in an account of the market's own and emit a `RecipientChanged` that changed nothing; a two-step handover that the new wallet accepts by signing, which would also catch typos but needs a pending recipient for each role in the market state and a second instruction.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Recipients](spec/pool4-for-solana.md#recipients)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
@@ -4540,6 +4550,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-46`, `POOL4-47`, and the changes to `POOL4-41` and `POOL4-44`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix audit findings H013, H020 and H033 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-52`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix review findings H022 and H063 in the handovers, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-36`: set by the session of [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152) from the spec's existing rule that a trade reaching a price bound is refused, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.

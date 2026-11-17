@@ -359,15 +359,19 @@ The runner is not specified yet (the map's "Not yet specified"); what it needs f
 | `pay_rewards` | `rewards_owed` is above 0, daily |
 | `sweep_fees` | A slot's ledger is above 0, daily; slot 1 only once `DESIGNER_RECIPIENT` is set |
 
+`pay_rewards` for a token with a transfer hook needs the hook's extra accounts, which the metadata form cannot carry, so the runner resolves them from the mint's extra account metas, as Aviary does; a hook that refuses the payout makes the job fail like any other, changing nothing.
+
 A payout into a recipient account that does not exist makes the caller pay its rent, and a recipient that closes its account after each payout gets that rent back each time, so the runner should skip a payout whose ledger is worth less than that rent while the account is missing.
 
 ## Recipients
 
 - `set_fee_recipient { new }` is signed by the current fee recipient, and `set_rewards_recipient { new }` by the current rewards recipient; `new` must not be the default key.
+- `new` must not be the role's current wallet (refused with `SameRecipient`), nor one of the market's own addresses: its market state, its vault authority, either vault or the program (refused with `NotAWallet`), since no key signs for a token account any of them owns and the role's income would be stranded there ([`POOL4-52`](../decisions.md#pool4-52-which-wallets-a-role-may-be-handed-to)).
+  Any other key is accepted in one step, so a mistyped wallet remains the holder's own risk.
 - What the role is owed follows it to the new wallet.
 - A market created with no fee recipient or no rewards recipient never gets one.
 - Nobody else can change a recipient, and nothing else about a market can change.
-- A handover may happen at any time, before the seed as well, and emits `RecipientChanged` (which role, the old wallet and the new) ([`POOL4-38`](../decisions.md#pool4-38-who-signs-the-payouts-and-what-they-report)).
+- A handover may happen at any time, before the seed as well, and emits `RecipientChanged` (which role, the old wallet and the new) ([`POOL4-38`](../decisions.md#pool4-38-who-signs-the-payouts-and-what-they-report)); since a handover to the current wallet is refused, the old and the new wallet always differ ([`POOL4-52`](../decisions.md#pool4-52-which-wallets-a-role-may-be-handed-to)).
 
 ## Counters
 
@@ -642,6 +646,7 @@ Measured on 2026-11-12 by [Buy wall AMM: the inventory cap](https://github.com/i
 Measured on 2026-11-16 by [Buy wall AMM: the buy wall](https://github.com/imDev2023/testing-pipeline/issues/50), on the same five markets: `place_wall` 16,858 to 29,143 units (the most when it closes a wall that has bought tokens, on the market of 10^-7 lamports a unit), a sell that crosses into the wall and trims 41,013 to 48,388, and its quote 25,886 to 28,534; the ceilings stay as they are.
 Measured on 2026-11-17 by [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55), with the floor's slot rule ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)), on the same five markets: `place_wall` 17,611 to 29,889 units, about 750 more for reading the Clock and bringing the floor up to date; the ceilings stay as they are.
 Measured on 2026-11-16 by [Buy wall AMM: payouts and recipient handovers](https://github.com/imDev2023/testing-pipeline/issues/51), on SPL Token, Token-2022 and Token-2022 with a transfer hook, with recipients whose associated token accounts have bump 255 (a payout derives that address twice, once itself and once in the associated token program, at 1,500 units for each bump below 255, a cost of the recipient's address and not of the program): `settle` 6,894 to 8,605 units, `pay_rewards` 10,383 to 19,390 into an account that exists and 27,354 to 40,213 when it creates one (the most for the hooked Token-2022 token, the hook's own compute left out), `sweep_fees` 10,381 into an account that exists and 27,347 when it creates one, and a handover 1,590; the ceilings stay as they are.
+Measured on 2026-11-17 by [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55), with the payouts sharing one helper and a handover refusing the market's own addresses ([`POOL4-52`](../decisions.md#pool4-52-which-wallets-a-role-may-be-handed-to)), on the same three tokens: `pay_rewards` 10,242 to 19,249 units into an account that exists and 27,204 to 40,063 when it creates one, `sweep_fees` 10,230 and 27,187, and a handover 3,196 (deriving the vault authority from its stored bump costs most of the rise); the ceilings stay as they are.
 Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53), inside the stand-in launchpad's call in LiteSVM: `pipeline_seed_liquidity` 48,850 units for an SPL Token token, 59,716 for a Token-2022 one and 65,802 for one with a transfer hook (the hook's own compute left out), and 60,847 for an SPL Token token on a local validator; its ceiling stays at 180,000, room for what later tickets add to creation and the seed.
 
 ### Invariants for test layer 3

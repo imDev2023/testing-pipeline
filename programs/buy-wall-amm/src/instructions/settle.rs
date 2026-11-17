@@ -10,7 +10,7 @@ use anchor_spl::token_interface::{burn_checked, BurnChecked, Mint, TokenInterfac
 
 use crate::errors::StrategyError;
 use crate::events::Settled;
-use crate::state::{check_vault_accounts, is_market_state, MarketState, AUTHORITY_SEED};
+use crate::state::{check_vault_accounts, is_market_state, MarketState, VaultSide, AUTHORITY_SEED};
 
 /// The order is part of `metadata.json`'s `settle` action; keep them in step.
 #[derive(Accounts)]
@@ -36,7 +36,7 @@ pub fn handle_settle(ctx: Context<Settle>) -> Result<()> {
         let authority_bump = check_vault_accounts(
             &state,
             &market_state,
-            0,
+            VaultSide::Token,
             &accounts.token_vault.key(),
             &accounts.token_mint.key(),
             &accounts.vault_authority.key(),

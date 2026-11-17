@@ -465,23 +465,31 @@ impl MarketState {
     }
 }
 
+/// Which of a market's two vaults a keeper job moves value out of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VaultSide {
+    /// The token vault, holding the market's token.
+    Token,
+    /// The SOL vault, holding wrapped SOL.
+    Sol,
+}
+
 /// The accounts a keeper job names for one of a market's vaults, checked against the market
-/// state: the vault and its mint are the market's for `side` (0 the token, 1 wrapped SOL),
-/// the market is open, and the vault authority is the PDA from the stored bump. Returns the
-/// bump, for the vault authority's signer seeds.
+/// state: the vault and its mint are the market's for `side`, the market is open, and the
+/// vault authority is the PDA from the stored bump. Returns the bump, for the vault
+/// authority's signer seeds.
 pub fn check_vault_accounts(
     state: &MarketState,
     market_state: &Pubkey,
-    side: u8,
+    side: VaultSide,
     vault: &Pubkey,
     mint: &Pubkey,
     authority: &Pubkey,
 ) -> Result<u8> {
     require!(state.status == STATUS_OPEN, StrategyError::MarketNotOpen);
     let (expected_vault, expected_mint) = match side {
-        0 => (state.token_vault, state.token_mint),
-        1 => (state.sol_vault, state.wsol_mint),
-        _ => return err!(StrategyError::WrongAccount),
+        VaultSide::Token => (state.token_vault, state.token_mint),
+        VaultSide::Sol => (state.sol_vault, state.wsol_mint),
     };
     require_keys_eq!(*mint, expected_mint, StrategyError::WrongAccount);
     require_keys_eq!(*vault, expected_vault, StrategyError::WrongAccount);

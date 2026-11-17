@@ -91,4 +91,8 @@ pub enum StrategyError {
         "A swap or the seed already ran in this slot; the wall can be placed from the next slot"
     )]
     SwapThisSlot,
+    #[msg("The new recipient is the role's current recipient")]
+    SameRecipient,
+    #[msg("The new recipient is one of the market's own addresses, not a wallet")]
+    NotAWallet,
 }

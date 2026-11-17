@@ -1,8 +1,12 @@
 # Only for `anchor idl build`, which needs an Anchor workspace to build the IDL in
 # idl/buy_wall_amm.json (scripts/build-idl.sh). Programs are built by cargo build-sbf, never by
 # `anchor build` (docs/toolchain.md).
-[toolchain]
-anchor_version = "1.2.1"
+#
+# The program builds against Anchor 1.2.2 (`anchor-lang` and `anchor-spl` are pinned `=1.2.2` in
+# programs/Cargo.toml), and `anchor idl build` compiles the IDL with that same anchor-lang, so
+# any anchor-cli 1.2 writes the same IDL; build-idl.sh prefers anchor-cli 1.2.2. There is no
+# `[toolchain] anchor_version` here on purpose: an anchor-cli of another version would hand the
+# command to `avm install` of that version instead of running it.
 
 [workspace]
 members = ["."]

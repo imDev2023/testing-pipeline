@@ -118,18 +118,13 @@ impl Owed {
         Ok((after, amount))
     }
 
-    /// `sweep_fees { slot }`: the slot's whole ledger, to the slot's wallet (`slot_wallet`).
+    /// `sweep_fees { slot }`: the slot's whole ledger, to the slot's wallet (`FeeSlot`).
     /// Returns the ledgers after, the wallet and the amount paid.
     pub fn sweep(self, slot: u8, fee_recipient: &Pubkey) -> Result<(Owed, Pubkey, u64), Refusal> {
-        let wallet = slot_wallet(slot, fee_recipient)?;
+        let slot = FeeSlot::try_from(slot)?;
+        let wallet = slot.wallet(fee_recipient)?;
         let mut after = self;
-        let ledger = match slot {
-            0 => &mut after.fees_recipient,
-            1 => &mut after.fees_designer,
-            2 => &mut after.fees_suite,
-            _ => return Err(Refusal::BadSlot),
-        };
-        let amount = core::mem::take(ledger);
+        let amount = core::mem::take(slot.ledger(&mut after));
         if amount == 0 {
             return Err(Refusal::NothingOwed);
         }
@@ -137,26 +132,76 @@ impl Owed {
     }
 }
 
+/// A fee slot of `sweep_fees { slot }`: which ledger it pays and to which wallet. The only
+/// place the numeric slot is decoded, and the only place a slot's ledger and wallet are
+/// paired, so the two can never fall out of step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeeSlot {
+    /// Slot 0: `fees_recipient`, to the market's fee recipient.
+    Recipient,
+    /// Slot 1: `fees_designer`, to `DESIGNER_RECIPIENT`.
+    Designer,
+    /// Slot 2: `fees_suite`, to `SUITE_TREASURY`.
+    Suite,
+}
+
+impl TryFrom<u8> for FeeSlot {
+    type Error = Refusal;
+
+    /// Slot 0, 1 or 2; any other is refused as `BadSlot`.
+    fn try_from(slot: u8) -> Result<Self, Refusal> {
+        match slot {
+            0 => Ok(FeeSlot::Recipient),
+            1 => Ok(FeeSlot::Designer),
+            2 => Ok(FeeSlot::Suite),
+            _ => Err(Refusal::BadSlot),
+        }
+    }
+}
+
+impl FeeSlot {
+    /// The wallet the slot is paid to, refused as `RecipientUnset` while it is the default
+    /// key (a market created with no fee recipient, or `DESIGNER_RECIPIENT` unset).
+    pub fn wallet(self, fee_recipient: &Pubkey) -> Result<Pubkey, Refusal> {
+        let wallet = match self {
+            FeeSlot::Recipient => *fee_recipient,
+            FeeSlot::Designer => DESIGNER_RECIPIENT,
+            FeeSlot::Suite => SUITE_TREASURY,
+        };
+        if wallet == Pubkey::default() {
+            return Err(Refusal::RecipientUnset);
+        }
+        Ok(wallet)
+    }
+
+    /// The slot's own fee ledger.
+    pub fn ledger(self, owed: &mut Owed) -> &mut u64 {
+        match self {
+            FeeSlot::Recipient => &mut owed.fees_recipient,
+            FeeSlot::Designer => &mut owed.fees_designer,
+            FeeSlot::Suite => &mut owed.fees_suite,
+        }
+    }
+}
+
 /// The wallet fee slot `slot` is paid to: 0 the market's fee recipient, 1
 /// `DESIGNER_RECIPIENT`, 2 `SUITE_TREASURY`; refused for any other slot and for a slot whose
 /// wallet is unset.
 pub fn slot_wallet(slot: u8, fee_recipient: &Pubkey) -> Result<Pubkey, Refusal> {
-    let wallet = match slot {
-        0 => *fee_recipient,
-        1 => DESIGNER_RECIPIENT,
-        2 => SUITE_TREASURY,
-        _ => return Err(Refusal::BadSlot),
-    };
-    if wallet == Pubkey::default() {
-        return Err(Refusal::RecipientUnset);
-    }
-    Ok(wallet)
+    FeeSlot::try_from(slot)?.wallet(fee_recipient)
 }
 
 /// Whether `signer` may hand a role held by `current` to `new`: only the current holder may,
 /// a role nobody holds (the default key) never gets one, and nobody may hand it to the
-/// default key.
-pub fn handover(current: &Pubkey, signer: &Pubkey, new: &Pubkey) -> Result<(), HandoverRefusal> {
+/// default key, to the wallet that already holds it, or to one of the market's own
+/// addresses (`own`: its market state, its vault authority, both vaults and the program),
+/// where no key could ever spend what the role is paid (`POOL4-52`).
+pub fn handover(
+    current: &Pubkey,
+    signer: &Pubkey,
+    new: &Pubkey,
+    own: &[Pubkey],
+) -> Result<(), HandoverRefusal> {
     if *current == Pubkey::default() {
         return Err(HandoverRefusal::RecipientUnset);
     }
@@ -165,6 +210,12 @@ pub fn handover(current: &Pubkey, signer: &Pubkey, new: &Pubkey) -> Result<(), H
     }
     if *new == Pubkey::default() {
         return Err(HandoverRefusal::NewRecipientRequired);
+    }
+    if new == current {
+        return Err(HandoverRefusal::SameRecipient);
+    }
+    if own.contains(new) {
+        return Err(HandoverRefusal::NotAWallet);
     }
     Ok(())
 }
@@ -175,6 +226,8 @@ pub enum HandoverRefusal {
     RecipientUnset,
     NotRecipient,
     NewRecipientRequired,
+    SameRecipient,
+    NotAWallet,
 }
 
 impl From<HandoverRefusal> for crate::errors::StrategyError {
@@ -184,6 +237,8 @@ impl From<HandoverRefusal> for crate::errors::StrategyError {
             HandoverRefusal::RecipientUnset => StrategyError::RecipientUnset,
             HandoverRefusal::NotRecipient => StrategyError::NotRecipient,
             HandoverRefusal::NewRecipientRequired => StrategyError::NewRecipientRequired,
+            HandoverRefusal::SameRecipient => StrategyError::SameRecipient,
+            HandoverRefusal::NotAWallet => StrategyError::NotAWallet,
         }
     }
 }
@@ -300,8 +355,8 @@ mod proofs {
     /// total, slot and recipient (INV-FB-10): on success the ledgers after are the ledgers
     /// before with the slot's own fee ledger emptied, the amount is all of it and the wallet
     /// is the slot's; it refuses a slot past 2 or a slot with no wallet as `slot_wallet`
-    /// does, then an empty ledger, and never overflows. No division: verified in 6 seconds
-    /// on the owner's Mac (2026-11-16).
+    /// does, then an empty ledger, and never overflows, with the wallet stated independently of
+    /// `FeeSlot` too. No division: verified in 15 seconds on the owner's Mac (2026-11-17).
     #[kani::proof]
     fn a_sweep_empties_its_own_ledger_and_nothing_else() {
         let before = any_owed();
@@ -316,6 +371,13 @@ mod proofs {
         match before.sweep(slot, &recipient) {
             Ok((after, wallet, amount)) => {
                 assert_eq!(Ok(wallet), slot_wallet(slot, &recipient));
+                // The slot's wallet, stated independently of `FeeSlot` too.
+                let own_wallet = match slot {
+                    0 => recipient,
+                    1 => DESIGNER_RECIPIENT,
+                    _ => SUITE_TREASURY,
+                };
+                assert_eq!(wallet, own_wallet);
                 assert!(wallet != Pubkey::default());
                 assert!(Some(amount) == own && amount > 0);
                 let expected = match slot {
@@ -343,6 +405,33 @@ mod proofs {
                 assert_eq!(refusal == Refusal::BadSlot, own.is_none());
             }
         }
+    }
+
+    /// A handover is allowed exactly when the role's current holder signs it to a key that
+    /// is not the default key, not its own and not one of the market's own addresses, for
+    /// every holder, signer, new key and set of the market's addresses (`POOL4-52`), and
+    /// each refusal is the first rule broken, in the spec's order. No division: verified in
+    /// 12 seconds on the owner's Mac (2026-11-17).
+    #[kani::proof]
+    fn a_handover_is_allowed_exactly_to_a_new_wallet_by_its_holder() {
+        let (current, signer, new) = (any_key(), any_key(), any_key());
+        let own = [any_key(), any_key(), any_key(), any_key(), any_key()];
+        let is_own = own.iter().any(|key| *key == new);
+        let unset = current == Pubkey::default();
+        let expected = if unset {
+            Err(HandoverRefusal::RecipientUnset)
+        } else if signer != current {
+            Err(HandoverRefusal::NotRecipient)
+        } else if new == Pubkey::default() {
+            Err(HandoverRefusal::NewRecipientRequired)
+        } else if new == current {
+            Err(HandoverRefusal::SameRecipient)
+        } else if is_own {
+            Err(HandoverRefusal::NotAWallet)
+        } else {
+            Ok(())
+        };
+        assert_eq!(handover(&current, &signer, &new, &own), expected);
     }
 
     /// `settle` empties `retired_tokens` and leaves every other ledger alone, for every
@@ -465,23 +554,110 @@ mod tests {
         assert_eq!(slot_wallet(3, &recipient), Err(Refusal::BadSlot));
     }
 
+    /// Each fee slot pays exactly its own ledger to exactly its own wallet, stated here
+    /// independently of `FeeSlot` (docs/spec/pool4-for-solana.md, "`sweep_fees { slot }`"):
+    /// with a different amount in every ledger, slot 0 pays `fees_recipient` to the fee
+    /// recipient, slot 1 `fees_designer` to `DESIGNER_RECIPIENT`, slot 2 `fees_suite` to
+    /// `SUITE_TREASURY`, and leaves every other ledger as it was; any other slot is refused.
+    #[test]
+    fn sos_h065_each_fee_slot_pays_its_own_ledger_to_its_own_wallet() {
+        let recipient = Pubkey::new_unique();
+        let before = Owed {
+            retired_tokens: 1,
+            rewards_owed: 2,
+            fees_recipient: 10,
+            fees_designer: 20,
+            fees_suite: 30,
+            tokens_burned: 3,
+            rewards_paid: 4,
+        };
+        let spec = [
+            (
+                FeeSlot::Recipient,
+                recipient,
+                10,
+                Owed {
+                    fees_recipient: 0,
+                    ..before
+                },
+            ),
+            (
+                FeeSlot::Designer,
+                DESIGNER_RECIPIENT,
+                20,
+                Owed {
+                    fees_designer: 0,
+                    ..before
+                },
+            ),
+            (
+                FeeSlot::Suite,
+                SUITE_TREASURY,
+                30,
+                Owed {
+                    fees_suite: 0,
+                    ..before
+                },
+            ),
+        ];
+        for (number, (slot, wallet, amount, after)) in spec.into_iter().enumerate() {
+            assert_eq!(FeeSlot::try_from(number as u8), Ok(slot));
+            let mut ledgers = before;
+            assert_eq!(*slot.ledger(&mut ledgers), amount);
+            if wallet == Pubkey::default() {
+                // The designer's slot while `DESIGNER_RECIPIENT` is unset.
+                assert_eq!(slot.wallet(&recipient), Err(Refusal::RecipientUnset));
+                assert_eq!(
+                    before.sweep(number as u8, &recipient),
+                    Err(Refusal::RecipientUnset)
+                );
+                continue;
+            }
+            assert_eq!(slot.wallet(&recipient), Ok(wallet));
+            assert_eq!(
+                before.sweep(number as u8, &recipient),
+                Ok((after, wallet, amount))
+            );
+        }
+        for slot in [3, 4, 255] {
+            assert_eq!(FeeSlot::try_from(slot), Err(Refusal::BadSlot));
+            assert_eq!(before.sweep(slot, &recipient), Err(Refusal::BadSlot));
+        }
+    }
+
     #[test]
     fn handovers() {
         let (current, other) = (Pubkey::new_unique(), Pubkey::new_unique());
         let none = Pubkey::default();
-        assert_eq!(handover(&current, &current, &other), Ok(()));
+        let own = [Pubkey::new_unique(), Pubkey::new_unique(), crate::ID];
+        assert_eq!(handover(&current, &current, &other, &own), Ok(()));
         assert_eq!(
-            handover(&current, &other, &other),
+            handover(&current, &other, &other, &own),
             Err(HandoverRefusal::NotRecipient)
         );
         assert_eq!(
-            handover(&current, &current, &none),
+            handover(&current, &current, &none, &own),
             Err(HandoverRefusal::NewRecipientRequired)
         );
         assert_eq!(
-            handover(&none, &none, &other),
+            handover(&none, &none, &other, &own),
             Err(HandoverRefusal::RecipientUnset)
         );
+        assert_eq!(
+            handover(&current, &current, &current, &own),
+            Err(HandoverRefusal::SameRecipient)
+        );
+        for address in own {
+            assert_eq!(
+                handover(&current, &current, &address, &own),
+                Err(HandoverRefusal::NotAWallet)
+            );
+            // A stranger naming one is still told it is not the recipient.
+            assert_eq!(
+                handover(&current, &other, &address, &own),
+                Err(HandoverRefusal::NotRecipient)
+            );
+        }
     }
 
     proptest! {

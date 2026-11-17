@@ -1318,6 +1318,16 @@
       "code": 6040,
       "name": "SwapThisSlot",
       "msg": "A swap or the seed already ran in this slot; the wall can be placed from the next slot"
+    },
+    {
+      "code": 6041,
+      "name": "SameRecipient",
+      "msg": "The new recipient is the role's current recipient"
+    },
+    {
+      "code": 6042,
+      "name": "NotAWallet",
+      "msg": "The new recipient is one of the market's own addresses, not a wallet"
     }
   ],
   "types": [

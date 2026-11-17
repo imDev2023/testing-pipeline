@@ -526,6 +526,163 @@ fn each_recipient_hands_over_its_own_role_and_what_it_is_owed() {
     env.send(&[ix], &[&new_fee]).unwrap();
 }
 
+/// The market's own addresses: its state, its vault authority, both vaults and the program.
+/// No key signs for a token account any of them owns, so income paid there would be stranded.
+fn own_addresses(market: &Market) -> [Pubkey; 5] {
+    [
+        market.market_state,
+        market.vault_authority,
+        market.token_vault,
+        market.sol_vault,
+        strategy_id(),
+    ]
+}
+
+/// A handover to one of the market's own addresses is refused with `NotAWallet`, for both
+/// roles, before the seed and after it (`POOL4-52`): payouts to such an address would land
+/// in an associated token account nobody can ever spend from, while every event looked
+/// normal.
+#[test]
+fn sos_h022_a_role_cannot_be_handed_to_one_of_the_markets_own_addresses() {
+    use buy_wall_amm::errors::StrategyError;
+    // Before the seed, when a handover is already allowed (`POOL4-38`).
+    let mut env = Env::new();
+    let (fee_recipient, rewards_recipient) = (wallet(&mut env), wallet(&mut env));
+    let params = params_with(&env, fee_recipient.pubkey(), rewards_recipient.pubkey());
+    let token = env.seedable_token(&TOKEN);
+    let market = env.create_market(token, TOKEN, &params).unwrap();
+    let before = env.market_state(&market);
+    for (rewards, signer) in [(false, &fee_recipient), (true, &rewards_recipient)] {
+        for own in own_addresses(&market) {
+            let ix = handover_ix(&market, rewards, &signer.pubkey(), &own);
+            assert_refused(env.send(&[ix], &[signer]), StrategyError::NotAWallet);
+        }
+    }
+    assert_eq!(env.market_state(&market), before);
+
+    // On an open market that owes both roles.
+    let Owing {
+        mut env,
+        market,
+        fee_recipient,
+        rewards_recipient,
+        ..
+    } = owing();
+    let before = env.market_state(&market);
+    for (rewards, signer) in [(false, &fee_recipient), (true, &rewards_recipient)] {
+        for own in own_addresses(&market) {
+            let ix = handover_ix(&market, rewards, &signer.pubkey(), &own);
+            assert_refused(env.send(&[ix], &[signer]), StrategyError::NotAWallet);
+        }
+    }
+    assert_eq!(env.market_state(&market), before);
+    // The roles stayed with their wallets, which are still paid.
+    let payer = wallet(&mut env);
+    sweep(&mut env, &market, &payer, &fee_recipient.pubkey(), 0).unwrap();
+    pay_rewards(&mut env, &market, &payer, &rewards_recipient.pubkey()).unwrap();
+    assert_eq!(
+        held(
+            &env,
+            &rewards_recipient.pubkey(),
+            &market.token_mint,
+            &TOKEN
+        ),
+        1_250_000_001
+    );
+    // A stranger is still told it is not the recipient, whatever it names.
+    let stranger = wallet(&mut env);
+    let ix = handover_ix(&market, false, &stranger.pubkey(), &market.vault_authority);
+    assert_refused(env.send(&[ix], &[&stranger]), StrategyError::NotRecipient);
+}
+
+/// A handover to the role's current wallet is refused with `SameRecipient`, so every
+/// `RecipientChanged` is a change (`POOL4-52`).
+#[test]
+fn sos_h063_a_role_cannot_be_handed_to_its_current_wallet() {
+    use buy_wall_amm::errors::StrategyError;
+    use buy_wall_amm::events::RecipientChanged;
+    let Owing {
+        mut env,
+        market,
+        fee_recipient,
+        rewards_recipient,
+        ..
+    } = owing();
+    let before = env.market_state(&market);
+    for (rewards, signer) in [(false, &fee_recipient), (true, &rewards_recipient)] {
+        let ix = handover_ix(&market, rewards, &signer.pubkey(), &signer.pubkey());
+        let result = env.send_logged(&[ix], &[signer]);
+        if let Ok((_, logs)) = &result {
+            assert!(events::<RecipientChanged>(logs).is_empty());
+        }
+        assert_refused(result, StrategyError::SameRecipient);
+    }
+    assert_eq!(env.market_state(&market), before);
+    // A stranger naming the current wallet is still told it is not the recipient.
+    let stranger = wallet(&mut env);
+    let ix = handover_ix(&market, false, &stranger.pubkey(), &fee_recipient.pubkey());
+    assert_refused(env.send(&[ix], &[&stranger]), StrategyError::NotRecipient);
+}
+
+/// `pay_rewards` and `sweep_fees` share one payout sequence, so they check the accounts they
+/// name the same way and refuse the same substitutions with the same error, changing nothing:
+/// another vault, another vault authority, another wallet, another token account for the
+/// right wallet, and another associated token program (refused by the account type before
+/// the program's own check, which derives the address under the real program's id).
+#[test]
+fn sos_h044_sos_h064_both_payouts_refuse_the_same_substitutions() {
+    use buy_wall_amm::errors::StrategyError;
+    let Owing {
+        mut env,
+        market,
+        fee_recipient,
+        rewards_recipient,
+        ..
+    } = owing();
+    let payer = wallet(&mut env);
+    let stranger = wallet(&mut env);
+    let before = env.market_state(&market);
+    let rewards = pay_rewards_ix(
+        &market,
+        &payer.pubkey(),
+        &rewards_recipient.pubkey(),
+        vec![],
+    );
+    let fees = sweep_fees_ix(&market, &payer.pubkey(), &fee_recipient.pubkey(), 0);
+    let stranger_token = |ix: &pipeline_client::Instruction| {
+        let mint = ix.accounts[3].pubkey;
+        let program = ix.accounts[7].pubkey;
+        pipeline_client::pda::associated_token(&stranger.pubkey(), &mint, &program)
+    };
+    for ix in [&rewards, &fees] {
+        // (account index, substitute, expected error or `None` for any refusal)
+        let substitutions = [
+            (2, market.sol_vault, Some(StrategyError::WrongAccount)),
+            (2, market.token_vault, Some(StrategyError::WrongAccount)),
+            (6, stranger.pubkey(), Some(StrategyError::WrongAccount)),
+            (4, stranger.pubkey(), Some(StrategyError::WrongAccount)),
+            (5, stranger_token(ix), Some(StrategyError::WrongAccount)),
+            (8, Pubkey::new_unique(), None),
+        ];
+        for (index, substitute, error) in substitutions {
+            if ix.accounts[index].pubkey == substitute {
+                continue; // the vault this payout really pays from
+            }
+            let mut bad = ix.clone();
+            bad.accounts[index].pubkey = substitute;
+            let result = env.send(&[bad], &[&payer]);
+            match error {
+                Some(error) => assert_refused(result, error),
+                None => assert_fails(result),
+            }
+            assert_eq!(env.market_state(&market), before);
+        }
+    }
+    // Unchanged, both still pay.
+    env.send(&[fees], &[&payer]).unwrap();
+    env.send(&[rewards], &[&payer]).unwrap();
+}
+
 #[test]
 fn a_market_created_with_no_recipient_never_gets_one() {
     use buy_wall_amm::errors::StrategyError;

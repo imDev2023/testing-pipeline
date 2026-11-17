@@ -115,8 +115,8 @@ impl TestBuild {
             TestBuild::NarrowedSweep => {
                 let payouts = replace_once(
                     sources.get("payouts.rs")?,
-                    "            2 => &mut after.fees_suite,\n",
-                    "            2 => return Err(Refusal::BadSlot),\n",
+                    "        let slot = FeeSlot::try_from(slot)?;\n",
+                    "        let slot = FeeSlot::try_from(slot)?;\n        if slot == FeeSlot::Suite {\n            return Err(Refusal::BadSlot);\n        }\n",
                 )?;
                 sources.set("payouts.rs", payouts);
             }

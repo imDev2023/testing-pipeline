@@ -23,7 +23,7 @@ use crate::errors::StrategyError;
 use crate::events::{CapLowered, Trimmed};
 use crate::pricing::{self, Side};
 use crate::state::{is_market_state, vault_authority, MarketState, AUTHORITY_SEED};
-use crate::token::{token_balance, transfer_checked, Transfer};
+use crate::token::{mint_decimals, token_balance, transfer_checked, Transfer};
 
 /// The router's ten fixed trade accounts.
 #[derive(Accounts)]
@@ -200,13 +200,4 @@ pub fn handle_swap<'info>(
         .set_counters(&settled.counters)
         .ok_or(StrategyError::Overflow)?;
     Ok(())
-}
-
-/// The decimals of the output mint, byte 44 of both token programs' mint layouts. The
-/// account's key is the market's stored mint, so its data is that mint's.
-fn mint_decimals(mint: &AccountInfo) -> Result<u8> {
-    let data = mint.try_borrow_data()?;
-    data.get(44)
-        .copied()
-        .ok_or_else(|| error!(StrategyError::WrongAccount))
 }
