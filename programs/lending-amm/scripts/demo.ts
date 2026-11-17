@@ -231,14 +231,15 @@ const DEMO = {
     firstDeposit: { token: 175_000_000_000n, wsol: 350_000_000n },
     buyWithLamports: 20_000_000n,
     sellTokens: 5_000_000_000n,
-    secondDeposit: { token: 100_000_000_000n, wsol: 150_000_000n },
+    // The WSOL each later deposit adds; the token it offers follows from the market's ratio.
+    secondDeposit: { wsol: 150_000_000n },
     // The second wallet, an LP who adds, removes in cash and in kind, and locks: what the payer
     // gives it, what it offers to add, and what it removes and locks of the shares it gets.
     secondLp: {
         lamports: 100_000_000n,
         wrapLamports: 100_000_000n,
         tokens: 50_000_000_000n,
-        deposit: { token: 50_000_000_000n, wsol: 50_000_000n },
+        deposit: { wsol: 50_000_000n },
         removeEachThird: 3n,
         lockTenth: 10n,
     },
@@ -526,6 +527,24 @@ function laterDeposit(max: [bigint, bigint], reserves: [bigint, bigint], shareCo
     return {
         shares,
         taken: [ceilDiv(shares * reserves[0], shareCount), ceilDiv(shares * reserves[1], shareCount)] as [bigint, bigint],
+    };
+}
+
+/** The slippage a depositor allows, in basis points, the demo's own choice. */
+const SLIPPAGE_BPS = 100n;
+
+/**
+ * The maximums a depositor offers to add `wsol` of the lent side at the market's ratio `R : L`
+ * with share count `N`: what the shares `wsol` buys ask of each side, rounded up, plus
+ * `SLIPPAGE_BPS`, never a whole balance, since the maximums are the deposit's price protection
+ * with `min_lp` (docs/spec/lending-pool.md, "Adding").
+ */
+function maximumsAtRatio(wsol: bigint, reserves: [bigint, bigint], shareCount: bigint) {
+    const shares = (wsol * shareCount) / reserves[1];
+    const withSlippage = (amount: bigint) => ceilDiv(amount * (10_000n + SLIPPAGE_BPS), 10_000n);
+    return {
+        token: withSlippage(ceilDiv(shares * reserves[0], shareCount)),
+        wsol: withSlippage(ceilDiv(shares * reserves[1], shareCount)),
     };
 }
 
@@ -1280,8 +1299,8 @@ async function main() {
     record.push(['swap without the reserve', 'refused: ReserveWrongAddress']);
 
     step('10. Adding liquidity again, at the ratio');
-    const second = DEMO.secondDeposit;
     const lentNow = await lentSide();
+    const second = maximumsAtRatio(DEMO.secondDeposit.wsol, [reserves[0], lentNow.total], shareCount);
     const later = laterDeposit([second.token, second.wsol], [reserves[0], lentNow.total], shareCount);
     const sharesBefore = await tokenBalance(lpShares);
     await send('add_liquidity', payer, [await deposit(second, later.shares)]);
@@ -1475,7 +1494,8 @@ async function main() {
     info(`second wallet ${lp2.address}: ${lp2Plan.tokens} token, ${lp2Plan.wrapLamports} WSOL`);
     const [lp2Shares] = await findLpSharesPda({ marketState, lp: lp2.address }, pdas);
     const beforeLp2 = await lentSide();
-    const atStoredRate = laterDeposit([lp2Plan.deposit.token, lp2Plan.deposit.wsol], [reserves[0], beforeLp2.total], shareCount);
+    const lp2Max = maximumsAtRatio(lp2Plan.deposit.wsol, [reserves[0], beforeLp2.total], shareCount);
+    const atStoredRate = laterDeposit([lp2Max.token, lp2Max.wsol], [reserves[0], beforeLp2.total], shareCount);
     // The market holds cTokens, so the deposit needs the reserve refreshed in the same slot, which
     // raises its rate by the interest since its last refresh: the shares are fewer than at the
     // stored rate, so the wallet allows 1% less, then checks the spec's formula at the rate klend
@@ -1484,7 +1504,7 @@ async function main() {
         action: addLiquidity,
         market: view,
         wallet: lp2.address,
-        args: { max_0: lp2Plan.deposit.token, max_1: lp2Plan.deposit.wsol, min_lp: (atStoredRate.shares * 99n) / 100n },
+        args: { max_0: lp2Max.token, max_1: lp2Max.wsol, min_lp: (atStoredRate.shares * 99n) / 100n },
         inputs: { reserve: RESERVE },
         tokenPrograms,
     });
@@ -1496,7 +1516,7 @@ async function main() {
     record.push(['deposit without a refresh', 'refused: ReserveStale']);
     await send('refresh_reserve + add_liquidity by the second wallet', lp2, [refreshReserve(), lp2Add]);
     const refreshedTotal = beforeLp2.buffer + lentValue(beforeLp2.ctokens, await readReserve());
-    const lp2Deposit = laterDeposit([lp2Plan.deposit.token, lp2Plan.deposit.wsol], [reserves[0], refreshedTotal], shareCount);
+    const lp2Deposit = laterDeposit([lp2Max.token, lp2Max.wsol], [reserves[0], refreshedTotal], shareCount);
     info(`klend's refresh raised the lent side from ${beforeLp2.total} to ${refreshedTotal}: ${lp2Deposit.shares} shares, not the ${atStoredRate.shares} the stored rate gave`);
     reserves = [reserves[0] + lp2Deposit.taken[0], reserves[1] + lp2Deposit.taken[1]];
     shareCount += lp2Deposit.shares;
@@ -1683,7 +1703,7 @@ async function main() {
         action: removeAction('remove_lent_side'),
         market: view,
         wallet: lp2.address,
-        args: { lp: lentOnly, min_lent: lentParts.buffer },
+        args: { lp: lentOnly, min_lent: lentParts.buffer, min_ctokens: lentParts.ctokens },
         inputs: { collateral_mint: collateralMint },
         tokenPrograms: removeTokenPrograms,
     });

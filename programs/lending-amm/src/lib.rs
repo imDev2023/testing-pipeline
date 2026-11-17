@@ -145,8 +145,9 @@ pub mod lending_amm {
         ctx: Context<'info, RemoveLentSide<'info>>,
         lp: u64,
         min_lent: u64,
+        min_ctokens: u64,
     ) -> Result<()> {
-        instructions::remove_lent_side_handler(ctx, lp, min_lent)
+        instructions::remove_lent_side_handler(ctx, lp, min_lent, min_ctokens)
     }
 
     /// Moves `amount` of the LP's shares into the market's lock account, for good.

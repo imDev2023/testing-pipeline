@@ -4727,7 +4727,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-83: Rebalance runs alone in its transaction
 
 - Question: How is `rebalance` kept from being sandwiched, with Kamino's free liquidity moved before it and back after it in the same transaction to force a market into or out of withdraw mode?
-- Answer: It refuses with `RebalanceNotAlone` unless called directly, at the transaction's level, beside nothing but compute budget instructions and klend's `refresh_reserve`, and once per transaction, as the instructions sysvar shows, since another market's `rebalance` deposits into or redeems from Kamino as klend's own instructions would.
+- Answer: It refuses with `RebalanceNotAlone` unless called directly, at the transaction's level, beside nothing but compute budget instructions and klend's `refresh_reserve` or `refresh_reserves_batch`, and once per transaction, as the instructions sysvar shows, since another market's `rebalance` deposits into or redeems from Kamino as klend's own instructions would.
 - Alternatives: The earlier default, it refuses with `RebalanceNotAlone` unless called directly, at the transaction's level, beside nothing but compute budget instructions, klend's `refresh_reserve` and other `rebalance` calls, as the instructions sysvar shows; refusing only klend's own instructions, which another program calling klend would get around; measuring free liquidity over time, which needs state the market does not keep; accepting the sandwich.
 - Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
 - Changes by: fixed on-chain once deployed
@@ -4827,7 +4827,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-93: Withdraw mode waits before it leaves
 
 - Question: How is a market kept from being taken out of withdraw mode by one reading of Kamino's free liquidity, inflated by a deposit and a redeem around `rebalance` in one Jito bundle?
-- Answer: The first `rebalance` that sees the free liquidity above the exit threshold records its slot in `exit_seen_slot`, the first field taken from the market state's reserved space, and stays; the market leaves only at a `rebalance` at least `WITHDRAW_MODE_EXIT_DELAY_SLOTS` (9,000 slots, about an hour) later that sees it so too, and any reading at or below the threshold in between starts the wait again.
+- Answer: The first `rebalance` that sees the free liquidity above the exit threshold records its slot in `exit_seen_slot`, the first field taken from the market state's reserved space, and stays; the market leaves only at a `rebalance` at least `WITHDRAW_MODE_EXIT_DELAY_SLOTS` (9,000 slots, about an hour) later that sees it so too, and any reading at or below the threshold in between, or any `rebalance` while Kamino redeems nothing, starts the wait again.
 - Alternatives: Leaving at the first reading above the threshold, which a bundle could force at no risk; a deposit-weighted measure over time, which Kamino's reserve does not keep.
 - Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
 - Changes by: fixed on-chain once deployed
@@ -4837,7 +4837,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-94: Leaving with the lent side alone
 
 - Question: How does an LP leave when the other mint's freeze authority or transfer hook stops its transfers, which every `remove_liquidity` makes?
-- Answer: With `remove_lent_side`, which burns shares for the buffer's part in the lent mint and the cTokens' part as cTokens, moves nothing of the other mint and reads no Kamino account, and leaves the other side's part in the market for the LPs who stay.
+- Answer: With `remove_lent_side`, which burns shares for the buffer's part in the lent mint and the cTokens' part as cTokens, each with its own minimum (`min_lent`, `min_ctokens`), moves nothing of the other mint and reads no Kamino account, and leaves the other side's part in the market for the LPs who stay.
 - Alternatives: A flag on `remove_liquidity`, which would change both of its metadata forms; keeping the other side's part owed to the LP, which would need a record per LP; accepting that such a mint traps the lent side.
 - Specified in: [`docs/spec/lending-pool.md`, Leaving with the lent side alone](spec/lending-pool.md#leaving-with-the-lent-side-alone)
 - Changes by: fixed on-chain once deployed

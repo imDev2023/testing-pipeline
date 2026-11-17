@@ -99,6 +99,10 @@ pub const REDEEM_RESERVE_COLLATERAL: [u8; 8] = [234, 117, 181, 125, 185, 142, 22
 /// klend's `refresh_reserve`, `sha256("global:refresh_reserve")[..8]`: the one klend instruction
 /// `rebalance` allows in its transaction, which a keeper puts first when the stored rate is stale.
 pub const REFRESH_RESERVE: [u8; 8] = [2, 218, 138, 235, 79, 201, 25, 102];
+/// klend's `refresh_reserves_batch`, `sha256("global:refresh_reserves_batch")[..8]`, which refreshes
+/// several reserves in one instruction and moves no liquidity, so `rebalance` allows it beside it
+/// as it allows `refresh_reserve` (finding R2-14).
+pub const REFRESH_RESERVES_BATCH: [u8; 8] = [144, 110, 26, 103, 162, 204, 252, 147];
 
 /// A reserve's deposit withdrawal cap: how much may leave it, net of deposits, per interval.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

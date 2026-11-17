@@ -531,7 +531,7 @@ fn removals_in_cash_and_in_kind_and_lock_lp_stay_under_their_ceilings() {
         // The lent side alone, into the LP's cToken account, which exists by now, and for a
         // second LP, of a fixed key too, creating theirs.
         let lent_side = strategy_compute(
-            &env.remove_lent_side(&market, &lp, third / 4, 0)
+            &env.remove_lent_side(&market, &lp, third / 4, [0, 0])
                 .unwrap()
                 .logs,
         )[0];
@@ -549,7 +549,7 @@ fn removals_in_cash_and_in_kind_and_lock_lp_stay_under_their_ceilings() {
             .unwrap();
         let shares = env.lp_shares_of(&market, &second.pubkey());
         let lent_side = strategy_compute(
-            &env.remove_lent_side(&market, &second, shares, 0)
+            &env.remove_lent_side(&market, &second, shares, [0, 0])
                 .unwrap()
                 .logs,
         )[0];
@@ -752,7 +752,7 @@ fn every_instruction_is_measured_in_every_state_of_kamino() {
                 Row::RemoveLiquidityInKind,
                 cost,
             ));
-            let meta = env.remove_lent_side(&market, &lp, shares, 0).unwrap();
+            let meta = env.remove_lent_side(&market, &lp, shares, [0, 0]).unwrap();
             let cost = strategy_compute(&meta.logs)[0];
             measured.push(("remove_lent_side".into(), Row::RemoveLentSide, cost));
             for when in ["creating", "into"] {

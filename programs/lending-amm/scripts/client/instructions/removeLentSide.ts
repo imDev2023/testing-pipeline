@@ -148,11 +148,13 @@ export type RemoveLentSideInstructionData = {
   discriminator: ReadonlyUint8Array;
   lp: bigint;
   minLent: bigint;
+  minCtokens: bigint;
 };
 
 export type RemoveLentSideInstructionDataArgs = {
   lp: number | bigint;
   minLent: number | bigint;
+  minCtokens: number | bigint;
 };
 
 export function getRemoveLentSideInstructionDataEncoder(): FixedSizeEncoder<RemoveLentSideInstructionDataArgs> {
@@ -161,6 +163,7 @@ export function getRemoveLentSideInstructionDataEncoder(): FixedSizeEncoder<Remo
       ["discriminator", fixEncoderSize(getBytesEncoder(), 8)],
       ["lp", getU64Encoder()],
       ["minLent", getU64Encoder()],
+      ["minCtokens", getU64Encoder()],
     ]),
     (value) => ({ ...value, discriminator: REMOVE_LENT_SIDE_DISCRIMINATOR }),
   );
@@ -171,6 +174,7 @@ export function getRemoveLentSideInstructionDataDecoder(): FixedSizeDecoder<Remo
     ["discriminator", fixDecoderSize(getBytesDecoder(), 8)],
     ["lp", getU64Decoder()],
     ["minLent", getU64Decoder()],
+    ["minCtokens", getU64Decoder()],
   ]);
 }
 
@@ -239,6 +243,7 @@ export type RemoveLentSideAsyncInput<
   systemProgram?: TAccountSystemProgram;
   lpArg: RemoveLentSideInstructionDataArgs["lp"];
   minLent: RemoveLentSideInstructionDataArgs["minLent"];
+  minCtokens: RemoveLentSideInstructionDataArgs["minCtokens"];
 };
 
 export async function getRemoveLentSideInstructionAsync<
@@ -648,6 +653,7 @@ export type RemoveLentSideInput<
   systemProgram?: TAccountSystemProgram;
   lpArg: RemoveLentSideInstructionDataArgs["lp"];
   minLent: RemoveLentSideInstructionDataArgs["minLent"];
+  minCtokens: RemoveLentSideInstructionDataArgs["minCtokens"];
 };
 
 export function getRemoveLentSideInstruction<

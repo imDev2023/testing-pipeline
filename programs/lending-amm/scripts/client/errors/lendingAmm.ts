@@ -113,7 +113,7 @@ export const LENDING_AMM_ERROR__KAMINO_STOPPED = 0x179e; // 6046
 export const LENDING_AMM_ERROR__KAMINO_DEPOSITS_BLOCKED = 0x179f; // 6047
 /** ReserveDeprecated: The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only */
 export const LENDING_AMM_ERROR__RESERVE_DEPRECATED = 0x17a0; // 6048
-/** RebalanceNotAlone: rebalance must be called directly, once per transaction, beside nothing but compute budget instructions and klend's refresh_reserve */
+/** RebalanceNotAlone: rebalance must be called directly, once per transaction, beside nothing but compute budget instructions and klend's refresh_reserve or refresh_reserves_batch */
 export const LENDING_AMM_ERROR__REBALANCE_NOT_ALONE = 0x17a1; // 6049
 /** BadSeedAmounts: SeedRequest.amounts must hold exactly one amount for each of the market's two mints */
 export const LENDING_AMM_ERROR__BAD_SEED_AMOUNTS = 0x17a2; // 6050
@@ -121,11 +121,14 @@ export const LENDING_AMM_ERROR__BAD_SEED_AMOUNTS = 0x17a2; // 6050
 export const LENDING_AMM_ERROR__RESERVE_STALE = 0x17a3; // 6051
 /** ReserveWrongVersion: The Kamino reserve's version is one this program was not written for: quotes, swaps, adding and rebalance are refused, and removal is in kind only */
 export const LENDING_AMM_ERROR__RESERVE_WRONG_VERSION = 0x17a4; // 6052
+/** BelowMinCtokens: The removal would pay out fewer cTokens than min_ctokens */
+export const LENDING_AMM_ERROR__BELOW_MIN_CTOKENS = 0x17a5; // 6053
 
 export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__BAD_INIT_DATA
   | typeof LENDING_AMM_ERROR__BAD_LENT_INDEX
   | typeof LENDING_AMM_ERROR__BAD_SEED_AMOUNTS
+  | typeof LENDING_AMM_ERROR__BELOW_MIN_CTOKENS
   | typeof LENDING_AMM_ERROR__BELOW_MIN_LENT
   | typeof LENDING_AMM_ERROR__BELOW_MIN_LP
   | typeof LENDING_AMM_ERROR__BELOW_MIN_OTHER
@@ -183,6 +186,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__BAD_INIT_DATA]: `Init data is not valid creation parameters`,
     [LENDING_AMM_ERROR__BAD_LENT_INDEX]: `The lent index must be 0 or 1`,
     [LENDING_AMM_ERROR__BAD_SEED_AMOUNTS]: `SeedRequest.amounts must hold exactly one amount for each of the market's two mints`,
+    [LENDING_AMM_ERROR__BELOW_MIN_CTOKENS]: `The removal would pay out fewer cTokens than min_ctokens`,
     [LENDING_AMM_ERROR__BELOW_MIN_LENT]: `The removal would pay out less of the lent mint than min_lent`,
     [LENDING_AMM_ERROR__BELOW_MIN_LP]: `The deposit would mint fewer shares than min_lp`,
     [LENDING_AMM_ERROR__BELOW_MIN_OTHER]: `The removal would pay out less of the other mint than min_other`,
@@ -208,7 +212,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__NOT_ENOUGH_SHARES]: `The removal burns more LP shares than the market has minted`,
     [LENDING_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
     [LENDING_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
-    [LENDING_AMM_ERROR__REBALANCE_NOT_ALONE]: `rebalance must be called directly, once per transaction, beside nothing but compute budget instructions and klend's refresh_reserve`,
+    [LENDING_AMM_ERROR__REBALANCE_NOT_ALONE]: `rebalance must be called directly, once per transaction, beside nothing but compute budget instructions and klend's refresh_reserve or refresh_reserves_batch`,
     [LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING]: `The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again`,
     [LENDING_AMM_ERROR__REDEEM_PAID_SHORT]: `Kamino's redeem paid the market less than the swap's shortfall`,
     [LENDING_AMM_ERROR__RESERVE_DEPRECATED]: `The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only`,

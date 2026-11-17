@@ -90,13 +90,26 @@ pub fn decide_with_exit_delay(
     kamino: Kamino,
     min_rebalance: u64,
 ) -> Result<(Decision, u64), StrategyError> {
-    if kamino.stopped {
-        return Err(StrategyError::KaminoStopped);
-    }
     let lent_total = buffer
         .checked_add(lent_value)
         .ok_or(StrategyError::Overflow)?;
     let x = exposure(lent_value, lent_total);
+    if kamino.stopped {
+        // While Kamino redeems nothing `rebalance` refuses, except to forget a wait to leave: a
+        // sighting from before an emergency must not let the market leave at the first reading
+        // after it (finding R2-04, docs/security/lending-amm/).
+        if exit_seen_slot != 0 {
+            return Ok((
+                Decision {
+                    withdraw_mode,
+                    planned: None,
+                    exposure: x,
+                },
+                0,
+            ));
+        }
+        return Err(StrategyError::KaminoStopped);
+    }
     let wants_out = withdraw_mode && !next_mode(withdraw_mode, kamino.free, x);
     let waited = exit_seen_slot != 0
         && slot >= exit_seen_slot.saturating_add(WITHDRAW_MODE_EXIT_DELAY_SLOTS);
@@ -170,6 +183,19 @@ pub(crate) fn assert_the_exit_waits(
     let wants_out = current && !next_mode(current, kamino.free, x);
     let waited = exit_seen_slot != 0
         && slot >= exit_seen_slot.saturating_add(WITHDRAW_MODE_EXIT_DELAY_SLOTS);
+    if kamino.stopped {
+        // Only a wait to forget, and nothing moved.
+        match result {
+            Ok((decision, seen)) => {
+                assert!(exit_seen_slot != 0 && seen == 0);
+                assert!(decision.planned.is_none() && decision.withdraw_mode == current);
+            }
+            Err(refusal) => {
+                assert!(exit_seen_slot == 0 && matches!(refusal, StrategyError::KaminoStopped))
+            }
+        }
+        return;
+    }
     match result {
         Err(refusal) => {
             assert!(kamino.stopped || !matches!(refusal, StrategyError::KaminoStopped));

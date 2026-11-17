@@ -346,14 +346,23 @@ fn sos_h006_an_lp_leaves_with_the_lent_side_when_the_other_mint_cannot_move() {
         .unwrap();
         let lent_account = env.wallet_token_account(&market, &wallet, lent_index);
         let lent_before = env.balance(&lent_account);
-        let too_much =
-            env.remove_lent_side_instruction(&market, &wallet, shares / 2, expected.buffer + 1);
+        let ask = |env: &Env, min: [u64; 2]| {
+            env.remove_lent_side_instruction(&market, &wallet, shares / 2, min)
+        };
+        // Each part has its own minimum, so a trade before the exit that moves the lent side
+        // between the buffer and the cTokens, towards the other side the LP gives up, cannot
+        // take part of it unbounded (finding R2-01).
+        let lent_short = ask(&env, [expected.buffer + 1, 0]);
         assert_refused(
-            env.send_meta(&[too_much], &[&lp]),
+            env.send_meta(&[lent_short], &[&lp]),
             StrategyError::BelowMinLent,
         );
-        let remove =
-            env.remove_lent_side_instruction(&market, &wallet, shares / 2, expected.buffer);
+        let ctokens_short = ask(&env, [0, expected.ctokens + 1]);
+        assert_refused(
+            env.send_meta(&[ctokens_short], &[&lp]),
+            StrategyError::BelowMinCtokens,
+        );
+        let remove = ask(&env, [expected.buffer, expected.ctokens]);
         let meta = env.send_meta(&[remove], &[&lp]).unwrap();
 
         assert_eq!(env.balance(&lent_account) - lent_before, expected.buffer);
@@ -452,4 +461,48 @@ fn sos_h004_one_reading_of_kamino_cannot_take_a_market_out_of_withdraw_mode() {
         assert_eq!(state.exit_seen_slot, 0);
         assert!(state.ctokens > 0);
     }
+}
+
+#[test]
+fn sos_r2_04_a_wait_to_leave_withdraw_mode_does_not_outlast_a_kamino_emergency() {
+    // A sighting recorded before Kamino stopped redeems must not let the market leave at the
+    // first reading after the emergency, with no honest reading possible during it.
+    use common::states::KaminoState;
+    use lending_amm::config::{
+        WITHDRAW_MODE_ENTER, WITHDRAW_MODE_EXIT, WITHDRAW_MODE_EXIT_DELAY_SLOTS as DELAY,
+    };
+    let lent = 0;
+    let mut env = Env::new();
+    env.load_klend();
+    let spec = lent_spec(&mut env, lent, 30);
+    let (market, _) = env
+        .create_funded_market(&spec, [OTHER, units(lent, 50)])
+        .unwrap();
+    env.rebalance(&market, None).unwrap();
+    let exposure = env.exposure(&market);
+    env.set_free_liquidity(&market, WITHDRAW_MODE_ENTER * exposure - 1);
+    env.rebalance(&market, None).unwrap();
+    env.set_free_liquidity(&market, WITHDRAW_MODE_EXIT * env.exposure(&market) + 1);
+    env.rebalance(&market, None).unwrap();
+    assert!(env.market_state(&market.market_state).exit_seen_slot > 0);
+
+    // In emergency mode `rebalance` refuses, except that it forgets the wait.
+    env.set_kamino_state(&market, KaminoState::ReserveEmergencyMode);
+    env.rebalance(&market, None).unwrap();
+    let state = env.market_state(&market.market_state);
+    assert!(state.withdraw_mode);
+    assert_eq!(state.exit_seen_slot, 0);
+    assert_refused(env.rebalance(&market, None), StrategyError::KaminoStopped);
+
+    // After it, an hour on, the first reading above the threshold starts a new wait.
+    let reserve = env.reserve_of(&market);
+    env.patch(&reserve, lending_amm::kamino::offsets::EMERGENCY_MODE, &[0]);
+    env.advance_clock(DELAY, (DELAY * 2 / 5) as i64);
+    env.rebalance(&market, None).unwrap();
+    let state = env.market_state(&market.market_state);
+    assert!(
+        state.withdraw_mode,
+        "left withdraw mode at the first reading after the emergency"
+    );
+    assert_eq!(state.exit_seen_slot, env.clock().slot);
 }

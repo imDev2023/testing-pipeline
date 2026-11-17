@@ -49,9 +49,10 @@ pub const KAMINO_RATE_HEADROOM_BPS: u16 = 10;
 pub const ADD_MAX_RESERVE_AGE_SLOTS: u64 = 0;
 /// How many slots old the reserve's last refresh may be when a quote or a swap values a market's
 /// cTokens: about an hour. A trade at the stored rate and one back after a refresh pay Pipeline's
-/// fee twice, 0.5%, besides the LP fee, which may be 0; an hour of interest at the steepest rate
-/// the deploy sees, our devnet reserves' 1,000% a year, is about 0.11%, so no such round trip
-/// pays. Beyond it a trader, a keeper or Aviary puts klend's `refresh_reserve` first.
+/// fee twice, 0.5%, besides the LP fee, which may be 0; 9,000 slots of interest at the steepest
+/// rate the deploy sees, our devnet reserves' 1,000% a year, is about 0.14% as klend counts slots
+/// (two a second), so no such round trip pays, with a margin of 1.7 to 3.5 times once reward and
+/// time-based interest are allowed for (finding R2-12). Beyond it a trader, a keeper or Aviary puts klend's `refresh_reserve` first.
 #[constant]
 pub const TRADE_MAX_RESERVE_AGE_SLOTS: u64 = 9_000;
 /// Enter withdraw mode when Kamino's freely available liquidity is below this many times
@@ -71,6 +72,8 @@ pub const WITHDRAW_MODE_EXIT: u64 = 10;
 /// (finding H004, docs/security/lending-amm/). Exported in the IDL, from which keepers read it.
 #[constant]
 pub const WITHDRAW_MODE_EXIT_DELAY_SLOTS: u64 = 9_000;
+// A delay of 0 would let one reading take a market out again (finding R2-19).
+const _: () = assert!(WITHDRAW_MODE_EXIT_DELAY_SLOTS > 0);
 // Relations the program's maths relies on, checked when it is built so no change to one value
 // can break them (finding H054, docs/security/lending-amm/): the band holds the target and stays
 // below the whole, and the headroom and the LP fee are parts of a whole.

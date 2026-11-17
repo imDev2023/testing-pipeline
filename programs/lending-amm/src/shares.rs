@@ -335,7 +335,7 @@ mod tests {
         let held = u64::MAX;
         assert_eq!(
             totals_after_in_kind(u128::MAX, 0, paid, held).map_err(|e| e as u32),
-            // floor((2^128 - 1) x (2^64 - 2) / (2^64 - 1)) = 2^128 - 2^64 - 1, with
+            // floor((2^128 - 1) x (2^64 - 2) / (2^64 - 1)) = 2^128 - 2^64 - 2, with
             // 2^128 - 1 = (2^64 + 1) x (2^64 - 1).
             Ok((u128::MAX - (u128::MAX - (1u128 << 64) - 1), 0))
         );

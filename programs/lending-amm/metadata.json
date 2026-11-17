@@ -260,7 +260,7 @@
             "name": "rebalance",
             "label": "Rebalance",
             "kind": "other",
-            "description": "Anyone moves the market's buffer back to its target share of the lent side when its share has left its band (the program's BUFFER_TARGET_BPS, BUFFER_MIN_BPS and BUFFER_MAX_BPS, in its IDL): above the band it deposits the surplus into the market's Kamino reserve, below it redeems the shortfall, capped at what Kamino can pay right now. Below WITHDRAW_MODE_ENTER times the larger of what the market lends and what its target would lend, of the reserve's freely available liquidity, it enters withdraw mode and redeems everything Kamino can pay; above WITHDRAW_MODE_EXIT times it leaves and the band applies again. It skips deposits while Kamino blocks cToken deposits, and refuses while either emergency mode is on or the reserve is deprecated. Inside the band, for a move smaller than the lent mint's floor, or with nothing to do in withdraw mode, it fails and changes nothing, so simulate first. It must be called directly, beside nothing but compute budget instructions, Kamino Lend's refresh_reserve and other rebalance calls. It creates no account, and the caller pays only the transaction fee. Inputs are the lent mint and its Kamino reserve, lending market, reserve liquidity supply and collateral mint, which the program checks.",
+            "description": "Anyone moves the market's buffer back to its target share of the lent side when its share has left its band (the program's BUFFER_TARGET_BPS, BUFFER_MIN_BPS and BUFFER_MAX_BPS, in its IDL): above the band it deposits the surplus into the market's Kamino reserve, below it redeems the shortfall, capped at what Kamino can pay right now. Below WITHDRAW_MODE_ENTER times the larger of what the market lends and what its target would lend, of the reserve's freely available liquidity, it enters withdraw mode and redeems everything Kamino can pay; above WITHDRAW_MODE_EXIT times it leaves and the band applies again. It skips deposits while Kamino blocks cToken deposits, and refuses while either emergency mode is on or the reserve is deprecated. Inside the band, for a move smaller than the lent mint's floor, or with nothing to do in withdraw mode, it fails and changes nothing, unless it starts or forgets withdraw mode's wait to leave, so simulate first. It must be called directly, once per transaction, beside nothing but compute budget instructions and Kamino Lend's refresh_reserve or refresh_reserves_batch; put refresh_reserve first so it decides on Kamino's state as of this slot. Leaving withdraw mode takes two calls an hour apart, the first only starting the wait. It creates no account, and the caller pays only the transaction fee. Inputs are the lent mint and its Kamino reserve, lending market, reserve liquidity supply and collateral mint, which the program checks.",
             "args": [],
             "accounts": [
                 {
@@ -647,6 +647,12 @@
                     "type": "u64",
                     "label": "Fewest of the lent token to accept",
                     "description": "The buffer's part, in WSOL or USDC. The removal fails if it would pay out less."
+                },
+                {
+                    "name": "min_ctokens",
+                    "type": "u64",
+                    "label": "Fewest cTokens to accept",
+                    "description": "The cTokens' part, in the Kamino cToken. The removal fails if it would pay out fewer. Set it with Fewest of the lent token to accept, so a trade before the removal cannot move the lent side between the buffer and the cTokens towards the token you give up."
                 }
             ],
             "accounts": [

@@ -1,6 +1,6 @@
-//! `remove_lent_side { lp, min_lent }`: an LP burns `lp` shares and leaves with the lent side's
-//! parts alone, giving up the other side's part to the LPs who stay (docs/spec/lending-pool.md,
-//! "Removing").
+//! `remove_lent_side { lp, min_lent, min_ctokens }`: an LP burns `lp` shares and leaves with the
+//! lent side's parts alone, giving up the other side's part to the LPs who stay
+//! (docs/spec/lending-pool.md, "Leaving with the lent side alone").
 //!
 //! The other mint may keep a freeze authority or a transfer hook, which the mint rules allow and
 //! Aviary shows. If its authority freezes the market's vault, or its hook refuses transfers out
@@ -97,6 +97,7 @@ pub fn remove_lent_side_handler<'info>(
     ctx: Context<'info, RemoveLentSide<'info>>,
     lp: u64,
     min_lent: u64,
+    min_ctokens: u64,
 ) -> Result<()> {
     let accounts = &ctx.accounts;
     let market = &accounts.market_state;
@@ -113,7 +114,14 @@ pub fn remove_lent_side_handler<'info>(
         removal.buffer > 0 || removal.ctokens > 0,
         StrategyError::ZeroRemoval
     );
+    // Each part has its own minimum: a trade before the exit that moved the lent side between
+    // the buffer and the cTokens, towards the other side the LP gives up, would otherwise take
+    // part of the payout with only one part bounded (finding R2-01, docs/security/lending-amm/).
     require!(removal.buffer >= min_lent, StrategyError::BelowMinLent);
+    require!(
+        removal.ctokens >= min_ctokens,
+        StrategyError::BelowMinCtokens
+    );
 
     let vaults = [&accounts.vault_0, &accounts.vault_1];
     let lp_tokens = [&accounts.lp_token_0, &accounts.lp_token_1];

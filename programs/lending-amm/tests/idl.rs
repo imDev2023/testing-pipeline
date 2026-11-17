@@ -335,6 +335,10 @@ fn its_events_and_errors_are_the_programs() {
             "ReserveWrongVersion",
             lending_amm::StrategyError::ReserveWrongVersion,
         ),
+        (
+            "BelowMinCtokens",
+            lending_amm::StrategyError::BelowMinCtokens,
+        ),
     ] {
         let listed = errors.iter().find(|e| e["name"] == name).unwrap();
         assert_eq!(
@@ -343,5 +347,5 @@ fn its_events_and_errors_are_the_programs() {
             "{name}"
         );
     }
-    assert_eq!(errors.last().unwrap()["name"], "ReserveWrongVersion");
+    assert_eq!(errors.last().unwrap()["name"], "BelowMinCtokens");
 }

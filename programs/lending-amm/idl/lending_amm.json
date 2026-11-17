@@ -1138,6 +1138,10 @@
         {
           "name": "min_lent",
           "type": "u64"
+        },
+        {
+          "name": "min_ctokens",
+          "type": "u64"
         }
       ]
     },
@@ -1729,7 +1733,7 @@
     {
       "code": 6049,
       "name": "RebalanceNotAlone",
-      "msg": "rebalance must be called directly, once per transaction, beside nothing but compute budget instructions and klend's refresh_reserve"
+      "msg": "rebalance must be called directly, once per transaction, beside nothing but compute budget instructions and klend's refresh_reserve or refresh_reserves_batch"
     },
     {
       "code": 6050,
@@ -1745,6 +1749,11 @@
       "code": 6052,
       "name": "ReserveWrongVersion",
       "msg": "The Kamino reserve's version is one this program was not written for: quotes, swaps, adding and rebalance are refused, and removal is in kind only"
+    },
+    {
+      "code": 6053,
+      "name": "BelowMinCtokens",
+      "msg": "The removal would pay out fewer cTokens than min_ctokens"
     }
   ],
   "types": [

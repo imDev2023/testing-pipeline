@@ -18,8 +18,9 @@
 //! and records exactly that, with the running totals deposited into and redeemed from Kamino,
 //! and the mode it is in. It creates no account and pays nothing, so the caller pays only the
 //! transaction fee. A call Kamino refuses fails whole. It must be called directly, beside nothing
-//! but compute budget instructions and klend's `refresh_reserve`, and once per transaction
-//! ([`require_alone`]), so nothing in its transaction can move Kamino's free liquidity around it.
+//! but compute budget instructions and klend's `refresh_reserve` or `refresh_reserves_batch`, and
+//! once per transaction ([`require_alone`]), so nothing in its transaction can move Kamino's free
+//! liquidity around it.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{get_stack_height, TRANSACTION_LEVEL_STACK_HEIGHT};
@@ -32,7 +33,7 @@ use crate::buffer::Move;
 use crate::config::KLEND_PROGRAM;
 use crate::errors::StrategyError;
 use crate::events::{RebalanceDirection, Rebalanced, WithdrawModeEntered, WithdrawModeLeft};
-use crate::kamino::{KaminoAccounts, INSTRUCTIONS_SYSVAR, REFRESH_RESERVE};
+use crate::kamino::{KaminoAccounts, INSTRUCTIONS_SYSVAR, REFRESH_RESERVE, REFRESH_RESERVES_BATCH};
 use crate::state::{LendingAmmMarket, AUTHORITY_SEED};
 use crate::token;
 use crate::withdraw_mode::{self, Kamino};
@@ -82,14 +83,16 @@ pub struct Rebalance<'info> {
 }
 
 /// Whether an instruction of `program` with `data` may share a transaction with `rebalance`:
-/// compute budget instructions, and klend's `refresh_reserve`, which a keeper puts first when the
-/// reserve's stored rate is stale. Never another `rebalance`, on this market or another: one
+/// compute budget instructions, and klend's `refresh_reserve` or `refresh_reserves_batch`, which a
+/// keeper puts first when the reserve's stored rate is stale. Never another `rebalance`, on this market or another: one
 /// market's deposit before a second market's call and a third's redeem after it would move
 /// Kamino's free liquidity around the second as klend's own instructions would (finding H003,
 /// docs/security/lending-amm/).
 pub fn allowed_beside_rebalance(program: &Pubkey, data: &[u8]) -> bool {
+    let tag = data.get(..8);
     *program == COMPUTE_BUDGET
-        || (*program == KLEND_PROGRAM && data.get(..8) == Some(&REFRESH_RESERVE[..]))
+        || (*program == KLEND_PROGRAM
+            && (tag == Some(&REFRESH_RESERVE[..]) || tag == Some(&REFRESH_RESERVES_BATCH[..])))
 }
 
 /// Refuses with `RebalanceNotAlone` unless `rebalance` is called directly, at the transaction's
