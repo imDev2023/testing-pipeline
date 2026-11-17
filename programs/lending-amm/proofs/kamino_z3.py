@@ -20,6 +20,9 @@ u64 cToken supply `N` (docs/spec/lending-pool.md, "Valuing the lent side"; docs/
    S)`, the floor above plus one when the division leaves a remainder) are worth at least `x`
    at the stored rate, and one fewer would be worth less than `x`, so they are at most one
    cToken more than the shortfall needs (docs/spec/lending-pool.md, "Redeeming the shortfall").
+5. The rate headroom (`with_rate_headroom`) taken off Kamino's limits before a redeem is planned
+   is never short of `KAMINO_RATE_HEADROOM_BPS` of them, by less than one unit, and leaves
+   between nothing and the whole limit.
 
 Each division is modelled by its quotient and remainder, and each wide product by its 64-bit
 digits (`p = h x 2^64 + l`, `0 <= l < 2^64`), which Z3 proves in seconds where symbolic
@@ -32,44 +35,15 @@ Run: `pip install z3-solver==5.4.1.0` (in a virtualenv), then
 
 import sys
 
-from z3 import And, If, Implies, Int, Not, Or, Solver, sat, unsat
+from z3 import And, If, Implies, Int, Or
+from z3_common import U128_MAX, constant, bounded, floor_div, prove
 
 TWO_64 = 2**64
 TWO_60 = 2**60
 U64_MAX = TWO_64 - 1
-U128_MAX = 2**128 - 1
 
 
-def bounded(name, high):
-    value = Int(name)
-    return value, And(value >= 0, value <= high)
-
-
-def floor_div(name, numerator, denominator):
-    """`numerator / denominator` as Rust's integer division: a quotient and its remainder."""
-    quotient, remainder = Int(f"{name}_q"), Int(f"{name}_r")
-    facts = And(
-        quotient * denominator + remainder == numerator,
-        remainder >= 0,
-        remainder < denominator,
-    )
-    return quotient, facts
-
-
-def prove(name, claim, *assumptions):
-    solver = Solver()
-    solver.set("timeout", 600_000)
-    solver.add(*assumptions)
-    solver.add(Not(claim))
-    result = solver.check()
-    if result == unsat:
-        print(f"PROVEN  {name}")
-        return True
-    if result == sat:
-        print(f"FAILED  {name}: counterexample {solver.model()}")
-    else:
-        print(f"UNKNOWN {name} ({solver.reason_unknown()})")
-    return False
+HEADROOM_BPS = constant("KAMINO_RATE_HEADROOM_BPS")
 
 
 def main():
@@ -300,6 +274,25 @@ def main():
         kq_facts,
         covered_facts,
         fewer_facts,
+    )
+
+    # 5. with_rate_headroom: amount - ceil(amount x KAMINO_RATE_HEADROOM_BPS / 10,000), for
+    # every u64: the headroom is never short of its basis points' share, rounds up by less than
+    # a unit, and leaves between 0 and the amount.
+    amount, amount_ok = bounded("amount", U64_MAX)
+    headroom, headroom_facts = floor_div("headroom", amount * HEADROOM_BPS + 10_000 - 1, 10_000)
+    left = amount - headroom
+    ok &= prove(
+        "the rate headroom is never short of its share, by less than a unit, and leaves at most "
+        "the amount",
+        And(
+            headroom * 10_000 >= amount * HEADROOM_BPS,
+            headroom * 10_000 < amount * HEADROOM_BPS + 10_000,
+            left >= 0,
+            left <= amount,
+        ),
+        amount_ok,
+        headroom_facts,
     )
 
     if not ok:

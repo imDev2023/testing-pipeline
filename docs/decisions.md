@@ -4167,8 +4167,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-27: Compute ceilings
 
 - Question: How much compute may each instruction use?
-- Answer: From 40,000 units for `lock_lp`, raised from 20,000 because the market's first lock creates the lock account, to 200,000 for `pipeline_seed_liquidity`, with 40,000 for a swap without a redeem and 80,000 with one; the build may lower a ceiling, and raising one needs a written reason.
-- Alternatives: The earlier default, 20,000 units for `lock_lp`, set for one transfer.
+- Answer: Each instruction's highest measured cost plus headroom (`LENDING-88`): from 20,000 units for `pipeline_quote` to 140,000 for `pipeline_seed_liquidity`, with 35,000 for a swap without a redeem and 75,000 with one, 90,000 for `rebalance`, 60,000 for `add_liquidity` and 50,000 for `lock_lp`; raising one needs a written reason.
+- Alternatives: The earlier default, from 40,000 units for `lock_lp` to 200,000 for `pipeline_seed_liquidity`, set before measuring; before that, 20,000 units for `lock_lp`, set for one transfer.
 - Specified in: [`docs/spec/lending-pool.md`, Compute ceilings](spec/lending-pool.md#compute-ceilings)
 - Changes by: build-time constant
 - Status: changed 2026-11-16
@@ -4773,6 +4773,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: fixed on-chain once deployed
 - Status: default
 - Decided: 2026-11-16 in [Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84)
+
+### LENDING-88: Compute ceilings from measured costs
+
+- Question: How far above what an instruction is measured to cost does its compute ceiling sit, and what do the tests check?
+- Answer: Every instruction is measured in every state of Kamino on both cluster builds and on fixed keys, the spec's table carries the highest cost of each row, and each ceiling is that cost plus a quarter, rounded up to a multiple of 5,000, except where a written reason keeps or raises it (`add_liquidity` and `lock_lp`, whose address searches vary with the keys); the tests assert every cost against its ceiling and each ceiling against the rule.
+- Alternatives: A fixed margin in compute units; leaving the ceilings set before measuring, which left up to twice the cost as headroom; leaving out what bump searches spend beyond an address's first bump, as `TAX-51` does for the tax AMM.
+- Specified in: [`docs/spec/lending-pool.md`, Compute ceilings](spec/lending-pool.md#compute-ceilings)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85)
+
+### LENDING-89: How the fuzzer moves Kamino
+
+- Question: How does the stateful fuzzer move Kamino between steps, so the invariants are checked against a moving rate and every state Kamino can be in?
+- Answer: Interest raises the rate, by edits of what borrowers owe and by klend's own `refresh_reserve` after time passes; write-offs with klend's real `socialize_loss` lower it, one in ten of them of the whole supply, which deprecates the reserve; borrowers move the free liquidity around withdraw mode's thresholds; and `block_ctoken_usage`, both emergency modes and a failed layout check switch on and off, all on klend's deployed bytes.
+- Alternatives: A fixed Kamino state per case, as the feature tickets fuzzed; moving the rate only by klend's refresh, at the pace of the interest the dumped reserves' borrowers pay.
+- Specified in: [`docs/spec/lending-pool.md`, Invariants for test layer 3](spec/lending-pool.md#invariants-for-test-layer-3)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85)
+
+### LENDING-90: Each invariant shown able to fail by a broken build
+
+- Question: How is each invariant of the fuzzer shown able to fail, and kept so?
+- Answer: A table of deliberately broken builds, each one careless edit (a rounding flipped the wrong way, a missing check) made to a copy of the program's source and built in its own target directory, so the program's source never carries them; a test runs the fuzzer on each from a fixed seed and requires it caught by the invariant the table names, at least one build for every invariant, in CI on every push.
+- Alternatives: Cargo features that switch the mistakes on inside the program's source; mutation testing with a generic tool, whose mutants are not tied to an invariant.
+- Specified in: [`docs/spec/lending-pool.md`, Invariants for test layer 3](spec/lending-pool.md#invariants-for-test-layer-3)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85)
 
 ## Not decided yet
 

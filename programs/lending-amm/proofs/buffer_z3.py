@@ -9,7 +9,10 @@ With `t = floor(L x BUFFER_TARGET_BPS / 10,000)` the target buffer:
 2. Below the band (`B x 10,000 < L x BUFFER_MIN_BPS`) the buffer is below its target, and the
    redeem `min(t - B, can_pay)` never carries it past `t`, never asks Kamino for more than it can
    pay, and lands exactly on `t` whenever Kamino can pay the whole shortfall.
-3. Inside the band nothing moves, and the three cases cover every input.
+3. Inside the band nothing moves, and the three cases cover every input; the band's products
+   give the same band as its edges in units of the lent mint, `ceil(L x BUFFER_MIN_BPS /
+   10,000)` and `floor(L x BUFFER_MAX_BPS / 10,000)`, which the Kani harness checks `band`
+   against.
 4. No intermediate overflows: the products fit a u128, and `t` fits a u64 (it is at most `L`).
 
 Every division is modelled by its quotient and remainder, as in `kamino_z3.py`. Kani proves the
@@ -19,50 +22,17 @@ Run: `pip install z3-solver==5.4.1.0` (in a virtualenv), then
 `python programs/lending-amm/proofs/buffer_z3.py`. Exits non-zero unless every claim is proven.
 """
 
-import re
 import sys
-from pathlib import Path
 
-from z3 import And, If, Int, Not, Solver, sat, unsat
+from z3 import And, If, Int, Not
+from z3_common import U64_MAX, U128_MAX, constant, bounded, prove
 
-U64_MAX = 2**64 - 1
-U128_MAX = 2**128 - 1
 BPS = 10_000
-
-
-def constant(name):
-    """A constant's value as `src/config.rs` defines it, so the proofs follow any change there."""
-    config = (Path(__file__).resolve().parent.parent / "src" / "config.rs").read_text()
-    match = re.search(rf"pub const {name}: \w+ = ([\d_]+);", config)
-    if not match:
-        sys.exit(f"no {name} in src/config.rs")
-    return int(match.group(1).replace("_", ""))
 
 
 TARGET = constant("BUFFER_TARGET_BPS")
 LOW = constant("BUFFER_MIN_BPS")
 HIGH = constant("BUFFER_MAX_BPS")
-
-
-def bounded(name, high):
-    value = Int(name)
-    return value, And(value >= 0, value <= high)
-
-
-def prove(name, claim, *assumptions):
-    solver = Solver()
-    solver.set("timeout", 600_000)
-    solver.add(*assumptions)
-    solver.add(Not(claim))
-    result = solver.check()
-    if result == unsat:
-        print(f"PROVEN  {name}")
-        return True
-    if result == sat:
-        print(f"FAILED  {name}: counterexample {solver.model()}")
-    else:
-        print(f"UNKNOWN {name} ({solver.reason_unknown()})")
-    return False
 
 
 def main():
@@ -120,6 +90,20 @@ def main():
         "the band's three cases never overlap",
         Not(And(above, below)),
         inputs,
+    )
+
+    # The band's edges as amounts of the lent mint, as the Kani harness states them:
+    # low = ceil(L x LOW / BPS) and high = floor(L x HIGH / BPS).
+    low, low_rem = Int("low"), Int("low_rem")
+    low_facts = And(low * BPS - low_rem == lent * LOW, low_rem >= 0, low_rem < BPS)
+    high, high_rem = Int("high"), Int("high_rem")
+    high_facts = And(high * BPS + high_rem == lent * HIGH, high_rem >= 0, high_rem < BPS)
+    ok &= prove(
+        "the band's products and its edges in units of the lent mint give the same band",
+        And(below == (b < low), above == (b > high)),
+        inputs,
+        low_facts,
+        high_facts,
     )
 
     if not ok:

@@ -16,6 +16,7 @@
 
 #![allow(dead_code)]
 
+pub mod fuzz;
 pub mod kamino;
 pub mod launchpad;
 pub mod rebalance;
@@ -270,12 +271,19 @@ impl Env {
     }
 
     /// [`Env::new`] on a VM set up by the caller, such as one with a feature switched off.
-    pub fn with_svm(mut svm: LiteSVM) -> Self {
+    pub fn with_svm(svm: LiteSVM) -> Self {
+        Self::with_program(svm, &strategy_so())
+    }
+
+    /// [`Env::new`] on a VM set up by the caller, with `program` deployed as the strategy in
+    /// place of the real build, such as one of the deliberately broken builds the fuzzer must
+    /// catch (`tests/broken_builds.rs`).
+    pub fn with_program(mut svm: LiteSVM, program: &[u8]) -> Self {
         let admin = Keypair::new();
         svm.airdrop(&admin.pubkey(), 10_000 * SOL).unwrap();
         svm.add_program(client::PROGRAM_ID, &router_so()).unwrap();
         set_upgrade_authority(&mut svm, &client::PROGRAM_ID, &admin.pubkey());
-        svm.add_program(strategy_id(), &strategy_so()).unwrap();
+        svm.add_program(strategy_id(), program).unwrap();
         set_upgrade_authority(&mut svm, &strategy_id(), &admin.pubkey());
         let fixtures = kamino::Fixtures::of_build();
         // The lent mints, their reserves, lending market, collateral mints and token
@@ -932,7 +940,12 @@ impl Env {
     /// A new wallet holding `amounts` of each of the market's mints, by mint index, plus
     /// some SOL.
     pub fn funded_wallet(&mut self, market: &Market, amounts: [u64; 2]) -> Keypair {
-        let wallet = Keypair::new();
+        self.fund_wallet(market, Keypair::new(), amounts)
+    }
+
+    /// [`Env::funded_wallet`] for a wallet of the caller's choosing, such as one with a fixed
+    /// key, whose PDA searches cost the same on every run.
+    pub fn fund_wallet(&mut self, market: &Market, wallet: Keypair, amounts: [u64; 2]) -> Keypair {
         self.svm.airdrop(&wallet.pubkey(), 10 * SOL).unwrap();
         for ((mint, token_program), amount) in
             market.mints.iter().zip(&market.token_programs).zip(amounts)

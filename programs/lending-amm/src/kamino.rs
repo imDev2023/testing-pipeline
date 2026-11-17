@@ -1271,6 +1271,249 @@ mod proofs {
         assert!(with_rate_headroom(amount) <= amount);
     }
 
+    fn assert_headroom_never_short(amount: u64) {
+        let left = with_rate_headroom(amount);
+        let bps = crate::config::KAMINO_RATE_HEADROOM_BPS as u128;
+        // The headroom is at least its basis points' share, rounded up: by less than a unit.
+        let headroom = (amount - left) as u128;
+        assert!(headroom * 10_000 >= amount as u128 * bps);
+        assert!(headroom * 10_000 < amount as u128 * bps + 10_000);
+    }
+
+    /// The headroom is never short of `KAMINO_RATE_HEADROOM_BPS` of the amount, and rounds up
+    /// by less than a unit: bounded below 2^16; `proofs/kamino_z3.py` for every amount.
+    #[kani::proof]
+    fn the_rate_headroom_is_never_short_bounded() {
+        assert_headroom_never_short(kani::any_where(|&a| a < (1 << 16)));
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    fn the_rate_headroom_is_never_short() {
+        assert_headroom_never_short(kani::any());
+    }
+
+    /// For any three terms, what Kamino can pay is never more than any of them, is one of them
+    /// unless redeems are stopped, and is nothing while they are.
+    #[kani::proof]
+    fn kamino_never_pays_more_than_any_term() {
+        let (free, cap, own, stopped): (u64, u64, u64, bool) = kani::any();
+        let paid = can_pay(free, cap, own, stopped);
+        assert!(paid <= free && paid <= cap && paid <= own);
+        assert!(stopped || paid == free || paid == cap || paid == own);
+        assert!(!stopped || paid == 0);
+    }
+
+    /// For any withdrawal cap and time, what remains is exactly klend's count: everything with
+    /// no cap, nothing for a negative capacity or an interval that has not started, the whole
+    /// capacity once the interval is over, and otherwise the capacity less the net outflow,
+    /// nothing once the outflow has passed the capacity.
+    #[kani::proof]
+    fn the_withdrawal_cap_remaining_is_klends_count() {
+        let cap = WithdrawalCap {
+            capacity: kani::any(),
+            current_total: kani::any(),
+            interval_start: kani::any(),
+            interval_length: kani::any(),
+        };
+        let now: u64 = kani::any();
+        let left = withdrawal_cap_remaining(&cap, now);
+        if cap.interval_length == 0 {
+            assert!(left == u64::MAX);
+        } else if cap.capacity < 0 || cap.interval_start > now {
+            assert!(left == 0);
+        } else if now - cap.interval_start >= cap.interval_length {
+            assert!(left as i128 == cap.capacity as i128);
+        } else if cap.current_total > cap.capacity {
+            assert!(left == 0);
+        } else {
+            assert!(left as i128 == cap.capacity as i128 - cap.current_total as i128);
+        }
+    }
+
+    /// For any reserve fields, the total supply is klend's: the available amount in fixed
+    /// point plus what is borrowed less the three fee fields, in that order, or `None` exactly
+    /// where that sum passes 128 bits or a subtraction would go below 0.
+    #[kani::proof]
+    fn the_total_supply_is_klends() {
+        let (available, borrowed, protocol, referrer, pending): (u64, u128, u128, u128, u128) =
+            kani::any();
+        let gross = ((available as u128) << FRACTION_BITS).checked_add(borrowed);
+        let result = total_supply_sf(available, borrowed, protocol, referrer, pending);
+        match gross {
+            None => assert!(result.is_none()),
+            Some(gross) => {
+                let after_protocol = gross.checked_sub(protocol);
+                let after_referrer = after_protocol.and_then(|g| g.checked_sub(referrer));
+                let after_pending = after_referrer.and_then(|g| g.checked_sub(pending));
+                assert!(result == after_pending);
+                if let Some(supply) = result {
+                    assert!(supply + protocol + referrer + pending == gross);
+                }
+            }
+        }
+    }
+
+    fn assert_higher_rate_never_values_lower(c: u64, s: u128, extra: u128, n: u64) {
+        let higher = s.saturating_add(extra);
+        if let (Some(low), Some(high)) = (collateral_value(c, s, n), collateral_value(c, higher, n))
+        {
+            assert!(low <= high);
+        }
+    }
+
+    /// A higher rate never values the same cTokens lower, so only a fall in Kamino's rate can
+    /// lower the lent side's value: for small amounts at any fractional rate and rise;
+    /// `proofs/kamino_z3.py` for every input.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_higher_rate_never_values_lower_bounded() {
+        let c: u64 = kani::any_where(|&c| c < SMALL);
+        let n: u64 = kani::any_where(|&n| n < SMALL);
+        let whole: u64 = kani::any_where(|&w| w < SMALL);
+        let fraction: u64 = kani::any_where(|&f| f < (1 << FRACTION_BITS));
+        let s = ((whole as u128) << FRACTION_BITS) | fraction as u128;
+        let extra: u128 = kani::any_where(|&e: &u128| e < (SMALL as u128) << FRACTION_BITS);
+        assert_higher_rate_never_values_lower(c, s, extra, n);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_higher_rate_never_values_lower() {
+        assert_higher_rate_never_values_lower(kani::any(), kani::any(), kani::any(), kani::any());
+    }
+
+    /// For any reserve, no cTokens are worth nothing, whatever the reserve holds, even where
+    /// its supply cannot be computed.
+    #[kani::proof]
+    fn no_ctokens_are_worth_nothing() {
+        let reserve = Reserve {
+            total_available_amount: kani::any(),
+            borrowed_amount_sf: kani::any(),
+            accumulated_protocol_fees_sf: kani::any(),
+            mint_total_supply: kani::any(),
+            ..Reserve::default()
+        };
+        assert!(matches!(reserve.lent_value(0), Ok(0)));
+    }
+
+    /// For any reserve, its freely available liquidity never panics and is never more than
+    /// its available amount.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_freely_available_liquidity_is_at_most_the_available_amount() {
+        let reserve = Reserve {
+            total_available_amount: kani::any(),
+            borrowed_amount_sf: kani::any(),
+            mint_total_supply: kani::any(),
+            queued_collateral_amount: kani::any(),
+            ..Reserve::default()
+        };
+        assert!(reserve.freely_available() <= reserve.total_available_amount);
+    }
+
+    /// For a small reserve at any state of its switches and cap, what a redeem may plan to
+    /// take is never more than what Kamino can pay right now, which is never more than the
+    /// market's cTokens are worth, and both are nothing while redeems are stopped; what the
+    /// reserve alone shows is never less than what the lending market's emergency mode allows.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_planned_redeem_never_asks_more_than_kamino_can_pay_bounded() {
+        let small = |x: &u64| *x < SMALL;
+        let reserve = Reserve {
+            version: if kani::any() {
+                RESERVE_VERSION
+            } else {
+                u64::MAX
+            },
+            total_available_amount: kani::any_where(small),
+            mint_total_supply: kani::any_where(small),
+            emergency_mode: kani::any(),
+            withdrawal_cap: WithdrawalCap {
+                capacity: kani::any_where(|&c| (-1..SMALL as i64).contains(&c)),
+                current_total: kani::any_where(|&c| (-1..SMALL as i64).contains(&c)),
+                interval_start: kani::any_where(small),
+                interval_length: kani::any_where(small),
+            },
+            ..Reserve::default()
+        };
+        let market = LendingMarket {
+            emergency_mode: kani::any(),
+        };
+        let ctokens: u64 = kani::any_where(small);
+        let now: i64 = kani::any_where(|&t| (-1..SMALL as i64).contains(&t));
+        let planned = reserve.can_pay_planned(&market, ctokens, now);
+        let can_pay_now = reserve.can_pay_now(&market, ctokens, now);
+        assert!(planned <= can_pay_now);
+        assert!(can_pay_now <= reserve.lent_value(ctokens).unwrap_or(u64::MAX));
+        assert!(can_pay_now <= reserve.freely_available());
+        if reserve.redeems_stopped(&market) {
+            assert!(planned == 0 && can_pay_now == 0);
+        }
+        assert!(reserve.can_pay_by_itself(ctokens, now) >= planned);
+    }
+
+    /// A small reserve at a rate of `whole` plus sixteenths: the total supply's 60 fractional
+    /// bits, symbolic in the other bounded harnesses, are held to their top four here, since
+    /// these harnesses run several long divisions each.
+    fn small_reserve(whole: u64, sixteenths: u64, n: u64) -> Reserve {
+        Reserve {
+            total_available_amount: whole,
+            borrowed_amount_sf: (sixteenths as u128) << (FRACTION_BITS - 4),
+            mint_total_supply: n,
+            ..Reserve::default()
+        }
+    }
+
+    /// The cTokens `rebalance` burns for an amount are never more than the market holds, all of
+    /// them once it asks for their whole value, and otherwise worth at most the amount at the
+    /// stored rate: for small amounts at rates in sixteenths.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_redeem_burns_at_most_what_the_market_holds_and_what_it_asks_for_bounded() {
+        let small = |x: &u64| *x < SMALL;
+        let reserve = small_reserve(
+            kani::any_where(small),
+            kani::any_where(|&f| f < 16),
+            kani::any_where(small),
+        );
+        let (liquidity, ctokens): (u64, u64) = (kani::any_where(small), kani::any_where(small));
+        if let Ok(burn) = reserve.ctokens_to_redeem(liquidity, ctokens) {
+            assert!(burn <= ctokens);
+            let value = reserve.lent_value(ctokens).unwrap();
+            if liquidity >= value {
+                // Asking for the whole value burns everything.
+                assert!(burn == ctokens);
+            } else {
+                assert!(burn > 0 && reserve.lent_value(burn).unwrap() <= liquidity);
+            }
+        }
+    }
+
+    /// The cTokens a swap burns for its shortfall are never more than the market holds and are
+    /// worth at least the shortfall at the stored rate; a reserve with no cTokens values every
+    /// cToken at nothing, so Kamino can pay nothing from it and no swap ever has a shortfall to
+    /// cover there. For small amounts at rates in sixteenths.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_shortfall_burns_at_most_what_the_market_holds_and_covers_it_bounded() {
+        let small = |x: &u64| *x < SMALL;
+        let n: u64 = kani::any_where(small);
+        let reserve = small_reserve(kani::any_where(small), kani::any_where(|&f| f < 16), n);
+        let (shortfall, ctokens): (u64, u64) = (kani::any_where(small), kani::any_where(small));
+        if let Ok(burn) = reserve.ctokens_for_shortfall(shortfall, ctokens) {
+            assert!(burn <= ctokens);
+            assert!(reserve.lent_value(burn).is_ok_and(|v| v >= shortfall) || n == 0);
+        }
+    }
+
     /// For any value, total supply and cToken supply, the cTokens for the value are computed
     /// without panicking or overflowing.
     #[kani::proof]

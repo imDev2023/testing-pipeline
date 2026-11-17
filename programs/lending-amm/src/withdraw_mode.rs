@@ -383,4 +383,118 @@ mod proofs {
         };
         let _ = decide(kani::any(), kani::any(), kani::any(), state, kani::any());
     }
+
+    /// The exposure is the larger of the lent value and the target lent value, so never below
+    /// the lent value, and never above the lent side: bounded below 2^16;
+    /// `proofs/withdraw_mode_z3.py` for every input.
+    #[kani::proof]
+    fn the_exposure_is_the_larger_term_and_within_the_lent_side_bounded() {
+        let lent_total: u64 = kani::any_where(|&l| l < (1 << 16));
+        assert_exposure_is_the_larger_term(kani::any_where(|&v| v <= lent_total), lent_total);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    fn the_exposure_is_the_larger_term_and_within_the_lent_side() {
+        let lent_total: u64 = kani::any();
+        assert_exposure_is_the_larger_term(kani::any_where(|&v| v <= lent_total), lent_total);
+    }
+
+    fn assert_exposure_is_the_larger_term(lent_value: u64, lent_total: u64) {
+        let x = exposure(lent_value, lent_total);
+        let target_lent = lent_total - buffer::target(lent_total);
+        assert!(x >= lent_value && x >= target_lent);
+        assert!(x == lent_value || x == target_lent);
+        assert!(x <= lent_total);
+    }
+
+    /// Withdraw mode's rules for `rebalance`, the Proptest property's statements:
+    /// it refuses while redeems are stopped and otherwise only while the mode holds; the mode
+    /// it records follows the thresholds, so a market in withdraw mode stays in it while the
+    /// free liquidity is at or below the exit threshold; in withdraw mode it only redeems,
+    /// everything Kamino can pay; it never deposits while deposits are blocked, and a market
+    /// that has lent nothing never makes its first deposit into a reserve below the entry
+    /// threshold; it never redeems more than Kamino can pay or the market has lent; and a call
+    /// that moves nothing changed the mode.
+    fn assert_decide_follows_the_rules(
+        current: bool,
+        buffer: u64,
+        lent_value: u64,
+        state: Kamino,
+        min_rebalance: u64,
+    ) {
+        let Some(lent_total) = buffer.checked_add(lent_value) else {
+            return;
+        };
+        let x = exposure(lent_value, lent_total) as u128;
+        let enter = WITHDRAW_MODE_ENTER as u128 * x;
+        let exit = WITHDRAW_MODE_EXIT as u128 * x;
+        let free = state.free as u128;
+        match decide(current, buffer, lent_value, state, min_rebalance) {
+            Err(StrategyError::KaminoStopped) => assert!(state.stopped),
+            Err(_) => {
+                assert!(!state.stopped);
+                assert!(next_mode(current, state.free, x as u64) == current);
+            }
+            Ok(decision) => {
+                assert!(!state.stopped);
+                assert!(decision.exposure as u128 == x);
+                assert!(decision.withdraw_mode == next_mode(current, state.free, x as u64));
+                if free < enter {
+                    assert!(decision.withdraw_mode);
+                }
+                if current && free <= exit {
+                    assert!(decision.withdraw_mode);
+                }
+                match decision.planned {
+                    Some(Move::Deposit(d)) => {
+                        assert!(!decision.withdraw_mode && !state.deposits_blocked && d > 0);
+                        assert!(d <= buffer);
+                        assert!(lent_value > 0 || free >= enter);
+                    }
+                    Some(Move::Redeem(r)) => {
+                        assert!(r > 0 && r <= state.can_pay && r <= lent_value);
+                        if decision.withdraw_mode {
+                            assert!(r == lent_value.min(state.can_pay));
+                        }
+                    }
+                    None => assert!(decision.withdraw_mode != current),
+                }
+            }
+        }
+    }
+
+    /// The rules for every input but a bounded buffer and lent value, below 2^8, where the
+    /// target's division is cheap; `proofs/withdraw_mode_z3.py` proves the exposure's terms for
+    /// every input, and the rules are the same comparisons whatever the size.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn rebalance_follows_withdraw_modes_rules_bounded() {
+        let state = Kamino {
+            free: kani::any(),
+            can_pay: kani::any(),
+            stopped: kani::any(),
+            deposits_blocked: kani::any(),
+        };
+        assert_decide_follows_the_rules(
+            kani::any(),
+            kani::any_where(|&b| b < (1 << 8)),
+            kani::any_where(|&v| v < (1 << 8)),
+            state,
+            kani::any(),
+        );
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn rebalance_follows_withdraw_modes_rules() {
+        let state = Kamino {
+            free: kani::any(),
+            can_pay: kani::any(),
+            stopped: kani::any(),
+            deposits_blocked: kani::any(),
+        };
+        assert_decide_follows_the_rules(kani::any(), kani::any(), kani::any(), state, kani::any());
+    }
 }
