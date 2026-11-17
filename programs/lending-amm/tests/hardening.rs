@@ -289,23 +289,6 @@ fn sos_h008_a_reserve_of_a_version_this_program_was_not_written_for_is_refused()
     }
 }
 
-/// `remove_lent_side { lp, min_lent }` by `lp`: `remove_liquidity`'s first nineteen accounts.
-fn remove_lent_side_instruction(
-    env: &Env,
-    market: &Market,
-    lp: &pipeline_client::Pubkey,
-    shares: u64,
-    min_lent: u64,
-) -> pipeline_client::Instruction {
-    let mut instruction =
-        env.remove_liquidity_instruction(market, lp, shares, [0, 0], Payout::InKind);
-    instruction.accounts.truncate(19);
-    let mut data = anchor_discriminator("remove_lent_side").to_vec();
-    data.extend(borsh::to_vec(&(shares, min_lent)).unwrap());
-    instruction.data = data;
-    instruction
-}
-
 #[test]
 fn sos_h006_an_lp_leaves_with_the_lent_side_when_the_other_mint_cannot_move() {
     use lending_amm::events::LentSideRemoved;
@@ -364,13 +347,13 @@ fn sos_h006_an_lp_leaves_with_the_lent_side_when_the_other_mint_cannot_move() {
         let lent_account = env.wallet_token_account(&market, &wallet, lent_index);
         let lent_before = env.balance(&lent_account);
         let too_much =
-            remove_lent_side_instruction(&env, &market, &wallet, shares / 2, expected.buffer + 1);
+            env.remove_lent_side_instruction(&market, &wallet, shares / 2, expected.buffer + 1);
         assert_refused(
             env.send_meta(&[too_much], &[&lp]),
             StrategyError::BelowMinLent,
         );
         let remove =
-            remove_lent_side_instruction(&env, &market, &wallet, shares / 2, expected.buffer);
+            env.remove_lent_side_instruction(&market, &wallet, shares / 2, expected.buffer);
         let meta = env.send_meta(&[remove], &[&lp]).unwrap();
 
         assert_eq!(env.balance(&lent_account) - lent_before, expected.buffer);

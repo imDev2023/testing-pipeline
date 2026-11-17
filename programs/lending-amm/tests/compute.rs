@@ -32,11 +32,12 @@ enum Row {
     Rebalance,
     RemoveLiquidityCash,
     RemoveLiquidityInKind,
+    RemoveLentSide,
     LockLp,
 }
 
 impl Row {
-    const ALL: [Row; 11] = [
+    const ALL: [Row; 12] = [
         Row::PipelineQuote,
         Row::PipelineSwapNoRedeem,
         Row::PipelineSwapWithRedeem,
@@ -47,6 +48,7 @@ impl Row {
         Row::Rebalance,
         Row::RemoveLiquidityCash,
         Row::RemoveLiquidityInKind,
+        Row::RemoveLentSide,
         Row::LockLp,
     ];
 
@@ -63,6 +65,7 @@ impl Row {
             Row::Rebalance => "`rebalance`",
             Row::RemoveLiquidityCash => "`remove_liquidity`, cash",
             Row::RemoveLiquidityInKind => "`remove_liquidity`, in kind",
+            Row::RemoveLentSide => "`remove_lent_side`",
             Row::LockLp => "`lock_lp`",
         }
     }
@@ -70,19 +73,20 @@ impl Row {
     /// `(highest measured, ceiling)`.
     fn figures(self) -> (u64, u64) {
         match self {
-            Row::PipelineQuote => (15_669, 20_000),
-            Row::PipelineSwapNoRedeem => (25_281, 35_000),
-            Row::PipelineSwapWithRedeem => (59_801, 75_000),
-            Row::PipelineResolveAccounts => (26_268, 35_000),
-            Row::PipelineInitMarket => (61_325, 80_000),
-            Row::PipelineSeedLiquidity => (110_575, 140_000),
+            Row::PipelineQuote => (15_981, 20_000),
+            Row::PipelineSwapNoRedeem => (25_592, 35_000),
+            Row::PipelineSwapWithRedeem => (60_154, 80_000),
+            Row::PipelineResolveAccounts => (26_316, 35_000),
+            Row::PipelineInitMarket => (61_354, 80_000),
+            Row::PipelineSeedLiquidity => (110_640, 140_000),
             // Kept at 60,000 rather than the rule's 55,000: on random keys the hooked first
             // deposit measured up to 55,635 (see `fixed_key`).
-            Row::AddLiquidity => (40_662, 60_000),
-            Row::Rebalance => (71_758, 90_000),
-            Row::RemoveLiquidityCash => (76_080, 100_000),
-            Row::RemoveLiquidityInKind => (62_710, 80_000),
-            Row::LockLp => (36_981, 50_000),
+            Row::AddLiquidity => (40_822, 60_000),
+            Row::Rebalance => (71_013, 90_000),
+            Row::RemoveLiquidityCash => (76_114, 100_000),
+            Row::RemoveLiquidityInKind => (62_831, 80_000),
+            Row::RemoveLentSide => (57_895, 75_000),
+            Row::LockLp => (36_978, 50_000),
         }
     }
 }
@@ -524,6 +528,32 @@ fn removals_in_cash_and_in_kind_and_lock_lp_stay_under_their_ceilings() {
             .remove_liquidity(&market, &lp, third / 2, [0, 0], Payout::InKind)
             .unwrap();
         let in_kind = [creating, existing].map(|meta| strategy_compute(&meta.logs)[0]);
+        // The lent side alone, into the LP's cToken account, which exists by now, and for a
+        // second LP, of a fixed key too, creating theirs.
+        let lent_side = strategy_compute(
+            &env.remove_lent_side(&market, &lp, third / 4, 0).unwrap().logs,
+        )[0];
+        record(
+            Row::RemoveLentSide,
+            lent_side,
+            &format!("on {name}, into the LP's cToken account"),
+        );
+        let second = env.fund_wallet(
+            &market,
+            solana_keypair::Keypair::new_from_array(fixed_key(&format!("a second LP on {name}"))),
+            [OTHER, units(lent, 50)],
+        );
+        env.add_liquidity(&market, &second, [OTHER / 10, units(lent, 5)], 0)
+            .unwrap();
+        let shares = env.lp_shares_of(&market, &second.pubkey());
+        let lent_side = strategy_compute(
+            &env.remove_lent_side(&market, &second, shares, 0).unwrap().logs,
+        )[0];
+        record(
+            Row::RemoveLentSide,
+            lent_side,
+            &format!("on {name}, creating the LP's cToken account"),
+        );
         // Locking, creating the lock account, then into the account that exists.
         let locks = [0, 1].map(|_| {
             let meta = env.lock_lp(&market, &lp, third / 4).unwrap();
@@ -661,9 +691,19 @@ fn every_instruction_is_measured_in_every_state_of_kamino() {
                 measured.push(("rebalance".into(), Row::Rebalance, cost));
             }
             if env.market_state(&market.market_state).withdraw_mode {
-                // Borrowers repay all they took: rebalance leaves withdraw mode and deposits.
+                // Borrowers repay all they took: rebalance starts the wait to leave withdraw mode,
+                // and once it is over leaves and deposits.
                 let now_free = env.free_liquidity(&market);
                 env.set_free_liquidity(&market, now_free + (free - little));
+                let meta = env.rebalance(&market, None).unwrap();
+                let cost = strategy_compute(&meta.logs)[0];
+                measured.push((
+                    "rebalance starting the wait to leave withdraw mode".into(),
+                    Row::Rebalance,
+                    cost,
+                ));
+                let delay = lending_amm::config::WITHDRAW_MODE_EXIT_DELAY_SLOTS;
+                env.advance_clock(delay, (delay * 2 / 5) as i64);
                 let meta = env.rebalance(&market, None).unwrap();
                 let cost = strategy_compute(&meta.logs)[0];
                 measured.push((
@@ -708,6 +748,9 @@ fn every_instruction_is_measured_in_every_state_of_kamino() {
                 Row::RemoveLiquidityInKind,
                 cost,
             ));
+            let meta = env.remove_lent_side(&market, &lp, shares, 0).unwrap();
+            let cost = strategy_compute(&meta.logs)[0];
+            measured.push(("remove_lent_side".into(), Row::RemoveLentSide, cost));
             for when in ["creating", "into"] {
                 let meta = env.lock_lp(&market, &lp, shares).unwrap();
                 let cost = strategy_compute(&meta.logs)[0];
@@ -739,6 +782,7 @@ fn every_instruction_is_measured_in_every_state_of_kamino() {
                 "pipeline_resolve_accounts within",
                 "pipeline_resolve_accounts beyond",
                 "remove_liquidity, in kind",
+                "remove_lent_side",
                 "lock_lp creating the lock account",
                 "lock_lp into the lock account",
                 "pipeline_init_market",
@@ -762,6 +806,7 @@ fn every_instruction_is_measured_in_every_state_of_kamino() {
                     allowed.extend(trading);
                     allowed.extend(redeeming);
                     allowed.extend(adding);
+                    allowed.push("rebalance starting the wait to leave withdraw mode");
                     allowed.push("rebalance leaving withdraw mode");
                 }
                 KaminoState::CapUsedUp

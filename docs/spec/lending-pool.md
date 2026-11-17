@@ -480,20 +480,25 @@ Two rows depart from that rule.
 `lock_lp` rises from 40,000 to 50,000, because the market's first lock creates the lock account through the associated token program, whose address search costs 4,500 units for every bump it tries after the first: on a market whose lock account needs one bump more than the market measured before, it took 36,981 against the 32,500 recorded then.
 These figures are measured on fixed keys; a caller sizing a compute limit for an instruction that searches for an address adds 1,500 units for every further bump the address needs, and 4,500 where the associated token program creates the account.
 Account resolution still answers while the reserve fails its layout check, since it reads the reserve only to choose the redeem accounts; the quote and the swap are what refuse.
+The hardening ticket measured every row again on both builds after its fixes ([Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86), 2026-11-17): the reserve's age and version checks, and the check that the lent mint's entry still names the reserve the market recorded, add a few hundred units to every call that reads Kamino.
+`pipeline_swap` with a redeem measured 60,154, a quarter above which is 75,193, so its ceiling rises from 75,000 to 80,000 by the rule.
+`remove_lent_side`, new with the hardening, measured at most 57,895, creating the LP's cToken account for an LP on a hooked market (it touches no account of the other mint, but its address search for the LP's cToken account depends on the LP's key), and 27,386 into an account that exists; its ceiling is 75,000 by the rule.
+A `rebalance` that only starts or forgets withdraw mode's wait to leave costs less than one that moves anything.
 
 | Instruction | Measured (compute units) | Ceiling (compute units) | Main cost |
 | --- | --- | --- | --- |
-| `pipeline_quote` | 15,669 | 20,000 | Reserve checks and fixed-point maths; well under the quoter's 200,000 cap |
-| `pipeline_swap`, no redeem | 25,281 | 35,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
-| `pipeline_swap`, with a redeem | 59,801 | 75,000 | Kamino's redeem (mainnet median 29,670) |
-| `pipeline_resolve_accounts` | 26,268 | 35,000 | Runs the quote to decide on the redeem accounts |
-| `pipeline_init_market` | 61,325 | 80,000 | Creating two vaults, the cToken account and the LP mint |
-| `pipeline_seed_liquidity` | 110,575 | 140,000 | Creation plus the first deposit |
-| `add_liquidity` | 40,662 | 60,000 | Two transfers in, an LP mint |
-| `remove_liquidity`, cash | 76,080 | 100,000 | Kamino's redeem, transfers out, an LP burn |
-| `remove_liquidity`, in kind | 62,710 | 80,000 | Transfers out, possibly creating the LP's cToken account |
-| `rebalance` | 71,758 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
-| `lock_lp` | 36,981 | 50,000 | One transfer, and the market's first lock creates the lock account |
+| `pipeline_quote` | 15,981 | 20,000 | Reserve checks and fixed-point maths; well under the quoter's 200,000 cap |
+| `pipeline_swap`, no redeem | 25,592 | 35,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
+| `pipeline_swap`, with a redeem | 60,154 | 80,000 | Kamino's redeem (mainnet median 29,670) |
+| `pipeline_resolve_accounts` | 26,316 | 35,000 | Runs the quote to decide on the redeem accounts |
+| `pipeline_init_market` | 61,354 | 80,000 | Creating two vaults, the cToken account and the LP mint |
+| `pipeline_seed_liquidity` | 110,640 | 140,000 | Creation plus the first deposit |
+| `add_liquidity` | 40,822 | 60,000 | Two transfers in, an LP mint |
+| `remove_liquidity`, cash | 76,114 | 100,000 | Kamino's redeem, transfers out, an LP burn |
+| `remove_liquidity`, in kind | 62,831 | 80,000 | Transfers out, possibly creating the LP's cToken account |
+| `rebalance` | 71,013 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
+| `remove_lent_side` | 57,895 | 75,000 | Transfers out, possibly creating the LP's cToken account |
+| `lock_lp` | 36,978 | 50,000 | One transfer, and the market's first lock creates the lock account |
 
 ### Invariants for test layer 3
 
@@ -505,6 +510,8 @@ Beyond the shared three (value conserved, every holder can exit, each quote equa
 - A swap never deposits into Kamino, never redeems when the buffer covers its output, and never redeems more than its shortfall plus one rounding unit's worth of cTokens.
 - Outside withdraw mode `rebalance` only ever moves the buffer's share towards `BUFFER_TARGET_BPS`; in withdraw mode it only redeems; and it never deposits while cToken deposits are blocked.
 - A market in withdraw mode stays in it across `rebalance` calls for as long as Kamino's freely available liquidity is at or below `WITHDRAW_MODE_EXIT` times `max(V, T)`, however much it has already redeemed.
+- It leaves only after the wait of "Withdraw mode": never at the first `rebalance` that sees the free liquidity above the exit threshold, and it forgets any wait at a reading at or below it.
+- Once a market holds cTokens, quotes and swaps refuse a reserve more than `TRADE_MAX_RESERVE_AGE_SLOTS` stale and adding one not refreshed in the same slot, with `ReserveStale`, and go through once klend's `refresh_reserve` has run (see "The stored rate, everywhere").
 - The share count `N` changes only by `add_liquidity`, `remove_liquidity`, seeding and SPL burns, and the lock account's balance never falls.
 
 How it is built ([Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85), 2026-11-16):
@@ -512,6 +519,7 @@ How it is built ([Lending AMM: the fuzzer against a moving Kamino, and the proof
 - The fuzzer, `tests/common/fuzz.rs`, mixes every instruction, created and seeded markets, donations and clock jumps with Kamino's moves, all on klend's deployed bytes: interest raises the rate, by edits of what borrowers owe and by klend's own `refresh_reserve` after time passes; write-offs with klend's real `socialize_loss` lower it, one in ten of them of the whole supply, which deprecates the reserve for good; borrowers move the free liquidity from 0 to 15 times the market's exposure; and `block_ctoken_usage`, both emergency modes and a failed layout check switch on and off.
 - It also checks that each call does what "When Kamino can't pay" gives for the state Kamino is in, and that no step but a write-off lowers the rate, so the value of an LP share may fall only on a write-off.
 - Every failure names the invariant it breaks, and `tests/broken_builds.rs` shows each one able to fail: the deliberately broken builds in `tests/broken-builds.json`, each one careless edit (a rounding flipped the wrong way, a missing check) to a copy of the program's source built by `scripts/broken-builds.py` in its own target directory, so the program's source never carries them, must each be caught by the invariant the table names, at least one build for every invariant; they are copies of the `devnet` build, the one this project deploys.
+- Since [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86) (2026-11-17) the fuzzer also checks the reserve's freshness and withdraw mode's wait: a swap or a deposit on a reserve too stale must be refused with `ReserveStale`, and is sent again with klend's refresh first wherever klend will refresh it, as a trader or an LP would; a market in withdraw mode must neither leave nor wait to leave while the free liquidity is at or below the exit threshold, and leaves only after the wait.
 - `PROPTEST_CASES` sets how many sequences run (24 in a plain `cargo test`, which CI runs on every push with the broken builds), and `FUZZ_SEED` the seed, which every run prints so it can be repeated.
 - On 2026-11-16 a long run of 10,000 sequences of up to 32 steps found no violation on either build: the `devnet` build with `FUZZ_SEED=20261116` in 39 minutes, the `mainnet` build with `FUZZ_SEED=20261117` in 33, on the owner's Mac; the devnet run made 4,757 deposits and 2,709 redeems by `rebalance`, 1,478 withdraw mode changes, 7,522 swaps that redeemed, 3,248 removals in cash and 3,900 in kind, 12,972 rises of the rate, 3,927 write-offs of part of the supply and 416 of all of it, and ran 12,656 steps with the layout check failing.
 
@@ -519,13 +527,14 @@ How it is built ([Lending AMM: the fuzzer against a moving Kamino, and the proof
 
 Every pure function of the program's maths (`pricing.rs`, `shares.rs`, `buffer.rs`, `withdraw_mode.rs` and the maths of `kamino.rs`) has a Kani harness, and every Proptest property a Kani or Z3 counterpart ([Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85), 2026-11-16).
 
-- The default tier, 47 harnesses, which CI runs, proves over every input every property that needs no reasoning about a quotient (nothing panics or overflows, the shortfall, what Kamino can pay, the withdrawal cap, the total supply, the share count, and that cTokens of no value are worth nothing), and the quotient properties for bounded inputs.
+- The default tier, 48 harnesses, which CI runs, proves over every input every property that needs no reasoning about a quotient (nothing panics or overflows, the shortfall, what Kamino can pay, the withdrawal cap, the total supply, the share count, and that cTokens of no value are worth nothing), and the quotient properties for bounded inputs.
 - Behind `--cfg kani_full` the same properties are stated for every input; run once on 2026-11-16 for 3 hours on a loaded machine, 44 harnesses verified, none failed, and 17 did not finish, the divisions and the 64-step loops.
-- Each of those 17 is proven for every input by Z3, in six files and 42 claims under `proofs/` sharing `proofs/z3_common.py`, which CI runs: among them that the band's products and its edges in units of the lent mint give the same band, isqrt's loop invariant, the running totals cTokens paid in kind take with them, withdraw mode's exposure and thresholds, the rate headroom, and that a higher rate never values the cTokens lower, which is why only a fall in Kamino's rate can lower an LP share's value.
+- Each of those 17 is proven for every input by Z3, in six files and 43 claims under `proofs/` sharing `proofs/z3_common.py`, which CI runs: among them that the band's products and its edges in units of the lent mint give the same band, isqrt's loop invariant, the running totals cTokens paid in kind take with them, withdraw mode's exposure and thresholds, the rate headroom, and that a higher rate never values the cTokens lower, which is why only a fall in Kamino's rate can lower an LP share's value.
 - Every Z3 claim added then was shown able to fail by a deliberate mutation.
 - The properties Book of Knowledge chose for the program were added on 2026-11-17 by [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86), each as a Proptest property, a default-tier Kani harness, a full-domain harness behind `kani_full` and a Z3 claim for every input: the valuation is additive to within one unit (KA-3), a shortfall within the cTokens' value is always burned, by at most the cTokens held (KA-5), a round trip at fixed reserves returns at most what went in (PR-3), and a later depositor overpays by less than one unit of each side (SH-3).
 - The fifth, that the share count still fits a u64 after any later deposit (SH-9), is a full-domain default-tier harness with a Proptest property and a Z3 claim.
 - Each of their Z3 claims was shown able to fail by a deliberate mutation, and their four `kani_full` harnesses have not been run yet.
+- The hardening's fixes added two more: withdraw mode's exit wait (`decide_with_exit_delay`, finding H004) has a Proptest property and a bounded default-tier harness, which found that a first sighting at slot 0 would have been recorded as none, so a sighting is now recorded as slot 1 at the earliest; and the running totals after an in-kind removal, now computed without the product so an in-kind exit never fails on them (finding H005), have a Z3 claim that the two-step formula equals `floor(net x paid / held)` with every intermediate inside a u128, shown able to fail by two mutations.
 - `quote` itself has a harness only in the full tier, because CBMC also encodes the Anchor errors it can build; the default tier proves its parts (`exact_in`, `lent_total`, `shortfall`), and the fuzzer checks that each quote equals its swap.
 - The byte decoding of Kamino's accounts and the account checks are left to the LiteSVM, layout and hostile tests.
 
