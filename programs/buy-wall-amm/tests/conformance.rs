@@ -100,7 +100,7 @@ fn seeded_markets_pass_every_check() {
 }
 
 #[test]
-fn a_seeded_market_of_a_token_with_a_transfer_hook_passes_every_check() {
+fn a_seeded_market_of_a_token_whose_transfer_hook_was_cleared_passes_every_check() {
     let mut env = Env::new();
     let token = env.seedable_hooked_token();
     let market = env
@@ -111,7 +111,7 @@ fn a_seeded_market_of_a_token_with_a_transfer_hook_passes_every_check() {
             10 * SOL,
         )
         .unwrap();
-    check(&env, &market, "a token with Pipeline's test-hook");
+    check(&env, &market, "a token whose transfer hook was cleared");
 }
 
 #[test]
@@ -265,7 +265,7 @@ fn markets_seeded_by_another_program_pass_every_check() {
             false,
         ),
         (
-            "a token with Pipeline's test-hook, seeded by the stand-in launchpad",
+            "a token whose transfer hook was cleared, seeded by the stand-in launchpad",
             true,
         ),
     ] {

@@ -123,10 +123,11 @@ pub struct SeedSource<'a, 'info> {
     pub hook_accounts: &'a [AccountInfo<'info>],
 }
 
-/// Refuses the seed unless the token's mint and freeze authorities are removed, then
-/// transfers `token_amount` and `sol_amount` into the vaults and returns what actually
-/// arrived in each, `x` token units and `y` lamports, so anything sent to a vault earlier
-/// stays a donation. Every path that seeds a market brings its seed through this.
+/// Refuses the seed unless the token's mint and freeze authorities are removed and its
+/// transfer hook, if it has one, is cleared, then transfers `token_amount` and
+/// `sol_amount` into the vaults and returns what actually arrived in each, `x` token units
+/// and `y` lamports, so anything sent to a vault earlier stays a donation. Every path that
+/// seeds a market brings its seed through this.
 pub fn bring_seed(source: SeedSource, token_amount: u64, sol_amount: u64) -> Result<(u64, u64)> {
     check_authorities_removed(source.token_mint)?;
     let x = transfer_measured(
@@ -158,8 +159,10 @@ pub fn bring_seed(source: SeedSource, token_amount: u64, sol_amount: u64) -> Res
 
 /// The token's mint and freeze authorities must both be removed before a seed: a live mint
 /// authority could mint and sell into the curve and the wall, and a live freeze authority
-/// could freeze the vault (the spec's "Mint rules").
-fn check_authorities_removed(token_mint: &Mint) -> Result<()> {
+/// could freeze the vault (the spec's "Mint rules"). So must a Token-2022 token's transfer
+/// hook, both its program and its authority (`POOL4-48`): whoever could still set the hook
+/// could make it refuse every sell but their own.
+fn check_authorities_removed(token_mint: &InterfaceAccount<'_, Mint>) -> Result<()> {
     require!(
         token_mint.mint_authority.is_none(),
         StrategyError::MintAuthorityLive
@@ -168,8 +171,31 @@ fn check_authorities_removed(token_mint: &Mint) -> Result<()> {
         token_mint.freeze_authority.is_none(),
         StrategyError::FreezeAuthorityLive
     );
+    let info = token_mint.to_account_info();
+    let data = info.try_borrow_data()?;
+    require!(
+        transfer_hook_cleared(&data),
+        StrategyError::TransferHookLive
+    );
     Ok(())
 }
+
+/// Whether a mint's `data` carries no live transfer hook: no TransferHook extension at all
+/// (an SPL Token mint, or a Token-2022 mint without one), or one whose value, the hook
+/// authority then the hook program (32 bytes each, zero for none), is all zeros, the state
+/// a contained token reaches after its unlock. Once both are unset Token-2022 can never set
+/// them again. The extension is read through the shared `mint-rules` crate, which already
+/// walked this mint's entries at creation.
+fn transfer_hook_cleared(data: &[u8]) -> bool {
+    match mint_rules::find_extension(data, mint_rules::extension::TRANSFER_HOOK) {
+        None => true,
+        Some(hook) => hook.len() == TRANSFER_HOOK_LEN && hook.iter().all(|&b| b == 0),
+    }
+}
+
+/// The length of Token-2022's TransferHook extension value: an optional authority and an
+/// optional program, 32 bytes each.
+const TRANSFER_HOOK_LEN: usize = 64;
 
 /// Opens a created market from what its seed brought, `x` token units and `y` lamports
 /// (`opening::open`, refusing a seed the spec refuses), and emits `MarketSeeded`. Both

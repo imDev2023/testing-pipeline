@@ -219,13 +219,53 @@ fn allowlisted_mint(session: &mut Session, admin: &Keypair) -> Pubkey {
     mint
 }
 
-/// A market no build can fully trade, made only through what the spec allows: its token's
-/// hook approves only the creator's own account, so the gate's trader can never buy, and its
-/// fee recipient, owed fees from the creator's buy, handed its wrapped SOL account to
-/// another owner, so `sweep_fees { slot: 0 }` refuses with `RecipientAccountNotTheirs`.
+/// The transfer hook extension of a Token-2022 `mint`, read from the lab's VM.
+fn transfer_hook(
+    session: &Session,
+    mint: &Pubkey,
+) -> spl_token_2022_interface::extension::transfer_hook::TransferHook {
+    use spl_token_2022_interface::extension::{
+        transfer_hook::TransferHook, BaseStateWithExtensions, StateWithExtensions,
+    };
+    let account = session.svm.get_account(mint).unwrap();
+    let state = StateWithExtensions::<spl_token_2022_interface::state::Mint>::unpack(&account.data)
+        .unwrap();
+    *state.get_extension::<TransferHook>().unwrap()
+}
+
+/// Writes `hook` as the transfer hook extension of a Token-2022 `mint` in the lab's VM.
+fn set_transfer_hook(
+    session: &mut Session,
+    mint: &Pubkey,
+    hook: spl_token_2022_interface::extension::transfer_hook::TransferHook,
+) {
+    use spl_token_2022_interface::extension::{
+        transfer_hook::TransferHook, BaseStateWithExtensionsMut, StateWithExtensionsMut,
+    };
+    let mut account = session.svm.get_account(mint).unwrap();
+    {
+        let mut state = StateWithExtensionsMut::<spl_token_2022_interface::state::Mint>::unpack(
+            &mut account.data,
+        )
+        .unwrap();
+        *state.get_extension_mut::<TransferHook>().unwrap() = hook;
+    }
+    session.svm.set_account(*mint, account).unwrap();
+}
+
+/// A market no build can fully trade: its token's hook approves only the creator's own
+/// account, so the gate's trader can never buy, and its fee recipient, owed fees from the
+/// creator's buy, handed its wrapped SOL account to another owner, so
+/// `sweep_fees { slot: 0 }` refuses with `RecipientAccountNotTheirs`. The seed now refuses
+/// a live hook (`POOL4-48`), so the market is seeded with the hook set aside and the hook
+/// written back into the lab's VM afterwards, as a market a build before that rule seeded
+/// would be: the relative rule must still hold for a failure that starts in another
+/// program.
 fn blocked_market(lab: &mut Lab) -> (MarketView, Pubkey) {
     let (session, admin) = (&mut lab.session, &lab.admin);
     let token = allowlisted_mint(session, admin);
+    let live_hook = transfer_hook(session, &token);
+    session.clear_transfer_hook(&token).unwrap();
     let fee_recipient = Keypair::new();
     session.svm.airdrop(&fee_recipient.pubkey(), SOL).unwrap();
     let params = InitParams {
@@ -244,6 +284,8 @@ fn blocked_market(lab: &mut Lab) -> (MarketView, Pubkey) {
         Some((1_000_000_000_000, 10 * SOL)),
     )
     .unwrap();
+    set_transfer_hook(session, &token, live_hook);
+    assert_eq!(session.hook_program(&token), Some(TEST_HOOK_PROGRAM));
 
     // The creator buys, which its own hook allows, so the fee slots are owed.
     synthetic::later(session, 3_600);
@@ -419,4 +461,37 @@ fn sos_h033_a_keeper_job_the_deployed_build_ran_is_run_whatever_the_candidates_r
         (failures[0].market_state.as_str(), failures[0].step.as_str()),
         (b.as_str(), "settle")
     );
+}
+
+#[test]
+fn sos_h001_a_market_waiting_for_its_seed_whose_token_has_a_live_hook_is_seeded_with_the_hook_cleared(
+) {
+    // The seed refuses a live transfer hook (`POOL4-48`), so the gate seeds a market waiting
+    // for its seed as its seeder would have to, with the hook cleared as well as the mint's
+    // authorities removed, in the replay only; then it trades it like any market, so the
+    // market is still checked past its seed. Here the hook would approve only its creator's
+    // own account, which would refuse the gate's seeder and trader.
+    let build = programs::current_build();
+    let mut lab = Lab::new(&build, &programs::pinned_router()).unwrap();
+    let (session, admin) = (&mut lab.session, &lab.admin);
+    let token = allowlisted_mint(session, admin);
+    let params = synthetic::launch_values(admin.pubkey());
+    let token_2022 = client::TOKEN_2022_PROGRAM_ID;
+    let waiting = synthetic::create(session, admin, token, token_2022, &params, None)
+        .unwrap()
+        .market_state;
+    assert_eq!(session.hook_program(&token), Some(TEST_HOOK_PROGRAM));
+    let snapshot = lab.snapshot(&[waiting], "H001").unwrap();
+
+    let report = run(&snapshot, &build);
+    println!("{report}");
+    assert!(report.passed(), "{report}");
+    assert!(report.shared_failures().is_empty(), "{report}");
+    let steps = steps_of(&report, &waiting);
+    for name in ["seed", "buy", "sell"] {
+        assert!(
+            steps.iter().any(|s| s.name.starts_with(name) && s.passed),
+            "{name}: {report}"
+        );
+    }
 }

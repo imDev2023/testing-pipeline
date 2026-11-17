@@ -938,9 +938,11 @@ impl Env {
         }
     }
 
-    /// A seedable Token-2022 token whose transfer hook is Pipeline's `test-hook`,
-    /// approving every transfer, with its mint and freeze authorities removed.
-    pub fn seedable_hooked_token(&mut self) -> Pubkey {
+    /// A Token-2022 token whose transfer hook is Pipeline's `test-hook`, approving every
+    /// transfer, with its mint and freeze authorities removed and its hook still live (the
+    /// admin is its hook authority), so the seed refuses it until the hook is cleared
+    /// (`POOL4-48`).
+    pub fn hooked_token(&mut self) -> Pubkey {
         self.add_test_hook();
         let mint = self.create_mint_with(
             &TOKEN_2022,
@@ -969,8 +971,49 @@ impl Env {
         mint
     }
 
+    /// Clears the transfer hook of `mint` (whose hook authority is the admin), as the
+    /// containment hook's unlock does: its program with Token-2022's `UpdateTransferHook`
+    /// to none when `program`, then its authority with `SetAuthority(TransferHookProgramId)`
+    /// to none when `authority`. Once both are gone they can never be set again.
+    pub fn clear_transfer_hook(&mut self, mint: &Pubkey, program: bool, authority: bool) {
+        use spl_token_2022_interface::extension::transfer_hook;
+        use spl_token_2022_interface::instruction::{set_authority, AuthorityType};
+        let admin = self.admin.pubkey();
+        let mut instructions = vec![];
+        if program {
+            instructions.push(
+                transfer_hook::instruction::update(&TOKEN_2022, mint, &admin, &[], None).unwrap(),
+            );
+        }
+        if authority {
+            instructions.push(
+                set_authority(
+                    &TOKEN_2022,
+                    mint,
+                    None,
+                    AuthorityType::TransferHookProgramId,
+                    &admin,
+                    &[],
+                )
+                .unwrap(),
+            );
+        }
+        if !instructions.is_empty() {
+            self.send(&instructions, &[]).unwrap();
+        }
+    }
+
+    /// A seedable Token-2022 token that carries the transfer hook extension with its hook
+    /// cleared, both its program and its authority unset (`POOL4-48`), as a contained token's
+    /// is after its unlock: Token-2022 calls no hook for it.
+    pub fn seedable_hooked_token(&mut self) -> Pubkey {
+        let mint = self.hooked_token();
+        self.clear_transfer_hook(&mint, true, true);
+        mint
+    }
+
     /// Creates and seeds a market of `token`, as `create_and_seed` does, with the token's
-    /// transfer-hook accounts after the seed's own.
+    /// transfer-hook accounts after the seed's own (none once its hook is cleared).
     pub fn create_and_seed_hooked(
         &mut self,
         token_mint: Pubkey,

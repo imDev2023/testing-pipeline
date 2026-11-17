@@ -116,9 +116,13 @@ So that slot 1's payout is tested before the constant is set, the program has a 
 - Its mint authority and its freeze authority must both be removed by the time the market is seeded.
   A live mint authority could mint and sell into the curve and the buy wall, and would make the burns meaningless; a live freeze authority could freeze the market's vault.
   The tax AMM allows both because USDC has them; a token on the buy wall AMM has no such need.
+- A Token-2022 token with a transfer hook must have its hook cleared by the time the market is seeded, like the mint and freeze authorities: both its hook program and its hook authority unset, the state a contained token reaches after its unlock ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)).
+  Whoever could still set the hook, or upgrade or configure the hook program it names, could make it refuse every sell but their own once holders have bought, and sell into the curve and the buy wall themselves, a freeze that spares one wallet.
+  Once both are unset Token-2022 can never set them again, so no hook ever runs on a seeded market's token; a token without the extension is unaffected.
+  Creation still accepts a live hook, and the seed refuses it with `TransferHookLive`, since the hook can be cleared between the two and could be changed until the seed.
 - A Token-2022 token may carry only the suite's allowlist of mint extensions, the tax AMM's ([`tax-amm.md`](tax-amm.md), "Mint rules"), which lives in the shared `programs/mint-rules` crate; the buy wall AMM calls that crate and keeps no copy of the list.
   Every other extension is refused at creation, including any the program does not recognise.
-- In Pipeline's trust flags a seeded market's token can therefore only ever show `token-2022`, `transfer-hook` and `transfer-hook-authority`.
+- In Pipeline's trust flags a seeded market's token can therefore only ever show `token-2022`: `transfer-hook` and `transfer-hook-authority` mark a hook program or a hook authority that is still set, which the seed refuses.
 
 ### Creating a market
 
@@ -315,7 +319,7 @@ It emits `WallPlaced` (the caller, the tip account, `converted`, what closing th
 - Sends all of `rewards_owed` to the rewards recipient's associated token account for the token, created if missing at the caller's expense, forwarding transfer-hook accounts.
 - Refused when nothing is owed.
 - No tip.
-- It is separate from `settle` so that burns never wait on a transfer a hook or a broken recipient account might refuse.
+- It is separate from `settle` so that burns never wait on a transfer a broken recipient account might refuse.
 - It emits `RewardsPaid` (the recipient, its token account, the amount and the lifetime total paid), and the lifetime total of rewards paid grows by what it pays.
 
 ### `sweep_fees { slot }`
@@ -373,15 +377,16 @@ It also keeps the creation slot and time and lifetime totals for display: tokens
 
 - A buy wall market cannot be a contained token's home market in v1: the containment hook's first version binds only tax AMM markets and reads only the tax AMM's counter ([`containment-hook.md`](containment-hook.md), [ADR 0006](../adr/0006-unlock-goal-counted-by-the-home-market.md)).
   So a contained token reaches the buy wall AMM only after its unlock.
-- A token may carry any other transfer hook; the market forwards hook accounts on every transfer of the token.
-- The design keeps everything a later hook version would need to accept these markets, so that change would touch the hook alone:
+- A token may no longer carry a live third-party transfer hook: the seed refuses one whose hook program or hook authority is still set, so a hooked token reaches a market only with its hook cleared, as a contained token's is after its unlock ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)).
+  The market still forwards whatever hook accounts it is given on every transfer of the token, which a cleared hook does not need, so a later rule that admitted some hooks would need no change to the actions.
+- The design keeps everything a later hook version would need to accept these markets, so that change would touch only the hook and the seed's refusal of a live hook, which would have to admit a token bound to the market being seeded:
   - bypass is refused, and the counters count router swaps only;
   - `fees_collected` is in SOL and can't be gamed by changing the rate, since a market's fee never changes and is never below 0.25%;
   - the vault and the router's `["fees", market]` account are computable before creation;
   - the token moves only between traders and the market's vault (swaps and the seed), out of the vault to the rewards recipient (`pay_rewards`), or is burned;
   - fees and keeper tips are wrapped SOL, which no hook sees;
   - liquidity can never leave: trims only move it, inside the same vaults, to the burn and the buy wall.
-- Pipeline's hosted API refuses to build swaps whose input mint has a transfer hook, so sells of a hooked token are built with the SDK, as Aviary does.
+- Pipeline's hosted API refuses to build swaps whose input mint has a transfer hook, because the client must resolve the hook's accounts; a seeded market's token has no hook program and needs none, and should the API refuse it for carrying the cleared extension, its sells are built with the SDK, as Aviary does.
 
 ## Market state
 
@@ -502,7 +507,7 @@ How it does each of these ([`POOL4-41`](../decisions.md#pool4-41-what-the-releas
 - On every market, with the candidate and the router copied from the cluster, it registers a market the router never recorded, with the router's `register_existing_market` and `init_fee_account` for both mints, and creates any missing router fee account, as anyone may, so such a market is checked like the rest.
 - It then resolves the accounts of a buy and a sell, quotes exact-in both ways at a tenth, a hundredth and a thousandth of the input vault and compares each quote with the deployed build's on the same state, and checks that `pipeline_market_info` gives the mints and vaults the router records.
 - It runs each keeper job that this tree's rules say is due on the state as downloaded and each job the deployed build ran on the snapshot, so a candidate that narrows a rule cannot drop that job from its own test, then buys with a hundredth of the SOL vault and sells what that bought, each swap with the candidate's quote as its minimum and delivering exactly it.
-- A market waiting for its seed is seeded first, as its seeder would seed it (the replay checks no signatures, and removes the mint's authorities as a seed requires), then traded like the rest, so a build that could not seed it is refused.
+- A market waiting for its seed is seeded first, as its seeder would seed it (the replay checks no signatures, and removes the mint's authorities and clears its transfer hook as a seed requires), then traded like the rest, so a build that could not seed it is refused.
 - A failed step counts against the candidate unless the deployed build failed the same step, matched by kind and not by name, on the same snapshot, the failure starting in the same program: a market whose token's hook refuses the gate's trader, or whose fee recipient handed its wrapped SOL account to another owner, fails those steps under every build and cannot veto a release, while a candidate that newly fails a step, or fails it in its own code where the deployed build failed in the hook, is refused.
 - The layout checks (reading the market state, finding the market, account resolution, the quotes and `pipeline_market_info`) never count as failing under the deployed build too, and run on every market whatever else fails there, so a build that would strand a market is refused even on a market whose trades are blocked.
 - Both replays sign with the same keys, the payer derived from the program and each market's trader and keeper from the market, so a step whose compute depends on a PDA's bump cannot pass in one replay and fail in the other.
@@ -557,7 +562,7 @@ buy-wall-amm/scripts/deploy.sh --url devnet --so target/deploy/buy_wall_amm.so
 | `set_rewards_recipient` | `other` | The rewards recipient |
 
 - Every action that moves the token forwards transfer-hook accounts after its own, as the template's swap does.
-  Metadata actions cannot describe those extra accounts, so generic forms work for tokens without a hook and Aviary builds the hooked ones itself.
+  Since the seed refuses a live hook ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)), a seeded market's token never needs any, so the generic forms work for every market; the forwarding matters only to a seed attempted while a hook is live, which is refused before any transfer.
 - Each instruction emits an event (market created, seeded, wall placed, settled, rewards paid, fees swept, recipient changed), and a swap emits one when it trims or lowers the cap (`Trimmed` or `CapLowered`, [`POOL4-30`](../decisions.md#pool4-30-what-a-swap-that-moves-the-cap-reports)), so Aviary's indexer can show a market's history; Aviary reads current values from the market state, not from events.
 - `pipeline_seed_liquidity` is described in a top-level `seed_liquidity` form shaped as `init` is, which Pipeline's validator allows as an unknown key: the seeded market state as a `pda:` source keyed by `input:seeder`, `input:token_mint` and wrapped SOL, `data` as init's arguments under the same IDL type with the seeder marked ignored, and the vault authority and both vaults after Pipeline's fixed seed accounts, so the SDK's `resolveInit` resolves it ([`POOL4-28`](../decisions.md#pool4-28-how-metadata-describes-seeding-from-another-program)).
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, a description that credits IMD's Pool4, category `amm`, tags including `pool4`, links including `source` and the IDL, `init` as above with `market_state: new_keypair`, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256; where they are published is in `README.md`.
@@ -594,7 +599,8 @@ Aviary's buy wall AMM panel shows, per market:
 - each keeper job that is due, as a button, and the recipients' handover forms;
 - the create form, pre-filled with IMD's launch values and showing the whole fee split, the designer and suite shares included.
 
-The explainer's fact table carries the same facts, and its risks for every buy wall market are: the curve thins as the cap falls, so the same trade moves the price more over time; after a fall in price the buy wall can sit well below the price, because its floor rises only about 4% a day; and a token with a transfer hook can be stopped from trading by that hook.
+The explainer's fact table carries the same facts, and its risks for every buy wall market are: the curve thins as the cap falls, so the same trade moves the price more over time; and after a fall in price the buy wall can sit well below the price, because its floor rises only about 4% a day.
+A hook that could stop trading is not among them, since the seed refuses a token whose transfer hook is still live ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)).
 
 ## For the shared engineering bar
 
@@ -604,8 +610,7 @@ What `README.md` asks each product's file to add; the mainnet upgrade policy is 
 
 Asserted per instruction in test layer 5; the build ticket measures each one and may lower it, and raising one needs a written reason here.
 They start from another Pool4 port's swaps on devnet, measured at 13,000 to 29,000 units, with room for 256-bit maths.
-A transfer hook's own compute is outside them.
-So is Token-2022's search for a hooked mint's validation account on each transfer the strategy makes, which costs 1,500 units for every bump it tries and depends only on the mint's address; the tests measure with hooked mints whose validation account has bump 255, so their numbers repeat.
+No transfer hook runs on a seeded market's token ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)), so they cover every transfer the strategy makes, including those of a token whose hook was cleared, which the tests measure beside SPL Token and Token-2022.
 
 | Instruction | Ceiling (compute units) | Main cost |
 | --- | --- | --- |
@@ -701,7 +706,7 @@ Tickets 1 to 8 are verified end to end through the real router copied from devne
   - each keeper job, its refusals and its rounding, with a frozen or missing recipient account never blocking trading or the other payouts;
   - both recipient handovers and every refusal by anyone else;
   - refusal of exact-out, of bypass, of every refused mint extension and of live mint or freeze authorities;
-  - a token with a transfer hook (Pipeline's `test-hook`) through the seed, swaps and `pay_rewards`;
+  - a token with a live transfer hook (Pipeline's `test-hook`, its program or its authority still set) refused at the seed by both seeding paths, and one whose hook was cleared through the seed, swaps and `pay_rewards`;
   - donations never credited, and the counters;
   - seeding by another program at the seeder-scoped address.
 - The worked example's numbers are reproduced exactly.

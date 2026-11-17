@@ -508,6 +508,37 @@ fn every_seed_rule_refuses_a_graduation_as_it_refuses_a_seed() {
     }
 }
 
+/// Finding H001 (`POOL4-48`): `pipeline_seed_liquidity` brings its seed through the same
+/// check as the `seed` action, so a graduation is refused while the token's transfer hook
+/// program or hook authority is still set, and a token whose hook was cleared graduates.
+#[test]
+fn sos_h001_a_graduation_is_refused_while_the_tokens_transfer_hook_is_live() {
+    let params = launch_params(Pubkey::new_unique());
+    for (what, clear_program, clear_authority, refusal) in [
+        ("a live transfer hook", false, false, Some(TransferHookLive)),
+        (
+            "a transfer hook with its authority removed and its program still set",
+            false,
+            true,
+            Some(TransferHookLive),
+        ),
+        (
+            "a transfer hook with its program removed and its authority still set",
+            true,
+            false,
+            Some(TransferHookLive),
+        ),
+        ("a cleared transfer hook", true, true, None),
+    ] {
+        let token_of: TokenOf = Box::new(move |env: &mut Env| {
+            let token = env.hooked_token();
+            env.clear_transfer_hook(&token, clear_program, clear_authority);
+            (token, TOKEN_2022)
+        });
+        assert_both_ways(what, &*token_of, &params, (TOKENS, LAMPORTS), refusal);
+    }
+}
+
 #[test]
 fn the_seeder_in_the_data_is_ignored_for_the_calling_programs_pda() {
     let mut env = Env::new();
@@ -687,8 +718,10 @@ fn a_graduation_emits_the_creation_and_seed_events() {
     assert_eq!(seeded[0].seed_time, 1_800_000_000);
 }
 
+/// A token whose transfer hook was cleared (`POOL4-48`) graduates and trades; one whose
+/// hook is live is refused (`sos_h001_a_graduation_is_refused_while_the_tokens_transfer_hook_is_live`).
 #[test]
-fn a_token_with_a_transfer_hook_graduates_with_its_hook_accounts() {
+fn a_token_whose_transfer_hook_was_cleared_graduates_and_trades() {
     let mut env = Env::new();
     let token = env.seedable_hooked_token();
     let launch = env.launch(token, TOKEN_2022, TOKENS, LAMPORTS);
@@ -721,7 +754,11 @@ fn the_graduation_transaction_fits_the_size_limit() {
     for (what, token, program) in [
         ("SPL Token", plain, TOKEN),
         ("Token-2022", token_2022, TOKEN_2022),
-        ("Token-2022 with a transfer hook", hooked, TOKEN_2022),
+        (
+            "Token-2022 with a cleared transfer hook",
+            hooked,
+            TOKEN_2022,
+        ),
     ] {
         let launch = env.launch(token, program, TOKENS, LAMPORTS);
         let creator = launch.creator.pubkey();
