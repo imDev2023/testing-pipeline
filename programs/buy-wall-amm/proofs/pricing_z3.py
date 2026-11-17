@@ -1,7 +1,9 @@
 """Z3 proofs of the buy wall AMM's pricing for every input.
 
-Kani proves the pricing in `src/pricing.rs` (its `proofs` module) for small inputs only: its
-SAT back end cannot relate a division's output to its inputs over the full range. Here Z3
+Kani proves the pricing in `src/pricing.rs` (its `proofs` module) for small inputs only, and
+its step harnesses are in the full tier (`kani_full`), which CI does not run: its SAT back end
+cannot relate a division's output to its inputs over the full range, and the steps did not
+finish in the default tier. Here Z3
 proves the pricing's properties for every input, from the defining inequalities of each
 floor and ceiling the code computes (`q = floor(n / d)` exactly when `q × d <= n < (q + 1)
 × d`, and `c = ceil(n / d)` exactly when `(c - 1) × d < n <= c × d`), over the integers, or
@@ -26,10 +28,11 @@ And two of the Book of Knowledge invariants (`.bok/confirmed-invariants/CONFIRME
 
 The link between this model and the compiled Rust is checked by tests: `U256::div_rem` is
 proven exact (Z3 for every 256-bit pair, `math_z3.py`; Kani for small inputs; Proptest on
-10,000 random 256-bit pairs), Kani proves
-the steps meet the same statements for small inputs, Proptest checks them on 10,000 random
-markets each, and a property test checks `sell_step` against the spec's own order of
-operations (`src/math.rs`, `src/pricing.rs`).
+10,000 random 256-bit pairs), Proptest checks the steps on 10,000 random markets each
+(including the widest reachable walls, with every refusal's kind checked), a property test
+checks `sell_step` against the spec's own order of operations, and the full-tier Kani harnesses
+prove the steps for small inputs when run by hand (`RUSTFLAGS="--cfg kani_full"`) (`src/math.rs`,
+`src/pricing.rs`); in CI the link is Proptest's, which is probabilistic, not a machine proof.
 
 Run: `pip install z3-solver==5.4.1.0` (in a virtualenv), then
 `python programs/buy-wall-amm/proofs/pricing_z3.py`. Exits non-zero unless every claim is
