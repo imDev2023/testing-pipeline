@@ -81,7 +81,7 @@ impl Row {
             Row::PipelineSeedLiquidity => (110_640, 140_000),
             // Kept at 60,000 rather than the rule's 55,000: on random keys the hooked first
             // deposit measured up to 55,635 (see `fixed_key`).
-            Row::AddLiquidity => (40_880, 60_000),
+            Row::AddLiquidity => (40_886, 60_000),
             Row::Rebalance => (70_838, 90_000),
             Row::RemoveLiquidityCash => (76_114, 100_000),
             Row::RemoveLiquidityInKind => (62_831, 80_000),

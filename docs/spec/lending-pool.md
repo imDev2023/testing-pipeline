@@ -490,7 +490,7 @@ The hardening ticket measured every row again on both builds after its fixes ([L
 `pipeline_swap` with a redeem measured 60,156, a quarter above which is 75,195, so its ceiling rises from 75,000 to 80,000 by the rule.
 `remove_lent_side`, new with the hardening, measured at most 57,912, creating the LP's cToken account for an LP on a hooked market (it touches no account of the other mint, but its address search for the LP's cToken account depends on the LP's key), and 27,386 into an account that exists; its ceiling is 75,000 by the rule.
 A `rebalance` that only starts or forgets withdraw mode's wait to leave costs less than one that moves anything.
-CI's Linux build, on platform tools v1.58, measured the hooked first deposit's `add_liquidity` at 40,880, 58 units above the owner's Mac on v1.57, so the Measured column takes the higher of the two.
+CI's Linux build, on platform tools v1.58, measured the hooked first deposit's `add_liquidity` at 40,886, 64 units above the owner's Mac on v1.57, so the Measured column takes the higher of the two.
 
 | Instruction | Measured (compute units) | Ceiling (compute units) | Main cost |
 | --- | --- | --- | --- |
@@ -500,7 +500,7 @@ CI's Linux build, on platform tools v1.58, measured the hooked first deposit's `
 | `pipeline_resolve_accounts` | 26,316 | 35,000 | Runs the quote to decide on the redeem accounts |
 | `pipeline_init_market` | 61,354 | 80,000 | Creating two vaults, the cToken account and the LP mint |
 | `pipeline_seed_liquidity` | 110,640 | 140,000 | Creation plus the first deposit |
-| `add_liquidity` | 40,880 | 60,000 | Two transfers in, an LP mint |
+| `add_liquidity` | 40,886 | 60,000 | Two transfers in, an LP mint |
 | `remove_liquidity`, cash | 76,114 | 100,000 | Kamino's redeem, transfers out, an LP burn |
 | `remove_liquidity`, in kind | 62,831 | 80,000 | Transfers out, possibly creating the LP's cToken account |
 | `rebalance` | 70,838 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
