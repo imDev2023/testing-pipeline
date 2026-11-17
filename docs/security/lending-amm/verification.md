@@ -89,7 +89,8 @@ R2-04 was proposed as INFO and is raised to LOW, since it bypasses the exit wait
 ### Partially fixed
 
 - H006: the trap by the other mint is closed (no CPI to its token program, no remaining accounts read, the mint account only deserialized); R2-01 and R2-03 remain.
-- H024: program guidance complete; the demo script contradicts it (R2-07, INFO). The MEDIUM itself is closed in guidance.
+- H024: program guidance complete; the demo script contradicts it (R2-07, INFO).
+  The MEDIUM itself is closed in guidance.
 - H087: R2-05.
 
 ### Not fixed

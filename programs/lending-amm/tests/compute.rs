@@ -73,16 +73,16 @@ impl Row {
     /// `(highest measured, ceiling)`.
     fn figures(self) -> (u64, u64) {
         match self {
-            Row::PipelineQuote => (15_981, 20_000),
+            Row::PipelineQuote => (15_983, 20_000),
             Row::PipelineSwapNoRedeem => (25_592, 35_000),
-            Row::PipelineSwapWithRedeem => (60_154, 80_000),
+            Row::PipelineSwapWithRedeem => (60_156, 80_000),
             Row::PipelineResolveAccounts => (26_316, 35_000),
             Row::PipelineInitMarket => (61_354, 80_000),
             Row::PipelineSeedLiquidity => (110_640, 140_000),
             // Kept at 60,000 rather than the rule's 55,000: on random keys the hooked first
             // deposit measured up to 55,635 (see `fixed_key`).
-            Row::AddLiquidity => (40_822, 60_000),
-            Row::Rebalance => (71_016, 90_000),
+            Row::AddLiquidity => (40_880, 60_000),
+            Row::Rebalance => (70_838, 90_000),
             Row::RemoveLiquidityCash => (76_114, 100_000),
             Row::RemoveLiquidityInKind => (62_831, 80_000),
             Row::RemoveLentSide => (57_912, 75_000),

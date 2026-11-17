@@ -149,19 +149,27 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
     };
     let (reserve, lending_market) = kamino.check(lent)?;
 
+    // While Kamino redeems nothing, `rebalance` refuses before valuing anything, except to forget a
+    // wait to leave withdraw mode, which no fault in the reserve's numbers may stop (finding R2-04).
+    if reserve.redeems_stopped(&lending_market) {
+        require!(market.exit_seen_slot != 0, StrategyError::KaminoStopped);
+        ctx.accounts.market_state.exit_seen_slot = 0;
+        return Ok(());
+    }
+    let clock = Clock::get()?;
     let held = market.ctokens;
     let buffer = market.reserves[lent_side];
     let lent_value = reserve.lent_value(held)?;
     let kamino_state = Kamino {
         free: reserve.freely_available(),
-        can_pay: reserve.can_pay_planned(&lending_market, held, Clock::get()?.unix_timestamp),
-        stopped: reserve.redeems_stopped(&lending_market),
+        can_pay: reserve.can_pay_planned(&lending_market, held, clock.unix_timestamp),
+        stopped: false,
         deposits_blocked: reserve.block_ctoken_usage,
     };
     let (decision, exit_seen_slot) = withdraw_mode::decide_with_exit_delay(
         market.withdraw_mode,
         market.exit_seen_slot,
-        Clock::get()?.slot,
+        clock.slot,
         buffer,
         lent_value,
         kamino_state,

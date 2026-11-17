@@ -75,7 +75,7 @@
 //  25. the borrower repays, the reserve is back above WITHDRAW_MODE_EXIT times X, and
 //      `rebalance` starts the market's wait to leave, recording the slot; once the free
 //      liquidity has stayed there WITHDRAW_MODE_EXIT_DELAY_SLOTS (on a local validator started
-//      with `--ticks-per-slot 2`, about two minutes), `rebalance` leaves withdraw mode and lends
+//      with `--ticks-per-slot 8`, about 14 minutes), `rebalance` leaves withdraw mode and lends
 //      again by klend's own deposit;
 //  26. the lending market's owner turns the WSOL reserve's emergency mode on: a sale within
 //      the buffer trades, one beyond it is refused by the quote and by the swap with
@@ -1163,6 +1163,20 @@ async function main() {
     let shareCount = firstShares + minimumLiquidity;
     // What the market has lent, as the script calculates it: nothing until step 11.
     let lent = { ctokens: 0n, deposited: 0n, redeemed: 0n };
+    /**
+     * The market's cTokens and running totals after `paid` cTokens leave in kind: the cTokens take
+     * their part of the net amount lent, rounded towards zero, off whichever running total is the
+     * larger, so the yield V + redeemed - deposited stays right (`shares::totals_after_in_kind`).
+     */
+    const afterInKind = (paid: bigint) => {
+        const net = lent.deposited - lent.redeemed;
+        const take = ((net < 0n ? -net : net) * paid) / lent.ctokens;
+        return {
+            ctokens: lent.ctokens - paid,
+            deposited: net >= 0n ? lent.deposited - take : lent.deposited,
+            redeemed: net >= 0n ? lent.redeemed : lent.redeemed - take,
+        };
+    };
     async function checkMarket(label: string) {
         const { data: state } = await fetchLendingAmmMarket(rpc, marketState, { commitment: 'confirmed' });
         const supply = await mintSupply(lpMint);
@@ -1619,15 +1633,7 @@ async function main() {
     if (!kindEvent.inKind || kindEvent.ctokens !== kindParts.ctokens || kindEvent.redeemed !== 0n) fail(`the removal event carries ${show(kindEvent)}`);
     reserves = [reserves[0] - kindParts.token, reserves[1] - kindParts.buffer];
     shareCount -= third;
-    // The cTokens take their part of the net amount lent, rounded towards zero, off whichever
-    // running total is the larger, so the yield V + redeemed - deposited stays right.
-    const net = lent.deposited - lent.redeemed;
-    const take = ((net < 0n ? -net : net) * kindParts.ctokens) / lent.ctokens;
-    lent = {
-        ctokens: lent.ctokens - kindParts.ctokens,
-        deposited: net >= 0n ? lent.deposited - take : lent.deposited,
-        redeemed: net >= 0n ? lent.redeemed : lent.redeemed - take,
-    };
+    lent = afterInKind(kindParts.ctokens);
     await checkMarket('after the in-kind removal');
     info(`burned ${third} shares for ${kindParts.token} token, ${kindParts.buffer} WSOL and ${kindParts.ctokens} cTokens in ${lp2Ctoken}, as calculated`);
     record.push(['remove in kind', `${third} shares for ${kindParts.token} token, ${kindParts.buffer} WSOL and ${kindParts.ctokens} cTokens`]);
@@ -1718,15 +1724,7 @@ async function main() {
     }
     reserves = [reserves[0], reserves[1] - lentParts.buffer];
     shareCount -= lentOnly;
-    {
-        const net = lent.deposited - lent.redeemed;
-        const take = ((net < 0n ? -net : net) * lentParts.ctokens) / lent.ctokens;
-        lent = {
-            ctokens: lent.ctokens - lentParts.ctokens,
-            deposited: net >= 0n ? lent.deposited - take : lent.deposited,
-            redeemed: net >= 0n ? lent.redeemed : lent.redeemed - take,
-        };
-    }
+    lent = afterInKind(lentParts.ctokens);
     await checkMarket('after leaving with the lent side alone');
     info(`burned ${lentOnly} shares for ${lentParts.buffer} WSOL and ${lentParts.ctokens} cTokens; the ${lentParts.token} token they were worth stay recorded for the LPs who stay`);
     record.push(['remove the lent side alone', `${lentOnly} shares for ${lentParts.buffer} WSOL and ${lentParts.ctokens} cTokens, ${lentParts.token} token left`]);
@@ -1939,13 +1937,7 @@ async function main() {
     }
     reserves = [reserves[0] - leftParts.token, reserves[1] - leftParts.buffer];
     shareCount -= lp2Left;
-    const netLent = lent.deposited - lent.redeemed;
-    const takeLeft = ((netLent < 0n ? -netLent : netLent) * leftParts.ctokens) / lent.ctokens;
-    lent = {
-        ctokens: lent.ctokens - leftParts.ctokens,
-        deposited: netLent >= 0n ? lent.deposited - takeLeft : lent.deposited,
-        redeemed: netLent >= 0n ? lent.redeemed : lent.redeemed - takeLeft,
-    };
+    lent = afterInKind(leftParts.ctokens);
     await checkMarket('after the in-kind removal in emergency mode');
     info(`the second wallet burned its last ${lp2Left} shares for ${leftParts.token} token, ${leftParts.buffer} WSOL and ${leftParts.ctokens} cTokens`);
 

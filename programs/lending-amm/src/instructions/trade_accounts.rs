@@ -133,6 +133,7 @@ impl<'a, 'info> StrategyAccounts<'a, 'info> {
         &self,
         market: &LendingAmmMarket,
         liquidity_mint: &'a AccountInfo<'info>,
+        now: i64,
     ) -> Result<u64> {
         let (kamino, ctoken_account) = self.kamino(liquidity_mint)?;
         require_keys_eq!(
@@ -142,11 +143,7 @@ impl<'a, 'info> StrategyAccounts<'a, 'info> {
         );
         let lent = market.lent_entry()?;
         let (reserve, lending_market) = kamino.check(lent)?;
-        Ok(reserve.can_pay_planned(
-            &lending_market,
-            market.ctokens,
-            Clock::get()?.unix_timestamp,
-        ))
+        Ok(reserve.can_pay_planned(&lending_market, market.ctokens, now))
     }
 
     /// Prices `trade` with the one pricing function, [`pricing::quote`], reading Kamino's other
@@ -165,7 +162,8 @@ impl<'a, 'info> StrategyAccounts<'a, 'info> {
     ) -> Result<Quote> {
         // A market holding cTokens prices them at the stored rate, which may lag the interest by
         // at most `TRADE_MAX_RESERVE_AGE_SLOTS`, so no round trip across a refresh pays. A
-        // deprecated reserve's rate never moves again, so it is never stale.
+        // deprecated reserve's rate never moves again, so it is never stale. The clock is read only
+        // where it is needed, since most trades need it nowhere.
         require!(
             market.ctokens == 0
                 || self.reserve.deprecated()
@@ -174,11 +172,12 @@ impl<'a, 'info> StrategyAccounts<'a, 'info> {
                     .refreshed_within(Clock::get()?.slot, config::TRADE_MAX_RESERVE_AGE_SLOTS),
             StrategyError::ReserveStale
         );
-        let quote = pricing::quote(market, &self.reserve, trade, || match self.redeem {
-            Some(_) => self.kamino_can_pay(market, output_mint),
-            None => Ok(self
-                .reserve
-                .can_pay_by_itself(market.ctokens, Clock::get()?.unix_timestamp)),
+        let quote = pricing::quote(market, &self.reserve, trade, || {
+            let now = Clock::get()?.unix_timestamp;
+            match self.redeem {
+                Some(_) => self.kamino_can_pay(market, output_mint, now),
+                None => Ok(self.reserve.can_pay_by_itself(market.ctokens, now)),
+            }
         })?;
         require!(
             quote.shortfall == 0 || self.redeem.is_some(),

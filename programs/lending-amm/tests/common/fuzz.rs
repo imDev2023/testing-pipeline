@@ -1357,8 +1357,9 @@ impl World {
         // it first saw it so, and a reading at or below the threshold starts the wait again.
         let slot = self.env.clock().slot;
         let wants_out = before.withdraw_mode && !by_thresholds;
-        let waited = before.exit_seen_slot != 0
-            && slot >= before.exit_seen_slot + WITHDRAW_MODE_EXIT_DELAY_SLOTS;
+        // Stated apart from the program's own comparison: the slots since the sighting.
+        let waited = before.exit_seen_slot > 0
+            && slot.saturating_sub(before.exit_seen_slot) >= WITHDRAW_MODE_EXIT_DELAY_SLOTS;
         let (mode, seen) = if stopped {
             // While Kamino redeems nothing it only forgets a wait.
             (before.withdraw_mode, 0)
