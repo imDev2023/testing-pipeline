@@ -18,51 +18,14 @@ proven.
 
 import sys
 
-from z3 import And, If, Int, Not, Solver, sat, unsat
+from z3 import And, If, Int
+from z3_common import u64, floor_div, ceil_div, prove
 
-U64_MAX = 2**64 - 1
 BPS = 10_000
 # The claims hold for any LP fee up to a whole (MAX_LP_FEE_BPS in src/config.rs is below it).
 MAX_FEE_BPS = BPS
 # MINIMUM_LIQUIDITY in src/config.rs.
 MINIMUM_LIQUIDITY = 1_000
-
-
-def u64(name):
-    value = Int(name)
-    return value, And(value >= 0, value <= U64_MAX)
-
-
-def floor_div(name, numerator, denominator):
-    """`numerator / denominator` as Rust's integer division: a quotient and its remainder."""
-    quotient, remainder = Int(f"{name}_q"), Int(f"{name}_r")
-    facts = And(
-        quotient * denominator + remainder == numerator,
-        remainder >= 0,
-        remainder < denominator,
-    )
-    return quotient, facts
-
-
-def ceil_div(name, numerator, denominator):
-    """`numerator.div_ceil(denominator)`: floor((n + d - 1) / d)."""
-    return floor_div(name, numerator + denominator - 1, denominator)
-
-
-def prove(name, claim, *assumptions):
-    solver = Solver()
-    solver.set("timeout", 600_000)
-    solver.add(*assumptions)
-    solver.add(Not(claim))
-    result = solver.check()
-    if result == unsat:
-        print(f"PROVEN  {name}")
-        return True
-    if result == sat:
-        print(f"FAILED  {name}: counterexample {solver.model()}")
-    else:
-        print(f"UNKNOWN {name} ({solver.reason_unknown()})")
-    return False
 
 
 def main():

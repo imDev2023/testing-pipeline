@@ -33,60 +33,17 @@ Run: `pip install z3-solver==5.4.1.0` (in a virtualenv), then
 `python programs/lending-amm/proofs/kamino_z3.py`. Exits non-zero unless every claim is proven.
 """
 
-import re
 import sys
-from pathlib import Path
 
-from z3 import And, If, Implies, Int, Not, Or, Solver, sat, unsat
+from z3 import And, If, Implies, Int, Or
+from z3_common import U128_MAX, constant, bounded, floor_div, prove
 
 TWO_64 = 2**64
 TWO_60 = 2**60
 U64_MAX = TWO_64 - 1
-U128_MAX = 2**128 - 1
-
-
-def constant(name):
-    """A constant's value as `src/config.rs` defines it, so the proofs follow any change there."""
-    config = (Path(__file__).resolve().parent.parent / "src" / "config.rs").read_text()
-    match = re.search(rf"pub const {name}: \w+ = ([\d_]+);", config)
-    if not match:
-        sys.exit(f"no {name} in src/config.rs")
-    return int(match.group(1).replace("_", ""))
 
 
 HEADROOM_BPS = constant("KAMINO_RATE_HEADROOM_BPS")
-
-
-def bounded(name, high):
-    value = Int(name)
-    return value, And(value >= 0, value <= high)
-
-
-def floor_div(name, numerator, denominator):
-    """`numerator / denominator` as Rust's integer division: a quotient and its remainder."""
-    quotient, remainder = Int(f"{name}_q"), Int(f"{name}_r")
-    facts = And(
-        quotient * denominator + remainder == numerator,
-        remainder >= 0,
-        remainder < denominator,
-    )
-    return quotient, facts
-
-
-def prove(name, claim, *assumptions):
-    solver = Solver()
-    solver.set("timeout", 600_000)
-    solver.add(*assumptions)
-    solver.add(Not(claim))
-    result = solver.check()
-    if result == unsat:
-        print(f"PROVEN  {name}")
-        return True
-    if result == sat:
-        print(f"FAILED  {name}: counterexample {solver.model()}")
-    else:
-        print(f"UNKNOWN {name} ({solver.reason_unknown()})")
-    return False
 
 
 def main():

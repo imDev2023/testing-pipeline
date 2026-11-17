@@ -85,10 +85,6 @@ impl Row {
             Row::LockLp => (36_981, 50_000),
         }
     }
-
-    fn ceiling(self) -> u64 {
-        self.figures().1
-    }
 }
 
 /// The headroom rule (docs/spec/lending-pool.md, "Compute ceilings"): a ceiling is at least
@@ -97,14 +93,22 @@ fn with_headroom(measured: u64) -> u64 {
     (measured + measured.div_ceil(4)).div_ceil(5_000) * 5_000
 }
 
-/// Prints a measured cost and asserts it is at most its row's ceiling.
+/// Prints a measured cost and asserts it is at most its row's ceiling, and at most the highest
+/// cost the table records for the row, so the table's Measured column never goes stale: a change
+/// that makes an instruction cost more updates the column, and with it the headroom rule's check.
 fn record(row: Row, cost: u64, context: &str) {
     println!("measured {row:?} {cost} CU: {context}");
+    let (measured, ceiling) = row.figures();
     assert!(
-        cost <= row.ceiling(),
-        "{context}: {} {cost} CU, ceiling {}",
-        row.instruction(),
-        row.ceiling()
+        cost <= ceiling,
+        "{context}: {} {cost} CU, ceiling {ceiling}",
+        row.instruction()
+    );
+    assert!(
+        cost <= measured,
+        "{context}: {} {cost} CU, above the {measured} the table records as its highest; update the \
+         Measured column here and in docs/spec/lending-pool.md",
+        row.instruction()
     );
 }
 
@@ -319,7 +323,11 @@ fn seeding_by_a_launchpad_fits_one_transaction_and_stays_under_its_ceiling() {
 #[test]
 fn a_later_add_liquidity_stays_under_its_ceiling() {
     for (name, mut env, market, lp) in markets() {
-        let more = env.funded_wallet(&market, [1_000_000_000_000, 50 * SOL]);
+        let more = env.fund_wallet(
+            &market,
+            solana_keypair::Keypair::new_from_array(fixed_key(&format!("a later LP on {name}"))),
+            [1_000_000_000_000, 50 * SOL],
+        );
         let fresh = env
             .add_liquidity(&market, &more, [10_000_000_000, SOL], 0)
             .unwrap();

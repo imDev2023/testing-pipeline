@@ -50,9 +50,24 @@ def copy_workspace():
     shutil.copytree(PROGRAMS / "mint-rules" / "src", COPY / "mint-rules" / "src")
     shutil.copy2(PROGRAMS / "mint-rules" / "Cargo.toml", COPY / "mint-rules" / "Cargo.toml")
     # The program builds without its tests, so its test-only dependencies are left out.
-    lending = (CRATE / "Cargo.toml").read_text().split("\n# For the tests in `tests/`")[0]
     (COPY / "lending-amm").mkdir()
-    (COPY / "lending-amm" / "Cargo.toml").write_text(lending + "\n")
+    (COPY / "lending-amm" / "Cargo.toml").write_text(
+        without_table((CRATE / "Cargo.toml").read_text(), "dev-dependencies")
+    )
+
+
+def without_table(manifest, table):
+    """`manifest` with the TOML table `[table]` and its keys removed, up to the next table."""
+    kept, skipping, found = [], False, False
+    for line in manifest.splitlines(keepends=True):
+        header = re.match(r"^\s*\[([^\[\]]+)\]\s*(#.*)?$", line)
+        if header:
+            skipping = header.group(1).strip() == table
+            found = found or skipping
+        if not skipping:
+            kept.append(line)
+    assert found, f"the manifest has a [{table}] table"
+    return "".join(kept)
 
 
 def build(entry):

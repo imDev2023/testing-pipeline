@@ -940,7 +940,12 @@ impl Env {
     /// A new wallet holding `amounts` of each of the market's mints, by mint index, plus
     /// some SOL.
     pub fn funded_wallet(&mut self, market: &Market, amounts: [u64; 2]) -> Keypair {
-        let wallet = Keypair::new();
+        self.fund_wallet(market, Keypair::new(), amounts)
+    }
+
+    /// [`Env::funded_wallet`] for a wallet of the caller's choosing, such as one with a fixed
+    /// key, whose PDA searches cost the same on every run.
+    pub fn fund_wallet(&mut self, market: &Market, wallet: Keypair, amounts: [u64; 2]) -> Keypair {
         self.svm.airdrop(&wallet.pubkey(), 10 * SOL).unwrap();
         for ((mint, token_program), amount) in
             market.mints.iter().zip(&market.token_programs).zip(amounts)

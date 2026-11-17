@@ -267,9 +267,20 @@ struct World {
     /// How many removals went through in cash and in kind, and how many locks and burns.
     removals: [usize; 2],
     locks_and_burns: [usize; 2],
-    /// How Kamino moved: interest edits and klend refreshes that raised the rate, partial
-    /// write-offs, total write-offs, and steps checked with the layout check failing.
-    kamino_moves: [usize; 5],
+    /// How Kamino moved, printed with `--nocapture`.
+    kamino_moves: KaminoMoves,
+}
+
+/// How Kamino moved in a case.
+#[derive(Clone, Copy, Debug, Default)]
+struct KaminoMoves {
+    /// Interest edits and klend refreshes that raised the rate.
+    rate_rises: usize,
+    /// Write-offs of part of the supply, and of all of it.
+    write_offs: usize,
+    total_write_offs: usize,
+    /// Steps run while the reserve failed its layout check.
+    steps_failing_layout: usize,
 }
 
 const SEED: [u64; 2] = [2_000_000_000_000, 40 * SOL];
@@ -340,7 +351,7 @@ impl World {
             taken_in_kind: 0,
             removals: [0; 2],
             locks_and_burns: [0; 2],
-            kamino_moves: [0; 5],
+            kamino_moves: KaminoMoves::default(),
         }
     }
 
@@ -404,7 +415,7 @@ impl World {
             }
         }
         if self.layout_failed {
-            self.kamino_moves[4] += 1;
+            self.kamino_moves.steps_failing_layout += 1;
         }
         let before = self.env.market_state(&self.market.market_state);
         let effective_before = self.effective();
@@ -524,7 +535,7 @@ impl World {
                 self.env
                     .patch(&reserve, offsets::BORROWED_AMOUNT_SF, &grown.to_le_bytes());
                 if grown > owed {
-                    self.kamino_moves[0] += 1;
+                    self.kamino_moves.rate_rises += 1;
                 }
             }
             Step::Accrue { slots } => {
@@ -538,7 +549,7 @@ impl World {
                         .send(&[refresh], &[])
                         .map_err(TestCaseError::fail)?;
                     if self.rate() != rate {
-                        self.kamino_moves[0] += 1;
+                        self.kamino_moves.rate_rises += 1;
                     }
                 }
             }
@@ -563,7 +574,11 @@ impl World {
                     Loss::Part(loss.min(most))
                 };
                 self.env.write_off(&self.market, loss);
-                self.kamino_moves[if bps >= 10_000 { 2 } else { 1 }] += 1;
+                if bps >= 10_000 {
+                    self.kamino_moves.total_write_offs += 1;
+                } else {
+                    self.kamino_moves.write_offs += 1;
+                }
             }
             Step::Remove {
                 lp,
@@ -820,8 +835,10 @@ impl World {
         };
         // No swap lowers R x L, with L = B + V, but for Kamino's rounding of a redeem.
         let (now, was) = (self.effective(), effective_before);
+        let mut allowed = now;
+        allowed[lent] += rounding;
         prop_assert!(
-            now[0] as u128 * (now[1] + rounding) as u128 >= was[0] as u128 * was[1] as u128,
+            allowed[0] as u128 * allowed[1] as u128 >= was[0] as u128 * was[1] as u128,
             "{} a swap lowered R x L: {:?} -> {:?}",
             VALUE,
             was,
@@ -1089,11 +1106,16 @@ impl World {
         // klend refuses a refresh in emergency mode, where `rebalance` refuses anyway.
         if refresh_first && !self.redeems_stopped() {
             let refresh = self.env.refresh_reserve_instruction(&self.market);
-            self.env.send(&[refresh], &[]).unwrap();
+            self.env.send(&[refresh], &[]).map_err(|e| {
+                TestCaseError::fail(format!(
+                    "{REBALANCE} klend refused the keeper's refresh: {e}"
+                ))
+            })?;
         }
         let refreshed_slot = {
             let reserve = self.env.reserve_of(&self.market);
-            u64::from_le_bytes(self.env.data(&reserve)[16..24].try_into().unwrap())
+            let at = super::kamino::klend_layout::RESERVE_LAST_UPDATE_SLOT;
+            u64::from_le_bytes(self.env.data(&reserve)[at..at + 8].try_into().unwrap())
         };
         let stale = refreshed_slot != self.env.clock().slot;
         let lent = self.market.lent_index;
@@ -1418,7 +1440,9 @@ impl World {
         // 256 bits.
         let effective = self.effective();
         let product = effective[0] as u128 * effective[1] as u128;
-        let allowed = effective[0] as u128 * (effective[1] + rounding) as u128;
+        let mut with_rounding = effective;
+        with_rounding[market.lent_index] += rounding;
+        let allowed = with_rounding[0] as u128 * with_rounding[1] as u128;
         let square = n as u128 * n as u128;
         let (old_product, old_square) = *value_per_share;
         prop_assert!(
@@ -1482,12 +1506,12 @@ impl World {
             self.rebalances;
         let [cash, in_kind] = self.removals;
         let [locks, burns] = self.locks_and_burns;
-        let [rate_rises, write_offs, total_write_offs, layout_failed] = [
-            self.kamino_moves[0],
-            self.kamino_moves[1],
-            self.kamino_moves[2],
-            self.kamino_moves[4],
-        ];
+        let KaminoMoves {
+            rate_rises,
+            write_offs,
+            total_write_offs,
+            steps_failing_layout: layout_failed,
+        } = self.kamino_moves;
         format!(
             "{}: rebalance: {deposits} deposits, {redeems} redeems, refused {within} inside the band, \
              {below} below the floor, {stopped} while Kamino redeemed nothing and {blocked} for \

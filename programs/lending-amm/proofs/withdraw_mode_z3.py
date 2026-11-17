@@ -26,50 +26,17 @@ Run: `pip install z3-solver==5.4.1.0` (in a virtualenv), then
 proven.
 """
 
-import re
 import sys
-from pathlib import Path
 
-from z3 import And, Bool, If, Implies, Int, Not, Or, Solver, sat, unsat
+from z3 import And, Bool, If, Implies, Int, Not
+from z3_common import U64_MAX, U128_MAX, constant, bounded, prove
 
-U64_MAX = 2**64 - 1
-U128_MAX = 2**128 - 1
 BPS = 10_000
-
-
-def constant(name):
-    """A constant's value as `src/config.rs` defines it, so the proofs follow any change there."""
-    config = (Path(__file__).resolve().parent.parent / "src" / "config.rs").read_text()
-    match = re.search(rf"pub const {name}: \w+ = ([\d_]+);", config)
-    if not match:
-        sys.exit(f"no {name} in src/config.rs")
-    return int(match.group(1).replace("_", ""))
 
 
 TARGET = constant("BUFFER_TARGET_BPS")
 ENTER = constant("WITHDRAW_MODE_ENTER")
 EXIT = constant("WITHDRAW_MODE_EXIT")
-
-
-def bounded(name, high):
-    value = Int(name)
-    return value, And(value >= 0, value <= high)
-
-
-def prove(name, claim, *assumptions):
-    solver = Solver()
-    solver.set("timeout", 600_000)
-    solver.add(*assumptions)
-    solver.add(Not(claim))
-    result = solver.check()
-    if result == unsat:
-        print(f"PROVEN  {name}")
-        return True
-    if result == sat:
-        print(f"FAILED  {name}: counterexample {solver.model()}")
-    else:
-        print(f"UNKNOWN {name} ({solver.reason_unknown()})")
-    return False
 
 
 def main():

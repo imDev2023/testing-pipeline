@@ -13,6 +13,11 @@
 //! which writes `programs/target/lending-broken-builds/<name>.so` (`LENDING_BROKEN_BUILDS`
 //! moves it). Every build runs from the same fixed seed, `BROKEN_BUILDS_SEED` (default 85), for
 //! at most `BROKEN_BUILDS_CASES` sequences (default 400), so a run is the same every time.
+//!
+//! The broken builds are of the `devnet` build, the one this project deploys, so the test runs
+//! only in it.
+
+#![cfg(feature = "devnet")]
 
 mod common;
 
