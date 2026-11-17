@@ -527,7 +527,7 @@ function laterDeposit(max: [bigint, bigint], reserves: [bigint, bigint], shareCo
 type KaminoDevnet = {
     klendProgram: string;
     lendingMarket: { address: string };
-    reserves: { wsol: { address: string; collateralMint: string; liquiditySupply: string } };
+    reserves: { wsol: { address: string; collateralMint: string; liquiditySupply: string; pythPrice: string } };
 };
 const KAMINO = JSON.parse(
     readFileSync(new URL('../../../deployments/kamino-devnet.json', import.meta.url), 'utf8'),
@@ -557,6 +557,29 @@ async function readReserve(): Promise<ReserveView> {
         fail(`the Kamino reserve ${RESERVE} names another lending market or mints`);
     }
     return view;
+}
+
+/**
+ * klend's `refresh_reserve` for the demo market's reserve, with the Pyth price account its config
+ * names and klend's own id in the other three oracle places, as klend 1.28.0 declares them. Once a
+ * market holds cTokens, `add_liquidity` needs the reserve refreshed in the same slot, and quotes
+ * and swaps one refreshed within `TRADE_MAX_RESERVE_AGE_SLOTS` (docs/spec/lending-pool.md, "The
+ * stored rate, everywhere"), so a depositor puts this first in the same transaction.
+ */
+function refreshReserve(): Instruction {
+    return {
+        programAddress: KLEND,
+        accounts: [
+            { address: RESERVE, role: AccountRole.WRITABLE },
+            { address: address(KAMINO.lendingMarket.address), role: AccountRole.READONLY },
+            { address: address(KAMINO.reserves.wsol.pythPrice), role: AccountRole.READONLY },
+            { address: KLEND, role: AccountRole.READONLY },
+            { address: KLEND, role: AccountRole.READONLY },
+            { address: KLEND, role: AccountRole.READONLY },
+        ],
+        // Anchor's discriminator of `refresh_reserve`, `sha256("global:refresh_reserve")[..8]`.
+        data: new Uint8Array([2, 218, 138, 235, 79, 201, 25, 102]),
+    };
 }
 
 /** The instructions sysvar, which klend's redeem introspects. */
@@ -1446,17 +1469,25 @@ async function main() {
     info(`second wallet ${lp2.address}: ${lp2Plan.tokens} token, ${lp2Plan.wrapLamports} WSOL`);
     const [lp2Shares] = await findLpSharesPda({ marketState, lp: lp2.address }, pdas);
     const beforeLp2 = await lentSide();
-    const lp2Deposit = laterDeposit([lp2Plan.deposit.token, lp2Plan.deposit.wsol], [reserves[0], beforeLp2.total], shareCount);
-    await send('add_liquidity by the second wallet', lp2, [
+    const atStoredRate = laterDeposit([lp2Plan.deposit.token, lp2Plan.deposit.wsol], [reserves[0], beforeLp2.total], shareCount);
+    // The market holds cTokens, so the deposit needs the reserve refreshed in the same slot, which
+    // raises its rate by the interest since its last refresh: the shares are fewer than at the
+    // stored rate, so the wallet allows 1% less, then checks the spec's formula at the rate klend
+    // refreshed to, which nothing else in the transaction changes.
+    await send('refresh_reserve + add_liquidity by the second wallet', lp2, [
+        refreshReserve(),
         await pipeline.buildActionInstruction({
             action: addLiquidity,
             market: view,
             wallet: lp2.address,
-            args: { max_0: lp2Plan.deposit.token, max_1: lp2Plan.deposit.wsol, min_lp: lp2Deposit.shares },
+            args: { max_0: lp2Plan.deposit.token, max_1: lp2Plan.deposit.wsol, min_lp: (atStoredRate.shares * 99n) / 100n },
             inputs: { reserve: RESERVE },
             tokenPrograms,
         }),
     ]);
+    const refreshedTotal = beforeLp2.buffer + lentValue(beforeLp2.ctokens, await readReserve());
+    const lp2Deposit = laterDeposit([lp2Plan.deposit.token, lp2Plan.deposit.wsol], [reserves[0], refreshedTotal], shareCount);
+    info(`klend's refresh raised the lent side from ${beforeLp2.total} to ${refreshedTotal}: ${lp2Deposit.shares} shares, not the ${atStoredRate.shares} the stored rate gave`);
     reserves = [reserves[0] + lp2Deposit.taken[0], reserves[1] + lp2Deposit.taken[1]];
     shareCount += lp2Deposit.shares;
     if ((await tokenBalance(lp2Shares)) !== lp2Deposit.shares) fail('the second wallet received other shares than calculated');

@@ -566,9 +566,23 @@ fn the_stored_rate_is_used_as_it_is() {
         );
     }
 
-    // A day after the reserve was last refreshed, nothing has refreshed it: quotes and swaps
-    // both price at the stored rate, so each swap delivers its quote.
+    // A day after the reserve was last refreshed, quotes and swaps refuse it as too stale to
+    // value the market's cTokens, since a round trip across a refresh could then pay
+    // (finding H-S2, docs/security/lending-amm/).
+    use lending_amm::config::TRADE_MAX_RESERVE_AGE_SLOTS as AGE;
+    let start = env.clock();
     env.advance_clock(216_000, 86_400);
+    assert_refused(
+        env.quote(&market, &exact_in(0, 1, OTHER / 100)),
+        StrategyError::ReserveStale,
+    );
+    assert_refused(
+        env.swap(&market, &trader, (0, 1), OTHER / 100),
+        StrategyError::ReserveStale,
+    );
+    // Up to an hour after it, nothing has refreshed it: quotes and swaps both price at the stored
+    // rate, so each swap delivers its quote.
+    env.set_clock(start.slot + AGE, start.unix_timestamp + (AGE * 2 / 5) as i64);
     for (sides, amount) in [((0, 1), OTHER / 100), ((1, 0), SOL)] {
         let quote = env
             .quote(&market, &exact_in(sides.0, sides.1, amount))
@@ -577,7 +591,7 @@ fn the_stored_rate_is_used_as_it_is() {
         assert_eq!(paid.received, quote.amount_out);
     }
 
-    // Once klend accrues the day's interest (any redeem refreshes the reserve), the market's
+    // Once klend accrues the hour's interest (any redeem refreshes the reserve), the market's
     // cTokens are worth more, so the same sell of the other side buys more of the lent side.
     let sell = exact_in(0, 1, OTHER / 100);
     let stored = env.quote(&market, &sell).unwrap();
@@ -591,7 +605,7 @@ fn the_stored_rate_is_used_as_it_is() {
         redeem_reserve_collateral(&env.kamino, 0, &holder.pubkey(), &collateral, &liquidity, 1);
     env.send(&[redeem], &[&holder]).unwrap();
     let value_after = reserve(&env, &market).lent_value(ctokens).unwrap();
-    println!("the market's cTokens: worth {value_before} at the stored rate, {value_after} once klend accrued a day");
+    println!("the market's cTokens: worth {value_before} at the stored rate, {value_after} once klend accrued an hour");
     assert!(value_after > value_before);
     let accrued = env.quote(&market, &sell).unwrap();
     println!(

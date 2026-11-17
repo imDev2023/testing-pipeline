@@ -66,7 +66,9 @@
 use super::remove::Payout;
 use super::states::Loss;
 use super::*;
-use lending_amm::config::{BUFFER_TARGET_BPS, MINIMUM_LIQUIDITY};
+use lending_amm::config::{
+    ADD_MAX_RESERVE_AGE_SLOTS, BUFFER_TARGET_BPS, MINIMUM_LIQUIDITY, TRADE_MAX_RESERVE_AGE_SLOTS,
+};
 use lending_amm::kamino::offsets;
 use lending_amm::StrategyError;
 use pipeline_client::{pda, Pubkey};
@@ -281,6 +283,9 @@ struct KaminoMoves {
     total_write_offs: usize,
     /// Steps run while the reserve failed its layout check.
     steps_failing_layout: usize,
+    /// Swaps and deposits refused as too stale to value the market's cTokens, then sent again
+    /// with klend's refresh first, as a trader or an LP would.
+    stale_retries: usize,
 }
 
 const SEED: [u64; 2] = [2_000_000_000_000, 40 * SOL];
@@ -397,6 +402,31 @@ impl World {
         self.env.market_state(&self.market.market_state).reserves
     }
 
+    /// Whether the program counts the reserve too stale to value the market's cTokens: they are
+    /// held, the reserve is not deprecated (its rate never moves again), and it was last refreshed
+    /// more than `max_age` slots ago (docs/spec/lending-pool.md, "The stored rate, everywhere").
+    fn stale(&self, max_age: u64) -> bool {
+        let reserve = self.reserve();
+        self.env.market_state(&self.market.market_state).ctokens > 0
+            && !reserve.deprecated()
+            && !reserve.refreshed_within(self.env.clock().slot, max_age)
+    }
+
+    /// klend's `refresh_reserve`, if klend will refresh the reserve: not while it fails the
+    /// layout check, is deprecated or its lending market is in emergency mode. Returns whether
+    /// it refreshed.
+    fn refresh_if_klend_will(&mut self) -> Result<bool, TestCaseError> {
+        if self.layout_failed || self.deprecated() || self.lending_market().emergency_mode {
+            return Ok(false);
+        }
+        let refresh = self.env.refresh_reserve_instruction(&self.market);
+        self.env
+            .send(&[refresh], &[])
+            .map_err(|e| TestCaseError::fail(format!("{STATES} klend refused a refresh: {e}")))?;
+        self.kamino_moves.stale_retries += 1;
+        Ok(true)
+    }
+
     /// Whether the reserve is deprecated: a write-off reached its whole supply.
     fn deprecated(&self) -> bool {
         self.reserve().version != lending_amm::kamino::RESERVE_VERSION
@@ -444,6 +474,26 @@ impl World {
                     Some(StrategyError::ReserveWrongDiscriminator)
                 } else if self.deprecated() {
                     Some(StrategyError::ReserveDeprecated)
+                } else if self.stale(ADD_MAX_RESERVE_AGE_SLOTS) {
+                    // Once it holds cTokens, adding needs a reserve refreshed this slot, so the LP
+                    // puts klend's refresh first, unless klend will not refresh it.
+                    let refused = self.env.add_liquidity(&self.market, &lp, max, 0);
+                    prop_assert!(
+                        refused.is_err_and(|e| e.contains("Error Code: ReserveStale.")),
+                        "{} added on a stale reserve",
+                        STATES
+                    );
+                    prop_assert_eq!(
+                        &self.env.market_state(&self.market.market_state),
+                        &before,
+                        "{}",
+                        CONSERVED
+                    );
+                    if self.refresh_if_klend_will()? {
+                        None
+                    } else {
+                        Some(StrategyError::ReserveStale)
+                    }
                 } else {
                     None
                 };
@@ -682,6 +732,9 @@ impl World {
         if self.layout_failed {
             return refusal.contains("Error Code: ReserveWrongDiscriminator.");
         }
+        if self.stale(TRADE_MAX_RESERVE_AGE_SLOTS) {
+            return refusal.contains("Error Code: ReserveStale.");
+        }
         let lent = self.market.lent_index;
         let effective = self.effective();
         let state = self.env.market_state(&self.market.market_state);
@@ -712,6 +765,30 @@ impl World {
     fn swap(&mut self, trader: usize, input: usize, amount: u64) -> Result<u64, TestCaseError> {
         use lending_amm::events::ShortfallRedeemed;
         let output = 1 - input;
+        // On a reserve too stale to value the market's cTokens the quote and the swap refuse, and
+        // the trader puts klend's refresh first, when klend will refresh it.
+        if !self.layout_failed && self.stale(TRADE_MAX_RESERVE_AGE_SLOTS) {
+            let before = self.env.market_state(&self.market.market_state);
+            let quote = self.env.quote(&self.market, &exact_in(input, output, amount));
+            let wallet = self.traders[trader].insecure_clone();
+            let swapped = self.env.swap_meta(&self.market, &wallet, (input, output), amount);
+            for refusal in [quote.map(|_| ()), swapped.map(|_| ())] {
+                prop_assert!(
+                    refusal.is_err_and(|e| e.contains("Error Code: ReserveStale.")),
+                    "{} traded on a stale reserve",
+                    STATES
+                );
+            }
+            prop_assert_eq!(
+                self.env.market_state(&self.market.market_state),
+                before,
+                "{}",
+                CONSERVED
+            );
+            if !self.refresh_if_klend_will()? {
+                return Ok(0);
+            }
+        }
         let lent = self.market.lent_index;
         let before = self.env.market_state(&self.market.market_state);
         let effective_before = self.effective();
@@ -1511,6 +1588,7 @@ impl World {
             write_offs,
             total_write_offs,
             steps_failing_layout: layout_failed,
+            stale_retries,
         } = self.kamino_moves;
         format!(
             "{}: rebalance: {deposits} deposits, {redeems} redeems, refused {within} inside the band, \
@@ -1519,7 +1597,8 @@ impl World {
              klend's refresh first; {} swaps redeemed their shortfall; removals: {cash} in cash, \
              {in_kind} in kind; {locks} locks and {burns} burns; Kamino: {rate_rises} rate rises, \
              {write_offs} write-offs, {total_write_offs} total, {layout_failed} steps failing the \
-             layout check",
+             layout check; {stale_retries} swaps and deposits refused on a stale reserve and sent \
+             again with klend's refresh first",
             if seeded { "seeded" } else { "created" },
             self.redeeming_swaps
         )

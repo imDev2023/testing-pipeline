@@ -18,13 +18,12 @@
 //! and records exactly that, with the running totals deposited into and redeemed from Kamino,
 //! and the mode it is in. It creates no account and pays nothing, so the caller pays only the
 //! transaction fee. A call Kamino refuses fails whole. It must be called directly, beside nothing
-//! but compute budget instructions, klend's `refresh_reserve` and other `rebalance` calls
+//! but compute budget instructions and klend's `refresh_reserve`, and once per transaction
 //! ([`require_alone`]), so nothing in its transaction can move Kamino's free liquidity around it.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{get_stack_height, TRANSACTION_LEVEL_STACK_HEIGHT};
-use anchor_lang::Discriminator;
-use solana_instructions_sysvar::load_instruction_at_checked;
+use solana_instructions_sysvar::{load_current_index_checked, load_instruction_at_checked};
 
 /// The compute budget program, whose instructions may share a transaction with `rebalance`.
 const COMPUTE_BUDGET: Pubkey = pubkey!("ComputeBudget111111111111111111111111111111");
@@ -83,13 +82,14 @@ pub struct Rebalance<'info> {
 }
 
 /// Whether an instruction of `program` with `data` may share a transaction with `rebalance`:
-/// compute budget instructions, klend's `refresh_reserve`, which a keeper puts first when the
-/// reserve's stored rate is stale, and `rebalance` itself, on this market or another.
+/// compute budget instructions, and klend's `refresh_reserve`, which a keeper puts first when the
+/// reserve's stored rate is stale. Never another `rebalance`, on this market or another: one
+/// market's deposit before a second market's call and a third's redeem after it would move
+/// Kamino's free liquidity around the second as klend's own instructions would (finding H-R1,
+/// docs/security/lending-amm/).
 pub fn allowed_beside_rebalance(program: &Pubkey, data: &[u8]) -> bool {
-    let tag = data.get(..8);
     *program == COMPUTE_BUDGET
-        || (*program == KLEND_PROGRAM && tag == Some(&REFRESH_RESERVE[..]))
-        || (*program == crate::ID && tag == Some(crate::instruction::Rebalance::DISCRIMINATOR))
+        || (*program == KLEND_PROGRAM && data.get(..8) == Some(&REFRESH_RESERVE[..]))
 }
 
 /// Refuses with `RebalanceNotAlone` unless `rebalance` is called directly, at the transaction's
@@ -115,7 +115,8 @@ fn require_alone(instructions: &AccountInfo) -> Result<()> {
         let bytes = data.get(..2).ok_or(StrategyError::KaminoAccountWrong)?;
         u16::from_le_bytes([bytes[0], bytes[1]])
     };
-    for index in 0..count {
+    let current = load_current_index_checked(instructions)?;
+    for index in (0..count).filter(|index| *index != current) {
         let instruction = load_instruction_at_checked(index as usize, instructions)?;
         require!(
             allowed_beside_rebalance(&instruction.program_id, &instruction.data),

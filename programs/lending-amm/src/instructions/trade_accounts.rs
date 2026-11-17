@@ -164,6 +164,17 @@ impl<'a, 'info> StrategyAccounts<'a, 'info> {
         output_mint: &'a AccountInfo<'info>,
         trade: &TradeRequest,
     ) -> Result<Quote> {
+        // A market holding cTokens prices them at the stored rate, which may lag the interest by
+        // at most `TRADE_MAX_RESERVE_AGE_SLOTS`, so no round trip across a refresh pays. A
+        // deprecated reserve's rate never moves again, so it is never stale.
+        require!(
+            market.ctokens == 0
+                || self.reserve.deprecated()
+                || self
+                    .reserve
+                    .refreshed_within(Clock::get()?.slot, config::TRADE_MAX_RESERVE_AGE_SLOTS),
+            StrategyError::ReserveStale
+        );
         let quote = pricing::quote(market, &self.reserve, trade, || match self.redeem {
             Some(_) => self.kamino_can_pay(market, output_mint),
             None => Ok(self

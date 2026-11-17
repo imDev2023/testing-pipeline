@@ -135,6 +135,10 @@ pub fn removal(
 /// `deposited - redeemed`, rounded towards zero, off `deposited` while it is positive and off
 /// `redeemed` while it is negative. So the market's lending yield, `V + redeemed - deposited`,
 /// falls by the same fraction as `V`, the part that left with the cTokens, without valuing them.
+///
+/// It never fails on arithmetic, however large the totals: they only track the yield, and must
+/// never stand between an LP and their exit in kind. Only `paid` of 0, `held` of 0 or `paid` above
+/// `held`, which no removal passes, are refused.
 pub fn totals_after_in_kind(
     deposited: u128,
     redeemed: u128,
@@ -144,16 +148,15 @@ pub fn totals_after_in_kind(
     if paid == 0 || held == 0 || paid > held {
         return Err(StrategyError::Overflow);
     }
-    let take = |net: u128| -> Result<u128, StrategyError> {
-        Ok(net
-            .checked_mul(paid as u128)
-            .ok_or(StrategyError::Overflow)?
-            / held as u128)
-    };
+    let (paid, held) = (paid as u128, held as u128);
+    // `floor(net x paid / held)`, exactly, without the product: with `net = q x held + r` it is
+    // `q x paid + floor(r x paid / held)`, where `q x paid <= net` since `paid <= held`, and
+    // `r x paid < 2^128` since both are below 2^64; the sum is at most `net`.
+    let take = |net: u128| (net / held) * paid + (net % held) * paid / held;
     if deposited >= redeemed {
-        Ok((deposited - take(deposited - redeemed)?, redeemed))
+        Ok((deposited - take(deposited - redeemed), redeemed))
     } else {
-        Ok((deposited, redeemed - take(redeemed - deposited)?))
+        Ok((deposited, redeemed - take(redeemed - deposited)))
     }
 }
 
@@ -321,6 +324,25 @@ mod tests {
             Ok((3, 3))
         );
         assert!(totals_after_in_kind(10, 0, 4, 3).is_err());
+    }
+
+    /// An in-kind exit never fails on the running totals' arithmetic, however large the net
+    /// amount lent: they only track the lending yield, and must never stand between an LP and
+    /// their exit (finding H-SH8, docs/security/lending-amm/).
+    #[test]
+    fn sos_in_kind_totals_never_overflow() {
+        let paid = u64::MAX - 1;
+        let held = u64::MAX;
+        assert_eq!(
+            totals_after_in_kind(u128::MAX, 0, paid, held).map_err(|e| e as u32),
+            // floor((2^128 - 1) x (2^64 - 2) / (2^64 - 1)) = 2^128 - 2^64 - 1, with
+            // 2^128 - 1 = (2^64 + 1) x (2^64 - 1).
+            Ok((u128::MAX - (u128::MAX - (1u128 << 64) - 1), 0))
+        );
+        assert_eq!(
+            totals_after_in_kind(0, u128::MAX, held, held).map_err(|e| e as u32),
+            Ok((0, 0))
+        );
     }
 
     #[test]
@@ -640,21 +662,18 @@ mod proofs {
                 };
                 // The cTokens left take `floor(net x paid / held)` off it: what is left is at
                 // least the remaining cTokens' part of the net, and less than a unit above it.
+                // Stated with products only where they fit; `proofs/shares_z3.py` states it for
+                // every input.
                 let take = net - net_after;
-                assert!(take * held as u128 <= net * paid as u128);
-                let above = take
-                    .checked_add(1)
-                    .and_then(|t| t.checked_mul(held as u128));
-                assert!(above.is_none_or(|above| net * (paid as u128) < above));
+                if let Some(product) = net.checked_mul(paid as u128) {
+                    assert!(take * held as u128 <= product);
+                    let above = take
+                        .checked_add(1)
+                        .and_then(|t| t.checked_mul(held as u128));
+                    assert!(above.is_none_or(|above| product < above));
+                }
             }
-            Err(_) => assert!(
-                paid == 0
-                    || held == 0
-                    || paid > held
-                    || (deposited.abs_diff(redeemed))
-                        .checked_mul(paid as u128)
-                        .is_none()
-            ),
+            Err(_) => assert!(paid == 0 || held == 0 || paid > held),
         }
     }
 

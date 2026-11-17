@@ -38,6 +38,22 @@ pub const BUFFER_MAX_BPS: u16 = 3_000;
 /// refused. 10 bps covers about a week of interest at 5% a year since the reserve's last
 /// refresh. The market's own cTokens' value needs none.
 pub const KAMINO_RATE_HEADROOM_BPS: u16 = 10;
+/// How many slots old the reserve's last refresh may be when `add_liquidity` values a market's
+/// cTokens: 0, refreshed in the same slot, as klend itself asks before it states its exchange
+/// rate. Adding and removing charge no fee, so any interest the stored rate has not counted yet
+/// would go to whoever adds just before the reserve refreshes and leaves just after, out of the
+/// LPs' yield (finding H-S1, docs/security/lending-amm/). A depositor puts klend's
+/// `refresh_reserve` first in the same transaction. Exported in the IDL, as is the trade bound,
+/// from which forms, keepers and the demo read them.
+#[constant]
+pub const ADD_MAX_RESERVE_AGE_SLOTS: u64 = 0;
+/// How many slots old the reserve's last refresh may be when a quote or a swap values a market's
+/// cTokens: about an hour. A trade at the stored rate and one back after a refresh pay Pipeline's
+/// fee twice, 0.5%, besides the LP fee, which may be 0; an hour of interest at the steepest rate
+/// the deploy sees, our devnet reserves' 1,000% a year, is about 0.11%, so no such round trip
+/// pays. Beyond it a trader, a keeper or Aviary puts klend's `refresh_reserve` first.
+#[constant]
+pub const TRADE_MAX_RESERVE_AGE_SLOTS: u64 = 9_000;
 /// Enter withdraw mode when Kamino's freely available liquidity is below this many times
 /// the larger of the market's lent value and its target lent value. Exported in the IDL, as is
 /// the exit multiple, from which keepers and the demo read them. It must not be above

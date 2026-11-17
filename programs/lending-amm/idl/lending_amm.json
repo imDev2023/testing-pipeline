@@ -1572,12 +1572,17 @@
     {
       "code": 6049,
       "name": "RebalanceNotAlone",
-      "msg": "rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls"
+      "msg": "rebalance must be called directly, once per transaction, beside nothing but compute budget instructions and klend's refresh_reserve"
     },
     {
       "code": 6050,
       "name": "BadSeedAmounts",
       "msg": "SeedRequest.amounts must hold exactly one amount for each of the market's two mints"
+    },
+    {
+      "code": 6051,
+      "name": "ReserveStale",
+      "msg": "The Kamino reserve's stored rate is too old to value the market's cTokens: put klend's refresh_reserve first in the same transaction"
     }
   ],
   "types": [
@@ -2410,6 +2415,20 @@
   ],
   "constants": [
     {
+      "name": "ADD_MAX_RESERVE_AGE_SLOTS",
+      "docs": [
+        "How many slots old the reserve's last refresh may be when `add_liquidity` values a market's",
+        "cTokens: 0, refreshed in the same slot, as klend itself asks before it states its exchange",
+        "rate. Adding and removing charge no fee, so any interest the stored rate has not counted yet",
+        "would go to whoever adds just before the reserve refreshes and leaves just after, out of the",
+        "LPs' yield (finding H-S1, docs/security/lending-amm/). A depositor puts klend's",
+        "`refresh_reserve` first in the same transaction. Exported in the IDL, as is the trade bound,",
+        "from which forms, keepers and the demo read them."
+      ],
+      "type": "u64",
+      "value": "0"
+    },
+    {
       "name": "BUFFER_MAX_BPS",
       "docs": [
         "...or above this."
@@ -2451,6 +2470,18 @@
       ],
       "type": "u64",
       "value": "1000"
+    },
+    {
+      "name": "TRADE_MAX_RESERVE_AGE_SLOTS",
+      "docs": [
+        "How many slots old the reserve's last refresh may be when a quote or a swap values a market's",
+        "cTokens: about an hour. A trade at the stored rate and one back after a refresh pay Pipeline's",
+        "fee twice, 0.5%, besides the LP fee, which may be 0; an hour of interest at the steepest rate",
+        "the deploy sees, our devnet reserves' 1,000% a year, is about 0.11%, so no such round trip",
+        "pays. Beyond it a trader, a keeper or Aviary puts klend's `refresh_reserve` first."
+      ],
+      "type": "u64",
+      "value": "9000"
     },
     {
       "name": "WITHDRAW_MODE_ENTER",

@@ -50,6 +50,9 @@ pub const LENDING_MARKET_DISCRIMINATOR: [u8; 8] = [246, 114, 50, 98, 72, 157, 28
 /// Byte offsets in a klend `Reserve` at 1.28.0, discriminator included.
 pub mod offsets {
     pub const VERSION: usize = 8;
+    /// `last_update.slot`: the slot klend last brought the reserve's interest up to date, by its
+    /// `refresh_reserve` or inside a deposit or redeem.
+    pub const LAST_UPDATE_SLOT: usize = 16;
     pub const LENDING_MARKET: usize = 32;
     pub const LIQUIDITY_MINT: usize = 128;
     /// `liquidity.supply_vault`, the token account holding the reserve's liquidity.
@@ -108,6 +111,8 @@ pub struct WithdrawalCap {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Reserve {
     pub version: u64,
+    /// The slot of the reserve's last refresh, as of which its stored rate counts the interest.
+    pub last_update_slot: u64,
     pub total_available_amount: u64,
     pub borrowed_amount_sf: u128,
     pub accumulated_protocol_fees_sf: u128,
@@ -175,6 +180,7 @@ pub fn read_reserve(
     let cap = offsets::WITHDRAWAL_CAP;
     Ok(Reserve {
         version: u64_at(data, offsets::VERSION).ok_or(bad)?,
+        last_update_slot: u64_at(data, offsets::LAST_UPDATE_SLOT).ok_or(bad)?,
         total_available_amount: u64_at(data, offsets::TOTAL_AVAILABLE_AMOUNT).ok_or(bad)?,
         borrowed_amount_sf: u128_at(data, offsets::BORROWED_AMOUNT_SF).ok_or(bad)?,
         accumulated_protocol_fees_sf: u128_at(data, offsets::ACCUMULATED_PROTOCOL_FEES_SF)
@@ -258,6 +264,13 @@ impl Reserve {
         }
         collateral_value(ctokens, self.total_supply_sf()?, self.mint_total_supply)
             .ok_or(StrategyError::Overflow)
+    }
+
+    /// Whether the reserve's stored rate was brought up to date at most `max_age` slots before
+    /// `slot`: the interest it has not counted yet is then at most `max_age` slots' worth
+    /// (docs/spec/lending-pool.md, "The stored rate, everywhere").
+    pub fn refreshed_within(&self, slot: u64, max_age: u64) -> bool {
+        slot.saturating_sub(self.last_update_slot) <= max_age
     }
 
     /// Whether a write-off has reached the reserve's whole supply, after which klend never
