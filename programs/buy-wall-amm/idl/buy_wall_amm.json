@@ -1308,6 +1308,11 @@
       "code": 6038,
       "name": "RecipientAccountNotTheirs",
       "msg": "The recipient's token account belongs to someone else"
+    },
+    {
+      "code": 6039,
+      "name": "SwapThisSlot",
+      "msg": "A swap or the seed already ran in this slot; the wall can be placed from the next slot"
     }
   ],
   "types": [

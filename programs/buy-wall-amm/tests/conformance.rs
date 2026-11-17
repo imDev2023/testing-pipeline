@@ -147,6 +147,7 @@ fn a_market_with_a_placed_wall_passes_every_check_at_above_and_inside_it() {
     let bought = swap(&mut env, (1, 0), SOL);
     advance(&mut env, 60);
     swap(&mut env, (0, 1), bought);
+    env.next_slot();
     env.place_wall(&market, &keeper).unwrap();
     let top = env.state(&market).wall_top();
     assert!(env.state(&market).wall_liquidity() > 0);

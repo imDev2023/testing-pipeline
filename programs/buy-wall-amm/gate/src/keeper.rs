@@ -1,7 +1,7 @@
 //! The four keeper jobs, and when each is due (docs/spec/pool4-for-solana.md, "For the
 //! keeper runner"). [`due`] is the program's own rule, from this tree's pure functions, read
 //! off the market state: `place_wall` once idle SOL or the wall's converted SOL reaches
-//! `WALL_THRESHOLD`, `settle` with tokens retired, `pay_rewards` with rewards owed, and
+//! `WALL_THRESHOLD`, in a slot no swap has run in, `settle` with tokens retired, `pay_rewards` with rewards owed, and
 //! `sweep_fees` for each slot whose ledger is above 0 and whose wallet is set (slot 1 only
 //! once `DESIGNER_RECIPIENT` is).
 //!
@@ -68,14 +68,22 @@ impl std::fmt::Display for Job {
     }
 }
 
-/// Every job due on `state`, in the order the runner would send them.
-pub fn due(state: &MarketState) -> Vec<Job> {
+/// Every job due on `state` in the Clock's `slot` at time `now`, in the order the runner would
+/// send them; `place_wall` only in a slot no swap has run in (`POOL4-50`).
+pub fn due(state: &MarketState, slot: u64, now: i64) -> Vec<Job> {
     if state.status != STATUS_OPEN {
         return vec![];
     }
     let owed = state.owed();
     let mut jobs = vec![];
-    if buy_wall_amm::wall::place(state.wall_books(), state.wall_at()).is_ok() {
+    let placing = buy_wall_amm::wall::place_in_slot(
+        state.wall_books(),
+        state.wall_at(),
+        state.guard(),
+        slot,
+        now,
+    );
+    if placing.is_ok() {
         jobs.push(Job::PlaceWall);
     }
     if owed.settle(state.reward_share_bps()).is_ok() {

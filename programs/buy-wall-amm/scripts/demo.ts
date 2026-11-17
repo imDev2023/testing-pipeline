@@ -24,8 +24,10 @@
 //      ran at;
 //   8. place the buy wall through the metadata's `place_wall` action, from the spec's
 //      formulas: refused with WallBelowThreshold while idle SOL is below WALL_THRESHOLD
-//      (shown by simulating it), then, after one more buy if its fee is needed, placed at
-//      the lower of the price and the guard's floor with everything idle, the dust swept
+//      (shown by simulating it), then, after one more buy if its fee is needed, placed in a
+//      later slot than the last swap (it is refused in a swap's own slot) at the lower of
+//      the price and the guard's floor, brought up to date for that slot, with everything
+//      idle, the dust swept
 //      and the caller tipped in wrapped SOL exactly as the spec's rule gives, emitting
 //      WallPlaced;
 //   9. sell into the wall: priced in two steps, the curve alone to the wall's top, then the
@@ -565,13 +567,25 @@ const wallTokens = (wall: Wall, s: bigint) =>
     wall.liquidity > 0n && s < wall.top ? (wall.liquidity * Q * (wall.top - s)) / (wall.top * s) : 0n;
 
 /**
- * The wall's guard (docs/spec/pool4-for-solana.md, "After pricing" steps 1, 3 and 4),
- * written out from the spec: before the books, in a slot later than `lastSlot`, the
- * reference moves toward the last close by at most `REF_STEP_BPS / 2` of itself per
- * `REF_STEP_WINDOW`; once the price is set, the floor crawls toward the reference by at most
- * `FLOOR_CRAWL_BPS / 2` of itself a day and drops at once to a lower price.
+ * The wall's guard (docs/spec/pool4-for-solana.md, "After pricing" steps 1, 3 and 4, and
+ * "`place_wall`"), written out from the spec: at a slot's first update (before the books, in
+ * a slot later than `lastSlot`), the reference moves toward the last close by at most
+ * `REF_STEP_BPS / 2` of itself per `REF_STEP_WINDOW`, then the floor crawls toward the
+ * reference by at most `FLOOR_CRAWL_BPS / 2` of itself a day and drops to the last close, the
+ * price the slot opened at, if that is lower; in a slot already brought up to date neither
+ * moves, and a swap's own price only becomes the last close (`POOL4-50`). `place_wall` brings
+ * the floor up to date the same way without marking the slot. Each clock only moves forward.
  */
 type Guard = { reference: bigint; refTime: bigint; floor: bigint; floorTime: bigint; lastSlot: bigint; lastClose: bigint };
+
+function specOpenFloor(g: Guard, now: bigint): Guard {
+    let floor = g.floor;
+    if (floor < g.reference) {
+        const dt = min(max(now - g.floorTime, 0n), SECONDS_PER_DAY);
+        floor = min(floor + (floor * FLOOR_CRAWL_BPS * dt) / (2n * 10_000n * SECONDS_PER_DAY), g.reference);
+    }
+    return { ...g, floor: min(floor, g.lastClose), floorTime: max(g.floorTime, now) };
+}
 
 function specFollow(g: Guard, slot: bigint, now: bigint): Guard {
     if (slot <= g.lastSlot) return g;
@@ -579,16 +593,11 @@ function specFollow(g: Guard, slot: bigint, now: bigint): Guard {
     const step = (g.reference * REF_STEP_BPS * dt) / (2n * 10_000n * REF_STEP_WINDOW);
     const reference =
         g.lastClose >= g.reference ? min(g.reference + step, g.lastClose) : max(g.reference - step, g.lastClose);
-    return { ...g, reference, refTime: now, lastSlot: slot };
+    return specOpenFloor({ ...g, reference, refTime: max(g.refTime, now), lastSlot: slot }, now);
 }
 
-function specCloseAt(g: Guard, price: bigint, now: bigint): Guard {
-    let floor = g.floor;
-    if (floor < g.reference) {
-        const dt = min(max(now - g.floorTime, 0n), SECONDS_PER_DAY);
-        floor = min(floor + (floor * FLOOR_CRAWL_BPS * dt) / (2n * 10_000n * SECONDS_PER_DAY), g.reference);
-    }
-    return { ...g, floor: min(floor, price), floorTime: now, lastClose: price };
+function specCloseAt(g: Guard, price: bigint): Guard {
+    return { ...g, lastClose: price };
 }
 
 /**
@@ -739,6 +748,15 @@ async function waitForClock(time: bigint) {
         const blockTime = await rpc.getBlockTime(slot).send().catch(() => null);
         if (blockTime !== null && BigInt(blockTime) >= time) return;
         if (i > 120) fail(`the cluster's clock did not reach ${time} within 60 s`);
+        await sleep(500);
+    }
+}
+
+/** Waits until the cluster's confirmed slot is later than `slot`. */
+async function waitForSlotAfter(slot: bigint) {
+    for (let i = 0; ; i++) {
+        if ((await rpc.getSlot({ commitment: 'confirmed' }).send()) > slot) return;
+        if (i > 120) fail(`the cluster did not pass slot ${slot} within 60 s`);
         await sleep(500);
     }
 }
@@ -1530,7 +1548,8 @@ async function main() {
         const { data: afterSwap } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
         const ranAt = le(afterSwap.decayTime);
         const events = await strategyEvents(signature);
-        // Step 1, the reference; steps 2 and 3, the books and the price; then the floor.
+        // Steps 1 and 4 at the slot's first update, the reference and the floor; steps 2 and
+        // 3, the books, the price and the last close.
         books.guard = specFollow(books.guard, events.slot, ranAt);
         const split = specSplit(spec.fee, BigInt(DEMO.wallSplitBps));
         if (input === 1) {
@@ -1541,7 +1560,7 @@ async function main() {
             books.poolSol -= spec.out + spec.fee;
         }
         books.curve = { sqrtPrice: spec.sqrtPrice, liquidity: books.curve.liquidity };
-        books.guard = specCloseAt(books.guard, spec.sqrtPrice, ranAt);
+        books.guard = specCloseAt(books.guard, spec.sqrtPrice);
         books.idleSol += split.wall;
         books.feesRecipient += split.recipient;
         books.feesDesigner += split.designer;
@@ -1629,11 +1648,20 @@ async function main() {
         // One more buy's fee takes idle SOL past the threshold.
         topUp = (await trade('buy for the wall', 1, DEMO.buy)).received;
     }
-    const expectedPlacement = specPlaceWall(wallBooks(), books.curve, books.guard.floor, feeBps) ?? fail(`idle SOL ${books.idleSol} is still below WALL_THRESHOLD`);
+    if (specPlaceWall(wallBooks(), books.curve, books.guard.floor, feeBps) === null) fail(`idle SOL ${books.idleSol} is still below WALL_THRESHOLD`);
+    // `place_wall` is refused in a slot a swap already ran in (`POOL4-50`), so it goes in a
+    // later slot than the last swap, as the keeper runner sends it.
+    await waitForSlotAfter(books.guard.lastSlot);
     const tipsBefore = await tokenBalance(payerAccounts[1]!);
     const { signature: placedSignature } = await send('place_wall', payer, [await placeWall()]);
     const tip = (await tokenBalance(payerAccounts[1]!)) - tipsBefore;
     const placedEvents = await strategyEvents(placedSignature);
+    if (placedEvents.slot <= books.guard.lastSlot) fail(`place_wall ran in slot ${placedEvents.slot}, not after the last swap's ${books.guard.lastSlot}`);
+    // It brings the floor up to date for its slot first, at the time it ran, which it records
+    // as the floor's clock (the clock never moves backwards, so that is its time or later).
+    const { data: afterPlacing } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
+    books.guard = specOpenFloor(books.guard, le(afterPlacing.floorTime));
+    const expectedPlacement = specPlaceWall(wallBooks(), books.curve, books.guard.floor, feeBps) ?? fail(`idle SOL ${books.idleSol} is still below WALL_THRESHOLD`);
     const { books: placedBooks, placement } = expectedPlacement;
     const work = max(placement.converted, books.idleSol);
     const [placedEvent] = placedEvents.placed;

@@ -83,6 +83,7 @@ fn worked_example_walled(env: &mut Env, params: &buy_wall_amm::InitParams) -> (M
     later(env, 60);
     assert_eq!(swap(env, &market, &trader, SELL, bought), 980_099_999);
     let keeper = env.keeper();
+    env.next_slot();
     let (tip, _) = env.place_wall(&market, &keeper).unwrap();
     assert_eq!(tip, 912_933);
     assert_eq!(env.state(&market).retired_tokens(), 8_333_333_340);
@@ -578,6 +579,7 @@ fn worked_example_walled_no_check(
     later(env, 60);
     swap(env, &market, &trader, SELL, bought);
     let keeper = env.keeper();
+    env.next_slot();
     env.place_wall(&market, &keeper).unwrap();
     assert!(env.state(&market).retired_tokens() > 0);
     (market, trader)
@@ -644,6 +646,7 @@ fn hooked_owing(
     later(env, 60);
     assert_eq!(swap(env, &market, trader, SELL, bought), 980_099_999);
     let keeper = env.keeper();
+    env.next_slot();
     env.place_wall(&market, &keeper).unwrap();
     set_supply(env, &token, TOKENS + 300_000_000_000);
     env.send(&[settle_ix(&market)], &[]).unwrap();
@@ -717,6 +720,7 @@ fn a_rewards_recipient_refused_by_the_hook_blocks_nothing_else() {
     later(&mut env, 60);
     swap(&mut env, &market, &trader, SELL, bought);
     let keeper = env.keeper();
+    env.next_slot();
     let _ = env.place_wall(&market, &keeper);
     env.send(&[settle_ix(&market)], &[]).unwrap();
     sweep(&mut env, &market, &payer, &fee_recipient.pubkey(), 0).unwrap();
@@ -801,6 +805,7 @@ fn a_missing_closed_or_reassigned_recipient_account_blocks_nothing_else() {
     later(&mut env, 60);
     swap(&mut env, &market, &trader, SELL, bought);
     let keeper = env.keeper();
+    env.next_slot();
     let _ = env.place_wall(&market, &keeper);
     let _ = env.send(&[settle_ix(&market)], &[]);
     sweep(&mut env, &market, &payer, &suite, 2).unwrap();
@@ -861,6 +866,7 @@ fn a_missing_closed_or_reassigned_recipient_account_blocks_nothing_else() {
     later(&mut env, 60);
     // More than the buy took, so the curve ends above the cap and trims.
     swap(&mut env, &market, &trader, SELL, bought + 100_000_000_000);
+    env.next_slot();
     let _ = env.place_wall(&market, &keeper);
     env.send(&[settle_ix(&market)], &[]).unwrap();
     let rewards = env.state(&market).rewards_owed();

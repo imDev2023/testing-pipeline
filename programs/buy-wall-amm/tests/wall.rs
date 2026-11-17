@@ -168,13 +168,29 @@ fn trade(
         after.fees_collected() - before.fees_collected(),
         spec.fee as u128
     );
+    // The floor moves only at the slot's first update, and then never above the price the
+    // slot opened at, the last close before the trade (`POOL4-50`).
+    if clock(env).slot > before.last_slot() {
+        assert!(
+            after.floor() <= before.last_close(),
+            "the floor is above the price its slot opened at"
+        );
+    } else {
+        assert_eq!(
+            (after.floor(), after.floor_time()),
+            (before.floor(), before.floor_time()),
+            "the floor moved on a trade in its own slot"
+        );
+    }
+    assert_eq!(after.last_close(), after.sqrt_price());
     assert_books(env, market);
     (result.received, logs)
 }
 
 /// Every vault holds exactly its ledgers; the pool ledgers cover what the curve and the wall
 /// hold at the current price, compared exactly (`wall::covers`); and the wall's floor is not
-/// above the price.
+/// above the reference. (It may be above the price: a sell lowers the price at once, and the
+/// floor only at the next slot's first update.)
 fn assert_books(env: &Env, market: &Market) {
     let state = env.state(market);
     assert_eq!(
@@ -200,7 +216,10 @@ fn assert_books(env: &Env, market: &Market) {
         ),
         "the pool ledgers cover the curve and the wall"
     );
-    assert!(state.floor() <= s, "the floor is never above the price");
+    assert!(
+        state.floor() <= state.reference(),
+        "the floor is never above the reference"
+    );
 }
 
 /// The worked example's market (docs/spec/pool4-for-solana.md, "Worked example"): 1,000,000
@@ -245,11 +264,20 @@ fn the_worked_examples_wall_numbers_are_reproduced_through_the_router() {
     let mut env = Env::new();
     let (market, trader) = traded_worked_example(&mut env);
     let before = env.state(&market);
-    // The sell back left the floor at its own price.
-    assert_eq!(before.floor(), 1_844_674_407_372_029_099);
+    // The sell back, the first update of its slot, crawled the floor 60 seconds' worth toward
+    // the reference, below the buy's price, the price that slot opened at; its own lower price
+    // never reaches the floor in its slot (`POOL4-50`).
+    assert_eq!(before.floor(), 1_844_700_027_848_835_313);
+    assert_eq!(before.last_close(), 1_844_674_407_372_029_099);
 
-    // `place_wall`.
+    // `place_wall` is refused in the sell's slot; from the next slot it runs, bringing the
+    // floor down to the sell's price, the price that slot opened at.
     let keeper = env.keeper();
+    assert_refused(
+        env.place_wall(&market, &keeper),
+        buy_wall_amm::errors::StrategyError::SwapThisSlot,
+    );
+    env.next_slot();
     let (tip, logs) = env.place_wall(&market, &keeper).unwrap();
     assert_eq!(tip, 912_933);
     let placed = env.state(&market);
@@ -263,11 +291,18 @@ fn the_worked_examples_wall_numbers_are_reproduced_through_the_router() {
     assert_eq!(placed.idle_sol(), 0);
     assert_eq!(placed.tips_paid(), 912_933);
     assert_eq!(placed.wall_tokens_bought(), 0);
-    // `place_wall` never moves the price, the curve, the cap, the guard or the counters.
+    // `place_wall` never moves the price, the curve, the cap or the counters, and of the guard
+    // only the floor, at the same time, so its clock stays.
     assert_eq!(placed.sqrt_price(), before.sqrt_price());
     assert_eq!(placed.liquidity(), before.liquidity());
     assert_eq!(placed.cap(), before.cap());
-    assert_eq!(placed.guard(), before.guard());
+    assert_eq!(
+        placed.guard(),
+        buy_wall_amm::guard::Guard {
+            floor: 1_844_674_407_372_029_099,
+            ..before.guard()
+        }
+    );
     assert_eq!(placed.counters(), before.counters());
     let tips = pda::associated_token(&keeper.pubkey(), &WSOL, &TOKEN);
     assert_eq!(
@@ -312,6 +347,7 @@ fn pricing_above_across_and_inside_the_wall_matches_the_spec_both_ways() {
     let mut env = Env::new();
     let (market, trader) = traded_worked_example(&mut env);
     let keeper = env.keeper();
+    env.next_slot();
     env.place_wall(&market, &keeper).unwrap();
     let top = env.state(&market).wall_top();
     let price = |env: &Env| env.state(&market).sqrt_price();
@@ -394,7 +430,7 @@ fn the_reference_ignores_trades_in_its_own_slot() {
 }
 
 #[test]
-fn the_floor_crawls_toward_the_reference_and_drops_at_once() {
+fn the_floor_crawls_toward_the_reference_and_drops_from_the_next_slot() {
     let mut env = Env::new();
     let market = worked_example(&mut env);
     let trader = env.trader(&market, 1_000_000_000_000, 100 * SOL);
@@ -431,15 +467,27 @@ fn the_floor_crawls_toward_the_reference_and_drops_at_once() {
     let crawl = before.floor() * FLOOR_CRAWL_BPS as u128 * (DAY / 2) / (2 * BPS as u128 * DAY);
     assert_eq!(
         crawled.floor(),
-        (before.floor() + crawl).min(crawled.reference())
+        (before.floor() + crawl)
+            .min(crawled.reference())
+            .min(before.last_close())
     );
 
-    // A sell to below the floor takes it down to the new price at once.
+    // A sell to below the floor never takes it down in the sell's own slot (`POOL4-50`); the
+    // next slot's first update, here a `place_wall`, takes it down to the sell's price at once.
     later(&mut env, 60);
     trade(&mut env, &market, &trader, SELL, 900_000_000_000);
     let dumped = env.state(&market);
+    // The sell opened its slot: the floor crawled a minute's worth, never above the price that
+    // slot opened at, and the sell's own price never reached it.
     assert!(dumped.sqrt_price() < crawled.floor());
-    assert_eq!(dumped.floor(), dumped.sqrt_price());
+    assert!(dumped.floor() >= crawled.floor() && dumped.floor() <= crawled.last_close());
+    add_idle_sol(&mut env, &market, WALL_THRESHOLD);
+    env.next_slot();
+    let keeper = env.keeper();
+    env.place_wall(&market, &keeper).unwrap();
+    let placed = env.state(&market);
+    assert_eq!(placed.floor(), dumped.sqrt_price());
+    assert_eq!(placed.wall_top(), dumped.sqrt_price());
 }
 
 #[test]
@@ -455,25 +503,37 @@ fn place_wall_is_refused_below_the_threshold_and_with_the_wrong_accounts() {
         buy_wall_amm::errors::StrategyError::MarketNotOpen,
     );
 
-    // Seeded, with nothing idle and no wall.
+    // Seeded, with nothing idle and no wall: in the seed's own slot, and from the next.
     let market = worked_example(&mut env);
+    assert_refused(
+        env.place_wall(&market, &keeper),
+        buy_wall_amm::errors::StrategyError::SwapThisSlot,
+    );
+    env.next_slot();
     assert_refused(
         env.place_wall(&market, &keeper),
         buy_wall_amm::errors::StrategyError::WallBelowThreshold,
     );
-    // A buy's fee puts 4,000,000 lamports in idle SOL: still below 10,000,000.
+    // A buy's fee puts 4,000,000 lamports in idle SOL: still below 10,000,000. In the buy's
+    // slot the slot is checked first (`POOL4-50`).
     let trader = env.trader(&market, 100_000_000_000, 100 * SOL);
     later(&mut env, 60);
     trade(&mut env, &market, &trader, BUY, SOL);
     assert!(env.state(&market).idle_sol() < WALL_THRESHOLD);
     assert_refused(
         env.place_wall(&market, &keeper),
+        buy_wall_amm::errors::StrategyError::SwapThisSlot,
+    );
+    env.next_slot();
+    assert_refused(
+        env.place_wall(&market, &keeper),
         buy_wall_amm::errors::StrategyError::WallBelowThreshold,
     );
-    // Two more reach it.
+    // Two more reach it; the wall waits for the next slot.
     trade(&mut env, &market, &trader, BUY, SOL);
     trade(&mut env, &market, &trader, BUY, SOL);
     assert!(env.state(&market).idle_sol() >= WALL_THRESHOLD);
+    env.next_slot();
 
     let tips = pda::associated_token(&keeper.pubkey(), &WSOL, &TOKEN);
     let wrong = |env: &mut Env, ix: pipeline_client::Instruction| {
@@ -529,6 +589,7 @@ fn place_wall_closes_a_wall_that_has_spent_enough_and_places_it_again() {
     let mut env = Env::new();
     let (market, trader) = traded_worked_example(&mut env);
     let keeper = env.keeper();
+    env.next_slot();
     env.place_wall(&market, &keeper).unwrap();
     // Sell well into the wall, until it has spent more than WALL_THRESHOLD.
     later(&mut env, 60);
@@ -541,6 +602,8 @@ fn place_wall_closes_a_wall_that_has_spent_enough_and_places_it_again() {
     // The sell's fee and its trim left some SOL idle too.
     let work = spent.max(sold.idle_sol());
 
+    // From the next slot, as the keeper runner sends it after the sell's swap event.
+    env.next_slot();
     let (tip, logs) = env.place_wall(&market, &keeper).unwrap();
     let placed = env.state(&market);
     let [event] = events::<WallPlaced>(&logs).try_into().unwrap();
@@ -558,9 +621,12 @@ fn place_wall_closes_a_wall_that_has_spent_enough_and_places_it_again() {
         placed.retired_tokens(),
         sold.retired_tokens() + bought + event.dust_tokens
     );
-    // The new wall: at the floor, which the sell took down to its price, with everything
-    // idle; the pool keeps the curve's holdings rounded up.
-    assert_eq!(placed.wall_top(), sold.floor().min(sold.sqrt_price()));
+    // The new wall: at the floor, which `place_wall`'s slot update took down to the sell's
+    // price, the price its slot opened at, with everything idle; the pool keeps the curve's
+    // holdings rounded up.
+    assert!(sold.floor() > sold.sqrt_price());
+    assert_eq!(placed.floor(), sold.sqrt_price());
+    assert_eq!(placed.wall_top(), sold.sqrt_price());
     let curve_tokens = U256::times_q(placed.liquidity())
         .div_ceil(U256::from(placed.sqrt_price()))
         .unwrap()
@@ -594,7 +660,8 @@ fn add_idle_sol(env: &mut Env, market: &Market, lamports: u64) {
 #[test]
 fn pumping_the_price_placing_the_wall_and_dumping_never_pays() {
     // The spec's case: the worked example's market with 5 SOL idle; buy with 30 SOL, place
-    // the wall in the same slot (collecting its tip) and sell everything back.
+    // the wall (refused in the buy's slot, so in the next, collecting its tip) and sell
+    // everything back.
     let mut env = Env::new();
     let market = worked_example(&mut env);
     add_idle_sol(&mut env, &market, 5 * SOL);
@@ -604,6 +671,11 @@ fn pumping_the_price_placing_the_wall_and_dumping_never_pays() {
     later(&mut env, 3_600);
     let before = env.state(&market).sqrt_price();
     let (bought, _) = trade(&mut env, &market, &pumper, BUY, 30 * SOL);
+    assert_refused(
+        env.place_wall(&market, &pumper),
+        buy_wall_amm::errors::StrategyError::SwapThisSlot,
+    );
+    env.next_slot();
     let (tip, _) = env.place_wall(&market, &pumper).unwrap();
     assert_eq!(tip, KEEPER_TIP_CAP);
     let placed = env.state(&market);
@@ -639,7 +711,9 @@ fn after_a_pump_place_wall_places_the_wall_at_the_lagging_floor() {
     // A buy lifts the price; the floor, which rises only slowly toward a lagging reference,
     // stays below it, so the wall's top is the floor, not the price (when the floor has
     // dropped to the price, as after the worked example's sell, the top is the price:
-    // `the_worked_examples_wall_numbers_are_reproduced_through_the_router`).
+    // `the_worked_examples_wall_numbers_are_reproduced_through_the_router`). The wall waits
+    // for the slot after the buy's, and an hour later the floor has crawled only up to the
+    // reference, which still lags at the opening price.
     let mut env = Env::new();
     let market = worked_example(&mut env);
     add_idle_sol(&mut env, &market, SOL);
@@ -649,6 +723,7 @@ fn after_a_pump_place_wall_places_the_wall_at_the_lagging_floor() {
     let state = env.state(&market);
     assert!(state.floor() < state.sqrt_price());
     let keeper = env.keeper();
+    later(&mut env, 3_600);
     env.place_wall(&market, &keeper).unwrap();
     let placed = env.state(&market);
     assert_eq!(placed.wall_top(), state.floor());
@@ -657,4 +732,252 @@ fn after_a_pump_place_wall_places_the_wall_at_the_lagging_floor() {
     assert!(wall_sol > 0);
     assert_eq!(placed.wall().sol_at(placed.sqrt_price()), Some(wall_sol));
     assert_eq!(placed.wall().tokens_at(placed.sqrt_price()), Some(0));
+}
+
+/// SOS finding H003 (`POOL4-50`): a sell to a dip bought straight back in its own slot never
+/// moves the floor, so a `place_wall` from the next slot never drags the whole wall down to a
+/// price that lasted only inside one slot; `place_wall` in that slot is refused. A genuine
+/// fall, a sell nobody buys back, lowers the floor from the next slot on.
+#[test]
+fn sos_h003_a_dip_bought_back_in_its_own_slot_never_moves_the_floor_or_the_wall() {
+    let mut env = Env::new();
+    let market = worked_example(&mut env);
+    let keeper = env.keeper();
+    // A wall of 1 SOL at the opening price, which is the floor.
+    add_idle_sol(&mut env, &market, SOL);
+    later(&mut env, 60);
+    env.place_wall(&market, &keeper).unwrap();
+    let walled = env.state(&market);
+    let opening = walled.sqrt_price();
+    assert_eq!(walled.wall_top(), opening);
+    assert_eq!(walled.floor(), opening);
+
+    // One slot: a sell to well under three quarters of the opening square-root price (about
+    // half the price), then a buy back with everything it paid.
+    later(&mut env, 60);
+    let attacker = env.trader(&market, 600_000_000_000, 100 * SOL);
+    let (paid, _) = trade(&mut env, &market, &attacker, SELL, 500_000_000_000);
+    let dip = env.state(&market).sqrt_price();
+    assert!(dip < opening * 3 / 4, "the sell reached a deep dip");
+    trade(&mut env, &market, &attacker, BUY, paid);
+    let back = env.state(&market);
+    assert!(back.sqrt_price() > dip + (opening - dip) * 9 / 10);
+    assert_eq!(
+        back.floor(),
+        walled.floor(),
+        "a dip inside one slot moved the floor"
+    );
+
+    // `place_wall` in that slot is refused, whatever is idle.
+    add_idle_sol(&mut env, &market, WALL_THRESHOLD);
+    assert_refused(
+        env.place_wall(&market, &keeper),
+        buy_wall_amm::errors::StrategyError::SwapThisSlot,
+    );
+
+    // From the next slot it brings the floor up to date with the price the slot opened at,
+    // the buy back's close, and places the wall there: never at the dip.
+    env.next_slot();
+    env.place_wall(&market, &keeper).unwrap();
+    let placed = env.state(&market);
+    assert_eq!(placed.floor(), walled.floor().min(back.sqrt_price()));
+    assert_eq!(placed.wall_top(), placed.floor());
+    assert!(placed.wall_top() > dip + (opening - dip) * 9 / 10);
+    // It brought only the floor up to date: the reference and its slot wait for a swap.
+    assert_eq!(
+        (placed.reference(), placed.ref_time(), placed.last_slot()),
+        (back.reference(), back.ref_time(), back.last_slot())
+    );
+    assert_books(&env, &market);
+
+    // A genuine fall: a sell nobody buys back. In its own slot the floor never reaches its
+    // price (the sell opened the slot, so the floor may crawl, but never above the price the
+    // slot opened at).
+    later(&mut env, 60);
+    trade(&mut env, &market, &attacker, SELL, 300_000_000_000);
+    let fallen = env.state(&market);
+    assert!(fallen.sqrt_price() < placed.floor());
+    assert!(fallen.floor() >= placed.floor() && fallen.floor() <= placed.last_close());
+    // From the next slot, the first update takes it down to the fall's close, and the wall
+    // goes there.
+    env.next_slot();
+    trade(&mut env, &market, &attacker, BUY, 1_000_000);
+    assert_eq!(env.state(&market).floor(), fallen.sqrt_price());
+    env.next_slot();
+    env.place_wall(&market, &keeper).unwrap();
+    assert_eq!(env.state(&market).wall_top(), fallen.sqrt_price());
+    assert_books(&env, &market);
+}
+
+/// The worked example's market at a 0.25% fee with the whole market share to the wall and no
+/// rewards, after a fall of about a fifth of the price and a day without a swap: the floor at
+/// the fall's close `s0`, the reference still at the opening price above it, a wall of 30 SOL
+/// (three times the curve's SOL) at `s0`, and `WALL_THRESHOLD` idle. Returns the market and
+/// the price `s0`. This is SOS finding H004's window, where the first swap realised a whole
+/// day's crawl of the floor at once.
+fn after_a_fall_and_a_quiet_day(env: &mut Env) -> (Market, u128) {
+    let mut params = launch_params(env.admin.pubkey());
+    params.fee_bps = 25;
+    params.wall_split_bps = 10_000;
+    params.reward_share_bps = 0;
+    params.rewards_recipient = pipeline_client::Pubkey::default();
+    let token = env.seedable_token(&TOKEN);
+    let (market, _) = env
+        .create_and_seed(token, TOKEN, &params, TOKENS, LAMPORTS)
+        .unwrap();
+    let opening = env.state(&market).sqrt_price();
+    let keeper = env.keeper();
+    later(env, 60);
+    let seller = env.trader(&market, 200_000_000_000, SOL);
+    trade(env, &market, &seller, SELL, 120_000_000_000);
+    let s0 = env.state(&market).sqrt_price();
+    assert!(s0 < opening * 92 / 100);
+    // From the next slot the floor is the fall's close; the wall goes there, then three times
+    // the curve's SOL joins it.
+    env.next_slot();
+    let _ = env.place_wall(&market, &keeper);
+    add_idle_sol(env, &market, 30 * SOL);
+    env.next_slot();
+    env.place_wall(&market, &keeper).unwrap();
+    add_idle_sol(env, &market, WALL_THRESHOLD);
+    let state = env.state(&market);
+    assert_eq!((state.floor(), state.wall_top()), (s0, s0));
+    assert_eq!(state.reference(), opening);
+    later(env, DAY as i64);
+    (market, s0)
+}
+
+/// SOS finding H004 (`POOL4-50`): after a fall and a quiet day, a buy up to where the floor
+/// would crawl, `place_wall` and a sell back never pays. The buy cannot lift the floor above
+/// the price its slot opened at, `place_wall` is refused in the buy's slot, and from the next
+/// slot the wall's top is no higher than the price before the buy, so the sell back never
+/// returns more than the buy cost.
+#[test]
+fn sos_h004_a_quiet_days_crawl_cannot_be_captured_by_a_buy_place_wall_and_sell() {
+    let mut env = Env::new();
+    let (market, s0) = after_a_fall_and_a_quiet_day(&mut env);
+    let before = env.state(&market);
+    // Where a day's crawl would take the floor, below the reference after its step.
+    let crawled = s0 + buy_wall_amm::guard::floor_crawl(s0, DAY).unwrap();
+    assert!(crawled < before.reference() * 98 / 100);
+    // The least buy that lifts the price to it.
+    let reaches = |a: u64| spec::buy(&before, a).unwrap().sqrt_price >= crawled;
+    let (mut lo, mut hi) = (1u64, 10 * SOL);
+    assert!(reaches(hi));
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if reaches(mid) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    let amount = hi;
+    // The amount, and Pipeline's 0.25% on top.
+    let pumper = env.trader(&market, 0, amount + amount / 300 + 1);
+    let (bought, _) = trade(&mut env, &market, &pumper, BUY, amount);
+    let after_buy = env.state(&market);
+    assert!(after_buy.sqrt_price() >= crawled);
+    assert!(
+        after_buy.floor() <= s0,
+        "the buy lifted the floor above the price its slot opened at"
+    );
+
+    // `place_wall` in the buy's slot is refused.
+    assert_refused(
+        env.place_wall(&market, &pumper),
+        buy_wall_amm::errors::StrategyError::SwapThisSlot,
+    );
+    // From the next slot, the wall's top is no higher than the price the buy's slot opened
+    // at, nor the price before the buy.
+    env.next_slot();
+    let (tip, _) = env.place_wall(&market, &pumper).unwrap();
+    let placed = env.state(&market);
+    assert!(placed.wall_top() <= placed.floor() && placed.floor() <= s0);
+    assert!(placed.wall_top() <= placed.sqrt_price());
+
+    // The sell back, with Pipeline's 0.25% on top from more tokens.
+    let held = env.balance(&pda::associated_token(
+        &pumper.pubkey(),
+        &market.token_mint,
+        &TOKEN,
+    ));
+    write_token_account(
+        &mut env.svm,
+        &market.token_mint,
+        &TOKEN,
+        &pumper.pubkey(),
+        held + bought / 300 + 1,
+    )
+    .unwrap();
+    let (sold, _) = trade(&mut env, &market, &pumper, SELL, bought);
+    println!("bought {bought} units for {amount} lamports, sold them back for {sold}, tip {tip}");
+    assert!(
+        sold <= amount,
+        "the round trip returned {sold} lamports for {amount}"
+    );
+}
+
+/// SOS finding H050 (`POOL4-50`): no keeper job run between the legs of a round trip changes
+/// what it returns. `settle` and `sweep_fees` touch only owed ledgers, and `place_wall`, the
+/// only job that moves pricing state, is refused in the round trip's slot; so in H004's window
+/// a round trip with the jobs between its legs sells for exactly what the same round trip
+/// with none does, which never exceeds what the buy cost.
+#[test]
+fn sos_h050_keeper_jobs_between_a_round_trips_legs_change_nothing() {
+    let round_trip = |jobs: bool| -> (u64, u64) {
+        let mut env = Env::new();
+        let (market, _) = after_a_fall_and_a_quiet_day(&mut env);
+        common::payouts::set_supply(&mut env, &market.token_mint, TOKENS);
+        let amount = SOL;
+        let trader = env.trader(&market, 0, amount + amount / 300 + 1);
+        let (bought, _) = trade(&mut env, &market, &trader, BUY, amount);
+        if jobs {
+            let before = env.state(&market);
+            assert!(before.retired_tokens() > 0 && before.fees_suite() > 0);
+            env.send(&[common::payouts::settle_ix(&market)], &[])
+                .unwrap();
+            let payer = env.admin.pubkey();
+            let suite = pipeline_client::Pubkey::new_from_array(
+                buy_wall_amm::config::SUITE_TREASURY.to_bytes(),
+            );
+            env.send(
+                &[common::payouts::sweep_fees_ix(&market, &payer, &suite, 2)],
+                &[],
+            )
+            .unwrap();
+            let keeper = env.keeper();
+            assert_refused(
+                env.place_wall(&market, &keeper),
+                buy_wall_amm::errors::StrategyError::SwapThisSlot,
+            );
+            let after = env.state(&market);
+            assert_eq!((after.retired_tokens(), after.fees_suite()), (0, 0));
+        }
+        let held = env.balance(&pda::associated_token(
+            &trader.pubkey(),
+            &market.token_mint,
+            &TOKEN,
+        ));
+        write_token_account(
+            &mut env.svm,
+            &market.token_mint,
+            &TOKEN,
+            &trader.pubkey(),
+            held + bought / 300 + 1,
+        )
+        .unwrap();
+        let (sold, _) = trade(&mut env, &market, &trader, SELL, bought);
+        (amount, sold)
+    };
+    let (amount, plain) = round_trip(false);
+    let (_, with_jobs) = round_trip(true);
+    assert_eq!(
+        with_jobs, plain,
+        "a keeper job between the legs changed the sell"
+    );
+    assert!(
+        plain <= amount,
+        "the round trip returned {plain} for {amount}"
+    );
 }

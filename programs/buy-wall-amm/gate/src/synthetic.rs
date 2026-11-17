@@ -7,11 +7,12 @@
 //!
 //! - market A, an SPL Token at IMD's launch values, is the worked example's market traded on
 //!   past its first wall and settlement: an hour after the seed a buy of 1 SOL, a minute
-//!   later the sell of what it bought (trimmed), the wall placed, the retired tokens settled,
-//!   then an hour on a buy of 3 SOL and a minute later its sell (trimmed again). It is left
-//!   with a wall placed, idle SOL past `WALL_THRESHOLD`, tokens retired, rewards owed and
-//!   fees in slots 0, 1 and 2, so `place_wall`, `settle`, `pay_rewards` and `sweep_fees`
-//!   slots 0 and 2 are due (slot 1 waits for `DESIGNER_RECIPIENT`);
+//!   later the sell of what it bought (trimmed), the wall placed from the next slot, the
+//!   retired tokens settled, then an hour on a buy of 3 SOL and a minute later its sell
+//!   (trimmed again). It is left with a wall placed, idle SOL past `WALL_THRESHOLD`, tokens
+//!   retired, rewards owed and fees in slots 0, 1 and 2, so `place_wall`, `settle`,
+//!   `pay_rewards` and `sweep_fees` slots 0 and 2 are due (slot 1 waits for
+//!   `DESIGNER_RECIPIENT`);
 //! - market B, a Token-2022 token with other parameters (a 2.5% fee all to the wall, no
 //!   rewards, the ratchet off), is only seeded, so nothing is due;
 //! - market C, an SPL Token at the launch values, is created but not seeded, its mint
@@ -92,6 +93,8 @@ impl Lab {
         let bought = swap(session, &a, true, SOL)?;
         later(session, 60);
         swap(session, &a, false, spendable(bought))?;
+        // From the next slot, as the keeper runner sends it (`POOL4-50`).
+        later(session, 0);
         job(session, &a, Job::PlaceWall)?;
         job(session, &a, Job::Settle)?;
         later(session, 3_600);

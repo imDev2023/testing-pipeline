@@ -375,7 +375,8 @@ impl MarketState {
         self.set_rewards_paid(owed.rewards_paid);
     }
 
-    /// What `place_wall` reads and never writes.
+    /// What `wall::place` reads and never writes; `place_wall` brings the floor up to date for
+    /// its slot first and writes it through `set_guard` (`wall::place_in_slot`, `POOL4-50`).
     pub fn wall_at(&self) -> crate::wall::At {
         crate::wall::At {
             sqrt_price: self.sqrt_price(),

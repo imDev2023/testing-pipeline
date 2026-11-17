@@ -5,9 +5,12 @@
 //! The wall is one stretch of liquidity `W` from `wall_top` down to zero. At or above its
 //! top it is all SOL, `W × wall_top / Q` lamports; below it, it has bought tokens and holds
 //! `W × s / Q` lamports. Pricing trades through it (`pricing.rs`); `place_wall` closes it at
-//! the current price and places it again with everything idle (`place` below).
+//! the current price and places it again with everything idle (`place` below), only in a slot
+//! no swap has run in yet and under the floor brought up to date for that slot
+//! (`place_in_slot`, `POOL4-50`).
 
 use crate::config::{KEEPER_TIP_CAP, WALL_THRESHOLD};
+use crate::guard::Guard;
 use crate::math::U256;
 
 /// The buy wall: its liquidity `W` and its top, a Q64.64 square-root price.
@@ -107,7 +110,8 @@ fn covers_checked(
     Some(ra.mul_u128(top)?.checked_add(rb)? <= U256::mul(top, s)?)
 }
 
-/// What `place_wall` reads of a market and never writes.
+/// What `place` reads of a market and never writes (`place_in_slot` first brings the floor
+/// up to date for its slot, and the instruction writes that floor through the guard).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct At {
     /// The square-root price, Q64.64.
@@ -161,6 +165,8 @@ pub enum Refusal {
     /// An overflow, or ledgers that do not cover what they must, which the invariants rule
     /// out.
     Overflow,
+    /// A swap, or the seed, already ran in this slot (`POOL4-50`).
+    SwapThisSlot,
 }
 
 impl From<Refusal> for crate::errors::StrategyError {
@@ -168,6 +174,7 @@ impl From<Refusal> for crate::errors::StrategyError {
         match refusal {
             Refusal::BelowThreshold => crate::errors::StrategyError::WallBelowThreshold,
             Refusal::Overflow => crate::errors::StrategyError::Overflow,
+            Refusal::SwapThisSlot => crate::errors::StrategyError::SwapThisSlot,
         }
     }
 }
@@ -295,6 +302,35 @@ pub fn place(books: WallBooks, at: At) -> Result<(WallBooks, Placement), Refusal
             tip,
         },
     ))
+}
+
+/// `place_wall` as the instruction runs it in the Clock's `slot` at time `now`
+/// (docs/spec/pool4-for-solana.md, "`place_wall`", `POOL4-50`): refused with `SwapThisSlot`
+/// in a slot a swap already ran in (`slot` not later than the guard's `last_slot`);
+/// otherwise the floor is brought up to date as a swap's first update in the slot would
+/// (`Guard::open_floor`, which marks no slot), then `place` (steps 1 to 5) runs under that
+/// floor, whatever floor `at` holds. The floor is never above the last close, which is the
+/// price, since only a swap moves either, so the wall's top is the floor. Returns the books,
+/// what it did and the guard to store.
+pub fn place_in_slot(
+    books: WallBooks,
+    at: At,
+    guard: Guard,
+    slot: u64,
+    now: i64,
+) -> Result<(WallBooks, Placement, Guard), Refusal> {
+    if slot <= guard.last_slot {
+        return Err(Refusal::SwapThisSlot);
+    }
+    let guard = guard.open_floor(now).ok_or(Refusal::Overflow)?;
+    let (placed, placement) = place(
+        books,
+        At {
+            floor: guard.floor,
+            ..at
+        },
+    )?;
+    Ok((placed, placement, guard))
 }
 
 // Kani proofs of the wall, in the tiers Pipeline uses (see `opening.rs`). The tip needs no
@@ -458,7 +494,8 @@ mod tests {
     const AT: At = At {
         sqrt_price: PRICE,
         liquidity: 99_166_666_666,
-        // The sell left the floor at its own price (it dropped to it at once).
+        // `place_wall`, in a later slot than the sell, brings the floor down to the sell's
+        // price, the price that slot opened at (`POOL4-50`).
         floor: PRICE,
         fee_bps: 100,
     };
@@ -484,6 +521,55 @@ mod tests {
                 placement.closed_tokens
             ),
             (0, 0, 0)
+        );
+    }
+
+    /// The worked example's guard after the sell back: the floor crawled 60 seconds' worth
+    /// at the sell's slot's first update, above the sell's price, which is the last close.
+    const SOLD: Guard = Guard {
+        reference: 1_863_121_151_444_664_712,
+        ref_time: 4_660,
+        floor: 1_844_700_027_848_835_313,
+        floor_time: 4_660,
+        last_slot: 9_160,
+        last_close: PRICE,
+    };
+
+    #[test]
+    fn place_wall_waits_for_a_later_slot_and_places_under_the_floor_brought_up_to_date() {
+        // In the sell's slot: refused, before the threshold is looked at.
+        assert_eq!(
+            place_in_slot(BEFORE, AT, SOLD, SOLD.last_slot, 4_660),
+            Err(Refusal::SwapThisSlot)
+        );
+        let idle = WallBooks {
+            idle_sol: 0,
+            ..BEFORE
+        };
+        assert_eq!(
+            place_in_slot(idle, AT, SOLD, SOLD.last_slot, 4_660),
+            Err(Refusal::SwapThisSlot)
+        );
+        // From the next slot: the floor drops to the sell's price, whatever `at` held, and
+        // the worked example's numbers follow.
+        let stale = At {
+            floor: SOLD.floor,
+            ..AT
+        };
+        let (after, placement, guard) =
+            place_in_slot(BEFORE, stale, SOLD, SOLD.last_slot + 1, 4_660).unwrap();
+        assert_eq!((after, placement), place(BEFORE, AT).unwrap());
+        assert_eq!(
+            guard,
+            Guard {
+                floor: PRICE,
+                ..SOLD
+            }
+        );
+        // Below the threshold it is still refused there, and the guard is not written.
+        assert_eq!(
+            place_in_slot(idle, AT, SOLD, SOLD.last_slot + 1, 4_660),
+            Err(Refusal::BelowThreshold)
         );
     }
 
@@ -669,6 +755,7 @@ mod tests {
                     prop_assert!(books.idle_sol < WALL_THRESHOLD && spent < WALL_THRESHOLD);
                 }
                 Err(Refusal::Overflow) => prop_assert!(false, "a covered market never overflows"),
+                Err(Refusal::SwapThisSlot) => prop_assert!(false, "only place_in_slot reads the slot"),
                 Ok((after, placement)) => {
                     prop_assert!(books.idle_sol >= WALL_THRESHOLD || spent >= WALL_THRESHOLD);
                     prop_assert_eq!(placement.converted, spent);
@@ -690,6 +777,44 @@ mod tests {
                     let idle = sol(&after) - U256::mul(at.liquidity, at.sqrt_price).unwrap().checked_ceil_shr64().unwrap();
                     prop_assert!(after.wall_sol_placed as u128 <= idle);
                     prop_assert!(U256::mul(after.wall.liquidity + 1, after.wall.top).unwrap() > U256::times_q(idle));
+                }
+            }
+        }
+
+        /// `place_wall` in a slot (`POOL4-50`): refused with `SwapThisSlot` exactly when a
+        /// swap already ran in the slot, whatever else holds; otherwise it is `place` under
+        /// the floor brought up to date, which is never above the price (the last close) nor
+        /// the reference, so the wall's top is never above the price at placement nor that
+        /// floor, and only the floor and its clock change in the guard.
+        #[test]
+        fn place_wall_runs_only_in_a_slot_no_swap_has_run_in(
+            (books, at) in market(),
+            (reference_bps, floor_bps, floor_time, dt) in (0u128..=20_000, 0u128..=10_000, 0i64..1 << 40, -100i64..200_000),
+            (last_slot, slots) in (0u64..1 << 40, 0u64..3),
+        ) {
+            let s = at.sqrt_price;
+            // A guard as trading could leave it: the last close at the price, the floor at or
+            // below the reference, either side of the price.
+            let reference = (s + s / 10_000 * reference_bps).min(MAX_SQRT_PRICE);
+            let floor = (MIN_SQRT_PRICE + (reference - MIN_SQRT_PRICE) / 10_000 * floor_bps).max(MIN_SQRT_PRICE);
+            let guard = Guard { reference, ref_time: floor_time, floor, floor_time, last_slot, last_close: s };
+            let now = floor_time + dt;
+            let result = place_in_slot(books, at, guard, last_slot + slots, now);
+            if slots == 0 {
+                prop_assert_eq!(result, Err(Refusal::SwapThisSlot));
+            } else {
+                let opened = guard.open_floor(now).unwrap();
+                prop_assert!(opened.floor <= s && opened.floor <= reference);
+                prop_assert_eq!(opened, Guard { floor: opened.floor, floor_time: opened.floor_time, ..guard });
+                let expected = place(books, At { floor: opened.floor, ..at });
+                match (result, expected) {
+                    (Ok((after, placement, stored)), Ok((books_expected, placement_expected))) => {
+                        prop_assert_eq!((after, placement), (books_expected, placement_expected));
+                        prop_assert_eq!(stored, opened);
+                        prop_assert!(after.wall.top <= s && after.wall.top <= opened.floor);
+                    }
+                    (Err(refusal), Err(expected)) => prop_assert_eq!(refusal, expected),
+                    (result, expected) => prop_assert!(false, "{:?} against {:?}", result, expected),
                 }
             }
         }

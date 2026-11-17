@@ -85,4 +85,8 @@ pub enum StrategyError {
     NewRecipientRequired,
     #[msg("The recipient's token account belongs to someone else")]
     RecipientAccountNotTheirs,
+    #[msg(
+        "A swap or the seed already ran in this slot; the wall can be placed from the next slot"
+    )]
+    SwapThisSlot,
 }
