@@ -776,8 +776,9 @@ pub const PENDING_SEED_TOKENS: u64 = 1_000_000_000_000;
 pub const PENDING_SEED_LAMPORTS: u64 = 10 * crate::session::SOL;
 
 /// Seeds a market waiting for its seed, as its seeder would: funded with the gate's seed, the
-/// mint's authorities removed as a seed requires, in the replay only. The replay does not
-/// check signatures, so the seeder's own signature is not needed.
+/// mint's authorities removed and its transfer hook cleared as a seed requires (`POOL4-17`,
+/// `POOL4-48`), in the replay only. The replay does not check signatures, so the seeder's own
+/// signature is not needed.
 fn seed_pending(
     session: &mut Session,
     view: &MarketView,
@@ -788,6 +789,7 @@ fn seed_pending(
     let token = view.token_index();
     let (mint, program) = (view.mints[token], view.token_programs[token]);
     session.remove_mint_authorities(&mint)?;
+    session.clear_transfer_hook(&mint)?;
     pipeline_check::write_token_account(
         &mut session.svm,
         &mint,

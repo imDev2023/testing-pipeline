@@ -583,45 +583,8 @@ fn worked_example_walled_no_check(
     (market, trader)
 }
 
-/// A seedable Token-2022 token whose transfer hook is Pipeline's `test-hook`, approving only
-/// transfers from or to the token accounts of `allowed` wallets (none: every transfer).
-fn hooked_token(env: &mut Env, allowed: &[Pubkey]) -> Pubkey {
-    use pipeline_client::{AccountMeta, Instruction};
-    env.add_test_hook();
-    let mint = env.create_mint_with(
-        &TOKEN_2022,
-        6,
-        &[RealExtension::TransferHook {
-            program: TEST_HOOK_PROGRAM,
-        }],
-        false,
-    );
-    let validation = pipeline_check::hooks::validation_address(&TEST_HOOK_PROGRAM, &mint);
-    let whitelist =
-        Pubkey::find_program_address(&[b"whitelist", mint.as_ref()], &TEST_HOOK_PROGRAM).0;
-    let mut data = b"tsthkini".to_vec();
-    for owner in allowed {
-        data.extend_from_slice(
-            pipeline_client::pda::associated_token(owner, &mint, &TOKEN_2022).as_ref(),
-        );
-    }
-    let initialize = Instruction::new_with_bytes(
-        TEST_HOOK_PROGRAM,
-        &data,
-        vec![
-            AccountMeta::new(env.admin.pubkey(), true),
-            AccountMeta::new(validation, false),
-            AccountMeta::new(whitelist, false),
-            AccountMeta::new_readonly(mint, false),
-            AccountMeta::new_readonly(pipeline_client::SYSTEM_PROGRAM_ID, false),
-        ],
-    );
-    env.send(&[initialize], &[]).unwrap();
-    env.revoke_authorities(&mint, &TOKEN_2022);
-    mint
-}
-
-/// A hooked token's market, traded and walled as the worked example's is, then settled.
+/// A market of a token whose transfer hook was cleared (`POOL4-48`), traded and walled as
+/// the worked example's is, then settled.
 fn hooked_owing(
     env: &mut Env,
     token: Pubkey,
@@ -651,15 +614,20 @@ fn hooked_owing(
     market
 }
 
+/// A token carries a transfer hook into a market only once the hook is cleared
+/// (`POOL4-48`; the seed's refusal of a live one is `sos_h001_*` in tests/seed.rs), so no
+/// hook can refuse a payout any more and the earlier test of a recipient a hook refused is
+/// gone; the recipient accounts that can still refuse one are those of
+/// `a_missing_closed_or_reassigned_recipient_account_blocks_nothing_else`.
 #[test]
-fn a_token_with_a_transfer_hook_goes_through_the_seed_swaps_and_pay_rewards() {
+fn a_token_whose_transfer_hook_was_cleared_goes_through_the_seed_swaps_and_pay_rewards() {
     let mut env = Env::new();
-    let token = hooked_token(&mut env, &[]);
+    let token = env.seedable_hooked_token();
     let (fee_recipient, rewards_recipient) = (wallet(&mut env), wallet(&mut env));
     let params = params_with(&env, fee_recipient.pubkey(), rewards_recipient.pubkey());
     let trader = wallet(&mut env);
     let market = hooked_owing(&mut env, token, &params, &trader);
-    // Without the hook's accounts the payout is refused, and nothing changes.
+    // No hook accounts are needed, and no hook is called.
     let payer = wallet(&mut env);
     let ix = pay_rewards_ix(
         &market,
@@ -667,14 +635,11 @@ fn a_token_with_a_transfer_hook_goes_through_the_seed_swaps_and_pay_rewards() {
         &rewards_recipient.pubkey(),
         vec![],
     );
-    assert_fails(env.send(&[ix], &[&payer]));
-    assert_eq!(env.state(&market).rewards_owed(), 1_250_000_001);
-    // With them, it goes through the hook.
-    let logs = pay_rewards(&mut env, &market, &payer, &rewards_recipient.pubkey()).unwrap();
+    let (_, logs) = env.send_logged(&[ix], &[&payer]).unwrap();
+    let hook = format!("Program {TEST_HOOK_PROGRAM} invoke");
     assert!(
-        logs.iter()
-            .any(|line| line.starts_with(&format!("Program {TEST_HOOK_PROGRAM} invoke"))),
-        "the payout went through the token's hook"
+        !logs.iter().any(|line| line.starts_with(&hook)),
+        "no hook ran"
     );
     assert_eq!(
         held(&env, &rewards_recipient.pubkey(), &token, &TOKEN_2022),
@@ -682,63 +647,6 @@ fn a_token_with_a_transfer_hook_goes_through_the_seed_swaps_and_pay_rewards() {
     );
     assert_eq!(env.state(&market).rewards_owed(), 0);
     assert_books(&env, &market);
-}
-
-#[test]
-fn a_rewards_recipient_refused_by_the_hook_blocks_nothing_else() {
-    use buy_wall_amm::errors::StrategyError;
-    let mut env = Env::new();
-    // The hook approves only the seeder's, the trader's and the keeper's accounts, and a
-    // second wallet the rewards role can be handed to: not the rewards recipient's.
-    let (fee_recipient, rewards_recipient, trader) =
-        (wallet(&mut env), wallet(&mut env), wallet(&mut env));
-    let fallback = wallet(&mut env);
-    let admin = env.admin.pubkey();
-    let token = hooked_token(&mut env, &[admin, trader.pubkey(), fallback.pubkey()]);
-    let params = params_with(&env, fee_recipient.pubkey(), rewards_recipient.pubkey());
-    let market = hooked_owing(&mut env, token, &params, &trader);
-
-    let payer = wallet(&mut env);
-    let refused = pay_rewards(&mut env, &market, &payer, &rewards_recipient.pubkey());
-    let message = refused.expect_err("the hook refuses the payout");
-    assert!(
-        message.contains("Custom(32343)"),
-        "the test hook's refusal: {message}"
-    );
-    assert_eq!(
-        env.state(&market).rewards_owed(),
-        1_250_000_001,
-        "the rewards wait"
-    );
-
-    // Trading, `place_wall`, `settle` and every fee slot go on regardless.
-    later(&mut env, 60);
-    let bought = swap(&mut env, &market, &trader, BUY, SOL);
-    later(&mut env, 60);
-    swap(&mut env, &market, &trader, SELL, bought);
-    let keeper = env.keeper();
-    let _ = env.place_wall(&market, &keeper);
-    env.send(&[settle_ix(&market)], &[]).unwrap();
-    sweep(&mut env, &market, &payer, &fee_recipient.pubkey(), 0).unwrap();
-    let suite = buy_wall_amm::config::SUITE_TREASURY.to_bytes().into();
-    sweep(&mut env, &market, &payer, &suite, 2).unwrap();
-    assert_books(&env, &market);
-
-    // The recipient hands the role to a wallet the hook approves, and the rewards follow.
-    let owed = env.state(&market).rewards_owed();
-    let ix = handover_ix(
-        &market,
-        true,
-        &rewards_recipient.pubkey(),
-        &fallback.pubkey(),
-    );
-    env.send(&[ix], &[&rewards_recipient]).unwrap();
-    pay_rewards(&mut env, &market, &payer, &fallback.pubkey()).unwrap();
-    assert_eq!(held(&env, &fallback.pubkey(), &token, &TOKEN_2022), owed);
-    assert_refused(
-        pay_rewards(&mut env, &market, &payer, &fallback.pubkey()),
-        StrategyError::NothingOwed,
-    );
 }
 
 /// Hands `account`'s ownership to `new_owner` (SPL Token allows it for any account, an

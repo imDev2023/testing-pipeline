@@ -1308,6 +1308,11 @@
       "code": 6038,
       "name": "RecipientAccountNotTheirs",
       "msg": "The recipient's token account belongs to someone else"
+    },
+    {
+      "code": 6039,
+      "name": "TransferHookLive",
+      "msg": "The token's transfer hook program and authority must both be removed before the seed"
     }
   ],
   "types": [

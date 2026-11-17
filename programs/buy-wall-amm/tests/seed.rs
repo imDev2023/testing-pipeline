@@ -299,6 +299,107 @@ fn a_seed_is_refused_while_the_mint_or_freeze_authority_is_live() {
     env.send(&[ix], &[&seeder]).unwrap();
 }
 
+/// A created market of `token`, a Token-2022 token, whose seeder is the admin, funded
+/// with the worked example's seed; and the seed itself, with the token's transfer-hook
+/// accounts as they are now.
+fn created_hooked(env: &mut Env, token: Pubkey) -> (Market, pipeline_client::Instruction) {
+    let admin = env.admin.pubkey();
+    let market = env
+        .create_market(token, TOKEN_2022, &worked_example_params(admin))
+        .unwrap();
+    env.fund(&admin, &token, &TOKEN_2022, TOKENS, LAMPORTS);
+    let hooks = env.hook_accounts(
+        &token,
+        pda::associated_token(&admin, &token, &TOKEN_2022),
+        market.token_vault,
+        admin,
+    );
+    let ix = seed_ix(&market, &admin, TOKENS, LAMPORTS, hooks);
+    (market, ix)
+}
+
+/// Finding H001 (`POOL4-48`): whoever can still set a token's transfer hook could, once
+/// holders have bought, make it refuse every sell but its own and sell into the curve and
+/// the wall, so the seed refuses a token whose hook program or hook authority is still set,
+/// as it refuses a live mint or freeze authority, and nothing moves.
+#[test]
+fn sos_h001_a_seed_is_refused_while_the_tokens_transfer_hook_is_live() {
+    for (what, clear_program, clear_authority) in [
+        ("program and authority set", false, false),
+        ("authority removed, program still set", false, true),
+        ("program removed, authority still set", true, false),
+    ] {
+        let mut env = Env::new();
+        let token = env.hooked_token();
+        env.clear_transfer_hook(&token, clear_program, clear_authority);
+        let (market, ix) = created_hooked(&mut env, token);
+        let refused = env.send(&[ix], &[]);
+        println!("{what}: {refused:?}");
+        assert_refused(refused, TransferHookLive);
+        assert_eq!(env.state(&market).status, 1, "{what}: still waiting");
+        assert_eq!(env.balance(&market.token_vault), 0, "{what}");
+        assert_eq!(env.balance(&market.sol_vault), 0, "{what}");
+
+        // Clearing what is left of the hook lets the same seed through, when the hook
+        // authority is still there to clear the program; without it the program stays set
+        // for good and the token can never be seeded.
+        if clear_authority {
+            continue;
+        }
+        env.clear_transfer_hook(&token, !clear_program, true);
+        let ix = seed_ix(&market, &env.admin.pubkey(), TOKENS, LAMPORTS, vec![]);
+        env.send(&[ix], &[]).unwrap();
+        assert_eq!(env.state(&market).status, STATUS_OPEN, "{what}");
+        assert_eq!(env.balance(&market.token_vault), TOKENS, "{what}");
+    }
+}
+
+/// Finding H001 (`POOL4-48`): a token whose transfer hook was cleared, both its program and
+/// its authority unset, as a contained token's is after its unlock, seeds and trades as any
+/// Token-2022 token does, with no hook accounts and no hook called.
+#[test]
+fn sos_h001_a_token_whose_transfer_hook_was_cleared_seeds_and_trades() {
+    let mut env = Env::new();
+    let token = env.seedable_hooked_token();
+    assert_eq!(env.hook_program(&token), None);
+    let admin = env.admin.pubkey();
+    let (market, logs) = env
+        .create_and_seed(
+            token,
+            TOKEN_2022,
+            &worked_example_params(admin),
+            TOKENS,
+            LAMPORTS,
+        )
+        .unwrap();
+    let state = env.state(&market);
+    assert_eq!(state.status, STATUS_OPEN);
+    assert_eq!(state.sqrt_price(), 1_844_674_407_370_955_161);
+    let trader = env.trader(&market, 1_000_000_000, 2 * SOL);
+    env.set_clock(5_000, 1_800_003_600);
+    let bought = env
+        .swap(
+            &market,
+            &trader,
+            (1, 0),
+            pipeline_client::TradeMode::ExactIn,
+            SOL,
+        )
+        .unwrap();
+    let sold = env
+        .swap(
+            &market,
+            &trader,
+            (0, 1),
+            pipeline_client::TradeMode::ExactIn,
+            bought.received,
+        )
+        .unwrap();
+    assert!(bought.received > 0 && sold.received > 0);
+    let hook = format!("Program {TEST_HOOK_PROGRAM} invoke");
+    assert!(!logs.iter().any(|line| line.starts_with(&hook)));
+}
+
 #[test]
 fn each_seed_bound_is_refused_on_the_wrong_side() {
     let mut env = Env::new();

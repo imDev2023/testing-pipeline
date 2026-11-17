@@ -451,8 +451,10 @@ fn quotes_and_swaps_are_refused_before_the_seed() {
     }
 }
 
+/// A token reaches a market with a transfer hook only once the hook is cleared
+/// (`POOL4-48`), so it trades as any Token-2022 token does, with no hook accounts.
 #[test]
-fn a_token_with_a_transfer_hook_is_bought_and_sold_through_the_router() {
+fn a_token_whose_transfer_hook_was_cleared_is_bought_and_sold_through_the_router() {
     let mut env = Env::new();
     let token = env.seedable_hooked_token();
     let market = env
@@ -474,19 +476,12 @@ fn a_token_with_a_transfer_hook_is_bought_and_sold_through_the_router() {
     assert_eq!(sold.received, quote.amount_out);
     assert_eq!(sold.received, 980_099_999);
     assert_vaults_match_ledgers(&env, &market);
-
-    // Without the hook's accounts, the buy's transfer out of the vault fails.
-    let mut ix = env.swap_ix(&market, &trader.pubkey(), BUY, TradeMode::ExactIn, SOL, 0);
-    ix.accounts.truncate(
-        ix.accounts.len()
-            - env
-                .hook_accounts(
-                    &token,
-                    market.token_vault,
-                    Pubkey::default(),
-                    market.vault_authority,
-                )
-                .len(),
+    // The swaps carried no hook accounts: the cleared hook has none.
+    let hooks = env.hook_accounts(
+        &token,
+        market.token_vault,
+        Pubkey::default(),
+        market.vault_authority,
     );
-    assert_fails(env.send(&[ix], &[&trader]));
+    assert!(hooks.is_empty());
 }

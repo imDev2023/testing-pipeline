@@ -85,4 +85,6 @@ pub enum StrategyError {
     NewRecipientRequired,
     #[msg("The recipient's token account belongs to someone else")]
     RecipientAccountNotTheirs,
+    #[msg("The token's transfer hook program and authority must both be removed before the seed")]
+    TransferHookLive,
 }

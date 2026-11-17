@@ -3585,11 +3585,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-17: Mint rules
 
 - Question: Which tokens may a buy wall market hold?
-- Answer: The token against wrapped SOL only, with the token's mint and freeze authorities removed by the time of the seed and only the tax AMM's allowlist of Token-2022 extensions.
-- Alternatives: Allowing mint and freeze authorities, as the tax AMM does; other quote mints.
+- Answer: The token against wrapped SOL only, with the token's mint and freeze authorities removed and any transfer hook cleared by the time of the seed (the hook as `POOL4-48` says), and only the tax AMM's allowlist of Token-2022 extensions.
+- Alternatives: The earlier default, the same with any transfer hook accepted whatever its program and authority; allowing mint and freeze authorities, as the tax AMM does; other quote mints.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Mint rules](spec/pool4-for-solana.md#mint-rules)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20)
 
 ### POOL4-18: Mainnet upgrade policy
@@ -3891,6 +3891,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-48: A transfer hook at the seed
+
+- Question: May a buy wall market be seeded with a Token-2022 token whose transfer hook can still change or refuse transfers, when whoever controls the hook could make it refuse every sell but their own once holders have bought and then sell into the curve and the buy wall?
+- Answer: No: both seeding paths refuse with `TransferHookLive` a token whose transfer hook extension still names a hook program or a hook authority, so a hooked token is seeded only with both unset (all 64 bytes of the extension zero), the state a contained token reaches after its unlock, and a token without the extension is unaffected.
+- Alternatives: Requiring only the hook authority removed, which leaves a hook program that can be upgraded or that reads an admin account of its own; accepting any hook and disclosing the risk, the earlier rule, under which a live hook could turn a market into a honeypot.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Mint rules](spec/pool4-for-solana.md#mint-rules)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ## Lending AMM (LENDING)
 

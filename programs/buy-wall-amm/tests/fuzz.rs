@@ -1,6 +1,8 @@
 //! Stateful invariant fuzzing (docs/spec/README.md, "Test layers" 3): Proptest generates
-//! sequences of the instructions built so far (creation with any parameters, the seed by
-//! the seeder or anyone else with any amounts, a launchpad's graduation through
+//! sequences of the instructions built so far (creation with any parameters, of a token
+//! with or without a transfer hook in any state, the seed by the seeder or anyone else with
+//! any amounts, which opens a market exactly when its own rules and the token's cleared or
+//! absent hook allow (`POOL4-48`), a launchpad's graduation through
 //! `pipeline_seed_liquidity` with any parameters and amounts, donations to the vaults, buys
 //! and sells through the router, `place_wall` by a keeper or by a trader, a buy sold
 //! straight back with or without `place_wall` in between, by a stranger, the fee recipient
@@ -84,9 +86,13 @@ use solana_signer::Signer;
 
 #[derive(Clone, Debug)]
 enum Step {
-    /// Create a market; `valid` picks parameters that pass, otherwise any parameters.
+    /// Create a market; `valid` picks parameters that pass, otherwise any parameters. A
+    /// Token-2022 token may carry a transfer hook (Pipeline's `test-hook`, its authority the
+    /// admin), `Some((clear_program, clear_authority))` saying which of its two fields were
+    /// cleared before the market was created.
     Create {
         token_2022: bool,
+        hook: Option<(bool, bool)>,
         valid: bool,
         fee_bps: u16,
         wall_split_bps: u16,
@@ -250,9 +256,9 @@ fn role() -> impl Strategy<Value = Role> {
 
 fn step() -> impl Strategy<Value = Step> {
     prop_oneof![
-        2 => (any::<bool>(), prop::bool::weighted(0.8), 0..400u16, 0..10_500u16, 0..3_500u16, 0..10_500u16, 0..10_500u16)
-            .prop_map(|(token_2022, valid, fee_bps, wall_split_bps, reward_share_bps, cap_floor_bps, cap_decay_bps)| {
-                Step::Create { token_2022, valid, fee_bps, wall_split_bps, reward_share_bps, cap_floor_bps, cap_decay_bps }
+        2 => (any::<bool>(), prop::option::weighted(0.4, (any::<bool>(), any::<bool>())), prop::bool::weighted(0.8), 0..400u16, 0..10_500u16, 0..3_500u16, 0..10_500u16, 0..10_500u16)
+            .prop_map(|(token_2022, hook, valid, fee_bps, wall_split_bps, reward_share_bps, cap_floor_bps, cap_decay_bps)| {
+                Step::Create { token_2022, hook, valid, fee_bps, wall_split_bps, reward_share_bps, cap_floor_bps, cap_decay_bps }
             }),
         1 => ((any::<bool>(), prop::bool::weighted(0.8), 0..400u16, 0..10_500u16, 0..3_500u16, 0..10_500u16, 0..10_500u16), seed_tokens(), seed_lamports())
             .prop_map(|((token_2022, valid, fee_bps, wall_split_bps, reward_share_bps, cap_floor_bps, cap_decay_bps), tokens, lamports)| {
@@ -324,6 +330,9 @@ fn seed_lamports() -> impl Strategy<Value = u64> {
 struct Tracked {
     market: Market,
     seeder: Keypair,
+    /// Whether the token's transfer hook still has its program or its authority set, so the
+    /// seed must refuse it (`POOL4-48`).
+    hook_live: bool,
     /// The market state when last checked, to compare with after the next step.
     last: MarketState,
     /// The floor the placed wall was placed under.
@@ -356,6 +365,7 @@ impl Tracked {
         Tracked {
             market,
             seeder,
+            hook_live: false,
             last,
             placed_under: None,
             dust_tokens: 0,
@@ -473,6 +483,7 @@ impl World {
         match *step {
             Step::Create {
                 token_2022,
+                hook,
                 valid,
                 fee_bps,
                 wall_split_bps,
@@ -481,7 +492,17 @@ impl World {
                 cap_decay_bps,
             } => {
                 let program = if token_2022 { TOKEN_2022 } else { TOKEN };
-                let token = self.env.seedable_token(&program);
+                let hook = hook.filter(|_| token_2022);
+                let token = match hook {
+                    Some((clear_program, clear_authority)) => {
+                        let token = self.env.hooked_token();
+                        self.env
+                            .clear_transfer_hook(&token, clear_program, clear_authority);
+                        token
+                    }
+                    None => self.env.seedable_token(&program),
+                };
+                let hook_live = hook.is_some_and(|cleared| cleared != (true, true));
                 common::payouts::set_supply(&mut self.env, &token, SUPPLY);
                 let seeder = Keypair::new();
                 self.env.svm.airdrop(&seeder.pubkey(), SOL).unwrap();
@@ -506,8 +527,9 @@ impl World {
                 if let Ok(market) = result {
                     let last = self.env.state(&market);
                     assert_eq!(last.status, STATUS_CREATED);
-                    self.markets
-                        .push(Tracked::new(market, seeder, last, recipients));
+                    let mut tracked = Tracked::new(market, seeder, last, recipients);
+                    tracked.hook_live = hook_live;
+                    self.markets.push(tracked);
                 }
             }
             Step::Seed {
@@ -519,6 +541,7 @@ impl World {
                 let Some(i) = self.pick(market) else { return };
                 let tracked = &self.markets[i];
                 let (m, seeder_key) = (tracked.market.clone(), tracked.seeder.pubkey());
+                let hook_live = tracked.hook_live;
                 let signer = if by_seeder {
                     tracked.seeder.insecure_clone()
                 } else {
@@ -539,12 +562,19 @@ impl World {
                 let should_open = by_seeder
                     && signer.pubkey() == seeder_key
                     && before.status == STATUS_CREATED
+                    && !hook_live
                     && expected.is_ok();
                 assert_eq!(
                     result.is_ok(),
                     should_open,
                     "seed {tokens}/{lamports}: {result:?}"
                 );
+                // The seeder's seed of a created market whose token's hook is live is refused
+                // for the hook, before anything moves.
+                if by_seeder && before.status == STATUS_CREATED && hook_live {
+                    common::assert_refused(result, StrategyError::TransferHookLive);
+                    assert_eq!(self.env.state(&m).status, STATUS_CREATED);
+                }
                 if let Ok(opened) = expected {
                     if should_open {
                         let after = self.env.state(&m);
@@ -635,7 +665,7 @@ impl World {
                 };
                 self.give(&donor.pubkey(), &mint, &program, amount);
                 let from = pda::associated_token(&donor.pubkey(), &mint, &program);
-                let ix = spl_token_2022_interface::instruction::transfer_checked(
+                let mut ix = spl_token_2022_interface::instruction::transfer_checked(
                     &program,
                     &from,
                     &mint,
@@ -646,6 +676,10 @@ impl World {
                     if sol { 9 } else { 6 },
                 )
                 .unwrap();
+                // A token whose hook is still live (a market its seed refused) needs the
+                // hook's accounts, as any transfer of it does.
+                ix.accounts
+                    .extend(self.env.hook_accounts(&mint, from, vault, donor.pubkey()));
                 self.env.send(&[ix], &[&donor]).unwrap();
             }
             Step::Trade {
@@ -1760,6 +1794,7 @@ fn replay(steps: &[Step]) {
     // Always start with a seeded market, so the other steps have something to trade.
     world.apply(&Step::Create {
         token_2022: false,
+        hook: None,
         valid: true,
         fee_bps: 75,
         wall_split_bps: 5_000,

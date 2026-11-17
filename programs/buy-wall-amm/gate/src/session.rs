@@ -183,6 +183,35 @@ impl Session {
             .map_err(|e| e.to_string())
     }
 
+    /// Clears a Token-2022 mint's transfer hook, its program and its authority, in the
+    /// replay only, as a seed requires (`POOL4-48`); a mint without one is left as it is.
+    pub fn clear_transfer_hook(&mut self, mint: &Pubkey) -> Result<(), String> {
+        use spl_token_2022_interface::extension::{
+            BaseStateWithExtensionsMut, StateWithExtensionsMut,
+        };
+        let mut account = self
+            .svm
+            .get_account(mint)
+            .ok_or_else(|| format!("the mint {mint} is missing"))?;
+        if account.owner != TOKEN_2022 {
+            return Ok(());
+        }
+        {
+            let mut state =
+                StateWithExtensionsMut::<spl_token_2022_interface::state::Mint>::unpack(
+                    &mut account.data,
+                )
+                .map_err(|e| format!("the mint {mint}: {e}"))?;
+            match state.get_extension_mut::<transfer_hook::TransferHook>() {
+                Ok(hook) => *hook = transfer_hook::TransferHook::default(),
+                Err(_) => return Ok(()),
+            }
+        }
+        self.svm
+            .set_account(*mint, account)
+            .map_err(|e| e.to_string())
+    }
+
     /// Adds `amount` to a mint's supply, in the replay only, for tokens written into an
     /// account rather than minted.
     pub fn add_supply(&mut self, mint: &Pubkey, amount: u64) -> Result<(), String> {

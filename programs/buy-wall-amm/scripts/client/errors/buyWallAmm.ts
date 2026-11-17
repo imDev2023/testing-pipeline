@@ -93,6 +93,8 @@ export const BUY_WALL_AMM_ERROR__NOT_RECIPIENT = 0x1794; // 6036
 export const BUY_WALL_AMM_ERROR__NEW_RECIPIENT_REQUIRED = 0x1795; // 6037
 /** RecipientAccountNotTheirs: The recipient's token account belongs to someone else */
 export const BUY_WALL_AMM_ERROR__RECIPIENT_ACCOUNT_NOT_THEIRS = 0x1796; // 6038
+/** TransferHookLive: The token's transfer hook program and authority must both be removed before the seed */
+export const BUY_WALL_AMM_ERROR__TRANSFER_HOOK_LIVE = 0x1797; // 6039
 
 export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__ALREADY_SEEDED
@@ -129,6 +131,7 @@ export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__SEEDER_REQUIRED
   | typeof BUY_WALL_AMM_ERROR__SEED_TOO_SMALL
   | typeof BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE
+  | typeof BUY_WALL_AMM_ERROR__TRANSFER_HOOK_LIVE
   | typeof BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD
   | typeof BUY_WALL_AMM_ERROR__WALL_SPLIT_OUT_OF_RANGE
   | typeof BUY_WALL_AMM_ERROR__WRONG_ACCOUNT
@@ -172,6 +175,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [BUY_WALL_AMM_ERROR__SEEDER_REQUIRED]: `The seeder must not be the default key`,
     [BUY_WALL_AMM_ERROR__SEED_TOO_SMALL]: `The seed must bring at least MIN_SEED_LAMPORTS`,
     [BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE]: `Trading is not available in this build`,
+    [BUY_WALL_AMM_ERROR__TRANSFER_HOOK_LIVE]: `The token's transfer hook program and authority must both be removed before the seed`,
     [BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD]: `Neither idle SOL nor the SOL the wall has spent reaches WALL_THRESHOLD`,
     [BUY_WALL_AMM_ERROR__WALL_SPLIT_OUT_OF_RANGE]: `The wall split must be at most 10,000 basis points`,
     [BUY_WALL_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,

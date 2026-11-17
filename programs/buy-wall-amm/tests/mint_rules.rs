@@ -100,7 +100,8 @@ fn every_allowlisted_extension_is_accepted() {
     let mut env = Env::new();
     let seeder = env.admin.pubkey();
     // A transfer hook set up with Token-2022's own instructions, naming Pipeline's
-    // `test-hook`.
+    // `test-hook`: accepted at creation, while the seed refuses it until the hook is cleared
+    // (`POOL4-48`, tests/seed.rs).
     let hooked = env.create_mint_with(
         &TOKEN_2022,
         6,
