@@ -119,6 +119,8 @@ export const LENDING_AMM_ERROR__REBALANCE_NOT_ALONE = 0x17a1; // 6049
 export const LENDING_AMM_ERROR__BAD_SEED_AMOUNTS = 0x17a2; // 6050
 /** ReserveStale: The Kamino reserve's stored rate is too old to value the market's cTokens: put klend's refresh_reserve first in the same transaction */
 export const LENDING_AMM_ERROR__RESERVE_STALE = 0x17a3; // 6051
+/** ReserveWrongVersion: The Kamino reserve's version is one this program was not written for: quotes, swaps, adding and rebalance are refused, and removal is in kind only */
+export const LENDING_AMM_ERROR__RESERVE_WRONG_VERSION = 0x17a4; // 6052
 
 export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__BAD_INIT_DATA
@@ -162,6 +164,7 @@ export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_LENDING_MARKET
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_LIQUIDITY_MINT
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_SIZE
+  | typeof LENDING_AMM_ERROR__RESERVE_WRONG_VERSION
   | typeof LENDING_AMM_ERROR__WITHIN_BAND
   | typeof LENDING_AMM_ERROR__WOULD_EMPTY_SIDE
   | typeof LENDING_AMM_ERROR__WRONG_ACCOUNT
@@ -218,6 +221,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__RESERVE_WRONG_LENDING_MARKET]: `The Kamino reserve belongs to another lending market`,
     [LENDING_AMM_ERROR__RESERVE_WRONG_LIQUIDITY_MINT]: `The Kamino reserve lends another mint`,
     [LENDING_AMM_ERROR__RESERVE_WRONG_SIZE]: `The Kamino reserve does not have a reserve's size`,
+    [LENDING_AMM_ERROR__RESERVE_WRONG_VERSION]: `The Kamino reserve's version is one this program was not written for: quotes, swaps, adding and rebalance are refused, and removal is in kind only`,
     [LENDING_AMM_ERROR__WITHIN_BAND]: `The buffer's share of the lent side is inside its band: there is nothing to rebalance`,
     [LENDING_AMM_ERROR__WOULD_EMPTY_SIDE]: `The trade would pay out a side's whole reserve`,
     [LENDING_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,

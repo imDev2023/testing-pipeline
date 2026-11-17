@@ -998,6 +998,150 @@
       "args": []
     },
     {
+      "name": "remove_lent_side",
+      "docs": [
+        "Burns `lp` of the LP's shares for their part of the buffer, in the lent mint, and of the",
+        "cTokens, in kind, leaving the other side's part to the LPs who stay: the way out when the",
+        "other mint's freeze authority or transfer hook stops `remove_liquidity`."
+      ],
+      "discriminator": [
+        167,
+        127,
+        36,
+        38,
+        141,
+        236,
+        21,
+        205
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "docs": [
+            "The LP, who pays for their cToken account if it is missing."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "lp_mint",
+          "writable": true,
+          "relations": [
+            "market_state"
+          ]
+        },
+        {
+          "name": "lp_shares",
+          "docs": [
+            "The token account of the LP mint the shares are burned from, which the LP owns."
+          ],
+          "writable": true
+        },
+        {
+          "name": "lp_token_0",
+          "docs": [
+            "program checks it."
+          ],
+          "writable": true
+        },
+        {
+          "name": "lp_token_1",
+          "writable": true
+        },
+        {
+          "name": "vault_0",
+          "writable": true
+        },
+        {
+          "name": "vault_1",
+          "writable": true
+        },
+        {
+          "name": "mint_0"
+        },
+        {
+          "name": "mint_1"
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctoken_account",
+          "writable": true
+        },
+        {
+          "name": "collateral_mint",
+          "docs": [
+            "The reserve's collateral (cToken) mint, which the market recorded."
+          ]
+        },
+        {
+          "name": "lp_ctoken",
+          "docs": [
+            "and created at the LP's expense if missing."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program_0"
+        },
+        {
+          "name": "token_program_1"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "SPL Token, the program of the LP mint, the lent mint and the cToken mint."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "lp",
+          "type": "u64"
+        },
+        {
+          "name": "min_lent",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "remove_liquidity",
       "docs": [
         "Burns `lp` of the LP's shares for their part of the other side, the buffer and the",
@@ -1205,6 +1349,19 @@
     }
   ],
   "events": [
+    {
+      "name": "LentSideRemoved",
+      "discriminator": [
+        119,
+        163,
+        51,
+        136,
+        154,
+        170,
+        199,
+        78
+      ]
+    },
     {
       "name": "LiquidityAdded",
       "discriminator": [
@@ -1583,6 +1740,11 @@
       "code": 6051,
       "name": "ReserveStale",
       "msg": "The Kamino reserve's stored rate is too old to value the market's cTokens: put klend's refresh_reserve first in the same transaction"
+    },
+    {
+      "code": 6052,
+      "name": "ReserveWrongVersion",
+      "msg": "The Kamino reserve's version is one this program was not written for: quotes, swaps, adding and rebalance are refused, and removal is in kind only"
     }
   ],
   "types": [
@@ -1784,6 +1946,61 @@
                 256
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "LentSideRemoved",
+      "docs": [
+        "An LP left with the lent side alone through `remove_lent_side`, giving up the other side's",
+        "part to the LPs who stay (docs/spec/lending-pool.md, \"Removing\")."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "The LP shares burned."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "share_count",
+            "docs": [
+              "The market's share count after the removal, the locked minimum included."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "lent",
+            "docs": [
+              "The buffer's part, paid in the lent mint."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ctokens",
+            "docs": [
+              "The cTokens' part, paid as cTokens."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "other_left",
+            "docs": [
+              "The other side's part, `R x lp / N`, left in the market for the LPs who stay."
+            ],
+            "type": "u64"
           }
         ]
       }
