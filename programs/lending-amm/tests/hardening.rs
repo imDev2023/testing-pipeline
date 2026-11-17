@@ -466,43 +466,57 @@ fn sos_h004_one_reading_of_kamino_cannot_take_a_market_out_of_withdraw_mode() {
 #[test]
 fn sos_r2_04_a_wait_to_leave_withdraw_mode_does_not_outlast_a_kamino_emergency() {
     // A sighting recorded before Kamino stopped redeems must not let the market leave at the
-    // first reading after the emergency, with no honest reading possible during it.
+    // first reading after the emergency, with no honest reading possible during it; under the
+    // lending market's emergency mode klend refuses a refresh, so the keeper sends `rebalance`
+    // alone, as here (finding R2F-02).
     use common::states::KaminoState;
     use lending_amm::config::{
         WITHDRAW_MODE_ENTER, WITHDRAW_MODE_EXIT, WITHDRAW_MODE_EXIT_DELAY_SLOTS as DELAY,
     };
-    let lent = 0;
-    let mut env = Env::new();
-    env.load_klend();
-    let spec = lent_spec(&mut env, lent, 30);
-    let (market, _) = env
-        .create_funded_market(&spec, [OTHER, units(lent, 50)])
-        .unwrap();
-    env.rebalance(&market, None).unwrap();
-    let exposure = env.exposure(&market);
-    env.set_free_liquidity(&market, WITHDRAW_MODE_ENTER * exposure - 1);
-    env.rebalance(&market, None).unwrap();
-    env.set_free_liquidity(&market, WITHDRAW_MODE_EXIT * env.exposure(&market) + 1);
-    env.rebalance(&market, None).unwrap();
-    assert!(env.market_state(&market.market_state).exit_seen_slot > 0);
+    use lending_amm::kamino::{lending_market_offsets, offsets};
+    for emergency in [
+        KaminoState::ReserveEmergencyMode,
+        KaminoState::MarketEmergencyMode,
+    ] {
+        let lent = 0;
+        let mut env = Env::new();
+        env.load_klend();
+        let spec = lent_spec(&mut env, lent, 30);
+        let (market, _) = env
+            .create_funded_market(&spec, [OTHER, units(lent, 50)])
+            .unwrap();
+        env.rebalance(&market, None).unwrap();
+        let exposure = env.exposure(&market);
+        env.set_free_liquidity(&market, WITHDRAW_MODE_ENTER * exposure - 1);
+        env.rebalance(&market, None).unwrap();
+        env.set_free_liquidity(&market, WITHDRAW_MODE_EXIT * env.exposure(&market) + 1);
+        env.rebalance(&market, None).unwrap();
+        assert!(env.market_state(&market.market_state).exit_seen_slot > 0);
 
-    // In emergency mode `rebalance` refuses, except that it forgets the wait.
-    env.set_kamino_state(&market, KaminoState::ReserveEmergencyMode);
-    env.rebalance(&market, None).unwrap();
-    let state = env.market_state(&market.market_state);
-    assert!(state.withdraw_mode);
-    assert_eq!(state.exit_seen_slot, 0);
-    assert_refused(env.rebalance(&market, None), StrategyError::KaminoStopped);
+        // In emergency mode `rebalance` refuses, except that it forgets the wait.
+        env.set_kamino_state(&market, emergency);
+        env.rebalance(&market, None).unwrap();
+        let state = env.market_state(&market.market_state);
+        assert!(state.withdraw_mode);
+        assert_eq!(state.exit_seen_slot, 0, "{emergency:?}");
+        assert_refused(env.rebalance(&market, None), StrategyError::KaminoStopped);
 
-    // After it, an hour on, the first reading above the threshold starts a new wait.
-    let reserve = env.reserve_of(&market);
-    env.patch(&reserve, lending_amm::kamino::offsets::EMERGENCY_MODE, &[0]);
-    env.advance_clock(DELAY, (DELAY * 2 / 5) as i64);
-    env.rebalance(&market, None).unwrap();
-    let state = env.market_state(&market.market_state);
-    assert!(
-        state.withdraw_mode,
-        "left withdraw mode at the first reading after the emergency"
-    );
-    assert_eq!(state.exit_seen_slot, env.clock().slot);
+        // After it, an hour on, the first reading above the threshold starts a new wait.
+        let reserve = env.reserve_of(&market);
+        env.patch(&reserve, offsets::EMERGENCY_MODE, &[0]);
+        let lending_market = env.kamino.address("lending-market");
+        env.patch(
+            &lending_market,
+            lending_market_offsets::EMERGENCY_MODE,
+            &[0],
+        );
+        env.advance_clock(DELAY, (DELAY * 2 / 5) as i64);
+        env.rebalance(&market, None).unwrap();
+        let state = env.market_state(&market.market_state);
+        assert!(
+            state.withdraw_mode,
+            "{emergency:?}: left withdraw mode at the first reading after the emergency"
+        );
+        assert_eq!(state.exit_seen_slot, env.clock().slot);
+    }
 }
