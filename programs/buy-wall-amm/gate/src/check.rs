@@ -20,6 +20,15 @@
 //! snapshot, so a candidate that narrows a rule cannot drop that job from its own test.
 //! A market the router never recorded is registered first, and a missing router fee account
 //! created, as anyone could, so such a market is checked like the rest.
+//!
+//! Then, in the same world, the gate makes a market of its own with the candidate
+//! ([`own_market`], `POOL4-53`): it readies the router as on devnet where the snapshot lacks
+//! its config or the program's registration, creates and seeds the market through the
+//! router, trades it past its first wall and settlement, and checks it as it checks the
+//! cluster's, every keeper job that has become due included, each quote required to serve.
+//! Every step there counts, since the deployed build never ran it, so a cluster with no
+//! market still exercises the candidate, and a build that refuses every instruction (one
+//! declared for another address, say) is refused before the first market exists.
 
 use pipeline_client::{self as client, pda, Pubkey};
 use pipeline_strategy_interface::fees;
@@ -33,6 +42,7 @@ use crate::session::{failing_program, first_line, program_name, spendable, Marke
 use crate::snapshot::{
     parse_key, Baseline, Cluster, Outcome, Quote, QuoteOutcome, RecordedStep, Snapshot, StepKind,
 };
+use crate::synthetic::{self, Lab};
 use crate::world;
 use buy_wall_amm::state::{MarketState, STATUS_CREATED, STATUS_OPEN};
 
@@ -48,6 +58,9 @@ pub struct Report {
     /// Whether a quote passed only because the release declares a pricing change.
     pub relied_on_pricing_change: bool,
     pub markets: Vec<MarketReport>,
+    /// The market the gate made of its own in the same world, after the cluster's (`None`
+    /// only when the snapshot did not load); every failed step there counts.
+    pub own_market: Option<MarketReport>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -97,6 +110,7 @@ impl Report {
     fn failed_steps(&self, shared: bool) -> Vec<Failure> {
         self.markets
             .iter()
+            .chain(&self.own_market)
             .flat_map(|market| {
                 market
                     .steps
@@ -154,8 +168,13 @@ impl std::fmt::Display for Report {
             )?;
             return Ok(());
         }
-        for market in &self.markets {
-            writeln!(f, "market state {}", market.market_state)?;
+        let own = self.own_market.iter().map(|market| (market, true));
+        for (market, ours) in self.markets.iter().map(|m| (m, false)).chain(own) {
+            if ours {
+                writeln!(f, "market of its own {}", market.market_state)?;
+            } else {
+                writeln!(f, "market state {}", market.market_state)?;
+            }
             for step in &market.steps {
                 if step.passed {
                     writeln!(f, "  ok   {}: {}", step.name, first_line(&step.detail))?;
@@ -171,24 +190,36 @@ impl std::fmt::Display for Report {
         }
         let failures = self.failures();
         let shared = self.shared_failures();
+        let checked = format!(
+            "{} market(s) of the cluster{}",
+            self.markets.len(),
+            if self.own_market.is_some() {
+                " and one of its own"
+            } else {
+                ""
+            }
+        );
         if failures.is_empty() {
             if shared.is_empty() {
-                writeln!(f, "PASSED: {} market(s), every step", self.markets.len())?;
+                writeln!(f, "PASSED: {checked}, every step")?;
             } else {
                 writeln!(
                     f,
-                    "PASSED: {} market(s); {} step(s) failed, each as it fails under the \
+                    "PASSED: {checked}; {} step(s) failed, each as it fails under the \
                      deployed build, so none is a regression:",
-                    self.markets.len(),
                     shared.len()
                 )?;
             }
         } else {
             writeln!(f, "REFUSED: {} step(s) failed", failures.len())?;
             for failure in &failures {
+                let what = match &self.own_market {
+                    Some(own) if own.market_state == failure.market_state => "market of its own",
+                    _ => "market state",
+                };
                 writeln!(
                     f,
-                    "  market state {}, step {}: {}",
+                    "  {what} {}, step {}: {}",
                     failure.market_state, failure.step, failure.detail
                 )?;
             }
@@ -230,6 +261,7 @@ pub fn run(
         setup_error: None,
         relied_on_pricing_change: false,
         markets: vec![],
+        own_market: None,
     };
     let loaded = snapshot
         .program_id()
@@ -259,7 +291,49 @@ pub fn run(
             steps: steps.steps,
         });
     }
+    report.own_market = Some(own_market(session));
     report
+}
+
+/// The name of the step that makes the gate's own market.
+pub const MAKE_MARKET: &str = "make a market of its own";
+
+/// Makes a market of the gate's own in `session`'s world, with the program loaded there,
+/// and checks it (`POOL4-53`): the world readied as devnet is where it lacks the router's
+/// config or the program's registration, the market created and seeded through the router
+/// at IMD's launch values and traded past its first wall and settlement as the synthetic
+/// fixture's market A is ([`Lab::traded_market`]), then, from a later slot, the checks every
+/// market gets, with each quote required to serve and each keeper job that has become due.
+/// No step is excused: the deployed build never ran it.
+fn own_market(session: Session) -> MarketReport {
+    let mut steps = Steps::default();
+    let made = Lab::within(session).and_then(|mut lab| {
+        let view = lab.traded_market()?;
+        Ok((lab, view))
+    });
+    let (mut lab, view) = match made {
+        Ok(made) => made,
+        Err(error) => {
+            steps.fail(StepKind::MakeMarket, MAKE_MARKET, error);
+            return MarketReport {
+                market_state: "(not made)".into(),
+                steps: steps.steps,
+            };
+        }
+    };
+    steps.pass(
+        StepKind::MakeMarket,
+        MAKE_MARKET,
+        "created and seeded through the router, bought, sold, place_wall, settle, bought and \
+         sold again",
+    );
+    // As the fixture's snapshot was taken, ten minutes on.
+    synthetic::later(&mut lab.session, 600);
+    check_market(&mut lab.session, &view.market_state, &Mode::Own, &mut steps);
+    MarketReport {
+        market_state: view.market_state.to_string(),
+        steps: steps.steps,
+    }
 }
 
 /// The same replay with `deployed` as the program: its quotes, and whether each other step
@@ -326,13 +400,15 @@ fn compare_with_deployed(steps: &mut [Step], baseline: &Baseline, market_state: 
     }
 }
 
-/// Whether the replay records the deployed build or checks a candidate against it.
+/// Whether the replay records the deployed build, checks a candidate against it, or checks
+/// the gate's own market, which no baseline covers.
 enum Mode<'a> {
     Record,
     Check {
         baseline: &'a Baseline,
         release: &'a Release,
     },
+    Own,
 }
 
 #[derive(Default)]
@@ -480,23 +556,22 @@ fn check_market(session: &mut Session, market_state: &Pubkey, mode: &Mode, steps
     let open = state.status == STATUS_OPEN;
 
     // Keeper jobs, from the state as it was: recording, every job; checking, each this
-    // tree's rules say is due and each the deployed build ran.
+    // tree's rules say is due and each the deployed build ran; on the gate's own market, each
+    // that is due.
     if open {
+        let clock: solana_clock::Clock = session.svm.get_sysvar();
+        let due = keeper::due(&state, clock.slot, clock.unix_timestamp);
         let jobs: Vec<Job> = match mode {
             Mode::Record => Job::ALL.to_vec(),
-            Mode::Check { baseline, .. } => {
-                let clock: solana_clock::Clock = session.svm.get_sysvar();
-                let due = keeper::due(&state, clock.slot, clock.unix_timestamp);
-                Job::ALL
-                    .into_iter()
-                    .filter(|job| {
-                        due.contains(job)
-                            || baseline
-                                .outcome(&market_state.to_string(), &StepKind::Job { job: *job })
-                                == Some(&Outcome::Passed)
-                    })
-                    .collect()
-            }
+            Mode::Own => due,
+            Mode::Check { baseline, .. } => Job::ALL
+                .into_iter()
+                .filter(|job| {
+                    due.contains(job)
+                        || baseline.outcome(&market_state.to_string(), &StepKind::Job { job: *job })
+                            == Some(&Outcome::Passed)
+                })
+                .collect(),
         };
         for job in jobs {
             let current = session.state(market_state).unwrap_or(state);
@@ -549,7 +624,8 @@ fn check_market(session: &mut Session, market_state: &Pubkey, mode: &Mode, steps
 }
 
 /// The quotes: recording, at a tenth, a hundredth and a thousandth of each input vault;
-/// checking, each the deployed build gave, compared with it.
+/// checking, each the deployed build gave, compared with it; on the gate's own market, the
+/// same amounts as recording, each of which must serve.
 fn check_quotes(session: &Session, view: &MarketView, mode: &Mode, steps: &mut Steps) {
     let (token, sol) = (view.token_index(), view.sol_index());
     let market_state = view.market_state.to_string();
@@ -573,6 +649,26 @@ fn check_quotes(session: &Session, view: &MarketView, mode: &Mode, steps: &mut S
                         amount,
                         result,
                     });
+                }
+            }
+            return;
+        }
+        Mode::Own => {
+            for (input, output) in [(sol, token), (token, sol)] {
+                for amount in quotes::amounts(session, view, input) {
+                    let kind = StepKind::Quote {
+                        input_index: input as u8,
+                        amount,
+                    };
+                    let name = format!("quote ({} {amount})", direction(view, input as u8));
+                    match quotes::quote(session, view, input, output, amount) {
+                        QuoteOutcome::AmountOut(out) => steps.pass(kind, name, out.to_string()),
+                        refused @ QuoteOutcome::Refused(_) => steps.fail(
+                            kind,
+                            name,
+                            format!("{refused} on a market of the gate's own, which must serve it"),
+                        ),
+                    }
                 }
             }
             return;

@@ -19,16 +19,18 @@ buy-wall-gate: the buy wall AMM's release gate (docs/spec/pool4-for-solana.md, \
   run --cluster <devnet|localnet|URL> --candidate <program.so>
       [--release <release.json>] [--records <dir>] [--snapshot-out <file>] [--program <id>]
         Downloads every market of the program from the cluster and replays it with the
-        candidate and the cluster's router. Exits 0 and records the pass if every step
-        passes on every market, or fails only as it does under the deployed build, else
-        exits 1 naming each market and step that failed.
+        candidate and the cluster's router, then makes and trades a market of its own in
+        the same world (POOL4-53). Exits 0 and records the pass if every step passes on
+        every market, or fails only as it does under the deployed build, and every step on
+        its own market passes, else exits 1 naming each market and step that failed.
 
   verify-record --cluster <...> --candidate <program.so> [--records <dir>] [--program <id>]
         Exits 0 only if a passing run covers deploying the candidate to the cluster now:
         same build, against the build deployed now, covering every market there now.
 
   check --snapshot <file> --candidate <program.so> [--router <pipeline.so>] [--release <...>]
-        The same checks on a saved snapshot or fixture, recording nothing.
+        The same checks on a saved snapshot or fixture, its own market included, recording
+        nothing.
 
   snapshot --cluster <...> --out <file> [--program <id>]
         Saves the cluster's markets as a fixture (no programs, the deployed build's quotes).
@@ -305,6 +307,7 @@ fn gate_run(options: &Options) -> Result<bool, String> {
                 detail: failure.detail,
             })
             .collect(),
+        own_market: report.own_market.is_some(),
     };
     let path = record::append(&options.path_or("records", records_dir()), &record)?;
     println!("recorded the pass in {}", path.display());
@@ -359,7 +362,7 @@ fn verify_record(options: &Options) -> Result<bool, String> {
         Ok(record) => {
             println!(
                 "build {} passed the release gate on this cluster at slot {} against deployed build {}, \
-                 covering all {} market(s)",
+                 covering all {} market(s) and a market of its own",
                 record.candidate_sha256,
                 record.slot,
                 record.deployed_sha256.as_deref().unwrap_or("(none)"),

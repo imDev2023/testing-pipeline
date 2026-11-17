@@ -66,7 +66,15 @@ impl Lab {
     /// the starting clock, with an admin holding 1,000 SOL.
     pub fn new(build: &[u8], router: &[u8]) -> Result<Self, String> {
         let program = crate::programs::program_id();
-        let mut session = setup(build, router, program)?;
+        Lab::within(setup(build, router, program)?)
+    }
+
+    /// A lab in `session`'s world, whatever it holds: a snapshot loaded with a candidate, say,
+    /// so the gate can make a market of its own beside the cluster's (`POOL4-53`). What a
+    /// market needs and a cluster with none may lack is added as devnet has it: the wrapped
+    /// SOL mint, the router's config, and the program's registration.
+    pub fn within(mut session: Session) -> Result<Self, String> {
+        prepare(&mut session)?;
         let admin = Keypair::new();
         session
             .svm
@@ -76,10 +84,15 @@ impl Lab {
     }
 
     /// Market A: the worked example's market, an SPL Token at IMD's launch values, traded on
-    /// past its first wall and settlement, so every keeper job but slot 1's is due.
+    /// past its first wall and settlement, so every keeper job but slot 1's is due. An error
+    /// names the step that failed.
     pub fn traded_market(&mut self) -> Result<MarketView, String> {
         let (session, admin) = (&mut self.session, &self.admin);
-        let token_a = mint(session, admin, TOKEN)?;
+        let step = |name: &str| {
+            let name = name.to_string();
+            move |error: String| format!("{name}: {error}")
+        };
+        let token_a = mint(session, admin, TOKEN).map_err(step("creating the mint"))?;
         let params_a = launch_values(admin.pubkey());
         let a = create(
             session,
@@ -88,19 +101,20 @@ impl Lab {
             TOKEN,
             &params_a,
             Some((1_000_000_000_000, 10 * SOL)),
-        )?;
+        )
+        .map_err(step("create_market and the seed"))?;
         later(session, 3_600);
-        let bought = swap(session, &a, true, SOL)?;
+        let bought = swap(session, &a, true, SOL).map_err(step("the first buy"))?;
         later(session, 60);
-        swap(session, &a, false, spendable(bought))?;
+        swap(session, &a, false, spendable(bought)).map_err(step("the first sell"))?;
         // From the next slot, as the keeper runner sends it (`POOL4-50`).
         later(session, 0);
-        job(session, &a, Job::PlaceWall)?;
-        job(session, &a, Job::Settle)?;
+        job(session, &a, Job::PlaceWall).map_err(step("place_wall"))?;
+        job(session, &a, Job::Settle).map_err(step("settle"))?;
         later(session, 3_600);
-        let bought = swap(session, &a, true, 3 * SOL)?;
+        let bought = swap(session, &a, true, 3 * SOL).map_err(step("the second buy"))?;
         later(session, 60);
-        swap(session, &a, false, spendable(bought))?;
+        swap(session, &a, false, spendable(bought)).map_err(step("the second sell"))?;
         Ok(a)
     }
 
@@ -179,38 +193,61 @@ fn setup(build: &[u8], router: &[u8], program: Pubkey) -> Result<Session, String
         .map_err(|e| format!("the router does not load: {e}"))?;
     svm.add_program(program, build)
         .map_err(|e| format!("the build does not load: {e}"))?;
-    // The wrapped SOL mint, as every cluster has it.
-    let mut data = vec![0u8; 82];
-    data[44] = 9;
-    data[45] = 1;
-    let lamports = svm.minimum_balance_for_rent_exemption(82);
-    svm.set_account(WSOL, account(lamports, data, TOKEN))
-        .map_err(|e| e.to_string())?;
+    Ok(Session::new(svm, program))
+}
 
-    let mut session = Session::new(svm, program);
+/// Adds what creating a market needs and the world lacks, as devnet has it: the wrapped SOL
+/// mint, the router's config (a 0.01 SOL listing fee), and the program's registration with
+/// the router, paying the config's listing fee. Making either, the payer becomes the upgrade
+/// authority of the program it needs, as if it had deployed it; a world that has both, as a
+/// snapshot with a market does, is left as it is.
+fn prepare(session: &mut Session) -> Result<(), String> {
+    if session.svm.get_account(&WSOL).is_none() {
+        let mut data = vec![0u8; 82];
+        data[44] = 9;
+        data[45] = 1;
+        let lamports = session.svm.minimum_balance_for_rent_exemption(82);
+        session
+            .svm
+            .set_account(WSOL, account(lamports, data, TOKEN))
+            .map_err(|e| e.to_string())?;
+    }
     let admin = session.payer.pubkey();
-    set_upgrade_authority(&mut session.svm, &client::PROGRAM_ID, &admin)?;
-    set_upgrade_authority(&mut session.svm, &program, &admin)?;
-    let fee_recipient = Pubkey::new_unique();
-    let config = client::initialize_config(
-        &admin,
-        &client::ConfigArgs {
-            listing_fee_lamports: 10_000_000,
-            listing_fee_recipient: fee_recipient,
-            treasury_owner: Pubkey::new_unique(),
-        },
-    );
-    let register = client::register_strategy(
-        &admin,
-        &admin,
-        &program,
-        &fee_recipient,
-        "https://example.com/metadata.json",
-        10_000_000,
-    );
-    session.send(&[config], &[])?;
-    session.send(&[register], &[])?;
-    Ok(session)
+    let program = session.program;
+    if session.svm.get_account(&pda::config()).is_none() {
+        set_upgrade_authority(&mut session.svm, &client::PROGRAM_ID, &admin)?;
+        let config = client::initialize_config(
+            &admin,
+            &client::ConfigArgs {
+                listing_fee_lamports: 10_000_000,
+                listing_fee_recipient: Pubkey::new_unique(),
+                treasury_owner: Pubkey::new_unique(),
+            },
+        );
+        session
+            .send(&[config], &[])
+            .map_err(|e| format!("initialize_config: {e}"))?;
+    }
+    if session.svm.get_account(&pda::strategy(&program)).is_none() {
+        let config = session
+            .svm
+            .get_account(&pda::config())
+            .and_then(|a| client::decode_config(&a.data))
+            .ok_or("the router's config does not decode")?;
+        set_upgrade_authority(&mut session.svm, &program, &admin)?;
+        let register = client::register_strategy(
+            &admin,
+            &admin,
+            &program,
+            &config.listing_fee_recipient,
+            "https://example.com/metadata.json",
+            config.listing_fee_lamports,
+        );
+        session
+            .send(&[register], &[])
+            .map_err(|e| format!("register_strategy: {e}"))?;
+    }
+    Ok(())
 }
 
 fn account(lamports: u64, data: Vec<u8>, owner: Pubkey) -> solana_account::Account {

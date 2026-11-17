@@ -3942,6 +3942,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
+### POOL4-53: Every gate run trades a market of its own
+
+- Question: What does the release gate check on a cluster with no market, where replaying the cluster's markets checks nothing and a build that refuses every instruction, such as one declared for another address, would pass?
+- Answer: Every gate run, `run` and `check` alike, also makes a market of its own in the same LiteSVM world with the candidate, readying the router's config and the program's registration as devnet has them where the snapshot lacks them, creating and seeding it through the router, trading it past its first wall and settlement and checking it as a cluster's market, every keeper job that has become due included and every quote required to serve, and refuses the candidate if any step there fails, none excused as shared with the deployed build; a record of a pass says so, and a record without it never covers a deploy (review findings H097 and H098).
+- Alternatives: Refusing a cluster with no market outright unless told to allow it, which would block a first deploy or demand a separate smoke test; leaving it, under which a cluster with no market passed any build vacuously and the deploy script accepted it.
+- Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
@@ -4570,7 +4580,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-46`, `POOL4-47`, and the changes to `POOL4-41` and `POOL4-44`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix review findings H013, H020 and H033 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
-- `POOL4-51`, `POOL4-52`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to harden the market's clocks (review finding H009) and fix review findings H022 and H063 in the handovers, and not yet put to the owner, so it is that session's default until the owner has been asked.
+- `POOL4-51` to `POOL4-53`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to harden the market's clocks (review finding H009), fix review findings H022 and H063 in the handovers and fix review findings H097 and H098 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-36`: set by the session of [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152) from the spec's existing rule that a trade reaching a price bound is refused, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.

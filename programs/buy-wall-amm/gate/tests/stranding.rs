@@ -2,8 +2,8 @@
 //! on every fixture the repo keeps, a build that moves a field, one that renames the market
 //! state type so its derived discriminator changes, and one that changes the account's size
 //! are each refused, a build whose payout rule can no longer sweep fee slot 2 is refused on
-//! every market the deployed build swept it on, and a build that appends a field into the
-//! reserve passes.
+//! every market the deployed build swept it on and on the market the gate makes of its own,
+//! and a build that appends a field into the reserve passes.
 //!
 //! Build the test builds first: `cargo run -p buy-wall-gate -- test-builds`.
 
@@ -56,8 +56,8 @@ fn builds_that_would_strand_a_market_are_refused_on_every_fixture_and_an_append_
                         );
                     }
                 } else {
-                    // Slot 2 fails on every market the deployed build swept it on, and nothing
-                    // else does.
+                    // Slot 2 fails on every market the deployed build swept it on and on the
+                    // gate's own market (POOL4-53), and nothing else does.
                     let slot_2 = StepKind::Job {
                         job: Job::SweepFees(2),
                     };
@@ -73,13 +73,15 @@ fn builds_that_would_strand_a_market_are_refused_on_every_fixture_and_an_append_
                         "{} sweeps slot 2 nowhere",
                         path.display()
                     );
-                    let failed: Vec<&str> = failures
+                    let own = &report.own_market.as_ref().unwrap().market_state;
+                    let mut failed: Vec<&str> = failures
                         .iter()
                         .map(|f| {
                             assert_eq!(f.step, "sweep_fees { slot: 2 }", "{report}");
                             f.market_state.as_str()
                         })
                         .collect();
+                    assert_eq!(failed.pop(), Some(own.as_str()), "{report}");
                     assert_eq!(failed, swept, "{report}");
                 }
                 println!("{} on {}:\n{report}", build.name(), path.display());

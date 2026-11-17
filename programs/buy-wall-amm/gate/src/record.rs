@@ -8,7 +8,8 @@
 //!
 //! A record counts for a deploy only if it was made against the same cluster, for the same
 //! build, against the build deployed there now, and covering every market there now: an
-//! upgrade or a new market since the run means the gate must run again.
+//! upgrade or a new market since the run means the gate must run again. A record from a gate
+//! that made no market of its own (`POOL4-53`) never counts.
 
 use std::path::{Path, PathBuf};
 
@@ -35,6 +36,11 @@ pub struct Record {
     /// same way on the same snapshot: the markets nobody can fully trade, and why.
     #[serde(default)]
     pub shared_failures: Vec<SharedFailure>,
+    /// Whether the run also made and traded a market of its own with the candidate
+    /// (`POOL4-53`); a record without it was written by a gate that, on a cluster with no
+    /// market, checked nothing, so it never counts.
+    #[serde(default)]
+    pub own_market: bool,
 }
 
 /// A step that failed under the candidate and the deployed build alike.
@@ -122,6 +128,13 @@ pub fn find(dir: &Path, target: &Target) -> Result<Record, String> {
 
 /// Why `record` does not cover `target`, if it does not.
 fn why_not(record: &Record, target: &Target) -> Option<String> {
+    if !record.own_market {
+        return Some(
+            "it was made by a gate that traded no market of its own, which on a cluster with no \
+             market checks nothing (POOL4-53)"
+                .into(),
+        );
+    }
     if record.deployed_sha256 != target.deployed_sha256 {
         return Some(format!(
             "it checked against deployed build {}, but {} is deployed now",

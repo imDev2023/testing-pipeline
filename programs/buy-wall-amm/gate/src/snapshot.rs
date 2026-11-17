@@ -114,13 +114,24 @@ pub enum StepKind {
     Register,
     FindMarket,
     FeeAccounts,
-    Resolve { input_index: u8 },
-    Quote { input_index: u8, amount: u64 },
+    Resolve {
+        input_index: u8,
+    },
+    Quote {
+        input_index: u8,
+        amount: u64,
+    },
     MarketInfo,
     Seed,
-    Job { job: crate::keeper::Job },
+    Job {
+        job: crate::keeper::Job,
+    },
     Buy,
     Sell,
+    /// Making the gate's own market (`POOL4-53`): readying the router as on devnet, creating
+    /// and seeding the market through it, and trading it past its first wall and settlement.
+    /// Never in a baseline, since the deployed build never makes one.
+    MakeMarket,
 }
 
 impl StepKind {

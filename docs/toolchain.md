@@ -238,6 +238,7 @@ Passed on 2026-11-16 from a fresh validator in 76 seconds, on its own ports (`sc
 
 `programs/buy-wall-amm/gate` (crate `buy-wall-gate`) is the buy wall AMM's release gate, a host tool beside the program, never deployed, added by [the release gate and layout fixtures](https://github.com/imDev2023/testing-pipeline/issues/54); [`pool4-for-solana.md`](spec/pool4-for-solana.md#how-to-run-it), "How to run it", has its commands.
 `cargo test --workspace` runs its checks on every fixture in `programs/buy-wall-amm/gate/fixtures/` against the current build, and on the five stranding test builds, which `cargo run -p buy-wall-gate -- test-builds` writes to `programs/target/gate-test-builds`, from edited copies of the workspace built in a target directory of their own there.
+Every gate run, on a cluster or a fixture, also makes and trades a market of its own with the candidate (`POOL4-53`), so `cargo test -p buy-wall-gate --test empty_cluster` checks that a cluster with no market passes the current build and refuses a broken one.
 Kani builds the crate without its dependencies (`cfg(not(kani))` in its `Cargo.toml`), because Kani's nightly Rust refuses LiteSVM's Solana crates and the gate has no proofs.
 The buy wall AMM's deploy script, `programs/buy-wall-amm/scripts/deploy.sh`, deploys only a build the gate has passed against the cluster it deploys to.
 

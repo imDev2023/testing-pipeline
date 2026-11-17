@@ -33,6 +33,7 @@ fn passing() -> Record {
         market_states: vec!["A".into(), "B".into()],
         pricing_change_declared: false,
         shared_failures: vec![],
+        own_market: true,
     }
 }
 
@@ -119,4 +120,40 @@ fn the_newest_passing_record_that_fits_is_the_one_found() {
         record::find(&dir, &target()).unwrap().recorded_at,
         passing().recorded_at
     );
+}
+
+#[test]
+fn sos_h097_a_record_from_a_gate_that_traded_no_market_of_its_own_no_longer_counts() {
+    // A pass recorded by the gate before POOL4-53, which on a cluster with no market checked
+    // nothing: saved without the field, as that gate wrote it.
+    let dir = scratch_dir("vacuous");
+    let vacuous = Record {
+        market_states: vec![],
+        ..passing()
+    };
+    let mut json = serde_json::to_value(vec![vacuous]).unwrap();
+    json[0]
+        .as_object_mut()
+        .unwrap()
+        .remove("own_market")
+        .unwrap();
+    std::fs::write(dir.join("devnet.json"), json.to_string()).unwrap();
+    let empty = Target {
+        market_states: vec![],
+        ..target()
+    };
+    let error = record::find(&dir, &empty).unwrap_err();
+    assert!(error.contains("market of its own"), "{error}");
+
+    // The same run by today's gate counts.
+    record::append(
+        &dir,
+        &Record {
+            market_states: vec![],
+            recorded_at: passing().recorded_at + 1,
+            ..passing()
+        },
+    )
+    .unwrap();
+    assert!(record::find(&dir, &empty).unwrap().own_market);
 }
