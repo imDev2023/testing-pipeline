@@ -163,19 +163,21 @@
                     "name": "max_0",
                     "type": "u64",
                     "label": "Most of token 1 to add",
+                    "description": "Your price protection with Fewest LP shares to accept: set it to the amount the market's current ratio asks for, plus your slippage tolerance, never to a whole balance. The deposit takes only what the shares minted are worth, at most this.",
                     "decimals_of": "mint:0"
                 },
                 {
                     "name": "max_1",
                     "type": "u64",
                     "label": "Most of token 2 to add",
+                    "description": "Your price protection with Fewest LP shares to accept: set it to the amount the market's current ratio asks for, plus your slippage tolerance, never to a whole balance. The deposit takes only what the shares minted are worth, at most this.",
                     "decimals_of": "mint:1"
                 },
                 {
                     "name": "min_lp",
                     "type": "u64",
                     "label": "Fewest LP shares to accept",
-                    "description": "The deposit fails if it would mint fewer, which protects against the price moving first."
+                    "description": "The deposit fails if it would mint fewer. With both maximums at the quoted amounts plus your slippage tolerance, this bounds what a price move before the deposit can cost you; a maximum set far above its quoted amount leaves that side unprotected."
                 }
             ],
             "accounts": [

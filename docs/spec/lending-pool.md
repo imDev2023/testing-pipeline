@@ -292,6 +292,7 @@ How it is built ([Lending AMM: withdraw mode and Kamino's other states](https://
 - `rebalance {}` is a permissionless custom action: anyone may call it at any time, and inside the band it does nothing, so it cannot be used to grief a market.
 - It creates no accounts, so the caller pays only the transaction fee, and gets no tip.
 - Our keeper runner calls it when Aviary's indexer sees a swap or an LP action leave a market outside its band, and sweeps every lending AMM market every 10 minutes for withdraw mode and anything missed; in withdraw mode a sweep's `rebalance` also records or forgets the market's wait to leave (see "Withdraw mode"), so the keeper sends it whenever its simulation succeeds.
+- The keeper puts klend's `refresh_reserve` before each `rebalance` in the same transaction, so the call decides on Kamino's state refreshed in that slot and its redeem needs no headroom for interest (finding S004).
 - The keeper runner also refreshes each reserve a lending AMM market lends to with klend's `refresh_reserve` whenever its last refresh is more than half of `TRADE_MAX_RESERVE_AGE_SLOTS` old, so markets keep quoting on reserves Kamino's own users leave idle, as our devnet reserves are for days at a time (see "The stored rate, everywhere").
 - That is the lending AMM's whole answer for the map's keeper runner: one keeper job per market, triggered by events, a few calls an hour at most.
   Kamino's `withdraw_queued_liquidity` is not needed, since the program never holds a withdrawal ticket.
@@ -339,6 +340,7 @@ How it is built ([Lending AMM: withdraw mode and Kamino's other states](https://
 - Later deposits take both mints at the current ratio `R : L`, with the lent side valued at its total, mint `min(other x N / R, lent x N / L)` shares rounded down, and take only the amounts those shares are worth, rounded up.
 - The lent-side deposit joins the buffer; `rebalance` lends it later, so adding never calls Kamino.
 - It refuses if fewer than `min_lp` shares would be minted, and while the reserve is deprecated or fails the layout check.
+- The two maximums are the deposit's price protection together with `min_lp`: a form sets each to the amount the market's current ratio asks for plus the depositor's slippage tolerance, never to a whole balance, since a maximum far above its quoted amount lets a trade before the deposit move the ratio and charge that side more for the same shares while `min_lp` still holds (finding H024, [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86), 2026-11-17).
 
 ### Removing
 

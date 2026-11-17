@@ -71,10 +71,21 @@ pub const WITHDRAW_MODE_EXIT: u64 = 10;
 /// (finding H004, docs/security/lending-amm/). Exported in the IDL, from which keepers read it.
 #[constant]
 pub const WITHDRAW_MODE_EXIT_DELAY_SLOTS: u64 = 9_000;
+// Relations the program's maths relies on, checked when it is built so no change to one value
+// can break them (finding H054, docs/security/lending-amm/): the band holds the target and stays
+// below the whole, and the headroom and the LP fee are parts of a whole.
+const _: () = assert!(
+    BUFFER_MIN_BPS <= BUFFER_TARGET_BPS
+        && BUFFER_TARGET_BPS <= BUFFER_MAX_BPS
+        && BUFFER_MAX_BPS < 10_000
+);
+const _: () = assert!(KAMINO_RATE_HEADROOM_BPS < 10_000);
+
 /// The highest LP fee a market may charge, in basis points: 2%. Exported in the IDL, from
 /// which forms and the demo read it.
 #[constant]
 pub const MAX_LP_FEE_BPS: u16 = 200;
+const _: () = assert!(MAX_LP_FEE_BPS < 10_000);
 /// LP base units the first deposit locks for good: counted in every market's share count
 /// and never minted. Exported in the IDL, from which the demo reads it.
 #[constant]
