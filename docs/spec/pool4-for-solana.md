@@ -222,6 +222,7 @@ For `a` credited lamports:
 `pipeline_swap` then updates the market in this order.
 None of it changes the trade just priced.
 `now` is the Clock's Unix time and every time difference saturates at 0.
+Every stored time (`ref_time`, `floor_time`, `decay_time`) becomes the later of itself and `now`, so a clock that goes back never counts the same seconds twice ([`POOL4-51`](../decisions.md#pool4-51-the-markets-clocks-never-run-backwards)).
 
 1. **Reference.**
    If the Clock's slot is later than `last_slot`: `dt = min(now - ref_time, REF_STEP_WINDOW)`, `step = floor(ref × REF_STEP_BPS × dt / (2 × 10,000 × REF_STEP_WINDOW))`, and `ref` moves toward `last_close` by at most `step`; then `ref_time = max(ref_time, now)` and `last_slot` is the slot.

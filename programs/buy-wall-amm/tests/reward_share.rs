@@ -262,6 +262,8 @@ fn sos_h007_a_wall_closure_pays_no_reward_share() {
     env.swap(&market, &trader, SELL, TradeMode::ExactIn, bought)
         .unwrap();
     let keeper = env.keeper();
+    // From the next slot, since none may follow a swap in its own (`POOL4-50`).
+    env.next_slot();
     env.place_wall(&market, &keeper).unwrap();
     // Its rewards settled and paid.
     env.send(&[settle_ix(&market)], &[]).unwrap();
@@ -282,10 +284,17 @@ fn sos_h007_a_wall_closure_pays_no_reward_share() {
     let walled = env.state(&market);
     let out = quoted(&env, &market, SELL, sold);
     let tips = pda::associated_token(&recipient.pubkey(), &WSOL, &TOKEN);
+    // The sell into the wall, then from the next slot (`POOL4-50`) the closing placement and
+    // the settle.
+    env.send(
+        &[swap_ix(&env, &market, &recipient, SELL, sold)],
+        &[&recipient],
+    )
+    .unwrap();
+    env.next_slot();
     let (_, logs) = env
         .send_logged(
             &[
-                swap_ix(&env, &market, &recipient, SELL, sold),
                 place_wall_ix(&market, &recipient.pubkey(), &tips),
                 settle_ix(&market),
             ],

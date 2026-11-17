@@ -592,7 +592,7 @@ fn sos_h022_a_role_cannot_be_handed_to_one_of_the_markets_own_addresses() {
             &market.token_mint,
             &TOKEN
         ),
-        1_250_000_001
+        1_249_999_999
     );
     // A stranger is still told it is not the recipient, whatever it names.
     let stranger = wallet(&mut env);
