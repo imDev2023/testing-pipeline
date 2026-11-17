@@ -62,6 +62,7 @@ fn the_metadata_describes_a_lending_amm() {
             ("rebalance", "other"),
             ("remove_liquidity", "remove_liquidity"),
             ("remove_liquidity_in_kind", "remove_liquidity"),
+            ("remove_lent_side", "remove_liquidity"),
             ("lock_lp", "other")
         ]
     );
