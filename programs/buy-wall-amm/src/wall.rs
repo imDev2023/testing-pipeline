@@ -202,7 +202,9 @@ pub fn tip(work: u64, fee_bps: u16, idle_sol: u64) -> Option<u64> {
 ///    `pool_sol`.
 ///
 /// It never moves the price or the curve, and it moves value only between the ledgers of
-/// each vault, except the tip, which leaves the SOL vault.
+/// each vault, except the tip, which leaves the SOL vault. Nothing it retires is rewardable
+/// (`retired_rewardable`, outside these books), so the closed wall's tokens and the dust
+/// burn whole (`POOL4-49`).
 pub fn place(books: WallBooks, at: At) -> Result<(WallBooks, Placement), Refusal> {
     let s = at.sqrt_price;
     // 1. The threshold. What the old wall holds at the price is both what it has not spent

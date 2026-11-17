@@ -36,8 +36,9 @@
 //      counters equal the spec's formulas to the unit, and each vault holds exactly the sum
 //      of its ledgers;
 //  11. settle the retired tokens through the metadata's `settle` action: the reward share
-//      joins the rewards owed and the rest is burned, the token's supply falling by exactly
-//      that, as the spec's formula gives, emitting Settled;
+//      of the part the cap's fall matched joins the rewards owed and the rest is burned, the
+//      token's supply falling by exactly that, as the spec's formula gives, emitting
+//      Settled;
 //  12. hand both recipient roles to fresh wallets through the metadata's
 //      `set_fee_recipient` and `set_rewards_recipient` actions, signed by the payer, the
 //      demo market's recipient; then show a handover signed by the old recipient refused
@@ -632,7 +633,8 @@ function specPlaceWall(b: WallBooks, curve: Curve, floor: bigint, feeBps: bigint
  * steps 5 and 6), written out here from the spec rather than taken from the program: the
  * decay credit builds up to one day's allowance, then a curve holding less than the cap
  * lowers it (the ratchet) and one holding more gives up its excess (the trim). `now` is the
- * Clock's time the swap ran at, which the market state records as its `decay_time`.
+ * Clock's time the swap ran at, which the market state records as its `decay_time` (the
+ * later of the two, so the clock never runs backwards).
  */
 type Cap = { cap: bigint; decayCredit: bigint; decayTime: bigint; capFloor: bigint; capDecayPerDay: bigint };
 type CapMoved =
@@ -646,7 +648,7 @@ function specCap(cap: Cap, curve: Curve, now: bigint): { cap: Cap; moved: CapMov
     const limit = cap.capDecayPerDay * DECAY_CREDIT_WINDOW;
     let credit = cap.decayCredit + cap.capDecayPerDay * elapsed;
     if (credit > limit) credit = limit;
-    const next = { ...cap, decayCredit: credit, decayTime: now };
+    const next = { ...cap, decayCredit: credit, decayTime: now > cap.decayTime ? now : cap.decayTime };
     const { sqrtPrice: s, liquidity: l } = curve;
     const held = (l * Q) / s;
     if (held < cap.cap) {
@@ -761,6 +763,7 @@ type OwedBooks = {
     poolSol: bigint;
     idleSol: bigint;
     retiredTokens: bigint;
+    retiredRewardable: bigint;
     feesRecipient: bigint;
     feesDesigner: bigint;
     feesSuite: bigint;
@@ -789,7 +792,9 @@ async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata,
     step('11. Settling the retired tokens');
     const retired = books.retiredTokens;
     if (retired === 0n) fail('nothing is retired to settle');
-    const toRewards = (retired * rewardShareBps) / 10_000n;
+    // POOL4-49: the reward share is paid only on the part the cap's fall matched.
+    const rewardable = books.retiredRewardable;
+    const toRewards = (rewardable * rewardShareBps) / 10_000n;
     const burned = retired - toRewards;
     const [supplyBefore, vaultBefore] = [await supply(), await tokenBalance(view.vaults[0]!)];
     const { signature: settledSignature } = await send('settle', payer, [await build('settle')]);
@@ -802,6 +807,7 @@ async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata,
     if (
         settled.length !== 1 ||
         event!.retired !== retired ||
+        event!.rewardable !== rewardable ||
         event!.burned !== burned ||
         event!.toRewards !== toRewards ||
         event!.rewardsOwed !== rewardsOwed ||
@@ -812,7 +818,8 @@ async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata,
         fail(`settle of ${retired}: expected ${burned} burned and ${toRewards} to the rewards; the supply fell ${supplyFell}, the vault ${vaultFell}, events ${json(settled)}`);
     }
     books.retiredTokens = 0n;
-    info(`${retired} retired units: ${toRewards} (the ${DEMO.rewardShareBps} basis point reward share) now owed as rewards, ${burned} burned; the token's supply fell by exactly ${burned}; Settled emitted`);
+    books.retiredRewardable = 0n;
+    info(`${retired} retired units, ${rewardable} of them matched by the cap's fall: ${toRewards} (the ${DEMO.rewardShareBps} basis point reward share of those) now owed as rewards, ${burned} burned; the token's supply fell by exactly ${burned}; Settled emitted`);
     record.push(['settle', `${burned} burned, ${toRewards} to the rewards`]);
 
     step('12. Handing both recipient roles to new wallets');
@@ -907,6 +914,7 @@ async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata,
     const after = await state();
     const read = {
         retiredTokens: [le(after.retiredTokens), 0n],
+        retiredRewardable: [le(after.retiredRewardable), 0n],
         rewardsOwed: [le(after.rewardsOwed), rewardsOwed],
         tokensBurned: [le(after.tokensBurned), tokensBurned],
         rewardsPaid: [le(after.rewardsPaid), rewardsPaid],
@@ -1425,6 +1433,10 @@ async function main() {
         feesDesigner: 0n,
         feesSuite: 0n,
         retiredTokens: 0n,
+        // The reward share's ledgers (POOL4-49): the cap's fall no trim has matched yet, and
+        // the part of the retired tokens that earns the reward share.
+        capFallUnmatched: 0n,
+        retiredRewardable: 0n,
         cap: {
             cap,
             decayCredit: le(state.decayCredit),
@@ -1558,12 +1570,16 @@ async function main() {
             books.curve = { sqrtPrice: spec.sqrtPrice, liquidity: moved.liquidity };
             books.poolTokens -= moved.tokens;
             books.retiredTokens += moved.tokens;
+            const matched = moved.tokens < books.capFallUnmatched ? moved.tokens : books.capFallUnmatched;
+            books.capFallUnmatched -= matched;
+            books.retiredRewardable += matched;
             books.poolSol -= moved.sol;
             books.idleSol += moved.sol;
             books.tokensTrimmed += moved.tokens;
             books.solTrimmed += moved.sol;
         }
         if (moved.kind === 'lowered') {
+            books.capFallUnmatched += moved.by;
             const [event] = events.lowered;
             if (
                 events.lowered.length !== 1 ||
@@ -1682,6 +1698,8 @@ async function main() {
         poolTokens: [le(traded.poolTokens), books.poolTokens],
         poolSol: [le(traded.poolSol), books.poolSol],
         retiredTokens: [le(traded.retiredTokens), books.retiredTokens],
+        retiredRewardable: [le(traded.retiredRewardable), books.retiredRewardable],
+        capFallUnmatched: [le(traded.capFallUnmatched), books.capFallUnmatched],
         idleSol: [le(traded.idleSol), books.idleSol],
         cap: [le(traded.cap), books.cap.cap],
         decayCredit: [le(traded.decayCredit), books.cap.decayCredit],

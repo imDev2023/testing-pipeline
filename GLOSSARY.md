@@ -284,11 +284,11 @@ The most a buy wall market's inventory cap may fall in a day, however much is bo
 _Avoid_: burn rate (the cap is not the supply), emission
 
 **Retired tokens**:
-Tokens a buy wall market has trimmed or its buy wall has bought, waiting to be burned and split.
+Tokens a buy wall market has trimmed or its buy wall has bought, waiting to be burned, less any reward share.
 _Avoid_: burned (not yet), treasury
 
 **Reward share**:
-The part of a buy wall market's retired tokens that goes to its rewards recipient instead of being burned.
+The part of a buy wall market's retired tokens that goes to its rewards recipient instead of being burned, paid only on trimmed tokens its inventory cap's own fall matched, so never more than the reward share of how far the cap has fallen.
 _Avoid_: staking yield (the recipient need not be a staking program), tax
 
 **Designer share**:

@@ -3475,11 +3475,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-06: Trimmed tokens and SOL
 
 - Question: What happens to trimmed tokens and trimmed SOL?
-- Answer: A reward share of 0% to 30% per market (the form pre-fills 15%) goes to one rewards recipient and the rest is burned; all trimmed SOL becomes the buy wall, and tokens the wall buys go through the same split.
-- Alternatives: Burning everything; IMD's fixed 85/15 with its three-way reward split.
+- Answer: A reward share of 0% to 30% per market (the form pre-fills 15%) goes to one rewards recipient and the rest is burned, the reward share paid only on trimmed tokens the cap's own fall matched ([POOL4-49](#pool4-49-which-retired-tokens-earn-the-reward-share)); all trimmed SOL becomes the buy wall, and tokens the wall buys are burned whole.
+- Alternatives: The earlier default, in which tokens the wall buys went through the same split and every retired token earned the reward share; burning everything; IMD's fixed 85/15 with its three-way reward split.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Creation parameters](spec/pool4-for-solana.md#creation-parameters)
 - Changes by: market-creation parameter
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20)
 
 ### POOL4-07: Staking
@@ -3891,6 +3891,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-49: Which retired tokens earn the reward share
+
+- Question: Which retired tokens earn the reward share, now that a rewards recipient can retire tokens itself by washing a buy against the decay credit, selling a dip into a tight cap or selling into the wall and closing it, all in one transaction?
+- Answer: Only trimmed tokens matched by the cap's own fall: the ratchet adds every unit the cap falls to `cap_fall_unmatched`, a trim moves `min(trimmed tokens, cap_fall_unmatched)` from it into `retired_rewardable`, and `settle` pays `floor(retired_rewardable x reward_share_bps / 10,000)` and burns the rest of `retired_tokens`, so the rest of a trim, the tokens a closed wall bought and `place_wall`'s dust burn whole and the rewards never exceed `reward_share_bps` of `seeded_tokens - cap_floor`.
+- Alternatives: The earlier rule, in which every retired token earned the reward share; lagging the ratchet by a slot so a same-transaction round trip never trims; paying no reward share on trims; accepting the behaviour and disclosing it.
+- Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ## Lending AMM (LENDING)
 

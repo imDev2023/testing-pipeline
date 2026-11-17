@@ -86,6 +86,10 @@ fn worked_example_walled(env: &mut Env, params: &buy_wall_amm::InitParams) -> (M
     let (tip, _) = env.place_wall(&market, &keeper).unwrap();
     assert_eq!(tip, 912_933);
     assert_eq!(env.state(&market).retired_tokens(), 8_333_333_340);
+    // The trim's 8,333,333,329 units were matched by the cap's fall; the dust was not
+    // (POOL4-49).
+    assert_eq!(env.state(&market).retired_rewardable(), 8_333_333_329);
+    assert_eq!(env.state(&market).cap_fall_unmatched(), 4);
     (market, trader)
 }
 
@@ -105,20 +109,21 @@ fn the_worked_examples_settle_is_reproduced_through_the_router() {
     let after = env.state(&market);
     assert_eq!(
         supply_before - supply(&env, &market.token_mint),
-        7_083_333_339
+        7_083_333_341
     );
-    assert_eq!(after.rewards_owed(), 1_250_000_001);
-    assert_eq!(after.retired_tokens(), 0);
-    assert_eq!(after.tokens_burned(), 7_083_333_339);
+    assert_eq!(after.rewards_owed(), 1_249_999_999);
+    assert_eq!((after.retired_tokens(), after.retired_rewardable()), (0, 0));
+    assert_eq!(after.tokens_burned(), 7_083_333_341);
     assert_eq!(
         events::<Settled>(&logs),
         vec![Settled {
             market_state: market.market_state,
             retired: 8_333_333_340,
-            burned: 7_083_333_339,
-            to_rewards: 1_250_000_001,
-            rewards_owed: 1_250_000_001,
-            tokens_burned: 7_083_333_339,
+            rewardable: 8_333_333_329,
+            burned: 7_083_333_341,
+            to_rewards: 1_249_999_999,
+            rewards_owed: 1_249_999_999,
+            tokens_burned: 7_083_333_341,
         }]
     );
     // `settle` never moves the price, the curve, the wall, the cap, the guard or the counters.
@@ -185,7 +190,7 @@ fn owing() -> Owing {
     set_supply(&mut env, &market.token_mint, TOKENS + 300_000_000_000);
     env.send(&[settle_ix(&market)], &[]).unwrap();
     let state = env.state(&market);
-    assert_eq!(state.rewards_owed(), 1_250_000_001);
+    assert_eq!(state.rewards_owed(), 1_249_999_999);
     assert!(state.fees_recipient() > 0 && state.fees_designer() > 0 && state.fees_suite() > 0);
     Owing {
         env,
@@ -277,7 +282,7 @@ fn pay_rewards_pays_everything_owed_to_the_rewards_recipient() {
     // Anyone may pay it; the caller pays for the recipient's missing token account.
     let lamports = env.svm.get_balance(&payer.pubkey()).unwrap();
     let logs = pay_rewards(&mut env, &market, &payer, &recipient).unwrap();
-    assert_eq!(env.balance(&to), 1_250_000_001);
+    assert_eq!(env.balance(&to), 1_249_999_999);
     assert!(
         env.svm.get_balance(&payer.pubkey()).unwrap() < lamports,
         "the payer paid the rent"
@@ -285,7 +290,7 @@ fn pay_rewards_pays_everything_owed_to_the_rewards_recipient() {
     let after = env.state(&market);
     assert_eq!(
         (after.rewards_owed(), after.rewards_paid()),
-        (0, 1_250_000_001)
+        (0, 1_249_999_999)
     );
     assert_eq!(
         events::<RewardsPaid>(&logs),
@@ -293,8 +298,8 @@ fn pay_rewards_pays_everything_owed_to_the_rewards_recipient() {
             market_state: market.market_state,
             recipient: recipient.to_bytes().into(),
             token_account: to.to_bytes().into(),
-            amount: 1_250_000_001,
-            rewards_paid: 1_250_000_001,
+            amount: 1_249_999_999,
+            rewards_paid: 1_249_999_999,
         }]
     );
     assert_eq!(after.sqrt_price(), before.sqrt_price());
@@ -508,7 +513,7 @@ fn each_recipient_hands_over_its_own_role_and_what_it_is_owed() {
     pay_rewards(&mut env, &market, &payer, &new_rewards.pubkey()).unwrap();
     assert_eq!(
         held(&env, &new_rewards.pubkey(), &market.token_mint, &TOKEN),
-        1_250_000_001
+        1_249_999_999
     );
     assert_eq!(
         held(
@@ -647,7 +652,7 @@ fn hooked_owing(
     env.place_wall(&market, &keeper).unwrap();
     set_supply(env, &token, TOKENS + 300_000_000_000);
     env.send(&[settle_ix(&market)], &[]).unwrap();
-    assert_eq!(env.state(&market).rewards_owed(), 1_250_000_001);
+    assert_eq!(env.state(&market).rewards_owed(), 1_249_999_999);
     market
 }
 
@@ -668,7 +673,7 @@ fn a_token_with_a_transfer_hook_goes_through_the_seed_swaps_and_pay_rewards() {
         vec![],
     );
     assert_fails(env.send(&[ix], &[&payer]));
-    assert_eq!(env.state(&market).rewards_owed(), 1_250_000_001);
+    assert_eq!(env.state(&market).rewards_owed(), 1_249_999_999);
     // With them, it goes through the hook.
     let logs = pay_rewards(&mut env, &market, &payer, &rewards_recipient.pubkey()).unwrap();
     assert!(
@@ -678,7 +683,7 @@ fn a_token_with_a_transfer_hook_goes_through_the_seed_swaps_and_pay_rewards() {
     );
     assert_eq!(
         held(&env, &rewards_recipient.pubkey(), &token, &TOKEN_2022),
-        1_250_000_001
+        1_249_999_999
     );
     assert_eq!(env.state(&market).rewards_owed(), 0);
     assert_books(&env, &market);
@@ -707,7 +712,7 @@ fn a_rewards_recipient_refused_by_the_hook_blocks_nothing_else() {
     );
     assert_eq!(
         env.state(&market).rewards_owed(),
-        1_250_000_001,
+        1_249_999_999,
         "the rewards wait"
     );
 
