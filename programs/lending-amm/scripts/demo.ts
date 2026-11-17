@@ -238,7 +238,8 @@ const DEMO = {
     secondLp: {
         lamports: 100_000_000n,
         wrapLamports: 100_000_000n,
-        tokens: 50_000_000_000n,
+        // Enough for its deposit at the market's ratio plus the slippage it allows.
+        tokens: 60_000_000_000n,
         deposit: { wsol: 50_000_000n },
         removeEachThird: 3n,
         lockTenth: 10n,
