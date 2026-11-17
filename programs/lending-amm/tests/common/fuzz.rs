@@ -1550,6 +1550,14 @@ impl World {
         let n = env.share_count(market);
         prop_assert_eq!(n, self.shares, "{}", SHARES);
         prop_assert!(n >= MINIMUM_LIQUIDITY, "{}", SHARES);
+        // Once open, a market never goes back to the first-deposit path, which would mint shares
+        // at a price of the depositor's choosing: the other side's reserve never returns to 0
+        // (Book of Knowledge's SH-10, docs/security/lending-amm/maths-properties.md).
+        prop_assert!(
+            state.reserves[market.other_index()] > 0,
+            "{} the other side's reserve fell to 0",
+            SHARES
+        );
         prop_assert_eq!(
             env.balance_or_zero(&env.lock_account(market)),
             self.locked,
