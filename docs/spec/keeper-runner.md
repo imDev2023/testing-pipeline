@@ -62,7 +62,7 @@ Like every decision in this spec, each one here is a default MetalLegBob may cha
 ## Sending a job
 
 1. Build the job's transaction from `packages/keeper-jobs`, with the keeper wallet as fee payer and, for `place_wall`, the keeper wallet's wrapped-SOL account as the tip account (created in the same transaction if missing).
-   For a buy wall market whose token has a transfer hook, `pay_rewards` needs the hook's extra accounts after its own, which the program's metadata form cannot carry, so `packages/keeper-jobs` resolves them from the mint's extra account metas; a hook that refuses the payout is a failure like any other (below).
+   A buy wall market's token never has a live transfer hook (the seed refuses one, `POOL4-48`), so its `pay_rewards` needs no hook accounts.
 2. Simulate it.
    A "nothing to do" refusal is a skip and costs nothing; any other simulation error counts as a failure (below).
 3. Estimate its cost (the fee plus the rent of any account it creates) and check it against every cap; a job over a cap is held, not sent.

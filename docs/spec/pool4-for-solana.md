@@ -364,7 +364,7 @@ The runner is not specified yet (the map's "Not yet specified"); what it needs f
 | `pay_rewards` | `rewards_owed` is above 0, daily |
 | `sweep_fees` | A slot's ledger is above 0, daily; slot 1 only once `DESIGNER_RECIPIENT` is set |
 
-`pay_rewards` for a token with a transfer hook needs the hook's extra accounts, which the metadata form cannot carry, so the runner resolves them from the mint's extra account metas, as Aviary does; a hook that refuses the payout makes the job fail like any other, changing nothing.
+`pay_rewards` needs no transfer-hook accounts, since a seeded market's token never has a live hook ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)), so the metadata form pays every market; a payout refused for any other reason makes the job fail like any other, changing nothing.
 
 A payout into a recipient account that does not exist makes the caller pay its rent, and a recipient that closes its account after each payout gets that rent back each time, so the runner should skip a payout whose ledger is worth less than that rent while the account is missing.
 

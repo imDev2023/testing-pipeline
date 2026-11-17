@@ -62,7 +62,7 @@
             "name": "seed",
             "label": "Seed the market",
             "kind": "add_liquidity",
-            "description": "Seeds and opens the market, once, signed by its seeder, from the seeder's own token and wrapped SOL accounts. The token's mint and freeze authorities must be removed first. The seed stays in the market for good: there is no withdrawal. A token with a transfer hook needs the hook's accounts after these, which this form cannot add.",
+            "description": "Seeds and opens the market, once, signed by its seeder, from the seeder's own token and wrapped SOL accounts. The token's mint and freeze authorities must be removed first, and a transfer hook, if the token has one, cleared (no hook program and no hook authority), so no hook ever runs on the market's token. The seed stays in the market for good: there is no withdrawal.",
             "args": [
                 { "name": "token_amount", "type": "u64", "label": "Tokens", "decimals_of": "mint:0" },
                 { "name": "sol_amount", "type": "u64", "label": "Wrapped SOL", "decimals_of": "mint:1" }
@@ -114,7 +114,7 @@
             "name": "pay_rewards",
             "label": "Pay the rewards",
             "kind": "claim",
-            "description": "A keeper job anyone may run. Pays everything the market owes its rewards recipient, in the token, to the recipient's associated token account, which the caller pays to create if it is missing. Enter the market's current rewards recipient; any other wallet is refused. Refused when nothing is owed. No tip. A token with a transfer hook needs the hook's accounts after these, which this form cannot add.",
+            "description": "A keeper job anyone may run. Pays everything the market owes its rewards recipient, in the token, to the recipient's associated token account, which the caller pays to create if it is missing. Enter the market's current rewards recipient; any other wallet is refused. Refused when nothing is owed. No tip.",
             "args": [],
             "accounts": [
                 { "name": "payer", "source": "wallet", "signer": true, "writable": true },
