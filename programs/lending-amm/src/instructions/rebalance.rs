@@ -85,7 +85,7 @@ pub struct Rebalance<'info> {
 /// compute budget instructions, and klend's `refresh_reserve`, which a keeper puts first when the
 /// reserve's stored rate is stale. Never another `rebalance`, on this market or another: one
 /// market's deposit before a second market's call and a third's redeem after it would move
-/// Kamino's free liquidity around the second as klend's own instructions would (finding H-R1,
+/// Kamino's free liquidity around the second as klend's own instructions would (finding H003,
 /// docs/security/lending-amm/).
 pub fn allowed_beside_rebalance(program: &Pubkey, data: &[u8]) -> bool {
     *program == COMPUTE_BUDGET
@@ -155,8 +155,10 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
         stopped: reserve.redeems_stopped(&lending_market),
         deposits_blocked: reserve.block_ctoken_usage,
     };
-    let decision = withdraw_mode::decide(
+    let (decision, exit_seen_slot) = withdraw_mode::decide_with_exit_delay(
         market.withdraw_mode,
+        market.exit_seen_slot,
+        Clock::get()?.slot,
         buffer,
         lent_value,
         kamino_state,
@@ -179,7 +181,9 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
         }
     }
     let Some(planned) = decision.planned else {
-        ctx.accounts.market_state.withdraw_mode = decision.withdraw_mode;
+        let market = &mut ctx.accounts.market_state;
+        market.withdraw_mode = decision.withdraw_mode;
+        market.exit_seen_slot = exit_seen_slot;
         return Ok(());
     };
 
@@ -212,6 +216,7 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
     // Record exactly what moved, as measured, never what was asked for.
     let market = &mut ctx.accounts.market_state;
     market.withdraw_mode = decision.withdraw_mode;
+    market.exit_seen_slot = exit_seen_slot;
     let (direction, liquidity, ctokens) = match planned {
         Move::Deposit(_) => {
             let liquidity = vault_before

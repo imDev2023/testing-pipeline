@@ -22,7 +22,7 @@
 //!   nothing to do and nobody pays for a no-op.
 
 use crate::buffer::{self, Move};
-use crate::config::{WITHDRAW_MODE_ENTER, WITHDRAW_MODE_EXIT};
+use crate::config::{WITHDRAW_MODE_ENTER, WITHDRAW_MODE_EXIT, WITHDRAW_MODE_EXIT_DELAY_SLOTS};
 use crate::errors::StrategyError;
 
 // The thresholds never overlap: a liquidity below the entry threshold is never above the exit
@@ -71,6 +71,137 @@ pub fn next_mode(current: bool, free: u64, exposure: u64) -> bool {
         false
     } else {
         current
+    }
+}
+
+/// What `rebalance` does, as [`decide`] says, except that a market in withdraw mode leaves only
+/// once it has seen Kamino's freely available liquidity above the exit threshold for
+/// `WITHDRAW_MODE_EXIT_DELAY_SLOTS`: `exit_seen_slot` is when it first saw it so, 0 if it has not,
+/// and `slot` is now. Returns the decision and the `exit_seen_slot` to record: the first sighting's
+/// slot while the market waits to leave, and 0 once it is not waiting, so a `rebalance` that sees
+/// the liquidity back at or below the threshold starts the wait again. A call that records a new
+/// value succeeds even when it moves nothing, as one that changes the mode does.
+pub fn decide_with_exit_delay(
+    withdraw_mode: bool,
+    exit_seen_slot: u64,
+    slot: u64,
+    buffer: u64,
+    lent_value: u64,
+    kamino: Kamino,
+    min_rebalance: u64,
+) -> Result<(Decision, u64), StrategyError> {
+    if kamino.stopped {
+        return Err(StrategyError::KaminoStopped);
+    }
+    let lent_total = buffer
+        .checked_add(lent_value)
+        .ok_or(StrategyError::Overflow)?;
+    let x = exposure(lent_value, lent_total);
+    let wants_out = withdraw_mode && !next_mode(withdraw_mode, kamino.free, x);
+    let waited = exit_seen_slot != 0
+        && slot >= exit_seen_slot.saturating_add(WITHDRAW_MODE_EXIT_DELAY_SLOTS);
+    if wants_out && !waited {
+        // Still in withdraw mode while it waits: it redeems everything Kamino can pay. A sighting
+        // is recorded as slot 1 at the earliest, since 0 means none.
+        let seen = if exit_seen_slot == 0 {
+            slot.max(1)
+        } else {
+            exit_seen_slot
+        };
+        return match redeem_everything(lent_value, kamino.can_pay, min_rebalance) {
+            Ok(planned) => Ok((
+                Decision {
+                    withdraw_mode: true,
+                    planned: Some(planned),
+                    exposure: x,
+                },
+                seen,
+            )),
+            Err(_) if seen != exit_seen_slot => Ok((
+                Decision {
+                    withdraw_mode: true,
+                    planned: None,
+                    exposure: x,
+                },
+                seen,
+            )),
+            Err(refusal) => Err(refusal),
+        };
+    }
+    match decide(withdraw_mode, buffer, lent_value, kamino, min_rebalance) {
+        Ok(decision) => Ok((decision, 0)),
+        // Nothing to move and no change of mode, but a wait to forget.
+        Err(_) if exit_seen_slot != 0 => Ok((
+            Decision {
+                withdraw_mode,
+                planned: None,
+                exposure: x,
+            },
+            0,
+        )),
+        Err(refusal) => Err(refusal),
+    }
+}
+
+/// The exit delay's rules, which Proptest and Kani check: [`decide_with_exit_delay`] takes a market
+/// out of withdraw mode only once `WITHDRAW_MODE_EXIT_DELAY_SLOTS` have passed since a sighting it
+/// recorded; while a market waits it stays in withdraw mode, redeems only, and records its first
+/// sighting; a market not waiting records none; and otherwise it does what [`decide`] does.
+#[cfg(any(test, kani))]
+pub(crate) fn assert_the_exit_waits(
+    current: bool,
+    exit_seen_slot: u64,
+    slot: u64,
+    buffer: u64,
+    lent_value: u64,
+    kamino: Kamino,
+    min_rebalance: u64,
+) {
+    let result = decide_with_exit_delay(
+        current,
+        exit_seen_slot,
+        slot,
+        buffer,
+        lent_value,
+        kamino,
+        min_rebalance,
+    );
+    let x = exposure(lent_value, buffer + lent_value);
+    let wants_out = current && !next_mode(current, kamino.free, x);
+    let waited = exit_seen_slot != 0
+        && slot >= exit_seen_slot.saturating_add(WITHDRAW_MODE_EXIT_DELAY_SLOTS);
+    match result {
+        Err(refusal) => {
+            assert!(kamino.stopped || !matches!(refusal, StrategyError::KaminoStopped));
+            // A refusal changes nothing: nothing to forget, and no first sighting to record.
+            assert!(
+                kamino.stopped
+                    || (exit_seen_slot == 0 && !wants_out)
+                    || (wants_out && exit_seen_slot != 0 && !waited)
+            );
+        }
+        Ok((decision, seen)) => {
+            assert!(!kamino.stopped);
+            if current && !decision.withdraw_mode {
+                assert!(waited);
+            }
+            if wants_out && !waited {
+                assert!(decision.withdraw_mode);
+                assert!(
+                    seen == if exit_seen_slot == 0 {
+                        slot.max(1)
+                    } else {
+                        exit_seen_slot
+                    }
+                );
+                assert!(!matches!(decision.planned, Some(Move::Deposit(_))));
+            } else {
+                assert!(seen == 0);
+                if let Ok(direct) = decide(current, buffer, lent_value, kamino, min_rebalance) {
+                    assert!(direct == decision);
+                }
+            }
+        }
     }
 }
 
@@ -337,6 +468,26 @@ mod tests {
                 }
             }
         }
+
+        /// The exit delay: a market leaves withdraw mode only after seeing the free liquidity
+        /// above the exit threshold for `WITHDRAW_MODE_EXIT_DELAY_SLOTS`, redeems and never
+        /// deposits while it waits, and records a sighting only while it waits.
+        #[test]
+        fn a_market_leaves_withdraw_mode_only_after_the_exit_delay(
+            current: bool,
+            exit_seen_slot in proptest::option::of(1u64..=u64::MAX).prop_map(|s| s.unwrap_or(0)),
+            slot: u64,
+            buffer in 0u64..=u64::MAX / 2,
+            lent_value in 0u64..=u64::MAX / 2,
+            free: u64,
+            can_pay: u64,
+            stopped in proptest::bool::weighted(0.1),
+            deposits_blocked: bool,
+            min_rebalance in 0u64..=100_000_000,
+        ) {
+            let state = Kamino { free, can_pay: can_pay.min(lent_value), stopped, deposits_blocked };
+            assert_the_exit_waits(current, exit_seen_slot, slot, buffer, lent_value, state, min_rebalance);
+        }
     }
 }
 
@@ -496,5 +647,27 @@ mod proofs {
             deposits_blocked: kani::any(),
         };
         assert_decide_follows_the_rules(kani::any(), kani::any(), kani::any(), state, kani::any());
+    }
+
+    /// The exit delay's rules for every input but a bounded buffer and lent value, below 2^8,
+    /// as for `decide`'s own rules.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn a_market_leaves_withdraw_mode_only_after_the_exit_delay_bounded() {
+        let state = Kamino {
+            free: kani::any(),
+            can_pay: kani::any(),
+            stopped: kani::any(),
+            deposits_blocked: kani::any(),
+        };
+        assert_the_exit_waits(
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any_where(|&b| b < (1 << 8)),
+            kani::any_where(|&v| v < (1 << 8)),
+            state,
+            kani::any(),
+        );
     }
 }

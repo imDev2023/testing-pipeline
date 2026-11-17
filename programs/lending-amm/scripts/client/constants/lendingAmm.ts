@@ -23,3 +23,5 @@ export const TRADE_MAX_RESERVE_AGE_SLOTS: bigint = 9000n;
 export const WITHDRAW_MODE_ENTER: bigint = 5n;
 
 export const WITHDRAW_MODE_EXIT: bigint = 10n;
+
+export const WITHDRAW_MODE_EXIT_DELAY_SLOTS: bigint = 9000n;

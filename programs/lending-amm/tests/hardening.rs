@@ -35,7 +35,7 @@ fn stale_market(env: &mut Env, lent: usize) -> Market {
 }
 
 #[test]
-fn sos_stale_entry_adding_at_the_stored_rate_then_leaving_takes_no_interest_from_the_lps() {
+fn sos_h001_adding_at_the_stored_rate_then_leaving_takes_no_interest_from_the_lps() {
     for lent in 0..LENT_MINTS.len() {
         let mut env = Env::new();
         let market = stale_market(&mut env, lent);
@@ -91,7 +91,7 @@ fn sos_stale_entry_adding_at_the_stored_rate_then_leaving_takes_no_interest_from
 }
 
 #[test]
-fn sos_rebalance_alone_no_other_rebalance_can_move_kamino_around_a_market_in_withdraw_mode() {
+fn sos_h003_no_other_rebalance_can_move_kamino_around_a_market_in_withdraw_mode() {
     // Market B is in withdraw mode, with Kamino's free liquidity right at its exit threshold.
     // Market A, on the same reserve, holds its whole lent side in its buffer, so its `rebalance`
     // deposits. With both in one transaction, A's deposit would lift Kamino's free liquidity past
@@ -132,15 +132,16 @@ fn sos_rebalance_alone_no_other_rebalance_can_move_kamino_around_a_market_in_wit
     );
     assert_eq!(env.market_state(&b.market_state), before);
 
-    // Each alone it runs: A deposits, and B, seeing a real deposit held in Kamino, leaves.
+    // Each alone it runs: A deposits, and B, seeing a real deposit held in Kamino, starts the
+    // wait to leave, which it completes only if the deposit stays for the whole wait.
     env.send_meta(&[rebalance_a], &[&caller]).unwrap();
     env.send_meta(&[rebalance_b], &[&caller]).unwrap();
-    assert!(!env.market_state(&b.market_state).withdraw_mode);
+    let state = env.market_state(&b.market_state);
+    assert!(state.withdraw_mode && state.exit_seen_slot > 0);
 }
 
 #[test]
-fn sos_stale_trade_a_quote_or_swap_refuses_a_reserve_more_than_an_hour_stale_and_no_round_trip_pays(
-) {
+fn sos_h002_a_quote_or_swap_refuses_a_reserve_more_than_an_hour_stale_and_no_round_trip_pays() {
     use lending_amm::config::TRADE_MAX_RESERVE_AGE_SLOTS;
     for lent in 0..LENT_MINTS.len() {
         let mut env = Env::new();
@@ -247,7 +248,7 @@ fn only_in_kind_works(
 }
 
 #[test]
-fn sos_recorded_reserve_a_market_never_reads_a_reserve_other_than_the_one_it_recorded() {
+fn sos_h007_a_market_never_reads_a_reserve_other_than_the_one_it_recorded() {
     // As if an upgrade edited the lent mint's row of `LENT_MINTS`: the market recorded one reserve
     // and the table now names another. It must stop rather than value, lend or redeem elsewhere.
     for lent in 0..LENT_MINTS.len() {
@@ -267,7 +268,7 @@ fn sos_recorded_reserve_a_market_never_reads_a_reserve_other_than_the_one_it_rec
 }
 
 #[test]
-fn sos_reserve_version_a_reserve_of_a_version_this_program_was_not_written_for_is_refused() {
+fn sos_h008_a_reserve_of_a_version_this_program_was_not_written_for_is_refused() {
     // A klend upgrade that moved the reserve to a new layout version, keeping its size and
     // discriminator: the market must not price from offsets that may have moved.
     for lent in 0..LENT_MINTS.len() {
@@ -306,13 +307,13 @@ fn remove_lent_side_instruction(
 }
 
 #[test]
-fn sos_other_mint_blocks_an_lp_leaves_with_the_lent_side_when_the_other_mint_cannot_move() {
+fn sos_h006_an_lp_leaves_with_the_lent_side_when_the_other_mint_cannot_move() {
     use lending_amm::events::LentSideRemoved;
     use lending_amm::shares::removal;
     // The other mint keeps a freeze authority, which the mint rules allow (as USDC's), and its
     // authority freezes the market's vault: no removal can pay the other side, so without
     // `remove_lent_side` the LPs' WSOL or USDC would be trapped with it.
-    for lent in 0..LENT_MINTS.len() {
+    for (lent, entry) in LENT_MINTS.iter().enumerate() {
         let mut env = Env::new();
         env.load_klend();
         let other = env.create_mint_with(
@@ -323,7 +324,7 @@ fn sos_other_mint_blocks_an_lp_leaves_with_the_lent_side_when_the_other_mint_can
             },
         );
         let spec = MarketSpec {
-            mints: [(other, TOKEN), (ck(&LENT_MINTS[lent].mint), TOKEN)],
+            mints: [(other, TOKEN), (ck(&entry.mint), TOKEN)],
             params: lending_amm::InitParams {
                 lent_index: 1,
                 lp_fee_bps: 30,
@@ -394,5 +395,78 @@ fn sos_other_mint_blocks_an_lp_leaves_with_the_lent_side_when_the_other_mint_can
             "lent {lent}: with the other vault frozen, left with {} of the lent mint and {} cTokens, {} of the other side left to the LPs who stay",
             expected.buffer, expected.ctokens, expected.other
         );
+    }
+}
+
+#[test]
+fn sos_h004_one_reading_of_kamino_cannot_take_a_market_out_of_withdraw_mode() {
+    // A deposit before `rebalance` and a redeem after it, in separate transactions of one Jito
+    // bundle, lift Kamino's free liquidity for that one reading at no risk to whoever does it.
+    // Here the free liquidity is set as their deposit and redeem would leave it.
+    use lending_amm::config::{
+        WITHDRAW_MODE_ENTER, WITHDRAW_MODE_EXIT, WITHDRAW_MODE_EXIT_DELAY_SLOTS,
+    };
+    for lent in 0..LENT_MINTS.len() {
+        let mut env = Env::new();
+        env.load_klend();
+        let spec = lent_spec(&mut env, lent, 30);
+        let (market, _) = env
+            .create_funded_market(&spec, [OTHER, units(lent, 50)])
+            .unwrap();
+        env.rebalance(&market, None).unwrap();
+        let exposure = env.exposure(&market);
+        env.set_free_liquidity(&market, WITHDRAW_MODE_ENTER * exposure - 1);
+        env.rebalance(&market, None).unwrap();
+        assert!(env.market_state(&market.market_state).withdraw_mode);
+        let crunch = WITHDRAW_MODE_EXIT * env.exposure(&market);
+
+        // The bundle: free liquidity above the exit threshold for one `rebalance`, then back.
+        env.set_free_liquidity(&market, crunch + 1);
+        let slot = env.clock().slot;
+        env.rebalance(&market, None).unwrap();
+        let state = env.market_state(&market.market_state);
+        assert!(
+            state.withdraw_mode,
+            "lent {lent}: one reading took the market out of withdraw mode"
+        );
+        assert_eq!(state.exit_seen_slot, slot);
+        assert_eq!(state.ctokens, 0, "lent {lent}: it lent while waiting");
+        env.set_free_liquidity(&market, crunch);
+
+        // The keeper's sweep sees the crunch and starts the wait again.
+        env.advance_clock(1_500, 600);
+        env.rebalance(&market, None).unwrap();
+        assert_eq!(env.market_state(&market.market_state).exit_seen_slot, 0);
+
+        // A second bundle an hour after the first starts a new wait; it does not complete one.
+        env.advance_clock(
+            WITHDRAW_MODE_EXIT_DELAY_SLOTS,
+            (WITHDRAW_MODE_EXIT_DELAY_SLOTS * 2 / 5) as i64,
+        );
+        env.set_free_liquidity(&market, crunch + 1);
+        let slot = env.clock().slot;
+        env.rebalance(&market, None).unwrap();
+        let state = env.market_state(&market.market_state);
+        assert!(state.withdraw_mode);
+        assert_eq!(state.exit_seen_slot, slot);
+
+        // Free liquidity that stays above the threshold for the whole wait, through the keeper's
+        // sweeps, takes it out, and it lends again in the same call.
+        assert_refused(
+            env.rebalance(&market, None),
+            StrategyError::BelowMinRebalance,
+        );
+        env.advance_clock(WITHDRAW_MODE_EXIT_DELAY_SLOTS - 1, 3_599);
+        assert_refused(
+            env.rebalance(&market, None),
+            StrategyError::BelowMinRebalance,
+        );
+        assert!(env.market_state(&market.market_state).withdraw_mode);
+        env.advance_clock(1, 1);
+        env.rebalance(&market, None).unwrap();
+        let state = env.market_state(&market.market_state);
+        assert!(!state.withdraw_mode);
+        assert_eq!(state.exit_seen_slot, 0);
+        assert!(state.ctokens > 0);
     }
 }

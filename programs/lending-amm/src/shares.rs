@@ -328,9 +328,9 @@ mod tests {
 
     /// An in-kind exit never fails on the running totals' arithmetic, however large the net
     /// amount lent: they only track the lending yield, and must never stand between an LP and
-    /// their exit (finding H-SH8, docs/security/lending-amm/).
+    /// their exit (finding H005, docs/security/lending-amm/).
     #[test]
-    fn sos_in_kind_totals_never_overflow() {
+    fn sos_h005_in_kind_totals_never_overflow() {
         let paid = u64::MAX - 1;
         let held = u64::MAX;
         assert_eq!(

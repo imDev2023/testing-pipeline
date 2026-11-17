@@ -42,7 +42,7 @@ pub const KAMINO_RATE_HEADROOM_BPS: u16 = 10;
 /// cTokens: 0, refreshed in the same slot, as klend itself asks before it states its exchange
 /// rate. Adding and removing charge no fee, so any interest the stored rate has not counted yet
 /// would go to whoever adds just before the reserve refreshes and leaves just after, out of the
-/// LPs' yield (finding H-S1, docs/security/lending-amm/). A depositor puts klend's
+/// LPs' yield (finding H001, docs/security/lending-amm/). A depositor puts klend's
 /// `refresh_reserve` first in the same transaction. Exported in the IDL, as is the trade bound,
 /// from which forms, keepers and the demo read them.
 #[constant]
@@ -63,6 +63,14 @@ pub const WITHDRAW_MODE_ENTER: u64 = 5;
 /// Leave withdraw mode when it is back above this many times that amount.
 #[constant]
 pub const WITHDRAW_MODE_EXIT: u64 = 10;
+/// How many slots a market in withdraw mode must have seen Kamino's freely available liquidity
+/// above the exit threshold before it leaves: about an hour. Any `rebalance` in between that sees
+/// it at or below the threshold starts the wait again. One reading can be inflated at no risk, by
+/// a deposit and a redeem around `rebalance` in one Jito bundle, which would lend the market's
+/// liquidity into a crunch; readings an hour apart, with the keeper's sweeps between them, cannot
+/// (finding H004, docs/security/lending-amm/). Exported in the IDL, from which keepers read it.
+#[constant]
+pub const WITHDRAW_MODE_EXIT_DELAY_SLOTS: u64 = 9_000;
 /// The highest LP fee a market may charge, in basis points: 2%. Exported in the IDL, from
 /// which forms and the demo read it.
 #[constant]

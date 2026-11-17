@@ -1939,11 +1939,21 @@
             "type": "i64"
           },
           {
+            "name": "exit_seen_slot",
+            "docs": [
+              "For a market in withdraw mode, the slot of the `rebalance` that first saw Kamino's freely",
+              "available liquidity above the exit threshold, since when every `rebalance` has; 0",
+              "otherwise, as in markets created before the field was taken from the reserved space",
+              "(docs/spec/lending-pool.md, \"Withdraw mode\")."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "reserved",
             "type": {
               "array": [
                 "u8",
-                256
+                248
               ]
             }
           }
@@ -2638,7 +2648,7 @@
         "cTokens: 0, refreshed in the same slot, as klend itself asks before it states its exchange",
         "rate. Adding and removing charge no fee, so any interest the stored rate has not counted yet",
         "would go to whoever adds just before the reserve refreshes and leaves just after, out of the",
-        "LPs' yield (finding H-S1, docs/security/lending-amm/). A depositor puts klend's",
+        "LPs' yield (finding H001, docs/security/lending-amm/). A depositor puts klend's",
         "`refresh_reserve` first in the same transaction. Exported in the IDL, as is the trade bound,",
         "from which forms, keepers and the demo read them."
       ],
@@ -2718,6 +2728,19 @@
       ],
       "type": "u64",
       "value": "10"
+    },
+    {
+      "name": "WITHDRAW_MODE_EXIT_DELAY_SLOTS",
+      "docs": [
+        "How many slots a market in withdraw mode must have seen Kamino's freely available liquidity",
+        "above the exit threshold before it leaves: about an hour. Any `rebalance` in between that sees",
+        "it at or below the threshold starts the wait again. One reading can be inflated at no risk, by",
+        "a deposit and a redeem around `rebalance` in one Jito bundle, which would lend the market's",
+        "liquidity into a crunch; readings an hour apart, with the keeper's sweeps between them, cannot",
+        "(finding H004, docs/security/lending-amm/). Exported in the IDL, from which keepers read it."
+      ],
+      "type": "u64",
+      "value": "9000"
     }
   ]
 }

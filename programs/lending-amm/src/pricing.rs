@@ -457,6 +457,7 @@ mod proofs {
             redeemed: 0,
             created_slot: 0,
             created_at: 0,
+            exit_seen_slot: 0,
             reserved: [0; crate::state::RESERVED_LEN],
         };
         let reserve = Reserve {
@@ -515,6 +516,7 @@ mod proofs {
             redeemed: 0,
             created_slot: 0,
             created_at: 0,
+            exit_seen_slot: 0,
             reserved: [0; crate::state::RESERVED_LEN],
         };
         let reserve = Reserve {

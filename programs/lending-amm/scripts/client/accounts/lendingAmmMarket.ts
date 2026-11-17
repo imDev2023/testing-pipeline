@@ -113,6 +113,13 @@ export type LendingAmmMarket = {
   /** When the market was created. */
   createdSlot: bigint;
   createdAt: bigint;
+  /**
+   * For a market in withdraw mode, the slot of the `rebalance` that first saw Kamino's freely
+   * available liquidity above the exit threshold, since when every `rebalance` has; 0
+   * otherwise, as in markets created before the field was taken from the reserved space
+   * (docs/spec/lending-pool.md, "Withdraw mode").
+   */
+  exitSeenSlot: bigint;
   reserved: ReadonlyUint8Array;
 };
 
@@ -166,6 +173,13 @@ export type LendingAmmMarketArgs = {
   /** When the market was created. */
   createdSlot: number | bigint;
   createdAt: number | bigint;
+  /**
+   * For a market in withdraw mode, the slot of the `rebalance` that first saw Kamino's freely
+   * available liquidity above the exit threshold, since when every `rebalance` has; 0
+   * otherwise, as in markets created before the field was taken from the reserved space
+   * (docs/spec/lending-pool.md, "Withdraw mode").
+   */
+  exitSeenSlot: number | bigint;
   reserved: ReadonlyUint8Array;
 };
 
@@ -194,7 +208,8 @@ export function getLendingAmmMarketEncoder(): FixedSizeEncoder<LendingAmmMarketA
       ["redeemed", getU128Encoder()],
       ["createdSlot", getU64Encoder()],
       ["createdAt", getI64Encoder()],
-      ["reserved", fixEncoderSize(getBytesEncoder(), 256)],
+      ["exitSeenSlot", getU64Encoder()],
+      ["reserved", fixEncoderSize(getBytesEncoder(), 248)],
     ]),
     (value) => ({ ...value, discriminator: LENDING_AMM_MARKET_DISCRIMINATOR }),
   );
@@ -224,7 +239,8 @@ export function getLendingAmmMarketDecoder(): FixedSizeDecoder<LendingAmmMarket>
     ["redeemed", getU128Decoder()],
     ["createdSlot", getU64Decoder()],
     ["createdAt", getI64Decoder()],
-    ["reserved", fixDecoderSize(getBytesDecoder(), 256)],
+    ["exitSeenSlot", getU64Decoder()],
+    ["reserved", fixDecoderSize(getBytesDecoder(), 248)],
   ]);
 }
 

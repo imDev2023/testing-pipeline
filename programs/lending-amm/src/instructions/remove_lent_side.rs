@@ -5,7 +5,7 @@
 //! The other mint may keep a freeze authority or a transfer hook, which the mint rules allow and
 //! Aviary shows. If its authority freezes the market's vault, or its hook refuses transfers out
 //! of it, every `remove_liquidity` fails, since it pays the other side first, and would trap the
-//! lent side too, the WSOL or USDC LPs count on leaving with (finding H-B,
+//! lent side too, the WSOL or USDC LPs count on leaving with (finding H006,
 //! docs/security/lending-amm/). This removal moves nothing of the other mint, so neither can stop
 //! it: it pays the buffer's part in the lent mint and the cTokens' part as cTokens, in kind,
 //! reading no Kamino account, exactly as `remove_liquidity` in kind pays them, and leaves the

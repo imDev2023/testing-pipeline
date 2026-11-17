@@ -37,7 +37,7 @@ pub const LP_SHARES_SEED: &[u8] = b"lp_shares";
 
 /// Room kept at the end of the account, all zeros, so a later version can add a field
 /// without moving any and without reallocating existing markets.
-pub const RESERVED_LEN: usize = 256;
+pub const RESERVED_LEN: usize = 248;
 
 /// Byte offsets in the account, discriminator included. They never change.
 pub mod layout {
@@ -50,7 +50,9 @@ pub mod layout {
     pub const CTOKENS: usize = 351;
     pub const DEPOSITED: usize = 359;
     pub const REDEEMED: usize = 375;
-    pub const RESERVED: usize = 407;
+    /// `exit_seen_slot`, the first field taken from the reserved space.
+    pub const EXIT_SEEN_SLOT: usize = 407;
+    pub const RESERVED: usize = 415;
     /// The whole account.
     pub const LEN: usize = 663;
 }
@@ -103,6 +105,11 @@ pub struct LendingAmmMarket {
     /// When the market was created.
     pub created_slot: u64,
     pub created_at: i64,
+    /// For a market in withdraw mode, the slot of the `rebalance` that first saw Kamino's freely
+    /// available liquidity above the exit threshold, since when every `rebalance` has; 0
+    /// otherwise, as in markets created before the field was taken from the reserved space
+    /// (docs/spec/lending-pool.md, "Withdraw mode").
+    pub exit_seen_slot: u64,
     pub reserved: [u8; RESERVED_LEN],
 }
 
@@ -128,7 +135,7 @@ impl LendingAmmMarket {
     /// The lent mint's entry in `LENT_MINTS`, which must still name the reserve and the collateral
     /// mint the market recorded at creation: a program upgrade that edits a row then stops the
     /// market's trading, adding and lending, while its LPs leave in kind, rather than pointing it
-    /// at another reserve (finding H-C, docs/security/lending-amm/).
+    /// at another reserve (finding H007, docs/security/lending-amm/).
     pub fn lent_entry(&self) -> Result<&'static crate::config::LentMint> {
         let entry = crate::config::lent_mint(&self.lent_mint())
             .ok_or(crate::errors::StrategyError::LentMintNotListed)?;

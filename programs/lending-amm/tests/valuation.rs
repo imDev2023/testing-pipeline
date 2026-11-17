@@ -568,7 +568,7 @@ fn the_stored_rate_is_used_as_it_is() {
 
     // A day after the reserve was last refreshed, quotes and swaps refuse it as too stale to
     // value the market's cTokens, since a round trip across a refresh could then pay
-    // (finding H-S2, docs/security/lending-amm/).
+    // (finding H002, docs/security/lending-amm/).
     use lending_amm::config::TRADE_MAX_RESERVE_AGE_SLOTS as AGE;
     let start = env.clock();
     env.advance_clock(216_000, 86_400);

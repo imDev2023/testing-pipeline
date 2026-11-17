@@ -68,6 +68,7 @@ use super::states::Loss;
 use super::*;
 use lending_amm::config::{
     ADD_MAX_RESERVE_AGE_SLOTS, BUFFER_TARGET_BPS, MINIMUM_LIQUIDITY, TRADE_MAX_RESERVE_AGE_SLOTS,
+    WITHDRAW_MODE_EXIT_DELAY_SLOTS,
 };
 use lending_amm::kamino::offsets;
 use lending_amm::StrategyError;
@@ -1215,12 +1216,29 @@ impl World {
         let exposure = self.exposure() as u128;
         let stopped = self.redeems_stopped();
         let blocked = reserve.block_ctoken_usage;
-        let mode = if free < WITHDRAW_MODE_ENTER as u128 * exposure {
+        let by_thresholds = if free < WITHDRAW_MODE_ENTER as u128 * exposure {
             true
         } else if free > WITHDRAW_MODE_EXIT as u128 * exposure {
             false
         } else {
             before.withdraw_mode
+        };
+        // A market in withdraw mode leaves only once it has seen the free liquidity above the
+        // exit threshold for `WITHDRAW_MODE_EXIT_DELAY_SLOTS`; meanwhile it stays, recording when
+        // it first saw it so, and a reading at or below the threshold starts the wait again.
+        let slot = self.env.clock().slot;
+        let wants_out = before.withdraw_mode && !by_thresholds;
+        let waited = before.exit_seen_slot != 0
+            && slot >= before.exit_seen_slot + WITHDRAW_MODE_EXIT_DELAY_SLOTS;
+        let (mode, seen) = if wants_out && !waited {
+            let first = if before.exit_seen_slot == 0 {
+                slot.max(1)
+            } else {
+                before.exit_seen_slot
+            };
+            (true, first)
+        } else {
+            (by_thresholds, 0)
         };
         // What the spec's rules give: a move, or no move with the mode changed, or a refusal.
         let planned: Result<Option<Move>, StrategyError> = if stopped {
@@ -1241,7 +1259,7 @@ impl World {
             };
             match moved {
                 Ok(moved) => Ok(Some(moved)),
-                Err(_) if mode != before.withdraw_mode => Ok(None),
+                Err(_) if mode != before.withdraw_mode || seen != before.exit_seen_slot => Ok(None),
                 Err(rule) => Err(rule),
             }
         };
@@ -1249,6 +1267,8 @@ impl World {
         let after = self.env.market_state(&self.market.market_state);
         // A market in withdraw mode stays in it while Kamino's free liquidity is at or below the
         // exit threshold, however much it has redeemed.
+        // Nor does it wait to leave: a reading at or below the threshold forgets any wait, unless
+        // Kamino has stopped redeems, when `rebalance` refuses before reading anything else.
         if before.withdraw_mode && free <= WITHDRAW_MODE_EXIT as u128 * exposure {
             prop_assert!(
                 after.withdraw_mode,
@@ -1257,10 +1277,27 @@ impl World {
                 free,
                 exposure
             );
+            prop_assert!(
+                stopped || after.exit_seen_slot == 0,
+                "{} waits to leave withdraw mode at {} free, X {}",
+                WITHDRAW_MODE,
+                free,
+                exposure
+            );
+        }
+        // ...and leaves only after the wait: one reading, which a bundle could inflate, never
+        // takes it out.
+        if before.withdraw_mode && !after.withdraw_mode {
+            prop_assert!(
+                waited,
+                "{} left withdraw mode without waiting",
+                WITHDRAW_MODE
+            );
         }
         match (planned, result) {
             (Ok(planned), Ok(_)) => {
                 prop_assert_eq!(after.withdraw_mode, mode, "{}", WITHDRAW_MODE);
+                prop_assert_eq!(after.exit_seen_slot, seen, "{}", WITHDRAW_MODE);
                 let total_after = self.effective()[lent];
                 let buffer_after = after.reserves[lent];
                 // Within Kamino's rounding: one cToken's worth, rounded up, and a unit.
@@ -1272,8 +1309,12 @@ impl World {
                     + 1;
                 match planned {
                     None => {
-                        // Only the mode changed.
-                        prop_assert_ne!(mode, before.withdraw_mode, "{}", WITHDRAW_MODE);
+                        // Only the mode, or the wait to leave it, changed.
+                        prop_assert!(
+                            mode != before.withdraw_mode || seen != before.exit_seen_slot,
+                            "{} changed nothing",
+                            WITHDRAW_MODE
+                        );
                         prop_assert_eq!(
                             (
                                 after.reserves,

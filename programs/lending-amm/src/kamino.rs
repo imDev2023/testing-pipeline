@@ -43,7 +43,7 @@ pub const RESERVE_DISCRIMINATOR: [u8; 8] = [43, 242, 204, 202, 26, 247, 59, 127]
 pub const RESERVE_VERSION: u64 = 1;
 /// The `version` klend gives a reserve a write-off has deprecated. Any version but this one and
 /// [`RESERVE_VERSION`] would be a klend this module was not written for, and fails the reserve
-/// check (finding H-D, docs/security/lending-amm/).
+/// check (finding H008, docs/security/lending-amm/).
 pub const DEPRECATED_RESERVE_VERSION: u64 = u64::MAX;
 
 /// A klend `LendingMarket` account's size, discriminator included.
