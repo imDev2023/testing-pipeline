@@ -432,6 +432,49 @@ mod tests {
                 prop_assert!(d.other <= max_other && d.lent <= max_lent);
             }
         }
+
+        /// A later depositor overpays by less than one unit of each side (Book of Knowledge
+        /// SH-3): each take is the ceiling of what the shares are worth,
+        /// taken x N < shares x reserve + N, and never more than offered.
+        #[test]
+        fn a_later_deposit_overpays_by_less_than_one_unit_of_each_side(
+            max_other: u64,
+            max_lent: u64,
+            reserve_other in 1u64..,
+            reserve_lent in 1u64..,
+            share_count in 1u64..,
+        ) {
+            if let Ok(d) = later_deposit(max_other, max_lent, reserve_other, reserve_lent, share_count) {
+                let n = share_count as u128;
+                let shares = d.shares as u128;
+                prop_assert!((d.other as u128) * n < shares * reserve_other as u128 + n);
+                prop_assert!((d.lent as u128) * n < shares * reserve_lent as u128 + n);
+                prop_assert!(d.other <= max_other && d.lent <= max_lent);
+            }
+        }
+
+        /// The share count always fits a u64 after a later deposit (Book of Knowledge SH-9):
+        /// from any LP supply whose share count fits, the supply after the deposit's shares are
+        /// minted has a share count too, so a later removal never meets `share_count` refusing.
+        /// Half the supplies are within 2^20 of the largest a share count allows, where the
+        /// deposit's own check is what refuses.
+        #[test]
+        fn the_share_count_fits_a_u64_after_a_later_deposit(
+            max_other: u64,
+            max_lent: u64,
+            reserve_other in 1u64..,
+            reserve_lent in 1u64..,
+            lp_supply in prop_oneof![
+                0u64..=(u64::MAX - MINIMUM_LIQUIDITY),
+                (u64::MAX - MINIMUM_LIQUIDITY - (1 << 20))..=(u64::MAX - MINIMUM_LIQUIDITY),
+            ],
+        ) {
+            let n = share_count(lp_supply).unwrap();
+            if let Ok(d) = later_deposit(max_other, max_lent, reserve_other, reserve_lent, n) {
+                let after = lp_supply.checked_add(d.shares).map(share_count);
+                prop_assert!(matches!(after, Some(Ok(count)) if count == n + d.shares));
+            }
+        }
     }
 }
 
@@ -494,6 +537,75 @@ mod proofs {
             assert!(d.shares as u128 * reserve_other as u128 <= d.other as u128 * n);
             assert!(d.shares as u128 * reserve_lent as u128 <= d.lent as u128 * n);
             assert!(d.other <= max_other && d.lent <= max_lent);
+        }
+    }
+
+    fn assert_later_deposit_overpays_by_less_than_one_unit(
+        max_other: u64,
+        max_lent: u64,
+        reserve_other: u64,
+        reserve_lent: u64,
+        share_count: u64,
+    ) {
+        if let Ok(d) = later_deposit(
+            max_other,
+            max_lent,
+            reserve_other,
+            reserve_lent,
+            share_count,
+        ) {
+            let (n, shares) = (share_count as u128, d.shares as u128);
+            assert!((d.other as u128) * n < shares * reserve_other as u128 + n);
+            assert!((d.lent as u128) * n < shares * reserve_lent as u128 + n);
+            assert!(d.other <= max_other && d.lent <= max_lent);
+        }
+    }
+
+    /// A later depositor overpays by less than one unit of each side, each take the ceiling
+    /// of what the shares are worth (Book of Knowledge SH-3): bounded below `SMALL`;
+    /// `proofs/lending_amm_z3.py` for every u64.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn a_later_deposit_overpays_by_less_than_one_unit_of_each_side_bounded() {
+        let small = |x: &u64| *x < SMALL;
+        assert_later_deposit_overpays_by_less_than_one_unit(
+            kani::any_where(small),
+            kani::any_where(small),
+            kani::any_where(small),
+            kani::any_where(small),
+            kani::any_where(small),
+        );
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn a_later_deposit_overpays_by_less_than_one_unit_of_each_side() {
+        assert_later_deposit_overpays_by_less_than_one_unit(
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
+    }
+
+    /// For any LP supply whose share count fits, and any amounts and reserves, the supply after
+    /// a successful later deposit still has a share count, `N + shares`, so `removal` never
+    /// refuses an exit for it (Book of Knowledge SH-9). The first deposit mints
+    /// `isqrt(other x lent) - MINIMUM_LIQUIDITY`, whose share count is the root, a u64.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn the_share_count_fits_a_u64_after_a_later_deposit() {
+        let lp_supply: u64 = kani::any();
+        let Ok(n) = share_count(lp_supply) else {
+            return;
+        };
+        if let Ok(d) = later_deposit(kani::any(), kani::any(), kani::any(), kani::any(), n) {
+            let after = lp_supply.checked_add(d.shares).map(share_count);
+            assert!(
+                matches!(after, Some(Ok(count)) if count as u128 == n as u128 + d.shares as u128)
+            );
         }
     }
 

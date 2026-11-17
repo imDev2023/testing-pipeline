@@ -15,6 +15,8 @@ input (docs/spec/lending-pool.md, "Shares", "Adding" and "Removing"; docs/spec/R
    falls below the smaller.
 3. `share_count` is the LP supply plus the locked minimum, refused exactly when that passes a
    u64.
+4. After a later deposit, which checks that `N + shares` fits a u64, the new supply's share
+   count fits a u64 too, so `share_count` never refuses an exit (Book of Knowledge SH-9).
 
 Each division is modelled by its quotient and remainder, as in `lending_amm_z3.py`. Kani
 proves the same statements of the Rust for small values, and Proptest checks them on 10,000
@@ -131,6 +133,21 @@ def main():
         "the share count is the supply plus the locked minimum, above the supply",
         Or(And(count <= U64_MAX, count > supply), supply > U64_MAX - MINIMUM_LIQUIDITY),
         supply_ok,
+    )
+
+    # 4. The share count always fits a u64 after a later deposit (Book of Knowledge SH-9): with
+    # N = supply + MINIMUM_LIQUIDITY a u64 (`share_count` accepted it) and the deposit's check
+    # that N + shares fits a u64, the new supply's share count, supply + shares +
+    # MINIMUM_LIQUIDITY, fits a u64 too, so `share_count` never refuses an exit after it.
+    shares, shares_ok = bounded("shares", U64_MAX)
+    ok &= prove(
+        "after a later deposit the share count still fits a u64",
+        And(supply + shares <= U64_MAX, supply + shares + MINIMUM_LIQUIDITY <= U64_MAX),
+        supply_ok,
+        count <= U64_MAX,
+        shares_ok,
+        shares >= 1,
+        count + shares <= U64_MAX,
     )
 
     if not ok:

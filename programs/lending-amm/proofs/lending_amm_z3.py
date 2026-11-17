@@ -63,6 +63,31 @@ def main():
         out_facts,
     )
 
+    # A round trip at fixed reserves (Book of Knowledge PR-3): selling a of side i for out,
+    # then selling out back against the reserves the first trade left, e_out - out on the input
+    # side and e_in + a on the output side, returns back <= a. Each leg's net is anything from
+    # 0 to its amount (net = amount - fee, 0 <= fee <= amount, proved above), so this holds at
+    # every fee up to a whole, among them 0, 30 and MAX_LP_FEE_BPS.
+    net_back = Int("net_back")
+    back, back_facts = floor_div("back", (e_in + a) * net_back, (e_out - out) + net_back)
+    ok &= prove(
+        "a round trip at fixed reserves never returns more than went in",
+        back <= a,
+        a_ok,
+        e_in_ok,
+        e_out_ok,
+        e_out >= 1,
+        net >= 0,
+        net <= a,
+        e_in + net >= 1,
+        out_facts,
+        out >= 1,
+        out < e_out,
+        net_back >= 0,
+        net_back <= out,
+        back_facts,
+    )
+
     # shares::first_deposit: shares = isqrt(o x l) - MINIMUM_LIQUIDITY, where
     # isqrt(p)^2 <= p < (isqrt(p) + 1)^2 (shares::isqrt, checked by Proptest and Kani).
     other, other_ok = u64("other")
@@ -113,6 +138,26 @@ def main():
         n >= 1,
         by_other_facts,
         by_lent_facts,
+        minted >= 1,
+        take_other_facts,
+        take_lent_facts,
+    )
+
+    # A later depositor overpays by less than one unit of each side (Book of Knowledge SH-3):
+    # each take is the ceiling of what the shares are worth, take x N < shares x reserve + N,
+    # so a looser rounding would fail here.
+    ok &= prove(
+        "a later deposit overpays by less than one unit of each side",
+        And(
+            take_other * n < minted * reserve_other + n,
+            take_lent * n < minted * reserve_lent + n,
+        ),
+        reserve_other_ok,
+        reserve_other >= 1,
+        reserve_lent_ok,
+        reserve_lent >= 1,
+        n_ok,
+        n >= 1,
         minted >= 1,
         take_other_facts,
         take_lent_facts,

@@ -1178,6 +1178,64 @@ mod tests {
                 prop_assert!((x - value) as u128 <= one_ctoken);
             }
         }
+
+        /// The valuation is additive to within one unit: splitting cTokens in two loses at most
+        /// one unit of the lent mint to rounding, `V(a) + V(b) <= V(a + b) <= V(a) + V(b) + 1`
+        /// (Book of Knowledge KA-3). At rates up to 2 lamports a cToken, with any remainder of
+        /// the total supply over the cToken supply, and parts up to 2^62, where nothing is
+        /// refused.
+        #[test]
+        fn the_valuation_is_additive_within_one_unit(
+            a in 0u64..(1 << 62),
+            b in 0u64..(1 << 62),
+            n in 1u64..,
+            rate_sf in 0u128..(1 << 61),
+            extra: u64,
+        ) {
+            let s = n as u128 * rate_sf + (extra % n) as u128;
+            let value = |k: u64| collateral_value(k, s, n);
+            let (Some(whole), Some(va), Some(vb)) = (value(a + b), value(a), value(b)) else {
+                return Err(TestCaseError::fail("a value below 2^64 was refused"));
+            };
+            let parts = va as u128 + vb as u128;
+            prop_assert!(parts <= whole as u128, "{} + {} > {}", va, vb, whole);
+            prop_assert!(whole as u128 <= parts + 1, "{} > {} + {} + 1", whole, va, vb);
+        }
+
+        /// A shortfall within the cTokens' value can always be burned, and the burn is at most
+        /// the cTokens held (Book of Knowledge KA-5): for any shortfall from 1 to `V(c)`, or of
+        /// any size when the cTokens are worth more than a u64 holds (which `can_pay_now` counts
+        /// as `u64::MAX`), the swap's burn succeeds and is at most `c`, so a quote and its swap
+        /// never disagree. At rates up to 2 lamports a cToken, with any remainder.
+        #[test]
+        fn a_shortfall_within_the_ctokens_value_is_always_burned(
+            c: u64,
+            n in 1u64..,
+            rate_sf in 0u128..(1 << 61),
+            extra: u64,
+            pick: u64,
+        ) {
+            let s = n as u128 * rate_sf + (extra % n) as u128;
+            let reserve = Reserve {
+                version: RESERVE_VERSION,
+                borrowed_amount_sf: s,
+                mint_total_supply: n,
+                ..Reserve::default()
+            };
+            let shortfalls = match collateral_value(c, s, n) {
+                Some(0) => return Ok(()),
+                Some(value) => [1 + pick % value, value],
+                None => [pick.max(1), u64::MAX],
+            };
+            for shortfall in shortfalls {
+                let burn = ctokens_covering(shortfall, s, n);
+                prop_assert!(burn.is_some_and(|k| k <= c), "{:?} for {}", burn, shortfall);
+                prop_assert_eq!(
+                    reserve.ctokens_for_shortfall(shortfall, c).map_err(|e| e as u32),
+                    Ok(burn.unwrap())
+                );
+            }
+        }
     }
 }
 
@@ -1599,5 +1657,90 @@ mod proofs {
     #[kani::solver(cadical)]
     fn the_ctokens_covering_a_shortfall_are_the_fewest_worth_it() {
         assert_worth_at_least_and_at_most_one_ctoken_more(kani::any(), kani::any(), kani::any());
+    }
+
+    fn assert_valuation_is_additive_within_one_unit(a: u64, b: u64, s: u128, n: u64) {
+        let Some(sum) = a.checked_add(b) else {
+            return;
+        };
+        if let Some(whole) = collateral_value(sum, s, n) {
+            // Each part is worth no more than the whole, so it is valued too.
+            let parts = collateral_value(a, s, n).unwrap() as u128
+                + collateral_value(b, s, n).unwrap() as u128;
+            assert!(parts <= whole as u128 && whole as u128 <= parts + 1);
+        }
+    }
+
+    /// The valuation is additive to within one unit, `V(a) + V(b) <= V(a + b) <= V(a) + V(b) +
+    /// 1`, so splitting cTokens (a redeem, a burn, a removal's part) loses at most one unit to
+    /// rounding (Book of Knowledge KA-3): for small amounts at any fractional rate;
+    /// `proofs/kamino_z3.py` for every input.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_valuation_is_additive_within_one_unit_bounded() {
+        let a: u64 = kani::any_where(|&a| a < SMALL);
+        let b: u64 = kani::any_where(|&b| b < SMALL);
+        let n: u64 = kani::any_where(|&n| n < SMALL);
+        let whole: u64 = kani::any_where(|&w| w < SMALL);
+        let fraction: u64 = kani::any_where(|&f| f < (1 << FRACTION_BITS));
+        let s = ((whole as u128) << FRACTION_BITS) | fraction as u128;
+        assert_valuation_is_additive_within_one_unit(a, b, s, n);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_valuation_is_additive_within_one_unit() {
+        assert_valuation_is_additive_within_one_unit(
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
+    }
+
+    fn assert_a_shortfall_within_the_value_is_burned(
+        shortfall: u64,
+        ctokens: u64,
+        s: u128,
+        n: u64,
+    ) {
+        // `can_pay_now` counts cTokens worth more than a u64 holds as worth `u64::MAX`.
+        let within = collateral_value(ctokens, s, n).is_none_or(|value| shortfall <= value);
+        if shortfall > 0 && within {
+            assert!(ctokens_covering(shortfall, s, n).is_some_and(|burn| burn <= ctokens));
+        }
+    }
+
+    /// A shortfall within the cTokens' value can always be burned, and the burn is at most the
+    /// cTokens held, so a quote that accepts a shortfall up to what Kamino can pay never meets a
+    /// swap that refuses it (Book of Knowledge KA-5): for small amounts at any fractional rate;
+    /// `proofs/kamino_z3.py` for every input.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_shortfall_within_the_ctokens_value_is_always_burned_bounded() {
+        let shortfall: u64 = kani::any_where(|&x| x < SMALL);
+        let ctokens: u64 = kani::any_where(|&c| c < SMALL);
+        let n: u64 = kani::any_where(|&n| n < SMALL);
+        let whole: u64 = kani::any_where(|&w| w < SMALL);
+        let fraction: u64 = kani::any_where(|&f| f < (1 << FRACTION_BITS));
+        let s = ((whole as u128) << FRACTION_BITS) | fraction as u128;
+        assert_a_shortfall_within_the_value_is_burned(shortfall, ctokens, s, n);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_shortfall_within_the_ctokens_value_is_always_burned() {
+        assert_a_shortfall_within_the_value_is_burned(
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
     }
 }
