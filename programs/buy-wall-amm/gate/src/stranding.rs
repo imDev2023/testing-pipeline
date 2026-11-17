@@ -1,11 +1,13 @@
 //! Test builds that prove the gate catches stranding: copies of the program with the
-//! layout mistakes that strand markets, made by editing a copy of the workspace exactly as a
+//! mistakes that strand markets, made by editing a copy of the workspace exactly as a
 //! careless change would edit the real one, so the program's own source never carries them.
 //!
-//! Three must be refused on every fixture, and one, a field appended into the reserve as
-//! `docs/spec/pool4-for-solana.md` ("One fixed-size layout") allows, must pass on every one.
-//! CI builds them with `buy-wall-gate test-builds` and `tests/stranding.rs` runs the gate on
-//! each.
+//! Three layout mistakes must be refused on every fixture, failing on every open market; a
+//! payout rule narrowed so one fee slot can no longer be swept must be refused on every
+//! market owed that slot; and a field appended into the reserve, as
+//! `docs/spec/pool4-for-solana.md` ("One fixed-size layout") allows, must pass on every
+//! fixture. CI builds them with `buy-wall-gate test-builds` and `tests/stranding.rs` runs the
+//! gate on each.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -22,14 +24,19 @@ pub enum TestBuild {
     /// A field appended into the reserve, zero meaning the old behaviour, as layout version 2
     /// beside version 1.
     AppendedField,
+    /// `Owed::sweep` made to refuse slot 2, the suite's fees: the layout and the trades stay
+    /// sound, but that ledger is stranded on every market owed it, and the gate's own tree,
+    /// built with the same edit, would no longer call that job due.
+    NarrowedSweep,
 }
 
 impl TestBuild {
-    pub const ALL: [TestBuild; 4] = [
+    pub const ALL: [TestBuild; 5] = [
         TestBuild::MovedField,
         TestBuild::RenamedType,
         TestBuild::Resized,
         TestBuild::AppendedField,
+        TestBuild::NarrowedSweep,
     ];
 
     pub fn name(self) -> &'static str {
@@ -38,12 +45,21 @@ impl TestBuild {
             TestBuild::RenamedType => "renamed-type",
             TestBuild::Resized => "resized",
             TestBuild::AppendedField => "appended-field",
+            TestBuild::NarrowedSweep => "narrowed-sweep",
         }
     }
 
     /// Whether the gate must pass it on every fixture.
     pub fn must_pass(self) -> bool {
         self == TestBuild::AppendedField
+    }
+
+    /// Whether it breaks the market state's layout, which strands every open market.
+    pub fn breaks_the_layout(self) -> bool {
+        matches!(
+            self,
+            TestBuild::MovedField | TestBuild::RenamedType | TestBuild::Resized
+        )
     }
 
     /// Edits the program's source, given as `(path under src/, text)` pairs.
@@ -95,6 +111,14 @@ impl TestBuild {
                     "pub const DEPLOYED_LAYOUT_VERSIONS: &[u8] = &[1, 2];",
                 )?;
                 sources.set("state.rs", state);
+            }
+            TestBuild::NarrowedSweep => {
+                let payouts = replace_once(
+                    sources.get("payouts.rs")?,
+                    "            2 => &mut after.fees_suite,\n",
+                    "            2 => return Err(Refusal::BadSlot),\n",
+                )?;
+                sources.set("payouts.rs", payouts);
             }
         }
         Ok(())

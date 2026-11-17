@@ -385,6 +385,55 @@ mod proofs {
             assert!(after.wall.top <= at.floor && after.wall.top <= at.sqrt_price);
         }
     }
+
+    /// The coverage oracle compares exactly (INV-PM-12, INV-WG-8): `covers_checked` answers
+    /// on these markets, and its answer is the spec's "Ledgers" over the rationals,
+    /// cross-multiplied in 256 bits (`lamports × Q >= L × s + W × min(s, top)` and `tokens ×
+    /// T × s >= L × Q × T + W × Q × (top - s)` with `T` the top while the wall holds tokens,
+    /// 1 otherwise). Bounded to a family of markets whose two quotients are small, so
+    /// `div_rem` loops a dozen times at most: prices within 2^8 of 2^60, a liquidity below
+    /// 2^8, a wall of `w × 2^48` for `w` below 2^8 (so its token quotient reaches 2^8 too)
+    /// on either side of the price, every u64 of lamports and every u16 of tokens, which
+    /// covers each branch of the whole-plus-remainder shortcut, the one-unit-to-spare test
+    /// with both remainders among them. Every input is the Proptest's
+    /// `the_coverage_oracle_compares_exactly` (below), against unbounded integers. In the
+    /// full tier: with its 256-bit products and two division loops it ran past a 5-minute
+    /// limit on the owner's Mac (2026-11-16).
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(14)]
+    fn the_coverage_oracle_compares_exactly_bounded() {
+        const BASE: u128 = 1 << 60;
+        let (l, w, ds, dt): (u8, u8, u8, u8) = (kani::any(), kani::any(), kani::any(), kani::any());
+        let (liquidity, s, top) = (l as u128, BASE + ds as u128, BASE + dt as u128);
+        let wall = Wall {
+            liquidity: (w as u128) << 48,
+            top,
+        };
+        let (tokens, lamports): (u16, u64) = (kani::any(), kani::any());
+        let answer = covers_checked(liquidity, s, wall, tokens as u64, lamports);
+        let sol = U256::mul(liquidity, s)
+            .unwrap()
+            .checked_add(U256::mul(wall.liquidity, s.min(top)).unwrap())
+            .unwrap();
+        let lamports_cover = U256::times_q(lamports as u128) >= sol;
+        let below = wall.liquidity > 0 && s < top;
+        let t = if below { top } else { 1 };
+        let wall_term = if below {
+            U256::times_q(wall.liquidity).mul_u128(top - s).unwrap()
+        } else {
+            U256::ZERO
+        };
+        let need = U256::times_q(liquidity)
+            .mul_u128(t)
+            .unwrap()
+            .checked_add(wall_term)
+            .unwrap();
+        let have = U256::mul(tokens as u128, t).unwrap().mul_u128(s).unwrap();
+        assert_eq!(answer, Some(lamports_cover && have >= need));
+        kani::cover!(answer == Some(true) && below && have == need);
+        kani::cover!(answer == Some(false) && lamports_cover && below);
+    }
 }
 
 #[cfg(test)]
@@ -672,5 +721,195 @@ mod tests {
                 }
             }
         }
+
+        /// The coverage oracle compares exactly (INV-PM-12, INV-WG-8): on every market
+        /// trading can reach (the price and the wall's top within the bounds, `W × top <=
+        /// idle × Q < 2^128`, any liquidity) `covers_checked` answers, and its answer is the
+        /// spec's "Ledgers" over the rationals, checked by cross-multiplying in unbounded
+        /// integers written apart from `U256`. The ledgers are drawn at and next to the
+        /// least that cover, so every branch of its whole-plus-remainder shortcut runs,
+        /// both outcomes of the one-unit-to-spare test among them.
+        #[test]
+        fn the_coverage_oracle_compares_exactly(
+            (liquidity, s, wall) in reachable_curve_and_wall(),
+            token_offset in -2i64..=3,
+            lamport_offset in -2i64..=2,
+            raw in any::<(u64, u64)>(),
+            near in any::<bool>(),
+        ) {
+            let (tokens, lamports) = if near {
+                near_the_least_cover(liquidity, s, wall, token_offset, lamport_offset).unwrap_or(raw)
+            } else {
+                raw
+            };
+            let answer = covers_checked(liquidity, s, wall, tokens, lamports);
+            prop_assert_eq!(answer, Some(covers_exactly(liquidity, s, wall, tokens, lamports)));
+        }
+
+        /// The same on any inputs at all, reachable or not: whenever `covers_checked` answers,
+        /// the answer is exact.
+        #[test]
+        fn the_coverage_oracle_never_answers_wrong(
+            liquidity in any::<u128>(),
+            s in prop_oneof![1u128..=u128::MAX, MIN_SQRT_PRICE..=MAX_SQRT_PRICE],
+            w in prop_oneof![Just(0u128), any::<u128>(), 0u128..1 << 96],
+            top in prop_oneof![any::<u128>(), MIN_SQRT_PRICE..=MAX_SQRT_PRICE],
+            token_offset in -2i64..=3,
+            lamport_offset in -2i64..=2,
+            raw in any::<(u64, u64)>(),
+        ) {
+            let wall = Wall { liquidity: w, top };
+            let (tokens, lamports) =
+                near_the_least_cover(liquidity, s, wall, token_offset, lamport_offset).unwrap_or(raw);
+            if let Some(answer) = covers_checked(liquidity, s, wall, tokens, lamports) {
+                prop_assert_eq!(answer, covers_exactly(liquidity, s, wall, tokens, lamports));
+            }
+        }
+    }
+
+    /// A natural number of any size, as little-endian 32-bit limbs: the coverage oracle's
+    /// arithmetic, written apart from `U256` so a slip in one is not repeated in the other.
+    #[derive(Clone, Debug)]
+    struct Natural(Vec<u32>);
+
+    impl Natural {
+        fn of(value: u128) -> Natural {
+            Natural((0..4).map(|i| (value >> (32 * i)) as u32).collect())
+        }
+
+        fn times(&self, other: &Natural) -> Natural {
+            let mut limbs = vec![0u64; self.0.len() + other.0.len() + 1];
+            for (i, a) in self.0.iter().enumerate() {
+                let mut carry = 0u64;
+                for (j, b) in other.0.iter().enumerate() {
+                    let sum = limbs[i + j] + *a as u64 * *b as u64 + carry;
+                    limbs[i + j] = sum & 0xffff_ffff;
+                    carry = sum >> 32;
+                }
+                let mut k = i + other.0.len();
+                while carry > 0 {
+                    let sum = limbs[k] + carry;
+                    limbs[k] = sum & 0xffff_ffff;
+                    carry = sum >> 32;
+                    k += 1;
+                }
+            }
+            Natural(limbs.into_iter().map(|limb| limb as u32).collect())
+        }
+
+        fn plus(&self, other: &Natural) -> Natural {
+            let len = self.0.len().max(other.0.len()) + 1;
+            let (mut limbs, mut carry) = (Vec::with_capacity(len), 0u64);
+            for i in 0..len {
+                let sum = *self.0.get(i).unwrap_or(&0) as u64
+                    + *other.0.get(i).unwrap_or(&0) as u64
+                    + carry;
+                limbs.push(sum as u32);
+                carry = sum >> 32;
+            }
+            Natural(limbs)
+        }
+
+        /// The limbs from the most significant, without leading zeros, so the derived
+        /// lexicographic order of equal-length vectors is the numeric order.
+        fn key(&self) -> (usize, Vec<u32>) {
+            let mut limbs = self.0.clone();
+            while limbs.last() == Some(&0) {
+                limbs.pop();
+            }
+            limbs.reverse();
+            (limbs.len(), limbs)
+        }
+
+        fn at_least(&self, other: &Natural) -> bool {
+            self.key() >= other.key()
+        }
+    }
+
+    /// The spec's "Ledgers" for the pool, over the rationals, cross-multiplied: lamports
+    /// cover `L × s / Q + W × min(s, top) / Q`, and tokens cover `L × Q / s + W × Q × (top -
+    /// s) / (top × s)`, the wall's term only while it holds tokens (placed, and the price
+    /// below its top).
+    fn covers_exactly(liquidity: u128, s: u128, wall: Wall, tokens: u64, lamports: u64) -> bool {
+        let n = Natural::of;
+        let q = n(1 << 64);
+        let (l, w, top) = (n(liquidity), n(wall.liquidity), wall.top);
+        let lamports_cover = n(lamports as u128)
+            .times(&q)
+            .at_least(&l.times(&n(s)).plus(&w.times(&n(s.min(top)))));
+        let tokens_cover = if wall.liquidity > 0 && s < top {
+            // tokens × top × s >= L × Q × top + W × Q × (top - s)
+            n(tokens as u128).times(&n(top)).times(&n(s)).at_least(
+                &l.times(&q)
+                    .times(&n(top))
+                    .plus(&w.times(&q).times(&n(top - s))),
+            )
+        } else {
+            // tokens × s >= L × Q
+            n(tokens as u128).times(&n(s)).at_least(&l.times(&q))
+        };
+        lamports_cover && tokens_cover
+    }
+
+    /// Ledgers at and next to the least that cover, offset by the given units: the whole
+    /// token quotients `floor(L × Q / s) + floor(W × Q × (top - s) / (top × s))` and the
+    /// lamports `ceil((L × s + W × min(s, top)) / Q)`, computed with `U256` (only to choose
+    /// the inputs; the oracle checks the answer). `None` if they do not fit in a u64.
+    fn near_the_least_cover(
+        liquidity: u128,
+        s: u128,
+        wall: Wall,
+        token_offset: i64,
+        lamport_offset: i64,
+    ) -> Option<(u64, u64)> {
+        let qa = U256::times_q(liquidity).div_floor(U256::from(s))?;
+        let qb = if wall.liquidity > 0 && s < wall.top {
+            U256::times_q(wall.liquidity)
+                .mul_u128(wall.top - s)?
+                .div_floor(U256::mul(wall.top, s)?)?
+        } else {
+            U256::ZERO
+        };
+        let whole = qa.checked_add(qb)?.to_u64()?;
+        let sol = U256::mul(liquidity, s)?
+            .checked_add(U256::mul(wall.liquidity, s.min(wall.top))?)?
+            .checked_ceil_shr64()?;
+        let sol = u64::try_from(sol).ok()?;
+        Some((
+            whole.checked_add_signed(token_offset)?,
+            sol.checked_add_signed(lamport_offset)?,
+        ))
+    }
+
+    /// A curve of any liquidity at a price within the bounds, and no wall or a wall
+    /// `place_wall` could place: its top within the bounds and `W = floor(idle × Q / top)`
+    /// for a u64 of idle SOL, the price on either side of it.
+    fn reachable_curve_and_wall() -> impl Strategy<Value = (u128, u128, Wall)> {
+        (
+            prop_oneof![MIN_LIQUIDITY..1u128 << 64, any::<u128>()],
+            MIN_SQRT_PRICE..=MAX_SQRT_PRICE,
+            MIN_SQRT_PRICE..=MAX_SQRT_PRICE,
+            prop_oneof![Just(0u64), any::<u64>(), 1u64..1 << 30],
+            prop_oneof![0u128..1 << 32, any::<u128>()],
+            any::<bool>(),
+        )
+            .prop_map(|(liquidity, s, top, idle, offset, near_top)| {
+                let liquidity_of_wall = ((idle as u128) << 64) / top;
+                // Often just around the top, where the wall's term turns on and off.
+                let s = if near_top {
+                    (top.saturating_sub(1 << 31) + offset % (1 << 32))
+                        .clamp(MIN_SQRT_PRICE, MAX_SQRT_PRICE)
+                } else {
+                    s
+                };
+                (
+                    liquidity,
+                    s,
+                    Wall {
+                        liquidity: liquidity_of_wall,
+                        top,
+                    },
+                )
+            })
     }
 }

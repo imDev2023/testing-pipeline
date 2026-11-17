@@ -2,11 +2,13 @@
 //! sequences of the instructions built so far (creation with any parameters, the seed by
 //! the seeder or anyone else with any amounts, a launchpad's graduation through
 //! `pipeline_seed_liquidity` with any parameters and amounts, donations to the vaults, buys
-//! and sells through the router, `place_wall` by a keeper or by a trader, and a buy sold
-//! straight back with or without `place_wall` in between, `settle`, `pay_rewards` and
-//! `sweep_fees` for any slot to the right wallet or another, a recipient's handover signed by
-//! it or by anyone else to a wallet or the default key, and a recipient's token account handed
-//! to someone else) and clock jumps, from seconds to
+//! and sells through the router, `place_wall` by a keeper or by a trader, a buy sold
+//! straight back with or without `place_wall` in between, by a stranger, the fee recipient
+//! sweeping its fees or the rewards recipient settling and paying itself its rewards inside
+//! the round trip, a sell bought straight back with `place_wall` in between, `settle`,
+//! `pay_rewards` and `sweep_fees` for any slot to the right wallet or another, a
+//! recipient's handover signed by it or by anyone else to a wallet or the default key, and a
+//! recipient's token account handed to someone else) and clock jumps, from seconds to
 //! across the cap's decay window, several trades often landing in one slot, sends each
 //! through the router in LiteSVM, and checks after every step:
 //!
@@ -34,27 +36,46 @@
 //! - a swap's trades move the pool and retired token ledgers together by exactly their
 //!   token flow, and the SOL ledgers by exactly their SOL flow, so a trim only moves value
 //!   between ledgers, and its totals count exactly what it moved;
-//! - a buy sold straight back never returns more than it cost, whatever keeper jobs run in
-//!   between;
+//! - self-dealing never profits (`INV-WG-7`, the named invariants below): a buy sold
+//!   straight back never returns more than it cost once everything the trader received is
+//!   counted, the SOL it sold for, the keeper tip it took and, as a recipient, the fees it
+//!   swept and the rewards it paid itself (sold too), less only the part of the tip that was
+//!   already there before its buy; and a sell bought straight back with `place_wall` in
+//!   between, spending what it sold for and its own share of the tip, never buys back more
+//!   than it sold;
 //! - no instruction other than `pipeline_swap` changes `sqrt_price`, the counters, the
 //!   cap, the curve's liquidity or the wall's guard, and a swap changes the counters by
 //!   exactly the trade it made;
+//! - every lifetime total (the tokens and SOL trimmed, the tokens the wall bought, burned
+//!   and paid as rewards, the tips, the fees, both volumes and the swap count) never falls,
+//!   and grows by exactly what moved (`INV-FB-15`): the burn measured on the mint, the
+//!   rewards and tips measured in the accounts paid, the tokens each closed wall bought, and
+//!   in a swap, the trim measured as the retired tokens and the idle SOL and fee ledgers it
+//!   added;
 //! - `settle`, `pay_rewards` and `sweep_fees` succeed exactly when the program's own
 //!   `payouts` functions allow them with the right wallet and that wallet's account is still
-//!   its own, leave the ledgers those functions compute, burn or pay exactly what they
-//!   compute into exactly that account, and otherwise change nothing; every retired token is
-//!   accounted for as burned, owed or paid as rewards;
+//!   its own, and are otherwise refused with exactly the error those functions, the wallet
+//!   check or the account check give; they leave the ledgers those functions compute, burn
+//!   or pay exactly what they compute into exactly that account, and otherwise change
+//!   nothing; every retired token is accounted for as burned, owed or paid as rewards;
+//! - `place_wall` and a handover are refused with exactly the error the program's own
+//!   `wall::place` and `payouts::handover` give;
 //! - a handover succeeds exactly when the role's current recipient signs it to a wallet,
 //!   recipients change only so, and what a role is owed follows it.
 //!
 //! Later tickets add their instructions and invariants here. `PROPTEST_CASES` sets how many
-//! sequences run (256 by default, of up to 31 steps each).
+//! sequences run (256 by default, of up to 31 steps each). The self-dealing invariants are
+//! named (`NAMED`): `FUZZ_INVARIANTS=<name>,...` checks only the ones it names, and a plain
+//! run checks all but those `KNOWN_FAILING` lists, which fail on today's code; every other
+//! invariant is checked on every run.
 
 mod common;
 
-use buy_wall_amm::config::{DECAY_CREDIT_WINDOW, MIN_LIQUIDITY, REF_STEP_BPS};
+use buy_wall_amm::config::{DECAY_CREDIT_WINDOW, KEEPER_TIP_CAP, MIN_LIQUIDITY, REF_STEP_BPS};
+use buy_wall_amm::errors::StrategyError;
 use buy_wall_amm::params::BPS;
 use buy_wall_amm::state::{MarketState, STATUS_CREATED, STATUS_OPEN};
+use buy_wall_amm::wall::Placement;
 use common::*;
 use pipeline_client::{pda, Pubkey, TradeMode};
 use proptest::prelude::*;
@@ -109,11 +130,21 @@ enum Step {
     },
     /// Buy with `amount` lamports and sell everything bought straight back, in one slot,
     /// with `place_wall` in between when `place_wall` says so (by the trader when
-    /// `by_trader`, so the trader also takes the tip).
+    /// `by_trader`, so the trader also takes the tip), as `role`: a recipient first claims
+    /// what it is already owed, then after the sell claims again (the rewards recipient
+    /// settling, paying itself and selling its rewards; the fee recipient sweeping slot 0).
     RoundTrip {
         market: usize,
         amount: u64,
         place_wall: bool,
+        by_trader: bool,
+        role: Role,
+    },
+    /// Sell `amount` tokens, `place_wall` (by the trader when `by_trader`), and buy straight
+    /// back with what the sell paid and the trader's own share of the tip, in one slot.
+    DumpBuyBack {
+        market: usize,
+        amount: u64,
         by_trader: bool,
     },
     /// `place_wall`, by a fresh keeper or by a trader who already holds wrapped SOL.
@@ -146,6 +177,77 @@ enum Step {
     Warp { seconds: i64, slots: u64 },
 }
 
+/// Who trades a round trip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Role {
+    /// A fresh wallet.
+    Stranger,
+    /// The market's fee recipient, which sweeps fee slot 0 inside the round trip.
+    FeeRecipient,
+    /// The market's rewards recipient, which settles and pays itself its rewards inside the
+    /// round trip (SOS hypothesis H002, the wash trade of the decay credit).
+    RewardsRecipient,
+}
+
+impl Role {
+    /// The named invariant a round trip by this role checks.
+    fn invariant(self) -> &'static str {
+        match self {
+            Role::Stranger => "round-trip",
+            Role::FeeRecipient => "round-trip-fee-recipient",
+            Role::RewardsRecipient => "round-trip-rewards-recipient",
+        }
+    }
+}
+
+/// The invariants `FUZZ_INVARIANTS` can name; every other invariant is checked on every run.
+const NAMED: &[&str] = &[
+    "round-trip",
+    "round-trip-fee-recipient",
+    "round-trip-rewards-recipient",
+    "dump-buy-back",
+];
+
+/// Named invariants that fail on today's code, so a plain run leaves them out; each runs
+/// when `FUZZ_INVARIANTS` names it, and the test below its counterexample replays it.
+const KNOWN_FAILING: &[&str] = &["round-trip-rewards-recipient"];
+
+/// Whether the named invariant `name` is checked in this run: those `FUZZ_INVARIANTS` names,
+/// or without it all but `KNOWN_FAILING`. Naming one that does not exist fails, so a typo
+/// can't make a run check nothing.
+fn enabled(name: &str) -> bool {
+    static SELECTED: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    assert!(NAMED.contains(&name), "{name} is not a named invariant");
+    SELECTED
+        .get_or_init(|| match std::env::var("FUZZ_INVARIANTS") {
+            Ok(names) => {
+                let names: Vec<String> = names.split(',').map(|n| n.trim().to_string()).collect();
+                for name in &names {
+                    assert!(
+                        NAMED.contains(&name.as_str()),
+                        "FUZZ_INVARIANTS names {name}, which is not an invariant: {NAMED:?}"
+                    );
+                }
+                names
+            }
+            Err(_) => NAMED
+                .iter()
+                .filter(|name| !KNOWN_FAILING.contains(name))
+                .map(|name| name.to_string())
+                .collect(),
+        })
+        .iter()
+        .any(|selected| selected == name)
+}
+
+fn role() -> impl Strategy<Value = Role> {
+    prop_oneof![
+        2 => Just(Role::Stranger),
+        1 => Just(Role::FeeRecipient),
+        1 => Just(Role::RewardsRecipient),
+    ]
+}
+
 fn step() -> impl Strategy<Value = Step> {
     prop_oneof![
         2 => (any::<bool>(), prop::bool::weighted(0.8), 0..400u16, 0..10_500u16, 0..3_500u16, 0..10_500u16, 0..10_500u16)
@@ -162,8 +264,10 @@ fn step() -> impl Strategy<Value = Step> {
             .prop_map(|(market, sol, amount)| Step::Donate { market, sol, amount }),
         5 => (any::<usize>(), any::<bool>(), trade_amount())
             .prop_map(|(market, buy, amount)| Step::Trade { market, buy, amount }),
-        2 => (any::<usize>(), trade_amount(), any::<bool>(), any::<bool>())
-            .prop_map(|(market, amount, place_wall, by_trader)| Step::RoundTrip { market, amount, place_wall, by_trader }),
+        2 => (any::<usize>(), trade_amount(), any::<bool>(), any::<bool>(), role())
+            .prop_map(|(market, amount, place_wall, by_trader, role)| Step::RoundTrip { market, amount, place_wall, by_trader, role }),
+        1 => (any::<usize>(), trade_amount(), prop::bool::weighted(0.8))
+            .prop_map(|(market, amount, by_trader)| Step::DumpBuyBack { market, amount, by_trader }),
         3 => (any::<usize>(), any::<bool>())
             .prop_map(|(market, by_trader)| Step::PlaceWall { market, by_trader }),
         2 => (clock_jump(), 0..1_000u64).prop_map(|(seconds, slots)| Step::Warp { seconds, slots }),
@@ -230,12 +334,21 @@ struct Tracked {
     /// role the market was created without.
     fee_recipient: Option<Keypair>,
     rewards_recipient: Option<Keypair>,
-    /// Token units `settle` burned, by the test's own count.
+    /// Token units `settle` burned, by the test's own count, measured on the vault and the
+    /// mint's supply: in all, and when last checked.
     burned: u128,
+    burned_checked: u128,
     /// Lamports `sweep_fees` paid out, by the recipients' balances: in all, and when last
     /// checked.
     swept: u128,
     swept_checked: u128,
+    /// Token units `pay_rewards` paid out, by the recipients' balances: in all, and when last
+    /// checked.
+    paid: u128,
+    paid_checked: u128,
+    /// Lamports `place_wall` tipped, by the callers' balances: in all, and when last checked.
+    tipped: u128,
+    tipped_checked: u128,
 }
 
 impl Tracked {
@@ -249,8 +362,13 @@ impl Tracked {
             fee_recipient: recipients.fee,
             rewards_recipient: recipients.rewards,
             burned: 0,
+            burned_checked: 0,
             swept: 0,
             swept_checked: 0,
+            paid: 0,
+            paid_checked: 0,
+            tipped: 0,
+            tipped_checked: 0,
         }
     }
 
@@ -292,6 +410,8 @@ struct World {
     /// The swaps the last step made, in order: (market, trade), checked against the
     /// counters, the ledgers and the price.
     swapped: Vec<(usize, Swapped)>,
+    /// What each `place_wall` since the last check did: (market, placement).
+    placed: Vec<(usize, Placement)>,
 }
 
 /// What a successful swap did, from the trader's side, and the price the pricing function
@@ -321,6 +441,7 @@ impl World {
             buyers: vec![],
             traders: Default::default(),
             swapped: vec![],
+            placed: vec![],
         }
     }
 
@@ -540,28 +661,18 @@ impl World {
                 amount,
                 place_wall,
                 by_trader,
+                role,
             } => {
                 let Some(i) = self.pick(market) else { return };
-                let trader = Keypair::new();
-                let Some(bought) = self.trade(i, true, amount, trader.insecure_clone()) else {
-                    return;
-                };
-                if place_wall {
-                    let keeper = if by_trader {
-                        trader.insecure_clone()
-                    } else {
-                        Keypair::new()
-                    };
-                    self.place_wall(i, &keeper);
-                }
-                // Sold straight back, in the same slot, whatever keeper job ran in between:
-                // never more than the buy cost.
-                if let Some(sold) = self.trade(i, false, bought, trader) {
-                    assert!(
-                        sold <= amount,
-                        "a buy of {amount} lamports sold straight back returned {sold}"
-                    );
-                }
+                self.round_trip(i, amount, place_wall, by_trader, role);
+            }
+            Step::DumpBuyBack {
+                market,
+                amount,
+                by_trader,
+            } => {
+                let Some(i) = self.pick(market) else { return };
+                self.dump_buy_back(i, amount, by_trader);
             }
             Step::PlaceWall { market, by_trader } => {
                 let Some(i) = self.pick(market) else { return };
@@ -642,6 +753,140 @@ impl World {
         }
     }
 
+    /// A buy of `amount` lamports on market `i` sold straight back, in one slot, with
+    /// `place_wall` in between when `place_wall` says so, as `role` (`INV-WG-7`). Whatever
+    /// the trader receives, the SOL its sells pay, the tip it takes and what it claims as a
+    /// recipient, never exceeds what its buy cost plus the part of the tip that was already
+    /// there before its buy (`tip_free`): the naive bound without it is false, since a small
+    /// buy can lift `idle_sol` over `WALL_THRESHOLD` and so unlock a tip earned by others.
+    /// A recipient first claims what it is already owed, so all it claims inside the round
+    /// trip its own trades created. Every invariant is checked after each instruction.
+    fn round_trip(&mut self, i: usize, amount: u64, place_wall: bool, by_trader: bool, role: Role) {
+        let m = self.markets[i].market.clone();
+        let recipient = match role {
+            Role::Stranger => None,
+            Role::FeeRecipient => self.markets[i].fee_recipient.as_ref(),
+            Role::RewardsRecipient => self.markets[i].rewards_recipient.as_ref(),
+        }
+        .map(Keypair::insecure_clone);
+        // A market without the role is traded by a stranger.
+        let role = if recipient.is_some() {
+            role
+        } else {
+            Role::Stranger
+        };
+        let trader = recipient.unwrap_or_else(Keypair::new);
+        if self.env.svm.get_account(&trader.pubkey()).is_none() {
+            self.env.svm.airdrop(&trader.pubkey(), SOL).unwrap();
+        }
+        // Accounts of its own for both mints (one a `BreakRecipient` step handed away is
+        // handed back, as its owner can).
+        self.give(&trader.pubkey(), &m.token_mint, &m.token_program, 0);
+        self.give(&trader.pubkey(), &WSOL, &TOKEN, 0);
+        match role {
+            Role::Stranger => {}
+            Role::FeeRecipient => {
+                self.sweep(i, 0, true);
+                self.check_markets();
+                assert_eq!(self.env.state(&m).fees_recipient(), 0, "slot 0 swept");
+            }
+            Role::RewardsRecipient => {
+                self.settle(i);
+                self.check_markets();
+                self.pay_rewards(i, true);
+                self.check_markets();
+                let state = self.env.state(&m);
+                assert_eq!(
+                    (state.retired_tokens(), state.rewards_owed()),
+                    (0, 0),
+                    "every reward already earned paid"
+                );
+            }
+        }
+        let free = tip_free(&self.env.state(&m));
+        let Some(bought) = self.trade(i, true, amount, trader.insecure_clone()) else {
+            return;
+        };
+        let mut tip = 0;
+        if place_wall {
+            self.check_markets();
+            let keeper = if by_trader {
+                trader.insecure_clone()
+            } else {
+                Keypair::new()
+            };
+            let tipped = self.place_wall(i, &keeper);
+            if by_trader {
+                tip = tipped.unwrap_or(0);
+            }
+            self.check_markets();
+        }
+        let Some(sold) = self.trade(i, false, bought, trader.insecure_clone()) else {
+            return;
+        };
+        let mut claimed = 0u64;
+        match role {
+            Role::Stranger => {}
+            Role::FeeRecipient => {
+                self.check_markets();
+                claimed = self.sweep(i, 0, true).unwrap_or(0);
+            }
+            Role::RewardsRecipient => {
+                self.check_markets();
+                self.settle(i);
+                self.check_markets();
+                if let Some(paid) = self.pay_rewards(i, true) {
+                    self.check_markets();
+                    // The rewards are worth what they sell for.
+                    claimed = self.trade(i, false, paid, trader).unwrap_or(0);
+                }
+            }
+        }
+        let received = sold as u128 + claimed as u128 + tip as u128;
+        let free = tip.min(free);
+        let name = role.invariant();
+        if enabled(name) {
+            assert!(
+                received <= amount as u128 + free as u128,
+                "{name}: self-dealing profited: a buy of {amount} lamports returned {sold} sold, \
+                 {claimed} claimed and a tip of {tip} (of which {free} was there before the buy)"
+            );
+        }
+    }
+
+    /// A sell of `amount` tokens on market `i`, `place_wall` (by the trader when
+    /// `by_trader`), and a buy straight back with what the sell paid and the part of the
+    /// tip the trader's own trade created, in one slot (`INV-WG-7` (b)): never more tokens
+    /// back than it sold.
+    fn dump_buy_back(&mut self, i: usize, amount: u64, by_trader: bool) {
+        let trader = Keypair::new();
+        let free = tip_free(&self.env.state(&self.markets[i].market));
+        let Some(out) = self.trade(i, false, amount, trader.insecure_clone()) else {
+            return;
+        };
+        self.check_markets();
+        let keeper = if by_trader {
+            trader.insecure_clone()
+        } else {
+            Keypair::new()
+        };
+        let tipped = self.place_wall(i, &keeper);
+        self.check_markets();
+        let tip = if by_trader { tipped.unwrap_or(0) } else { 0 };
+        let spend = out + (tip - tip.min(free));
+        let Some(back) = self.trade(i, true, spend, trader) else {
+            return;
+        };
+        if enabled("dump-buy-back") {
+            assert!(
+                back <= amount,
+                "dump-buy-back: self-dealing profited: a sell of {amount} tokens for {out} \
+                 lamports and a tip of {tip} (of which {free} was there before the sell) \
+                 bought back {back}"
+            );
+        }
+    }
+
     /// Whether `owner`'s associated token account for `mint` is missing or still `owner`'s,
     /// read from the account itself: a payout into it may go ahead.
     fn own_account(&self, owner: &Pubkey, mint: &Pubkey, program: &Pubkey) -> bool {
@@ -672,50 +917,52 @@ impl World {
             .unwrap_or(0)
     }
 
-    /// `settle` on market `i`: checked against the program's own `payouts`, accepted or
-    /// refused, with the burn measured on the vault and the mint's supply.
+    /// `settle` on market `i`: checked against the program's own `payouts` on an open
+    /// market, accepted or refused with exactly its error, with the burn measured on the vault and the mint's
+    /// supply.
     fn settle(&mut self, i: usize) {
         let m = self.markets[i].market.clone();
         let before = self.env.state(&m);
-        let expected = before.owed().settle(before.reward_share_bps());
+        let expected = open(&before).and_then(|()| {
+            before
+                .owed()
+                .settle(before.reward_share_bps())
+                .map_err(StrategyError::from)
+        });
         let (vault, supply) = (
             self.env.balance(&m.token_vault),
             supply_of(&self.env, &m.token_mint),
         );
         let result = self.env.send_logged(&[common::payouts::settle_ix(&m)], &[]);
-        match (expected, &result) {
-            (Ok((owed, split)), Ok((_, logs))) => {
-                let after = self.env.state(&m);
-                // The spec's split, stated here independently of the program's maths.
-                let retired = before.retired_tokens() as u128;
-                let to_rewards = retired * before.reward_share_bps() as u128 / 10_000;
-                assert_eq!(
-                    (split.to_rewards as u128, split.burned as u128),
-                    (to_rewards, retired - to_rewards)
-                );
-                assert_eq!(after.owed(), owed);
-                assert_eq!(self.env.balance(&m.token_vault), vault - split.burned);
-                assert_eq!(supply_of(&self.env, &m.token_mint), supply - split.burned);
-                assert_eq!(
-                    events::<buy_wall_amm::events::Settled>(logs).len(),
-                    1,
-                    "settle emits Settled"
-                );
-                self.markets[i].burned += split.burned as u128;
-            }
-            (Err(_), Err(_)) => {}
-            (expected, _) => panic!(
-                "settle on {:?}: expected {expected:?}, got {:?}",
-                before.owed(),
-                result.map(|_| ())
-            ),
-        }
+        assert_outcome("settle", &expected, &result);
+        let (Ok((owed, split)), Ok((_, logs))) = (expected, &result) else {
+            return;
+        };
+        let after = self.env.state(&m);
+        // The spec's split, stated here independently of the program's maths.
+        let retired = before.retired_tokens() as u128;
+        let to_rewards = retired * before.reward_share_bps() as u128 / 10_000;
+        assert_eq!(
+            (split.to_rewards as u128, split.burned as u128),
+            (to_rewards, retired - to_rewards)
+        );
+        assert_eq!(after.owed(), owed);
+        assert_eq!(self.env.balance(&m.token_vault), vault - split.burned);
+        assert_eq!(supply_of(&self.env, &m.token_mint), supply - split.burned);
+        assert_eq!(
+            events::<buy_wall_amm::events::Settled>(logs).len(),
+            1,
+            "settle emits Settled"
+        );
+        self.markets[i].burned += split.burned as u128;
     }
 
     /// `pay_rewards` on market `i`, to the rewards recipient or a stranger: it succeeds
     /// exactly when `payouts` allows it, the wallet is the recipient and its account is its
-    /// own, and then pays exactly what was owed into exactly that account.
-    fn pay_rewards(&mut self, i: usize, right_wallet: bool) {
+    /// own, and then pays exactly what was owed into exactly that account; otherwise it is
+    /// refused with exactly the error of the first check that fails, in the program's order
+    /// (the market is open, `payouts`, the wallet, its account). Returns what it paid.
+    fn pay_rewards(&mut self, i: usize, right_wallet: bool) -> Option<u64> {
         let m = self.markets[i].market.clone();
         let before = self.env.state(&m);
         let recipient = if right_wallet {
@@ -727,28 +974,41 @@ impl World {
         self.env.svm.airdrop(&payer.pubkey(), SOL).unwrap();
         let account = pda::associated_token(&recipient, &m.token_mint, &m.token_program);
         let held = self.held(&account);
-        let expected = before.owed().pay_rewards(&before.rewards_recipient);
-        let allowed = expected.is_ok()
-            && recipient.to_bytes() == before.rewards_recipient.to_bytes()
-            && self.own_account(&recipient, &m.token_mint, &m.token_program);
+        let own = self.own_account(&recipient, &m.token_mint, &m.token_program);
+        let expected = open(&before)
+            .and_then(|()| {
+                before
+                    .owed()
+                    .pay_rewards(&before.rewards_recipient)
+                    .map_err(StrategyError::from)
+            })
+            .and_then(|paid| {
+                if recipient.to_bytes() != before.rewards_recipient.to_bytes() {
+                    Err(StrategyError::WrongAccount)
+                } else if !own {
+                    Err(StrategyError::RecipientAccountNotTheirs)
+                } else {
+                    Ok(paid)
+                }
+            });
         let ix = common::payouts::pay_rewards_ix(&m, &payer.pubkey(), &recipient, vec![]);
         let result = self.env.send_logged(&[ix], &[&payer]);
-        assert_eq!(
-            result.is_ok(),
-            allowed,
-            "pay_rewards: {expected:?}: {result:?}"
-        );
-        if let (Ok((owed, amount)), Ok((_, logs))) = (expected, &result) {
-            assert_eq!(self.env.state(&m).owed(), owed);
-            assert_eq!(self.held(&account), held + amount);
-            assert_eq!(events::<buy_wall_amm::events::RewardsPaid>(logs).len(), 1);
-            self.count_holder(&m.token_mint, account);
-        }
+        assert_outcome("pay_rewards", &expected, &result);
+        let (Ok((owed, amount)), Ok((_, logs))) = (expected, &result) else {
+            return None;
+        };
+        assert_eq!(self.env.state(&m).owed(), owed);
+        let paid = self.held(&account) - held;
+        assert_eq!(paid, amount);
+        assert_eq!(events::<buy_wall_amm::events::RewardsPaid>(logs).len(), 1);
+        self.count_holder(&m.token_mint, account);
+        self.markets[i].paid += paid as u128;
+        Some(paid)
     }
 
     /// `sweep_fees { slot }` on market `i`, to the slot's wallet or a stranger, checked as
-    /// `pay_rewards` is.
-    fn sweep(&mut self, i: usize, slot: u8, right_wallet: bool) {
+    /// `pay_rewards` is. Returns what it paid.
+    fn sweep(&mut self, i: usize, slot: u8, right_wallet: bool) -> Option<u64> {
         let m = self.markets[i].market.clone();
         let before = self.env.state(&m);
         let fee_recipient = before.fee_recipient;
@@ -762,28 +1022,41 @@ impl World {
         self.env.svm.airdrop(&payer.pubkey(), SOL).unwrap();
         let account = pda::associated_token(&recipient, &WSOL, &TOKEN);
         let held = self.held(&account);
-        let expected = before.owed().sweep(slot, &fee_recipient);
-        let allowed = expected.is_ok()
-            && wallet.map(|w| w.to_bytes()) == Ok(recipient.to_bytes())
-            && self.own_account(&recipient, &WSOL, &TOKEN);
+        let own = self.own_account(&recipient, &WSOL, &TOKEN);
+        let expected = open(&before)
+            .and_then(|()| {
+                before
+                    .owed()
+                    .sweep(slot, &fee_recipient)
+                    .map_err(StrategyError::from)
+            })
+            .and_then(|(owed, wallet, amount)| {
+                if recipient.to_bytes() != wallet.to_bytes() {
+                    Err(StrategyError::WrongAccount)
+                } else if !own {
+                    Err(StrategyError::RecipientAccountNotTheirs)
+                } else {
+                    Ok((owed, amount))
+                }
+            });
         let ix = common::payouts::sweep_fees_ix(&m, &payer.pubkey(), &recipient, slot);
         let result = self.env.send_logged(&[ix], &[&payer]);
-        assert_eq!(
-            result.is_ok(),
-            allowed,
-            "sweep_fees {slot}: {expected:?}: {result:?}"
-        );
-        if let (Ok((owed, _, amount)), Ok((_, logs))) = (expected, &result) {
-            assert_eq!(self.env.state(&m).owed(), owed);
-            assert_eq!(self.held(&account), held + amount);
-            assert_eq!(events::<buy_wall_amm::events::FeesSwept>(logs).len(), 1);
-            self.count_holder(&WSOL, account);
-            self.markets[i].swept += amount as u128;
-        }
+        assert_outcome(&format!("sweep_fees {slot}"), &expected, &result);
+        let (Ok((owed, amount)), Ok((_, logs))) = (expected, &result) else {
+            return None;
+        };
+        assert_eq!(self.env.state(&m).owed(), owed);
+        let paid = self.held(&account) - held;
+        assert_eq!(paid, amount);
+        assert_eq!(events::<buy_wall_amm::events::FeesSwept>(logs).len(), 1);
+        self.count_holder(&WSOL, account);
+        self.markets[i].swept += paid as u128;
+        Some(paid)
     }
 
     /// A handover on market `i`: it succeeds exactly when the role's current recipient signs
-    /// it to a wallet that is not the default key.
+    /// it to a wallet that is not the default key, and is otherwise refused with exactly the
+    /// error `payouts::handover` gives.
     fn handover(&mut self, i: usize, rewards: bool, by_recipient: bool, to_default: bool) {
         let m = self.markets[i].market.clone();
         let current = self.markets[i]
@@ -800,8 +1073,21 @@ impl World {
         } else {
             new.pubkey()
         };
+        let state = self.env.state(&m);
+        let held = if rewards {
+            state.rewards_recipient
+        } else {
+            state.fee_recipient
+        };
+        let expected = buy_wall_amm::payouts::handover(
+            &held,
+            &signer.pubkey().to_bytes().into(),
+            &new_key.to_bytes().into(),
+        )
+        .map_err(StrategyError::from);
         let ix = common::payouts::handover_ix(&m, rewards, &signer.pubkey(), &new_key);
         let result = self.env.send(&[ix], &[&signer]);
+        assert_outcome("handover", &expected, &result);
         let allowed = current.is_some() && by_recipient && !to_default;
         assert_eq!(result.is_ok(), allowed, "handover: {result:?}");
         if result.is_ok() {
@@ -816,37 +1102,39 @@ impl World {
 
     /// `place_wall` on market `i` by `keeper`, tipping its wrapped SOL account: checked
     /// against the program's own `wall::place` on the market as it was, which it must equal
-    /// exactly, accepted or refused.
-    fn place_wall(&mut self, i: usize, keeper: &Keypair) {
+    /// exactly, accepted or refused with exactly its error. Returns the tip, measured on the
+    /// keeper's account.
+    fn place_wall(&mut self, i: usize, keeper: &Keypair) -> Option<u64> {
         let m = self.markets[i].market.clone();
         if self.env.svm.get_account(&keeper.pubkey()).is_none() {
             self.env.svm.airdrop(&keeper.pubkey(), SOL).unwrap();
         }
         self.give(&keeper.pubkey(), &WSOL, &TOKEN, 0);
         let before = self.env.state(&m);
-        let expected = (before.status == STATUS_OPEN)
-            .then(|| buy_wall_amm::wall::place(before.wall_books(), before.wall_at()));
+        let expected = if before.status == STATUS_OPEN {
+            buy_wall_amm::wall::place(before.wall_books(), before.wall_at())
+                .map_err(StrategyError::from)
+        } else {
+            Err(StrategyError::MarketNotOpen)
+        };
         let result = self.env.place_wall(&m, keeper);
-        match (expected, &result) {
-            (Some(Ok((books, placement))), Ok((tip, logs))) => {
-                let after = self.env.state(&m);
-                assert_eq!(after.wall_books(), books);
-                assert_eq!(*tip, placement.tip);
-                assert_eq!(events::<buy_wall_amm::events::WallPlaced>(logs).len(), 1);
-                // Never above the floor, and so never above the price.
-                assert!(after.wall_top() <= before.floor());
-                assert!(after.wall_top() <= after.sqrt_price());
-                let tracked = &mut self.markets[i];
-                tracked.placed_under = Some(before.floor());
-                tracked.dust_tokens += placement.dust_tokens as u128;
-            }
-            (Some(Err(_)) | None, Err(_)) => {}
-            (expected, _) => panic!(
-                "place_wall on {:?}: expected {expected:?}, got {:?}",
-                before.wall_books(),
-                result.map(|(tip, _)| tip)
-            ),
-        }
+        assert_outcome("place_wall", &expected, &result);
+        let (Ok((books, placement)), Ok((tip, logs))) = (expected, &result) else {
+            return None;
+        };
+        let after = self.env.state(&m);
+        assert_eq!(after.wall_books(), books);
+        assert_eq!(*tip, placement.tip);
+        assert_eq!(events::<buy_wall_amm::events::WallPlaced>(logs).len(), 1);
+        // Never above the floor, and so never above the price.
+        assert!(after.wall_top() <= before.floor());
+        assert!(after.wall_top() <= after.sqrt_price());
+        self.placed.push((i, placement));
+        let tracked = &mut self.markets[i];
+        tracked.placed_under = Some(before.floor());
+        tracked.dust_tokens += placement.dust_tokens as u128;
+        tracked.tipped += *tip as u128;
+        Some(*tip)
     }
 
     /// Quotes and swaps `amount` of market `i` through the router, as `trader` (funded here
@@ -913,6 +1201,13 @@ impl World {
 
     /// Every invariant, on every market, after a step.
     fn check(&mut self) {
+        self.check_value();
+        self.check_markets();
+        self.check_exits();
+    }
+
+    /// Value conserved, across every wallet and vault, after a step.
+    fn check_value(&mut self) {
         // Value conserved: every unit given out is in some account the test funded or in a
         // market's vault.
         for (mint, minted) in &self.minted {
@@ -954,7 +1249,13 @@ impl World {
                 );
             }
         }
+    }
+
+    /// Every invariant of each market's own state, after a step or, inside a step of several
+    /// instructions, after each of them, so each instruction's moves are measured alone.
+    fn check_markets(&mut self) {
         let swapped = std::mem::take(&mut self.swapped);
+        let placed = std::mem::take(&mut self.placed);
         let slot = self
             .env
             .svm
@@ -993,10 +1294,48 @@ impl World {
                 + last.fees_recipient() as u128
                 + last.fees_designer() as u128
                 + last.fees_suite() as u128;
-            if last.status == STATUS_OPEN {
-                assert!(state.tokens_trimmed() >= last.tokens_trimmed());
-                assert!(state.sol_trimmed() >= last.sol_trimmed());
-                assert!(state.wall_tokens_bought() >= last.wall_tokens_bought());
+            // INV-FB-15: no lifetime total ever falls.
+            let totals = [
+                (
+                    "tokens_trimmed",
+                    last.tokens_trimmed(),
+                    state.tokens_trimmed(),
+                ),
+                ("sol_trimmed", last.sol_trimmed(), state.sol_trimmed()),
+                (
+                    "wall_tokens_bought",
+                    last.wall_tokens_bought(),
+                    state.wall_tokens_bought(),
+                ),
+                ("tokens_burned", last.tokens_burned(), state.tokens_burned()),
+                ("rewards_paid", last.rewards_paid(), state.rewards_paid()),
+                ("tips_paid", last.tips_paid(), state.tips_paid()),
+                (
+                    "fees_collected",
+                    last.fees_collected(),
+                    state.fees_collected(),
+                ),
+                (
+                    "volume[0]",
+                    last.volume(0).unwrap(),
+                    state.volume(0).unwrap(),
+                ),
+                (
+                    "volume[1]",
+                    last.volume(1).unwrap(),
+                    state.volume(1).unwrap(),
+                ),
+                (
+                    "swap_count",
+                    last.swap_count() as u128,
+                    state.swap_count() as u128,
+                ),
+            ];
+            for (name, before, after) in totals {
+                assert!(
+                    after >= before,
+                    "the lifetime total {name} fell from {before} to {after}"
+                );
             }
             // The only value that leaves a market's ledgers outside a swap is a tip, out of
             // the SOL vault, a burn or rewards paid out of the token vault, and fees swept.
@@ -1006,6 +1345,41 @@ impl World {
             let swept = tracked.swept - tracked.swept_checked;
             tracked.swept_checked = tracked.swept;
             assert_eq!(state.tokens_burned(), tracked.burned, "the burned total");
+            // INV-FB-15: each total grows by exactly what moved, measured outside the
+            // program: the burn on the mint's supply, rewards and tips in the accounts paid.
+            let measured = |total: u128, checked: &mut u128| {
+                let moved = total - *checked;
+                *checked = total;
+                moved
+            };
+            let burned_measured = measured(tracked.burned, &mut tracked.burned_checked);
+            let paid_measured = measured(tracked.paid, &mut tracked.paid_checked);
+            let tipped_measured = measured(tracked.tipped, &mut tracked.tipped_checked);
+            assert_eq!(
+                burned, burned_measured,
+                "tokens_burned grew by {burned}, but {burned_measured} burned"
+            );
+            assert_eq!(
+                rewards_paid, paid_measured,
+                "rewards_paid grew by {rewards_paid}, but {paid_measured} was paid"
+            );
+            assert_eq!(
+                tips, tipped_measured,
+                "tips_paid grew by {tips}, but {tipped_measured} was tipped"
+            );
+            // The wall's total grows only when `place_wall` closes a wall, by the tokens it
+            // had bought.
+            let placements: Vec<&Placement> = placed
+                .iter()
+                .filter(|(market, _)| *market == index)
+                .map(|(_, placement)| placement)
+                .collect();
+            let closed: u128 = placements.iter().map(|p| p.closed_tokens as u128).sum();
+            assert_eq!(
+                state.wall_tokens_bought() - last.wall_tokens_bought(),
+                closed,
+                "wall_tokens_bought grew by other than the tokens closed walls bought"
+            );
             match trades.as_slice() {
                 [] => {
                     if last.status == STATUS_OPEN {
@@ -1035,6 +1409,29 @@ impl World {
                     // A swap pays nothing out.
                     assert_eq!((burned, rewards_paid, swept), (0, 0, 0));
                     assert_eq!(state.rewards_owed(), last.rewards_owed());
+                    // The harness checks between a `place_wall` and a swap, so a trim is
+                    // measured on its own.
+                    assert!(placements.is_empty(), "a place_wall checked with a swap");
+                    // INV-FB-15: a trim's totals count exactly what it moved, the tokens into
+                    // `retired_tokens` and the SOL into `idle_sol`, where the fee's wall share
+                    // also goes, the rest of the fee going to the fee ledgers.
+                    let fees: u128 = trades.iter().map(|t| t.fee as u128).sum();
+                    let idle_and_fees = |s: &MarketState| {
+                        s.idle_sol() as u128
+                            + s.fees_recipient() as u128
+                            + s.fees_designer() as u128
+                            + s.fees_suite() as u128
+                    };
+                    assert_eq!(
+                        state.tokens_trimmed() - last.tokens_trimmed(),
+                        state.retired_tokens() as u128 - last.retired_tokens() as u128,
+                        "tokens_trimmed grew by other than the tokens a trim retired"
+                    );
+                    assert_eq!(
+                        state.sol_trimmed() - last.sol_trimmed() + fees,
+                        idle_and_fees(&state) - idle_and_fees(last),
+                        "sol_trimmed grew by other than the SOL a trim idled"
+                    );
                     let (mut tokens_in, mut sol_in) = (0i128, 0i128);
                     let (mut volume_in, mut volume_out) = ([0u128; 2], [0u128; 2]);
                     for trade in &trades {
@@ -1209,6 +1606,10 @@ impl World {
             );
             tracked.last = state;
         }
+    }
+
+    /// Every holder can exit, after a step.
+    fn check_exits(&mut self) {
         // Every holder can exit, as `exit::can_exit` defines it (`POOL4-36`): a buyer's whole
         // token balance sells, unless it is worth less than one lamport or is more than the
         // curve can take before its price bound, when the most it can take sells (and every
@@ -1268,6 +1669,77 @@ fn creation_params(
     (params, recipients)
 }
 
+/// `INV-WG-7`'s `tip_free`: the tip `place_wall` would pay on `state` with its threshold
+/// ignored, stated from the spec's `place_wall` steps 1 to 4 rather than with the program's
+/// `wall::place`: `min(KEEPER_TIP_CAP, floor(work × fee_bps / 10,000), idle + closed + dust)`,
+/// where `closed` is what the wall holds at the price, `work` the larger of the SOL the wall
+/// has spent and `idle_sol`, and `dust` the SOL the pool holds beyond the curve's own,
+/// rounded up. It is the part of a tip that a trader's own trades did not create.
+fn tip_free(state: &MarketState) -> u64 {
+    if state.status != STATUS_OPEN {
+        return 0;
+    }
+    let s = state.sqrt_price();
+    let wall = state.wall();
+    let (closed, converted) = if state.wall_liquidity() > 0 {
+        let closed = wall.sol_at(s).expect("the wall's SOL fits");
+        (closed, state.wall_sol_placed().saturating_sub(closed))
+    } else {
+        (0, 0)
+    };
+    let (_, curve_sol) = buy_wall_amm::cap::held_rounded_up(state.liquidity(), s)
+        .expect("a seeded market's curve fits");
+    let dust = (state.pool_sol().saturating_sub(closed) as u128).saturating_sub(curve_sol);
+    let idle = state.idle_sol() as u128;
+    let work = (converted as u128).max(idle);
+    let earned = work * state.fee_bps() as u128 / BPS as u128;
+    (KEEPER_TIP_CAP as u128)
+        .min(earned)
+        .min(idle + closed as u128 + dust) as u64
+}
+
+/// The keeper jobs' first check (`state::check_vault_accounts`): the market is open.
+fn open(state: &MarketState) -> Result<(), StrategyError> {
+    if state.status == STATUS_OPEN {
+        Ok(())
+    } else {
+        Err(StrategyError::MarketNotOpen)
+    }
+}
+
+/// The custom error code on the first line of a failed transaction's message, if any.
+fn custom_code(message: &str) -> Option<u32> {
+    let line = message.lines().next()?;
+    let start = line.find("Custom(")? + "Custom(".len();
+    line[start..].split(')').next()?.parse().ok()
+}
+
+/// Asserts that an instruction did what the model predicted: succeeded when it predicted
+/// success, and was refused with exactly the error it predicted otherwise, so a refusal for
+/// the wrong reason fails.
+#[track_caller]
+fn assert_outcome<T: std::fmt::Debug, U>(
+    what: &str,
+    expected: &Result<T, StrategyError>,
+    result: &Result<U, String>,
+) {
+    match (expected, result) {
+        (Ok(_), Ok(_)) => {}
+        (Err(error), Err(message)) => {
+            let code: u32 = (*error).into();
+            assert_eq!(
+                custom_code(message),
+                Some(code),
+                "{what}: expected {error:?} ({code}), got:\n{message}"
+            );
+        }
+        (Ok(expected), Err(message)) => {
+            panic!("{what}: expected {expected:?}, but it was refused:\n{message}")
+        }
+        (Err(error), Ok(_)) => panic!("{what}: expected {error:?}, but it succeeded"),
+    }
+}
+
 /// A mint's supply (SPL Token's and Token-2022's mint layout: the supply at 36).
 fn supply_of(env: &Env, mint: &Pubkey) -> u64 {
     let data = env.svm.get_account(mint).expect("the mint").data;
@@ -1281,20 +1753,81 @@ fn cases() -> u32 {
         .unwrap_or(256)
 }
 
+/// A world with the default market every sequence starts with, after `steps`, every
+/// invariant checked after each.
+fn replay(steps: &[Step]) {
+    let mut world = World::new();
+    // Always start with a seeded market, so the other steps have something to trade.
+    world.apply(&Step::Create {
+        token_2022: false,
+        valid: true,
+        fee_bps: 75,
+        wall_split_bps: 5_000,
+        reward_share_bps: 1_499,
+        cap_floor_bps: 1_990,
+        cap_decay_bps: 2_000,
+    });
+    world.check();
+    world.apply(&Step::Seed {
+        market: 0,
+        tokens: 1_000_000_000_000,
+        lamports: 10 * SOL,
+        by_seeder: true,
+    });
+    world.check();
+    for step in steps {
+        world.apply(step);
+        world.check();
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: cases(), ..ProptestConfig::default() })]
 
     #[test]
     fn invariants_hold_after_every_step(steps in prop::collection::vec(step(), 1..32)) {
-        let mut world = World::new();
-        // Always start with a seeded market, so the other steps have something to trade.
-        world.apply(&Step::Create { token_2022: false, valid: true, fee_bps: 75, wall_split_bps: 5_000, reward_share_bps: 1_499, cap_floor_bps: 1_990, cap_decay_bps: 2_000 });
-        world.check();
-        world.apply(&Step::Seed { market: 0, tokens: 1_000_000_000_000, lamports: 10 * SOL, by_seeder: true });
-        world.check();
-        for step in &steps {
-            world.apply(step);
-            world.check();
-        }
+        replay(&steps);
     }
+}
+
+/// The fuzzer's counterexample to `round-trip-rewards-recipient` (2026-11-16), minimised,
+/// and the same wash trade at a day's decay credit: SOS hypothesis H002, which today's code
+/// fails, so a plain run checks every other invariant on it and `FUZZ_INVARIANTS=
+/// round-trip-rewards-recipient` shows it failing. On the default market (a 75 basis point
+/// fee and a 14.99% reward share), one second after the seed the rewards recipient buys
+/// with 35 lamports, sells it all straight back for 32, settles and pays itself the rewards
+/// that the sell's trim retired, and sells them for 4: 36 lamports back for 35. The buy
+/// spends the decay credit to lower the cap to what the curve then holds, so the sell back
+/// is trimmed and its tokens retired, and the reward share of them comes back to the
+/// trader, more than the two fees it paid. A day after the seed the same round trip with
+/// 1 SOL sells back for 980,099,999 lamports and claims rewards that sell for 131,727,578:
+/// 0.11 SOL more than it cost, in one transaction's worth of instructions.
+#[test]
+fn the_rewards_recipients_wash_trade_counterexample() {
+    replay(&[
+        Step::Warp {
+            seconds: 1,
+            slots: 0,
+        },
+        Step::RoundTrip {
+            market: 0,
+            amount: 35,
+            place_wall: false,
+            by_trader: false,
+            role: Role::RewardsRecipient,
+        },
+    ]);
+    replay(&[
+        Step::Warp {
+            seconds: DECAY_CREDIT_WINDOW,
+            slots: 0,
+        },
+        Step::RoundTrip {
+            market: 0,
+            amount: SOL,
+            place_wall: false,
+            by_trader: false,
+            role: Role::RewardsRecipient,
+        },
+    ]);
 }

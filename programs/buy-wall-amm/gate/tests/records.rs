@@ -32,6 +32,7 @@ fn passing() -> Record {
         deployed_sha256: Some("d".repeat(64)),
         market_states: vec!["A".into(), "B".into()],
         pricing_change_declared: false,
+        shared_failures: vec![],
     }
 }
 

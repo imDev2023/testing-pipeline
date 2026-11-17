@@ -1,11 +1,10 @@
 //! The quotes the gate compares: on every market, exact-in quotes both ways at a tenth, a
 //! hundredth and a thousandth of the input vault, as the deployed build gives them when a
-//! snapshot is taken and as the candidate gives them on the same state (`POOL4-41`).
-
-use pipeline_client::Pubkey;
+//! snapshot is taken and as the candidate gives them on the same state (`POOL4-41`); both
+//! are taken by the same replay (`check.rs`).
 
 use crate::session::{first_line, MarketView, Session};
-use crate::snapshot::{Quote, QuoteOutcome};
+use crate::snapshot::QuoteOutcome;
 
 /// The gate's quotes are of what the input vault holds divided by each of these.
 pub const QUOTE_DIVISORS: [u64; 3] = [10, 100, 1_000];
@@ -42,25 +41,4 @@ pub fn quote(
         Ok(resolved) => session.quote(view, input, output, amount, &resolved),
         Err(error) => QuoteOutcome::Refused(format!("resolve: {}", first_line(&error))),
     }
-}
-
-/// Every quote the gate compares on `market_states`, from the program in `session`.
-pub fn record(session: &Session, market_states: &[Pubkey]) -> Result<Vec<Quote>, String> {
-    let mut quotes = vec![];
-    for market_state in market_states {
-        let view = session.market(market_state)?;
-        let (token, sol) = view.sides()?;
-        for (input, output) in [(sol, token), (token, sol)] {
-            for amount in amounts(session, &view, input) {
-                quotes.push(Quote {
-                    market_state: market_state.to_string(),
-                    input_index: input as u8,
-                    output_index: output as u8,
-                    amount,
-                    result: quote(session, &view, input, output, amount),
-                });
-            }
-        }
-    }
-    Ok(quotes)
 }

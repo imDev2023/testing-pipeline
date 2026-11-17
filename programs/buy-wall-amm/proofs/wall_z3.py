@@ -18,6 +18,10 @@ wall](https://github.com/imDev2023/testing-pipeline/issues/50)):
 - closing and placing the wall conserves the ledgers, never finds them short of the curve's
   own holdings, and leaves them covering the curve and the new wall.
 
+And the Book of Knowledge invariant WG-5 (`.bok/confirmed-invariants/CONFIRMED.md`):
+`place_wall` cannot be called twice for two tips, since right after a placement there is no
+work for a second one.
+
 The curve of liquidity `L` holds `L × Q / s` token units and `L × s / Q` lamports at price
 `s`; the wall of liquidity `W` and top `t` holds `W × Q × (t - s) / (t × s)` token units
 below its top (none at or above it) and `W × min(s, t) / Q` lamports. A step along
@@ -37,6 +41,7 @@ proven.
 """
 
 import sys
+import time
 
 from z3 import And, If, Int, Not, Or, Real, Solver, sat, unsat
 
@@ -45,18 +50,20 @@ BPS = 10_000
 
 
 def prove(name, claim, *assumptions):
+    start = time.perf_counter()
     solver = Solver()
     solver.set("timeout", 600_000)
     solver.add(*assumptions)
     solver.add(Not(claim))
     result = solver.check()
+    seconds = time.perf_counter() - start
     if result == unsat:
-        print(f"PROVEN  {name}")
+        print(f"PROVEN  {name} ({seconds:.2f} s)")
         return True
     if result == sat:
-        print(f"FAILED  {name}: counterexample {solver.model()}")
+        print(f"FAILED  {name} ({seconds:.2f} s): counterexample {solver.model()}")
     else:
-        print(f"UNKNOWN {name} ({solver.reason_unknown()})")
+        print(f"UNKNOWN {name} ({seconds:.2f} s, {solver.reason_unknown()})")
     return False
 
 
@@ -306,6 +313,49 @@ results.append(
             Ps2 * Q >= iL * i_s + W2 * top2,
         ),
         placed,
+    )
+)
+
+# --- WG-5: place_wall cannot be called twice for two tips ----------------------------------
+# Right after a placement, with no swap in between (only a swap moves the price, the floor or
+# the curve, and only a swap or a placement changes `idle_sol` or the wall; the payouts touch
+# neither, `src/payouts.rs`), a second `place` sees `idle_sol = 0` and the new wall's
+# `converted = wall_sol_placed - floor(W' × min(s, top') / Q)`, with `wall_sol_placed =
+# floor(W' × top' / Q)` (`sol_at(top)`). Since top' <= s, both floors are the same, so
+# `converted` is 0 and step 1 refuses with `BelowThreshold` before any tip; and it stays 0 at
+# any price at or above the new top, so only a trade that sells into the wall makes work.
+WALL_THRESHOLD = 10_000_000
+wsp, at_price, s_later, at_later = Int("wsp"), Int("at_price"), Int("s_later"), Int("at_later")
+
+
+def converted(W, sol_now):
+    """Step 1's `converted` for wall liquidity W: 0 with no wall, else `wall_sol_placed -
+    sol_at(s)` saturating at 0."""
+    return If(W > 0, If(wsp - sol_now > 0, wsp - sol_now, 0), 0)
+
+
+again = And(
+    placed,
+    floor_of(wsp, W2 * top2, Q),
+    floor_of(at_price, W2 * If(i_s < top2, i_s, top2), Q),
+)
+results.append(
+    prove(
+        "place_wall twice: right after a placement converted is 0 and idle_sol is 0, so the second call is refused (BelowThreshold) and tips nothing",
+        And(
+            converted(W2, at_price) == 0,
+            And(I_after < WALL_THRESHOLD, converted(W2, at_price) < WALL_THRESHOLD),
+        ),
+        again,
+    )
+)
+results.append(
+    prove(
+        "place_wall: the new wall's converted stays 0 at every price at or above its top",
+        converted(W2, at_later) == 0,
+        again,
+        s_later >= top2,
+        floor_of(at_later, W2 * If(s_later < top2, s_later, top2), Q),
     )
 )
 

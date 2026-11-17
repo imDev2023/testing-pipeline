@@ -3825,12 +3825,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-41: What the release gate runs on each market
 
 - Question: What exactly does the release gate run on each market, and which quotes does it compare?
-- Answer: With the candidate and the cluster's router it resolves a buy and a sell, compares exact-in quotes both ways at a tenth, a hundredth and a thousandth of the input vault with the deployed build's on the same state, runs each keeper job the program's own rules say is due on the state as downloaded, seeds a market waiting for its seed as its seeder would, then buys with a hundredth of the SOL vault and sells what that bought, each delivering exactly the candidate's quote.
-- Alternatives: One quote each way; judging keeper jobs due after the trades; comparing whole market states after the trades.
+- Answer: With the candidate and the cluster's router it resolves a buy and a sell, compares exact-in quotes both ways at a tenth, a hundredth and a thousandth of the input vault with the deployed build's on the same state, checks `pipeline_market_info` against the router's record, seeds a market waiting for its seed as its seeder would, runs each keeper job that this tree's rules say is due on the state as downloaded or that the deployed build ran on the snapshot, then buys with a hundredth of the SOL vault and sells what that bought, each delivering exactly the candidate's quote.
+- Alternatives: The earlier default, the same without `pipeline_market_info` and with only the keeper jobs this tree's rules say are due, which let a candidate that narrows a rule drop that job from its own test; one quote each way; judging keeper jobs due after the trades; comparing whole market states after the trades.
 - Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
 - Changes by: spec only
-- Status: default
-- Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+- Status: changed 2026-11-16
+- Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ### POOL4-42: How a release declares a pricing change
 
@@ -3855,12 +3855,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-44: How the gate is proved to catch stranding
 
 - Question: How are the test builds made that prove the gate catches stranding?
-- Answer: From edited copies of the workspace, built in a target directory of their own, never from features in the program's source: a moved field, the market state type renamed with its discriminator left to Anchor, an account 8 bytes larger, all refused, and a field appended into the reserve as layout version 2, passed, on every fixture in CI.
-- Alternatives: Cargo features that switch layouts in `state.rs`, which would put stranding layouts into the audited source.
+- Answer: From edited copies of the workspace, built in a target directory of their own, never from features in the program's source: a moved field, the market state type renamed with its discriminator left to Anchor and an account 8 bytes larger, each refused on every open market, a payout rule narrowed so fee slot 2 can no longer be swept, refused on every market the deployed build swept it on, and a field appended into the reserve as layout version 2, passed, on every fixture in CI.
+- Alternatives: The earlier default, the same without the narrowed payout rule, which proved nothing about keeper jobs; Cargo features that switch layouts in `state.rs`, which would put stranding layouts into the audited source.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Fixtures in CI](spec/pool4-for-solana.md#fixtures-in-ci)
 - Changes by: spec only
-- Status: default
-- Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+- Status: changed 2026-11-16
+- Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ### POOL4-45: How the gate reads a cluster
 
@@ -3871,6 +3871,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+
+### POOL4-46: When a failed step counts against a candidate
+
+- Question: Which of the steps a candidate fails refuse it, when a market's token, its recipients or the router can make a step fail under every build?
+- Answer: A failed step counts unless the deployed build failed the same step, matched by kind and not by name, on the same snapshot with the failure starting in the same program, as recorded in the snapshot when it is taken (so fixtures compare without the deployed program); the layout checks (reading the market state, finding the market, account resolution, the quotes and `pipeline_market_info`) always run and always count, both replays sign with the same keys derived from the market, and the failures that do not count are printed and recorded with the pass.
+- Alternatives: The earlier default, every step must pass, which any market whose token's hook refuses the gate's trader or whose fee recipient made its account unpayable vetoes forever, for every build; excusing a shared failure whatever program it starts in, which would let a candidate fail in its own code where the deployed build failed in a hook; running the deployed build again at check time, which fixtures cannot, since they carry no programs.
+- Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-47: Markets the router has not recorded
+
+- Question: What does the gate do with a market state the router has no Market for, or a market missing a router fee account?
+- Answer: The snapshot copies such a market as if the router had recorded what `pipeline_market_info` gives and saves it marked unregistered, and the replay registers it with the router's `register_existing_market` and `init_fee_account` for both mints, and creates any missing fee account of a recorded market, as anyone may, then checks it like the rest.
+- Alternatives: The earlier behaviour, aborting the whole run, which let anyone block every upgrade with one direct `pipeline_seed_liquidity` call; leaving such markets out of the check, which would not check them at all.
+- Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ## Lending AMM (LENDING)
 
@@ -4499,6 +4519,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-53` to `LENDING-59`: set by the session of [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-46`, `POOL4-47`, and the changes to `POOL4-41` and `POOL4-44`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix audit findings H013, H020 and H033 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-36`: set by the session of [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152) from the spec's existing rule that a trade reaching a price bound is refused, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.

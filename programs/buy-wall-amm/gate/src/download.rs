@@ -2,18 +2,24 @@
 //! pipeline-check clones a market (the router and its config, the Market, the strategy's
 //! registration, program and ProgramData, the mints, vaults, fee accounts, transfer hooks
 //! and every account `pipeline_resolve_accounts` lists), plus the token accounts the payouts
-//! pay into; then the quotes the deployed build gives on that state.
+//! pay into; then what the deployed build does on that state (`check::record_baseline`).
+//!
+//! A market state the router has no Market for (a wallet may call `pipeline_seed_liquidity`
+//! itself and never register the market) is cloned the same way, as if the router had
+//! recorded what `pipeline_market_info` would give it, and saved without that Market: the
+//! replay registers it, as anyone could (`check.rs`).
 
+use borsh::BorshSerialize;
 use buy_wall_amm::config::{DESIGNER_RECIPIENT, MARKET_STATE_SIZE, SUITE_TREASURY};
 use buy_wall_amm::state::{MarketState, MARKET_STATE_DISCRIMINATOR};
-use pipeline_check::{clone_market, AccountSource, CheckOptions};
-use pipeline_client::{pda, Pubkey};
+use pipeline_check::{clone_market, AccountSource, CheckOptions, ClusterInfo};
+use pipeline_client::{self as client, pda, Pubkey};
+use solana_account::Account;
 
-use crate::quotes;
-use crate::session::{key, Session, TOKEN, WSOL};
+use crate::check;
+use crate::session::{key, TOKEN, WSOL};
 use crate::snapshot::{Baseline, Cluster, SavedAccount, SavedMarket, Snapshot, FORMAT};
 use crate::source::{Recording, Rpc};
-use crate::world;
 
 /// Every market state of `program` on the cluster behind `rpc`: the accounts it owns that
 /// start with the market state's discriminator. An account with the discriminator but not
@@ -53,19 +59,30 @@ pub fn snapshot(
     let mut saved_markets = vec![];
     for market_state in market_states {
         let market = pda::market(program, market_state);
-        clone_market(&mut recording, market, None, &CheckOptions::default())
-            .map_err(|e| format!("market state {market_state}: {e}"))?;
-        let (_, account) = recording
-            .served
-            .get(&market_state.to_string())
-            .ok_or_else(|| format!("market state {market_state} does not exist"))?;
-        let state = read_state(&account.data)
+        let [state_account, market_account] =
+            <[Option<Account>; 2]>::try_from(recording.get_accounts(&[*market_state, market])?)
+                .map_err(|_| "the source served the wrong number of accounts")?;
+        let state = state_account
+            .and_then(|account| read_state(&account.data))
             .ok_or_else(|| format!("market state {market_state} is not a buy wall market"))?;
+        let registered = market_account.is_some_and(|a| a.owner == client::PROGRAM_ID);
+        let cloned = if registered {
+            clone_market(&mut recording, market, None, &CheckOptions::default())
+        } else {
+            let mut unregistered = Unregistered {
+                inner: &mut recording,
+                market,
+                account: market_record(program, market_state, &state)?,
+            };
+            clone_market(&mut unregistered, market, None, &CheckOptions::default())
+        };
+        cloned.map_err(|e| format!("market state {market_state}: {e}"))?;
         recording.get_accounts(&payout_accounts(&state))?;
         saved_markets.push(SavedMarket {
             market: market.to_string(),
             market_state: market_state.to_string(),
             layout_version: state.layout_version,
+            registered,
         });
     }
 
@@ -114,10 +131,7 @@ pub fn snapshot(
         },
         synthetic,
         note: note.into(),
-        baseline: Baseline {
-            executable_sha256: None,
-            quotes: vec![],
-        },
+        baseline: Baseline::default(),
         markets: saved_markets,
         accounts: recording
             .served
@@ -126,16 +140,73 @@ pub fn snapshot(
             .collect(),
     };
 
-    // The quotes of the deployed build, on that state.
+    // What the deployed build does on that state.
     if let Some(deployed) = snapshot.program_elf(program)? {
-        snapshot.baseline.executable_sha256 = Some(pipeline_check::executable_sha256(&deployed).0);
-        let svm = world::load(&snapshot, &deployed, None)?;
-        let session = Session::new(svm, *program);
-        snapshot.baseline.quotes = quotes::record(&session, market_states)?;
+        snapshot.baseline = check::record_baseline(&snapshot, &deployed, None)?;
     } else if !market_states.is_empty() {
         return Err(format!("{program} has markets but is not deployed"));
     }
     Ok(snapshot)
+}
+
+/// The router's Market for a market state it never recorded, as `register_existing_market`
+/// would write it from `pipeline_market_info`, which the cloning needs to find the market's
+/// accounts. It is never saved: the replay registers the market through the router itself.
+fn market_record(
+    program: &Pubkey,
+    market_state: &Pubkey,
+    state: &MarketState,
+) -> Result<Account, String> {
+    let mut mints = [Pubkey::default(); pipeline_strategy_interface::MAX_MARKET_MINTS];
+    let mut vaults = mints;
+    mints[..2].copy_from_slice(&[key(&state.token_mint), key(&state.wsol_mint)]);
+    vaults[..2].copy_from_slice(&[key(&state.token_vault), key(&state.sol_vault)]);
+    let record = client::Market {
+        strategy_program: *program,
+        market_state: *market_state,
+        mint_count: 2,
+        mints,
+        vaults,
+        supports_exact_out: buy_wall_amm::pricing::SUPPORTS_EXACT_OUT,
+        created_by: Pubkey::default(),
+        created_at: 0,
+        bump: 0,
+        fee_authority_bump: 0,
+    };
+    let mut data = client::account_discriminator("Market").to_vec();
+    record.serialize(&mut data).map_err(|e| e.to_string())?;
+    Ok(Account {
+        lamports: 1,
+        data,
+        owner: client::PROGRAM_ID,
+        executable: false,
+        rent_epoch: 0,
+    })
+}
+
+/// An account source that serves `account` at `market`, which the source behind it does not
+/// hold, and serves everything else from it; so only what it served from behind is
+/// recorded.
+struct Unregistered<'a> {
+    inner: &'a mut dyn AccountSource,
+    market: Pubkey,
+    account: Account,
+}
+
+impl AccountSource for Unregistered<'_> {
+    fn get_accounts(&mut self, keys: &[Pubkey]) -> Result<Vec<Option<Account>>, String> {
+        let mut accounts = self.inner.get_accounts(keys)?;
+        for (key, account) in keys.iter().zip(accounts.iter_mut()) {
+            if *key == self.market {
+                *account = Some(self.account.clone());
+            }
+        }
+        Ok(accounts)
+    }
+
+    fn cluster_info(&mut self) -> Result<ClusterInfo, String> {
+        self.inner.cluster_info()
+    }
 }
 
 /// A market state's body, read with this tree's layout.

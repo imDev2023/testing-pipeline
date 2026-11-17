@@ -43,17 +43,109 @@ market.";
 /// Builds the markets with `build` as the program and `router` as the router, and returns
 /// their snapshot, without the programs, as the repo keeps it.
 pub fn build(build: &[u8], router: &[u8]) -> Result<Snapshot, String> {
-    let program = crate::programs::program_id();
-    let mut session = setup(build, router, program)?;
-    let admin = Keypair::new();
-    session
-        .svm
-        .airdrop(&admin.pubkey(), 1_000 * SOL)
-        .map_err(|e| format!("{e:?}"))?;
+    let mut lab = Lab::new(build, router)?;
+    let a = lab.traded_market()?;
+    let b = lab.seeded_market()?;
+    let c = lab.waiting_market()?;
+    later(&mut lab.session, 600);
+    lab.snapshot(&[a.market_state, b.market_state, c.market_state], NOTE)?
+        .without_programs()
+}
 
-    // Market A: the worked example's market, traded on.
-    let token_a = mint(&mut session, &admin, TOKEN)?;
-    let params_a = InitParams {
+/// A LiteSVM run through the real router that makes markets as their creators would, for
+/// the synthetic fixture and for tests that need markets of other kinds beside its own.
+pub struct Lab {
+    pub session: Session,
+    /// The wallet that creates and seeds the markets.
+    pub admin: Keypair,
+}
+
+impl Lab {
+    /// The router configured as on devnet and `build` deployed and registered with it, at
+    /// the starting clock, with an admin holding 1,000 SOL.
+    pub fn new(build: &[u8], router: &[u8]) -> Result<Self, String> {
+        let program = crate::programs::program_id();
+        let mut session = setup(build, router, program)?;
+        let admin = Keypair::new();
+        session
+            .svm
+            .airdrop(&admin.pubkey(), 1_000 * SOL)
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(Lab { session, admin })
+    }
+
+    /// Market A: the worked example's market, an SPL Token at IMD's launch values, traded on
+    /// past its first wall and settlement, so every keeper job but slot 1's is due.
+    pub fn traded_market(&mut self) -> Result<MarketView, String> {
+        let (session, admin) = (&mut self.session, &self.admin);
+        let token_a = mint(session, admin, TOKEN)?;
+        let params_a = launch_values(admin.pubkey());
+        let a = create(
+            session,
+            admin,
+            token_a,
+            TOKEN,
+            &params_a,
+            Some((1_000_000_000_000, 10 * SOL)),
+        )?;
+        later(session, 3_600);
+        let bought = swap(session, &a, true, SOL)?;
+        later(session, 60);
+        swap(session, &a, false, spendable(bought))?;
+        job(session, &a, Job::PlaceWall)?;
+        job(session, &a, Job::Settle)?;
+        later(session, 3_600);
+        let bought = swap(session, &a, true, 3 * SOL)?;
+        later(session, 60);
+        swap(session, &a, false, spendable(bought))?;
+        Ok(a)
+    }
+
+    /// Market B: a Token-2022 token with other parameters, only seeded, so nothing is due.
+    pub fn seeded_market(&mut self) -> Result<MarketView, String> {
+        let (session, admin) = (&mut self.session, &self.admin);
+        let token_b = mint(session, admin, TOKEN_2022)?;
+        let params_b = InitParams {
+            fee_bps: 250,
+            wall_split_bps: 10_000,
+            fee_recipient: anchor(Pubkey::default()),
+            reward_share_bps: 0,
+            rewards_recipient: anchor(Pubkey::default()),
+            cap_floor_bps: 5_000,
+            cap_decay_bps: 0,
+            seeder: anchor(admin.pubkey()),
+        };
+        create(
+            session,
+            admin,
+            token_b,
+            TOKEN_2022,
+            &params_b,
+            Some((500_000_000_000_000, 5 * SOL)),
+        )
+    }
+
+    /// Market C: an SPL Token at the launch values, created and waiting for its seed, its
+    /// mint authority still set.
+    pub fn waiting_market(&mut self) -> Result<MarketView, String> {
+        let (session, admin) = (&mut self.session, &self.admin);
+        let token_c = mint(session, admin, TOKEN)?;
+        let params_c = launch_values(admin.pubkey());
+        create(session, admin, token_c, TOKEN, &params_c, None)
+    }
+
+    /// The snapshot of `market_states`, taken through pipeline-check's cloning from this
+    /// run exactly as a cluster's is, with the programs, so its baseline is this run's build.
+    pub fn snapshot(self, market_states: &[Pubkey], note: &str) -> Result<Snapshot, String> {
+        let program = self.session.program;
+        let mut source = SvmSource::new(self.session.svm);
+        download::snapshot(&mut source, &program, market_states, None, true, note)
+    }
+}
+
+/// IMD's launch values, with fresh recipients and `seeder` as the seeder.
+pub fn launch_values(seeder: Pubkey) -> InitParams {
+    InitParams {
         fee_bps: 100,
         wall_split_bps: 5_000,
         fee_recipient: anchor(Pubkey::new_unique()),
@@ -61,72 +153,11 @@ pub fn build(build: &[u8], router: &[u8]) -> Result<Snapshot, String> {
         rewards_recipient: anchor(Pubkey::new_unique()),
         cap_floor_bps: 2_000,
         cap_decay_bps: 2_000,
-        seeder: anchor(admin.pubkey()),
-    };
-    let a = create(
-        &mut session,
-        &admin,
-        token_a,
-        TOKEN,
-        &params_a,
-        Some((1_000_000_000_000, 10 * SOL)),
-    )?;
-    later(&mut session, 3_600);
-    let bought = swap(&mut session, &a, true, SOL)?;
-    later(&mut session, 60);
-    swap(&mut session, &a, false, spendable(bought))?;
-    job(&mut session, &a, Job::PlaceWall)?;
-    job(&mut session, &a, Job::Settle)?;
-    later(&mut session, 3_600);
-    let bought = swap(&mut session, &a, true, 3 * SOL)?;
-    later(&mut session, 60);
-    swap(&mut session, &a, false, spendable(bought))?;
-
-    // Market B: a Token-2022 token, only seeded.
-    let token_b = mint(&mut session, &admin, TOKEN_2022)?;
-    let params_b = InitParams {
-        fee_bps: 250,
-        wall_split_bps: 10_000,
-        fee_recipient: anchor(Pubkey::default()),
-        reward_share_bps: 0,
-        rewards_recipient: anchor(Pubkey::default()),
-        cap_floor_bps: 5_000,
-        cap_decay_bps: 0,
-        seeder: anchor(admin.pubkey()),
-    };
-    let b = create(
-        &mut session,
-        &admin,
-        token_b,
-        TOKEN_2022,
-        &params_b,
-        Some((500_000_000_000_000, 5 * SOL)),
-    )?;
-
-    // Market C: an SPL Token at the launch values, created and waiting for its seed, its mint
-    // authority still set.
-    let token_c = mint(&mut session, &admin, TOKEN)?;
-    let params_c = InitParams {
-        fee_recipient: anchor(Pubkey::new_unique()),
-        rewards_recipient: anchor(Pubkey::new_unique()),
-        ..params_a.clone()
-    };
-    let c = create(&mut session, &admin, token_c, TOKEN, &params_c, None)?;
-    later(&mut session, 600);
-
-    let mut source = SvmSource::new(session.svm);
-    download::snapshot(
-        &mut source,
-        &program,
-        &[a.market_state, b.market_state, c.market_state],
-        None,
-        true,
-        NOTE,
-    )?
-    .without_programs()
+        seeder: anchor(seeder),
+    }
 }
 
-fn anchor(key: Pubkey) -> anchor_lang::prelude::Pubkey {
+pub fn anchor(key: Pubkey) -> anchor_lang::prelude::Pubkey {
     anchor_lang::prelude::Pubkey::new_from_array(key.to_bytes())
 }
 
@@ -206,7 +237,11 @@ fn set_upgrade_authority(
 
 /// A 6-decimal mint of `token_program` with `admin` as its mint authority and no freeze
 /// authority.
-fn mint(session: &mut Session, admin: &Keypair, token_program: Pubkey) -> Result<Pubkey, String> {
+pub fn mint(
+    session: &mut Session,
+    admin: &Keypair,
+    token_program: Pubkey,
+) -> Result<Pubkey, String> {
     use spl_token_2022_interface::instruction::initialize_mint2;
     let mint = Keypair::new();
     let lamports = session.svm.minimum_balance_for_rent_exemption(82);
@@ -223,7 +258,7 @@ fn mint(session: &mut Session, admin: &Keypair, token_program: Pubkey) -> Result
     Ok(mint.pubkey())
 }
 
-fn system_create_account(
+pub fn system_create_account(
     from: &Pubkey,
     to: &Pubkey,
     lamports: u64,
@@ -243,9 +278,10 @@ fn system_create_account(
 
 /// Creates a market from the `init` form with both fee accounts, as a creator would, and,
 /// given a seed of `(tokens, lamports)`, seeds it through the `seed` action in the same
-/// transaction, after minting the tokens to `admin`, giving it the wrapped SOL and removing
-/// the mint authority. Without a seed the market waits for one, its mint authority kept.
-fn create(
+/// transaction (with the token's transfer-hook accounts if it has a hook), after minting the
+/// tokens to `admin`, giving it the wrapped SOL and removing the mint authority. Without a
+/// seed the market waits for one, its mint authority kept.
+pub fn create(
     session: &mut Session,
     admin: &Keypair,
     token_mint: Pubkey,
@@ -298,13 +334,15 @@ fn create(
     let mut signers = vec![&market_state];
     if let Some((tokens, lamports)) = seed {
         fund_seeder(session, admin, token_mint, token_program, tokens, lamports)?;
+        let from = pda::associated_token(&admin.pubkey(), &token_mint, &token_program);
+        let hooks = session.hook_accounts(&token_mint, from, view.vaults[0], admin.pubkey())?;
         instructions.push(seed_ix(
             &program,
             &view,
             &admin.pubkey(),
             tokens,
             lamports,
-            vec![],
+            hooks,
         ));
         signers.push(admin);
     }
@@ -314,7 +352,7 @@ fn create(
 
 /// Mints `tokens` to `admin`, gives it `lamports` of wrapped SOL and removes the mint
 /// authority, as a seed requires.
-fn fund_seeder(
+pub fn fund_seeder(
     session: &mut Session,
     admin: &Keypair,
     token_mint: Pubkey,
@@ -342,7 +380,7 @@ fn fund_seeder(
 }
 
 /// Moves the clock `seconds` on, with slots to match.
-fn later(session: &mut Session, seconds: i64) {
+pub fn later(session: &mut Session, seconds: i64) {
     let mut clock: solana_clock::Clock = session.svm.get_sysvar();
     session
         .svm
@@ -354,7 +392,12 @@ fn later(session: &mut Session, seconds: i64) {
 
 /// A buy (`buy`) of `amount` lamports, or a sell of `amount` units by the last buyer, at its
 /// quote; what the trader received.
-fn swap(session: &mut Session, view: &MarketView, buy: bool, amount: u64) -> Result<u64, String> {
+pub fn swap(
+    session: &mut Session,
+    view: &MarketView,
+    buy: bool,
+    amount: u64,
+) -> Result<u64, String> {
     let (token, sol) = view.sides()?;
     let (input, output) = if buy { (sol, token) } else { (token, sol) };
     let resolved = session.resolve(view, input, output, amount)?;
@@ -368,7 +411,7 @@ fn swap(session: &mut Session, view: &MarketView, buy: bool, amount: u64) -> Res
     Ok(result.received)
 }
 
-fn job(session: &mut Session, view: &MarketView, job: Job) -> Result<(), String> {
+pub fn job(session: &mut Session, view: &MarketView, job: Job) -> Result<(), String> {
     let state = session.state(&view.market_state)?;
     keeper::run(session, view, &state, job).map(|_| ())
 }

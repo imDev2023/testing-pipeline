@@ -22,3 +22,9 @@ test-ledger/
 *keypair*.json
 id.json
 __pycache__/
+
+# Working folders of the review skills (Stronghold of Security, Book of Knowledge); their reports are
+# kept in docs/security/<program>/.
+.audit/
+.audit-history/
+.bok/

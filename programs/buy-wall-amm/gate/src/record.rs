@@ -31,6 +31,19 @@ pub struct Record {
     pub deployed_sha256: Option<String>,
     pub market_states: Vec<String>,
     pub pricing_change_declared: bool,
+    /// The steps that failed but did not count, because the deployed build failed them the
+    /// same way on the same snapshot: the markets nobody can fully trade, and why.
+    #[serde(default)]
+    pub shared_failures: Vec<SharedFailure>,
+}
+
+/// A step that failed under the candidate and the deployed build alike.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedFailure {
+    pub market_state: String,
+    pub step: String,
+    /// The error, where it started, and how the deployed build failed.
+    pub detail: String,
 }
 
 /// What a deploy is about to do, which a record must cover.

@@ -16,8 +16,19 @@ over the integers. The ticket's proofs (docs/spec/pool4-for-solana.md, "After pr
   copies the price through, which Proptest and Kani's full tier check);
 - after a trim the pool ledgers still cover the curve.
 
+And the Book of Knowledge invariants (`.bok/confirmed-invariants/CONFIRMED.md`):
+
+- CAP-1: steps 5 and 6 never refuse a swap on a reachable market (every checked step of
+  `Inventory::after_swap` succeeds, and the market stays in the reachable envelope);
+- CAP-2: a trim never takes the wall's backing: ledgers that covered the curve and the wall
+  before it still cover both after it;
+- CAP-3: over any sequence of swaps the cap falls by at most the starting credit plus the decay
+  of the time that really passed, and the decay clock never runs backwards. These claims state
+  the clock rule `decay_time = max(decay_time, now)`; today's code writes `decay_time: now`,
+  so they FAIL until that fix lands (see `decay_time_after` below, the one line to change).
+
 The link between this model and the compiled Rust is checked by tests: `U256::div_rem` is
-proven exact (`src/math.rs`), Proptest checks `Inventory::after_swap` against the spec's
+proven exact for every 256-bit pair (`math_z3.py`), Proptest checks `Inventory::after_swap` against the spec's
 formulas written out on 10,000 random reachable markets (`src/cap.rs`), and the worked
 example's numbers are reproduced through the router (`tests/cap.rs`).
 
@@ -26,6 +37,7 @@ Run: `pip install z3-solver==5.4.1.0` (in a virtualenv), then
 """
 
 import sys
+import time
 
 from z3 import And, If, Int, Not, Or, Solver, sat, unsat
 
@@ -33,21 +45,28 @@ Q = 2**64  # Q64.64's one
 SECONDS_PER_DAY = 86_400
 DECAY_CREDIT_WINDOW = 86_400
 MIN_LIQUIDITY = 1_000_000
+MIN_SQRT_PRICE = 2**32
+MAX_SQRT_PRICE = 2**96
+U64 = 2**64
+U128 = 2**128
+I64_MIN, I64_MAX = -(2**63), 2**63 - 1
 
 
 def prove(name, claim, *assumptions):
+    start = time.perf_counter()
     solver = Solver()
     solver.set("timeout", 600_000)
     solver.add(*assumptions)
     solver.add(Not(claim))
     result = solver.check()
+    seconds = time.perf_counter() - start
     if result == unsat:
-        print(f"PROVEN  {name}")
+        print(f"PROVEN  {name} ({seconds:.2f} s)")
         return True
     if result == sat:
-        print(f"FAILED  {name}: counterexample {solver.model()}")
+        print(f"FAILED  {name} ({seconds:.2f} s): counterexample {solver.model()}")
     else:
-        print(f"UNKNOWN {name} ({solver.reason_unknown()})")
+        print(f"UNKNOWN {name} ({seconds:.2f} s, {solver.reason_unknown()})")
     return False
 
 
@@ -182,6 +201,234 @@ results.append(
         Or(held_after <= cap, new_L == MIN_LIQUIDITY),
         *trim,
         floor_of(held_after, new_L * Q, s),
+    )
+)
+
+# --- CAP-1: steps 5 and 6 never refuse a swap on a reachable market ------------------------
+# The reachable envelope (the Book of Knowledge invariant CAP-1): the price within the trading
+# bounds, the curve between MIN_LIQUIDITY and 2^88 (the opening proves it below 2^88,
+# `opening_z3.py`, and a trim only lowers it, above), the cap floor between 1 and the cap, each
+# vault's ledgers summing to at most u64::MAX (they are what the vault holds), the pool
+# ledgers covering the curve, and the lifetime trimmed totals at most u64::MAX per swap so far,
+# with fewer than u64::MAX swaps (`pricing::settle` refuses the swap whose count would pass
+# it before step 5 runs). Every operation of `Inventory::after_swap` that can return `None`
+# then succeeds.
+retired, idle, swaps, tokens_trimmed, sol_trimmed = (
+    Int(n) for n in ["retired", "idle", "swaps", "tokens_trimmed", "sol_trimmed"]
+)
+envelope = [
+    s >= MIN_SQRT_PRICE,
+    s <= MAX_SQRT_PRICE,
+    L >= MIN_LIQUIDITY,
+    L < 2**88,
+    floor >= 1,
+    floor <= cap,
+    cap < U64,
+    pool_tokens >= 0,
+    pool_sol >= 0,
+    retired >= 0,
+    idle >= 0,
+    pool_tokens + retired < U64,
+    pool_sol + idle < U64,
+    Ls == L * s,
+    L * Q <= pool_tokens * s,
+    Ls <= pool_sol * Q,
+    swaps >= 0,
+    swaps <= U64 - 2,
+    tokens_trimmed >= 0,
+    sol_trimmed >= 0,
+    tokens_trimmed <= swaps * (U64 - 1),
+    sol_trimmed <= swaps * (U64 - 1),
+]
+results.append(
+    prove(
+        "steps 5 and 6: what the curve holds, floor(L * Q / s), fits in 128 bits (held's to_u128)",
+        held < 2**128,
+        *envelope,
+        floor_of(held, L * Q, s),
+    )
+)
+results.append(
+    prove(
+        "steps 5 and 6, the ratchet (held < cap): every checked step is Some and the cap stays at or above its floor",
+        And(
+            new_cap <= cap,  # `cap.checked_sub(lowered)`
+            (cap - new_cap) * SECONDS_PER_DAY <= credit,  # `decay_credit.checked_sub(..)`
+            new_cap < U64,  # `u64::try_from(lowered)`
+            held < U64,  # `u64::try_from(held)`
+            new_cap >= floor,
+            credit - (cap - new_cap) * SECONDS_PER_DAY <= per_day * DECAY_CREDIT_WINDOW,
+        ),
+        *envelope,
+        *ratchet,
+        per_day >= 0,
+        credit <= per_day * DECAY_CREDIT_WINDOW,
+    )
+)
+results.append(
+    prove(
+        "steps 5 and 6, the trim (held > cap): every checked step is Some, on any reachable market",
+        And(
+            cap_s < 2**192,  # `U256::mul(cap, s)?.checked_shr64()?`
+            kept_tokens < 2**128,  # `held_rounded_up`'s to_u128
+            kept_sol < 2**128,  # `held_rounded_up`'s checked_ceil_shr64
+            curve_sol < 2**128,  # `U256::mul(L, s)?.checked_shr64()?`
+            tokens < U64,  # `u64::try_from(..)`
+            sol < U64,
+            tokens <= pool_tokens,  # `pool_tokens.checked_sub(trim.tokens)`
+            retired + tokens < U64,  # `retired_tokens.checked_add(trim.tokens)`
+            sol <= pool_sol,  # `pool_sol.checked_sub(trim.sol)`
+            idle + sol < U64,  # `idle_sol.checked_add(trim.sol)`
+            tokens_trimmed + tokens < 2**128,  # the lifetime totals' checked_add
+            sol_trimmed + sol < 2**128,
+        ),
+        *envelope,
+        *trim,
+    )
+)
+results.append(
+    prove(
+        "steps 5 and 6, the trim: the market stays in the envelope (liquidity in range, ledger sums kept, totals per swap)",
+        And(
+            new_L >= MIN_LIQUIDITY,
+            new_L < 2**88,
+            (pool_tokens - tokens) + (retired + tokens) == pool_tokens + retired,
+            (pool_sol - sol) + (idle + sol) == pool_sol + idle,
+            tokens_trimmed + tokens <= (swaps + 1) * (U64 - 1),
+            sol_trimmed + sol <= (swaps + 1) * (U64 - 1),
+        ),
+        *envelope,
+        *trim,
+    )
+)
+
+# --- CAP-2: a trim never takes the wall's backing ------------------------------------------
+# The trim sizes its take from the curve alone (`Inventory` carries no wall), so this proves
+# that the pool ledgers that covered the curve and the wall before a trim still cover both
+# after it, for any wall holdings: `wall_tokens` stands for the wall's token units times
+# `top × s` (W × Q × (top - s) below its top, 0 at or above it) and `wall_sol` for its lamports
+# times Q (W × min(s, top)), each any non-negative amount. The trim changes neither the price
+# nor the wall.
+top, wall_tokens, wall_sol, st = Int("top"), Int("wall_tokens"), Int("wall_sol"), Int("st")
+walled = [
+    top > 0,
+    wall_tokens >= 0,
+    wall_sol >= 0,
+    st == s * top,
+    L * Q * top + wall_tokens <= pool_tokens * st,
+    Ls + wall_sol <= pool_sol * Q,
+]
+results.append(
+    prove(
+        "trim: the pool ledgers still cover the curve's and the wall's tokens",
+        new_L * Q * top + wall_tokens <= (pool_tokens - tokens) * st,
+        *trim,
+        *walled,
+    )
+)
+results.append(
+    prove(
+        "trim: the pool ledgers still cover the curve's and the wall's SOL",
+        newLs + wall_sol <= (pool_sol - sol) * Q,
+        *trim,
+        *walled,
+    )
+)
+
+# --- CAP-3: the cap never falls faster than its decay rate, over any sequence --------------
+# Step 5 as written (`accrue`): the time since `decay_time`, i64-saturated and 0 if negative;
+# the credit plus `per_day` for each of those seconds, saturating at 2^128 - 1, then at most a
+# day's allowance. Step 6 spends 86,400 of credit per unit the cap falls (`by`, 0 on a trim or
+# no change), which the ratchet claims above prove it can afford.
+#
+# The decay clock rule these claims state: the clock never runs backwards, `decay_time =
+# max(decay_time, now)`. TODAY'S CODE writes `decay_time: now` (src/cap.rs, `after_swap`), so
+# the claims marked "(clock rule)" FAIL until the fix lands; `decay_time_after` below is the
+# one line that mirrors the code, and becomes `maximum(then, now)` with the fix.
+
+
+def decay_time_after(then, now):
+    """`Inventory::after_swap`'s new `decay_time`, as written in src/cap.rs today: `now`."""
+    return now
+
+
+def elapsed(then, now):
+    """`u128::try_from(now.saturating_sub(then)).unwrap_or(0)`."""
+    d = now - then
+    saturated = If(d > I64_MAX, I64_MAX, If(d < I64_MIN, I64_MIN, d))
+    return If(saturated < 0, 0, saturated)
+
+
+def accrue(credit, per_day, then, now):
+    """`accrue` as written: saturating sum, then the day's limit."""
+    total = credit + per_day * elapsed(then, now)
+    return minimum(If(total >= U128, U128 - 1, total), per_day * DECAY_CREDIT_WINDOW)
+
+
+def i64(v):
+    return And(I64_MIN <= v, v <= I64_MAX)
+
+
+then, now, by, credit_after = Int("then"), Int("now"), Int("by"), Int("credit_after")
+swap_step = [
+    i64(then),
+    i64(now),
+    per_day >= 0,
+    per_day < U64,
+    credit >= 0,
+    credit < U128,
+    accrued == accrue(credit, per_day, then, now),
+    # The ratchet's contract (proved above): by >= 0 and 86,400 × by never more than the
+    # credit; a trim or no change spends nothing (by = 0).
+    by >= 0,
+    by * SECONDS_PER_DAY <= accrued,
+    credit_after == accrued - by * SECONDS_PER_DAY,
+]
+results.append(
+    prove(
+        "decay: one swap's credit left plus 86,400 per unit fallen never exceeds the credit before plus the decay of the seconds elapsed",
+        credit_after + by * SECONDS_PER_DAY <= credit + per_day * elapsed(then, now),
+        *swap_step,
+    )
+)
+time_after = decay_time_after(then, now)
+results.append(
+    prove(
+        "decay clock (clock rule; fails until src/cap.rs writes max(decay_time, now)): decay_time never runs backwards",
+        time_after >= then,
+        *swap_step,
+    )
+)
+results.append(
+    prove(
+        "decay clock (clock rule; fails until the fix): one swap's credit left plus 86,400 per unit fallen never exceeds the credit before plus the decay of how far the clock moved",
+        credit_after + by * SECONDS_PER_DAY <= credit + per_day * (time_after - then),
+        *swap_step,
+    )
+)
+# Three swaps in a row at any clock readings: the cap falls, in all, by no more than the credit
+# at the start plus the decay of the time from the first clock to the latest reading seen.
+times = [Int(f"t{i}") for i in range(4)]  # t0 is the stored decay_time; t1..t3 the swaps' clocks
+credits = [Int(f"credit{i}") for i in range(4)]
+accrueds = [Int(f"accrued{i}") for i in range(1, 4)]
+bys = [Int(f"by{i}") for i in range(1, 4)]
+clocks = [times[0]]
+sequence = [per_day >= 0, per_day < U64, credits[0] >= 0, credits[0] <= per_day * DECAY_CREDIT_WINDOW, i64(times[0])]
+for i in range(3):
+    sequence += [
+        i64(times[i + 1]),
+        accrueds[i] == accrue(credits[i], per_day, clocks[i], times[i + 1]),
+        bys[i] >= 0,
+        bys[i] * SECONDS_PER_DAY <= accrueds[i],
+        credits[i + 1] == accrueds[i] - bys[i] * SECONDS_PER_DAY,
+    ]
+    clocks.append(decay_time_after(clocks[i], times[i + 1]))
+latest = maximum(maximum(times[0], times[1]), maximum(times[2], times[3]))
+results.append(
+    prove(
+        "decay clock (clock rule; fails until the fix): over three swaps the cap falls by at most (credit at the start + per_day x (latest clock - first)) / 86,400",
+        (bys[0] + bys[1] + bys[2]) * SECONDS_PER_DAY + credits[3] <= credits[0] + per_day * (latest - times[0]),
+        *sequence,
     )
 )
 

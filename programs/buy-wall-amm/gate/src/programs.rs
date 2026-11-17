@@ -50,6 +50,15 @@ pub fn pinned_router() -> Vec<u8> {
     read(path, "Run `scripts/fetch-router.sh` first.")
 }
 
+/// Pipeline's `test-hook`, an allowlist transfer hook, as `scripts/fetch-pipeline.sh programs`
+/// builds it, for tests of markets whose token's hook refuses the gate's trader.
+pub fn test_hook() -> Vec<u8> {
+    read(
+        repo_root().join("fixtures/pipeline/programs/target/deploy/test_hook.so"),
+        "Run `scripts/fetch-pipeline.sh programs` first.",
+    )
+}
+
 /// The fixtures the repo keeps, one per layout version (`gate/fixtures/*.json`).
 pub fn fixtures_dir() -> PathBuf {
     crate_dir().join("fixtures")

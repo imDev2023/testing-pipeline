@@ -1,24 +1,60 @@
 //! The four keeper jobs, and when each is due (docs/spec/pool4-for-solana.md, "For the
-//! keeper runner"). Whether a job is due is the program's own rule, from this tree's pure
-//! functions, read off the market state: `place_wall` once idle SOL or the wall's converted
-//! SOL reaches `WALL_THRESHOLD`, `settle` with tokens retired, `pay_rewards` with rewards
-//! owed, and `sweep_fees` for each slot whose ledger is above 0 and whose wallet is set
-//! (slot 1 only once `DESIGNER_RECIPIENT` is).
+//! keeper runner"). [`due`] is the program's own rule, from this tree's pure functions, read
+//! off the market state: `place_wall` once idle SOL or the wall's converted SOL reaches
+//! `WALL_THRESHOLD`, `settle` with tokens retired, `pay_rewards` with rewards owed, and
+//! `sweep_fees` for each slot whose ledger is above 0 and whose wallet is set (slot 1 only
+//! once `DESIGNER_RECIPIENT` is).
+//!
+//! This tree is the candidate's, so its rules alone would let a candidate that narrows a
+//! rule drop that job from its own test. The gate therefore also runs every job the deployed
+//! build ran on the snapshot ([`crate::check`]): it tries each of the four, every slot of
+//! `sweep_fees` on its own, with the deployed build and records which ran.
 
 use buy_wall_amm::state::{MarketState, STATUS_OPEN};
 use pipeline_client::pda;
+use serde::{Deserialize, Serialize};
 use solana_signer::Signer;
 
 use crate::session::{
     key, pay_rewards_ix, place_wall_ix, settle_ix, sweep_fees_ix, MarketView, Session, TOKEN, WSOL,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub enum Job {
     PlaceWall,
     Settle,
     PayRewards,
     SweepFees(u8),
+}
+
+impl Job {
+    /// Every job, in the order the runner sends them.
+    pub const ALL: [Job; 6] = [
+        Job::PlaceWall,
+        Job::Settle,
+        Job::PayRewards,
+        Job::SweepFees(0),
+        Job::SweepFees(1),
+        Job::SweepFees(2),
+    ];
+}
+
+impl From<Job> for String {
+    fn from(job: Job) -> String {
+        job.to_string()
+    }
+}
+
+impl TryFrom<String> for Job {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Job, String> {
+        Job::ALL
+            .into_iter()
+            .find(|job| job.to_string() == text)
+            .ok_or_else(|| format!("{text:?} is not a keeper job"))
+    }
 }
 
 impl std::fmt::Display for Job {
@@ -67,7 +103,7 @@ pub fn run(
     let payer = session.payer.pubkey();
     match job {
         Job::PlaceWall => {
-            let keeper = session.keeper()?;
+            let keeper = session.keeper(&view.market_state)?;
             let tips = pda::associated_token(&keeper.pubkey(), &WSOL, &TOKEN);
             let ix = place_wall_ix(&program, view, &keeper.pubkey(), &tips);
             session.send(&[ix], &[&keeper])?;

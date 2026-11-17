@@ -198,17 +198,23 @@ mod proofs {
     use super::*;
     use crate::config::MAX_REWARD_SHARE_BPS;
 
-    /// Bound of the default tier, for the retired tokens, as Pipeline bounds its own
-    /// `ceil_bps`: below 2^12 CBMC ran over 13 minutes without finishing, and below 2^10 it
-    /// verified the harness in 764 seconds, beside a test run, on the owner's Mac
+    /// Bound of the bounded settlement harness, for the retired tokens, as Pipeline bounds
+    /// its own `ceil_bps`: below 2^12 CBMC ran over 13 minutes without finishing, and below
+    /// 2^10 it verified the harness in 764 seconds, beside a test run, on the owner's Mac
     /// (2026-11-16).
+    #[cfg(kani_full)]
     const SMALL: u64 = 1 << 10;
 
     /// The split for every reward share a market may choose, below `SMALL` retired, where
     /// every product fits in 64 bits: nothing is created or lost, the reward share is exactly
     /// `floor(retired × bps / 10,000)` (stated without a division, which CBMC handles slowly:
     /// `to_rewards × 10,000 <= retired × bps < (to_rewards + 1) × 10,000`), and anything
-    /// retired burns something, since a market's reward share never takes it all.
+    /// retired burns something, since a market's reward share never takes it all. In the
+    /// full tier (INV-FB-12): at 764 seconds it took most of CI's Kani budget to prove for
+    /// `retired < 2^10` what `proofs/payouts_z3.py` proves for every input; the unit test
+    /// `the_settlement_split_for_every_remainder` (below) keeps a fast check of the compiled
+    /// split in its place, over every remainder modulo 10,000, the only place it rounds.
+    #[cfg(kani_full)]
     #[kani::proof]
     fn the_settlement_split_adds_up_and_always_burns_bounded() {
         let (retired, bps): (u64, u16) = (kani::any(), kani::any());
@@ -235,6 +241,147 @@ mod proofs {
         assert!(floor <= product && product < floor + 10_000);
         assert!(retired == 0 || split.burned > 0);
     }
+
+    fn any_owed() -> Owed {
+        Owed {
+            retired_tokens: kani::any(),
+            rewards_owed: kani::any(),
+            fees_recipient: kani::any(),
+            fees_designer: kani::any(),
+            fees_suite: kani::any(),
+            tokens_burned: kani::any(),
+            rewards_paid: kani::any(),
+        }
+    }
+
+    /// Any key, the default key among them.
+    fn any_key() -> Pubkey {
+        Pubkey::new_from_array(kani::any())
+    }
+
+    /// `pay_rewards` moves exactly one ledger and touches nothing else, for every ledger and
+    /// lifetime total (INV-FB-10): on success the ledgers after are the ledgers before with
+    /// `rewards_owed` emptied into `rewards_paid`, and the amount is everything owed; it
+    /// refuses in the spec's order, an unset recipient first, then nothing owed, and
+    /// overflows only past a u128 of lifetime rewards. No division: verified in 3 seconds on
+    /// the owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn paying_rewards_empties_its_own_ledger_and_nothing_else() {
+        let before = any_owed();
+        let recipient = any_key();
+        match before.pay_rewards(&recipient) {
+            Ok((after, amount)) => {
+                assert!(recipient != Pubkey::default());
+                assert!(amount == before.rewards_owed && amount > 0);
+                let expected = Owed {
+                    rewards_owed: 0,
+                    rewards_paid: before.rewards_paid + amount as u128,
+                    ..before
+                };
+                assert_eq!(after, expected);
+            }
+            Err(Refusal::RecipientUnset) => assert!(recipient == Pubkey::default()),
+            Err(Refusal::NothingOwed) => {
+                assert!(recipient != Pubkey::default() && before.rewards_owed == 0)
+            }
+            Err(Refusal::Overflow) => assert!(
+                recipient != Pubkey::default()
+                    && before.rewards_owed > 0
+                    && before
+                        .rewards_paid
+                        .checked_add(before.rewards_owed as u128)
+                        .is_none()
+            ),
+            Err(_) => panic!("pay_rewards refuses only as above"),
+        }
+    }
+
+    /// `sweep` moves exactly one ledger and touches nothing else, for every ledger, lifetime
+    /// total, slot and recipient (INV-FB-10): on success the ledgers after are the ledgers
+    /// before with the slot's own fee ledger emptied, the amount is all of it and the wallet
+    /// is the slot's; it refuses a slot past 2 or a slot with no wallet as `slot_wallet`
+    /// does, then an empty ledger, and never overflows. No division: verified in 6 seconds
+    /// on the owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn a_sweep_empties_its_own_ledger_and_nothing_else() {
+        let before = any_owed();
+        let (slot, recipient): (u8, Pubkey) = (kani::any(), any_key());
+        // The slot's ledger, stated independently of `sweep`'s own match.
+        let own = match slot {
+            0 => Some(before.fees_recipient),
+            1 => Some(before.fees_designer),
+            2 => Some(before.fees_suite),
+            _ => None,
+        };
+        match before.sweep(slot, &recipient) {
+            Ok((after, wallet, amount)) => {
+                assert_eq!(Ok(wallet), slot_wallet(slot, &recipient));
+                assert!(wallet != Pubkey::default());
+                assert!(Some(amount) == own && amount > 0);
+                let expected = match slot {
+                    0 => Owed {
+                        fees_recipient: 0,
+                        ..before
+                    },
+                    1 => Owed {
+                        fees_designer: 0,
+                        ..before
+                    },
+                    _ => Owed {
+                        fees_suite: 0,
+                        ..before
+                    },
+                };
+                assert_eq!(after, expected);
+            }
+            Err(Refusal::NothingOwed) => {
+                assert!(slot_wallet(slot, &recipient).is_ok() && own == Some(0))
+            }
+            Err(refusal) => {
+                assert!(refusal == Refusal::BadSlot || refusal == Refusal::RecipientUnset);
+                assert_eq!(slot_wallet(slot, &recipient), Err(refusal));
+                assert_eq!(refusal == Refusal::BadSlot, own.is_none());
+            }
+        }
+    }
+
+    /// `settle` empties `retired_tokens` and leaves every other ledger alone, for every
+    /// ledger, lifetime total and reward share a market may choose (INV-FB-11): on success
+    /// the ledgers after are the ledgers before with `retired_tokens` emptied, the split's
+    /// reward share added to `rewards_owed` and its burn to `tokens_burned`, and the split
+    /// adds up to what was retired, so the token ledgers fall by exactly the burn; it refuses
+    /// as `NothingToSettle` exactly when nothing is retired. That the split is the spec's is
+    /// `the_settlement_split_for_every_remainder`'s and `proofs/payouts_z3.py`'s to prove.
+    /// Verified in 8 seconds on the owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn settling_empties_the_retired_ledger_and_nothing_else() {
+        let before = any_owed();
+        let bps: u16 = kani::any();
+        kani::assume(bps <= MAX_REWARD_SHARE_BPS);
+        match before.settle(bps) {
+            Ok((after, split)) => {
+                assert!(before.retired_tokens > 0);
+                assert_eq!(
+                    split.to_rewards as u128 + split.burned as u128,
+                    before.retired_tokens as u128
+                );
+                let expected = Owed {
+                    retired_tokens: 0,
+                    rewards_owed: before.rewards_owed + split.to_rewards,
+                    tokens_burned: before.tokens_burned + split.burned as u128,
+                    ..before
+                };
+                assert_eq!(after, expected);
+            }
+            Err(refusal) => {
+                assert_eq!(
+                    refusal == Refusal::NothingToSettle,
+                    before.retired_tokens == 0
+                );
+                assert!(refusal == Refusal::NothingToSettle || refusal == Refusal::Overflow);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -252,6 +399,50 @@ mod tests {
                 burned: 7_083_333_339
             })
         );
+    }
+
+    /// The settlement split for every remainder modulo 10,000, the only place `share`
+    /// rounds (INV-FB-12, in the default tier's place of the 764-second Kani harness, now in
+    /// the full tier): for `retired = q × 10,000 + r` with every `r` from 0 to 9,999, at
+    /// the least, the next and the greatest quotient a u64 holds, and at the reward shares
+    /// at and around every edge, the reward share is exactly `floor(retired × bps /
+    /// 10,000)`, the split adds up, and anything retired burns something at every share a
+    /// market may choose. `proofs/payouts_z3.py` proves the same for every input.
+    #[test]
+    fn the_settlement_split_for_every_remainder() {
+        let shares = [
+            0,
+            1,
+            1_000,
+            1_500,
+            2_999,
+            MAX_REWARD_SHARE_BPS,
+            5_000,
+            9_999,
+            10_000,
+        ];
+        for q in [0, 1, u64::MAX / 10_000] {
+            for r in 0..10_000u64 {
+                let Some(retired) = q.checked_mul(10_000).and_then(|v| v.checked_add(r)) else {
+                    continue;
+                };
+                for bps in shares {
+                    let split = settle(retired, bps).unwrap();
+                    let exact = retired as u128 * bps as u128 / 10_000;
+                    assert_eq!(split.to_rewards as u128, exact, "{retired} at {bps}");
+                    assert_eq!(
+                        split.to_rewards as u128 + split.burned as u128,
+                        retired as u128
+                    );
+                    if bps <= MAX_REWARD_SHARE_BPS {
+                        assert!(retired == 0 || split.burned > 0, "{retired} at {bps}");
+                    }
+                }
+            }
+        }
+        // And past 10,000 basis points the split is refused, never wrapped.
+        assert_eq!(settle(1, 10_001), None);
+        assert_eq!(settle(u64::MAX, u16::MAX), None);
     }
 
     #[test]
