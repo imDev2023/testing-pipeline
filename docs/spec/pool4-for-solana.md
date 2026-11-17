@@ -17,7 +17,7 @@ Terms are as in `GLOSSARY.md`: inventory cap, cap floor, cap decay, trim, retire
 - After every swap the market compares the curve's token holdings with its inventory cap.
   A buy that leaves it below the cap lowers the cap, within the cap decay and never below the cap floor.
   A sell that leaves it above the cap is trimmed: the excess tokens and the proportional SOL leave the curve without moving the price.
-- Trimmed tokens are retired: burned, except for the market's reward share.
+- Trimmed tokens are retired: burned, except for the market's reward share, which is paid only on as many trimmed tokens as the cap has fallen ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
   Trimmed SOL becomes the buy wall.
 - Every swap pays the market's fee, always in SOL, split between IMD and Adam (the designer share), us (the suite share) and the market, whose part goes to a fee recipient, the buy wall, or both.
 - Four keeper jobs place the wall, burn, pay rewards and pay out fees; anyone may call them.
@@ -237,14 +237,16 @@ None of it changes the trade just priced.
    Then `floor` drops to that `last_close` if it is lower, and `floor_time = max(floor_time, now)`, at every slot's first update whether or not the floor crawled ([`POOL4-32`](../decisions.md#pool4-32-when-the-floors-clock-moves)).
    In a slot already brought up to date the floor and `floor_time` stay as they are, so no trade can move the floor in its own slot, and the floor is never above the price the slot opened at.
 5. **Decay credit.**
-   `decay_credit = min(decay_credit + cap_decay_per_day × (now - decay_time), cap_decay_per_day × DECAY_CREDIT_WINDOW)` and `decay_time = now`.
+   `decay_credit = min(decay_credit + cap_decay_per_day × (now - decay_time), cap_decay_per_day × DECAY_CREDIT_WINDOW)` and `decay_time = max(decay_time, now)`, so the decay clock never runs backwards.
    The credit is in token-seconds, so nothing is lost to rounding, and at most one day's allowance ever builds up.
 6. **The cap.**
    With `held = floor(L × Q / s)`:
    - **Ratchet**, when `held < cap`: the cap falls to `max(held, cap - floor(decay_credit / 86,400), cap_floor)`, with the subtraction saturating at 0, and `decay_credit` drops by 86,400 for every token unit the cap fell.
      This runs after a sell as well as a buy, whenever the curve ends below the cap ([`POOL4-31`](../decisions.md#pool4-31-the-ratchet-after-a-sell)).
+     Every unit the cap fell joins `cap_fall_unmatched`, the cap's fall that no trim has matched yet.
    - **Trim**, when `held > cap`: `new_L = max(floor(cap × s / Q), MIN_LIQUIDITY)`, and if that is below `L`, the curve gives up `held - ceil(new_L × Q / s)` token units and `floor(L × s / Q) - ceil(new_L × s / Q)` lamports (0 if negative).
      Both leave the pool ledgers: the tokens join `retired_tokens`, the SOL joins `idle_sol`, and `L` becomes `new_L`.
+     Of the tokens, `min(tokens, cap_fall_unmatched)` are matched by the cap's fall: they move from `cap_fall_unmatched` into `retired_rewardable`, the part of `retired_tokens` that earns the reward share ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
      `sqrt_price` is untouched, so a trim never moves the price.
 7. **Counters** (see "Counters").
 
@@ -254,6 +256,7 @@ The halving in steps 1 and 4 turns a rate on the price into a rate on its square
 
 - The ratchet is IMD's at its deployed setting: a buy lowers the cap by all the room it opens, limited by the cap decay and the cap floor.
 - IMD's hook lets decay allowance build up without limit while a market is idle; ours stops at one day's worth, so a long-idle market's cap can never drop many days at once.
+- The reward share is paid only on trimmed tokens the cap's own fall matched, so over a market's life the rewards never exceed `reward_share_bps` of `seeded_tokens - cap_floor`, the budget its creator published; a trim from a cap that has not fallen (a dip sold into a tight cap), the tokens a closed wall bought and `place_wall`'s dust all burn whole, and a market with no cap decay pays no rewards ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
 - The wall's floor follows IMD's guard, slot by slot: at a slot's first update it drops to the price the slot opened at, the previous slot's close, and it rises about 4% a day toward a reference that lags the price, but never above that close.
   The wall can never be placed above the floor, nor in a slot a swap has already run in, so pumping the price and placing the wall high earns nothing, a dip bought straight back inside one slot never drags the wall down, and no trade can lift the floor in its own slot, so a quiet spell's crawl never lifts it above the price a buy started from when that buy opens its slot ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
 - IMD's rates are per Ethereum block; ours are per second, because Solana's slot times vary.
@@ -276,7 +279,7 @@ The market state keeps one ledger per claim on a vault:
 
 | Vault | Ledgers |
 | --- | --- |
-| Token | `pool_tokens` (the curve's and the wall's), `retired_tokens` (waiting to be burned and split), `rewards_owed` |
+| Token | `pool_tokens` (the curve's and the wall's), `retired_tokens` (waiting to be burned and split; `retired_rewardable` of it earns the reward share), `rewards_owed` |
 | Wrapped SOL | `pool_sol` (the curve's and the wall's), `idle_sol` (waiting to be placed as the wall), `fees_recipient`, `fees_designer`, `fees_suite` |
 
 These always hold, and the tests check them after every instruction:
@@ -285,6 +288,7 @@ These always hold, and the tests check them after every instruction:
 - `pool_tokens` and `pool_sol` cover everything the curve and the wall could ever pay out at the current price.
 - The curve never holds more tokens than the inventory cap after a swap, except where `MIN_LIQUIDITY` stopped a trim.
 - The inventory cap never rises and never falls below the cap floor.
+- `retired_rewardable` never exceeds `retired_tokens`, and every unit the cap has fallen since the seed is either still in `cap_fall_unmatched` or was matched by a trim, so the rewards owed and paid never exceed `reward_share_bps` of how far the cap has fallen.
 - The wall's floor is never above the reference, and never above the previous slot's close (`last_close` at the slot's first update); it changes only at a slot's first update.
 - A placed wall's top is never above the price at placement nor the floor it was placed under.
 
@@ -302,8 +306,8 @@ Then:
 
 1. `converted` is the SOL the placed wall has spent buying tokens: `wall_sol_placed - floor(W × min(s, wall_top) / Q)`, or 0 with no wall.
    The call is refused unless `idle_sol` or `converted` is at least `WALL_THRESHOLD`.
-2. The old wall is closed at the current price: its SOL moves from `pool_sol` to `idle_sol` and the tokens it bought, `floor(W × Q × (wall_top - s) / (wall_top × s))` when `s < wall_top`, move from `pool_tokens` to `retired_tokens`.
-3. Rounding dust follows: whatever `pool_sol` and `pool_tokens` hold beyond the curve's own holdings, rounded up, joins `idle_sol` and `retired_tokens`.
+2. The old wall is closed at the current price: its SOL moves from `pool_sol` to `idle_sol` and the tokens it bought, `floor(W × Q × (wall_top - s) / (wall_top × s))` when `s < wall_top`, move from `pool_tokens` to `retired_tokens`, never to `retired_rewardable`, so they burn whole ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
+3. Rounding dust follows: whatever `pool_sol` and `pool_tokens` hold beyond the curve's own holdings, rounded up, joins `idle_sol` and `retired_tokens`, and burns whole too.
 4. The caller is tipped `min(KEEPER_TIP_CAP, floor(work × fee_bps / 10,000), idle_sol)` lamports from `idle_sol`, where `work` is the larger of `converted` and the idle SOL from step 1 if that reached the threshold.
    This is IMD's rule: the tip never exceeds the fee the market earned on the work, so faking work never pays.
    It is paid in wrapped SOL to a token account the caller names.
@@ -314,13 +318,13 @@ It emits `WallPlaced` (the caller, the tip account, `converted`, what closing th
 
 ### `settle`
 
-- Splits `retired_tokens`: `floor(retired × reward_share_bps / 10,000)` joins `rewards_owed`, and the rest is burned from the token vault.
+- Splits `retired_tokens`: `floor(retired_rewardable × reward_share_bps / 10,000)` joins `rewards_owed`, the rest of `retired_tokens` is burned from the token vault, and both `retired_tokens` and `retired_rewardable` become 0 ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
 - Refused when there is nothing retired.
 - No tip.
 - A burn calls no transfer hook, so no hook can refuse it.
 - Nobody signs it but whoever pays the transaction fee, since it pays nobody ([`POOL4-38`](../decisions.md#pool4-38-who-signs-the-payouts-and-what-they-report)).
 - Like `pay_rewards` and `sweep_fees`, it is refused with `MarketNotOpen` until the market is seeded.
-- It emits `Settled` (what was retired, burned and added to the rewards owed, the rewards owed after and the lifetime total burned), and the lifetime total of tokens burned grows by what it burns.
+- It emits `Settled` (what was retired, the part of it that earned the reward share, what was burned and added to the rewards owed, the rewards owed after and the lifetime total burned), and the lifetime total of tokens burned grows by what it burns.
 
 ### `pay_rewards`
 
@@ -427,6 +431,7 @@ Fields, in order:
 | Cap | inventory cap, `decay_credit`, `decay_time` |
 | Wall guard | `ref`, `ref_time`, `floor`, `floor_time`, `last_slot`, `last_close` |
 | Totals | tokens trimmed, SOL trimmed, tokens the wall bought, tokens burned, rewards paid, tips paid |
+| Reward share | `cap_fall_unmatched`, `retired_rewardable` ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)) |
 | Reserve | zeroed to the end of the account |
 
 The first build ticket ([Buy wall AMM: a market opens](https://github.com/imDev2023/testing-pipeline/issues/47)) fixed the byte offsets below; they are frozen from the first devnet deployment ([Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56)) and published in the IDL.
@@ -499,9 +504,11 @@ The program's `state.rs` holds the same layout, and `tests/layout.rs` reads this
 | `tokens_burned` | 671 | 16 | u128 |
 | `rewards_paid` | 687 | 16 | u128 |
 | `tips_paid` | 703 | 16 | u128 |
-| `reserve` | 719 | 305 | bytes |
+| `cap_fall_unmatched` | 719 | 8 | u64 |
+| `retired_rewardable` | 727 | 8 | u64 |
+| `reserve` | 735 | 289 | bytes |
 
-Square-root prices (`sqrt_price`, `wall_top`, `ref`, `floor`, `last_close`) are Q64.64; times are Unix seconds; `cap` is the inventory cap and `ref` is the wall's reference; `decay_credit` is in token-seconds.
+Square-root prices (`sqrt_price`, `wall_top`, `ref`, `floor`, `last_close`) are Q64.64; times are Unix seconds; `cap` is the inventory cap and `ref` is the wall's reference; `decay_credit` is in token-seconds; `cap_fall_unmatched` and `retired_rewardable` are token units, appended before the first deployment, so still layout version 1 ([`POOL4-19`](../decisions.md#pool4-19-build-order-and-the-first-deploy), [`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
 
 ### A release gate
 
@@ -591,10 +598,10 @@ A market is seeded with 1,000,000 tokens of 6 decimals (1,000,000,000,000 units)
 | Step | Result |
 | --- | --- |
 | Seed | `sqrt_price` 1,844,674,407,370,955,161; `liquidity` 99,999,999,999; cap 1,000,000,000,000 |
-| One hour later, a buy of 1 SOL | Fee 10,000,000: designer 1,000,000, suite 1,000,000, fee recipient 4,000,000, wall 4,000,000. Out 90,081,892,629 units; `sqrt_price` 2,027,297,173,702,505,949. The cap falls by one hour's allowance to 991,666,666,667 |
-| 60 seconds later, a sell of those 90,081,892,629 units | Gross 989,999,999; fee 9,900,000 (3,960,000 of it to the wall); out 980,099,999. `sqrt_price` 1,844,674,407,372,029,099. The trim retires 8,333,333,329 units and moves 83,333,332 lamports to idle SOL, leaving `liquidity` 99,166,666,666, `pool_tokens` 991,666,666,671, `pool_sol` 9,916,666,669 and `idle_sol` 91,293,332 |
+| One hour later, a buy of 1 SOL | Fee 10,000,000: designer 1,000,000, suite 1,000,000, fee recipient 4,000,000, wall 4,000,000. Out 90,081,892,629 units; `sqrt_price` 2,027,297,173,702,505,949. The cap falls by one hour's allowance, 8,333,333,333 units, to 991,666,666,667 |
+| 60 seconds later, a sell of those 90,081,892,629 units | Gross 989,999,999; fee 9,900,000 (3,960,000 of it to the wall); out 980,099,999. `sqrt_price` 1,844,674,407,372,029,099. The trim retires 8,333,333,329 units, all matched by the cap's fall, and moves 83,333,332 lamports to idle SOL, leaving `liquidity` 99,166,666,666, `pool_tokens` 991,666,666,671, `pool_sol` 9,916,666,669 and `idle_sol` 91,293,332 |
 | `place_wall`, in a later slot | Tip 912,933. `wall_top` 1,844,674,407,372,029,099; `wall_liquidity` 903,804,009; `wall_sol_placed` 90,380,400; `pool_sol` 10,007,047,068; 11 units of dust join the retired tokens (8,333,333,340), leaving `pool_tokens` 991,666,666,660 |
-| `settle` | Burns 7,083,333,339 units; `rewards_owed` 1,250,000,001 |
+| `settle` | The reward share of the 8,333,333,329 matched units, 1,249,999,999, joins `rewards_owed`; the other 7,083,333,341 units, the dust among them, are burned |
 | 60 seconds later, a sell of 20,000,000,000 units | Gross 196,081,138; fee 1,960,812; out 194,120,326, through the curve and the wall together. `sqrt_price` 1,808,529,293,213,661,729. The wall has spent 1,770,941 lamports on 180,633,508 units |
 
 In the same model, on a market seeded the same way with 5 SOL idle, buying with 30 SOL, placing the wall in the next slot (it is refused in the buy's own slot) and selling everything back loses 0.595 SOL, and the wall's top ends no higher than the price before the buy.
@@ -611,7 +618,7 @@ Aviary's buy wall AMM panel shows, per market:
 - each keeper job that is due, as a button, and the recipients' handover forms;
 - the create form, pre-filled with IMD's launch values and showing the whole fee split, the designer and suite shares included.
 
-The explainer's fact table carries the same facts, and its risks for every buy wall market are: the curve thins as the cap falls, so the same trade moves the price more over time; and after a fall in price the buy wall can sit well below the price, because its floor rises only about 4% a day.
+The explainer's fact table carries the same facts, and its risks for every buy wall market are: the curve thins as the cap falls, so the same trade moves the price more over time; after a fall in price the buy wall can sit well below the price, because its floor rises only about 4% a day; and the rewards recipient can trade the cap down itself and take the reward share of that fall at once, though never more than the budget the reward share and the cap floor set.
 A hook that could stop trading is not among them, since the seed refuses a token whose transfer hook is still live ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)).
 
 ## For the shared engineering bar
@@ -659,6 +666,7 @@ Beyond the shared three (value conserved, every holder can exit, each quote equa
   A trim lowers `L`, so it only shrinks that amount, which is less than one lamport whenever `L + W` is below 2^32.
 - A trim never changes `sqrt_price`.
 - A buy sold straight back never returns more than it cost, whatever keeper jobs run in between: in its own slot `place_wall` is refused, and a buy that opens its slot and is sold back after `place_wall` in a later slot with no time passed in between never returns more either.
+- For the rewards recipient, settling and paying itself inside the round trip, the rewards it takes never exceed the reward share of the cap's fall and of the cap's fall left unmatched before it.
 - The reference and the floor never move on a trade in the slot they were last updated in, and `place_wall` is refused in a slot a swap has run in.
 - No instruction other than `pipeline_swap` changes `sqrt_price` or the counters.
 

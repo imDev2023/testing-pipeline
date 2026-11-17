@@ -45,12 +45,19 @@
 //!   between ledgers, and its totals count exactly what it moved;
 //! - self-dealing never profits (`INV-WG-7`, the named invariants below): a buy sold
 //!   straight back never returns more than it cost once everything the trader received is
-//!   counted, the SOL it sold for, the keeper tip it took and, as a recipient, the fees it
-//!   swept and the rewards it paid itself (sold too), less only the part of the tip that was
-//!   already there before its buy (with `place_wall` in between, the buy opens its slot and
-//!   the wall is placed in the next, since in the buy's slot it is refused); and a sell
-//!   bought straight back with `place_wall` in between (in the next slot), spending what it
-//!   sold for and its own share of the tip, never buys back more than it sold;
+//!   counted, the SOL it sold for, the keeper tip it took and, as the fee recipient, the
+//!   fees it swept, less only the part of the tip that was already there before its buy; as
+//!   the rewards recipient, its trades and tip never return more than that and the rewards
+//!   it paid itself never exceed the reward share of the cap's fall, the fall during the
+//!   round trip and any left unmatched before it (`POOL4-49`); and a sell bought straight
+//!   back with `place_wall` in between, spending what it sold for and its own share of the
+//!   tip, never buys back more than it sold (with `place_wall` in between, the buy opens its
+//!   slot and the wall is placed in the next, since in the buy's slot it is refused);
+//! - the reward share is paid only on what the cap's fall matched (`POOL4-49`):
+//!   `retired_rewardable` never exceeds `retired_tokens`; every unit the cap has fallen since
+//!   the seed is still unmatched, rewardable or settled as rewardable, so the rewards owed
+//!   and paid never exceed the reward share of how far the cap has fallen; and only a swap
+//!   moves the unmatched fall, only a swap or `settle` the rewardable part;
 //! - no instruction other than `pipeline_swap` changes `sqrt_price`, the counters, the
 //!   cap, the curve's liquidity or the wall's guard, but `place_wall`, which moves only the
 //!   floor and its clock, and a swap changes the counters by exactly the trade it made;
@@ -66,6 +73,7 @@
 //!   check or the account check give; they leave the ledgers those functions compute, burn
 //!   or pay exactly what they compute into exactly that account, and otherwise change
 //!   nothing; every retired token is accounted for as burned, owed or paid as rewards;
+//!   `settle` pays the reward share of `retired_rewardable` only and burns the rest;
 //! - `place_wall` and a handover are refused with exactly the error the program's own
 //!   `wall::place_in_slot` and `payouts::handover` give;
 //! - a handover succeeds exactly when the role's current recipient signs it to a fresh
@@ -255,8 +263,9 @@ const NAMED: &[&str] = &[
 ];
 
 /// Named invariants that fail on today's code, so a plain run leaves them out; each runs
-/// when `FUZZ_INVARIANTS` names it, and the test below its counterexample replays it.
-const KNOWN_FAILING: &[&str] = &["round-trip-rewards-recipient"];
+/// when `FUZZ_INVARIANTS` names it, and a test replays its counterexample. None since
+/// `POOL4-49` (`round-trip-rewards-recipient`, SOS H002).
+const KNOWN_FAILING: &[&str] = &[];
 
 /// Whether the named invariant `name` is checked in this run: those `FUZZ_INVARIANTS` names,
 /// or without it all but `KNOWN_FAILING`. Naming one that does not exist fails, so a typo
@@ -398,6 +407,9 @@ struct Tracked {
     /// Lamports `place_wall` tipped, by the callers' balances: in all, and when last checked.
     tipped: u128,
     tipped_checked: u128,
+    /// Token units that earned the reward share in every `settle` so far, by the test's own
+    /// count (`POOL4-49`).
+    rewardable_settled: u128,
 }
 
 impl Tracked {
@@ -419,6 +431,7 @@ impl Tracked {
             paid_checked: 0,
             tipped: 0,
             tipped_checked: 0,
+            rewardable_settled: 0,
         }
     }
 
@@ -886,7 +899,8 @@ impl World {
                 );
             }
         }
-        let free = tip_free(&self.env.state(&m));
+        let start = self.env.state(&m);
+        let free = tip_free(&start);
         // With `place_wall` in between, the buy opens its slot, so the floor it brings up to
         // date is at most the price before it (`POOL4-50`).
         if place_wall {
@@ -918,6 +932,10 @@ impl World {
             return;
         };
         let mut claimed = 0u64;
+        // The reward units the rewards recipient pays itself, and the most the cap's fall
+        // allows it: the reward share of the fall left unmatched before its buy and the fall
+        // during the round trip (`POOL4-49`).
+        let (mut rewards, mut budget) = (0u128, 0u128);
         match role {
             Role::Stranger => {}
             Role::FeeRecipient => {
@@ -926,24 +944,48 @@ impl World {
             }
             Role::RewardsRecipient => {
                 self.check_markets();
+                let traded = self.env.state(&m);
+                let fell = (start.cap() - traded.cap()) as u128;
+                budget = (start.cap_fall_unmatched() as u128 + fell)
+                    * start.reward_share_bps() as u128
+                    / 10_000;
                 self.settle(i);
                 self.check_markets();
                 if let Some(paid) = self.pay_rewards(i, true) {
                     self.check_markets();
+                    rewards = paid as u128;
                     // The rewards are worth what they sell for.
                     claimed = self.trade(i, false, paid, trader).unwrap_or(0);
                 }
             }
         }
-        let received = sold as u128 + claimed as u128 + tip as u128;
         let free = tip.min(free);
         let name = role.invariant();
         if enabled(name) {
-            assert!(
-                received <= amount as u128 + free as u128,
-                "{name}: self-dealing profited: a buy of {amount} lamports returned {sold} sold, \
-                 {claimed} claimed and a tip of {tip} (of which {free} was there before the buy)"
-            );
+            if role == Role::RewardsRecipient {
+                // Its trades and tip alone never profit, and the rewards it paid itself stay
+                // within the reward share of the cap's fall (its creator's published
+                // budget), however many it sold them for.
+                let received = sold as u128 + tip as u128;
+                assert!(
+                    received <= amount as u128 + free as u128,
+                    "{name}: self-dealing profited: a buy of {amount} lamports returned {sold} \
+                     sold and a tip of {tip} (of which {free} was there before the buy)"
+                );
+                assert!(
+                    rewards <= budget,
+                    "{name}: the rewards recipient paid itself {rewards} reward units (sold for \
+                     {claimed}), beyond the {budget} the cap's fall allows"
+                );
+            } else {
+                let received = sold as u128 + claimed as u128 + tip as u128;
+                assert!(
+                    received <= amount as u128 + free as u128,
+                    "{name}: self-dealing profited: a buy of {amount} lamports returned {sold} \
+                     sold, {claimed} claimed and a tip of {tip} (of which {free} was there \
+                     before the buy)"
+                );
+            }
         }
     }
 
@@ -1036,14 +1078,18 @@ impl World {
             return;
         };
         let after = self.env.state(&m);
-        // The spec's split, stated here independently of the program's maths.
+        // The spec's split, stated here independently of the program's maths: the reward
+        // share of the rewardable part only, the rest of the retired tokens burned, both
+        // ledgers emptied (`POOL4-49`).
         let retired = before.retired_tokens() as u128;
-        let to_rewards = retired * before.reward_share_bps() as u128 / 10_000;
+        let rewardable = before.retired_rewardable() as u128;
+        let to_rewards = rewardable * before.reward_share_bps() as u128 / 10_000;
         assert_eq!(
             (split.to_rewards as u128, split.burned as u128),
             (to_rewards, retired - to_rewards)
         );
         assert_eq!(after.owed(), owed);
+        assert_eq!((after.retired_tokens(), after.retired_rewardable()), (0, 0));
         assert_eq!(self.env.balance(&m.token_vault), vault - split.burned);
         assert_eq!(supply_of(&self.env, &m.token_mint), supply - split.burned);
         assert_eq!(
@@ -1052,6 +1098,7 @@ impl World {
             "settle emits Settled"
         );
         self.markets[i].burned += split.burned as u128;
+        self.markets[i].rewardable_settled += rewardable;
     }
 
     /// `pay_rewards` on market `i`, to the rewards recipient or a stranger: it succeeds
@@ -1510,6 +1557,13 @@ impl World {
                         assert_eq!(state.liquidity(), last.liquidity());
                         assert_eq!(state.cap(), last.cap());
                         assert_eq!(state.decay_credit(), last.decay_credit());
+                        // Only a swap moves the cap's unmatched fall, and outside a swap the
+                        // rewardable part only empties, in a `settle`.
+                        assert_eq!(state.cap_fall_unmatched(), last.cap_fall_unmatched());
+                        assert!(
+                            state.retired_rewardable() == last.retired_rewardable()
+                                || (state.retired_rewardable() == 0 && burned > 0)
+                        );
                         assert_eq!(
                             (
                                 token_ledgers + burned + rewards_paid,
@@ -1696,6 +1750,10 @@ impl World {
                 STATUS_CREATED => {
                     assert_eq!(state.sqrt_price(), 0);
                     assert_eq!((token_ledgers, sol_ledgers), (0, 0));
+                    assert_eq!(
+                        (state.cap_fall_unmatched(), state.retired_rewardable()),
+                        (0, 0)
+                    );
                 }
                 STATUS_OPEN => {
                     let (s, l) = (state.sqrt_price(), state.liquidity());
@@ -1751,6 +1809,26 @@ impl World {
                             + state.rewards_owed() as u128
                             + state.rewards_paid(),
                         state.tokens_trimmed() + state.wall_tokens_bought() + tracked.dust_tokens
+                    );
+                    // POOL4-49: the rewardable part is a part of the retired tokens; every
+                    // unit the cap has fallen since the seed (which set it to the seeded
+                    // tokens) is still unmatched, rewardable or settled as rewardable; so the
+                    // rewards owed and paid never exceed the reward share of the cap's fall.
+                    assert!(state.retired_rewardable() <= state.retired_tokens());
+                    assert_eq!(
+                        tracked.rewardable_settled
+                            + state.retired_rewardable() as u128
+                            + state.cap_fall_unmatched() as u128,
+                        (state.seeded_tokens() - state.cap()) as u128,
+                        "the cap's fall is not all unmatched, rewardable or settled"
+                    );
+                    let booked = state.rewards_owed() as u128 + state.rewards_paid();
+                    assert!(
+                        booked * 10_000
+                            <= tracked.rewardable_settled * state.reward_share_bps() as u128,
+                        "{booked} reward units booked, beyond the reward share of the {} \
+                         rewardable units settled",
+                        tracked.rewardable_settled
                     );
                     assert!(l >= MIN_LIQUIDITY);
                 }
@@ -1948,17 +2026,17 @@ proptest! {
 }
 
 /// The fuzzer's counterexample to `round-trip-rewards-recipient` (2026-11-16), minimised,
-/// and the same wash trade at a day's decay credit: SOS hypothesis H002, which today's code
-/// fails, so a plain run checks every other invariant on it and `FUZZ_INVARIANTS=
-/// round-trip-rewards-recipient` shows it failing. On the default market (a 75 basis point
-/// fee and a 14.99% reward share), one second after the seed the rewards recipient buys
-/// with 35 lamports, sells it all straight back for 32, settles and pays itself the rewards
-/// that the sell's trim retired, and sells them for 4: 36 lamports back for 35. The buy
-/// spends the decay credit to lower the cap to what the curve then holds, so the sell back
-/// is trimmed and its tokens retired, and the reward share of them comes back to the
-/// trader, more than the two fees it paid. A day after the seed the same round trip with
-/// 1 SOL sells back for 980,099,999 lamports and claims rewards that sell for 131,727,578:
-/// 0.11 SOL more than it cost, in one transaction's worth of instructions.
+/// and the same wash trade at a day's decay credit: SOS hypothesis H002. On the default
+/// market (a 75 basis point fee and a 14.99% reward share), one second after the seed the
+/// rewards recipient buys with 35 lamports, sells it all straight back for 32, settles and
+/// pays itself the rewards that the sell's trim retired, and sells them for 4: 36 lamports
+/// back for 35. A day after the seed the same round trip with 1 SOL sells back for
+/// 980,099,999 lamports and claims rewards that sell for 131,727,578. The buy spends the
+/// decay credit to lower the cap, so the sell back is trimmed by what the cap fell, and
+/// since `POOL4-49` that is all the reward share pays on: the rewards stay within the
+/// reward share of the cap's fall, the budget the market's creator published, which the
+/// invariant now states, and they no longer recycle (the trim of their sale is not matched
+/// by any fall). Both runs check every invariant, this one included.
 #[test]
 fn the_rewards_recipients_wash_trade_counterexample() {
     replay(&[

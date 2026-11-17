@@ -3475,11 +3475,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-06: Trimmed tokens and SOL
 
 - Question: What happens to trimmed tokens and trimmed SOL?
-- Answer: A reward share of 0% to 30% per market (the form pre-fills 15%) goes to one rewards recipient and the rest is burned; all trimmed SOL becomes the buy wall, and tokens the wall buys go through the same split.
-- Alternatives: Burning everything; IMD's fixed 85/15 with its three-way reward split.
+- Answer: A reward share of 0% to 30% per market (the form pre-fills 15%) goes to one rewards recipient and the rest is burned, the reward share paid only on trimmed tokens the cap's own fall matched ([POOL4-49](#pool4-49-which-retired-tokens-earn-the-reward-share)); all trimmed SOL becomes the buy wall, and tokens the wall buys are burned whole.
+- Alternatives: The earlier default, in which tokens the wall buys went through the same split and every retired token earned the reward share; burning everything; IMD's fixed 85/15 with its three-way reward split.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Creation parameters](spec/pool4-for-solana.md#creation-parameters)
 - Changes by: market-creation parameter
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20)
 
 ### POOL4-07: Staking
@@ -3902,11 +3902,31 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
+### POOL4-49: Which retired tokens earn the reward share
+
+- Question: Which retired tokens earn the reward share, now that a rewards recipient can retire tokens itself by washing a buy against the decay credit, selling a dip into a tight cap or selling into the wall and closing it, all in one transaction?
+- Answer: Only trimmed tokens matched by the cap's own fall: the ratchet adds every unit the cap falls to `cap_fall_unmatched`, a trim moves `min(trimmed tokens, cap_fall_unmatched)` from it into `retired_rewardable`, and `settle` pays `floor(retired_rewardable x reward_share_bps / 10,000)` and burns the rest of `retired_tokens`, so the rest of a trim, the tokens a closed wall bought and `place_wall`'s dust burn whole and the rewards never exceed `reward_share_bps` of `seeded_tokens - cap_floor`.
+- Alternatives: The earlier rule, in which every retired token earned the reward share; lagging the ratchet by a slot so a same-transaction round trip never trims; paying no reward share on trims; accepting the behaviour and disclosing it.
+- Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
 ### POOL4-50: When the wall's floor moves
 
 - Question: When may the wall's floor change, and when may `place_wall` run, so that neither a price that lasts only inside one transaction or slot nor a quiet spell's crawl can move the buy wall?
 - Answer: Only at a slot's first update, as the reference already moves (a swap's in "After pricing" step 4, or `place_wall`'s own when no swap has run in the slot yet, which leaves the slot unmarked): the floor crawls toward the reference, never above it nor the previous slot's close `last_close`, and drops to that close if it is lower, so it never changes inside a slot and is never above the price the slot opened at; `place_wall` is refused with `SwapThisSlot` in a slot a swap already ran in, and places the wall at `min(price, floor)` with the floor brought up to date.
 - Alternatives: The earlier default, the floor crawling and dropping to every swap's own price, which let a sell to a dip bought straight back in one transaction drag the whole wall down for days (SOS finding H003) and a buy after a quiet day capture the crawl by placing the wall above its own starting price and selling into it (H004, H050); a field for the current slot's lowest close that caps a placement made in that slot; keeping the earlier rule and disclosing both risks.
+- Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-51: The market's clocks never run backwards
+
+- Question: What does a market do with a Clock whose Unix time is earlier than a time it has stored, the cap's `decay_time` or the guard's `ref_time` and `floor_time`?
+- Answer: Each stored time becomes the later of itself and the Clock's time, so a clock that goes back credits nothing and the same seconds are never counted twice for the cap's decay credit, the reference's step or the floor's crawl; Agave's Clock never goes back from one slot to the next (review finding H009), so on a live cluster this changes nothing and is defence in depth.
+- Alternatives: The earlier rule, storing the Clock's time as it is, under which a clock that went back and then forward would count the overlap twice; refusing a swap whose clock is earlier than a stored time, which would stop trading over a validator's error.
 - Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
 - Changes by: fixed on-chain once deployed
 - Status: default
@@ -4549,8 +4569,8 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-53` to `LENDING-59`: set by the session of [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
-- `POOL4-46`, `POOL4-47`, and the changes to `POOL4-41` and `POOL4-44`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix audit findings H013, H020 and H033 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
-- `POOL4-52`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix review findings H022 and H063 in the handovers, and not yet put to the owner, so it is that session's default until the owner has been asked.
+- `POOL4-46`, `POOL4-47`, and the changes to `POOL4-41` and `POOL4-44`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix review findings H013, H020 and H033 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-51`, `POOL4-52`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to harden the market's clocks (review finding H009) and fix review findings H022 and H063 in the handovers, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-36`: set by the session of [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152) from the spec's existing rule that a trade reaching a price bound is refused, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.

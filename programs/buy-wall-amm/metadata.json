@@ -100,7 +100,7 @@
             "name": "settle",
             "label": "Settle retired tokens",
             "kind": "other",
-            "description": "A keeper job anyone may run. Splits the market's retired tokens: the market's reward share of them is kept for the rewards recipient and the rest is burned, lowering the token's supply. Refused when nothing is retired. No tip, and no signature but the transaction fee payer's. It never moves the price.",
+            "description": "A keeper job anyone may run. Splits the market's retired tokens: the market's reward share of the trimmed tokens the inventory cap's fall matched is kept for the rewards recipient and the rest, the tokens the buy wall bought among them, is burned, lowering the token's supply. Refused when nothing is retired. No tip, and no signature but the transaction fee payer's. It never moves the price.",
             "args": [],
             "accounts": [
                 { "name": "market_state", "source": "market_state", "writable": true },

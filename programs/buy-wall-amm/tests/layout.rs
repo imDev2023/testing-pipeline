@@ -122,6 +122,8 @@ fn set(state: &mut MarketState, field: &str, value: &[u8]) {
         "tokens_burned" => state.set_tokens_burned(u128_()),
         "rewards_paid" => state.set_rewards_paid(u128_()),
         "tips_paid" => state.set_tips_paid(u128_()),
+        "cap_fall_unmatched" => state.set_cap_fall_unmatched(u64_()),
+        "retired_rewardable" => state.set_retired_rewardable(u64_()),
         other => panic!("the spec names a field the program has no setter for: {other}"),
     }
 }

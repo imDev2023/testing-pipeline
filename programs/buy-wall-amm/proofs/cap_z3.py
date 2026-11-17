@@ -23,9 +23,15 @@ And the Book of Knowledge invariants (`.bok/confirmed-invariants/CONFIRMED.md`):
 - CAP-2: a trim never takes the wall's backing: ledgers that covered the curve and the wall
   before it still cover both after it;
 - CAP-3: over any sequence of swaps the cap falls by at most the starting credit plus the decay
-  of the time that really passed, and the decay clock never runs backwards. These claims state
-  the clock rule `decay_time = max(decay_time, now)`; today's code writes `decay_time: now`,
-  so they FAIL until that fix lands (see `decay_time_after` below, the one line to change).
+  of the time that really passed, and the decay clock never runs backwards: the clock rule
+  `decay_time = max(decay_time, now)` (`decay_time_after` below).
+
+And the reward share's budget (`POOL4-49`): the ratchet adds every unit the cap falls to
+`cap_fall_unmatched`, and a trim moves `min(trimmed tokens, cap_fall_unmatched)` from it into
+`retired_rewardable`, never more than it retires, so `retired_rewardable` stays within
+`retired_tokens` and every unit the cap has fallen since the seed is either unmatched or
+rewardable (settled or not), never both and never lost (`payouts_z3.py` proves `settle` keeps
+it, and so the rewards within the reward share of the cap's fall).
 
 The link between this model and the compiled Rust is checked by tests: `U256::div_rem` is
 proven exact for every 256-bit pair (`math_z3.py`), Proptest checks `Inventory::after_swap` against the spec's
@@ -342,14 +348,12 @@ results.append(
 # no change), which the ratchet claims above prove it can afford.
 #
 # The decay clock rule these claims state: the clock never runs backwards, `decay_time =
-# max(decay_time, now)`. TODAY'S CODE writes `decay_time: now` (src/cap.rs, `after_swap`), so
-# the claims marked "(clock rule)" FAIL until the fix lands; `decay_time_after` below is the
-# one line that mirrors the code, and becomes `maximum(then, now)` with the fix.
+# max(decay_time, now)`, as src/cap.rs (`after_swap`) writes it.
 
 
 def decay_time_after(then, now):
-    """`Inventory::after_swap`'s new `decay_time`, as written in src/cap.rs today: `now`."""
-    return now
+    """`Inventory::after_swap`'s new `decay_time`, as written in src/cap.rs: `max(then, now)`."""
+    return maximum(then, now)
 
 
 def elapsed(then, now):
@@ -394,14 +398,14 @@ results.append(
 time_after = decay_time_after(then, now)
 results.append(
     prove(
-        "decay clock (clock rule; fails until src/cap.rs writes max(decay_time, now)): decay_time never runs backwards",
+        "decay clock (clock rule): decay_time never runs backwards",
         time_after >= then,
         *swap_step,
     )
 )
 results.append(
     prove(
-        "decay clock (clock rule; fails until the fix): one swap's credit left plus 86,400 per unit fallen never exceeds the credit before plus the decay of how far the clock moved",
+        "decay clock (clock rule): one swap's credit left plus 86,400 per unit fallen never exceeds the credit before plus the decay of how far the clock moved",
         credit_after + by * SECONDS_PER_DAY <= credit + per_day * (time_after - then),
         *swap_step,
     )
@@ -426,9 +430,72 @@ for i in range(3):
 latest = maximum(maximum(times[0], times[1]), maximum(times[2], times[3]))
 results.append(
     prove(
-        "decay clock (clock rule; fails until the fix): over three swaps the cap falls by at most (credit at the start + per_day x (latest clock - first)) / 86,400",
+        "decay clock (clock rule): over three swaps the cap falls by at most (credit at the start + per_day x (latest clock - first)) / 86,400",
         (bys[0] + bys[1] + bys[2]) * SECONDS_PER_DAY + credits[3] <= credits[0] + per_day * (latest - times[0]),
         *sequence,
+    )
+)
+
+# --- POOL4-49: the reward share's budget -------------------------------------------------
+# `unmatched` is `cap_fall_unmatched`, `rewardable` is `retired_rewardable` and `settled` the
+# rewardable units every earlier `settle` emptied; `seeded` is `seeded_tokens`, the cap at the
+# seed. On every reachable market `rewardable <= retired` and `settled + rewardable + unmatched
+# == seeded - cap`, both 0 at the seed (the seed writes neither field and sets the cap to the
+# seeded tokens). The ratchet adds the units the cap fell to `unmatched`; a trim moves
+# `eligible = min(tokens, unmatched)` from `unmatched` to `rewardable` as it adds `tokens` to
+# `retired`.
+unmatched, rewardable, settled, seeded, eligible = (
+    Int(n) for n in ["unmatched", "rewardable", "settled", "seeded", "eligible"]
+)
+budget = [
+    unmatched >= 0,
+    rewardable >= 0,
+    settled >= 0,
+    rewardable <= retired,
+    settled + rewardable + unmatched == seeded - cap,
+    seeded < U64,
+]
+results.append(
+    prove(
+        "reward budget, the ratchet: every unit the cap falls joins cap_fall_unmatched, so the budget is kept and the checked add never overflows",
+        And(
+            settled + rewardable + (unmatched + (cap - new_cap)) == seeded - new_cap,
+            unmatched + (cap - new_cap) < U64,  # `cap_fall_unmatched.checked_add(by)`
+        ),
+        *envelope,
+        *ratchet,
+        *budget,
+        per_day >= 0,
+        credit <= per_day * DECAY_CREDIT_WINDOW,
+    )
+)
+trim_rewardable = [eligible == minimum(tokens, unmatched)]
+results.append(
+    prove(
+        "reward budget, the trim: it makes rewardable no more than it retires and no more than the cap's unmatched fall, keeps the budget, and never overflows",
+        And(
+            eligible >= 0,
+            eligible <= tokens,
+            unmatched - eligible >= 0,  # `cap_fall_unmatched.checked_sub(eligible)`
+            rewardable + eligible <= retired + tokens,
+            rewardable + eligible < U64,  # `retired_rewardable.checked_add(eligible)`
+            settled + (rewardable + eligible) + (unmatched - eligible) == seeded - cap,
+        ),
+        *envelope,
+        *trim,
+        *budget,
+        *trim_rewardable,
+    )
+)
+results.append(
+    prove(
+        "reward budget, the trim: a trim from a cap with no unmatched fall makes nothing rewardable (a dip sold into a tight cap)",
+        eligible == 0,
+        *envelope,
+        *trim,
+        *budget,
+        *trim_rewardable,
+        unmatched == 0,
     )
 )
 

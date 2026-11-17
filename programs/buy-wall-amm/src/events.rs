@@ -105,6 +105,8 @@ pub struct Settled {
     pub market_state: Pubkey,
     /// The retired tokens settled, all of them.
     pub retired: u64,
+    /// The part of them the cap's fall matched, which earned the reward share (`POOL4-49`).
+    pub rewardable: u64,
     /// Token units burned from the token vault.
     pub burned: u64,
     /// Token units that joined the rewards owed.

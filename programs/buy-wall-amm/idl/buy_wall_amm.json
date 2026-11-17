@@ -2189,14 +2189,38 @@
             }
           },
           {
-            "name": "reserve",
+            "name": "cap_fall_unmatched",
             "docs": [
-              "719 to the end: zeroed, for fields later layouts append."
+              "719: u64, token units the ratchet has lowered the cap by that no trim has matched yet"
             ],
             "type": {
               "array": [
                 "u8",
-                305
+                8
+              ]
+            }
+          },
+          {
+            "name": "retired_rewardable",
+            "docs": [
+              "727: u64, token units, the part of `retired_tokens` that earns the reward share"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "reserve",
+            "docs": [
+              "735 to the end: zeroed, for fields later layouts append."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                289
               ]
             }
           }
@@ -2356,6 +2380,13 @@
             "name": "retired",
             "docs": [
               "The retired tokens settled, all of them."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "rewardable",
+            "docs": [
+              "The part of them the cap's fall matched, which earned the reward share (`POOL4-49`)."
             ],
             "type": "u64"
           },

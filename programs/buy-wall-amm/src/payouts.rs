@@ -13,17 +13,22 @@ use crate::config::{DESIGNER_RECIPIENT, SUITE_TREASURY};
 /// What one `settle` does with the retired tokens.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Settlement {
-    /// `floor(retired × reward_share_bps / 10,000)`, joining `rewards_owed`.
+    /// `floor(rewardable × reward_share_bps / 10,000)`, joining `rewards_owed`.
     pub to_rewards: u64,
-    /// The rest, burned from the token vault.
+    /// The rest of the retired tokens, burned from the token vault.
     pub burned: u64,
 }
 
-/// Splits `retired` token units: the reward share joins `rewards_owed` and the rest is
-/// burned, so the two always add up to `retired`. `None` for a reward share above 10,000
-/// basis points, which creation refuses.
-pub fn settle(retired: u64, reward_share_bps: u16) -> Option<Settlement> {
-    let to_rewards = share(retired, reward_share_bps)?;
+/// Splits `retired` token units, of which `rewardable` were matched by the cap's fall and
+/// earn the reward share (`POOL4-49`): the reward share of `rewardable` joins
+/// `rewards_owed` and the rest of `retired` is burned, so the two always add up to
+/// `retired`. `None` for a reward share above 10,000 basis points, which creation refuses,
+/// or a rewardable part above the retired tokens, which no market reaches.
+pub fn settle(retired: u64, rewardable: u64, reward_share_bps: u16) -> Option<Settlement> {
+    if rewardable > retired {
+        return None;
+    }
+    let to_rewards = share(rewardable, reward_share_bps)?;
     Some(Settlement {
         to_rewards,
         burned: retired.checked_sub(to_rewards)?,
@@ -35,6 +40,8 @@ pub fn settle(retired: u64, reward_share_bps: u16) -> Option<Settlement> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Owed {
     pub retired_tokens: u64,
+    /// The part of `retired_tokens` that earns the reward share (`POOL4-49`).
+    pub retired_rewardable: u64,
     pub rewards_owed: u64,
     pub fees_recipient: u64,
     pub fees_designer: u64,
@@ -75,15 +82,22 @@ impl From<Refusal> for crate::errors::StrategyError {
 }
 
 impl Owed {
-    /// `settle`: the whole of `retired_tokens` split, the reward share into `rewards_owed`
-    /// and the rest burned. Returns the ledgers after and the split.
+    /// `settle`: the whole of `retired_tokens` split, the reward share of its rewardable part
+    /// into `rewards_owed` and the rest burned, emptying both. Returns the ledgers after and
+    /// the split.
     pub fn settle(self, reward_share_bps: u16) -> Result<(Owed, Settlement), Refusal> {
         if self.retired_tokens == 0 {
             return Err(Refusal::NothingToSettle);
         }
-        let split = settle(self.retired_tokens, reward_share_bps).ok_or(Refusal::Overflow)?;
+        let split = settle(
+            self.retired_tokens,
+            self.retired_rewardable,
+            reward_share_bps,
+        )
+        .ok_or(Refusal::Overflow)?;
         let after = Owed {
             retired_tokens: 0,
+            retired_rewardable: 0,
             rewards_owed: self
                 .rewards_owed
                 .checked_add(split.to_rewards)
@@ -260,11 +274,12 @@ mod proofs {
     #[cfg(kani_full)]
     const SMALL: u64 = 1 << 10;
 
-    /// The split for every reward share a market may choose, below `SMALL` retired, where
-    /// every product fits in 64 bits: nothing is created or lost, the reward share is exactly
-    /// `floor(retired × bps / 10,000)` (stated without a division, which CBMC handles slowly:
-    /// `to_rewards × 10,000 <= retired × bps < (to_rewards + 1) × 10,000`), and anything
-    /// retired burns something, since a market's reward share never takes it all. In the
+    /// The split for every reward share a market may choose, below `SMALL` retired and any
+    /// rewardable part of them, where every product fits in 64 bits: nothing is created or
+    /// lost, the reward share is exactly `floor(rewardable × bps / 10,000)` (stated without
+    /// a division, which CBMC handles slowly: `to_rewards × 10,000 <= rewardable × bps <
+    /// (to_rewards + 1) × 10,000`), and anything retired burns something, since a market's
+    /// reward share never takes it all. In the
     /// full tier (INV-FB-12): at 764 seconds it took most of CI's Kani budget to prove for
     /// `retired < 2^10` what `proofs/payouts_z3.py` proves for every input; the unit test
     /// `the_settlement_split_for_every_remainder` (below) keeps a fast check of the compiled
@@ -272,25 +287,25 @@ mod proofs {
     #[cfg(kani_full)]
     #[kani::proof]
     fn the_settlement_split_adds_up_and_always_burns_bounded() {
-        let (retired, bps): (u64, u16) = (kani::any(), kani::any());
-        kani::assume(retired < SMALL && bps <= MAX_REWARD_SHARE_BPS);
-        let split = settle(retired, bps).unwrap();
+        let (retired, rewardable, bps): (u64, u64, u16) = (kani::any(), kani::any(), kani::any());
+        kani::assume(retired < SMALL && rewardable <= retired && bps <= MAX_REWARD_SHARE_BPS);
+        let split = settle(retired, rewardable, bps).unwrap();
         assert!(split.to_rewards + split.burned == retired);
-        let product = retired * bps as u64;
+        let product = rewardable * bps as u64;
         assert!(split.to_rewards * 10_000 <= product && product < (split.to_rewards + 1) * 10_000);
         assert!(retired == 0 || split.burned > 0);
     }
 
-    /// The same for every u64 retired.
+    /// The same for every u64 retired and rewardable part of it.
     #[cfg(kani_full)]
     #[kani::proof]
     fn the_settlement_split_adds_up_and_always_burns() {
-        let (retired, bps): (u64, u16) = (kani::any(), kani::any());
-        kani::assume(bps <= MAX_REWARD_SHARE_BPS);
-        let split = settle(retired, bps).unwrap();
+        let (retired, rewardable, bps): (u64, u64, u16) = (kani::any(), kani::any(), kani::any());
+        kani::assume(rewardable <= retired && bps <= MAX_REWARD_SHARE_BPS);
+        let split = settle(retired, rewardable, bps).unwrap();
         assert!(split.to_rewards as u128 + split.burned as u128 == retired as u128);
         let (product, floor) = (
-            retired as u128 * bps as u128,
+            rewardable as u128 * bps as u128,
             split.to_rewards as u128 * 10_000,
         );
         assert!(floor <= product && product < floor + 10_000);
@@ -300,6 +315,7 @@ mod proofs {
     fn any_owed() -> Owed {
         Owed {
             retired_tokens: kani::any(),
+            retired_rewardable: kani::any(),
             rewards_owed: kani::any(),
             fees_recipient: kani::any(),
             fees_designer: kani::any(),
@@ -434,14 +450,16 @@ mod proofs {
         assert_eq!(handover(&current, &signer, &new, &own), expected);
     }
 
-    /// `settle` empties `retired_tokens` and leaves every other ledger alone, for every
-    /// ledger, lifetime total and reward share a market may choose (INV-FB-11): on success
-    /// the ledgers after are the ledgers before with `retired_tokens` emptied, the split's
-    /// reward share added to `rewards_owed` and its burn to `tokens_burned`, and the split
-    /// adds up to what was retired, so the token ledgers fall by exactly the burn; it refuses
-    /// as `NothingToSettle` exactly when nothing is retired. That the split is the spec's is
-    /// `the_settlement_split_for_every_remainder`'s and `proofs/payouts_z3.py`'s to prove.
-    /// Verified in 8 seconds on the owner's Mac (2026-11-16).
+    /// `settle` empties `retired_tokens` and `retired_rewardable` and leaves every other
+    /// ledger alone, for every ledger, lifetime total and reward share a market may choose
+    /// (INV-FB-11): on success the ledgers after are the ledgers before with both emptied,
+    /// the split's reward share added to `rewards_owed` and its burn to `tokens_burned`, and
+    /// the split adds up to what was retired, so the token ledgers fall by exactly the burn;
+    /// it refuses as `NothingToSettle` exactly when nothing is retired, and otherwise only
+    /// for a rewardable part above the retired tokens, which no market reaches, or an
+    /// overflow. That the split is the spec's is `the_settlement_split_for_every_remainder`'s
+    /// and `proofs/payouts_z3.py`'s to prove. Verified in 12 seconds on the owner's Mac
+    /// (2026-11-17), beside other sessions' builds.
     #[kani::proof]
     fn settling_empties_the_retired_ledger_and_nothing_else() {
         let before = any_owed();
@@ -454,8 +472,10 @@ mod proofs {
                     split.to_rewards as u128 + split.burned as u128,
                     before.retired_tokens as u128
                 );
+                assert!(before.retired_rewardable <= before.retired_tokens);
                 let expected = Owed {
                     retired_tokens: 0,
+                    retired_rewardable: 0,
                     rewards_owed: before.rewards_owed + split.to_rewards,
                     tokens_burned: before.tokens_burned + split.burned as u128,
                     ..before
@@ -468,6 +488,22 @@ mod proofs {
                     before.retired_tokens == 0
                 );
                 assert!(refusal == Refusal::NothingToSettle || refusal == Refusal::Overflow);
+                // Stated without a division, which CBMC handles slowly: the reward share is at
+                // most the rewardable part and the burn at most the retired tokens, so an
+                // overflow needs one of these.
+                if refusal == Refusal::Overflow {
+                    assert!(
+                        before.retired_rewardable > before.retired_tokens
+                            || before
+                                .rewards_owed
+                                .checked_add(before.retired_rewardable)
+                                .is_none()
+                            || before
+                                .tokens_burned
+                                .checked_add(before.retired_tokens as u128)
+                                .is_none()
+                    );
+                }
             }
         }
     }
@@ -479,24 +515,28 @@ mod tests {
     use crate::config::MAX_REWARD_SHARE_BPS;
     use proptest::prelude::*;
 
+    /// The worked example's `settle`: 8,333,333,340 units retired, of which the trim's
+    /// 8,333,333,329 were matched by the cap's fall and the 11 of dust were not (POOL4-49).
     #[test]
     fn the_worked_examples_settlement() {
         assert_eq!(
-            settle(8_333_333_340, 1_500),
+            settle(8_333_333_340, 8_333_333_329, 1_500),
             Some(Settlement {
-                to_rewards: 1_250_000_001,
-                burned: 7_083_333_339
+                to_rewards: 1_249_999_999,
+                burned: 7_083_333_341
             })
         );
     }
 
     /// The settlement split for every remainder modulo 10,000, the only place `share`
     /// rounds (INV-FB-12, in the default tier's place of the 764-second Kani harness, now in
-    /// the full tier): for `retired = q × 10,000 + r` with every `r` from 0 to 9,999, at
-    /// the least, the next and the greatest quotient a u64 holds, and at the reward shares
-    /// at and around every edge, the reward share is exactly `floor(retired × bps /
-    /// 10,000)`, the split adds up, and anything retired burns something at every share a
-    /// market may choose. `proofs/payouts_z3.py` proves the same for every input.
+    /// the full tier): for a rewardable part `q × 10,000 + r` with every `r` from 0 to
+    /// 9,999, at the least, the next and the greatest quotient a u64 holds, of retired tokens
+    /// that are all rewardable or have 11 units more (or as many more as a u64 holds), and
+    /// at the reward shares at and around every edge, the reward share is exactly
+    /// `floor(rewardable × bps / 10,000)`, the split adds up, and anything retired burns
+    /// something at every share a market may choose. `proofs/payouts_z3.py` proves the same
+    /// for every input.
     #[test]
     fn the_settlement_split_for_every_remainder() {
         let shares = [
@@ -512,26 +552,38 @@ mod tests {
         ];
         for q in [0, 1, u64::MAX / 10_000] {
             for r in 0..10_000u64 {
-                let Some(retired) = q.checked_mul(10_000).and_then(|v| v.checked_add(r)) else {
+                let Some(rewardable) = q.checked_mul(10_000).and_then(|v| v.checked_add(r)) else {
                     continue;
                 };
-                for bps in shares {
-                    let split = settle(retired, bps).unwrap();
-                    let exact = retired as u128 * bps as u128 / 10_000;
-                    assert_eq!(split.to_rewards as u128, exact, "{retired} at {bps}");
-                    assert_eq!(
-                        split.to_rewards as u128 + split.burned as u128,
-                        retired as u128
-                    );
-                    if bps <= MAX_REWARD_SHARE_BPS {
-                        assert!(retired == 0 || split.burned > 0, "{retired} at {bps}");
+                for retired in [rewardable, rewardable.saturating_add(11)] {
+                    for bps in shares {
+                        let split = settle(retired, rewardable, bps).unwrap();
+                        let exact = rewardable as u128 * bps as u128 / 10_000;
+                        assert_eq!(split.to_rewards as u128, exact, "{rewardable} at {bps}");
+                        assert_eq!(
+                            split.to_rewards as u128 + split.burned as u128,
+                            retired as u128
+                        );
+                        if bps <= MAX_REWARD_SHARE_BPS {
+                            assert!(retired == 0 || split.burned > 0, "{retired} at {bps}");
+                        }
                     }
                 }
             }
         }
-        // And past 10,000 basis points the split is refused, never wrapped.
-        assert_eq!(settle(1, 10_001), None);
-        assert_eq!(settle(u64::MAX, u16::MAX), None);
+        // Nothing rewardable: everything burns.
+        assert_eq!(
+            settle(u64::MAX, 0, MAX_REWARD_SHARE_BPS),
+            Some(Settlement {
+                to_rewards: 0,
+                burned: u64::MAX
+            })
+        );
+        // Past 10,000 basis points, or with more rewardable than retired, the split is
+        // refused, never wrapped.
+        assert_eq!(settle(1, 1, 10_001), None);
+        assert_eq!(settle(u64::MAX, u64::MAX, u16::MAX), None);
+        assert_eq!(settle(1, 2, 1_500), None);
     }
 
     #[test]
@@ -564,6 +616,7 @@ mod tests {
         let recipient = Pubkey::new_unique();
         let before = Owed {
             retired_tokens: 1,
+            retired_rewardable: 1,
             rewards_owed: 2,
             fees_recipient: 10,
             fees_designer: 20,
@@ -663,12 +716,16 @@ mod tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10_000))]
 
-        /// The split adds up, is exactly the reward share, and always burns something.
+        /// The split adds up, is exactly the reward share of the rewardable part, and always
+        /// burns something.
         #[test]
-        fn the_settlement_split(retired in any::<u64>(), bps in 0..=MAX_REWARD_SHARE_BPS) {
-            let split = settle(retired, bps).unwrap();
+        fn the_settlement_split(
+            retired in any::<u64>(), part in any::<u64>(), bps in 0..=MAX_REWARD_SHARE_BPS,
+        ) {
+            let rewardable = retired.checked_add(1).map_or(part, |bound| part % bound);
+            let split = settle(retired, rewardable, bps).unwrap();
             prop_assert_eq!(split.to_rewards as u128 + split.burned as u128, retired as u128);
-            prop_assert_eq!(split.to_rewards as u128, retired as u128 * bps as u128 / 10_000);
+            prop_assert_eq!(split.to_rewards as u128, rewardable as u128 * bps as u128 / 10_000);
             prop_assert!(retired == 0 || split.burned > 0);
         }
 
@@ -676,11 +733,12 @@ mod tests {
         /// exactly what they report, and keep the lifetime totals.
         #[test]
         fn payouts_move_exactly_what_they_report(
-            retired in any::<u32>(), owed in any::<u32>(), fees in any::<[u32; 3]>(),
-            bps in 0..=MAX_REWARD_SHARE_BPS, slot in 0..4u8,
+            retired in any::<u32>(), part in any::<u32>(), owed in any::<u32>(),
+            fees in any::<[u32; 3]>(), bps in 0..=MAX_REWARD_SHARE_BPS, slot in 0..4u8,
         ) {
             let before = Owed {
                 retired_tokens: retired as u64,
+                retired_rewardable: (part as u64) % (retired as u64 + 1),
                 rewards_owed: owed as u64,
                 fees_recipient: fees[0] as u64,
                 fees_designer: fees[1] as u64,
@@ -690,7 +748,11 @@ mod tests {
             };
             match before.settle(bps) {
                 Ok((after, split)) => {
-                    prop_assert_eq!(after.retired_tokens, 0);
+                    prop_assert_eq!((after.retired_tokens, after.retired_rewardable), (0, 0));
+                    prop_assert_eq!(
+                        split.to_rewards as u128,
+                        before.retired_rewardable as u128 * bps as u128 / 10_000
+                    );
                     prop_assert_eq!(after.rewards_owed, before.rewards_owed + split.to_rewards);
                     prop_assert_eq!(after.tokens_burned, 7 + split.burned as u128);
                     prop_assert_eq!(split.to_rewards + split.burned, before.retired_tokens);
