@@ -37,10 +37,14 @@ pub const FRACTION_BITS: u32 = 60;
 pub const RESERVE_LEN: usize = 8_624;
 /// Anchor's discriminator of klend's `Reserve`, `sha256("account:Reserve")[..8]`.
 pub const RESERVE_DISCRIMINATOR: [u8; 8] = [43, 242, 204, 202, 26, 247, 59, 127];
-/// A reserve's `version` while klend can use it; klend sets it to `u64::MAX` when a write-off
-/// reaches the reserve's whole supply, and refuses redeems from a reserve whose version is not
-/// this one (`ReserveDeprecated`).
+/// A reserve's `version` while klend can use it; klend sets it to [`DEPRECATED_RESERVE_VERSION`]
+/// when a write-off reaches the reserve's whole supply, and refuses redeems from a reserve whose
+/// version is not this one (`ReserveDeprecated`).
 pub const RESERVE_VERSION: u64 = 1;
+/// The `version` klend gives a reserve a write-off has deprecated. Any version but this one and
+/// [`RESERVE_VERSION`] would be a klend this module was not written for, and fails the reserve
+/// check (finding H-D, docs/security/lending-amm/).
+pub const DEPRECATED_RESERVE_VERSION: u64 = u64::MAX;
 
 /// A klend `LendingMarket` account's size, discriminator included.
 pub const LENDING_MARKET_LEN: usize = 4_664;
@@ -135,7 +139,7 @@ pub struct LendingMarket {
 
 /// Checks that `data`, owned by `owner` at `address`, is the reserve `lent` names, in the
 /// layout this module reads: its address, owner, size, Anchor discriminator, lending market,
-/// liquidity mint and collateral mint, in that order (docs/spec/lending-pool.md, "Checking the
+/// liquidity mint, collateral mint and version, in that order (docs/spec/lending-pool.md, "Checking the
 /// reserve before reading it"). Any mismatch, such as a Kamino upgrade that changes the
 /// layout, refuses rather than misprices.
 pub fn check_reserve(
@@ -164,6 +168,10 @@ pub fn check_reserve(
     }
     if key_at(data, offsets::COLLATERAL_MINT) != Some(lent.collateral_mint) {
         return Err(StrategyError::ReserveWrongCollateralMint);
+    }
+    let version = u64_at(data, offsets::VERSION);
+    if version != Some(RESERVE_VERSION) && version != Some(DEPRECATED_RESERVE_VERSION) {
+        return Err(StrategyError::ReserveWrongVersion);
     }
     Ok(())
 }
@@ -227,8 +235,7 @@ pub fn read_lending_market(
 
 /// The reserve a market lends to, from the account passed for it: the lent mint's entry in
 /// `LENT_MINTS` names the reserve, so the account must be exactly that one.
-pub fn reserve_of(lent_mint: &Pubkey, account: &AccountInfo) -> Result<Reserve> {
-    let lent = crate::config::lent_mint(lent_mint).ok_or(StrategyError::LentMintNotListed)?;
+pub fn reserve_of(lent: &LentMint, account: &AccountInfo) -> Result<Reserve> {
     let data = account.try_borrow_data()?;
     read_reserve(account.key, account.owner, &data, lent).map_err(|refusal| {
         msg!("Reserve {} refused: {:?}", account.key, refusal);

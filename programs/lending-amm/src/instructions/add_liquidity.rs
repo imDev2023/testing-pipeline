@@ -95,7 +95,10 @@ pub fn add_liquidity_handler<'info>(
     let other_index = market.other_index();
     let max = [max_0, max_1];
     let (max_other, max_lent) = (max[other_index], max[lent_index]);
-    let reserve = kamino::reserve_of(&market.lent_mint(), &ctx.accounts.reserve.to_account_info())?;
+    let reserve = kamino::reserve_of(
+        market.lent_entry()?,
+        &ctx.accounts.reserve.to_account_info(),
+    )?;
     // A deprecated reserve never redeems again, so the market takes no new liquidity it would lend
     // there or price against it (docs/spec/lending-pool.md, "When Kamino can't pay").
     require!(!reserve.deprecated(), StrategyError::ReserveDeprecated);

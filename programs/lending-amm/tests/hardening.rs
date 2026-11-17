@@ -214,3 +214,185 @@ fn sos_stale_trade_a_quote_or_swap_refuses_a_reserve_more_than_an_hour_stale_and
         assert!(back < 0, "lent {lent}: the round trip paid {back}");
     }
 }
+
+/// Every call that reads Kamino is refused with `error`, while an LP still leaves in kind.
+fn only_in_kind_works(
+    env: &mut Env,
+    market: &Market,
+    lp: &solana_keypair::Keypair,
+    error: StrategyError,
+) {
+    let (other, lent_side) = (market.other_index(), market.lent_index);
+    let trader = env.funded_wallet(market, [OTHER, units(0, 10)]);
+    for (input, output) in [(other, lent_side), (lent_side, other)] {
+        let amount = env.balance(&env.wallet_token_account(market, &trader.pubkey(), input)) / 100;
+        assert_refused(env.quote(market, &exact_in(input, output, amount)), error);
+        assert_refused(env.swap(market, &trader, (input, output), amount), error);
+    }
+    let mut max = [0u64; 2];
+    max[other] = OTHER / 10;
+    max[lent_side] = units(0, 5);
+    let adder = env.funded_wallet(market, max);
+    // Refused before the reserve's age matters, so no refresh first (klend itself refuses one of
+    // a reserve of another version).
+    assert_refused(env.add_liquidity(market, &adder, max, 0), error);
+    assert_refused(env.rebalance(market, None), error);
+    let shares = env.lp_shares_of(market, &lp.pubkey());
+    assert_refused(
+        env.remove_liquidity(market, lp, shares / 2, [0, 0], Payout::Cash),
+        error,
+    );
+    env.remove_liquidity(market, lp, shares / 2, [0, 0], Payout::InKind)
+        .unwrap();
+}
+
+#[test]
+fn sos_recorded_reserve_a_market_never_reads_a_reserve_other_than_the_one_it_recorded() {
+    // As if an upgrade edited the lent mint's row of `LENT_MINTS`: the market recorded one reserve
+    // and the table now names another. It must stop rather than value, lend or redeem elsewhere.
+    for lent in 0..LENT_MINTS.len() {
+        let mut env = Env::new();
+        env.load_klend();
+        let spec = lent_spec(&mut env, lent, 30);
+        let (market, lp) = env
+            .create_funded_market(&spec, [OTHER, units(lent, 50)])
+            .unwrap();
+        env.rebalance(&market, None).unwrap();
+        // The market state's `reserve` field, after the version, bumps, lent index, fee, mode,
+        // both mints and vaults, the market signer, the LP mint and the cToken account.
+        let reserve_field = 15 + 6 * 32 + 32;
+        env.patch(&market.market_state, reserve_field, &[7u8; 32]);
+        only_in_kind_works(&mut env, &market, &lp, StrategyError::ReserveWrongAddress);
+    }
+}
+
+#[test]
+fn sos_reserve_version_a_reserve_of_a_version_this_program_was_not_written_for_is_refused() {
+    // A klend upgrade that moved the reserve to a new layout version, keeping its size and
+    // discriminator: the market must not price from offsets that may have moved.
+    for lent in 0..LENT_MINTS.len() {
+        let mut env = Env::new();
+        env.load_klend();
+        let spec = lent_spec(&mut env, lent, 30);
+        let (market, lp) = env
+            .create_funded_market(&spec, [OTHER, units(lent, 50)])
+            .unwrap();
+        env.rebalance(&market, None).unwrap();
+        let reserve = env.reserve_of(&market);
+        env.patch(
+            &reserve,
+            lending_amm::kamino::offsets::VERSION,
+            &2u64.to_le_bytes(),
+        );
+        only_in_kind_works(&mut env, &market, &lp, StrategyError::ReserveWrongVersion);
+    }
+}
+
+/// `remove_lent_side { lp, min_lent }` by `lp`: `remove_liquidity`'s first nineteen accounts.
+fn remove_lent_side_instruction(
+    env: &Env,
+    market: &Market,
+    lp: &pipeline_client::Pubkey,
+    shares: u64,
+    min_lent: u64,
+) -> pipeline_client::Instruction {
+    let mut instruction =
+        env.remove_liquidity_instruction(market, lp, shares, [0, 0], Payout::InKind);
+    instruction.accounts.truncate(19);
+    let mut data = anchor_discriminator("remove_lent_side").to_vec();
+    data.extend(borsh::to_vec(&(shares, min_lent)).unwrap());
+    instruction.data = data;
+    instruction
+}
+
+#[test]
+fn sos_other_mint_blocks_an_lp_leaves_with_the_lent_side_when_the_other_mint_cannot_move() {
+    use lending_amm::events::LentSideRemoved;
+    use lending_amm::shares::removal;
+    // The other mint keeps a freeze authority, which the mint rules allow (as USDC's), and its
+    // authority freezes the market's vault: no removal can pay the other side, so without
+    // `remove_lent_side` the LPs' WSOL or USDC would be trapped with it.
+    for lent in 0..LENT_MINTS.len() {
+        let mut env = Env::new();
+        env.load_klend();
+        let other = env.create_mint_with(
+            &TOKEN,
+            MintOptions {
+                freeze_authority: true,
+                ..MintOptions::default()
+            },
+        );
+        let spec = MarketSpec {
+            mints: [(other, TOKEN), (ck(&LENT_MINTS[lent].mint), TOKEN)],
+            params: lending_amm::InitParams {
+                lent_index: 1,
+                lp_fee_bps: 30,
+            },
+        };
+        let (market, lp) = env
+            .create_funded_market(&spec, [OTHER, units(lent, 50)])
+            .unwrap();
+        env.rebalance(&market, None).unwrap();
+        let freeze = spl_token_2022_interface::instruction::freeze_account(
+            &TOKEN,
+            &market.vaults[market.other_index()],
+            &other,
+            &env.admin.pubkey(),
+            &[],
+        )
+        .unwrap();
+        env.send(&[freeze], &[]).unwrap();
+
+        let wallet = lp.pubkey();
+        let shares = env.lp_shares_of(&market, &wallet);
+        assert!(env
+            .remove_liquidity(&market, &lp, shares / 2, [0, 0], Payout::InKind)
+            .is_err());
+
+        let state = env.market_state(&market.market_state);
+        let supply = env.mint_supply(&market.addresses.lp_mint);
+        let (other_index, lent_index) = (market.other_index(), market.lent_index);
+        let expected = removal(
+            shares / 2,
+            supply,
+            state.reserves[other_index],
+            state.reserves[lent_index],
+            state.ctokens,
+        )
+        .unwrap();
+        let lent_account = env.wallet_token_account(&market, &wallet, lent_index);
+        let lent_before = env.balance(&lent_account);
+        let too_much =
+            remove_lent_side_instruction(&env, &market, &wallet, shares / 2, expected.buffer + 1);
+        assert_refused(
+            env.send_meta(&[too_much], &[&lp]),
+            StrategyError::BelowMinLent,
+        );
+        let remove =
+            remove_lent_side_instruction(&env, &market, &wallet, shares / 2, expected.buffer);
+        let meta = env.send_meta(&[remove], &[&lp]).unwrap();
+
+        assert_eq!(env.balance(&lent_account) - lent_before, expected.buffer);
+        assert_eq!(
+            env.balance(&env.lp_ctoken_account(&market, &wallet)),
+            expected.ctokens
+        );
+        let after = env.market_state(&market.market_state);
+        assert_eq!(after.reserves[other_index], state.reserves[other_index]);
+        assert_eq!(
+            after.reserves[lent_index],
+            state.reserves[lent_index] - expected.buffer
+        );
+        assert_eq!(after.ctokens, state.ctokens - expected.ctokens);
+        assert_eq!(env.lp_shares_of(&market, &wallet), shares - shares / 2);
+        let event = &events::<LentSideRemoved>(&meta.logs)[0];
+        assert_eq!(
+            (event.lent, event.ctokens, event.other_left),
+            (expected.buffer, expected.ctokens, expected.other)
+        );
+        println!(
+            "lent {lent}: with the other vault frozen, left with {} of the lent mint and {} cTokens, {} of the other side left to the LPs who stay",
+            expected.buffer, expected.ctokens, expected.other
+        );
+    }
+}

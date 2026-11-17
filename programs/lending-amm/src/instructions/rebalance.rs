@@ -132,8 +132,7 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
     let market = &accounts.market_state;
     require!(market.is_open(), StrategyError::MarketNotOpen);
     let lent_side = market.lent_side();
-    let lent =
-        crate::config::lent_mint(&market.lent_mint()).ok_or(StrategyError::LentMintNotListed)?;
+    let lent = market.lent_entry()?;
     let kamino = KaminoAccounts {
         klend_program: &accounts.klend_program,
         reserve: &accounts.reserve,

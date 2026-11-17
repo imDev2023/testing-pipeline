@@ -125,6 +125,20 @@ impl LendingAmmMarket {
         self.mints[self.lent_side()]
     }
 
+    /// The lent mint's entry in `LENT_MINTS`, which must still name the reserve and the collateral
+    /// mint the market recorded at creation: a program upgrade that edits a row then stops the
+    /// market's trading, adding and lending, while its LPs leave in kind, rather than pointing it
+    /// at another reserve (finding H-C, docs/security/lending-amm/).
+    pub fn lent_entry(&self) -> Result<&'static crate::config::LentMint> {
+        let entry = crate::config::lent_mint(&self.lent_mint())
+            .ok_or(crate::errors::StrategyError::LentMintNotListed)?;
+        require!(
+            entry.reserve == self.reserve && entry.collateral_mint == self.collateral_mint,
+            crate::errors::StrategyError::ReserveWrongAddress
+        );
+        Ok(entry)
+    }
+
     /// Whether the first deposit has been made, which opens the market to quotes and swaps.
     ///
     /// Keyed on the other side alone: once the first deposit has put something there, no

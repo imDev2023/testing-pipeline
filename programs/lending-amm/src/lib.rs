@@ -18,6 +18,9 @@
 //! | `add_liquidity`             | LPs, directly                    | adds both mints for LP shares            |
 //! | `remove_liquidity`          | LPs, directly                    | burns LP shares for both mints, in cash  |
 //! |                             |                                  | or with the cTokens' part in kind        |
+//! | `remove_lent_side`          | LPs, directly                    | burns LP shares for the lent side's      |
+//! |                             |                                  | parts alone, when the other mint can't   |
+//! |                             |                                  | move                                     |
 //! | `lock_lp`                   | LPs, directly                    | moves LP shares into the lock account    |
 //! | `rebalance`                 | anyone, a keeper                 | moves the buffer back to its target      |
 //!
@@ -133,6 +136,17 @@ pub mod lending_amm {
         in_kind: bool,
     ) -> Result<()> {
         instructions::remove_liquidity_handler(ctx, lp, min_other, min_lent, in_kind)
+    }
+
+    /// Burns `lp` of the LP's shares for their part of the buffer, in the lent mint, and of the
+    /// cTokens, in kind, leaving the other side's part to the LPs who stay: the way out when the
+    /// other mint's freeze authority or transfer hook stops `remove_liquidity`.
+    pub fn remove_lent_side<'info>(
+        ctx: Context<'info, RemoveLentSide<'info>>,
+        lp: u64,
+        min_lent: u64,
+    ) -> Result<()> {
+        instructions::remove_lent_side_handler(ctx, lp, min_lent)
     }
 
     /// Moves `amount` of the LP's shares into the market's lock account, for good.

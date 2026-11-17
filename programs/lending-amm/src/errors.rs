@@ -112,4 +112,6 @@ pub enum StrategyError {
     BadSeedAmounts,
     #[msg("The Kamino reserve's stored rate is too old to value the market's cTokens: put klend's refresh_reserve first in the same transaction")]
     ReserveStale,
+    #[msg("The Kamino reserve's version is one this program was not written for: quotes, swaps, adding and rebalance are refused, and removal is in kind only")]
+    ReserveWrongVersion,
 }

@@ -67,7 +67,7 @@ pub fn strategy_accounts<'a, 'info>(
     let (reserve_account, rest) = rest
         .split_first()
         .ok_or(StrategyError::ReserveWrongAddress)?;
-    let reserve = kamino::reserve_of(&market.lent_mint(), reserve_account)?;
+    let reserve = kamino::reserve_of(market.lent_entry()?, reserve_account)?;
     let starts_redeem = rest.first().is_some_and(|a| *a.key == KLEND_PROGRAM);
     let (redeem, rest) = match rest {
         [klend_program, lending_market, lending_market_authority, liquidity_supply, collateral_mint, ctoken_account, token_program, instructions_sysvar, rest @ ..]
@@ -140,8 +140,7 @@ impl<'a, 'info> StrategyAccounts<'a, 'info> {
             market.ctoken_account,
             StrategyError::KaminoAccountWrong
         );
-        let lent =
-            config::lent_mint(&market.lent_mint()).ok_or(StrategyError::LentMintNotListed)?;
+        let lent = market.lent_entry()?;
         let (reserve, lending_market) = kamino.check(lent)?;
         Ok(reserve.can_pay_planned(
             &lending_market,
