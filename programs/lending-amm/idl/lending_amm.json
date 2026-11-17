@@ -163,6 +163,101 @@
       ]
     },
     {
+      "name": "lock_lp",
+      "docs": [
+        "Moves `amount` of the LP's shares into the market's lock account, for good."
+      ],
+      "discriminator": [
+        236,
+        140,
+        2,
+        95,
+        1,
+        131,
+        251,
+        254
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "docs": [
+            "The LP, who pays for the lock account if it is missing."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market_state"
+        },
+        {
+          "name": "lp_mint",
+          "relations": [
+            "market_state"
+          ]
+        },
+        {
+          "name": "lp_shares",
+          "docs": [
+            "The token account of the LP mint the shares come from, which the LP owns."
+          ],
+          "writable": true
+        },
+        {
+          "name": "lock_account",
+          "docs": [
+            "mint; created here if missing."
+          ],
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "SPL Token, the LP mint's program."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "pipeline_init_market",
       "docs": [
         "Creates a market. `data` is the Borsh-encoded [`InitParams`]."
@@ -419,7 +514,10 @@
           "name": "input_mint"
         },
         {
-          "name": "output_mint"
+          "name": "output_mint",
+          "docs": [
+            "the lent mint before passing it on as klend's liquidity mint."
+          ]
         },
         {
           "name": "input_token_program"
@@ -477,7 +575,10 @@
           "name": "input_mint"
         },
         {
-          "name": "output_mint"
+          "name": "output_mint",
+          "docs": [
+            "the lent mint before passing it on as klend's liquidity mint."
+          ]
         },
         {
           "name": "input_token_program"
@@ -492,6 +593,245 @@
           "type": {
             "defined": {
               "name": "ResolveRequest"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pipeline_seed_liquidity",
+      "docs": [
+        "For a launchpad graduating a token: creates a market at the PDA `[\"seeded\", seeder,",
+        "other_mint, lent_mint, lp_fee_bps]` with the creation parameters in `request.data`,",
+        "makes its first deposit of `request.amounts` from the seeder's escrows, mints the shares",
+        "to the LP recipient's associated token account for the LP mint, and returns",
+        "`SeedResult`. The caller then records the market with the router."
+      ],
+      "discriminator": [
+        197,
+        81,
+        12,
+        118,
+        24,
+        65,
+        212,
+        81
+      ],
+      "accounts": [
+        {
+          "name": "seeder",
+          "docs": [
+            "A PDA of the calling program, signing; it owns the escrows and becomes the seeder."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "docs": [
+            "checked and created by [`NewMarket`]."
+          ],
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "A system account holding the SOL the caller allows for rent."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "lp_recipient",
+          "docs": [
+            "lock them."
+          ]
+        },
+        {
+          "name": "mint_0"
+        },
+        {
+          "name": "escrow_0",
+          "docs": [
+            "authority."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program_0"
+        },
+        {
+          "name": "mint_1"
+        },
+        {
+          "name": "escrow_1",
+          "writable": true
+        },
+        {
+          "name": "token_program_1"
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_0",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "mint_0"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_1",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              },
+              {
+                "kind": "account",
+                "path": "mint_1"
+              }
+            ]
+          }
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "ctoken_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lp_mint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  112,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "SPL Token, which owns the lent mint, the collateral mint and the LP mint."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "recipient_shares",
+          "docs": [
+            "lock account when the LP recipient is the vault authority."
+          ],
+          "writable": true
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "reserve",
+          "docs": [
+            "The Kamino reserve the lent mint lends to, read-only, checked before the first deposit",
+            "as `add_liquidity` checks it."
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "request",
+          "type": {
+            "defined": {
+              "name": "SeedRequest"
             }
           }
         }
@@ -656,6 +996,197 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "remove_liquidity",
+      "docs": [
+        "Burns `lp` of the LP's shares for their part of the other side, the buffer and the",
+        "cTokens: in cash, the cTokens' part redeemed from Kamino and paid in the lent mint, or in",
+        "kind, paid as cTokens with no Kamino account read or called."
+      ],
+      "discriminator": [
+        80,
+        85,
+        209,
+        72,
+        24,
+        206,
+        177,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "docs": [
+            "The LP, who burns their shares and pays for their cToken account if an in-kind removal",
+            "creates it."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "lp_mint",
+          "writable": true,
+          "relations": [
+            "market_state"
+          ]
+        },
+        {
+          "name": "lp_shares",
+          "docs": [
+            "The token account of the LP mint the shares are burned from, which the LP owns."
+          ],
+          "writable": true
+        },
+        {
+          "name": "lp_token_0",
+          "writable": true
+        },
+        {
+          "name": "lp_token_1",
+          "writable": true
+        },
+        {
+          "name": "vault_0",
+          "writable": true
+        },
+        {
+          "name": "vault_1",
+          "writable": true
+        },
+        {
+          "name": "mint_0"
+        },
+        {
+          "name": "mint_1"
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctoken_account",
+          "writable": true
+        },
+        {
+          "name": "collateral_mint",
+          "docs": [
+            "The reserve's collateral (cToken) mint, an SPL Token mint, read-only, so an in-kind",
+            "removal never write-locks the mint every Kamino user of the reserve shares; a cash removal",
+            "passes it again, writable, among the Kamino accounts."
+          ]
+        },
+        {
+          "name": "lp_ctoken",
+          "docs": [
+            "removal pays the cTokens, created there if missing; checked only in kind, since a cash",
+            "removal never touches it."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program_0"
+        },
+        {
+          "name": "token_program_1"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "SPL Token, the program of the LP mint, the lent mint and every cToken mint."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "klend_program",
+          "docs": [
+            "For a removal in cash, the lent mint's Kamino accounts, each checked before any is",
+            "passed to klend ([`KaminoAccounts::check`]); left out in kind."
+          ],
+          "optional": true
+        },
+        {
+          "name": "reserve",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "lending_market",
+          "optional": true
+        },
+        {
+          "name": "lending_market_authority",
+          "optional": true
+        },
+        {
+          "name": "reserve_liquidity_supply",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "instructions_sysvar",
+          "optional": true
+        },
+        {
+          "name": "reserve_collateral_mint",
+          "docs": [
+            "supply; checked against the lent mint's entry in `LENT_MINTS`."
+          ],
+          "writable": true,
+          "optional": true
+        }
+      ],
+      "args": [
+        {
+          "name": "lp",
+          "type": "u64"
+        },
+        {
+          "name": "min_other",
+          "type": "u64"
+        },
+        {
+          "name": "min_lent",
+          "type": "u64"
+        },
+        {
+          "name": "in_kind",
+          "type": "bool"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -688,6 +1219,19 @@
       ]
     },
     {
+      "name": "LiquidityRemoved",
+      "discriminator": [
+        225,
+        105,
+        216,
+        39,
+        124,
+        116,
+        169,
+        189
+      ]
+    },
+    {
       "name": "MarketCreated",
       "discriminator": [
         88,
@@ -701,6 +1245,19 @@
       ]
     },
     {
+      "name": "MarketSeeded",
+      "discriminator": [
+        132,
+        95,
+        90,
+        213,
+        26,
+        63,
+        25,
+        185
+      ]
+    },
+    {
       "name": "Rebalanced",
       "discriminator": [
         74,
@@ -711,6 +1268,58 @@
         179,
         52,
         182
+      ]
+    },
+    {
+      "name": "SharesLocked",
+      "discriminator": [
+        20,
+        13,
+        218,
+        116,
+        193,
+        93,
+        51,
+        151
+      ]
+    },
+    {
+      "name": "ShortfallRedeemed",
+      "discriminator": [
+        208,
+        206,
+        3,
+        143,
+        152,
+        189,
+        140,
+        24
+      ]
+    },
+    {
+      "name": "WithdrawModeEntered",
+      "discriminator": [
+        66,
+        18,
+        123,
+        120,
+        231,
+        122,
+        170,
+        76
+      ]
+    },
+    {
+      "name": "WithdrawModeLeft",
+      "discriminator": [
+        118,
+        66,
+        87,
+        168,
+        200,
+        101,
+        236,
+        125
       ]
     }
   ],
@@ -803,7 +1412,7 @@
     {
       "code": 6017,
       "name": "BeyondBuffer",
-      "msg": "The trade would pay out more of the lent side than the buffer holds"
+      "msg": "The trade would pay out more of the lent side than the buffer holds plus what Kamino can pay right now"
     },
     {
       "code": 6018,
@@ -899,6 +1508,76 @@
       "code": 6036,
       "name": "KaminoAccountWrong",
       "msg": "A Kamino account is not the one the lent mint's reserve names"
+    },
+    {
+      "code": 6037,
+      "name": "RedeemAccountsMissing",
+      "msg": "The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again"
+    },
+    {
+      "code": 6038,
+      "name": "RedeemPaidShort",
+      "msg": "Kamino's redeem paid the market less than the swap's shortfall"
+    },
+    {
+      "code": 6039,
+      "name": "ZeroRemoval",
+      "msg": "The removal would burn no LP shares or pay out nothing"
+    },
+    {
+      "code": 6040,
+      "name": "NotEnoughShares",
+      "msg": "The removal burns more LP shares than the market has minted"
+    },
+    {
+      "code": 6041,
+      "name": "BelowMinOther",
+      "msg": "The removal would pay out less of the other mint than min_other"
+    },
+    {
+      "code": 6042,
+      "name": "BelowMinLent",
+      "msg": "The removal would pay out less of the lent mint than min_lent"
+    },
+    {
+      "code": 6043,
+      "name": "KaminoAccountsMissing",
+      "msg": "A removal in cash needs the lent mint's Kamino accounts: add them, or remove in kind"
+    },
+    {
+      "code": 6044,
+      "name": "KaminoCannotPay",
+      "msg": "Kamino cannot pay the cTokens' part right now: remove in kind"
+    },
+    {
+      "code": 6045,
+      "name": "ZeroLock",
+      "msg": "Locking needs at least one LP share"
+    },
+    {
+      "code": 6046,
+      "name": "KaminoStopped",
+      "msg": "Kamino redeems nothing right now (reserve or lending market emergency mode, or a deprecated reserve): rebalance refuses"
+    },
+    {
+      "code": 6047,
+      "name": "KaminoDepositsBlocked",
+      "msg": "Kamino blocks cToken deposits into the reserve: rebalance skips the deposit"
+    },
+    {
+      "code": 6048,
+      "name": "ReserveDeprecated",
+      "msg": "The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only"
+    },
+    {
+      "code": 6049,
+      "name": "RebalanceNotAlone",
+      "msg": "rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls"
+    },
+    {
+      "code": 6050,
+      "name": "BadSeedAmounts",
+      "msg": "SeedRequest.amounts must hold exactly one amount for each of the market's two mints"
     }
   ],
   "types": [
@@ -1157,9 +1836,78 @@
       }
     },
     {
+      "name": "LiquidityRemoved",
+      "docs": [
+        "An LP removed liquidity with `remove_liquidity` (docs/spec/lending-pool.md, \"Removing\")."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "The LP shares burned."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "share_count",
+            "docs": [
+              "The market's share count after the removal, the locked minimum included."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "amounts",
+            "docs": [
+              "What the LP received of each mint, by mint index: the other side's part, and of the lent",
+              "mint the buffer's part plus, in cash, what klend paid for the cTokens' part."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                2
+              ]
+            }
+          },
+          {
+            "name": "ctokens",
+            "docs": [
+              "The cTokens that left the market, as measured: paid to the LP in kind, burned by klend's",
+              "redeem in cash."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "in_kind",
+            "docs": [
+              "Whether the cTokens' part was paid as cTokens."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "redeemed",
+            "docs": [
+              "In cash, the lent mint klend's redeem paid for the cTokens' part, included in `amounts`."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "MarketCreated",
       "docs": [
-        "A market was created through the router's `create_market`."
+        "A market was created, through the router's `create_market` or a launchpad's",
+        "`pipeline_seed_liquidity`, which then emits [`MarketSeeded`]."
       ],
       "type": {
         "kind": "struct",
@@ -1216,6 +1964,68 @@
           {
             "name": "created_at",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketSeeded",
+      "docs": [
+        "A launchpad's program seeded a new market with `pipeline_seed_liquidity`: its first deposit",
+        "came from the seeder's escrows, and its shares went to the LP recipient."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "seeder",
+            "docs": [
+              "The calling program's PDA that signed, whose address scopes the market's."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_recipient",
+            "docs": [
+              "The owner of the shares, and the token account of the LP mint they went to: the",
+              "recipient's associated token account, the lock account when the recipient is the vault",
+              "authority."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "shares_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "amounts",
+            "docs": [
+              "What the market took of each mint, by mint index."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                2
+              ]
+            }
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "The LP shares minted to the recipient."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "share_count",
+            "docs": [
+              "The market's share count after the seed, the locked minimum included."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -1325,6 +2135,129 @@
       }
     },
     {
+      "name": "SeedRequest",
+      "docs": [
+        "`pipeline_strategy_interface::SeedRequest`: the most to take from each escrow, in mint",
+        "order, and the creation parameters, Borsh-encoded as [`crate::InitParams`]."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "amounts",
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "data",
+            "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SharesLocked",
+      "docs": [
+        "An LP moved shares into the market's lock account with `lock_lp`, for good",
+        "(docs/spec/lending-pool.md, \"Locking\")."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "The shares locked by this call."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "locked",
+            "docs": [
+              "The lock account's balance afterwards: every share locked in the market so far."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "share_count",
+            "docs": [
+              "The market's share count, the locked minimum included, which locking leaves unchanged."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ShortfallRedeemed",
+      "docs": [
+        "A swap redeemed its shortfall from Kamino before paying the trader",
+        "(docs/spec/lending-pool.md, \"Redeeming the shortfall\")."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "shortfall",
+            "docs": [
+              "What the trade paid out beyond the buffer, `out - B`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ctokens",
+            "docs": [
+              "The cTokens burned, `ceil(shortfall x S_ctoken / S_total)` at the stored rate, as",
+              "measured at the market's cToken account."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "liquidity",
+            "docs": [
+              "The lent mint klend's redeem actually paid into the buffer vault, at least the shortfall;",
+              "anything above it stays in the buffer."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "buffer",
+            "docs": [
+              "The buffer `B` the market has recorded after paying the trader."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ctokens_held",
+            "docs": [
+              "The cTokens `c` the market has recorded afterwards."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "redeemed",
+            "docs": [
+              "The running total of the lent mint redeemed from Kamino afterwards."
+            ],
+            "type": "u128"
+          }
+        ]
+      }
+    },
+    {
       "name": "SwapRequest",
       "docs": [
         "`pipeline_strategy_interface::SwapRequest`."
@@ -1410,6 +2343,69 @@
           }
         ]
       }
+    },
+    {
+      "name": "WithdrawModeEntered",
+      "docs": [
+        "`rebalance` put the market into withdraw mode: Kamino's freely available liquidity was below",
+        "`WITHDRAW_MODE_ENTER` times the market's exposure (docs/spec/lending-pool.md, \"Withdraw",
+        "mode\"). Emitted before the call's [`Rebalanced`], if it moved anything."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "free_liquidity",
+            "docs": [
+              "The reserve's freely available liquidity `rebalance` measured."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "exposure",
+            "docs": [
+              "The market's exposure `X = max(V, T)`: the larger of its lent value and its target lent",
+              "value."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WithdrawModeLeft",
+      "docs": [
+        "`rebalance` took the market out of withdraw mode: Kamino's freely available liquidity was",
+        "back above `WITHDRAW_MODE_EXIT` times the market's exposure, so the band applies again.",
+        "Emitted before the call's [`Rebalanced`], if it moved anything."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "free_liquidity",
+            "docs": [
+              "The reserve's freely available liquidity `rebalance` measured."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "exposure",
+            "docs": [
+              "The market's exposure `X = max(V, T)`."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
     }
   ],
   "constants": [
@@ -1455,6 +2451,25 @@
       ],
       "type": "u64",
       "value": "1000"
+    },
+    {
+      "name": "WITHDRAW_MODE_ENTER",
+      "docs": [
+        "Enter withdraw mode when Kamino's freely available liquidity is below this many times",
+        "the larger of the market's lent value and its target lent value. Exported in the IDL, as is",
+        "the exit multiple, from which keepers and the demo read them. It must not be above",
+        "`WITHDRAW_MODE_EXIT`, which `crate::withdraw_mode` checks when the program is built."
+      ],
+      "type": "u64",
+      "value": "5"
+    },
+    {
+      "name": "WITHDRAW_MODE_EXIT",
+      "docs": [
+        "Leave withdraw mode when it is back above this many times that amount."
+      ],
+      "type": "u64",
+      "value": "10"
     }
   ]
 }

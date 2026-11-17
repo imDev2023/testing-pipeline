@@ -5,6 +5,7 @@ docs/spec/README.md, "Test layers", layer 6).
     python3 programs/lending-amm/scripts/kamino_accounts.py dump --cluster mainnet
     python3 programs/lending-amm/scripts/kamino_accounts.py dump --cluster devnet [--out DIR]
     python3 programs/lending-amm/scripts/kamino_accounts.py check --cluster mainnet [--fresh DIR]
+    python3 programs/lending-amm/scripts/kamino_accounts.py local --cluster devnet --out DIR
 
 For each reserve a build of the lending AMM lends to, it reads the reserve, its lending
 market, the lending market's authority (when it exists), the liquidity and collateral mints,
@@ -33,6 +34,13 @@ The reserves are those of each cluster's lent mints: mainnet's are read from the
 (`tests/policy_values.rs`); `tests/kamino.rs` checks the committed dumps are of the reserves
 each build lends to. Offsets are klend 1.28.0's (docs/spec/lending-pool.md,
 "Valuing the lent side").
+
+`local` writes, for a local validator only, the devnet accounts the Kamino-side commands of
+`scripts/kamino-devnet` need beyond the cToken path: the two Pyth price accounts the reserves
+name, with their publish time moved 50 years ahead, since klend counts a price from the future
+as 0 seconds old and a validator warped to devnet's slot keeps a clock of its own, so the test
+borrower can borrow and repay; and klend's global config, which turning emergency mode on and
+off reads. Nothing it writes is committed.
 
 Environment: RPC_URL overrides the cluster's public RPC.
 """
@@ -332,15 +340,63 @@ def check(cluster: str, fresh: pathlib.Path | None) -> int:
     return 0
 
 
+# A Pyth receiver `PriceUpdateV2` account with full verification: discriminator, write
+# authority, verification level (one byte), then the price message: feed id, price (i64),
+# confidence (u64), exponent (i32), publish time and previous publish time (i64 each).
+PYTH_PUBLISH_TIME = 8 + 32 + 1 + 32 + 8 + 8 + 4
+PYTH_FULLY_VERIFIED_AT = 40
+# How far ahead `local` moves the Pyth publish times: 50 years.
+PYTH_AHEAD_SECONDS = 50 * 365 * 86_400
+
+
+def local(cluster: str, out: pathlib.Path) -> None:
+    if cluster != "devnet":
+        raise SystemExit("`local` is for a local validator running devnet's klend")
+    url = os.environ.get("RPC_URL", RPC[cluster])
+    deployment = json.loads((ROOT / "deployments" / "kamino-devnet.json").read_text())
+    labels = {f"pyth-{name}": reserve["pythPrice"] for name, reserve in deployment["reserves"].items()}
+    labels["global-config"] = find_program_address([b"global_config"], klend_program())
+    _, accounts = get_accounts(url, list(labels.values()))
+    ahead = int(time.time()) + PYTH_AHEAD_SECONDS
+    out.mkdir(parents=True, exist_ok=True)
+    for (label, address), account in zip(labels.items(), accounts):
+        if account is None:
+            raise SystemExit(f"{label} {address} does not exist on {cluster}")
+        data = bytearray(base64.b64decode(account["data"][0]))
+        if label.startswith("pyth-"):
+            if data[PYTH_FULLY_VERIFIED_AT] != 1:
+                raise SystemExit(f"{label} {address} is not a fully verified Pyth price update")
+            data[PYTH_PUBLISH_TIME : PYTH_PUBLISH_TIME + 8] = ahead.to_bytes(8, "little", signed=True)
+            data[PYTH_PUBLISH_TIME + 8 : PYTH_PUBLISH_TIME + 16] = (ahead - 1).to_bytes(8, "little", signed=True)
+        record = {
+            "pubkey": address,
+            "account": {
+                "lamports": account["lamports"],
+                "data": [base64.b64encode(bytes(data)).decode(), "base64"],
+                "owner": account["owner"],
+                "executable": account["executable"],
+                "rentEpoch": 0,
+                "space": len(data),
+            },
+        }
+        (out / f"{label}.json").write_text(json.dumps(record, indent=2) + "\n")
+    print(f"{cluster}: {', '.join(labels)} -> {out}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("command", choices=["dump", "check"])
+    parser.add_argument("command", choices=["dump", "check", "local"])
     parser.add_argument("--cluster", choices=["mainnet", "devnet"], required=True)
-    parser.add_argument("--out", type=pathlib.Path, help="where `dump` writes (default: the committed copy)")
+    parser.add_argument("--out", type=pathlib.Path, help="where `dump` (default: the committed copy) or `local` writes")
     parser.add_argument("--fresh", type=pathlib.Path, help="`check` against this dump instead of fetching one")
     args = parser.parse_args()
     if args.command == "dump":
         dump(args.cluster, args.out or COMMITTED / args.cluster)
+        return 0
+    if args.command == "local":
+        if args.out is None:
+            raise SystemExit("`local` needs --out")
+        local(args.cluster, args.out)
         return 0
     return check(args.cluster, args.fresh)
 

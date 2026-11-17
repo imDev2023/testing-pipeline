@@ -88,24 +88,53 @@ pub fn lent_total(
         .ok_or(StrategyError::Overflow)
 }
 
-/// What a lent-side output may take from the buffer: refused beyond it. Redeeming the
-/// shortfall from Kamino inside the swap arrives with
-/// [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81).
-pub fn check_buffer(out: u64, buffer: u64) -> core::result::Result<(), StrategyError> {
-    if out > buffer {
+/// The shortfall `s = out - B` a lent-side output of `out` must redeem from Kamino when the
+/// buffer holds `buffer` and Kamino can pay `kamino_can_pay` right now: 0 when the buffer
+/// covers it, refused when it needs more than the buffer plus what Kamino can pay
+/// (docs/spec/lending-pool.md, "Pricing" and "Redeeming the shortfall").
+pub fn shortfall(
+    out: u64,
+    buffer: u64,
+    kamino_can_pay: u64,
+) -> core::result::Result<u64, StrategyError> {
+    let shortfall = out.saturating_sub(buffer);
+    if shortfall > kamino_can_pay {
         return Err(StrategyError::BeyondBuffer);
     }
-    Ok(())
+    Ok(shortfall)
+}
+
+/// A priced trade: what [`quote`] returns to `pipeline_quote` and settles in `pipeline_swap`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Quote {
+    pub amount_in: u64,
+    pub amount_out: u64,
+    /// What the swap redeems from Kamino before paying out, `out - B`, or 0 when the buffer
+    /// covers the output or the output is the other side.
+    pub shortfall: u64,
+}
+
+impl Quote {
+    /// The quote as Pipeline's interface returns it.
+    pub fn result(&self) -> QuoteResult {
+        QuoteResult {
+            amount_in: self.amount_in,
+            amount_out: self.amount_out,
+        }
+    }
 }
 
 /// Prices `trade` against `market`, with its lent side valued from `reserve`, which the caller
 /// has checked ([`crate::kamino::reserve_of`]): exact-in only, once the first deposit has
-/// opened it.
+/// opened it. A lent-side output beyond the buffer asks `kamino_can_pay` what Kamino can pay
+/// right now, and only then, so a trade the buffer covers never reads Kamino's other accounts;
+/// it is refused when the shortfall is more than that.
 pub fn quote(
     market: &LendingAmmMarket,
     reserve: &Reserve,
     trade: &TradeRequest,
-) -> Result<QuoteResult> {
+    kamino_can_pay: impl FnOnce() -> Result<u64>,
+) -> Result<Quote> {
     require!(
         trade.mode == TradeMode::ExactIn,
         StrategyError::ExactOutNotSupported
@@ -123,12 +152,16 @@ pub fn quote(
         trade.amount,
         market.lp_fee_bps,
     )?;
-    if output == lent {
-        check_buffer(priced.out, market.reserves[lent])?;
-    }
-    Ok(QuoteResult {
+    let buffer = market.reserves[lent];
+    let shortfall = if output == lent && priced.out > buffer {
+        shortfall(priced.out, buffer, kamino_can_pay()?)?
+    } else {
+        0
+    };
+    Ok(Quote {
         amount_in: trade.amount,
         amount_out: priced.out,
+        shortfall,
     })
 }
 
@@ -179,10 +212,17 @@ mod tests {
     }
 
     #[test]
-    fn a_lent_output_beyond_the_buffer_is_refused() {
-        assert!(check_buffer(10, 10).is_ok());
+    fn a_lent_output_beyond_the_buffer_redeems_its_shortfall_or_is_refused() {
+        let code = |r: core::result::Result<u64, StrategyError>| r.map_err(|e| e as u32);
+        assert_eq!(code(shortfall(10, 10, 0)), Ok(0));
+        assert_eq!(code(shortfall(9, 10, 0)), Ok(0));
+        assert_eq!(code(shortfall(15, 10, 5)), Ok(5));
         assert_eq!(
-            check_buffer(11, 10).map_err(|e| e as u32),
+            code(shortfall(16, 10, 5)),
+            Err(StrategyError::BeyondBuffer as u32)
+        );
+        assert_eq!(
+            code(shortfall(11, 10, 0)),
             Err(StrategyError::BeyondBuffer as u32)
         );
     }

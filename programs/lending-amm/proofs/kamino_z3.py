@@ -16,6 +16,10 @@ u64 cToken supply `N` (docs/spec/lending-pool.md, "Valuing the lent side"; docs/
    carries the buffer past its target at the stored rate; and that function's numerator split,
    its refusal of a quotient of 2^64 or more, and its long division, whose doubled remainder may
    carry out of 128 bits since the divisor `S` may use all 128, are exact.
+4. The cTokens a swap burns for its shortfall `x` (`ctokens_covering`, `k = ceil(x x N x 2^60 /
+   S)`, the floor above plus one when the division leaves a remainder) are worth at least `x`
+   at the stored rate, and one fewer would be worth less than `x`, so they are at most one
+   cToken more than the shortfall needs (docs/spec/lending-pool.md, "Redeeming the shortfall").
 
 Each division is modelled by its quotient and remainder, and each wide product by its 64-bit
 digits (`p = h x 2^64 + l`, `0 <= l < 2^64`), which Z3 proves in seconds where symbolic
@@ -278,6 +282,24 @@ def main():
             2 * y3 + bit3 == q3_next * s_total + r3_next,
         ),
         step3_ok,
+    )
+
+    # 4. k = floor(x x N x 2^60 / S) + (1 if the remainder is not 0) cTokens are worth
+    # floor(k x S / (N x 2^60)) >= x, and k - 1 of them, for k >= 1, are worth less than x.
+    kq, kq_facts = floor_div("kq", x * m, s_total)
+    kr = x * m - kq * s_total
+    kc = kq + If(kr > 0, 1, 0)
+    covered, covered_facts = floor_div("covered", kc * s_total, m)
+    fewer, fewer_facts = floor_div("fewer", (kc - 1) * s_total, m)
+    ok &= prove(
+        "the cTokens covering a shortfall are worth at least it, and one fewer would be worth less",
+        And(covered >= x, Implies(kc >= 1, fewer < x)),
+        x_ok,
+        n_ok,
+        s_ok,
+        kq_facts,
+        covered_facts,
+        fewer_facts,
     )
 
     if not ok:

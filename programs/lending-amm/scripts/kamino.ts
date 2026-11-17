@@ -20,6 +20,7 @@ const OFFSETS = {
     pendingReferrerFeesSf: 376,
     collateralMint: 2560,
     mintTotalSupply: 2592,
+    queuedCollateralAmount: 6968,
 } as const;
 
 export type ReserveView = {
@@ -33,6 +34,8 @@ export type ReserveView = {
     totalSupplySf: bigint;
     /** S_ctoken, the reserve's own `collateral.mint_total_supply`. */
     mintTotalSupply: bigint;
+    /** cTokens held back by queued withdrawal tickets. */
+    queuedCollateralAmount: bigint;
 };
 
 function u64(data: Uint8Array, offset: number): bigint {
@@ -68,7 +71,18 @@ export function decodeReserve(data: Uint8Array): ReserveView | string {
         collateralMint: key(data, OFFSETS.collateralMint),
         totalSupplySf: supply,
         mintTotalSupply: u64(data, OFFSETS.mintTotalSupply),
+        queuedCollateralAmount: u64(data, OFFSETS.queuedCollateralAmount),
     };
+}
+
+/**
+ * The reserve's freely available liquidity, which withdraw mode measures: what it holds less
+ * the value of queued withdrawal tickets at the stored rate (docs/spec/lending-pool.md,
+ * "Redeeming the shortfall").
+ */
+export function freeLiquidity(reserve: ReserveView): bigint {
+    const queued = lentValue(reserve.queuedCollateralAmount, reserve);
+    return reserve.totalAvailableAmount > queued ? reserve.totalAvailableAmount - queued : 0n;
 }
 
 /**
@@ -105,4 +119,14 @@ export function klendDeposit(liquidity: bigint, totalSupplySf: bigint, mintTotal
     const scaled = mintTotalSupply << 60n;
     const taken = (ctokens * totalSupplySf + scaled - 1n) / scaled;
     return { ctokens, taken };
+}
+
+/**
+ * klend's `redeem_reserve_collateral` of `ctokens` at a reserve whose total supply is
+ * `totalSupplySf` and cToken supply `mintTotalSupply` once refreshed: it pays
+ * `floor(ctokens x S_total / S_ctoken)` of the liquidity (`collateral_to_liquidity` in klend
+ * 1.28.0), written here on its own.
+ */
+export function klendRedeem(ctokens: bigint, totalSupplySf: bigint, mintTotalSupply: bigint) {
+    return (ctokens * totalSupplySf) / (mintTotalSupply << 60n);
 }

@@ -161,6 +161,7 @@ export type PipelineQuoteInput<
   traderOutput: TAccountTraderOutput;
   inputVault: TAccountInputVault;
   inputMint: TAccountInputMint;
+  /** the lent mint before passing it on as klend's liquidity mint. */
   outputMint: TAccountOutputMint;
   inputTokenProgram: TAccountInputTokenProgram;
   outputTokenProgram: TAccountOutputTokenProgram;
@@ -381,6 +382,7 @@ export type ParsedPipelineQuoteInstruction<
     traderOutput: TAccountMetas[4];
     inputVault: TAccountMetas[5];
     inputMint: TAccountMetas[6];
+    /** the lent mint before passing it on as klend's liquidity mint. */
     outputMint: TAccountMetas[7];
     inputTokenProgram: TAccountMetas[8];
     outputTokenProgram: TAccountMetas[9];

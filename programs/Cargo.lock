@@ -1977,11 +1977,14 @@ dependencies = [
  "serde_json",
  "solana-account",
  "solana-clock 3.2.1",
+ "solana-instructions-sysvar 3.0.1",
  "solana-keypair",
+ "solana-message",
  "solana-security-txt",
  "solana-signer",
  "solana-transaction",
  "spl-token-2022-interface 3.1.2",
+ "stand-in-launchpad",
  "toml",
 ]
 
@@ -5078,6 +5081,13 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "pipeline-strategy-interface",
+]
+
+[[package]]
+name = "stand-in-smart-wallet"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
 ]
 
 [[package]]

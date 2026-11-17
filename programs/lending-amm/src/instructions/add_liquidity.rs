@@ -12,7 +12,7 @@
 //! LP's associated token account, because metadata can't describe the associated token
 //! account of a mint that is itself a PDA.) The lent side is valued from the Kamino reserve,
 //! which every deposit, the first included, checks before reading, so adding is refused while
-//! the reserve fails the check. Remaining accounts are the other side's transfer-hook
+//! the reserve fails the check, and while it is deprecated after a total write-off. Remaining accounts are the other side's transfer-hook
 //! accounts, forwarded to its transfer in; the lent mint has none.
 
 use anchor_lang::prelude::*;
@@ -95,6 +95,9 @@ pub fn add_liquidity_handler<'info>(
     let max = [max_0, max_1];
     let (max_other, max_lent) = (max[other_index], max[lent_index]);
     let reserve = kamino::reserve_of(&market.lent_mint(), &ctx.accounts.reserve.to_account_info())?;
+    // A deprecated reserve never redeems again, so the market takes no new liquidity it would lend
+    // there or price against it (docs/spec/lending-pool.md, "When Kamino can't pay").
+    require!(!reserve.deprecated(), StrategyError::ReserveDeprecated);
     let first = !market.is_open();
     let deposit = if first {
         shares::first_deposit(max_other, max_lent)?

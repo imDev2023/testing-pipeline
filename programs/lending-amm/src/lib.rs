@@ -13,14 +13,20 @@
 //! | `pipeline_resolve_accounts` | quoters and SDKs, in simulation  | lists the accounts a swap needs          |
 //! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices a trade, read-only                |
 //! | `pipeline_swap`             | the router, from `swap`          | settles a trade                          |
+//! | `pipeline_seed_liquidity`   | a launchpad's program, by CPI    | creates a market and makes its first     |
+//! |                             |                                  | deposit from the launchpad's escrows     |
 //! | `add_liquidity`             | LPs, directly                    | adds both mints for LP shares            |
+//! | `remove_liquidity`          | LPs, directly                    | burns LP shares for both mints, in cash  |
+//! |                             |                                  | or with the cTokens' part in kind        |
+//! | `lock_lp`                   | LPs, directly                    | moves LP shares into the lock account    |
 //! | `rebalance`                 | anyone, a keeper                 | moves the buffer back to its target      |
 //!
 //! Quotes, swaps and deposits value the lent side as `L = B + V`: the buffer `B` in the lent
 //! mint's vault, plus the market's recorded cTokens at the Kamino reserve's stored rate, read
-//! after the reserve is checked ([`kamino`]). `rebalance` lends the surplus to Kamino and
-//! redeems a shortfall from it, by the rule in [`buffer`], whenever the buffer's share of the
-//! lent side has left its band.
+//! after the reserve is checked ([`kamino`]). A swap that pays out more of the lent side than
+//! the buffer holds redeems just the shortfall from Kamino inside the swap, and never deposits.
+//! `rebalance` lends the surplus to Kamino and redeems a shortfall from it, by the rule in
+//! [`buffer`], whenever the buffer's share of the lent side has left its band.
 //!
 //! Where things live: the build-time policy values in [`config`], the creation parameters
 //! and their rules in [`params`], the market state and its final layout in [`state`], the
@@ -43,6 +49,7 @@ pub mod pricing;
 pub mod shares;
 pub mod state;
 pub mod token;
+pub mod withdraw_mode;
 
 pub use errors::StrategyError;
 pub use instructions::*;
@@ -93,6 +100,18 @@ pub mod lending_amm {
         instructions::swap(ctx, request)
     }
 
+    /// For a launchpad graduating a token: creates a market at the PDA `["seeded", seeder,
+    /// other_mint, lent_mint, lp_fee_bps]` with the creation parameters in `request.data`,
+    /// makes its first deposit of `request.amounts` from the seeder's escrows, mints the shares
+    /// to the LP recipient's associated token account for the LP mint, and returns
+    /// `SeedResult`. The caller then records the market with the router.
+    pub fn pipeline_seed_liquidity<'info>(
+        ctx: Context<'info, SeedLiquidity<'info>>,
+        request: interface::SeedRequest,
+    ) -> Result<()> {
+        instructions::seed_liquidity(ctx, request)
+    }
+
     /// Adds both mints to a market for LP shares; the first deposit opens it.
     pub fn add_liquidity<'info>(
         ctx: Context<'info, AddLiquidity<'info>>,
@@ -101,6 +120,24 @@ pub mod lending_amm {
         min_lp: u64,
     ) -> Result<()> {
         instructions::add_liquidity_handler(ctx, max_0, max_1, min_lp)
+    }
+
+    /// Burns `lp` of the LP's shares for their part of the other side, the buffer and the
+    /// cTokens: in cash, the cTokens' part redeemed from Kamino and paid in the lent mint, or in
+    /// kind, paid as cTokens with no Kamino account read or called.
+    pub fn remove_liquidity<'info>(
+        ctx: Context<'info, RemoveLiquidity<'info>>,
+        lp: u64,
+        min_other: u64,
+        min_lent: u64,
+        in_kind: bool,
+    ) -> Result<()> {
+        instructions::remove_liquidity_handler(ctx, lp, min_other, min_lent, in_kind)
+    }
+
+    /// Moves `amount` of the LP's shares into the market's lock account, for good.
+    pub fn lock_lp(ctx: Context<LockLp>, amount: u64) -> Result<()> {
+        instructions::lock_lp_handler(ctx, amount)
     }
 
     /// Moves the buffer back to its target by depositing into Kamino or redeeming from it,

@@ -39,7 +39,7 @@ pub enum StrategyError {
     ZeroOutput,
     #[msg("The trade would pay out a side's whole reserve")]
     WouldEmptySide,
-    #[msg("The trade would pay out more of the lent side than the buffer holds")]
+    #[msg("The trade would pay out more of the lent side than the buffer holds plus what Kamino can pay right now")]
     BeyondBuffer,
     #[msg("The first deposit needs both amounts above 0")]
     ZeroDeposit,
@@ -82,4 +82,32 @@ pub enum StrategyError {
     BelowMinRebalance,
     #[msg("A Kamino account is not the one the lent mint's reserve names")]
     KaminoAccountWrong,
+    #[msg("The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again")]
+    RedeemAccountsMissing,
+    #[msg("Kamino's redeem paid the market less than the swap's shortfall")]
+    RedeemPaidShort,
+    #[msg("The removal would burn no LP shares or pay out nothing")]
+    ZeroRemoval,
+    #[msg("The removal burns more LP shares than the market has minted")]
+    NotEnoughShares,
+    #[msg("The removal would pay out less of the other mint than min_other")]
+    BelowMinOther,
+    #[msg("The removal would pay out less of the lent mint than min_lent")]
+    BelowMinLent,
+    #[msg("A removal in cash needs the lent mint's Kamino accounts: add them, or remove in kind")]
+    KaminoAccountsMissing,
+    #[msg("Kamino cannot pay the cTokens' part right now: remove in kind")]
+    KaminoCannotPay,
+    #[msg("Locking needs at least one LP share")]
+    ZeroLock,
+    #[msg("Kamino redeems nothing right now (reserve or lending market emergency mode, or a deprecated reserve): rebalance refuses")]
+    KaminoStopped,
+    #[msg("Kamino blocks cToken deposits into the reserve: rebalance skips the deposit")]
+    KaminoDepositsBlocked,
+    #[msg("The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only")]
+    ReserveDeprecated,
+    #[msg("rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls")]
+    RebalanceNotAlone,
+    #[msg("SeedRequest.amounts must hold exactly one amount for each of the market's two mints")]
+    BadSeedAmounts,
 }

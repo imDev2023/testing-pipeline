@@ -17,7 +17,12 @@
 #![allow(dead_code)]
 
 pub mod kamino;
+pub mod launchpad;
 pub mod rebalance;
+pub mod redeem;
+pub mod remove;
+pub mod smart_wallet;
+pub mod states;
 
 use std::path::PathBuf;
 
@@ -261,7 +266,11 @@ pub struct Env {
 
 impl Env {
     pub fn new() -> Self {
-        let mut svm = LiteSVM::new();
+        Self::with_svm(LiteSVM::new())
+    }
+
+    /// [`Env::new`] on a VM set up by the caller, such as one with a feature switched off.
+    pub fn with_svm(mut svm: LiteSVM) -> Self {
         let admin = Keypair::new();
         svm.airdrop(&admin.pubkey(), 10_000 * SOL).unwrap();
         svm.add_program(client::PROGRAM_ID, &router_so()).unwrap();
@@ -273,6 +282,7 @@ impl Env {
         // accounts, as the cluster had them at one slot; the clock then starts one slot and
         // one second after it, so Kamino's own timestamps are never in the future.
         fixtures.install(&mut svm);
+        kamino::second_depositor(&mut svm, &fixtures);
         let mut env = Env {
             svm,
             admin,
@@ -793,16 +803,68 @@ impl Env {
         market: &Market,
         trade: &TradeRequest,
     ) -> Result<TransactionMetadata, String> {
+        self.resolve_round_meta(market, trade, 0, &[])
+    }
+
+    /// `pipeline_resolve_accounts` for round `round`, run in simulation, with `known`, the
+    /// accounts the round before returned, passed read-only after the router's ten, as
+    /// Pipeline's quoter and SDK pass them.
+    pub fn resolve_round_meta(
+        &self,
+        market: &Market,
+        trade: &TradeRequest,
+        round: u8,
+        known: &[AccountMeta],
+    ) -> Result<TransactionMetadata, String> {
         let request = ResolveRequest {
             trade: trade.clone(),
-            round: 0,
+            round,
         };
+        let mut accounts = self.read_accounts(market, trade);
+        accounts.extend(
+            known
+                .iter()
+                .map(|a| AccountMeta::new_readonly(a.pubkey, false)),
+        );
         let instruction = strategy_call(
             client::interface::discriminator::RESOLVE_ACCOUNTS,
             &request,
-            self.read_accounts(market, trade),
+            accounts,
         );
         self.simulate_meta(instruction)
+    }
+
+    /// The strategy accounts a swap needs, from `pipeline_resolve_accounts`, run round after
+    /// round as integrators run it, with how many rounds it took and each round's metadata.
+    pub fn resolve_rounds(
+        &self,
+        market: &Market,
+        trade: &TradeRequest,
+    ) -> Result<(Vec<AccountMeta>, Vec<TransactionMetadata>), String> {
+        let mut known: Vec<AccountMeta> = vec![];
+        let mut rounds = vec![];
+        for round in 0..client::interface::MAX_RESOLVE_ROUNDS {
+            let meta = self.resolve_round_meta(market, trade, round, &known)?;
+            let result: ResolveResult =
+                borsh::from_slice(&meta.return_data.data).map_err(|e| e.to_string())?;
+            rounds.push(meta);
+            known = result
+                .accounts
+                .iter()
+                .map(|a| {
+                    let address = Pubkey::new_from_array(a.address);
+                    if a.writable {
+                        AccountMeta::new(address, false)
+                    } else {
+                        AccountMeta::new_readonly(address, false)
+                    }
+                })
+                .collect();
+            if result.complete {
+                return Ok((known, rounds));
+            }
+        }
+        Err("account resolution did not finish".into())
     }
 
     /// The strategy accounts a swap needs, from `pipeline_resolve_accounts`.
@@ -811,21 +873,8 @@ impl Env {
         market: &Market,
         trade: &TradeRequest,
     ) -> Result<Vec<AccountMeta>, String> {
-        let data = self.resolve_meta(market, trade)?.return_data.data;
-        let result: ResolveResult = borsh::from_slice(&data).map_err(|e| e.to_string())?;
-        assert!(result.complete, "the lending AMM resolves in one round");
-        Ok(result
-            .accounts
-            .iter()
-            .map(|a| {
-                let address = Pubkey::new_from_array(a.address);
-                if a.writable {
-                    AccountMeta::new(address, false)
-                } else {
-                    AccountMeta::new_readonly(address, false)
-                }
-            })
-            .collect())
+        self.resolve_rounds(market, trade)
+            .map(|(accounts, _)| accounts)
     }
 
     /// The strategy's `pipeline_quote` metadata, in simulation.
@@ -843,6 +892,25 @@ impl Env {
         );
         let instruction = strategy_call(client::interface::discriminator::QUOTE, trade, accounts);
         self.simulate_meta(instruction)
+    }
+
+    /// The strategy's `pipeline_quote` with the strategy accounts given rather than resolved,
+    /// in simulation.
+    pub fn quote_with(
+        &self,
+        market: &Market,
+        trade: &TradeRequest,
+        strategy_accounts: &[AccountMeta],
+    ) -> Result<QuoteResult, String> {
+        let mut accounts = self.read_accounts(market, trade);
+        accounts.extend(
+            strategy_accounts
+                .iter()
+                .map(|a| AccountMeta::new_readonly(a.pubkey, false)),
+        );
+        let instruction = strategy_call(client::interface::discriminator::QUOTE, trade, accounts);
+        let data = self.simulate_meta(instruction)?.return_data.data;
+        borsh::from_slice(&data).map_err(|e| e.to_string())
     }
 
     /// The strategy's `pipeline_quote`, in vault amounts (before Pipeline's fee).
@@ -890,7 +958,28 @@ impl Env {
             mode,
             ..exact_in(input, output, amount_in)
         };
-        let mut strategy_accounts = self.resolve_accounts(market, &trade)?;
+        let strategy_accounts = self.resolve_accounts(market, &trade)?;
+        Ok(self.swap_instruction_with(
+            market,
+            trader,
+            (input, output),
+            amount_in,
+            mode,
+            strategy_accounts,
+        ))
+    }
+
+    /// [`Env::swap_instruction`] with the strategy accounts given rather than resolved for this
+    /// trade, as an integrator who resolved them earlier, or for another size, would send it.
+    pub fn swap_instruction_with(
+        &self,
+        market: &Market,
+        trader: &Pubkey,
+        (input, output): (usize, usize),
+        amount_in: u64,
+        mode: TradeMode,
+        mut strategy_accounts: Vec<AccountMeta>,
+    ) -> Instruction {
         // The output mint's hook accounts follow the strategy's own, for its payout.
         strategy_accounts.extend(market.hook_accounts[output].iter().cloned());
         let accounts = client::SwapAccounts {
@@ -925,7 +1014,7 @@ impl Env {
             input_hook_accounts: market.hook_accounts[input].len() as u8,
             extra: vec![],
         };
-        Ok(client::swap(&accounts, &args))
+        client::swap(&accounts, &args)
     }
 
     /// An exact-in swap through the router of `amount_in` of mint `input` for mint
