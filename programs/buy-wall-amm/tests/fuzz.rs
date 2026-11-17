@@ -7,7 +7,8 @@
 //! sweeping its fees or the rewards recipient settling and paying itself its rewards inside
 //! the round trip, a sell bought straight back with `place_wall` in between, `settle`,
 //! `pay_rewards` and `sweep_fees` for any slot to the right wallet or another, a
-//! recipient's handover signed by it or by anyone else to a wallet or the default key, and a
+//! recipient's handover signed by it or by anyone else to a fresh wallet, the default key,
+//! the role's current wallet or one of the market's own addresses, and a
 //! recipient's token account handed to someone else) and clock jumps, from seconds to
 //! across the cap's decay window, several trades often landing in one slot, sends each
 //! through the router in LiteSVM, and checks after every step:
@@ -60,8 +61,9 @@
 //!   nothing; every retired token is accounted for as burned, owed or paid as rewards;
 //! - `place_wall` and a handover are refused with exactly the error the program's own
 //!   `wall::place` and `payouts::handover` give;
-//! - a handover succeeds exactly when the role's current recipient signs it to a wallet,
-//!   recipients change only so, and what a role is owed follows it.
+//! - a handover succeeds exactly when the role's current recipient signs it to a fresh
+//!   wallet (never the default key, its current wallet or one of the market's own addresses,
+//!   `POOL4-52`), recipients change only so, and what a role is owed follows it.
 //!
 //! Later tickets add their instructions and invariants here. `PROPTEST_CASES` sets how many
 //! sequences run (256 by default, of up to 31 steps each). The self-dealing invariants are
@@ -161,12 +163,12 @@ enum Step {
         right_wallet: bool,
     },
     /// A handover of the fee role or the rewards role, signed by its recipient or by a
-    /// stranger, to a fresh wallet or to the default key.
+    /// stranger, to a fresh wallet or to a key a handover must refuse.
     Handover {
         market: usize,
         rewards: bool,
         by_recipient: bool,
-        to_default: bool,
+        to: HandoverTo,
     },
     /// A recipient hands the ownership of its associated token account for its payouts (the
     /// rewards recipient's for the token, the fee recipient's for wrapped SOL) to someone
@@ -175,6 +177,30 @@ enum Step {
     BreakRecipient { market: usize, rewards: bool },
     /// Move the clock forward.
     Warp { seconds: i64, slots: u64 },
+}
+
+/// The key a handover names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HandoverTo {
+    /// A fresh wallet, the only key a handover accepts.
+    Fresh,
+    /// The default key.
+    Default,
+    /// The role's current wallet.
+    Current,
+    /// One of the market's own addresses: its market state, its vault authority, the token
+    /// vault, the SOL vault or the program, by index modulo five.
+    Own(u8),
+}
+
+/// Mostly fresh wallets, so roles move often, and each refused key now and then.
+fn handover_to() -> impl Strategy<Value = HandoverTo> {
+    prop_oneof![
+        14 => Just(HandoverTo::Fresh),
+        2 => Just(HandoverTo::Default),
+        2 => Just(HandoverTo::Current),
+        2 => (0..5u8).prop_map(HandoverTo::Own),
+    ]
 }
 
 /// Who trades a round trip.
@@ -276,8 +302,8 @@ fn step() -> impl Strategy<Value = Step> {
             .prop_map(|(market, right_wallet)| Step::PayRewards { market, right_wallet }),
         3 => (any::<usize>(), 0..4u8, prop::bool::weighted(0.85))
             .prop_map(|(market, slot, right_wallet)| Step::Sweep { market, slot, right_wallet }),
-        2 => (any::<usize>(), any::<bool>(), prop::bool::weighted(0.7), prop::bool::weighted(0.15))
-            .prop_map(|(market, rewards, by_recipient, to_default)| Step::Handover { market, rewards, by_recipient, to_default }),
+        2 => (any::<usize>(), any::<bool>(), prop::bool::weighted(0.7), handover_to())
+            .prop_map(|(market, rewards, by_recipient, to)| Step::Handover { market, rewards, by_recipient, to }),
         1 => (any::<usize>(), any::<bool>())
             .prop_map(|(market, rewards)| Step::BreakRecipient { market, rewards }),
     ]
@@ -710,10 +736,10 @@ impl World {
                 market,
                 rewards,
                 by_recipient,
-                to_default,
+                to,
             } => {
                 let Some(i) = self.pick(market) else { return };
-                self.handover(i, rewards, by_recipient, to_default);
+                self.handover(i, rewards, by_recipient, to);
             }
             Step::BreakRecipient { market, rewards } => {
                 let Some(i) = self.pick(market) else { return };
@@ -1055,9 +1081,10 @@ impl World {
     }
 
     /// A handover on market `i`: it succeeds exactly when the role's current recipient signs
-    /// it to a wallet that is not the default key, and is otherwise refused with exactly the
-    /// error `payouts::handover` gives.
-    fn handover(&mut self, i: usize, rewards: bool, by_recipient: bool, to_default: bool) {
+    /// it to a fresh wallet, never the default key, the role's current wallet or one of the
+    /// market's own addresses (`POOL4-52`), and is otherwise refused with exactly the error
+    /// `payouts::handover` gives.
+    fn handover(&mut self, i: usize, rewards: bool, by_recipient: bool, to: HandoverTo) {
         let m = self.markets[i].market.clone();
         let current = self.markets[i]
             .recipient(rewards)
@@ -1068,27 +1095,38 @@ impl World {
         };
         self.env.svm.airdrop(&signer.pubkey(), SOL).unwrap();
         let new = Keypair::new();
-        let new_key = if to_default {
-            Pubkey::default()
-        } else {
-            new.pubkey()
-        };
         let state = self.env.state(&m);
         let held = if rewards {
             state.rewards_recipient
         } else {
             state.fee_recipient
         };
+        // The market's own addresses, from the harness's own derivation, not the program's.
+        let own = [
+            m.market_state,
+            m.vault_authority,
+            m.token_vault,
+            m.sol_vault,
+            common::strategy_id(),
+        ];
+        let new_key = match to {
+            HandoverTo::Fresh => new.pubkey(),
+            HandoverTo::Default => Pubkey::default(),
+            HandoverTo::Current => Pubkey::new_from_array(held.to_bytes()),
+            HandoverTo::Own(k) => own[k as usize % own.len()],
+        };
+        let own_keys: Vec<_> = own.iter().map(|k| k.to_bytes().into()).collect();
         let expected = buy_wall_amm::payouts::handover(
             &held,
             &signer.pubkey().to_bytes().into(),
             &new_key.to_bytes().into(),
+            &own_keys,
         )
         .map_err(StrategyError::from);
         let ix = common::payouts::handover_ix(&m, rewards, &signer.pubkey(), &new_key);
         let result = self.env.send(&[ix], &[&signer]);
         assert_outcome("handover", &expected, &result);
-        let allowed = current.is_some() && by_recipient && !to_default;
+        let allowed = current.is_some() && by_recipient && to == HandoverTo::Fresh;
         assert_eq!(result.is_ok(), allowed, "handover: {result:?}");
         if result.is_ok() {
             let tracked = &mut self.markets[i];

@@ -13,9 +13,8 @@ use anchor_spl::token_interface::{Mint, TokenInterface};
 
 use crate::errors::StrategyError;
 use crate::events::RewardsPaid;
-use crate::recipient::{ensure, RecipientAccounts};
-use crate::state::{check_vault_accounts, is_market_state, MarketState, AUTHORITY_SEED};
-use crate::token::{transfer_checked, Transfer};
+use crate::recipient::{pay_out, PayoutAccounts};
+use crate::state::{is_market_state, MarketState, VaultSide};
 
 /// The order is part of `metadata.json`'s `pay_rewards` action; keep them in step. The
 /// token's transfer-hook accounts follow these.
@@ -46,61 +45,33 @@ pub struct PayRewards<'info> {
 
 pub fn handle_pay_rewards<'info>(ctx: Context<'info, PayRewards<'info>>) -> Result<()> {
     let accounts = &ctx.accounts;
-    let market_state = accounts.market_state.key();
-    let (owed, amount, authority_bump) = {
-        let state = accounts.market_state.load()?;
-        let authority_bump = check_vault_accounts(
-            &state,
-            &market_state,
-            0,
-            &accounts.token_vault.key(),
-            &accounts.token_mint.key(),
-            &accounts.vault_authority.key(),
-        )?;
-        let (owed, amount) = state
-            .owed()
-            .pay_rewards(&state.rewards_recipient)
-            .map_err(|refusal| error!(StrategyError::from(refusal)))?;
-        require_keys_eq!(
-            accounts.rewards_recipient.key(),
-            state.rewards_recipient,
-            StrategyError::WrongAccount
-        );
-        (owed, amount, authority_bump)
-    };
-
-    ensure(RecipientAccounts {
-        payer: &accounts.payer.to_account_info(),
-        recipient: &accounts.rewards_recipient.to_account_info(),
-        token_account: &accounts.recipient_token_account.to_account_info(),
-        mint: &accounts.token_mint.to_account_info(),
-        token_program: &accounts.token_program.to_account_info(),
-        associated_token_program: &accounts.associated_token_program.to_account_info(),
-        system_program: &accounts.system_program.to_account_info(),
-    })?;
-    let bump = [authority_bump];
-    let authority_seeds: &[&[u8]] = &[AUTHORITY_SEED, market_state.as_ref(), &bump];
-    transfer_checked(
-        Transfer {
-            token_program: &accounts.token_program.to_account_info(),
-            from: &accounts.token_vault.to_account_info(),
+    let paid = pay_out(
+        PayoutAccounts {
+            payer: &accounts.payer.to_account_info(),
+            market_state: &accounts.market_state,
+            vault: &accounts.token_vault.to_account_info(),
             mint: &accounts.token_mint.to_account_info(),
-            to: &accounts.recipient_token_account.to_account_info(),
-            authority: &accounts.vault_authority.to_account_info(),
+            recipient: &accounts.rewards_recipient.to_account_info(),
+            token_account: &accounts.recipient_token_account.to_account_info(),
+            vault_authority: &accounts.vault_authority.to_account_info(),
+            token_program: &accounts.token_program.to_account_info(),
+            associated_token_program: &accounts.associated_token_program.to_account_info(),
+            system_program: &accounts.system_program.to_account_info(),
             hook_accounts: ctx.remaining_accounts,
         },
-        amount,
+        VaultSide::Token,
         accounts.token_mint.decimals,
-        &[authority_seeds],
+        |state| {
+            let (owed, amount) = state.owed().pay_rewards(&state.rewards_recipient)?;
+            Ok((owed, state.rewards_recipient, amount))
+        },
     )?;
-
-    accounts.market_state.load_mut()?.set_owed(&owed);
     emit!(RewardsPaid {
-        market_state,
-        recipient: accounts.rewards_recipient.key(),
+        market_state: accounts.market_state.key(),
+        recipient: paid.wallet,
         token_account: accounts.recipient_token_account.key(),
-        amount,
-        rewards_paid: owed.rewards_paid,
+        amount: paid.amount,
+        rewards_paid: paid.owed.rewards_paid,
     });
     Ok(())
 }

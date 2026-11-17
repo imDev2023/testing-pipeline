@@ -180,6 +180,26 @@ fn created(env: &mut Env, token: Pubkey, seeder: &Keypair) -> Market {
     market
 }
 
+/// The seed refuses a stored cap floor above 10,000 basis points itself, rather than opening
+/// a market whose cap starts below its floor, where every buy would revert. Creation never
+/// stores such a value, so the market state is edited here by hand, as a faulty layout
+/// upgrade might leave it.
+#[test]
+fn sos_h023_the_seed_refuses_a_stored_cap_floor_above_10000_basis_points() {
+    let mut env = Env::new();
+    let token = env.seedable_token(&TOKEN);
+    let seeder = Keypair::new();
+    let market = created(&mut env, token, &seeder);
+    let mut account = env.svm.get_account(&market.market_state).unwrap();
+    let state: &mut buy_wall_amm::state::MarketState =
+        bytemuck::from_bytes_mut(&mut account.data[8..]);
+    state.set_cap_floor_bps(10_001);
+    env.svm.set_account(market.market_state, account).unwrap();
+    let ix = seed_ix(&market, &seeder.pubkey(), TOKENS, LAMPORTS, vec![]);
+    assert_refused(env.send(&[ix], &[&seeder]), CapFloorOutOfRange);
+    assert_eq!(env.state(&market).pool_tokens(), 0);
+}
+
 #[test]
 fn only_the_stored_seeder_may_seed_and_only_once() {
     let mut env = Env::new();

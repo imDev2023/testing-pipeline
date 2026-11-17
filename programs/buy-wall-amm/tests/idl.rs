@@ -313,15 +313,15 @@ fn its_events_and_errors_are_the_programs() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "RecipientAccountNotTheirs");
-    let last_code: u32 = buy_wall_amm::errors::StrategyError::RecipientAccountNotTheirs.into();
+    assert_eq!(last["name"], "NotAWallet");
+    let last_code: u32 = buy_wall_amm::errors::StrategyError::NotAWallet.into();
     assert_eq!(last["code"].as_u64().unwrap() as u32, last_code);
     // The four trading refusals follow `Overflow`, then the seed request's, then
-    // `place_wall`'s, then the payouts' and handovers', so every earlier error keeps its
-    // number.
+    // `place_wall`'s, then the payouts' and handovers', then the handovers' refusals of
+    // `POOL4-52`, so every earlier error keeps its number.
     let names: Vec<_> = errors.iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert_eq!(
-        names[names.len() - 14..],
+        names[names.len() - 16..],
         [
             "Overflow",
             "ZeroInput",
@@ -336,7 +336,9 @@ fn its_events_and_errors_are_the_programs() {
             "BadFeeSlot",
             "NotRecipient",
             "NewRecipientRequired",
-            "RecipientAccountNotTheirs"
+            "RecipientAccountNotTheirs",
+            "SameRecipient",
+            "NotAWallet"
         ]
     );
 }

@@ -24,7 +24,7 @@ no-log-ix-name = []
 test-designer-recipient = []
 
 [dependencies]
-anchor-lang = { workspace = true, features = ["init-if-needed"] }
+anchor-lang.workspace = true
 anchor-spl.workspace = true
 bytemuck.workspace = true
 mint-rules.workspace = true

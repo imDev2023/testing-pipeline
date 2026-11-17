@@ -116,6 +116,10 @@ pub struct Opened {
 /// Why a seed is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
+    /// A cap floor above 10,000 basis points, which creation refuses (`params.rs`); checked
+    /// again here so a stored value that ever bypassed creation cannot open a market whose
+    /// cap starts below its floor.
+    CapFloorOutOfRange,
     EmptySeed,
     SeedTooSmall,
     OpeningPriceOutOfBounds,
@@ -126,6 +130,7 @@ pub enum Refusal {
 impl From<Refusal> for StrategyError {
     fn from(refusal: Refusal) -> Self {
         match refusal {
+            Refusal::CapFloorOutOfRange => StrategyError::CapFloorOutOfRange,
             Refusal::EmptySeed => StrategyError::EmptySeed,
             Refusal::SeedTooSmall => StrategyError::SeedTooSmall,
             Refusal::OpeningPriceOutOfBounds => StrategyError::OpeningPriceOutOfBounds,
@@ -136,10 +141,13 @@ impl From<Refusal> for StrategyError {
 }
 
 /// Opens a market seeded with `x` token units and `y` lamports (what arrived), or says why
-/// the seed is refused: no tokens, less than `MIN_SEED_LAMPORTS`, an opening price outside
+/// the seed is refused: a cap floor above 10,000 basis points, no tokens, less than `MIN_SEED_LAMPORTS`, an opening price outside
 /// the bounds, or a curve that would hold less than `MIN_LIQUIDITY` with its cap at the
 /// floor.
 pub fn open(x: u64, y: u64, cap_floor_bps: u16, cap_decay_bps: u16) -> Result<Opened, Refusal> {
+    if cap_floor_bps > BPS {
+        return Err(Refusal::CapFloorOutOfRange);
+    }
     if x == 0 {
         return Err(Refusal::EmptySeed);
     }
@@ -364,6 +372,18 @@ mod tests {
             prop_assert_eq!(l, token_side);
         }
 
+        /// A cap floor above 10,000 basis points is refused whatever the seed, before any
+        /// other check, so the cap can never start below its floor.
+        #[test]
+        fn a_cap_floor_above_10000_basis_points_never_opens(
+            x in any::<u64>(),
+            y in any::<u64>(),
+            floor_bps in (BPS + 1)..=u16::MAX,
+            decay_bps in any::<u16>(),
+        ) {
+            prop_assert_eq!(open(x, y, floor_bps, decay_bps), Err(Refusal::CapFloorOutOfRange));
+        }
+
         /// Every accepted seed opens inside the bounds with at least `MIN_LIQUIDITY`, and its
         /// cap starts at what arrived, never below the floor.
         #[test]
@@ -383,6 +403,20 @@ mod tests {
                 prop_assert!(liquidity_at(opened.cap_floor, opened.sqrt_price).unwrap() >= MIN_LIQUIDITY);
             }
         }
+    }
+
+    /// The cap floor's bound, at 10,000 basis points and one above: the seed that opens at
+    /// 100% is refused at 10,001, which creation already refuses but `open` no longer
+    /// trusts it to.
+    #[test]
+    fn sos_h023_open_refuses_a_cap_floor_above_10000_basis_points() {
+        let (x, y) = (1_000_000_000_000, 10_000_000_000);
+        let opened = open(x, y, 10_000, 2_000).unwrap();
+        assert_eq!(opened.cap_floor, opened.cap);
+        assert_eq!(open(x, y, 10_001, 2_000), Err(Refusal::CapFloorOutOfRange));
+        assert_eq!(open(x, y, u16::MAX, 0), Err(Refusal::CapFloorOutOfRange));
+        // Before every other refusal, an empty seed included.
+        assert_eq!(open(0, 0, 10_001, 0), Err(Refusal::CapFloorOutOfRange));
     }
 
     #[test]
