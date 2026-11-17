@@ -531,7 +531,9 @@ fn removals_in_cash_and_in_kind_and_lock_lp_stay_under_their_ceilings() {
         // The lent side alone, into the LP's cToken account, which exists by now, and for a
         // second LP, of a fixed key too, creating theirs.
         let lent_side = strategy_compute(
-            &env.remove_lent_side(&market, &lp, third / 4, 0).unwrap().logs,
+            &env.remove_lent_side(&market, &lp, third / 4, 0)
+                .unwrap()
+                .logs,
         )[0];
         record(
             Row::RemoveLentSide,
@@ -547,7 +549,9 @@ fn removals_in_cash_and_in_kind_and_lock_lp_stay_under_their_ceilings() {
             .unwrap();
         let shares = env.lp_shares_of(&market, &second.pubkey());
         let lent_side = strategy_compute(
-            &env.remove_lent_side(&market, &second, shares, 0).unwrap().logs,
+            &env.remove_lent_side(&market, &second, shares, 0)
+                .unwrap()
+                .logs,
         )[0];
         record(
             Row::RemoveLentSide,
