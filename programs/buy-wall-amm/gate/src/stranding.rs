@@ -145,8 +145,8 @@ impl TestBuild {
             TestBuild::DesignerSet => {
                 let config = replace_once(
                     sources.get("config.rs")?,
-                    "pub const DESIGNER_RECIPIENT: Pubkey = Pubkey::new_from_array([0; 32]);",
-                    "pub const DESIGNER_RECIPIENT: Pubkey = Pubkey::new_from_array([7; 32]);",
+                    "DESIGNER_RECIPIENT: Pubkey = Pubkey::new_from_array([0; 32]);",
+                    "DESIGNER_RECIPIENT: Pubkey = Pubkey::new_from_array([7; 32]);",
                 )?;
                 sources.set("config.rs", config);
             }
