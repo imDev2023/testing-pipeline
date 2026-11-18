@@ -1,6 +1,6 @@
 //! A cluster with no market must not pass a broken build (audit findings H097 and H098;
 //! decision `POOL4-53`): besides replaying every market the cluster has, every gate run makes
-//! a market of its own in the same world with the candidate, through the router, seeds it,
+//! a market of its own in a world of its own with the candidate, through the router, seeds it,
 //! trades it, runs each keeper job that becomes due, and refuses the candidate if any step
 //! fails, so a build that refuses every instruction is refused before the first market
 //! exists.

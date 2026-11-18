@@ -727,6 +727,42 @@ pub fn failing_program(error: &str) -> Option<String> {
     })
 }
 
+/// What tells one failure from another: the instruction error in its first line, which
+/// carries the failing program's own error code (`InstructionError(0, Custom(6033))`), or the
+/// whole first line when no program raised it.
+pub fn failure_error(message: &str) -> String {
+    let line = first_line(message);
+    let Some(start) = line.find("InstructionError(") else {
+        return line;
+    };
+    let mut depth = 0;
+    for (at, c) in line[start..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => continue,
+        }
+        if depth == 0 {
+            return line[start..=start + at].to_string();
+        }
+    }
+    line
+}
+
+/// The two keys a failed `require_keys_eq!` compared, as Anchor logs them: the left, then the
+/// right.
+pub fn compared_keys(message: &str) -> Option<(Pubkey, Pubkey)> {
+    let logs: Vec<&str> = message
+        .lines()
+        .filter_map(|line| line.strip_prefix("Program log: "))
+        .collect();
+    let at = logs.iter().position(|line| *line == "Left:")?;
+    match logs.get(at + 1..at + 4)? {
+        [left, "Right:", right] => Some((left.parse().ok()?, right.parse().ok()?)),
+        _ => None,
+    }
+}
+
 /// A program's name for the report: the buy wall AMM, the router or a token program by
 /// name, any other by its address.
 pub fn program_name(program: &str, ours: &Pubkey) -> String {
@@ -774,6 +810,34 @@ mod tests {
         assert_ne!(key(b"trader", &a), key(b"keeper", &a));
         let payer = |svm| Session::new(svm, program).payer.pubkey();
         assert_eq!(payer(LiteSVM::new()), payer(LiteSVM::new()));
+    }
+
+    #[test]
+    fn two_failures_differ_by_their_instruction_error_or_else_their_whole_message() {
+        assert_eq!(
+            failure_error("InstructionError(0, Custom(6033))\nProgram log: anything"),
+            "InstructionError(0, Custom(6033))"
+        );
+        assert_eq!(
+            failure_error("its quote was refused: InstructionError(1, InvalidAccountData) then"),
+            "InstructionError(1, InvalidAccountData)"
+        );
+        assert_eq!(
+            failure_error("received 5, not the quote 6\nmore"),
+            "received 5, not the quote 6"
+        );
+    }
+
+    #[test]
+    fn the_keys_a_failed_comparison_logged_are_read_back_in_order() {
+        let (left, right) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let logs = format!(
+            "InstructionError(0, Custom(6000))\nProgram log: AnchorError occurred.\nProgram log: \
+             Left:\nProgram log: {left}\nProgram log: Right:\nProgram log: {right}\nProgram x \
+             failed"
+        );
+        assert_eq!(compared_keys(&logs), Some((left, right)));
+        assert_eq!(compared_keys("InstructionError(0, Custom(6000))"), None);
     }
 
     #[test]

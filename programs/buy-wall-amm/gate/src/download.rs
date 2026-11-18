@@ -49,16 +49,13 @@ pub fn snapshot(
     note: &str,
 ) -> Result<Snapshot, String> {
     let mut recording = Recording::new(source);
-    // The program and the router, with the router's config and the program's registration
-    // where they exist, even when no market exists yet, so the market the gate makes of its
-    // own is made as on the cluster (`POOL4-53`).
+    // The program and the router, even when no market exists yet: the deployed build is the
+    // baseline, and the router runs every replay.
     recording.get_accounts(&[
         *program,
         pda::program_data(program),
         pipeline_client::PROGRAM_ID,
         pda::program_data(&pipeline_client::PROGRAM_ID),
-        pda::config(),
-        pda::strategy(program),
     ])?;
     let mut saved_markets = vec![];
     for market_state in market_states {
