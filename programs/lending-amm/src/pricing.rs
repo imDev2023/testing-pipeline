@@ -348,6 +348,163 @@ mod proofs {
         with_edge_fee!(fee => assert_product_never_falls(reserve_in, reserve_out, amount_in, fee));
     }
 
+    /// For every output, buffer and payable amount: the shortfall is what the output needs
+    /// beyond the buffer, 0 whenever the buffer covers it, and refused exactly when it is more
+    /// than Kamino can pay right now.
+    #[kani::proof]
+    fn the_shortfall_is_the_output_beyond_the_buffer_up_to_what_kamino_can_pay() {
+        let (out, buffer, can_pay): (u64, u64, u64) = kani::any();
+        match shortfall(out, buffer, can_pay) {
+            Ok(s) => {
+                assert!(s <= can_pay);
+                if out <= buffer {
+                    assert!(s == 0);
+                } else {
+                    assert!(s == out - buffer && buffer + s == out);
+                }
+            }
+            Err(error) => {
+                assert!(matches!(error, StrategyError::BeyondBuffer));
+                assert!(out > buffer && out - buffer > can_pay);
+            }
+        }
+    }
+
+    /// The lent side's total is the recorded buffer plus the recorded cTokens' value at the
+    /// stored rate, or refused; no cTokens add nothing, and tokens sent to the market outside
+    /// its instructions never count, since only recorded amounts are read. Bounded: the
+    /// cTokens and the reserve's two supplies below 2^4, the buffer any u64, so its overflow is
+    /// covered; the valuation itself is proven for every input in `kamino.rs` and
+    /// `proofs/kamino_z3.py`.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_lent_total_is_the_buffer_plus_the_recorded_ctokens_value() {
+        let mut market = LendingAmmMarket {
+            version: 1,
+            bump: 0,
+            authority_bump: 0,
+            lent_index: kani::any_where(|&i| i < 2),
+            lp_fee_bps: 0,
+            withdraw_mode: false,
+            mints: [Pubkey::default(); 2],
+            vaults: [Pubkey::default(); 2],
+            market_signer: Pubkey::default(),
+            lp_mint: Pubkey::default(),
+            ctoken_account: Pubkey::default(),
+            reserve: Pubkey::default(),
+            collateral_mint: Pubkey::default(),
+            seeder: Pubkey::default(),
+            reserves: [kani::any(), kani::any()],
+            ctokens: kani::any_where(|&c| c < SMALL),
+            deposited: 0,
+            redeemed: 0,
+            created_slot: 0,
+            created_at: 0,
+            reserved: [0; crate::state::RESERVED_LEN],
+        };
+        let reserve = Reserve {
+            total_available_amount: kani::any_where(|&a| a < SMALL),
+            mint_total_supply: kani::any_where(|&n| n < SMALL),
+            ..Reserve::default()
+        };
+        let buffer = market.reserves[market.lent_side()];
+        match (
+            lent_total(&market, &reserve),
+            reserve.lent_value(market.ctokens),
+        ) {
+            (Ok(total), Ok(value)) => assert!(total as u128 == buffer as u128 + value as u128),
+            (Err(_), Ok(value)) => assert!(buffer as u128 + value as u128 > u64::MAX as u128),
+            (Ok(_), Err(_)) => panic!("valued cTokens the reserve cannot value"),
+            (Err(_), Err(_)) => {}
+        }
+        // No cTokens add nothing to the buffer, whatever the reserve holds.
+        market.ctokens = 0;
+        assert!(lent_total(&market, &reserve).ok() == Some(buffer));
+    }
+
+    /// A quote is the one pricing function's answer on the effective reserves `[R, B + V]`:
+    /// for a trade `exact_in` and `shortfall` accept, its output is `exact_in`'s and a
+    /// lent-side output beyond the buffer carries exactly its shortfall and asks what Kamino can
+    /// pay only then. Bounded: amounts and reserves below 2^4, and no cTokens, whose value
+    /// `lent_total` adds (proven above). Its refusals are those of `exact_in` and `shortfall`,
+    /// proven above, and the exact-out and wrong-sides refusals the unit tests check. Only behind
+    /// `kani_full`: even with every refusal assumed away, CBMC encodes the Anchor error values
+    /// `quote` can build and ran past 6 minutes, so the default tier proves its parts
+    /// (`exact_in`, `lent_total`, `shortfall`) and the fuzzer checks each quote equals its swap.
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_quote_is_exact_in_on_the_effective_reserves_with_its_shortfall() {
+        let small = |x: &u64| *x < SMALL;
+        let market = LendingAmmMarket {
+            version: 1,
+            bump: 0,
+            authority_bump: 0,
+            lent_index: kani::any_where(|&i| i < 2),
+            lp_fee_bps: 30,
+            withdraw_mode: false,
+            mints: [Pubkey::default(); 2],
+            vaults: [Pubkey::default(); 2],
+            market_signer: Pubkey::default(),
+            lp_mint: Pubkey::default(),
+            ctoken_account: Pubkey::default(),
+            reserve: Pubkey::default(),
+            collateral_mint: Pubkey::default(),
+            seeder: Pubkey::default(),
+            reserves: [kani::any_where(small), kani::any_where(small)],
+            ctokens: 0,
+            deposited: 0,
+            redeemed: 0,
+            created_slot: 0,
+            created_at: 0,
+            reserved: [0; crate::state::RESERVED_LEN],
+        };
+        let reserve = Reserve {
+            total_available_amount: kani::any_where(small),
+            mint_total_supply: kani::any_where(small),
+            ..Reserve::default()
+        };
+        let input: u8 = kani::any_where(|&i| i < 2);
+        let trade = TradeRequest {
+            mode: TradeMode::ExactIn,
+            input_index: input,
+            output_index: 1 - input,
+            amount: kani::any_where(small),
+            trader: None,
+            extra: Vec::new(),
+        };
+        let can_pay: u64 = kani::any_where(small);
+        let (input, output) = (trade.input_index as usize, trade.output_index as usize);
+        let lent = market.lent_side();
+        let buffer = market.reserves[lent];
+        let effective = market.reserves;
+        let priced = exact_in(effective[input], effective[output], trade.amount, 30);
+        // Only trades the maths accepts, so no Anchor error is ever built.
+        kani::assume(market.is_open());
+        let Ok(priced) = priced else {
+            kani::assume(false);
+            return;
+        };
+        kani::assume(output != lent || priced.out <= buffer || priced.out - buffer <= can_pay);
+        let mut asked = false;
+        let quoted = quote(&market, &reserve, &trade, || {
+            asked = true;
+            Ok(can_pay)
+        });
+        let Ok(q) = quoted else {
+            panic!("a trade the maths accepts is quoted");
+        };
+        assert!(q.amount_out == priced.out);
+        assert!(q.amount_in == trade.amount);
+        if output == lent && q.amount_out > buffer {
+            assert!(asked && q.shortfall == q.amount_out - buffer && q.shortfall <= can_pay);
+        } else {
+            assert!(!asked && q.shortfall == 0);
+        }
+    }
+
     #[cfg(kani_full)]
     #[kani::proof]
     #[kani::solver(cadical)]

@@ -87,7 +87,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.onchain == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
-    timeout-minutes: 60
+    # 13 minutes on an idle runner, but 57 on 2026-11-17 while other projects loaded the iMac
+    # that hosts the runners (load average above 50), so the limit leaves room for that.
+    timeout-minutes: 90
     env:
       # Test binaries link every Solana crate; without debug info they are a fraction of the
       # size, which keeps the runner's disk from filling up.
@@ -141,6 +143,8 @@ jobs:
         run: source scripts/toolchain-env.sh && scripts/build-programs.sh
       - name: The buy wall AMM release gate's test builds, which would strand a market (POOL4-44)
         run: source scripts/toolchain-env.sh && cd programs && cargo run -p buy-wall-gate -- test-builds
+      - name: The lending AMM's deliberately broken builds, which its invariant fuzzer must catch
+        run: source scripts/toolchain-env.sh && python3 programs/lending-amm/scripts/broken-builds.py
       - name: Clippy
         run: cd programs && cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (LiteSVM through devnet's router, with pipeline-check)
@@ -185,7 +189,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.onchain == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
-    timeout-minutes: 60
+    # 54 minutes on 2026-11-17 with the lending AMM's 42 harnesses while the runners' host was
+    # loaded (21 on an idler one), so the limit leaves room for that.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache Kani
