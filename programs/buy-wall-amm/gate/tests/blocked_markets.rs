@@ -1,8 +1,11 @@
-//! A market nobody can fully trade must not veto every release (audit findings H013, H020
-//! and H033; docs/spec/pool4-for-solana.md, "A release gate"): the gate registers a market
-//! the router has never recorded, as anyone could, and counts a failed step against the
-//! candidate only if the deployed build passes the same step on the same snapshot, while the
-//! layout checks still refuse every build that would strand a market.
+//! A market nobody can fully trade must not veto every release (review findings H013, H020,
+//! H033 and R2G-01 to R2G-03; docs/spec/pool4-for-solana.md, "A release gate"): the gate
+//! registers a market the router has never recorded, as anyone could, and counts a failed
+//! step against the candidate unless the deployed build failed the same step on the same
+//! snapshot with the same error in the same program, while the layout checks still refuse
+//! every build that would strand a market; the cluster's state cannot refuse every candidate
+//! through the gate's own market, and each replay asks the build it runs for the fee slots'
+//! wallets.
 //!
 //! Needs the stranding test builds (`cargo run -p buy-wall-gate -- test-builds`) and
 //! Pipeline's `test-hook` (`scripts/fetch-pipeline.sh programs`).
@@ -494,4 +497,186 @@ fn sos_h001_a_market_waiting_for_its_seed_whose_token_has_a_live_hook_is_seeded_
             "{name}: {report}"
         );
     }
+}
+
+/// Each failure that counts, as its market and step.
+fn counted(report: &check::Report) -> Vec<(String, String)> {
+    report
+        .failures()
+        .into_iter()
+        .map(|f| (f.market_state, f.step))
+        .collect()
+}
+
+#[test]
+fn sos_r2g_01_a_shared_failure_must_be_the_same_error_not_only_the_same_program() {
+    // On the blocked market both builds refuse `sweep_fees { slot: 0 }` in the buy wall AMM
+    // with `RecipientAccountNotTheirs`. Had the deployed build refused it there with another
+    // error of its own, the candidate's refusal is a different failure and counts, so a third
+    // party's block of one market cannot hide a different regression of that step on it.
+    let (mut snapshot, _, blocked) = blocked_snapshot();
+    let slot_0 = StepKind::Job {
+        job: Job::SweepFees(0),
+    };
+    let step = snapshot
+        .baseline
+        .steps
+        .iter_mut()
+        .find(|s| s.market_state == blocked.to_string() && s.kind == slot_0)
+        .expect("the deployed build tried slot 0 on the blocked market");
+    let Outcome::Failed { program, error } = &mut step.outcome else {
+        panic!("the deployed build swept slot 0 on the blocked market");
+    };
+    assert_eq!(*program, Some(programs::program_id().to_string()));
+    assert!(error.contains("Custom("), "{error}");
+    *error = "InstructionError(0, Custom(6000))".into();
+
+    let report = run(&snapshot, &programs::current_build());
+    assert!(!report.passed(), "{report}");
+    assert_eq!(
+        failed_steps(&report, &blocked),
+        ["sweep_fees { slot: 0 }"],
+        "{report}"
+    );
+    // The trades its hook refuses still fail with the same error under both builds.
+    assert_eq!(shared_steps(&report, &blocked), ["buy", "sell"], "{report}");
+}
+
+#[test]
+fn sos_r2g_02_a_paused_router_or_a_reassigned_treasury_account_cannot_refuse_every_candidate() {
+    // The router's admin pauses it, and `SUITE_TREASURY`'s wrapped SOL account belongs to
+    // another owner: on the cluster's market the trades and the slot 2 sweep fail under every
+    // build, and the gate's own market, in a world of its own, still runs every step.
+    let build = programs::current_build();
+    let mut lab = Lab::new(&build, &programs::pinned_router()).unwrap();
+    let ordinary = lab.traded_market().unwrap().market_state;
+    let session = &mut lab.session;
+    let treasury = Pubkey::new_from_array(buy_wall_amm::config::SUITE_TREASURY.to_bytes());
+    pipeline_check::write_token_account(&mut session.svm, &WSOL, &TOKEN, &treasury, 0).unwrap();
+    let treasury_account = pda::associated_token(&treasury, &WSOL, &TOKEN);
+    let mut reassigned = session.svm.get_account(&treasury_account).unwrap();
+    reassigned.data[32..64].copy_from_slice(Pubkey::new_unique().as_ref());
+    session
+        .svm
+        .set_account(treasury_account, reassigned)
+        .unwrap();
+    let admin = session.payer.pubkey();
+    let pause = client::update_config(
+        &admin,
+        &client::UpdateConfigArgs {
+            paused: Some(true),
+            ..Default::default()
+        },
+    );
+    session.send(&[pause], &[]).unwrap();
+    synthetic::later(session, 60);
+    let snapshot = lab.snapshot(&[ordinary], "R2G-02").unwrap();
+
+    // The snapshot holds both blocks.
+    let accounts = snapshot.accounts().unwrap();
+    let saved = |address: &Pubkey| &accounts.iter().find(|(a, _)| a == address).unwrap().1;
+    assert!(
+        client::decode_config(&saved(&pda::config()).data)
+            .unwrap()
+            .paused
+    );
+    assert_ne!(&saved(&treasury_account).data[32..64], treasury.as_ref());
+
+    let report = run(&snapshot, &build);
+    println!("{report}");
+    assert!(report.passed(), "{report}");
+    assert_eq!(
+        shared_steps(&report, &ordinary),
+        ["sweep_fees { slot: 2 }", "buy", "sell"],
+        "{report}"
+    );
+    let own = report.own_market.as_ref().unwrap();
+    assert!(own.steps.iter().all(|s| s.passed), "{report}");
+    assert!(
+        own.steps.iter().any(|s| s.name == "sweep_fees { slot: 2 }"),
+        "{report}"
+    );
+
+    // A build that strands slot 2 is still refused: on the cluster's market, where it fails
+    // with an error of its own, and on the gate's own market.
+    let report = run(&snapshot, &programs::test_build(TestBuild::NarrowedSweep));
+    assert!(!report.passed(), "{report}");
+    let own = report.own_market.as_ref().unwrap().market_state.clone();
+    let slot_2 = "sweep_fees { slot: 2 }".to_string();
+    assert_eq!(
+        counted(&report),
+        [(ordinary.to_string(), slot_2.clone()), (own, slot_2)],
+        "{report}"
+    );
+}
+
+#[test]
+fn sos_r2g_03_a_build_whose_slot_2_wallet_refuses_is_refused() {
+    // `FeeSlot::wallet` refuses slot 2 as unset. The deployed build's record swept slot 2, so
+    // the candidate's refusal counts, on the cluster's market and on the gate's own.
+    let snapshot =
+        synthetic::build(&programs::current_build(), &programs::pinned_router()).unwrap();
+    let a = snapshot.markets[0].market_state.clone();
+    let slot_2 = StepKind::Job {
+        job: Job::SweepFees(2),
+    };
+    assert_eq!(
+        snapshot.baseline.outcome(&a, &slot_2),
+        Some(&Outcome::Passed)
+    );
+
+    let report = run(&snapshot, &programs::test_build(TestBuild::RefusedWallet));
+    assert!(!report.passed(), "{report}");
+    let own = report.own_market.as_ref().unwrap().market_state.clone();
+    let name = "sweep_fees { slot: 2 }".to_string();
+    assert_eq!(
+        counted(&report),
+        [(a, name.clone()), (own, name)],
+        "{report}"
+    );
+    // The refusal is the build's own, raised in the buy wall AMM.
+    let failed = report.markets[0]
+        .steps
+        .iter()
+        .find(|s| s.kind == slot_2)
+        .unwrap();
+    assert!(failed.detail.contains("RecipientUnset"), "{report}");
+    assert_eq!(failed.program, Some(programs::program_id().to_string()));
+}
+
+#[test]
+fn sos_r2g_03_each_fee_slots_wallet_comes_from_the_deployed_build_not_the_gates_tree() {
+    // The deployed build pays slot 1 to a wallet this tree does not have, so this tree stands
+    // in for a candidate's tree that refuses a slot's wallet. The record must still sweep the
+    // slot, so a candidate that unsets the wallet again, stranding `fees_designer` on every
+    // market, is refused; the deployed build itself still passes.
+    let deployed = programs::test_build(TestBuild::DesignerSet);
+    let mut lab = Lab::new(&deployed, &programs::pinned_router()).unwrap();
+    let a = lab.traded_market().unwrap().market_state;
+    synthetic::later(&mut lab.session, 600);
+    let snapshot = lab.snapshot(&[a], "R2G-03").unwrap();
+    let slot_1 = StepKind::Job {
+        job: Job::SweepFees(1),
+    };
+    assert_eq!(
+        snapshot.baseline.outcome(&a.to_string(), &slot_1),
+        Some(&Outcome::Passed),
+        "the deployed build's record did not sweep slot 1"
+    );
+
+    let report = run(&snapshot, &deployed);
+    assert!(report.passed(), "{report}");
+
+    let report = run(&snapshot, &programs::current_build());
+    assert!(!report.passed(), "{report}");
+    assert_eq!(
+        counted(&report),
+        [(a.to_string(), "sweep_fees { slot: 1 }".to_string())],
+        "{report}"
+    );
+    let failed = steps_of(&report, &a)
+        .iter()
+        .find(|s| s.kind == slot_1)
+        .unwrap();
+    assert!(failed.detail.contains("RecipientUnset"), "{report}");
 }

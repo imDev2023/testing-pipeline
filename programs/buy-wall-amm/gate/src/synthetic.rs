@@ -69,10 +69,9 @@ impl Lab {
         Lab::within(setup(build, router, program)?)
     }
 
-    /// A lab in `session`'s world, whatever it holds: a snapshot loaded with a candidate, say,
-    /// so the gate can make a market of its own beside the cluster's (`POOL4-53`). What a
-    /// market needs and a cluster with none may lack is added as devnet has it: the wrapped
-    /// SOL mint, the router's config, and the program's registration.
+    /// A lab in `session`'s world, such as the bare one the gate makes a market of its own in
+    /// (`world::own`, `POOL4-53`). What a market needs and the world lacks is added as devnet
+    /// has it: the wrapped SOL mint, the router's config, and the program's registration.
     pub fn within(mut session: Session) -> Result<Self, String> {
         prepare(&mut session)?;
         let admin = Keypair::new();
@@ -199,8 +198,8 @@ fn setup(build: &[u8], router: &[u8], program: Pubkey) -> Result<Session, String
 /// Adds what creating a market needs and the world lacks, as devnet has it: the wrapped SOL
 /// mint, the router's config (a 0.01 SOL listing fee), and the program's registration with
 /// the router, paying the config's listing fee. Making either, the payer becomes the upgrade
-/// authority of the program it needs, as if it had deployed it; a world that has both, as a
-/// snapshot with a market does, is left as it is.
+/// authority of the program it needs, as if it had deployed it; a world that has both is
+/// left as it is.
 fn prepare(session: &mut Session) -> Result<(), String> {
     if session.svm.get_account(&WSOL).is_none() {
         let mut data = vec![0u8; 82];

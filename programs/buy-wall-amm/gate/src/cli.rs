@@ -20,7 +20,7 @@ buy-wall-gate: the buy wall AMM's release gate (docs/spec/pool4-for-solana.md, \
       [--release <release.json>] [--records <dir>] [--snapshot-out <file>] [--program <id>]
         Downloads every market of the program from the cluster and replays it with the
         candidate and the cluster's router, then makes and trades a market of its own in
-        the same world (POOL4-53). Exits 0 and records the pass if every step passes on
+        a world of its own (POOL4-53). Exits 0 and records the pass if every step passes on
         every market, or fails only as it does under the deployed build, and every step on
         its own market passes, else exits 1 naming each market and step that failed.
 

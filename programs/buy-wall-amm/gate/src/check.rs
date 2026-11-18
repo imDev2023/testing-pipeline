@@ -7,11 +7,11 @@
 //! ([`record_baseline`]), records the deployed build's quotes and whether each other step
 //! passed with it, every keeper job tried whether due or not. A step the candidate fails
 //! counts against it unless the deployed build failed the same step on the same snapshot,
-//! the failure starting in the same program (the relative rule): a market whose token's hook
-//! refuses the gate's trader, or whose fee recipient made its account unpayable, fails those
-//! steps under every build, so they cannot veto a release, while a candidate that newly fails
-//! a step, or fails it in its own code where the deployed build failed in the hook, is
-//! refused. The layout checks (reading the market state, finding the market, account
+//! with the same error starting in the same program (the relative rule): a market whose
+//! token's hook refuses the gate's trader, or whose fee recipient made its account unpayable,
+//! fails those steps under every build, so they cannot veto a release, while a candidate that
+//! newly fails a step, fails it in its own code where the deployed build failed in the hook,
+//! or fails it with another error, is refused. The layout checks (reading the market state, finding the market, account
 //! resolution, the quotes and `pipeline_market_info`) never count as shared and run on every
 //! market whatever else fails, so a build that would strand a market is refused even on a
 //! market whose trades are blocked.
@@ -21,14 +21,15 @@
 //! A market the router never recorded is registered first, and a missing router fee account
 //! created, as anyone could, so such a market is checked like the rest.
 //!
-//! Then, in the same world, the gate makes a market of its own with the candidate
-//! ([`own_market`], `POOL4-53`): it readies the router as on devnet where the snapshot lacks
-//! its config or the program's registration, creates and seeds the market through the
+//! Then, in a world of its own, the gate makes a market with the candidate ([`own_market`],
+//! `POOL4-53`): it readies the router as on devnet, creates and seeds the market through the
 //! router, trades it past its first wall and settlement, and checks it as it checks the
 //! cluster's, every keeper job that has become due included, each quote required to serve.
 //! Every step there counts, since the deployed build never ran it, so a cluster with no
 //! market still exercises the candidate, and a build that refuses every instruction (one
-//! declared for another address, say) is refused before the first market exists.
+//! declared for another address, say) is refused before the first market exists; and since
+//! that world holds nothing of the cluster's, no state on the cluster can refuse every
+//! candidate there.
 
 use pipeline_client::{self as client, pda, Pubkey};
 use pipeline_strategy_interface::fees;
@@ -38,7 +39,9 @@ use solana_signer::Signer;
 use crate::keeper::{self, Job};
 use crate::quotes;
 use crate::release::Release;
-use crate::session::{failing_program, first_line, program_name, spendable, MarketView, Session};
+use crate::session::{
+    failing_program, failure_error, first_line, program_name, spendable, MarketView, Session,
+};
 use crate::snapshot::{
     parse_key, Baseline, Cluster, Outcome, Quote, QuoteOutcome, RecordedStep, Snapshot, StepKind,
 };
@@ -58,7 +61,7 @@ pub struct Report {
     /// Whether a quote passed only because the release declares a pricing change.
     pub relied_on_pricing_change: bool,
     pub markets: Vec<MarketReport>,
-    /// The market the gate made of its own in the same world, after the cluster's (`None`
+    /// The market the gate made of its own in a world of its own, after the cluster's (`None`
     /// only when the snapshot did not load); every failed step there counts.
     pub own_market: Option<MarketReport>,
 }
@@ -291,23 +294,28 @@ pub fn run(
             steps: steps.steps,
         });
     }
-    report.own_market = Some(own_market(session));
+    report.own_market = Some(own_market(snapshot, program, candidate, router_elf));
     report
 }
 
 /// The name of the step that makes the gate's own market.
 pub const MAKE_MARKET: &str = "make a market of its own";
 
-/// Makes a market of the gate's own in `session`'s world, with the program loaded there,
-/// and checks it (`POOL4-53`): the world readied as devnet is where it lacks the router's
-/// config or the program's registration, the market created and seeded through the router
-/// at IMD's launch values and traded past its first wall and settlement as the synthetic
-/// fixture's market A is ([`Lab::traded_market`]), then, from a later slot, the checks every
-/// market gets, with each quote required to serve and each keeper job that has become due.
-/// No step is excused: the deployed build never ran it.
-fn own_market(session: Session) -> MarketReport {
+/// Makes a market of the gate's own with `candidate` and checks it (`POOL4-53`): in a world
+/// holding nothing of the cluster's ([`world::own`]), readied as devnet is, the market created
+/// and seeded through the router at IMD's launch values and traded past its first wall and
+/// settlement as the synthetic fixture's market A is ([`Lab::traded_market`]), then, from a
+/// later slot, the checks every market gets, with each quote required to serve and each
+/// keeper job that has become due. No step is excused: the deployed build never ran it.
+fn own_market(
+    snapshot: &Snapshot,
+    program: Pubkey,
+    candidate: &[u8],
+    router_elf: Option<&[u8]>,
+) -> MarketReport {
     let mut steps = Steps::default();
-    let made = Lab::within(session).and_then(|mut lab| {
+    let made = world::own(snapshot, candidate, router_elf).and_then(|svm| {
+        let mut lab = Lab::within(Session::new(svm, program))?;
         let view = lab.traded_market()?;
         Ok((lab, view))
     });
@@ -378,8 +386,8 @@ pub fn record_baseline(
     Ok(baseline)
 }
 
-/// Marks each failed step the deployed build failed the same way, the failure starting in
-/// the same program, as not counting; never a layout check.
+/// Marks each failed step the deployed build failed the same way, with the same error
+/// starting in the same program, as not counting; never a layout check.
 fn compare_with_deployed(steps: &mut [Step], baseline: &Baseline, market_state: &str) {
     for step in steps.iter_mut() {
         if step.passed || !step.kind.may_fail_under_any_build() {
@@ -389,7 +397,7 @@ fn compare_with_deployed(steps: &mut [Step], baseline: &Baseline, market_state: 
         else {
             continue;
         };
-        if *program != step.program {
+        if *program != step.program || failure_error(error) != failure_error(&step.detail) {
             continue;
         }
         step.deployed_fails_too = Some(if *error == first_line(&step.detail) {

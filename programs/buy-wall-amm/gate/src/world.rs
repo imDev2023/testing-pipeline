@@ -20,12 +20,7 @@ pub fn load(
     let mut svm = LiteSVM::new().with_sigverify(false);
     set_clock(&mut svm, snapshot);
 
-    let router = match router_elf {
-        Some(elf) => elf.to_vec(),
-        None => snapshot
-            .program_elf(&client::PROGRAM_ID)?
-            .ok_or("the snapshot holds no router; pass the pinned router")?,
-    };
+    let router = router_of(snapshot, router_elf)?;
     // The two programs are loaded from their bytes, never from the saved accounts.
     let replaced = [
         program,
@@ -52,6 +47,33 @@ pub fn load(
         .map_err(|e| format!("the router does not load: {e}"))?;
     load_program(&mut svm, program, strategy_elf)?;
     Ok(svm)
+}
+
+/// The world of the market the gate makes of its own (`POOL4-53`): the router the replay runs
+/// and `strategy_elf` at the program's address, at the snapshot's clock, and no account of the
+/// cluster's, so nothing on the cluster (a paused router, a fixed fee wallet's reassigned
+/// token account) can refuse every candidate there.
+pub fn own(
+    snapshot: &Snapshot,
+    strategy_elf: &[u8],
+    router_elf: Option<&[u8]>,
+) -> Result<LiteSVM, String> {
+    let mut svm = LiteSVM::new().with_sigverify(false);
+    set_clock(&mut svm, snapshot);
+    svm.add_program(client::PROGRAM_ID, &router_of(snapshot, router_elf)?)
+        .map_err(|e| format!("the router does not load: {e}"))?;
+    load_program(&mut svm, snapshot.program_id()?, strategy_elf)?;
+    Ok(svm)
+}
+
+/// The router to run: `router_elf` when given, else the snapshot's copy of the cluster's.
+fn router_of(snapshot: &Snapshot, router_elf: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    match router_elf {
+        Some(elf) => Ok(elf.to_vec()),
+        None => snapshot
+            .program_elf(&client::PROGRAM_ID)?
+            .ok_or_else(|| "the snapshot holds no router; pass the pinned router".to_string()),
+    }
 }
 
 /// Replaces the program's executable with `elf`, as an upgrade would.

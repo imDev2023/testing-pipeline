@@ -8,11 +8,11 @@
 //! on every market (registering one the router never recorded, as anyone could) runs account
 //! resolution, quotes compared with the deployed build's on the same state,
 //! `pipeline_market_info`, each keeper job that is due or that the deployed build ran, a buy
-//! and a sell through the router ([`check`]). In the same world it then makes a market of
-//! its own with the candidate through the router, trades it and checks it the same way
+//! and a sell through the router ([`check`]). In a world of its own it then makes a market
+//! with the candidate through the router, trades it and checks it the same way
 //! (`POOL4-53`), so a cluster with no market still exercises the candidate. It refuses the
-//! build if a step fails on any market that the deployed build passed, or failed elsewhere
-//! than the candidate does, if any step on its own market fails, if any layout check fails,
+//! build if a step fails on any market that the deployed build passed, or failed with
+//! another error or elsewhere than the candidate does, if any step on its own market fails, if any layout check fails,
 //! or if a quote differs without the release declaring a pricing change ([`release`]). A passing run against a cluster is recorded ([`record`]), and the
 //! deploy script accepts only a build with a passing record against the cluster it deploys
 //! to.

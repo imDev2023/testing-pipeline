@@ -1,9 +1,10 @@
 //! Proof that the gate catches stranding (docs/spec/pool4-for-solana.md, "A release gate"):
 //! on every fixture the repo keeps, a build that moves a field, one that renames the market
 //! state type so its derived discriminator changes, and one that changes the account's size
-//! are each refused, a build whose payout rule can no longer sweep fee slot 2 is refused on
-//! every market the deployed build swept it on and on the market the gate makes of its own,
-//! and a build that appends a field into the reserve passes.
+//! are each refused, a build whose payout rule can no longer sweep fee slot 2 and one whose
+//! slot 2 wallet is refused as unset are each refused on every market the deployed build swept
+//! it on and on the market the gate makes of its own, and a build that appends a field into
+//! the reserve and one that sets the designer's wallet pass.
 //!
 //! Build the test builds first: `cargo run -p buy-wall-gate -- test-builds`.
 

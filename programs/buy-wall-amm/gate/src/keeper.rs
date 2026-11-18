@@ -8,15 +8,19 @@
 //! This tree is the candidate's, so its rules alone would let a candidate that narrows a
 //! rule drop that job from its own test. The gate therefore also runs every job the deployed
 //! build ran on the snapshot ([`crate::check`]): it tries each of the four, every slot of
-//! `sweep_fees` on its own, with the deployed build and records which ran.
+//! `sweep_fees` on its own, with the deployed build and records which ran. Which wallet a
+//! sweep pays is asked of the build being run ([`swept_wallet`]), never of this tree, so a
+//! tree that refuses a slot's wallet cannot keep the deployed build from sweeping that slot
+//! in its record (`POOL4-46`).
 
 use buy_wall_amm::state::{MarketState, STATUS_OPEN};
-use pipeline_client::pda;
+use pipeline_client::{pda, Pubkey};
 use serde::{Deserialize, Serialize};
 use solana_signer::Signer;
 
 use crate::session::{
-    key, pay_rewards_ix, place_wall_ix, settle_ix, sweep_fees_ix, MarketView, Session, TOKEN, WSOL,
+    compared_keys, key, pay_rewards_ix, place_wall_ix, settle_ix, sweep_fees_ix, MarketView,
+    Session, TOKEN, WSOL,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,11 +146,27 @@ pub fn run(
             Ok(format!("paid {}", state.rewards_owed()))
         }
         Job::SweepFees(slot) => {
-            let wallet = buy_wall_amm::payouts::slot_wallet(slot, &state.fee_recipient)
-                .map_err(|refusal| format!("slot {slot} has no wallet: {refusal:?}"))?;
-            let ix = sweep_fees_ix(&program, view, &payer, &key(&wallet), slot);
+            let wallet = swept_wallet(session, view, slot)?;
+            let ix = sweep_fees_ix(&program, view, &payer, &wallet, slot);
             session.send(&[ix], &[])?;
             Ok("swept".into())
         }
+    }
+}
+
+/// The wallet the build loaded in `session` pays fee slot `slot` of this market to, asked of
+/// the build itself: a sweep simulated with the gate's payer as the recipient, which the
+/// build refuses naming the wallet it compared that recipient with. A build that refuses the
+/// sweep before that comparison (nothing owed, no wallet set) gives that refusal, which is
+/// its answer for the job.
+fn swept_wallet(session: &Session, view: &MarketView, slot: u8) -> Result<Pubkey, String> {
+    let asked = session.payer.pubkey();
+    let ix = sweep_fees_ix(&session.program, view, &asked, &asked, slot);
+    match session.simulate(ix) {
+        Ok(_) => Ok(asked),
+        Err(refusal) => match compared_keys(&refusal) {
+            Some((given, wallet)) if given == asked => Ok(wallet),
+            _ => Err(refusal),
+        },
     }
 }
