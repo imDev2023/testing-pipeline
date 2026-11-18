@@ -153,6 +153,14 @@ pub fn token_balance(account: &AccountInfo) -> Result<u64> {
     Ok(u64::from_le_bytes(amount))
 }
 
+/// A mint's decimals, from its base layout, which SPL Token and Token-2022 share; the mint's
+/// owner is checked by whoever passes it on (creation checks every mint against its token
+/// program).
+pub fn mint_decimals(mint: &AccountInfo) -> Result<u8> {
+    let data = mint.try_borrow_data()?;
+    Ok(*data.get(44).ok_or(StrategyError::NotAMint)?)
+}
+
 /// `transfer_checked` that forwards transfer-hook accounts to the token program, so
 /// Token-2022 mints with transfer hooks work.
 #[allow(clippy::too_many_arguments)]

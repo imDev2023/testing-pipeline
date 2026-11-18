@@ -33,6 +33,8 @@ anchor-spl.workspace = true
 mint-rules.workspace = true
 pipeline-strategy-interface.workspace = true
 solana-security-txt.workspace = true
+# Reads the instructions sysvar, so `rebalance` can refuse to share its transaction.
+solana-instructions-sysvar = "3.0.1"
 
 # Anchor's macros check `target_os = "solana"`, which host builds don't know about, and
 # Kani sets `kani`; `kani_full` turns on the full-domain proofs, as in Pipeline.
@@ -51,7 +53,9 @@ serde_json.workspace = true
 solana-account.workspace = true
 solana-clock.workspace = true
 solana-keypair.workspace = true
+solana-message.workspace = true
 solana-signer.workspace = true
 solana-transaction.workspace = true
 spl-token-2022-interface.workspace = true
+stand-in-launchpad.workspace = true
 toml.workspace = true

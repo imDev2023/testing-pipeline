@@ -73,6 +73,7 @@ fn every_constant_is_defined_once_in_the_config_module() {
         "BUFFER_MAX_BPS",
         "WITHDRAW_MODE_ENTER",
         "WITHDRAW_MODE_EXIT",
+        "KAMINO_RATE_HEADROOM_BPS",
         "MAX_LP_FEE_BPS",
         "MINIMUM_LIQUIDITY",
         "LP_DECIMALS",
@@ -104,11 +105,57 @@ fn the_lent_mints_reserves_and_kamino_are_written_only_in_the_config_module() {
     }
     for address in addresses {
         let files = files_containing(&address);
+        // Metadata cannot read the config module, so `rebalance`'s accounts name klend there,
+        // as a fixed account and as the program of its lending market authority; the test
+        // below checks those are the config module's klend, and tests/metadata.rs that the
+        // instruction built from them is the program's.
+        let allowed = |f: &String| {
+            f == CONFIG
+                || (address == config::KLEND_PROGRAM.to_string()
+                    && f == "lending-amm/metadata.json")
+        };
         assert!(
-            files.iter().all(|f| f == CONFIG),
+            files.iter().all(allowed),
             "{address} is written outside the config module: {files:?}"
         );
     }
+}
+
+#[test]
+fn the_metadata_names_only_the_config_modules_klend() {
+    let text = std::fs::read_to_string(programs_dir().join("lending-amm/metadata.json")).unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let klend = config::KLEND_PROGRAM.to_string();
+    // The actions that call klend, `rebalance` and the cash form of `remove_liquidity`, name it
+    // twice each, as the program and as the lending market authority's PDA program, from the
+    // config module's constant; the in-kind form names no Kamino account at all.
+    let calling = ["rebalance", "remove_liquidity"];
+    for action in metadata["actions"].as_array().unwrap() {
+        let name = action["name"].as_str().unwrap();
+        let sources: Vec<&str> = action["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["source"].as_str().unwrap())
+            .collect();
+        let named = sources.iter().filter(|s| s.contains(&klend)).count();
+        if calling.contains(&name) {
+            assert!(
+                sources.contains(&format!("fixed:{klend}").as_str()),
+                "{name}"
+            );
+            assert!(
+                sources.contains(&format!("pda:{klend}:str:lma,key:input:lending_market").as_str()),
+                "{name}"
+            );
+            assert_eq!(named, 2, "{name}");
+        } else {
+            assert_eq!(named, 0, "{name}");
+        }
+    }
+    // Nowhere else, and no other address that looks like Kamino's.
+    assert_eq!(text.matches(&klend).count(), 2 * calling.len());
+    assert_eq!(text.matches("KLend").count(), 2 * calling.len());
 }
 
 #[cfg(feature = "devnet")]
@@ -177,6 +224,7 @@ fn the_constants_have_the_specs_values() {
         (5, 10)
     );
     assert_eq!(config::MAX_LP_FEE_BPS, 200);
+    assert_eq!(config::KAMINO_RATE_HEADROOM_BPS, 10);
     assert_eq!(config::MINIMUM_LIQUIDITY, 1_000);
     assert_eq!(config::LP_DECIMALS, 9);
     assert_eq!(

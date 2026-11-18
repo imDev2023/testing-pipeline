@@ -2,8 +2,9 @@
 //! (docs/spec/lending-pool.md, "Valuing the lent side"): `L = B + V`, with `V` the market's
 //! recorded cTokens at the reserve's stored rate, after checking the reserve.
 //!
-//! No instruction lends yet, so the tests give a market cTokens directly ([`Env::give_ctokens`])
-//! and compare it with a market holding the same value in its buffer. Every transaction goes
+//! The tests give a market cTokens directly ([`Env::give_ctokens`]), so they can set any amount
+//! and compare it with a market holding the same value in its buffer; `tests/rebalance.rs`
+//! lends through klend's real deposit. Every transaction goes
 //! through the real router, against the Kamino reserve dumped from the cluster this build lends
 //! on and, where Kamino itself runs, klend's deployed bytes.
 

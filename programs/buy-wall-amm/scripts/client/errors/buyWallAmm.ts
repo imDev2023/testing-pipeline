@@ -77,9 +77,26 @@ export const BUY_WALL_AMM_ERROR__NOTHING_AFTER_FEE = 0x178c; // 6028
 export const BUY_WALL_AMM_ERROR__PRICE_BOUND_REACHED = 0x178d; // 6029
 /** BadSeedAmounts: A seed request needs exactly one amount per mint: the token's, then wrapped SOL's */
 export const BUY_WALL_AMM_ERROR__BAD_SEED_AMOUNTS = 0x178e; // 6030
+/** WallBelowThreshold: Neither idle SOL nor the SOL the wall has spent reaches WALL_THRESHOLD */
+export const BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD = 0x178f; // 6031
+/** NothingToSettle: No retired tokens to settle */
+export const BUY_WALL_AMM_ERROR__NOTHING_TO_SETTLE = 0x1790; // 6032
+/** NothingOwed: Nothing is owed */
+export const BUY_WALL_AMM_ERROR__NOTHING_OWED = 0x1791; // 6033
+/** RecipientUnset: This role or fee slot has no wallet */
+export const BUY_WALL_AMM_ERROR__RECIPIENT_UNSET = 0x1792; // 6034
+/** BadFeeSlot: The fee slot must be 0, 1 or 2 */
+export const BUY_WALL_AMM_ERROR__BAD_FEE_SLOT = 0x1793; // 6035
+/** NotRecipient: Only the current recipient may hand its role over */
+export const BUY_WALL_AMM_ERROR__NOT_RECIPIENT = 0x1794; // 6036
+/** NewRecipientRequired: The new recipient must not be the default key */
+export const BUY_WALL_AMM_ERROR__NEW_RECIPIENT_REQUIRED = 0x1795; // 6037
+/** RecipientAccountNotTheirs: The recipient's token account belongs to someone else */
+export const BUY_WALL_AMM_ERROR__RECIPIENT_ACCOUNT_NOT_THEIRS = 0x1796; // 6038
 
 export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__ALREADY_SEEDED
+  | typeof BUY_WALL_AMM_ERROR__BAD_FEE_SLOT
   | typeof BUY_WALL_AMM_ERROR__BAD_INIT_DATA
   | typeof BUY_WALL_AMM_ERROR__BAD_SEED_AMOUNTS
   | typeof BUY_WALL_AMM_ERROR__CAP_DECAY_OUT_OF_RANGE
@@ -93,19 +110,26 @@ export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__MARKET_NOT_OPEN
   | typeof BUY_WALL_AMM_ERROR__MINT_AUTHORITY_LIVE
   | typeof BUY_WALL_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED
+  | typeof BUY_WALL_AMM_ERROR__NEW_RECIPIENT_REQUIRED
   | typeof BUY_WALL_AMM_ERROR__NOT_A_MARKET
   | typeof BUY_WALL_AMM_ERROR__NOTHING_AFTER_FEE
+  | typeof BUY_WALL_AMM_ERROR__NOTHING_OWED
+  | typeof BUY_WALL_AMM_ERROR__NOTHING_TO_SETTLE
   | typeof BUY_WALL_AMM_ERROR__NOT_PIPELINE
+  | typeof BUY_WALL_AMM_ERROR__NOT_RECIPIENT
   | typeof BUY_WALL_AMM_ERROR__NOT_SEEDER
   | typeof BUY_WALL_AMM_ERROR__OPENING_PRICE_OUT_OF_BOUNDS
   | typeof BUY_WALL_AMM_ERROR__OVERFLOW
   | typeof BUY_WALL_AMM_ERROR__PRICE_BOUND_REACHED
+  | typeof BUY_WALL_AMM_ERROR__RECIPIENT_ACCOUNT_NOT_THEIRS
+  | typeof BUY_WALL_AMM_ERROR__RECIPIENT_UNSET
   | typeof BUY_WALL_AMM_ERROR__REWARD_SHARE_OUT_OF_RANGE
   | typeof BUY_WALL_AMM_ERROR__REWARDS_RECIPIENT_MISMATCH
   | typeof BUY_WALL_AMM_ERROR__SAME_MINT
   | typeof BUY_WALL_AMM_ERROR__SEEDER_REQUIRED
   | typeof BUY_WALL_AMM_ERROR__SEED_TOO_SMALL
   | typeof BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE
+  | typeof BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD
   | typeof BUY_WALL_AMM_ERROR__WALL_SPLIT_OUT_OF_RANGE
   | typeof BUY_WALL_AMM_ERROR__WRONG_ACCOUNT
   | typeof BUY_WALL_AMM_ERROR__ZERO_INPUT
@@ -115,6 +139,7 @@ let buyWallAmmErrorMessages: Record<BuyWallAmmError, string> | undefined;
 if (process.env["NODE_ENV"] !== "production") {
   buyWallAmmErrorMessages = {
     [BUY_WALL_AMM_ERROR__ALREADY_SEEDED]: `The market is already seeded`,
+    [BUY_WALL_AMM_ERROR__BAD_FEE_SLOT]: `The fee slot must be 0, 1 or 2`,
     [BUY_WALL_AMM_ERROR__BAD_INIT_DATA]: `Init data is not valid creation parameters`,
     [BUY_WALL_AMM_ERROR__BAD_SEED_AMOUNTS]: `A seed request needs exactly one amount per mint: the token's, then wrapped SOL's`,
     [BUY_WALL_AMM_ERROR__CAP_DECAY_OUT_OF_RANGE]: `The cap decay must be at most MAX_CAP_DECAY_BPS`,
@@ -128,19 +153,26 @@ if (process.env["NODE_ENV"] !== "production") {
     [BUY_WALL_AMM_ERROR__MARKET_NOT_OPEN]: `The market is not seeded yet`,
     [BUY_WALL_AMM_ERROR__MINT_AUTHORITY_LIVE]: `The token's mint authority must be removed before the seed`,
     [BUY_WALL_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED]: `The token carries a Token-2022 extension outside the allowlist`,
+    [BUY_WALL_AMM_ERROR__NEW_RECIPIENT_REQUIRED]: `The new recipient must not be the default key`,
     [BUY_WALL_AMM_ERROR__NOT_A_MARKET]: `Not a buy wall market state of a deployed layout`,
     [BUY_WALL_AMM_ERROR__NOTHING_AFTER_FEE]: `Nothing is left of the input after the fee`,
+    [BUY_WALL_AMM_ERROR__NOTHING_OWED]: `Nothing is owed`,
+    [BUY_WALL_AMM_ERROR__NOTHING_TO_SETTLE]: `No retired tokens to settle`,
     [BUY_WALL_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
+    [BUY_WALL_AMM_ERROR__NOT_RECIPIENT]: `Only the current recipient may hand its role over`,
     [BUY_WALL_AMM_ERROR__NOT_SEEDER]: `Only the market's seeder may seed it`,
     [BUY_WALL_AMM_ERROR__OPENING_PRICE_OUT_OF_BOUNDS]: `The opening price is outside the opening bounds`,
     [BUY_WALL_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
     [BUY_WALL_AMM_ERROR__PRICE_BOUND_REACHED]: `The trade reaches a price bound with input left over`,
+    [BUY_WALL_AMM_ERROR__RECIPIENT_ACCOUNT_NOT_THEIRS]: `The recipient's token account belongs to someone else`,
+    [BUY_WALL_AMM_ERROR__RECIPIENT_UNSET]: `This role or fee slot has no wallet`,
     [BUY_WALL_AMM_ERROR__REWARD_SHARE_OUT_OF_RANGE]: `The reward share must be at most MAX_REWARD_SHARE_BPS`,
     [BUY_WALL_AMM_ERROR__REWARDS_RECIPIENT_MISMATCH]: `A rewards recipient is required exactly when the reward share is above 0`,
     [BUY_WALL_AMM_ERROR__SAME_MINT]: `The token must not be wrapped SOL, SPL Token's or Token-2022's`,
     [BUY_WALL_AMM_ERROR__SEEDER_REQUIRED]: `The seeder must not be the default key`,
     [BUY_WALL_AMM_ERROR__SEED_TOO_SMALL]: `The seed must bring at least MIN_SEED_LAMPORTS`,
     [BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE]: `Trading is not available in this build`,
+    [BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD]: `Neither idle SOL nor the SOL the wall has spent reaches WALL_THRESHOLD`,
     [BUY_WALL_AMM_ERROR__WALL_SPLIT_OUT_OF_RANGE]: `The wall split must be at most 10,000 basis points`,
     [BUY_WALL_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,
     [BUY_WALL_AMM_ERROR__ZERO_INPUT]: `The input is zero`,

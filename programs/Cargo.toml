@@ -11,7 +11,7 @@
 # local demo: docs/toolchain.md.
 [workspace]
 resolver = "2"
-members = ["mint-rules", "tax-amm", "buy-wall-amm", "containment-hook", "lending-amm", "test-programs/stand-in-launchpad"]
+members = ["mint-rules", "tax-amm", "buy-wall-amm", "buy-wall-amm/gate", "containment-hook", "lending-amm", "test-programs/stand-in-launchpad", "test-programs/stand-in-smart-wallet"]
 
 [workspace.package]
 edition = "2021"

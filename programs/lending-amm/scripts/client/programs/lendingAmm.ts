@@ -42,29 +42,45 @@ import {
 } from "../accounts/index.ts";
 import {
   getAddLiquidityInstructionAsync,
+  getLockLpInstructionAsync,
   getPipelineInitMarketInstructionAsync,
   getPipelineMarketInfoInstruction,
   getPipelineQuoteInstruction,
   getPipelineResolveAccountsInstruction,
+  getPipelineSeedLiquidityInstructionAsync,
   getPipelineSwapInstruction,
+  getRebalanceInstructionAsync,
+  getRemoveLiquidityInstructionAsync,
   parseAddLiquidityInstruction,
+  parseLockLpInstruction,
   parsePipelineInitMarketInstruction,
   parsePipelineMarketInfoInstruction,
   parsePipelineQuoteInstruction,
   parsePipelineResolveAccountsInstruction,
+  parsePipelineSeedLiquidityInstruction,
   parsePipelineSwapInstruction,
+  parseRebalanceInstruction,
+  parseRemoveLiquidityInstruction,
   type AddLiquidityAsyncInput,
+  type LockLpAsyncInput,
   type ParsedAddLiquidityInstruction,
+  type ParsedLockLpInstruction,
   type ParsedPipelineInitMarketInstruction,
   type ParsedPipelineMarketInfoInstruction,
   type ParsedPipelineQuoteInstruction,
   type ParsedPipelineResolveAccountsInstruction,
+  type ParsedPipelineSeedLiquidityInstruction,
   type ParsedPipelineSwapInstruction,
+  type ParsedRebalanceInstruction,
+  type ParsedRemoveLiquidityInstruction,
   type PipelineInitMarketAsyncInput,
   type PipelineMarketInfoInput,
   type PipelineQuoteInput,
   type PipelineResolveAccountsInput,
+  type PipelineSeedLiquidityAsyncInput,
   type PipelineSwapInput,
+  type RebalanceAsyncInput,
+  type RemoveLiquidityAsyncInput,
 } from "../instructions/index.ts";
 import {
   findAuthorityPda,
@@ -111,9 +127,23 @@ export function identifyLendingAmmAccount(
 
 export const LendingAmmEvent = {
   0: "LiquidityAdded",
-  1: "MarketCreated",
+  1: "LiquidityRemoved",
+  2: "MarketCreated",
+  3: "MarketSeeded",
+  4: "Rebalanced",
+  5: "SharesLocked",
+  6: "ShortfallRedeemed",
+  7: "WithdrawModeEntered",
+  8: "WithdrawModeLeft",
   LiquidityAdded: 0,
-  MarketCreated: 1,
+  LiquidityRemoved: 1,
+  MarketCreated: 2,
+  MarketSeeded: 3,
+  Rebalanced: 4,
+  SharesLocked: 5,
+  ShortfallRedeemed: 6,
+  WithdrawModeEntered: 7,
+  WithdrawModeLeft: 8,
 } as const;
 
 export type LendingAmmEvent = (typeof LendingAmmEvent)[Exclude<
@@ -140,12 +170,89 @@ export function identifyLendingAmmEvent(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([225, 105, 216, 39, 124, 116, 169, 189]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.LiquidityRemoved;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
         new Uint8Array([88, 184, 130, 231, 226, 84, 6, 58]),
       ),
       0,
     )
   ) {
     return LendingAmmEvent.MarketCreated;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([132, 95, 90, 213, 26, 63, 25, 185]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.MarketSeeded;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([74, 101, 57, 244, 181, 179, 52, 182]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.Rebalanced;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([20, 13, 218, 116, 193, 93, 51, 151]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.SharesLocked;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([208, 206, 3, 143, 152, 189, 140, 24]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.ShortfallRedeemed;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([66, 18, 123, 120, 231, 122, 170, 76]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.WithdrawModeEntered;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([118, 66, 87, 168, 200, 101, 236, 125]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.WithdrawModeLeft;
   }
   throw new Error(
     "The provided event could not be identified as a lendingAmm event.",
@@ -154,17 +261,25 @@ export function identifyLendingAmmEvent(
 
 export const LendingAmmInstruction = {
   0: "AddLiquidity",
-  1: "PipelineInitMarket",
-  2: "PipelineMarketInfo",
-  3: "PipelineQuote",
-  4: "PipelineResolveAccounts",
-  5: "PipelineSwap",
+  1: "LockLp",
+  2: "PipelineInitMarket",
+  3: "PipelineMarketInfo",
+  4: "PipelineQuote",
+  5: "PipelineResolveAccounts",
+  6: "PipelineSeedLiquidity",
+  7: "PipelineSwap",
+  8: "Rebalance",
+  9: "RemoveLiquidity",
   AddLiquidity: 0,
-  PipelineInitMarket: 1,
-  PipelineMarketInfo: 2,
-  PipelineQuote: 3,
-  PipelineResolveAccounts: 4,
-  PipelineSwap: 5,
+  LockLp: 1,
+  PipelineInitMarket: 2,
+  PipelineMarketInfo: 3,
+  PipelineQuote: 4,
+  PipelineResolveAccounts: 5,
+  PipelineSeedLiquidity: 6,
+  PipelineSwap: 7,
+  Rebalance: 8,
+  RemoveLiquidity: 9,
 } as const;
 
 export type LendingAmmInstruction = (typeof LendingAmmInstruction)[Exclude<
@@ -186,6 +301,17 @@ export function identifyLendingAmmInstruction(
     )
   ) {
     return LendingAmmInstruction.AddLiquidity;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([236, 140, 2, 95, 1, 131, 251, 254]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmInstruction.LockLp;
   }
   if (
     containsBytes(
@@ -235,12 +361,45 @@ export function identifyLendingAmmInstruction(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([197, 81, 12, 118, 24, 65, 212, 81]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmInstruction.PipelineSeedLiquidity;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
         new Uint8Array([161, 235, 193, 107, 155, 234, 162, 140]),
       ),
       0,
     )
   ) {
     return LendingAmmInstruction.PipelineSwap;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([108, 158, 77, 9, 210, 52, 88, 62]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmInstruction.Rebalance;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([80, 85, 209, 72, 24, 206, 177, 108]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmInstruction.RemoveLiquidity;
   }
   throw new SolanaError(
     SOLANA_ERROR__PROGRAM_CLIENTS__FAILED_TO_IDENTIFY_INSTRUCTION,
@@ -255,6 +414,9 @@ export type ParsedLendingAmmInstruction<
       instructionType: typeof LendingAmmInstruction.AddLiquidity;
     } & ParsedAddLiquidityInstruction<TProgram>)
   | ({
+      instructionType: typeof LendingAmmInstruction.LockLp;
+    } & ParsedLockLpInstruction<TProgram>)
+  | ({
       instructionType: typeof LendingAmmInstruction.PipelineInitMarket;
     } & ParsedPipelineInitMarketInstruction<TProgram>)
   | ({
@@ -267,8 +429,17 @@ export type ParsedLendingAmmInstruction<
       instructionType: typeof LendingAmmInstruction.PipelineResolveAccounts;
     } & ParsedPipelineResolveAccountsInstruction<TProgram>)
   | ({
+      instructionType: typeof LendingAmmInstruction.PipelineSeedLiquidity;
+    } & ParsedPipelineSeedLiquidityInstruction<TProgram>)
+  | ({
       instructionType: typeof LendingAmmInstruction.PipelineSwap;
-    } & ParsedPipelineSwapInstruction<TProgram>);
+    } & ParsedPipelineSwapInstruction<TProgram>)
+  | ({
+      instructionType: typeof LendingAmmInstruction.Rebalance;
+    } & ParsedRebalanceInstruction<TProgram>)
+  | ({
+      instructionType: typeof LendingAmmInstruction.RemoveLiquidity;
+    } & ParsedRemoveLiquidityInstruction<TProgram>);
 
 export function parseLendingAmmInstruction<TProgram extends string>(
   instruction: Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array>,
@@ -280,6 +451,13 @@ export function parseLendingAmmInstruction<TProgram extends string>(
       return {
         instructionType: LendingAmmInstruction.AddLiquidity,
         ...parseAddLiquidityInstruction(instruction),
+      };
+    }
+    case LendingAmmInstruction.LockLp: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: LendingAmmInstruction.LockLp,
+        ...parseLockLpInstruction(instruction),
       };
     }
     case LendingAmmInstruction.PipelineInitMarket: {
@@ -310,11 +488,32 @@ export function parseLendingAmmInstruction<TProgram extends string>(
         ...parsePipelineResolveAccountsInstruction(instruction),
       };
     }
+    case LendingAmmInstruction.PipelineSeedLiquidity: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: LendingAmmInstruction.PipelineSeedLiquidity,
+        ...parsePipelineSeedLiquidityInstruction(instruction),
+      };
+    }
     case LendingAmmInstruction.PipelineSwap: {
       assertIsInstructionWithAccounts(instruction);
       return {
         instructionType: LendingAmmInstruction.PipelineSwap,
         ...parsePipelineSwapInstruction(instruction),
+      };
+    }
+    case LendingAmmInstruction.Rebalance: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: LendingAmmInstruction.Rebalance,
+        ...parseRebalanceInstruction(instruction),
+      };
+    }
+    case LendingAmmInstruction.RemoveLiquidity: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: LendingAmmInstruction.RemoveLiquidity,
+        ...parseRemoveLiquidityInstruction(instruction),
       };
     }
     default:
@@ -348,6 +547,10 @@ export type LendingAmmPluginInstructions = {
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getAddLiquidityInstructionAsync> &
     SelfPlanAndSendFunctions;
+  lockLp: (
+    input: LockLpAsyncInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getLockLpInstructionAsync> & SelfPlanAndSendFunctions;
   pipelineInitMarket: (
     input: MakeOptional<PipelineInitMarketAsyncInput, "payer">,
     config?: { programAddress?: Address | HasAddress },
@@ -368,10 +571,25 @@ export type LendingAmmPluginInstructions = {
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getPipelineResolveAccountsInstruction> &
     SelfPlanAndSendFunctions;
+  pipelineSeedLiquidity: (
+    input: MakeOptional<PipelineSeedLiquidityAsyncInput, "payer">,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getPipelineSeedLiquidityInstructionAsync> &
+    SelfPlanAndSendFunctions;
   pipelineSwap: (
     input: PipelineSwapInput,
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getPipelineSwapInstruction> & SelfPlanAndSendFunctions;
+  rebalance: (
+    input: RebalanceAsyncInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getRebalanceInstructionAsync> &
+    SelfPlanAndSendFunctions;
+  removeLiquidity: (
+    input: RemoveLiquidityAsyncInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getRemoveLiquidityInstructionAsync> &
+    SelfPlanAndSendFunctions;
 };
 
 export type LendingAmmPluginPdas = {
@@ -413,6 +631,14 @@ export function lendingAmmProgram(
                   instructionConfig?.programAddress ?? config.programAddress,
               }),
             ),
+          lockLp: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getLockLpInstructionAsync(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
           pipelineInitMarket: (input, instructionConfig) =>
             addSelfPlanAndSendFunctions(
               client,
@@ -448,10 +674,37 @@ export function lendingAmmProgram(
                   instructionConfig?.programAddress ?? config.programAddress,
               }),
             ),
+          pipelineSeedLiquidity: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getPipelineSeedLiquidityInstructionAsync(
+                { ...input, payer: input.payer ?? client.payer },
+                {
+                  programAddress:
+                    instructionConfig?.programAddress ?? config.programAddress,
+                },
+              ),
+            ),
           pipelineSwap: (input, instructionConfig) =>
             addSelfPlanAndSendFunctions(
               client,
               getPipelineSwapInstruction(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          rebalance: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getRebalanceInstructionAsync(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          removeLiquidity: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getRemoveLiquidityInstructionAsync(input, {
                 programAddress:
                   instructionConfig?.programAddress ?? config.programAddress,
               }),

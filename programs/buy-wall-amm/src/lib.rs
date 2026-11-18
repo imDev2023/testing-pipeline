@@ -11,9 +11,15 @@
 //! | `pipeline_market_info`      | the router, at market creation   | reports mints, vaults, exact-out      |
 //! | `pipeline_resolve_accounts` | quoters and SDKs, in simulation  | lists the output vault, its authority |
 //! | `pipeline_quote`            | quoters and SDKs, in simulation  | prices an exact-in trade             |
-//! | `pipeline_swap`             | the router, from `swap`          | settles a trade, then the cap        |
+//! | `pipeline_swap`             | the router, from `swap`          | settles a trade, the guard, the cap  |
 //! | `seed`                      | the market's seeder, directly    | seeds and opens the market, once      |
 //! | `pipeline_seed_liquidity`   | a launchpad's program, by CPI    | creates, seeds and opens a market     |
+//! | `place_wall`                | anyone, a keeper job             | places idle SOL as the buy wall       |
+//! | `settle`                    | anyone, a keeper job             | burns retired tokens but the rewards  |
+//! | `pay_rewards`               | anyone, a keeper job             | pays the rewards recipient            |
+//! | `sweep_fees`                | anyone, a keeper job             | pays one fee slot to its wallet       |
+//! | `set_fee_recipient`         | the fee recipient                | hands its role to another wallet      |
+//! | `set_rewards_recipient`     | the rewards recipient            | hands its role to another wallet      |
 //!
 //! Policy values live only in `config.rs` (build-time constants) and in each market's
 //! creation parameters (`params.rs`).
@@ -25,21 +31,33 @@ pub mod cap;
 pub mod config;
 pub mod errors;
 pub mod events;
+pub mod guard;
 pub mod instructions;
 pub mod interface;
 pub mod math;
 pub mod opening;
 pub mod params;
+pub mod payouts;
 pub mod pricing;
+pub mod recipient;
 pub mod state;
 pub mod token;
 pub mod vaults;
+pub mod wall;
 
 pub use instructions::*;
 pub use params::InitParams;
 
 // Replaced with this program's address by `scripts/new-strategy.sh`.
+#[cfg(not(feature = "test-designer-recipient"))]
 declare_id!("BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6");
+// The `test-designer-recipient` build, which pays fee slot 1 to a test key (`config.rs`),
+// runs only at an address of its own, so it refuses every instruction if it is ever deployed
+// at the program's real address (Anchor checks the program id on entry, `POOL4-39`). Written
+// path-qualified so that tools reading the program's address from the line above
+// (`scripts/local-validator.sh`) find exactly one.
+#[cfg(feature = "test-designer-recipient")]
+anchor_lang::declare_id!("DesignerTestBui1d111111111111111111111111111");
 
 #[program]
 pub mod buy_wall_amm {
@@ -88,6 +106,49 @@ pub mod buy_wall_amm {
         sol_amount: u64,
     ) -> Result<()> {
         instructions::seed::handle_seed(ctx, token_amount, sol_amount)
+    }
+
+    /// Custom action, a permissionless keeper job: closes the buy wall at the current price
+    /// and places it again with everything idle, at the lower of the price and the wall's
+    /// floor, tipping the caller in wrapped SOL; refused until `idle_sol` or the SOL the
+    /// wall has spent reaches `WALL_THRESHOLD`.
+    pub fn place_wall(ctx: Context<PlaceWall>) -> Result<()> {
+        instructions::place_wall::handle_place_wall(ctx)
+    }
+
+    /// Custom action, a permissionless keeper job: splits the retired tokens, the reward share
+    /// joining `rewards_owed` and the rest burned from the token vault; refused when nothing
+    /// is retired. No tip, and nobody signs but whoever pays the transaction fee.
+    pub fn settle(ctx: Context<Settle>) -> Result<()> {
+        instructions::settle::handle_settle(ctx)
+    }
+
+    /// Custom action, a permissionless keeper job: pays all of `rewards_owed` to the rewards
+    /// recipient's associated token account for the token, created at the caller's expense
+    /// if missing; refused when nothing is owed. No tip. Remaining accounts are the token's
+    /// transfer-hook accounts.
+    pub fn pay_rewards<'info>(ctx: Context<'info, PayRewards<'info>>) -> Result<()> {
+        instructions::pay_rewards::handle_pay_rewards(ctx)
+    }
+
+    /// Custom action, a permissionless keeper job: pays fee slot `slot`'s whole ledger in
+    /// wrapped SOL to its wallet's associated token account, created at the caller's expense
+    /// if missing: 0 the fee recipient, 1 `DESIGNER_RECIPIENT` (refused while it is unset), 2
+    /// `SUITE_TREASURY`; refused when nothing is owed. No tip.
+    pub fn sweep_fees(ctx: Context<SweepFees>, slot: u8) -> Result<()> {
+        instructions::sweep_fees::handle_sweep_fees(ctx, slot)
+    }
+
+    /// Custom action: the fee recipient hands its role, and what the role is owed, to `new`,
+    /// which must not be the default key.
+    pub fn set_fee_recipient(ctx: Context<SetRecipient>, new: Pubkey) -> Result<()> {
+        instructions::set_recipient::handle_set_recipient(ctx, events::RecipientRole::Fee, new)
+    }
+
+    /// Custom action: the rewards recipient hands its role, and what the role is owed, to
+    /// `new`, which must not be the default key.
+    pub fn set_rewards_recipient(ctx: Context<SetRecipient>, new: Pubkey) -> Result<()> {
+        instructions::set_recipient::handle_set_recipient(ctx, events::RecipientRole::Rewards, new)
     }
 
     /// Pipeline's optional extension, called by another program such as a launchpad

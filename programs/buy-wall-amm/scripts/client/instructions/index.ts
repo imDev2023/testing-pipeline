@@ -6,10 +6,16 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from "./payRewards.ts";
 export * from "./pipelineInitMarket.ts";
 export * from "./pipelineMarketInfo.ts";
 export * from "./pipelineQuote.ts";
 export * from "./pipelineResolveAccounts.ts";
 export * from "./pipelineSeedLiquidity.ts";
 export * from "./pipelineSwap.ts";
+export * from "./placeWall.ts";
 export * from "./seed.ts";
+export * from "./setFeeRecipient.ts";
+export * from "./setRewardsRecipient.ts";
+export * from "./settle.ts";
+export * from "./sweepFees.ts";

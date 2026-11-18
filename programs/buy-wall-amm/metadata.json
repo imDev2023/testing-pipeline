@@ -1,7 +1,7 @@
 {
     "schema": "pipeline-strategy-metadata/1",
     "name": "Aviary Buy Wall AMM",
-    "description": "A port of IMD's Pool4 design. Each market pairs a token with wrapped SOL on a constant-product curve that owns all its liquidity: seeded once, with no LP shares and no way to take liquidity out. An inventory cap trims the curve when sells leave it holding too many tokens; trimmed tokens are burned except for the market's reward share, and trimmed SOL becomes a buy wall below the price. Every swap pays the market's fee in SOL, split between IMD and Adam, the suite and the market. Nobody controls a market after its seed. A launchpad graduating a token can create and seed a market in one call through pipeline_seed_liquidity. This build opens markets and trades them exact-in on the curve; the inventory cap, the buy wall and the keeper jobs arrive in later builds.",
+    "description": "A port of IMD's Pool4 design. Each market pairs a token with wrapped SOL on a constant-product curve that owns all its liquidity: seeded once, with no LP shares and no way to take liquidity out. An inventory cap trims the curve when sells leave it holding too many tokens; trimmed tokens are burned except for the market's reward share, and trimmed SOL becomes a buy wall below the price. Every swap pays the market's fee in SOL, split between IMD and Adam, the suite and the market. Nobody controls a market after its seed. A launchpad graduating a token can create and seed a market in one call through pipeline_seed_liquidity. Anyone may run the keeper jobs that place the wall, burn the retired tokens but the reward share, pay the rewards recipient and sweep each fee share to its wallet, and each recipient may hand its own role to another wallet.",
     "category": "amm",
     "tags": ["pool4", "buy-wall", "inventory-cap", "burn"],
     "links": {
@@ -78,6 +78,102 @@
                 { "name": "wsol_mint", "source": "mint:1" },
                 { "name": "token_program", "source": "token_program:0" },
                 { "name": "sol_token_program", "source": "token_program:1" }
+            ]
+        },
+        {
+            "name": "place_wall",
+            "label": "Place the buy wall",
+            "kind": "other",
+            "description": "A keeper job anyone may run. Closes the buy wall at the current price and places it again with all the market's idle SOL, below the price at the lower of the price and the wall's floor, which rises only slowly after a pump, so a pumped price earns nothing. Refused until the market's idle SOL, or the SOL the placed wall has spent buying tokens, reaches the program's WALL_THRESHOLD. Tips the caller in wrapped SOL to their own wrapped SOL account, which must exist: at most the program's KEEPER_TIP_CAP and never more than the market's fee on that SOL. It never moves the price.",
+            "args": [],
+            "accounts": [
+                { "name": "caller", "source": "wallet", "signer": true },
+                { "name": "market_state", "source": "market_state", "writable": true },
+                { "name": "sol_vault", "source": "vault:1", "writable": true },
+                { "name": "tip_account", "source": "wallet_token_account:1", "writable": true },
+                { "name": "wsol_mint", "source": "mint:1" },
+                { "name": "vault_authority", "source": "pda:strategy:str:authority,key:market_state" },
+                { "name": "sol_token_program", "source": "token_program:1" }
+            ]
+        },
+        {
+            "name": "settle",
+            "label": "Settle retired tokens",
+            "kind": "other",
+            "description": "A keeper job anyone may run. Splits the market's retired tokens: the market's reward share of them is kept for the rewards recipient and the rest is burned, lowering the token's supply. Refused when nothing is retired. No tip, and no signature but the transaction fee payer's. It never moves the price.",
+            "args": [],
+            "accounts": [
+                { "name": "market_state", "source": "market_state", "writable": true },
+                { "name": "token_vault", "source": "vault:0", "writable": true },
+                { "name": "token_mint", "source": "mint:0", "writable": true },
+                { "name": "vault_authority", "source": "pda:strategy:str:authority,key:market_state" },
+                { "name": "token_program", "source": "token_program:0" }
+            ]
+        },
+        {
+            "name": "pay_rewards",
+            "label": "Pay the rewards",
+            "kind": "claim",
+            "description": "A keeper job anyone may run. Pays everything the market owes its rewards recipient, in the token, to the recipient's associated token account, which the caller pays to create if it is missing. Enter the market's current rewards recipient; any other wallet is refused. Refused when nothing is owed. No tip. A token with a transfer hook needs the hook's accounts after these, which this form cannot add.",
+            "args": [],
+            "accounts": [
+                { "name": "payer", "source": "wallet", "signer": true, "writable": true },
+                { "name": "market_state", "source": "market_state", "writable": true },
+                { "name": "token_vault", "source": "vault:0", "writable": true },
+                { "name": "token_mint", "source": "mint:0" },
+                { "name": "rewards_recipient", "source": "input:rewards_recipient" },
+                { "name": "recipient_token_account", "source": "ata:input:rewards_recipient,mint:0", "writable": true },
+                { "name": "vault_authority", "source": "pda:strategy:str:authority,key:market_state" },
+                { "name": "token_program", "source": "token_program:0" },
+                { "name": "associated_token_program", "source": "associated_token_program" },
+                { "name": "system_program", "source": "system_program" }
+            ]
+        },
+        {
+            "name": "sweep_fees",
+            "label": "Sweep a fee share",
+            "kind": "claim",
+            "description": "A keeper job anyone may run. Pays one share of the market's fees, all of it, in wrapped SOL to the wallet's associated wrapped SOL account, which the caller pays to create if it is missing: slot 0 is the market's fee recipient, slot 1 the designer share for IMD and Adam (refused until the program's DESIGNER_RECIPIENT is set, the SOL waiting in the market), slot 2 the suite share for the program's SUITE_TREASURY. Enter that slot's wallet; any other is refused. Refused when nothing is owed. No tip. The recipient unwraps by closing the account.",
+            "args": [
+                { "name": "slot", "type": "u8", "label": "Fee slot (0 fee recipient, 1 designer, 2 suite)" }
+            ],
+            "accounts": [
+                { "name": "payer", "source": "wallet", "signer": true, "writable": true },
+                { "name": "market_state", "source": "market_state", "writable": true },
+                { "name": "sol_vault", "source": "vault:1", "writable": true },
+                { "name": "wsol_mint", "source": "mint:1" },
+                { "name": "recipient", "source": "input:recipient" },
+                { "name": "recipient_token_account", "source": "ata:input:recipient,mint:1", "writable": true },
+                { "name": "vault_authority", "source": "pda:strategy:str:authority,key:market_state" },
+                { "name": "sol_token_program", "source": "token_program:1" },
+                { "name": "associated_token_program", "source": "associated_token_program" },
+                { "name": "system_program", "source": "system_program" }
+            ]
+        },
+        {
+            "name": "set_fee_recipient",
+            "label": "Hand over the fee recipient role",
+            "kind": "other",
+            "description": "Signed by the market's current fee recipient only: hands the role, and the fees it is owed, to another wallet, which must not be the default key. A market created with no fee recipient never gets one.",
+            "args": [
+                { "name": "new", "type": "pubkey", "label": "New fee recipient" }
+            ],
+            "accounts": [
+                { "name": "recipient", "source": "wallet", "signer": true },
+                { "name": "market_state", "source": "market_state", "writable": true }
+            ]
+        },
+        {
+            "name": "set_rewards_recipient",
+            "label": "Hand over the rewards recipient role",
+            "kind": "other",
+            "description": "Signed by the market's current rewards recipient only: hands the role, and the rewards it is owed, to another wallet, which must not be the default key. A market created with no rewards recipient never gets one.",
+            "args": [
+                { "name": "new", "type": "pubkey", "label": "New rewards recipient" }
+            ],
+            "accounts": [
+                { "name": "recipient", "source": "wallet", "signer": true },
+                { "name": "market_state", "source": "market_state", "writable": true }
             ]
         }
     ],

@@ -13,6 +13,9 @@
 #[path = "../../../tax-amm/tests/common/mod.rs"]
 pub mod common;
 
+pub mod ceilings;
+pub mod fuzz;
+
 use std::path::PathBuf;
 
 use anchor_lang::{AccountDeserialize, InstructionData};
@@ -671,8 +674,17 @@ pub fn hook_compute(logs: &[String]) -> Vec<u64> {
 /// than the associated one, sized for the transfer hook account extension Token-2022 adds
 /// for a hooked mint: how a holder gets a second account of their own.
 pub fn second_token_account(env: &mut Env, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+    second_token_account_at(env, &Keypair::new(), owner, mint)
+}
+
+/// [`second_token_account`] at `account`'s address.
+pub fn second_token_account_at(
+    env: &mut Env,
+    account: &Keypair,
+    owner: &Pubkey,
+    mint: &Pubkey,
+) -> Pubkey {
     use spl_token_2022_interface::extension::ExtensionType;
-    let account = Keypair::new();
     let space =
         ExtensionType::try_calculate_account_len::<spl_token_2022_interface::state::Account>(&[
             ExtensionType::TransferHookAccount,
@@ -701,7 +713,7 @@ pub fn second_token_account(env: &mut Env, owner: &Pubkey, mint: &Pubkey) -> Pub
         owner,
     )
     .unwrap();
-    env.send(&[create, initialize], &[&account]).unwrap();
+    env.send(&[create, initialize], &[account]).unwrap();
     account.pubkey()
 }
 

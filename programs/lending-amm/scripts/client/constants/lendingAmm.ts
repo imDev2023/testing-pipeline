@@ -6,6 +6,16 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export const BUFFER_MAX_BPS: number = 3000;
+
+export const BUFFER_MIN_BPS: number = 1000;
+
+export const BUFFER_TARGET_BPS: number = 2000;
+
 export const MAX_LP_FEE_BPS: number = 200;
 
 export const MINIMUM_LIQUIDITY: bigint = 1000n;
+
+export const WITHDRAW_MODE_ENTER: bigint = 5n;
+
+export const WITHDRAW_MODE_EXIT: bigint = 10n;

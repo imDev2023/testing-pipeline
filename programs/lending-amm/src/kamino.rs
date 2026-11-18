@@ -1,16 +1,16 @@
-//! Every read of Kamino Lend (klend), in one place (docs/spec/lending-pool.md, "Building it"):
-//! the reserve check, the reserve's total supply and stored exchange rate, its flags, and what
-//! Kamino can pay right now. [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
-//! adds Kamino's deposit and redeem calls here too, so a later strategy version can add
-//! another lending market without touching the pool's maths.
+//! Every read of and call to Kamino Lend (klend), in one place (docs/spec/lending-pool.md,
+//! "Building it"): the reserve check, the reserve's total supply and stored exchange rate, its
+//! flags, what Kamino can pay right now, the cTokens a redeem burns, the check of every Kamino
+//! account a call passes, and the deposit and redeem calls themselves ([`KaminoAccounts`]), so
+//! a later strategy version can add another lending market without touching the pool's maths.
 //!
 //! The offsets, discriminators and formulas are written by hand from klend release 1.28.0
 //! (`686913e`), as the Kamino facts, section 4, list them; the program never depends on
 //! klend's crate, which is BSL 1.1 (docs/spec/lending-pool.md, "Building it").
 //!
 //! The maths is in pure functions of numbers ([`total_supply_sf`], [`collateral_value`],
-//! [`withdrawal_cap_remaining`], [`can_pay`]), which Proptest, Kani and Z3 check on their
-//! own; the account functions only check and decode.
+//! [`ctokens_for_value`], [`ctokens_covering`], [`withdrawal_cap_remaining`], [`can_pay`]), which Proptest, Kani and
+//! Z3 check on their own; the account functions only check, decode and call.
 //!
 //! # Valuing cTokens
 //!
@@ -24,6 +24,8 @@
 //! payout (docs/spec/lending-pool.md, "The stored rate, everywhere").
 
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
+use anchor_lang::solana_program::program::invoke_signed;
 
 use crate::config::{LentMint, KLEND_PROGRAM};
 use crate::errors::StrategyError;
@@ -50,6 +52,8 @@ pub mod offsets {
     pub const VERSION: usize = 8;
     pub const LENDING_MARKET: usize = 32;
     pub const LIQUIDITY_MINT: usize = 128;
+    /// `liquidity.supply_vault`, the token account holding the reserve's liquidity.
+    pub const LIQUIDITY_SUPPLY: usize = 160;
     pub const TOTAL_AVAILABLE_AMOUNT: usize = 224;
     pub const BORROWED_AMOUNT_SF: usize = 232;
     pub const ACCUMULATED_PROTOCOL_FEES_SF: usize = 344;
@@ -67,8 +71,27 @@ pub mod offsets {
 
 /// Byte offsets in a klend `LendingMarket` at 1.28.0, discriminator included.
 pub mod lending_market_offsets {
+    /// `bump_seed`, a u64 holding the lending market authority PDA's bump.
+    pub const BUMP_SEED: usize = 16;
     pub const EMERGENCY_MODE: usize = 122;
 }
+
+/// Seed of klend's lending market authority PDA, `["lma", lending_market]`, which owns every
+/// reserve's liquidity supply and mints its cTokens.
+pub const LENDING_MARKET_AUTHORITY_SEED: &[u8] = b"lma";
+
+/// The instructions sysvar, which klend's deposit and redeem take for introspection.
+pub const INSTRUCTIONS_SYSVAR: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
+
+/// Anchor's instruction discriminator of klend's `deposit_reserve_liquidity`,
+/// `sha256("global:deposit_reserve_liquidity")[..8]`.
+pub const DEPOSIT_RESERVE_LIQUIDITY: [u8; 8] = [169, 201, 30, 126, 6, 205, 102, 68];
+/// Anchor's instruction discriminator of klend's `redeem_reserve_collateral`,
+/// `sha256("global:redeem_reserve_collateral")[..8]`.
+pub const REDEEM_RESERVE_COLLATERAL: [u8; 8] = [234, 117, 181, 125, 185, 142, 220, 29];
+/// klend's `refresh_reserve`, `sha256("global:refresh_reserve")[..8]`: the one klend instruction
+/// `rebalance` allows in its transaction, which a keeper puts first when the stored rate is stale.
+pub const REFRESH_RESERVE: [u8; 8] = [2, 218, 138, 235, 79, 201, 25, 102];
 
 /// A reserve's deposit withdrawal cap: how much may leave it, net of deposits, per interval.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -207,6 +230,12 @@ pub fn reserve_of(lent_mint: &Pubkey, account: &AccountInfo) -> Result<Reserve> 
     })
 }
 
+/// The reserve's liquidity supply, the token account holding its liquidity, from a reserve's
+/// data that passed [`check_reserve`].
+pub fn liquidity_supply_of(data: &[u8]) -> Option<Pubkey> {
+    key_at(data, offsets::LIQUIDITY_SUPPLY)
+}
+
 impl Reserve {
     /// The reserve's total supply, `S_total`, in 60-bit fixed point.
     pub fn total_supply_sf(&self) -> core::result::Result<u128, StrategyError> {
@@ -254,10 +283,17 @@ impl Reserve {
         }
     }
 
+    /// Whether klend redeems nothing from this reserve right now: either emergency mode is on,
+    /// the reserve's or its lending market's, or the reserve is deprecated
+    /// (docs/spec/lending-pool.md, "When Kamino can't pay").
+    pub fn redeems_stopped(&self, market: &LendingMarket) -> bool {
+        market.emergency_mode || self.emergency_mode || self.deprecated()
+    }
+
     /// What Kamino can pay a market holding `ctokens` right now, at Unix time `now`
     /// (docs/spec/lending-pool.md, "Redeeming the shortfall").
     pub fn can_pay_now(&self, market: &LendingMarket, ctokens: u64, now: i64) -> u64 {
-        let stopped = market.emergency_mode || self.emergency_mode || self.deprecated();
+        let stopped = self.redeems_stopped(market);
         let Ok(supply) = self.total_supply_sf() else {
             return 0;
         };
@@ -271,6 +307,53 @@ impl Reserve {
             stopped,
         )
     }
+}
+
+impl Reserve {
+    /// What a market holding `ctokens` may plan to redeem at Unix time `now`, in `rebalance` and
+    /// in a swap's redeem of its shortfall alike: what Kamino can pay right now
+    /// ([`Reserve::can_pay_now`]), but with each of Kamino's own limits, its freely available
+    /// liquidity and what remains of its withdrawal cap, lowered by `KAMINO_RATE_HEADROOM_BPS`
+    /// ([`with_rate_headroom`]), since klend pays at the rate it refreshes to inside the redeem,
+    /// above the stored rate the redeem is planned at, and refuses a redeem that would pass either
+    /// limit.
+    pub fn can_pay_planned(&self, market: &LendingMarket, ctokens: u64, now: i64) -> u64 {
+        self.can_pay_planned_unless(self.redeems_stopped(market), ctokens, now)
+    }
+
+    /// [`Reserve::can_pay_planned`], with whether Kamino redeems nothing (`stopped`) given.
+    fn can_pay_planned_unless(&self, stopped: bool, ctokens: u64, now: i64) -> u64 {
+        let Ok(supply) = self.total_supply_sf() else {
+            return 0;
+        };
+        let own = collateral_value(ctokens, supply, self.mint_total_supply).unwrap_or(u64::MAX);
+        let now = u64::try_from(now).unwrap_or(0);
+        can_pay(
+            with_rate_headroom(self.freely_available()),
+            with_rate_headroom(withdrawal_cap_remaining(&self.withdrawal_cap, now)),
+            own,
+            stopped,
+        )
+    }
+}
+
+impl Reserve {
+    /// What a market holding `ctokens` may plan to redeem at Unix time `now`, as far as the
+    /// reserve alone shows: [`Reserve::can_pay_planned`] stopped only by the reserve's own
+    /// emergency mode or deprecation. It is what account resolution counts, and a quote or swap
+    /// built without the redeem accounts, which have no lending market account to read; the
+    /// lending market's emergency mode can only lower it.
+    pub fn can_pay_by_itself(&self, ctokens: u64, now: i64) -> u64 {
+        self.can_pay_planned_unless(self.emergency_mode || self.deprecated(), ctokens, now)
+    }
+}
+
+/// `amount` less `KAMINO_RATE_HEADROOM_BPS` of it, rounded so the headroom is never smaller.
+pub fn with_rate_headroom(amount: u64) -> u64 {
+    let headroom =
+        (amount as u128 * crate::config::KAMINO_RATE_HEADROOM_BPS as u128).div_ceil(10_000);
+    // The headroom is at most the amount, since the basis points are below 10,000.
+    amount - headroom as u64
 }
 
 /// A reserve's total supply in 60-bit fixed point, klend's `total_supply`:
@@ -368,6 +451,280 @@ pub fn can_pay(freely_available: u64, cap_remaining: u64, own_value: u64, stoppe
         return 0;
     }
     freely_available.min(cap_remaining).min(own_value)
+}
+
+/// How many cTokens are worth at most `liquidity`: `floor(liquidity x mint_total_supply x
+/// 2^60 / total_supply_sf)`, exactly, or `None` when the reserve has no supply or that does not
+/// fit in a u64. By klend's own rounding they then redeem for at most `liquidity` at the same
+/// rate, and for less than one cToken's worth below it.
+pub fn ctokens_for_value(
+    liquidity: u64,
+    total_supply_sf: u128,
+    mint_total_supply: u64,
+) -> Option<u64> {
+    ctokens_quotient(liquidity, total_supply_sf, mint_total_supply).map(|(quotient, _)| quotient)
+}
+
+/// How many cTokens are worth at least `liquidity`: `ceil(liquidity x mint_total_supply x 2^60
+/// / total_supply_sf)`, exactly, or `None` when the reserve has no supply or that does not fit
+/// in a u64. klend pays `floor(k x total_supply_sf / (mint_total_supply x 2^60))` for `k`
+/// cTokens, which for these is at least `liquidity` at the same rate, and they are fewer than
+/// one cToken more than `liquidity` needs: what a swap burns to redeem its shortfall
+/// (docs/spec/lending-pool.md, "Redeeming the shortfall").
+pub fn ctokens_covering(
+    liquidity: u64,
+    total_supply_sf: u128,
+    mint_total_supply: u64,
+) -> Option<u64> {
+    let (quotient, remainder) = ctokens_quotient(liquidity, total_supply_sf, mint_total_supply)?;
+    quotient.checked_add((remainder != 0) as u64)
+}
+
+/// `liquidity x mint_total_supply x 2^60` divided by `total_supply_sf`, as its quotient and
+/// remainder, exactly, or `None` when the reserve has no supply or the quotient does not fit
+/// in a u64.
+///
+/// Every intermediate fits: `liquidity x mint_total_supply` is below 2^128, so the numerator
+/// `x x 2^60` is held as `(x >> 4) x 2^64 + (x mod 16) x 2^60`; a quotient of 2^64 or more is
+/// refused before dividing; and the long division keeps the bit a doubled remainder would carry
+/// out of 128 bits, since the divisor may use all 128.
+fn ctokens_quotient(
+    liquidity: u64,
+    total_supply_sf: u128,
+    mint_total_supply: u64,
+) -> Option<(u64, u128)> {
+    if total_supply_sf == 0 {
+        return None;
+    }
+    let product = liquidity as u128 * mint_total_supply as u128;
+    let top = product >> 4;
+    let low = ((product & 0xf) as u64) << FRACTION_BITS;
+    // The quotient is below 2^64 exactly when top x 2^64 + low < divisor x 2^64.
+    if top >= total_supply_sf {
+        return None;
+    }
+    let mut remainder = top;
+    let mut quotient: u64 = 0;
+    for bit in (0..64).rev() {
+        // The remainder is below the divisor, so doubling it and adding a bit stays below
+        // 2^129: `carry` is its 129th bit.
+        let carry = remainder >> 127;
+        remainder = (remainder << 1) | ((low >> bit) & 1) as u128;
+        quotient <<= 1;
+        if carry == 1 || remainder >= total_supply_sf {
+            // The true remainder is below twice the divisor, so this is below the divisor and
+            // the wrapped difference is exact.
+            remainder = remainder.wrapping_sub(total_supply_sf);
+            quotient |= 1;
+        }
+    }
+    Some((quotient, remainder))
+}
+
+impl Reserve {
+    /// The cTokens to burn to redeem `liquidity` from a market holding `ctokens`: all of them
+    /// when `liquidity` is at least their whole value, otherwise as many as are worth at most
+    /// `liquidity` at the stored rate ([`ctokens_for_value`]), so a redeem never carries the
+    /// buffer past its target at that rate. klend refreshes the reserve inside the redeem, and
+    /// interest only raises the rate, so they fetch at least their value at the stored rate.
+    pub fn ctokens_to_redeem(
+        &self,
+        liquidity: u64,
+        ctokens: u64,
+    ) -> core::result::Result<u64, StrategyError> {
+        if liquidity >= self.lent_value(ctokens)? {
+            return Ok(ctokens);
+        }
+        let burn = ctokens_for_value(liquidity, self.total_supply_sf()?, self.mint_total_supply)
+            .ok_or(StrategyError::Overflow)?;
+        // Less than one cToken's worth redeems nothing, which klend refuses: below the floor.
+        if burn == 0 {
+            return Err(StrategyError::BelowMinRebalance);
+        }
+        Ok(burn.min(ctokens))
+    }
+}
+
+impl Reserve {
+    /// The cTokens a swap burns to redeem its `shortfall` from a market holding `ctokens`:
+    /// `ceil(shortfall x S_ctoken / S_total)` at the stored rate ([`ctokens_covering`]), worth at
+    /// least the shortfall at that rate and less than one cToken more. klend refreshes the
+    /// reserve inside the redeem, and interest only raises the rate, so the market receives at
+    /// least the shortfall. Refused when the market holds fewer, which a shortfall within the
+    /// value of its cTokens never needs.
+    pub fn ctokens_for_shortfall(
+        &self,
+        shortfall: u64,
+        ctokens: u64,
+    ) -> core::result::Result<u64, StrategyError> {
+        let burn = ctokens_covering(shortfall, self.total_supply_sf()?, self.mint_total_supply)
+            .ok_or(StrategyError::Overflow)?;
+        if burn > ctokens {
+            return Err(StrategyError::BeyondBuffer);
+        }
+        Ok(burn)
+    }
+}
+
+/// The accounts klend's `deposit_reserve_liquidity` and `redeem_reserve_collateral` take besides
+/// the depositor and its two token accounts.
+pub struct KaminoAccounts<'a, 'info> {
+    pub klend_program: &'a AccountInfo<'info>,
+    pub reserve: &'a AccountInfo<'info>,
+    pub lending_market: &'a AccountInfo<'info>,
+    pub lending_market_authority: &'a AccountInfo<'info>,
+    pub liquidity_mint: &'a AccountInfo<'info>,
+    pub liquidity_supply: &'a AccountInfo<'info>,
+    pub collateral_mint: &'a AccountInfo<'info>,
+    /// SPL Token, the program of the lent mint and of every cToken mint.
+    pub token_program: &'a AccountInfo<'info>,
+    pub instructions_sysvar: &'a AccountInfo<'info>,
+}
+
+impl<'info> KaminoAccounts<'_, 'info> {
+    /// Checks every account against the reserve `lent` names, before any is passed to klend,
+    /// and reads the reserve and its lending market: the reserve passes [`check_reserve`], the
+    /// lending market is the reserve's, the lending market authority is its PDA, the mints are
+    /// the reserve's, the liquidity supply is the one the reserve records, and the programs and
+    /// the sysvar are what they claim to be. So klend can never be handed another reserve's
+    /// accounts, and nothing that is not klend is ever called as klend.
+    pub fn check(&self, lent: &LentMint) -> Result<(Reserve, LendingMarket)> {
+        let wrong = StrategyError::KaminoAccountWrong;
+        require_keys_eq!(*self.klend_program.key, KLEND_PROGRAM, wrong);
+        require_keys_eq!(*self.token_program.key, anchor_spl::token::ID, wrong);
+        require_keys_eq!(*self.instructions_sysvar.key, INSTRUCTIONS_SYSVAR, wrong);
+        require_keys_eq!(*self.liquidity_mint.key, lent.mint, wrong);
+        require_keys_eq!(*self.collateral_mint.key, lent.collateral_mint, wrong);
+        let reserve_data = self.reserve.try_borrow_data()?;
+        let reserve = read_reserve(self.reserve.key, self.reserve.owner, &reserve_data, lent)
+            .map_err(|refusal| {
+                msg!("Reserve {} refused: {:?}", self.reserve.key, refusal);
+                error!(refusal)
+            })?;
+        let supply_vault = key_at(&reserve_data, offsets::LIQUIDITY_SUPPLY);
+        drop(reserve_data);
+        require!(
+            supply_vault == Some(*self.liquidity_supply.key),
+            StrategyError::KaminoAccountWrong
+        );
+
+        let data = self.lending_market.try_borrow_data()?;
+        let market = read_lending_market(
+            self.lending_market.key,
+            self.lending_market.owner,
+            &data,
+            lent,
+        )
+        .map_err(|refusal| error!(refusal))?;
+        let bump = *data.get(lending_market_offsets::BUMP_SEED).ok_or(wrong)?;
+        let authority = Pubkey::create_program_address(
+            &[
+                LENDING_MARKET_AUTHORITY_SEED,
+                self.lending_market.key.as_ref(),
+                &[bump],
+            ],
+            &KLEND_PROGRAM,
+        )
+        .map_err(|_| error!(wrong))?;
+        require_keys_eq!(*self.lending_market_authority.key, authority, wrong);
+        Ok((reserve, market))
+    }
+
+    /// klend's `deposit_reserve_liquidity { liquidity_amount }`: `owner`, signing with
+    /// `signer_seeds`, moves up to `liquidity` of the lent mint from `source` into the reserve,
+    /// and klend mints cTokens into `destination`. The accounts in the order klend 1.28.0
+    /// declares them.
+    pub fn deposit(
+        &self,
+        owner: &AccountInfo<'info>,
+        source: &AccountInfo<'info>,
+        destination: &AccountInfo<'info>,
+        liquidity: u64,
+        signer_seeds: &[&[&[u8]]],
+    ) -> Result<()> {
+        let accounts = [
+            (owner, false, true),
+            (self.reserve, true, false),
+            (self.lending_market, false, false),
+            (self.lending_market_authority, false, false),
+            (self.liquidity_mint, false, false),
+            (self.liquidity_supply, true, false),
+            (self.collateral_mint, true, false),
+            (source, true, false),
+            (destination, true, false),
+            (self.token_program, false, false),
+            (self.token_program, false, false),
+            (self.instructions_sysvar, false, false),
+        ];
+        self.invoke(
+            DEPOSIT_RESERVE_LIQUIDITY,
+            liquidity,
+            &accounts,
+            signer_seeds,
+        )
+    }
+
+    /// klend's `redeem_reserve_collateral { collateral_amount }`: `owner`, signing with
+    /// `signer_seeds`, burns `ctokens` from `source`, and klend pays the lent mint into
+    /// `destination` at the reserve's rate, refreshed in the call. The accounts in the order
+    /// klend 1.28.0 declares them.
+    pub fn redeem(
+        &self,
+        owner: &AccountInfo<'info>,
+        source: &AccountInfo<'info>,
+        destination: &AccountInfo<'info>,
+        ctokens: u64,
+        signer_seeds: &[&[&[u8]]],
+    ) -> Result<()> {
+        let accounts = [
+            (owner, false, true),
+            (self.lending_market, false, false),
+            (self.reserve, true, false),
+            (self.lending_market_authority, false, false),
+            (self.liquidity_mint, false, false),
+            (self.collateral_mint, true, false),
+            (self.liquidity_supply, true, false),
+            (source, true, false),
+            (destination, true, false),
+            (self.token_program, false, false),
+            (self.token_program, false, false),
+            (self.instructions_sysvar, false, false),
+        ];
+        self.invoke(REDEEM_RESERVE_COLLATERAL, ctokens, &accounts, signer_seeds)
+    }
+
+    /// Calls klend's instruction `discriminator` with one u64 argument and `accounts` as
+    /// (account, writable, signer), signed by the PDA `signer_seeds` names.
+    fn invoke(
+        &self,
+        discriminator: [u8; 8],
+        amount: u64,
+        accounts: &[(&AccountInfo<'info>, bool, bool)],
+        signer_seeds: &[&[&[u8]]],
+    ) -> Result<()> {
+        let mut data = discriminator.to_vec();
+        data.extend_from_slice(&amount.to_le_bytes());
+        let metas = accounts
+            .iter()
+            .map(|(account, writable, signer)| AccountMeta {
+                pubkey: *account.key,
+                is_writable: *writable,
+                is_signer: *signer,
+            })
+            .collect();
+        let mut infos: Vec<AccountInfo<'info>> = accounts
+            .iter()
+            .map(|(account, _, _)| (*account).clone())
+            .collect();
+        infos.push(self.klend_program.clone());
+        let instruction = Instruction {
+            program_id: KLEND_PROGRAM,
+            accounts: metas,
+            data,
+        };
+        invoke_signed(&instruction, &infos, signer_seeds)?;
+        Ok(())
+    }
 }
 
 fn u64_at(data: &[u8], offset: usize) -> Option<u64> {
@@ -542,6 +899,164 @@ mod tests {
         assert_eq!(can_pay(7, 9, 5, true), 0);
     }
 
+    /// The exact floor of `x x N x 2^60 / S` if it fits a u64, by the reference: a 256-bit
+    /// numerator divided by a 128-bit divisor one bit at a time.
+    fn exact_ctokens(x: u64, s: u128, n: u64) -> Option<u64> {
+        if s == 0 {
+            return None;
+        }
+        let numerator = mul(mul(wide(x as u128), wide(n as u128)), wide(1u128 << 60));
+        let mut remainder = [0u64; 4];
+        let mut quotient = [0u64; 4];
+        let divisor = wide(s);
+        let ge = |a: &Wide, b: &Wide| {
+            (0..4)
+                .rev()
+                .find(|&i| a[i] != b[i])
+                .is_none_or(|i| a[i] > b[i])
+        };
+        for bit in (0..256).rev() {
+            remainder = mul(remainder, wide(2));
+            remainder[0] |= (numerator[bit / 64] >> (bit % 64)) & 1;
+            if ge(&remainder, &divisor) {
+                let mut borrow = 0u128;
+                for i in 0..4 {
+                    let t = (remainder[i] as u128).wrapping_sub(divisor[i] as u128 + borrow);
+                    borrow = ((remainder[i] as u128) < divisor[i] as u128 + borrow) as u128;
+                    remainder[i] = t as u64;
+                }
+                quotient[bit / 64] |= 1 << (bit % 64);
+            }
+        }
+        (quotient[1] == 0 && quotient[2] == 0 && quotient[3] == 0).then_some(quotient[0])
+    }
+
+    #[test]
+    fn the_ctokens_for_a_value_are_the_examples() {
+        // At a rate of exactly 1.5: 1,500 is worth 1,000 cTokens, and 1,501 still 1,000.
+        let s = 3u128 << 60;
+        assert_eq!(ctokens_for_value(1_500, s, 2), Some(1_000));
+        assert_eq!(ctokens_for_value(1_501, s, 2), Some(1_000));
+        assert_eq!(ctokens_for_value(1, s, 2), Some(0));
+        assert_eq!(ctokens_for_value(0, s, 2), Some(0));
+        // No supply: nothing can be computed.
+        assert_eq!(ctokens_for_value(5, 0, 2), None);
+        // The divisor may use all 128 bits.
+        assert_eq!(
+            ctokens_for_value(u64::MAX, u128::MAX, u64::MAX),
+            exact_ctokens(u64::MAX, u128::MAX, u64::MAX)
+        );
+        // A quotient of 2^64 or more is refused.
+        assert_eq!(ctokens_for_value(u64::MAX, 1 << 60, 2), None);
+    }
+
+    #[test]
+    fn the_ctokens_covering_a_shortfall_are_the_examples() {
+        // At a rate of exactly 1.5: 1,500 needs 1,000 cTokens, 1,501 needs 1,001 (1,000.67
+        // rounded up), 1 needs 1, and nothing needs none.
+        let s = 3u128 << 60;
+        assert_eq!(ctokens_covering(1_500, s, 2), Some(1_000));
+        assert_eq!(ctokens_covering(1_501, s, 2), Some(1_001));
+        assert_eq!(ctokens_covering(1, s, 2), Some(1));
+        assert_eq!(ctokens_covering(0, s, 2), Some(0));
+        assert_eq!(ctokens_covering(5, 0, 2), None);
+        // A quotient of 2^64 or more is refused, and so is one that rounds up to 2^64.
+        assert_eq!(ctokens_covering(u64::MAX, 1 << 60, 2), None);
+        assert_eq!(ctokens_covering(u64::MAX, 1 << 60, 1), Some(u64::MAX));
+        // A swap burns them, and never more than the market holds.
+        let reserve = Reserve {
+            version: RESERVE_VERSION,
+            total_available_amount: 3_000,
+            mint_total_supply: 2_000,
+            ..Reserve::default()
+        };
+        assert_eq!(
+            reserve
+                .ctokens_for_shortfall(1_501, 2_000)
+                .map_err(|e| e as u32),
+            Ok(1_001)
+        );
+        assert_eq!(
+            reserve
+                .ctokens_for_shortfall(1_501, 1_000)
+                .map_err(|e| e as u32),
+            Err(StrategyError::BeyondBuffer as u32)
+        );
+    }
+
+    #[test]
+    fn the_rate_headroom_is_taken_from_kaminos_limits_rounded_up() {
+        let bps = crate::config::KAMINO_RATE_HEADROOM_BPS as u64;
+        assert_eq!(
+            with_rate_headroom(1_000_000),
+            1_000_000 - 1_000_000 * bps / 10_000
+        );
+        assert_eq!(with_rate_headroom(1), 0);
+        assert_eq!(with_rate_headroom(0), 0);
+        assert!(with_rate_headroom(u64::MAX) < u64::MAX);
+        // Kamino's limits get the headroom, and the market's own cTokens do not: here the
+        // cTokens are worth the least, 1,500 at a rate of 1.5, so they bind exactly.
+        let reserve = Reserve {
+            version: RESERVE_VERSION,
+            total_available_amount: 3_000_000,
+            mint_total_supply: 2_000_000,
+            ..Reserve::default()
+        };
+        let market = LendingMarket::default();
+        assert_eq!(reserve.can_pay_planned(&market, 1_000, 0), 1_500);
+        assert_eq!(
+            reserve.can_pay_planned(&market, 4_000_000, 0),
+            with_rate_headroom(3_000_000)
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+        /// The headroom never exceeds the amount, never falls below the basis points' share,
+        /// and so leaves at most what Kamino can pay.
+        #[test]
+        fn the_rate_headroom_is_never_negative_and_never_short(amount: u64) {
+            let left = with_rate_headroom(amount);
+            let bps = crate::config::KAMINO_RATE_HEADROOM_BPS as u128;
+            prop_assert!(left <= amount);
+            prop_assert!((amount - left) as u128 * 10_000 >= amount as u128 * bps);
+        }
+    }
+
+    #[test]
+    fn a_redeem_burns_everything_once_it_asks_for_the_whole_value() {
+        let reserve = Reserve {
+            total_available_amount: 3,
+            mint_total_supply: 2,
+            ..Reserve::default()
+        };
+        // 1,000 cTokens at 1.5 are worth 1,500.
+        assert_eq!(
+            reserve
+                .ctokens_to_redeem(1_500, 1_000)
+                .map_err(|e| e as u32),
+            Ok(1_000)
+        );
+        assert_eq!(
+            reserve
+                .ctokens_to_redeem(9_999, 1_000)
+                .map_err(|e| e as u32),
+            Ok(1_000)
+        );
+        assert_eq!(
+            reserve
+                .ctokens_to_redeem(1_499, 1_000)
+                .map_err(|e| e as u32),
+            Ok(999)
+        );
+        // Less than one cToken's worth burns nothing, which klend would refuse: below the floor.
+        assert_eq!(
+            reserve.ctokens_to_redeem(1, 1_000).map_err(|e| e as u32),
+            Err(StrategyError::BelowMinRebalance as u32)
+        );
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10_000))]
 
@@ -594,6 +1109,74 @@ mod tests {
             prop_assert!(paid <= free && paid <= cap && paid <= own);
             prop_assert!(stopped || paid == free || paid == cap || paid == own);
             prop_assert!(!stopped || paid == 0);
+        }
+
+        /// The cTokens for a value are exactly floor(x x N x 2^60 / S), refused exactly when
+        /// that does not fit a u64 or there is no supply.
+        #[test]
+        fn the_ctokens_for_a_value_are_the_exact_floor(x: u64, s: u128, n: u64) {
+            prop_assert_eq!(ctokens_for_value(x, s, n), exact_ctokens(x, s, n));
+        }
+
+        /// The cTokens covering a shortfall are the fewest worth at least it at the stored
+        /// rate: worth at least the shortfall, and one fewer would be worth less, so they are at
+        /// most one cToken more than needed; refused exactly when that count does not fit a u64
+        /// or there is no supply.
+        #[test]
+        fn the_ctokens_covering_a_shortfall_are_the_fewest_worth_it(
+            x: u64,
+            n in 1u64..,
+            s in 1u128..,
+        ) {
+            let floor = exact_ctokens(x, s, n);
+            match ctokens_covering(x, s, n) {
+                Some(k) => {
+                    let floor = floor.unwrap();
+                    prop_assert!(k == floor || k == floor + 1);
+                    // klend's payout for k at the same rate.
+                    let worth = |k: u64| klend_payout(k, s, n);
+                    if let Some(value) = worth(k) {
+                        prop_assert!(value >= x);
+                    }
+                    if k > 0 {
+                        prop_assert!(worth(k - 1).unwrap() < x);
+                    }
+                }
+                None => prop_assert!(floor.is_none_or(|q| q == u64::MAX)),
+            }
+        }
+
+        /// The same, on real-sized reserves, against the program's own valuation.
+        #[test]
+        fn the_ctokens_covering_a_shortfall_are_worth_it_on_real_sized_reserves(
+            x in 0u64..(1 << 60),
+            n in 1u64..(1 << 50),
+            rate_sf in (1u128 << 60)..(4u128 << 60),
+        ) {
+            let s = n as u128 * rate_sf;
+            if let Some(k) = ctokens_covering(x, s, n) {
+                prop_assert!(collateral_value(k, s, n).unwrap() >= x);
+                if k > 0 {
+                    prop_assert!(collateral_value(k - 1, s, n).unwrap() < x);
+                }
+            }
+        }
+
+        /// They are worth at most the value asked for, and less than one cToken's worth
+        /// below it: a redeem lands within one cToken of its amount and never past it.
+        #[test]
+        fn the_ctokens_for_a_value_are_worth_it_within_one_ctoken(
+            x: u64,
+            n in 1u64..(1 << 50),
+            rate_sf in (1u128 << 60)..(4u128 << 60),
+        ) {
+            let s = n as u128 * rate_sf;
+            if let Some(k) = ctokens_for_value(x, s, n) {
+                let value = collateral_value(k, s, n).unwrap();
+                prop_assert!(value <= x);
+                let one_ctoken = s.div_ceil((n as u128) << 60);
+                prop_assert!((x - value) as u128 <= one_ctoken);
+            }
         }
     }
 }
@@ -679,5 +1262,342 @@ mod proofs {
         let (c, n): (u64, u64) = (kani::any(), kani::any());
         let s: u128 = kani::any_where(|&s: &u128| s < (1u128 << 64));
         assert_never_above_klend(c, s, n);
+    }
+
+    /// For any amount, the headroom never panics and leaves at most the amount.
+    #[kani::proof]
+    fn with_rate_headroom_never_panics_and_never_leaves_more() {
+        let amount: u64 = kani::any();
+        assert!(with_rate_headroom(amount) <= amount);
+    }
+
+    fn assert_headroom_never_short(amount: u64) {
+        let left = with_rate_headroom(amount);
+        let bps = crate::config::KAMINO_RATE_HEADROOM_BPS as u128;
+        // The headroom is at least its basis points' share, rounded up: by less than a unit.
+        let headroom = (amount - left) as u128;
+        assert!(headroom * 10_000 >= amount as u128 * bps);
+        assert!(headroom * 10_000 < amount as u128 * bps + 10_000);
+    }
+
+    /// The headroom is never short of `KAMINO_RATE_HEADROOM_BPS` of the amount, and rounds up
+    /// by less than a unit: bounded below 2^16; `proofs/kamino_z3.py` for every amount.
+    #[kani::proof]
+    fn the_rate_headroom_is_never_short_bounded() {
+        assert_headroom_never_short(kani::any_where(|&a| a < (1 << 16)));
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    fn the_rate_headroom_is_never_short() {
+        assert_headroom_never_short(kani::any());
+    }
+
+    /// For any three terms, what Kamino can pay is never more than any of them, is one of them
+    /// unless redeems are stopped, and is nothing while they are.
+    #[kani::proof]
+    fn kamino_never_pays_more_than_any_term() {
+        let (free, cap, own, stopped): (u64, u64, u64, bool) = kani::any();
+        let paid = can_pay(free, cap, own, stopped);
+        assert!(paid <= free && paid <= cap && paid <= own);
+        assert!(stopped || paid == free || paid == cap || paid == own);
+        assert!(!stopped || paid == 0);
+    }
+
+    /// For any withdrawal cap and time, what remains is exactly klend's count: everything with
+    /// no cap, nothing for a negative capacity or an interval that has not started, the whole
+    /// capacity once the interval is over, and otherwise the capacity less the net outflow,
+    /// nothing once the outflow has passed the capacity.
+    #[kani::proof]
+    fn the_withdrawal_cap_remaining_is_klends_count() {
+        let cap = WithdrawalCap {
+            capacity: kani::any(),
+            current_total: kani::any(),
+            interval_start: kani::any(),
+            interval_length: kani::any(),
+        };
+        let now: u64 = kani::any();
+        let left = withdrawal_cap_remaining(&cap, now);
+        if cap.interval_length == 0 {
+            assert!(left == u64::MAX);
+        } else if cap.capacity < 0 || cap.interval_start > now {
+            assert!(left == 0);
+        } else if now - cap.interval_start >= cap.interval_length {
+            assert!(left as i128 == cap.capacity as i128);
+        } else if cap.current_total > cap.capacity {
+            assert!(left == 0);
+        } else {
+            assert!(left as i128 == cap.capacity as i128 - cap.current_total as i128);
+        }
+    }
+
+    /// For any reserve fields, the total supply is klend's: the available amount in fixed
+    /// point plus what is borrowed less the three fee fields, in that order, or `None` exactly
+    /// where that sum passes 128 bits or a subtraction would go below 0.
+    #[kani::proof]
+    fn the_total_supply_is_klends() {
+        let (available, borrowed, protocol, referrer, pending): (u64, u128, u128, u128, u128) =
+            kani::any();
+        let gross = ((available as u128) << FRACTION_BITS).checked_add(borrowed);
+        let result = total_supply_sf(available, borrowed, protocol, referrer, pending);
+        match gross {
+            None => assert!(result.is_none()),
+            Some(gross) => {
+                let after_protocol = gross.checked_sub(protocol);
+                let after_referrer = after_protocol.and_then(|g| g.checked_sub(referrer));
+                let after_pending = after_referrer.and_then(|g| g.checked_sub(pending));
+                assert!(result == after_pending);
+                if let Some(supply) = result {
+                    assert!(supply + protocol + referrer + pending == gross);
+                }
+            }
+        }
+    }
+
+    fn assert_higher_rate_never_values_lower(c: u64, s: u128, extra: u128, n: u64) {
+        let higher = s.saturating_add(extra);
+        if let (Some(low), Some(high)) = (collateral_value(c, s, n), collateral_value(c, higher, n))
+        {
+            assert!(low <= high);
+        }
+    }
+
+    /// A higher rate never values the same cTokens lower, so only a fall in Kamino's rate can
+    /// lower the lent side's value: for small amounts at any fractional rate and rise;
+    /// `proofs/kamino_z3.py` for every input.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_higher_rate_never_values_lower_bounded() {
+        let c: u64 = kani::any_where(|&c| c < SMALL);
+        let n: u64 = kani::any_where(|&n| n < SMALL);
+        let whole: u64 = kani::any_where(|&w| w < SMALL);
+        let fraction: u64 = kani::any_where(|&f| f < (1 << FRACTION_BITS));
+        let s = ((whole as u128) << FRACTION_BITS) | fraction as u128;
+        let extra: u128 = kani::any_where(|&e: &u128| e < (SMALL as u128) << FRACTION_BITS);
+        assert_higher_rate_never_values_lower(c, s, extra, n);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_higher_rate_never_values_lower() {
+        assert_higher_rate_never_values_lower(kani::any(), kani::any(), kani::any(), kani::any());
+    }
+
+    /// For any reserve, no cTokens are worth nothing, whatever the reserve holds, even where
+    /// its supply cannot be computed.
+    #[kani::proof]
+    fn no_ctokens_are_worth_nothing() {
+        let reserve = Reserve {
+            total_available_amount: kani::any(),
+            borrowed_amount_sf: kani::any(),
+            accumulated_protocol_fees_sf: kani::any(),
+            mint_total_supply: kani::any(),
+            ..Reserve::default()
+        };
+        assert!(matches!(reserve.lent_value(0), Ok(0)));
+    }
+
+    /// For any reserve, its freely available liquidity never panics and is never more than
+    /// its available amount.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_freely_available_liquidity_is_at_most_the_available_amount() {
+        let reserve = Reserve {
+            total_available_amount: kani::any(),
+            borrowed_amount_sf: kani::any(),
+            mint_total_supply: kani::any(),
+            queued_collateral_amount: kani::any(),
+            ..Reserve::default()
+        };
+        assert!(reserve.freely_available() <= reserve.total_available_amount);
+    }
+
+    /// For a small reserve at any state of its switches and cap, what a redeem may plan to
+    /// take is never more than what Kamino can pay right now, which is never more than the
+    /// market's cTokens are worth, and both are nothing while redeems are stopped; what the
+    /// reserve alone shows is never less than what the lending market's emergency mode allows.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_planned_redeem_never_asks_more_than_kamino_can_pay_bounded() {
+        let small = |x: &u64| *x < SMALL;
+        let reserve = Reserve {
+            version: if kani::any() {
+                RESERVE_VERSION
+            } else {
+                u64::MAX
+            },
+            total_available_amount: kani::any_where(small),
+            mint_total_supply: kani::any_where(small),
+            emergency_mode: kani::any(),
+            withdrawal_cap: WithdrawalCap {
+                capacity: kani::any_where(|&c| (-1..SMALL as i64).contains(&c)),
+                current_total: kani::any_where(|&c| (-1..SMALL as i64).contains(&c)),
+                interval_start: kani::any_where(small),
+                interval_length: kani::any_where(small),
+            },
+            ..Reserve::default()
+        };
+        let market = LendingMarket {
+            emergency_mode: kani::any(),
+        };
+        let ctokens: u64 = kani::any_where(small);
+        let now: i64 = kani::any_where(|&t| (-1..SMALL as i64).contains(&t));
+        let planned = reserve.can_pay_planned(&market, ctokens, now);
+        let can_pay_now = reserve.can_pay_now(&market, ctokens, now);
+        assert!(planned <= can_pay_now);
+        assert!(can_pay_now <= reserve.lent_value(ctokens).unwrap_or(u64::MAX));
+        assert!(can_pay_now <= reserve.freely_available());
+        if reserve.redeems_stopped(&market) {
+            assert!(planned == 0 && can_pay_now == 0);
+        }
+        assert!(reserve.can_pay_by_itself(ctokens, now) >= planned);
+    }
+
+    /// A small reserve at a rate of `whole` plus sixteenths: the total supply's 60 fractional
+    /// bits, symbolic in the other bounded harnesses, are held to their top four here, since
+    /// these harnesses run several long divisions each.
+    fn small_reserve(whole: u64, sixteenths: u64, n: u64) -> Reserve {
+        Reserve {
+            total_available_amount: whole,
+            borrowed_amount_sf: (sixteenths as u128) << (FRACTION_BITS - 4),
+            mint_total_supply: n,
+            ..Reserve::default()
+        }
+    }
+
+    /// The cTokens `rebalance` burns for an amount are never more than the market holds, all of
+    /// them once it asks for their whole value, and otherwise worth at most the amount at the
+    /// stored rate: for small amounts at rates in sixteenths.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_redeem_burns_at_most_what_the_market_holds_and_what_it_asks_for_bounded() {
+        let small = |x: &u64| *x < SMALL;
+        let reserve = small_reserve(
+            kani::any_where(small),
+            kani::any_where(|&f| f < 16),
+            kani::any_where(small),
+        );
+        let (liquidity, ctokens): (u64, u64) = (kani::any_where(small), kani::any_where(small));
+        if let Ok(burn) = reserve.ctokens_to_redeem(liquidity, ctokens) {
+            assert!(burn <= ctokens);
+            let value = reserve.lent_value(ctokens).unwrap();
+            if liquidity >= value {
+                // Asking for the whole value burns everything.
+                assert!(burn == ctokens);
+            } else {
+                assert!(burn > 0 && reserve.lent_value(burn).unwrap() <= liquidity);
+            }
+        }
+    }
+
+    /// The cTokens a swap burns for its shortfall are never more than the market holds and are
+    /// worth at least the shortfall at the stored rate; a reserve with no cTokens values every
+    /// cToken at nothing, so Kamino can pay nothing from it and no swap ever has a shortfall to
+    /// cover there. For small amounts at rates in sixteenths.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_shortfall_burns_at_most_what_the_market_holds_and_covers_it_bounded() {
+        let small = |x: &u64| *x < SMALL;
+        let n: u64 = kani::any_where(small);
+        let reserve = small_reserve(kani::any_where(small), kani::any_where(|&f| f < 16), n);
+        let (shortfall, ctokens): (u64, u64) = (kani::any_where(small), kani::any_where(small));
+        if let Ok(burn) = reserve.ctokens_for_shortfall(shortfall, ctokens) {
+            assert!(burn <= ctokens);
+            assert!(reserve.lent_value(burn).is_ok_and(|v| v >= shortfall) || n == 0);
+        }
+    }
+
+    /// For any value, total supply and cToken supply, the cTokens for the value are computed
+    /// without panicking or overflowing.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn ctokens_for_value_never_panics() {
+        let _ = ctokens_for_value(kani::any(), kani::any(), kani::any());
+    }
+
+    fn assert_worth_at_most_and_within_one_ctoken(x: u64, s: u128, n: u64) {
+        if let Some(k) = ctokens_for_value(x, s, n) {
+            if n > 0 {
+                let value = collateral_value(k, s, n).unwrap();
+                assert!(value <= x);
+                assert!(
+                    ((x - value) as u128) << FRACTION_BITS
+                        <= s.div_ceil(n as u128).saturating_add(1u128 << FRACTION_BITS)
+                );
+            }
+        }
+    }
+
+    /// The cTokens for a value are worth at most it, within one cToken's worth, for small
+    /// amounts at any fractional rate.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_ctokens_for_a_value_are_worth_it_within_one_ctoken_bounded() {
+        let x: u64 = kani::any_where(|&x| x < SMALL);
+        let n: u64 = kani::any_where(|&n| n > 0 && n < SMALL);
+        let whole: u64 = kani::any_where(|&w| w > 0 && w < SMALL);
+        let fraction: u64 = kani::any_where(|&f| f < (1 << FRACTION_BITS));
+        let s = ((whole as u128) << FRACTION_BITS) | fraction as u128;
+        assert_worth_at_most_and_within_one_ctoken(x, s, n);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_ctokens_for_a_value_are_worth_it_within_one_ctoken() {
+        assert_worth_at_most_and_within_one_ctoken(kani::any(), kani::any(), kani::any());
+    }
+
+    /// For any shortfall, total supply and cToken supply, the cTokens covering it are computed
+    /// without panicking or overflowing.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn ctokens_covering_never_panics() {
+        let _ = ctokens_covering(kani::any(), kani::any(), kani::any());
+    }
+
+    fn assert_worth_at_least_and_at_most_one_ctoken_more(x: u64, s: u128, n: u64) {
+        if let Some(k) = ctokens_covering(x, s, n) {
+            if n > 0 {
+                assert!(collateral_value(k, s, n).is_none_or(|value| value >= x));
+                if k > 0 {
+                    assert!(collateral_value(k - 1, s, n).unwrap() < x);
+                }
+            }
+        }
+    }
+
+    /// The cTokens a swap burns for its shortfall are worth at least the shortfall at the
+    /// stored rate, and one fewer would be worth less, so they are at most one cToken more than
+    /// needed, for small amounts at any fractional rate.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_ctokens_covering_a_shortfall_are_the_fewest_worth_it_bounded() {
+        let x: u64 = kani::any_where(|&x| x < SMALL);
+        let n: u64 = kani::any_where(|&n| n > 0 && n < SMALL);
+        let whole: u64 = kani::any_where(|&w| w > 0 && w < SMALL);
+        let fraction: u64 = kani::any_where(|&f| f < (1 << FRACTION_BITS));
+        let s = ((whole as u128) << FRACTION_BITS) | fraction as u128;
+        assert_worth_at_least_and_at_most_one_ctoken_more(x, s, n);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_ctokens_covering_a_shortfall_are_the_fewest_worth_it() {
+        assert_worth_at_least_and_at_most_one_ctoken_more(kani::any(), kani::any(), kani::any());
     }
 }

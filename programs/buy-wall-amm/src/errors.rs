@@ -69,4 +69,20 @@ pub enum StrategyError {
     PriceBoundReached,
     #[msg("A seed request needs exactly one amount per mint: the token's, then wrapped SOL's")]
     BadSeedAmounts,
+    #[msg("Neither idle SOL nor the SOL the wall has spent reaches WALL_THRESHOLD")]
+    WallBelowThreshold,
+    #[msg("No retired tokens to settle")]
+    NothingToSettle,
+    #[msg("Nothing is owed")]
+    NothingOwed,
+    #[msg("This role or fee slot has no wallet")]
+    RecipientUnset,
+    #[msg("The fee slot must be 0, 1 or 2")]
+    BadFeeSlot,
+    #[msg("Only the current recipient may hand its role over")]
+    NotRecipient,
+    #[msg("The new recipient must not be the default key")]
+    NewRecipientRequired,
+    #[msg("The recipient's token account belongs to someone else")]
+    RecipientAccountNotTheirs,
 }

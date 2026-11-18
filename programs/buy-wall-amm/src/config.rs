@@ -24,9 +24,21 @@ pub const DESIGNER_SHARE_BPS: u16 = 1_000;
 pub const SUITE_SHARE_BPS: u16 = 1_000;
 /// The wallet the designer share is paid to. Unset (the all-zero key) while IMD and Adam
 /// have no known Solana address; an upgrade sets it before the program is frozen.
+/// Published in the IDL (`#[constant]`), where the demo script reads it, as is the suite
+/// treasury below (`POOL4-40`).
+#[cfg(not(feature = "test-designer-recipient"))]
+#[constant]
 pub const DESIGNER_RECIPIENT: Pubkey = Pubkey::new_from_array([0; 32]);
+/// A test build's designer wallet, a key nobody holds, so the tests can show `sweep_fees`
+/// paying slot 1 once `DESIGNER_RECIPIENT` is set (`POOL4-39`). Only CI's extra test build
+/// turns this feature on, and that build has a program id of its own (`lib.rs`), so deployed
+/// at the program's address it would refuse every instruction.
+#[cfg(feature = "test-designer-recipient")]
+#[constant]
+pub const DESIGNER_RECIPIENT: Pubkey = pubkey!("DesignerRecipientTestKey11111111111111111111");
 /// The suite treasury, the same wallet the tax AMM pays its suite share to; its key is in
 /// `~/.config/testing-pipeline/devnet/suite-treasury.json` and docs/toolchain.md ("Keys").
+#[constant]
 pub const SUITE_TREASURY: Pubkey = pubkey!("CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF");
 /// The highest reward share a market may choose, in basis points of the trimmed tokens.
 pub const MAX_REWARD_SHARE_BPS: u16 = 3_000;
@@ -35,15 +47,22 @@ pub const MIN_CAP_FLOOR_BPS: u16 = 10;
 /// The highest cap decay a market may choose, in basis points of the seeded tokens a day.
 pub const MAX_CAP_DECAY_BPS: u16 = 10_000;
 /// Idle SOL, or SOL the wall has spent, that lets the wall be placed again (0.01 SOL).
+/// Published in the IDL (`#[constant]`), where the demo script reads it, as are the tip cap
+/// and the guard's rates below (`POOL4-35`).
+#[constant]
 pub const WALL_THRESHOLD: u64 = 10_000_000;
 /// The most a wall placement tips its caller (0.002 SOL).
+#[constant]
 pub const KEEPER_TIP_CAP: u64 = 2_000_000;
 /// How fast the wall's floor may rise, in basis points of the price a day.
+#[constant]
 pub const FLOOR_CRAWL_BPS: u64 = 400;
 /// How fast the reference may follow the price: `REF_STEP_BPS` of the price per
 /// `REF_STEP_WINDOW` seconds.
+#[constant]
 pub const REF_STEP_BPS: u64 = 200;
 /// See `REF_STEP_BPS`, in seconds.
+#[constant]
 pub const REF_STEP_WINDOW: i64 = 12;
 /// The most cap decay allowance that builds up while a market is idle, in seconds.
 /// Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-30`).

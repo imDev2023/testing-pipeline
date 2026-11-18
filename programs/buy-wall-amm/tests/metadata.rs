@@ -1,7 +1,8 @@
 //! `metadata.json` (docs/spec/pool4-for-solana.md, "Custom actions and metadata") passes
-//! Pipeline's validator with zero warnings, and its `init`, `seed_liquidity` and `seed` forms
-//! describe exactly the instructions the program takes: the same arguments in the same order and Borsh
-//! encoding, and the same accounts, resolved here from each form's account sources.
+//! Pipeline's validator with zero warnings, and its `init` and `seed_liquidity` forms and
+//! every action's form describe exactly the instructions the program takes: the same
+//! arguments in the same order and Borsh encoding, and the same accounts, resolved here from
+//! each form's account sources.
 
 mod common;
 
@@ -31,6 +32,18 @@ fn resolve(
         AccountSource::MarketState => market.market_state,
         AccountSource::Market => market.market,
         AccountSource::Fixed(key) => *key,
+        AccountSource::SystemProgram => pipeline_client::SYSTEM_PROGRAM_ID,
+        AccountSource::AssociatedTokenProgram => common::payouts::ATA_PROGRAM,
+        AccountSource::Ata { owner, mint } => {
+            let owner = resolve(owner, market, wallet, inputs);
+            let mint = resolve(mint, market, wallet, inputs);
+            let program = if mint == market.token_mint {
+                market.token_program
+            } else {
+                TOKEN
+            };
+            pda::associated_token(&owner, &mint, &program)
+        }
         AccountSource::Input(name) => inputs.iter().find(|(n, _)| n == name).unwrap().1,
         AccountSource::Mint(i) => market.mints()[*i as usize],
         AccountSource::Vault(i) => market.vaults()[*i as usize],
@@ -102,6 +115,7 @@ fn encode_args(form: &Value, values: &[(&str, Value)]) -> Vec<u8> {
             .unwrap_or_else(|| panic!("no value for {name}"))
             .1;
         match arg["type"].as_str().unwrap() {
+            "u8" => data.push(value.as_u64().unwrap() as u8),
             "u16" => data.extend_from_slice(&(value.as_u64().unwrap() as u16).to_le_bytes()),
             "u64" => data.extend_from_slice(&value.as_u64().unwrap().to_le_bytes()),
             "pubkey" => data.extend_from_slice(
@@ -213,6 +227,33 @@ fn the_seed_action_builds_exactly_what_seed_takes() {
 }
 
 #[test]
+fn the_place_wall_action_builds_exactly_what_place_wall_takes() {
+    let metadata = metadata();
+    let action = metadata["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == "place_wall")
+        .unwrap();
+    assert_eq!(action["kind"], "other");
+    assert_eq!(action["args"].as_array().map(Vec::len), Some(0));
+    let wallet = Pubkey::new_unique();
+    for token_program in [TOKEN, TOKEN_2022] {
+        let market = Market::addresses(Pubkey::new_unique(), Pubkey::new_unique(), token_program);
+        // The tip goes to the caller's own wrapped SOL account.
+        let tips = pda::associated_token(&wallet, &WSOL, &TOKEN);
+        let expected = place_wall_ix(&market, &wallet, &tips);
+        assert_eq!(
+            resolve_accounts(action, &market, &wallet, &[]),
+            expected.accounts
+        );
+        let mut data = pipeline_client::instruction_discriminator("place_wall").to_vec();
+        data.extend(encode_args(action, &[]));
+        assert_eq!(data, expected.data);
+    }
+}
+
+#[test]
 fn the_seed_liquidity_form_describes_exactly_what_pipeline_seed_liquidity_takes() {
     // Pipeline's metadata standard has no field for pipeline_seed_liquidity, so the form is
     // shaped as `init` is (the validator allows unknown keys, as the zero-warning test
@@ -257,5 +298,80 @@ fn the_seed_liquidity_form_describes_exactly_what_pipeline_seed_liquidity_takes(
                 AccountMeta::new(market.sol_vault, false),
             ]
         );
+    }
+}
+
+fn action(metadata: &Value, name: &str) -> Value {
+    metadata["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == name)
+        .unwrap_or_else(|| panic!("no {name} action"))
+        .clone()
+}
+
+#[test]
+fn the_payout_actions_build_exactly_what_the_program_takes() {
+    use common::payouts::*;
+    let metadata = metadata();
+    let wallet = Pubkey::new_unique();
+    let recipient = Pubkey::new_unique();
+    for token_program in [TOKEN, TOKEN_2022] {
+        let market = Market::addresses(Pubkey::new_unique(), Pubkey::new_unique(), token_program);
+
+        let settle = action(&metadata, "settle");
+        assert_eq!(settle["kind"], "other");
+        assert_eq!(
+            resolve_accounts(&settle, &market, &wallet, &[]),
+            settle_ix(&market).accounts
+        );
+        assert_eq!(
+            pipeline_client::instruction_discriminator("settle").to_vec(),
+            settle_ix(&market).data
+        );
+
+        let pay = action(&metadata, "pay_rewards");
+        assert_eq!(pay["kind"], "claim");
+        let expected = pay_rewards_ix(&market, &wallet, &recipient, vec![]);
+        let inputs = [("rewards_recipient", recipient)];
+        assert_eq!(
+            resolve_accounts(&pay, &market, &wallet, &inputs),
+            expected.accounts
+        );
+        let mut data = pipeline_client::instruction_discriminator("pay_rewards").to_vec();
+        data.extend(encode_args(&pay, &[]));
+        assert_eq!(data, expected.data);
+
+        let sweep = action(&metadata, "sweep_fees");
+        assert_eq!(sweep["kind"], "claim");
+        let expected = sweep_fees_ix(&market, &wallet, &recipient, 2);
+        let inputs = [("recipient", recipient)];
+        assert_eq!(
+            resolve_accounts(&sweep, &market, &wallet, &inputs),
+            expected.accounts
+        );
+        let mut data = pipeline_client::instruction_discriminator("sweep_fees").to_vec();
+        data.extend(encode_args(&sweep, &[("slot", Value::from(2))]));
+        assert_eq!(data, expected.data);
+
+        for (name, rewards) in [
+            ("set_fee_recipient", false),
+            ("set_rewards_recipient", true),
+        ] {
+            let handover = action(&metadata, name);
+            assert_eq!(handover["kind"], "other");
+            let expected = handover_ix(&market, rewards, &wallet, &recipient);
+            assert_eq!(
+                resolve_accounts(&handover, &market, &wallet, &[]),
+                expected.accounts
+            );
+            let mut data = pipeline_client::instruction_discriminator(name).to_vec();
+            data.extend(encode_args(
+                &handover,
+                &[("new", Value::from(recipient.to_string()))],
+            ));
+            assert_eq!(data, expected.data);
+        }
     }
 }

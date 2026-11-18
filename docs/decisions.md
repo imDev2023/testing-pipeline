@@ -3448,6 +3448,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
 
+### HOOK-35: The launch script's rehearsal of the devnet launch
+
+- Question: How does one run of the launch script rehearse the devnet launch, with its two contained tokens and the sweep of Pipeline's fee?
+- Answer: Each `--goal` and `--deadline` pair launches one token, one after another in the same run, with `--unlock` given for every token or for none, and every launch sweeps Pipeline's fee in the token from its fee account to Pipeline's treasury with the router's `sweep_fees` and the hook accounts.
+- Alternatives: Two runs of the script, one per token; a separate rehearsal script, which would repeat the launch's setup.
+- Specified in: [the ticket, Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+
+### HOOK-36: How the fuzzer judges the hook's invariants
+
+- Question: How does the containment hook's invariant fuzzer check its five invariants?
+- Answer: On every market shape the tax AMM's fuzzer builds, with the contained mint at either index and the tax AMM's own invariants lifted beside the hook's, it checks invariant 1 by the balances of every account of the token the world knows (what leaves the outside accounts must reach the home vault or the fee account, and the reverse), invariant 5 by simulating a sale of every signer's whole holding through the router with the hook accounts, and runs 1,000 sequences of up to 50 steps in CI, spread over every core.
+- Alternatives: Reading each transaction's token transfers for invariant 1, which would miss a token moved by an instruction the reader does not know; checking only quotes for invariant 5, which never runs the hook.
+- Specified in: [the ticket, Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+
+### HOOK-37: What `bind`'s ceiling counts
+
+- Question: Does `bind`'s compute ceiling count what its bump searches spend, which depends on the mint's address?
+- Answer: No: like the tax AMM's ceilings, it leaves out the 1,500 units each of its four searches spends for every bump tried after the first, so `bind` costs the same 20,916 units on every mint against its 60,000.
+- Alternatives: Counting the whole cost, which reached 55,416 units in the fuzzer and would fail on a rare mint; passing the bumps to `bind` as arguments, which would change its instruction.
+- Specified in: [`docs/spec/containment-hook.md`, Compute ceilings](spec/containment-hook.md#compute-ceilings)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+
 ## Buy wall AMM (POOL4)
 
 `POOL4-01` to `POOL4-21` keep the numbers their tickets proposed, which the buy wall AMM's build tickets already cite.
@@ -3647,7 +3677,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: Where does the first layout fixture come from before any market exists on devnet?
 - Answer: From a LiteSVM market traded through the real router, marked synthetic, until the devnet demo market provides a real one; CI keeps both.
 - Alternatives: Waiting for devnet before the release gate can run in CI.
-- Specified in: [the ticket, Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+- Specified in: [`docs/spec/pool4-for-solana.md`, Fixtures in CI](spec/pool4-for-solana.md#fixtures-in-ci)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-10 in [Cut Pool4 for Solana's build tickets](https://github.com/imDev2023/testing-pipeline/issues/24)
@@ -3761,6 +3791,146 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: fixed on-chain once deployed
 - Status: default
 - Decided: 2026-11-12 in [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49)
+
+### POOL4-32: When the floor's clock moves
+
+- Question: Does the wall's floor reset its clock (`floor_time`) on every swap, or only on a swap where it crawls toward the reference?
+- Answer: On every swap, as step 4 of "After pricing" reads ("Then `floor_time = now`"), so the floor crawls only by the time since the last swap and never by a whole day at once when the reference first rises above it after a quiet spell.
+- Alternatives: Only when the floor crawls, which would let a floor that sat at the reference for a long time jump a full day's crawl on the first swap after the reference moved up.
+- Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
+
+### POOL4-33: When a wall counts as placed
+
+- Question: When does pricing treat the buy wall as placed, given that `place_wall` can leave a top with no liquidity when almost nothing is idle?
+- Answer: Exactly when `wall_liquidity` is above 0; a top with no liquidity trades as no wall, so every trade moves along the curve alone in one step.
+- Alternatives: Whenever `wall_top` is set, which would split such trades into two steps along the same liquidity for nothing but an extra rounding.
+- Specified in: [`docs/spec/pool4-for-solana.md`, What is stored](spec/pool4-for-solana.md#what-is-stored)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
+
+### POOL4-34: What `place_wall` takes and reports
+
+- Question: Which accounts does `place_wall` take, where may its tip go, and what does it report?
+- Answer: The caller signs; the tip goes to any wrapped SOL account the caller names except the market's own SOL vault (the metadata form names the caller's own); it emits `WallPlaced` with the caller, the tip account, the old wall's spent SOL, what closing it moved, the dust swept, the tip and the new wall; and the lifetime total of tokens the wall bought grows when a wall is closed, by what that wall bought.
+- Alternatives: No signer, since the tip goes wherever the caller says anyway; a tip only to the caller's associated token account, created if missing, which costs more compute and rent on every call.
+- Specified in: [`docs/spec/pool4-for-solana.md`, `place_wall`](spec/pool4-for-solana.md#place_wall)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
+
+### POOL4-35: The wall's constants in the IDL
+
+- Question: How does the demo's model of the wall and its guard learn the constants it needs without restating them?
+- Answer: The program publishes `WALL_THRESHOLD`, `KEEPER_TIP_CAP`, `FLOOR_CRAWL_BPS`, `REF_STEP_BPS` and `REF_STEP_WINDOW` in its IDL with Anchor's `#[constant]`, as it does the fee shares (`POOL4-25`) and the cap's constants (`POOL4-30`), and the demo reads them from the generated client.
+- Alternatives: Restating them in the demo, which the one-place rule forbids.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Constants](spec/pool4-for-solana.md#constants)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
+
+### POOL4-36: Every holder can exit, at a price bound
+
+- Question: When a holding is more than the curve can take before `MIN_SQRT_PRICE`, as a trim down to `MIN_LIQUIDITY` near the bound can make it, should the pricing sell what it can, or is the whole holding refused, and what does the invariant "every holder can exit" then ask?
+- Answer: The whole holding is refused with `PriceBoundReached`, as the pricing's rules already say, since an exact-in swap keeps all its input and cannot fill in part; the holder exits by selling the most the curve can take, so the invariant asks that the whole holding sells, or pays nothing, or that the most the curve can take sells or pays nothing while one token unit more is refused for the bound.
+- Alternatives: A partial fill that pays for what the curve can take and keeps the rest of the input, which takes the rest from the trader; refusing such a holding with `ZeroOutput` when the curve holds less than a lamport above the bound, which changes a program error for no holder's gain; keeping trims from shrinking the curve below what every holding needs, which no market can know.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Invariants for test layer 3](spec/pool4-for-solana.md#invariants-for-test-layer-3)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152)
+
+### POOL4-37: How a payout names and checks its recipient's account
+
+- Question: Which account do `pay_rewards` and `sweep_fees` pay, and what do they do when it is missing or no longer the recipient's?
+- Answer: The caller names the recipient's wallet, which must be the one the market or the program names, and only that wallet's associated token account for the mint is paid: created at the caller's expense when it does not exist (never created, closed, or holding only lamports sent to its address), and refused with `RecipientAccountNotTheirs` when it exists but its owner was reassigned, so only that payout waits until the recipient hands its role over.
+- Alternatives: Any token account the recipient owns, which the associated token program's idempotent create would accept and which Aviary and indexers could not predict; reading the recipient from the market state without naming it, which Pipeline's metadata forms cannot describe.
+- Specified in: [`docs/spec/pool4-for-solana.md`, The recipient's token account](spec/pool4-for-solana.md#the-recipients-token-account)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
+
+### POOL4-38: Who signs the payouts and what they report
+
+- Question: Who signs `settle`, `pay_rewards`, `sweep_fees` and the handovers, when may a handover happen, and what does each report?
+- Answer: `settle` needs no signature but the fee payer's, since it pays nobody; `pay_rewards` and `sweep_fees` are signed by the caller, who pays for a missing recipient account; the payouts are refused until the market is seeded, while a handover, signed by the role's current recipient, may happen at any time, before the seed too; they emit `Settled`, `RewardsPaid`, `FeesSwept` and `RecipientChanged`, and the lifetime totals of tokens burned and rewards paid grow with each.
+- Alternatives: A named caller on `settle`, as `place_wall` has for its tip, which it has no use for; handovers only once a market is open.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Recipients](spec/pool4-for-solana.md#recipients)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
+
+### POOL4-39: Testing the designer slot before its wallet is set
+
+- Question: How is fee slot 1's payout tested while `DESIGNER_RECIPIENT` is unset in every build that is deployed?
+- Answer: A `test-designer-recipient` feature of the program sets the constant to a test key nobody holds, in `config.rs` beside the real value, and gives that build a program id of its own, so deployed at the program's address it would refuse every instruction; CI builds the program a second time with it and runs the payout tests against that build.
+- Alternatives: Testing slot 1 only in the pure functions, never through the router; leaving its payout untested until the constant is set.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Constants](spec/pool4-for-solana.md#constants)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
+
+### POOL4-40: The fee slots' wallets in the IDL
+
+- Question: How does the demo learn the wallets fee slots 1 and 2 are paid to without restating them?
+- Answer: The program publishes `DESIGNER_RECIPIENT` and `SUITE_TREASURY` in its IDL with Anchor's `#[constant]`, as the tax AMM publishes its suite treasury, and the demo reads them from the generated client.
+- Alternatives: Restating them in the demo, which the one-place rule forbids.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Constants](spec/pool4-for-solana.md#constants)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: payouts and recipient handovers (`settle`, `pay_rewards`, `sweep_fees`)](https://github.com/imDev2023/testing-pipeline/issues/51)
+
+### POOL4-41: What the release gate runs on each market
+
+- Question: What exactly does the release gate run on each market, and which quotes does it compare?
+- Answer: With the candidate and the cluster's router it resolves a buy and a sell, compares exact-in quotes both ways at a tenth, a hundredth and a thousandth of the input vault with the deployed build's on the same state, runs each keeper job the program's own rules say is due on the state as downloaded, seeds a market waiting for its seed as its seeder would, then buys with a hundredth of the SOL vault and sells what that bought, each delivering exactly the candidate's quote.
+- Alternatives: One quote each way; judging keeper jobs due after the trades; comparing whole market states after the trades.
+- Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+
+### POOL4-42: How a release declares a pricing change
+
+- Question: How does a release declare the pricing change that lets its quotes differ from the deployed build's?
+- Answer: In `programs/buy-wall-amm/release.json`, committed with it, by naming the executable hash of each build whose quotes it changes, so a declaration left in place after its release deploys covers nothing more; it lets amounts differ but never a served quote become a refusal, and unlocks a deploy only as committed.
+- Alternatives: A yes or no flag, which would keep covering later releases until someone reset it.
+- Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+
+### POOL4-43: What a passing gate run must cover for a deploy
+
+- Question: Which passing gate run lets the deploy script deploy a build?
+- Answer: One recorded for the same cluster (by genesis hash) and the same executable hash, made against the build deployed there now and covering every market there now, kept per cluster in `deployments/release-gate/buy-wall-amm/`, with a local validator's records kept out of git.
+- Alternatives: Any passing run of the same build hash, which an upgrade or a new market since would make stale; running the gate inside the deploy script.
+- Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+
+### POOL4-44: How the gate is proved to catch stranding
+
+- Question: How are the test builds made that prove the gate catches stranding?
+- Answer: From edited copies of the workspace, built in a target directory of their own, never from features in the program's source: a moved field, the market state type renamed with its discriminator left to Anchor, an account 8 bytes larger, all refused, and a field appended into the reserve as layout version 2, passed, on every fixture in CI.
+- Alternatives: Cargo features that switch layouts in `state.rs`, which would put stranding layouts into the audited source.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Fixtures in CI](spec/pool4-for-solana.md#fixtures-in-ci)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+
+### POOL4-45: How the gate reads a cluster
+
+- Question: How does the gate read accounts from a cluster?
+- Answer: Through read-only JSON-RPC calls sent with `curl`, so it can send nothing, and so the owner's firewall, which holds back every freshly built binary's network calls until allowed by hand, never stalls it after a rebuild; it keeps only an RPC URL's scheme and host in what it prints and saves.
+- Alternatives: `pipeline-check`'s own HTTP client, which would add an HTTP stack to the on-chain workspace and be held back after every rebuild.
+- Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
 
 ## Lending AMM (LENDING)
 
@@ -4027,11 +4197,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-27: Compute ceilings
 
 - Question: How much compute may each instruction use?
-- Answer: From 20,000 units for `lock_lp` to 200,000 for `pipeline_seed_liquidity`, with 40,000 for a swap without a redeem and 80,000 with one; the build may lower a ceiling, and raising one needs a written reason.
-- Alternatives: None recorded.
+- Answer: Each instruction's highest measured cost plus headroom (`LENDING-88`): from 20,000 units for `pipeline_quote` to 140,000 for `pipeline_seed_liquidity`, with 35,000 for a swap without a redeem and 75,000 with one, 90,000 for `rebalance`, 60,000 for `add_liquidity` and 50,000 for `lock_lp`; raising one needs a written reason.
+- Alternatives: The earlier default, from 40,000 units for `lock_lp` to 200,000 for `pipeline_seed_liquidity`, set before measuring; before that, 20,000 units for `lock_lp`, set for one transfer.
 - Specified in: [`docs/spec/lending-pool.md`, Compute ceilings](spec/lending-pool.md#compute-ceilings)
 - Changes by: build-time constant
-- Status: default
+- Status: changed 2026-11-16
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-28: Devnet lending market
@@ -4284,6 +4454,386 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Lending AMM: klend fixtures, and valuing the lent side from Kamino's reserve](https://github.com/imDev2023/testing-pipeline/issues/79)
 
+### LENDING-53: How the target and the band round
+
+- Question: How is the target buffer rounded, and is a share exactly at an edge of the band inside it or outside it?
+- Answer: The target is `floor(L x BUFFER_TARGET_BPS / 10,000)`, and the band is compared exactly in 128-bit integers with both edges inside it, so a deposit leaves exactly the target and an uncapped redeem asks for exactly the target.
+- Alternatives: The target rounded up; the edges outside the band; comparing shares rounded to whole basis points.
+- Specified in: [`docs/spec/lending-pool.md`, The rule](spec/lending-pool.md#the-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-54: What a rebalance with nothing to do does
+
+- Question: What does `rebalance` do inside the band, below the floor, or when Kamino can pay nothing of a redeem?
+- Answer: It fails and changes nothing, with `WithinBand` inside the band and `BelowMinRebalance` below the lent mint's `MIN_REBALANCE` or when Kamino can pay nothing, so a keeper's simulation shows there is nothing to do and nobody pays for a no-op.
+- Alternatives: Succeeding without moving anything, which a keeper would pay for; one error for both cases.
+- Specified in: [`docs/spec/lending-pool.md`, The rule](spec/lending-pool.md#the-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-55: How many cTokens a rebalance redeems
+
+- Question: How many cTokens does `rebalance` burn to redeem a shortfall?
+- Answer: As many as are worth at most the shortfall at the stored rate, `floor(s x S_ctoken / S_total)`, or all the market holds once the shortfall reaches their whole value, so the buffer never passes its target at that rate and lands less than one cToken's worth short of it.
+- Alternatives: Rounding up, as the in-swap redeem does to cover a payout, which could carry the buffer one cToken's worth past its target.
+- Specified in: [`docs/spec/lending-pool.md`, The rule](spec/lending-pool.md#the-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-56: How rebalance checks Kamino's accounts
+
+- Question: Which of the accounts `rebalance` passes to klend does the program check itself, rather than leave to klend?
+- Answer: All of them, before calling klend: klend's id, SPL Token, the instructions sysvar, the lent and collateral mints, the reserve, its liquidity supply, its lending market and that market's authority PDA, each failing with `KaminoAccountWrong` unless the reserve or lending market check names it, and its own buffer vault and cToken account by address.
+- Alternatives: Checking only the reserve and the klend program and leaving the rest to klend's own constraints, which would also refuse them but with klend's errors and only for the accounts klend constrains.
+- Specified in: [`docs/spec/lending-pool.md`, Custom actions and metadata](spec/lending-pool.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-57: How rebalance takes its Kamino accounts
+
+- Question: How does a keeper or Aviary's form give `rebalance` the Kamino accounts of a market's lent mint?
+- Answer: As the metadata's named inputs `lent_mint`, `reserve`, `lending_market`, `reserve_liquidity_supply` and `collateral_mint`, with the lending market authority as klend's PDA of the lending market and the caller a read-only signer, and the band's three constants exported in the IDL for forms and keepers to read.
+- Alternatives: A metadata source reading them from the market state or the reserve, which the metadata schema at `5ad130d` does not have.
+- Specified in: [`docs/spec/lending-pool.md`, Custom actions and metadata](spec/lending-pool.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-58: Kamino's rounding in a rebalance
+
+- Question: May a `rebalance` lower the lent side's total, and so an LP share's value, by Kamino's own rounding?
+- Answer: Yes, by at most one unit of the lent mint, since klend takes back a deposit's cTokens rounded up and the market values its cTokens rounded down; the tests and the fuzzer allow exactly that unit and no more.
+- Alternatives: Depositing one unit less so the total can never fall, which leaves the buffer a unit above its target and still cannot cover a redeem's rounding.
+- Specified in: [`docs/spec/lending-pool.md`, The rule](spec/lending-pool.md#the-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-59: Headroom below Kamino's limits on a redeem
+
+- Question: How far below Kamino's freely available liquidity and withdrawal cap does `rebalance` plan a redeem, given that klend pays at the rate it refreshes the reserve to inside the redeem?
+- Answer: 10 basis points of each limit, the constant `KAMINO_RATE_HEADROOM_BPS`, about a week of interest at 5% a year since the reserve's last refresh, and none on the value of the market's own cTokens.
+- Alternatives: No headroom, which makes klend refuse a redeem capped at a limit whenever the reserve was not refreshed in the same slot; calling klend's `refresh_reserve` first, which needs the reserve's oracle accounts whenever its price is stale, a dependency the cToken path otherwise avoids; projecting the interest, which would copy Kamino's interest maths.
+- Specified in: [`docs/spec/lending-pool.md`, Constants](spec/lending-pool.md#constants)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80)
+
+### LENDING-60: How a redeeming swap's accounts are resolved
+
+- Question: How does `pipeline_resolve_accounts` decide whether a trade needs Kamino's redeem accounts, and which does it list?
+- Answer: A lent-side output resolves in two rounds, the second reading the reserve and running the quote with the one pricing function, and only a trade that quote redeems gets the reserve writable and, after it, klend, the lending market, its authority, the reserve's liquidity supply and collateral mint, the market's cToken account, SPL Token once and the instructions sysvar; an other-side output resolves in one round, and a reserve failing its check or a refused trade gets no redeem accounts.
+- Alternatives: Always listing the redeem accounts for a lent-side output, which would write-lock the reserve every Kamino user of that mint shares on every sale; one round with the redeem accounts guessed from vault balances, which cannot value the cTokens.
+- Specified in: [`docs/spec/lending-pool.md`, Accounts](spec/lending-pool.md#accounts)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
+### LENDING-61: A swap built without its redeem accounts
+
+- Question: How does a swap recognise the redeem accounts, and what does one that needs a redeem but lacks them do?
+- Answer: It recognises them by klend's id right after a lent-side output's reserve and checks them only when the trade redeems, each failing with `KaminoAccountWrong` unless the reserve or lending market check names it; without them it fails with its own error, `RedeemAccountsMissing`, and changes nothing, so the integrator resolves again.
+- Alternatives: Spending only the buffer and refusing the rest with `BeyondBuffer`, which would not tell the integrator that resolving again fixes it; checking the redeem accounts on every swap that carries them, which costs compute for nothing.
+- Specified in: [`docs/spec/lending-pool.md`, Accounts](spec/lending-pool.md#accounts)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
+### LENDING-62: What Kamino can pay a swap
+
+- Question: How much of a shortfall may a swap plan to redeem, given that klend pays at the rate it refreshes the reserve to inside the redeem?
+- Answer: What Kamino can pay right now with the same `KAMINO_RATE_HEADROOM_BPS` taken off its freely available liquidity and withdrawal cap as for `rebalance`, read from the lending market and the clock only when the output passes the buffer; a larger shortfall is refused with `BeyondBuffer` by the quote and the swap alike.
+- Alternatives: Kamino's limits with no headroom, under which a quote could promise a trade klend then refuses whenever the reserve was not refreshed in the same slot.
+- Specified in: [`docs/spec/lending-pool.md`, Redeeming the shortfall](spec/lending-pool.md#redeeming-the-shortfall)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
+### LENDING-63: What a redeeming swap records and tells
+
+- Question: What does a swap that redeems record, and what does it emit?
+- Answer: It measures the lent mint that arrived in its buffer vault and the cTokens that left its cToken account, fails with `RedeemPaidShort` below the shortfall, keeps anything above it in the buffer, adds what arrived to its running total redeemed, and emits `ShortfallRedeemed` with the shortfall, the cTokens burned, the lent mint received and the buffer, cTokens and running total afterwards.
+- Alternatives: Recording what it asked klend for rather than what moved; leaving the redeem to the router's swap event, which carries only the trade's amounts.
+- Specified in: [`docs/spec/lending-pool.md`, Redeeming the shortfall](spec/lending-pool.md#redeeming-the-shortfall)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
+### LENDING-64: Kamino's rounding in a redeeming swap
+
+- Question: May a swap that redeems lower the lent side's total, and so `R x L`, by Kamino's own rounding?
+- Answer: Yes, by at most one unit of the lent mint, as a `rebalance` may, since klend pays its rounded-down rate for the cTokens burned while the market values the rest rounded down too; the tests and the fuzzer allow exactly that unit and no more.
+- Alternatives: Refusing a redeem whose rounding would lower the total, which would refuse ordinary sales over a single unit.
+- Specified in: [`docs/spec/lending-pool.md`, Invariants for test layer 3](spec/lending-pool.md#invariants-for-test-layer-3)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: redeem a swap's shortfall from Kamino inside the swap](https://github.com/imDev2023/testing-pipeline/issues/81)
+
+### LENDING-65: How an in-kind removal leaves Kamino's accounts out
+
+- Question: How does one `remove_liquidity` instruction take Kamino's accounts in cash and none at all in kind?
+- Answer: It takes them last as Anchor optional accounts, among them a writable copy of the collateral mint so that the shared one stays read-only and an in-kind removal never write-locks it; an in-kind removal passes the program's own id in their seven places and never reads them, and metadata has two forms of the one instruction, `remove_liquidity` in cash and `remove_liquidity_in_kind` naming it by its discriminator with `strategy_program` in those places.
+- Alternatives: Kamino's accounts as remaining accounts recognised by klend's id, which metadata cannot describe; two instructions, which would change the spec's one `remove_liquidity { lp, min_other, min_lent, in_kind }`.
+- Specified in: [`docs/spec/lending-pool.md`, Custom actions and metadata](spec/lending-pool.md#custom-actions-and-metadata)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-66: When a cash removal redeems
+
+- Question: When does a removal in cash redeem the cTokens' part, and when does it refuse?
+- Answer: After checking every Kamino account as `rebalance` does, it refuses with `KaminoCannotPay` before burning anything or calling Kamino unless the part's value at the stored rate is within what Kamino can pay right now as a swap's redeem counts it, headroom included; cTokens worth less than one unit at the stored rate are not redeemed and stay in the market, and a cash removal that would then pay nothing is refused with `ZeroRemoval`; a cash removal that must redeem without Kamino's accounts fails with `KaminoAccountsMissing`.
+- Alternatives: Calling klend and letting it refuse, which would not name the cause; Kamino's limits with no headroom, under which klend could refuse a removal the program let through.
+- Specified in: [`docs/spec/lending-pool.md`, Removing](spec/lending-pool.md#removing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-67: What a cash removal pays and records
+
+- Question: What does an LP receive for the cTokens' part in cash, and what does the market record and tell?
+- Answer: klend redeems the part into the market's buffer vault and the LP receives the buffer's part plus everything klend paid, as measured, at the rate klend refreshed to; the market records exactly what left, adds klend's payout to its running total redeemed, and emits `LiquidityRemoved` with the shares, the share count after, what each mint paid, the cTokens that left, whether in kind and klend's payout.
+- Alternatives: Paying only the part's value at the stored rate and keeping the interest klend accrued in the refresh, which belongs to those cTokens; redeeming straight into the LP's account, which the market could not measure.
+- Specified in: [`docs/spec/lending-pool.md`, Removing](spec/lending-pool.md#removing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-68: Which accounts a removal or a lock takes shares from and pays into
+
+- Question: From which LP token accounts may a removal or a lock take shares, and where do in-kind cTokens go?
+- Answer: From any token account of the LP mint the signer owns, never one they are only a delegate of (`WrongAccount`); in-kind cTokens go to the LP's associated token account for the collateral mint, which the associated token program creates at the LP's expense only when it is missing.
+- Alternatives: Only the LP's shares account PDA, which would strand shares an LP moved elsewhere; letting a delegate remove, which would pay a delegate another holder's liquidity.
+- Specified in: [`docs/spec/lending-pool.md`, Removing](spec/lending-pool.md#removing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-69: The lock account and the first lock
+
+- Question: Who creates the lock account, and how do forms find it?
+- Answer: The market's first `lock_lp` creates it, the vault authority's associated token account for the LP mint, at that LP's expense, and the `lock_lp` metadata action takes it as the named input `lock_account`, since metadata cannot describe the associated token account of a mint that is itself a PDA; it emits `SharesLocked` with the shares locked, the lock account's balance and the share count.
+- Alternatives: Creating the lock account at market creation, which would add rent and a fifth account to every creation transaction already near its size limit.
+- Specified in: [`docs/spec/lending-pool.md`, Locking](spec/lending-pool.md#locking)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-70: min_lent in each form
+
+- Question: What does `min_lent` bound in a cash removal and in an in-kind one?
+- Answer: The lent mint actually paid: the buffer's part plus klend's payout in cash, and the buffer's part alone in kind, where the cTokens' part is fixed by the market's recorded cTokens.
+- Alternatives: Bounding the lent side's value including in-kind cTokens at the stored rate, which would make an in-kind removal read the reserve.
+- Specified in: [`docs/spec/lending-pool.md`, Removing](spec/lending-pool.md#removing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-71: A removal's rounding
+
+- Question: May a removal lower the value of an LP share?
+- Answer: Per share none of `R`, `B` and `c` falls, since each part rounds down; the market values the remaining cTokens rounded down, so `L x lp / N` may read one unit of the lent mint lower, which the tests and the fuzzer allow and no more.
+- Alternatives: Paying fewer cTokens so that the floored value never falls, which would depart from the spec's `c x lp / N`.
+- Specified in: [`docs/spec/lending-pool.md`, Invariants for test layer 3](spec/lending-pool.md#invariants-for-test-layer-3)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-72: The running totals after an in-kind removal
+
+- Question: How do the running totals deposited into and redeemed from Kamino follow cTokens an LP takes in kind, so that the lending yield `V + redeemed - deposited` stays right?
+- Answer: The cTokens take their share of the market's cTokens of the net amount lent, `deposited - redeemed`, rounded towards zero, off `deposited`, or off `redeemed` while redeemed is the larger, so the yield falls by the same fraction as `V`, the part that left with the cTokens, without the in-kind path reading the reserve to value them.
+- Alternatives: Leaving the totals unchanged, which would show a market that paid out half its cTokens in kind as having lost half its lent value; adding the cTokens' value to `redeemed`, which needs the reserve that the in-kind path must never read.
+- Specified in: [`docs/spec/lending-pool.md`, Removing](spec/lending-pool.md#removing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: remove liquidity in cash or in kind, and lock LP shares](https://github.com/imDev2023/testing-pipeline/issues/82)
+
+### LENDING-73: How withdraw mode measures Kamino and the market
+
+- Question: What exactly does `rebalance` compare to enter and leave withdraw mode?
+- Answer: The reserve's freely available liquidity (`total_available_amount` less queued withdrawal tickets, at the stored rate) against `X = max(V, T)` with `T = L - floor(L x BUFFER_TARGET_BPS / 10,000)`, entering below `WITHDRAW_MODE_ENTER x X`, leaving above `WITHDRAW_MODE_EXIT x X` and keeping the mode at and between both edges, the products taken in 128 bits.
+- Alternatives: `T` rounded down; the total available amount without the queued tickets; comparing at or below and at or above, which would let both edges change the mode.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-74: A rebalance that changes withdraw mode but moves nothing
+
+- Question: What does a `rebalance` do when it should enter or leave withdraw mode but has nothing to move, such as entering when Kamino can pay nothing, or leaving with the buffer inside its band?
+- Answer: It succeeds and records the mode, emitting its event, while a call that neither moves nor changes the mode still refuses as a no-op, with `BelowMinRebalance` in withdraw mode once everything is redeemed.
+- Alternatives: Refusing it like any no-op, which would leave a market that cannot redeem anything right now out of withdraw mode, ready to lend back into the crunch.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-75: The floor in withdraw mode
+
+- Question: Does the lent mint's `MIN_REBALANCE` apply to the redeems `rebalance` makes in withdraw mode?
+- Answer: Yes, except for a redeem that takes every cToken the market holds, so a market can always empty out its last cTokens however little they are worth.
+- Alternatives: The floor always, which could leave dust lent to a reserve in a crunch; no floor, which would let keepers pay for redeems of a few lamports again and again.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-76: Rebalance while Kamino redeems nothing
+
+- Question: What does `rebalance` do while either emergency mode is on or the reserve is deprecated?
+- Answer: It refuses with its own error, `KaminoStopped`, before anything else, changing nothing and leaving withdraw mode as it was.
+- Alternatives: Planning as usual and failing with `BelowMinRebalance`, or calling klend and letting it refuse, either of which hides why.
+- Specified in: [`docs/spec/lending-pool.md`, When Kamino can't pay](spec/lending-pool.md#when-kamino-cant-pay)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-77: Rebalance while cToken deposits are blocked
+
+- Question: What does `rebalance` do above the band while Kamino blocks cToken deposits (`block_ctoken_usage`)?
+- Answer: It skips the deposit and refuses with `KaminoDepositsBlocked`, changing nothing, while redeems below the band go ahead and leaving withdraw mode is still recorded.
+- Alternatives: Calling klend and letting it refuse with its own error.
+- Specified in: [`docs/spec/lending-pool.md`, When Kamino can't pay](spec/lending-pool.md#when-kamino-cant-pay)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-78: A cash removal while Kamino redeems nothing
+
+- Question: May an LP remove in cash while Kamino redeems nothing, when the stored rate values their cTokens' part at nothing, as after a total write-off?
+- Answer: No: whenever Kamino redeems nothing and the LP's part holds any cTokens, a cash removal refuses with `KaminoCannotPay` before calling Kamino, and the LP removes in kind, taking their cTokens.
+- Alternatives: Letting the cash path skip cTokens worth nothing at the stored rate, which would leave the LP's cTokens behind for the remaining LPs.
+- Specified in: [`docs/spec/lending-pool.md`, When Kamino can't pay](spec/lending-pool.md#when-kamino-cant-pay)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-79: What Kamino can pay without the lending market's account
+
+- Question: How do account resolution, and a quote or swap built without the redeem accounts, count what Kamino can pay, when they have the reserve but not the lending market?
+- Answer: From the reserve alone (its emergency mode, deprecation, free liquidity and withdrawal cap), so a trade the reserve refuses gets no redeem accounts and fails with `BeyondBuffer`, while one only the lending market's emergency mode refuses gets them and its quote and swap refuse it.
+- Alternatives: Assuming Kamino can pay anything, which listed klend's accounts for trades Kamino could not pay and sent the swap built from them back to resolution with `RedeemAccountsMissing`; a third round to read the lending market.
+- Specified in: [`docs/spec/lending-pool.md`, Accounts](spec/lending-pool.md#accounts)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-80: A redeem on a stale reserve
+
+- Question: How does `rebalance` redeem what Kamino can pay when the reserve's stored rate is older than `KAMINO_RATE_HEADROOM_BPS` covers, so klend's refreshed rate would carry a capped redeem past Kamino's limits?
+- Answer: The keeper puts klend's own `refresh_reserve`, with the reserve's oracle accounts, before `rebalance` in the same transaction, so the redeem is planned at a rate refreshed in that slot; alone, the call fails whole and changes nothing.
+- Alternatives: A larger or rate-aware headroom; `rebalance` calling `refresh_reserve` itself, which needs the oracle accounts in every call; projecting the interest, which the spec rules out.
+- Specified in: [`docs/spec/lending-pool.md`, The rule](spec/lending-pool.md#the-rule)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-81: Withdraw mode's events
+
+- Question: What does the market emit when `rebalance` enters or leaves withdraw mode?
+- Answer: `WithdrawModeEntered` or `WithdrawModeLeft`, with the market, the free liquidity and the exposure `X` it measured, before the call's `Rebalanced` if it moved anything.
+- Alternatives: One event with a flag; putting the mode into `Rebalanced`, which a call that moves nothing does not emit.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-82: The demo market's size and the tests' second depositor
+
+- Question: How large is the demo market, and how do the `devnet` build's tests keep its WSOL reserve out of withdraw mode?
+- Answer: The demo market's lent side stays near 0.4 SOL, so it fits the 5 SOL the devnet wallet keeps free in the WSOL reserve, and the `devnet` build's tests give the dumped reserve a second depositor of their own that keeps 2,500 SOL free.
+- Alternatives: Topping the devnet reserve up for the demo, which would make the devnet ticket's demo depend on a larger second depositor; shrinking every test market to fit 5 SOL.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-83: Rebalance runs alone in its transaction
+
+- Question: How is `rebalance` kept from being sandwiched, with Kamino's free liquidity moved before it and back after it in the same transaction to force a market into or out of withdraw mode?
+- Answer: It refuses with `RebalanceNotAlone` unless called directly, at the transaction's level, beside nothing but compute budget instructions, klend's `refresh_reserve` and other `rebalance` calls, as the instructions sysvar shows.
+- Alternatives: Refusing only klend's own instructions, which another program calling klend would get around; measuring free liquidity over time, which needs state the market does not keep; accepting the sandwich.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
+
+### LENDING-84: Seeding checks the Kamino reserve
+
+- Question: Does `pipeline_seed_liquidity` check the lent mint's Kamino reserve, which creation alone never reads?
+- Answer: Yes: the reserve is one of its accounts, and it refuses one that fails the reserve check or is deprecated, exactly as the first deposit through `add_liquidity` does, so a seeded market and a created one refuse the same openings.
+- Alternatives: Leaving the reserve out, which saves 33 bytes of the graduation transaction but lets a launchpad open a market against a deprecated reserve that would never lend.
+- Specified in: [`docs/spec/lending-pool.md`, Seeding](spec/lending-pool.md#seeding)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84)
+
+### LENDING-85: Where a seed's shares go, and how a launchpad names that account
+
+- Question: How does `pipeline_seed_liquidity` reach the LP recipient's associated token account for the LP mint, which metadata cannot describe because the LP mint is itself a PDA?
+- Answer: The strategy creates that account itself, idempotently, through the associated token program from the payer's SOL, and checks its address, and the metadata's `seed_liquidity` form takes it as the named input `lp_recipient_shares`, which is the lock account when the LP recipient is the market's vault authority.
+- Alternatives: The LP's shares PDA `["lp_shares", market_state, lp_recipient]` that `add_liquidity` uses, which metadata can describe but which would put a locked seed outside the lock account indexers read; asking the launchpad to create the account first, which it cannot before the LP mint exists.
+- Specified in: [`docs/spec/lending-pool.md`, Seeding](spec/lending-pool.md#seeding)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84)
+
+### LENDING-86: Graduation transactions on hooked tokens use a lookup table
+
+- Question: Does a launchpad's graduation, with `register_existing_market` and both `init_fee_account` calls in the same transaction, fit Solana's 1,232 bytes?
+- Answer: As a legacy transaction signed by the creator alone it does on SPL Token and plain Token-2022 tokens (at most 1,221 bytes), and with a transfer hook's two accounts it does not (1,287), so a launchpad graduating a hooked token sends a version 0 transaction with an address lookup table of the accounts every graduation shares (1,044 bytes in the tests).
+- Alternatives: Dropping accounts from `pipeline_seed_liquidity` (the reserve, the associated token program), which saves at most 66 bytes and gives up LENDING-84 or LENDING-85; recording the market in a second transaction, which the ticket's same-transaction rule excludes.
+- Specified in: [`docs/spec/lending-pool.md`, Seeding](spec/lending-pool.md#seeding)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84)
+
+### LENDING-87: Seeding's events
+
+- Question: What does `pipeline_seed_liquidity` emit for indexers?
+- Answer: `MarketCreated`, as every creation does, then `MarketSeeded` with the seeder, the LP recipient, the account the shares went to, the amounts taken, the shares minted and the share count afterwards.
+- Alternatives: `LiquidityAdded` with the LP recipient as the LP, which would hide that the deposit came from a launchpad's escrows and not from the recipient's wallet.
+- Specified in: [`docs/spec/lending-pool.md`, Seeding](spec/lending-pool.md#seeding)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84)
+
+### LENDING-88: Compute ceilings from measured costs
+
+- Question: How far above what an instruction is measured to cost does its compute ceiling sit, and what do the tests check?
+- Answer: Every instruction is measured in every state of Kamino on both cluster builds and on fixed keys, the spec's table carries the highest cost of each row, and each ceiling is that cost plus a quarter, rounded up to a multiple of 5,000, except where a written reason keeps or raises it (`add_liquidity` and `lock_lp`, whose address searches vary with the keys); the tests assert every cost against its ceiling and each ceiling against the rule.
+- Alternatives: A fixed margin in compute units; leaving the ceilings set before measuring, which left up to twice the cost as headroom; leaving out what bump searches spend beyond an address's first bump, as `TAX-51` does for the tax AMM.
+- Specified in: [`docs/spec/lending-pool.md`, Compute ceilings](spec/lending-pool.md#compute-ceilings)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85)
+
+### LENDING-89: How the fuzzer moves Kamino
+
+- Question: How does the stateful fuzzer move Kamino between steps, so the invariants are checked against a moving rate and every state Kamino can be in?
+- Answer: Interest raises the rate, by edits of what borrowers owe and by klend's own `refresh_reserve` after time passes; write-offs with klend's real `socialize_loss` lower it, one in ten of them of the whole supply, which deprecates the reserve; borrowers move the free liquidity around withdraw mode's thresholds; and `block_ctoken_usage`, both emergency modes and a failed layout check switch on and off, all on klend's deployed bytes.
+- Alternatives: A fixed Kamino state per case, as the feature tickets fuzzed; moving the rate only by klend's refresh, at the pace of the interest the dumped reserves' borrowers pay.
+- Specified in: [`docs/spec/lending-pool.md`, Invariants for test layer 3](spec/lending-pool.md#invariants-for-test-layer-3)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85)
+
+### LENDING-90: Each invariant shown able to fail by a broken build
+
+- Question: How is each invariant of the fuzzer shown able to fail, and kept so?
+- Answer: A table of deliberately broken builds, each one careless edit (a rounding flipped the wrong way, a missing check) made to a copy of the program's source and built in its own target directory, so the program's source never carries them; a test runs the fuzzer on each from a fixed seed and requires it caught by the invariant the table names, at least one build for every invariant, in CI on every push.
+- Alternatives: Cargo features that switch the mistakes on inside the program's source; mutation testing with a generic tool, whose mutants are not tied to an invariant.
+- Specified in: [`docs/spec/lending-pool.md`, Invariants for test layer 3](spec/lending-pool.md#invariants-for-test-layer-3)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -4306,18 +4856,24 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `TAX-06`, `POOL4-04`: `GLOSSARY.md` gives the suite share and the designer share as fixed tenths, so a change to either constant also has to edit the glossary; it should name the constant, not the number.
 - `SUITE-04`, `SUITE-05`, `SUITE-07`, `SUITE-12` to `SUITE-14`: these live only in the map's body; when the map closes they need a home in `docs/spec/README.md`.
 - `SUITE-29` to `SUITE-31`: the owner answered these on a ticket that is still open, so "Specified in" names the ticket; the session that closes it points them at wherever the site's own docs record them.
-- `POOL4-20`, `LENDING-36`: these live only in build tickets; `pool4-for-solana.md` (Fixtures in CI) and `lending-pool.md` (Devnet) should state them, so each has a home once its ticket closes.
+- `LENDING-36`: this lives only in its build ticket; `lending-pool.md` (Devnet) should state it, so it has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
 - `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-41`, `TAX-53`, `TAX-54`: set by the session of [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `HOOK-35` to `HOOK-37`: set by the session of [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-25` to `POOL4-27`: set by the session of [Buy wall AMM: plain trading through the router](https://github.com/imDev2023/testing-pipeline/issues/48) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-24` is the owner's answer to that session's question.
+- `LENDING-53` to `LENDING-59`: set by the session of [Lending AMM: lend the surplus with `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/80) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `LENDING-73` to `LENDING-83`: set by the session of [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83) while building, where the spec left the choice open, and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-36`: set by the session of [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152) from the spec's existing rule that a trade reaching a price bound is refused, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.

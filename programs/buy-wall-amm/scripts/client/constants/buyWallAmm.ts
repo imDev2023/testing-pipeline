@@ -6,10 +6,30 @@
  * @see https://github.com/codama-idl/codama
  */
 
+import { address, type Address, type HasAddress } from "@solana/kit";
+
 export const DECAY_CREDIT_WINDOW: bigint = 86400n;
+
+export const DESIGNER_RECIPIENT: Address = address(
+  "11111111111111111111111111111111",
+);
 
 export const DESIGNER_SHARE_BPS: number = 1000;
 
+export const FLOOR_CRAWL_BPS: bigint = 400n;
+
+export const KEEPER_TIP_CAP: bigint = 2000000n;
+
 export const MIN_LIQUIDITY: bigint = 1000000n;
 
+export const REF_STEP_BPS: bigint = 200n;
+
+export const REF_STEP_WINDOW: bigint = 12n;
+
 export const SUITE_SHARE_BPS: number = 1000;
+
+export const SUITE_TREASURY: Address = address(
+  "CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF",
+);
+
+export const WALL_THRESHOLD: bigint = 10000000n;

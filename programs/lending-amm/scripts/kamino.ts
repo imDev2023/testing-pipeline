@@ -20,10 +20,13 @@ const OFFSETS = {
     pendingReferrerFeesSf: 376,
     collateralMint: 2560,
     mintTotalSupply: 2592,
+    queuedCollateralAmount: 6968,
 } as const;
 
 export type ReserveView = {
     lastUpdateSlot: bigint;
+    /** `liquidity.total_available_amount`, the liquidity the reserve holds. */
+    totalAvailableAmount: bigint;
     lendingMarket: Address;
     liquidityMint: Address;
     collateralMint: Address;
@@ -31,6 +34,8 @@ export type ReserveView = {
     totalSupplySf: bigint;
     /** S_ctoken, the reserve's own `collateral.mint_total_supply`. */
     mintTotalSupply: bigint;
+    /** cTokens held back by queued withdrawal tickets. */
+    queuedCollateralAmount: bigint;
 };
 
 function u64(data: Uint8Array, offset: number): bigint {
@@ -60,12 +65,24 @@ export function decodeReserve(data: Uint8Array): ReserveView | string {
         u128(data, OFFSETS.pendingReferrerFeesSf);
     return {
         lastUpdateSlot: u64(data, OFFSETS.lastUpdateSlot),
+        totalAvailableAmount: u64(data, OFFSETS.totalAvailableAmount),
         lendingMarket: key(data, OFFSETS.lendingMarket),
         liquidityMint: key(data, OFFSETS.liquidityMint),
         collateralMint: key(data, OFFSETS.collateralMint),
         totalSupplySf: supply,
         mintTotalSupply: u64(data, OFFSETS.mintTotalSupply),
+        queuedCollateralAmount: u64(data, OFFSETS.queuedCollateralAmount),
     };
+}
+
+/**
+ * The reserve's freely available liquidity, which withdraw mode measures: what it holds less
+ * the value of queued withdrawal tickets at the stored rate (docs/spec/lending-pool.md,
+ * "Redeeming the shortfall").
+ */
+export function freeLiquidity(reserve: ReserveView): bigint {
+    const queued = lentValue(reserve.queuedCollateralAmount, reserve);
+    return reserve.totalAvailableAmount > queued ? reserve.totalAvailableAmount - queued : 0n;
 }
 
 /**
@@ -89,4 +106,27 @@ export function rate(reserve: ReserveView): string {
     const scaled = (reserve.totalSupplySf * 10n ** 12n) / (reserve.mintTotalSupply << 60n);
     const text = scaled.toString().padStart(13, '0');
     return `${text.slice(0, -12)}.${text.slice(-12)}`;
+}
+
+/**
+ * klend's `deposit_reserve_liquidity` for `liquidity` at a reserve whose total supply is
+ * `totalSupplySf` and cToken supply `mintTotalSupply` once refreshed: it mints
+ * `floor(liquidity x S_ctoken / S_total)` cTokens and takes back what they are worth, rounded up
+ * (`compute_depositable_amount_and_minted_collateral` in klend 1.28.0), written here on its own.
+ */
+export function klendDeposit(liquidity: bigint, totalSupplySf: bigint, mintTotalSupply: bigint) {
+    const ctokens = (liquidity * mintTotalSupply << 60n) / totalSupplySf;
+    const scaled = mintTotalSupply << 60n;
+    const taken = (ctokens * totalSupplySf + scaled - 1n) / scaled;
+    return { ctokens, taken };
+}
+
+/**
+ * klend's `redeem_reserve_collateral` of `ctokens` at a reserve whose total supply is
+ * `totalSupplySf` and cToken supply `mintTotalSupply` once refreshed: it pays
+ * `floor(ctokens x S_total / S_ctoken)` of the liquidity (`collateral_to_liquidity` in klend
+ * 1.28.0), written here on its own.
+ */
+export function klendRedeem(ctokens: bigint, totalSupplySf: bigint, mintTotalSupply: bigint) {
+    return (ctokens * totalSupplySf) / (mintTotalSupply << 60n);
 }

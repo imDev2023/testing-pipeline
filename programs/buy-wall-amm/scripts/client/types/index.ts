@@ -7,5 +7,6 @@
  */
 
 export * from "./initParams.ts";
+export * from "./recipientRole.ts";
 export * from "./tradeMode.ts";
 export * from "./tradeRequest.ts";

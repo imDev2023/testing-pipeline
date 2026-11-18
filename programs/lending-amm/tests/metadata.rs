@@ -1,9 +1,9 @@
 //! `metadata.json` against the program (docs/spec/lending-pool.md, "Custom actions and
 //! metadata"; docs/spec/README.md, "Metadata, IDL and conformance report"): it passes
 //! `pipeline-client`'s validator with zero warnings, its `init` form takes the other mint
-//! and then the lent mint (so `lent_index` is 1), and `create_market` and `add_liquidity`
-//! built from it, as a desk builds them, carry exactly the accounts and data the program
-//! expects, and work.
+//! and then the lent mint (so `lent_index` is 1), and `create_market`, `add_liquidity`,
+//! `rebalance`, `remove_liquidity` in cash and in kind and `lock_lp` built from it, as a desk or
+//! a keeper builds them, carry exactly the accounts and data the program expects, and work.
 
 mod common;
 
@@ -55,7 +55,40 @@ fn the_metadata_describes_a_lending_amm() {
         .iter()
         .map(|a| (a["name"].as_str().unwrap(), a["kind"].as_str().unwrap()))
         .collect();
-    assert_eq!(actions, [("add_liquidity", "add_liquidity")]);
+    assert_eq!(
+        actions,
+        [
+            ("add_liquidity", "add_liquidity"),
+            ("rebalance", "other"),
+            ("remove_liquidity", "remove_liquidity"),
+            ("remove_liquidity_in_kind", "remove_liquidity"),
+            ("lock_lp", "other")
+        ]
+    );
+    // An LP signs removals and locks, as the writable wallet that pays for any account
+    // created, and nothing else signs.
+    for action in &m["actions"].as_array().unwrap()[2..] {
+        let signers: Vec<&Value> = action["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| a["signer"].as_bool().unwrap_or(false))
+            .collect();
+        assert_eq!(signers.len(), 1, "{}", action["name"]);
+        assert_eq!(signers[0]["source"], "wallet");
+        assert_eq!(signers[0]["writable"], true);
+    }
+    // rebalance is signed by anyone: the wallet that calls it, read-only, and nothing else.
+    let rebalance = &m["actions"][1];
+    let signers: Vec<&Value> = rebalance["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| a["signer"].as_bool().unwrap_or(false))
+        .collect();
+    assert_eq!(signers.len(), 1);
+    assert_eq!(signers[0]["source"], "wallet");
+    assert!(!signers[0]["writable"].as_bool().unwrap_or(false));
 }
 
 #[test]
@@ -104,12 +137,24 @@ fn resolve(source: &AccountSource, cx: &Context) -> Pubkey {
             &market().mints[*i as usize],
             &market().token_programs[*i as usize],
         ),
+        AccountSource::StrategyProgram => strategy_id(),
+        AccountSource::AssociatedTokenProgram => pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
+        AccountSource::Ata { owner, mint } => pipeline_client::pda::associated_token(
+            &resolve(owner, cx),
+            &resolve(mint, cx),
+            &match mint.as_ref() {
+                AccountSource::Input(name) => cx.inputs[name.as_str()].1,
+                other => panic!("unexpected mint source {other:?}"),
+            },
+        ),
         AccountSource::TokenProgramOf(mint) => match mint.as_ref() {
             AccountSource::Input(name) => cx.inputs[name.as_str()].1,
             other => panic!("unexpected mint source {other:?}"),
         },
         AccountSource::Pda { program, seeds } => {
-            assert!(program.is_none(), "the lending AMM's PDAs are its own");
+            // The lending AMM's own PDAs, and klend's lending market authority.
+            let program = program.unwrap_or_else(strategy_id);
+            assert!(program == strategy_id() || program == common::kamino::klend());
             let bytes: Vec<Vec<u8>> = seeds
                 .iter()
                 .map(|seed| match seed {
@@ -120,7 +165,7 @@ fn resolve(source: &AccountSource, cx: &Context) -> Pubkey {
                 })
                 .collect();
             let refs: Vec<&[u8]> = bytes.iter().map(Vec::as_slice).collect();
-            Pubkey::find_program_address(&refs, &strategy_id()).0
+            Pubkey::find_program_address(&refs, &program).0
         }
         other => panic!("unexpected source {other:?}"),
     }
@@ -147,6 +192,7 @@ fn metas(accounts: &Value, cx: &Context) -> Vec<AccountMeta> {
 /// Encodes `value` as the metadata's `type` says Borsh encodes it.
 fn encode(kind: &str, value: u64) -> Vec<u8> {
     match kind {
+        "bool" => vec![(value != 0) as u8],
         "u8" => vec![value as u8],
         "u16" => (value as u16).to_le_bytes().to_vec(),
         "u64" => value.to_le_bytes().to_vec(),
@@ -254,4 +300,268 @@ fn create_market_and_add_liquidity_built_from_the_metadata_are_what_the_program_
     instructions.push(add);
     env.send(&instructions, &[&lp]).unwrap();
     assert_eq!(env.market_state(&cx.market_state).reserves, amounts);
+}
+
+#[test]
+fn rebalance_built_from_the_metadata_is_the_programs_and_works() {
+    let m = metadata();
+    let mut env = Env::new();
+    let spec = env.wsol_market_spec(30);
+    let (market, _) = env.create_funded_market(&spec, [SOL, 2 * SOL]).unwrap();
+    let k = &env.kamino;
+    let keeper = solana_keypair::Keypair::new();
+    // The inputs a keeper, or Aviary's form, fills in for the market's lent mint.
+    let cx = Context {
+        wallet: keeper.pubkey(),
+        market_state: market.market_state,
+        inputs: HashMap::from([
+            ("lent_mint".to_string(), (wsol(), TOKEN)),
+            ("reserve".to_string(), (k.address("reserve-sol"), TOKEN)),
+            (
+                "lending_market".to_string(),
+                (k.address("lending-market"), TOKEN),
+            ),
+            (
+                "reserve_liquidity_supply".to_string(),
+                (k.address("liquidity-supply-sol"), TOKEN),
+            ),
+            (
+                "collateral_mint".to_string(),
+                (k.address("collateral-mint-sol"), TOKEN),
+            ),
+        ]),
+        args: HashMap::new(),
+        market: Some(market.clone()),
+    };
+    let action = &m["actions"][1];
+    assert_eq!(action["name"], "rebalance");
+    assert!(action["args"].as_array().unwrap().is_empty());
+    let rebalance = Instruction::new_with_bytes(
+        strategy_id(),
+        &anchor_discriminator("rebalance"),
+        metas(&action["accounts"], &cx),
+    );
+    assert_eq!(
+        rebalance,
+        env.rebalance_instruction(&market, &keeper.pubkey())
+    );
+    // And it lends the surplus.
+    env.load_klend();
+    env.svm.airdrop(&keeper.pubkey(), SOL).unwrap();
+    env.send(&[rebalance], &[&keeper]).unwrap();
+    assert!(env.market_state(&market.market_state).ctokens > 0);
+}
+
+/// The action named `name`.
+fn action<'a>(m: &'a Value, name: &str) -> &'a Value {
+    m["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == name)
+        .unwrap_or_else(|| panic!("no action {name}"))
+}
+
+/// An action's instruction data, as the SDK builds it: its discriminator, given or Anchor's from
+/// its name, then its arguments in order.
+fn action_data(action: &Value, values: &HashMap<&str, u64>) -> Vec<u8> {
+    let mut data = match action["discriminator"].as_str() {
+        Some(hex) => (0..8)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+            .collect(),
+        None => anchor_discriminator(action["name"].as_str().unwrap()).to_vec(),
+    };
+    let args = encoded_args(&action["args"], values);
+    for arg in action["args"].as_array().unwrap() {
+        data.extend(&args[arg["name"].as_str().unwrap()]);
+    }
+    data
+}
+
+#[test]
+fn removals_and_lock_lp_built_from_the_metadata_are_the_programs_and_work() {
+    use common::rebalance::{lent_spec, units, OTHER};
+    use common::remove::Payout;
+    let m = metadata();
+    for lent in 0..lending_amm::config::LENT_MINTS.len() {
+        let name = common::kamino::lent_name(lent);
+        let mut env = Env::new();
+        env.load_klend();
+        let spec = lent_spec(&mut env, lent, 30);
+        let (market, lp) = env
+            .create_funded_market(&spec, [OTHER, units(lent, 50)])
+            .unwrap();
+        env.rebalance(&market, None).unwrap();
+        let k = &env.kamino;
+        // The inputs Aviary's forms fill in for the market's lent mint.
+        let cx = Context {
+            wallet: lp.pubkey(),
+            market_state: market.market_state,
+            inputs: HashMap::from([
+                (
+                    "reserve".to_string(),
+                    (k.address(&format!("reserve-{name}")), TOKEN),
+                ),
+                (
+                    "lending_market".to_string(),
+                    (k.address("lending-market"), TOKEN),
+                ),
+                (
+                    "reserve_liquidity_supply".to_string(),
+                    (k.address(&format!("liquidity-supply-{name}")), TOKEN),
+                ),
+                (
+                    "collateral_mint".to_string(),
+                    (k.address(&format!("collateral-mint-{name}")), TOKEN),
+                ),
+                (
+                    "lock_account".to_string(),
+                    (env.lock_account(&market), TOKEN),
+                ),
+            ]),
+            args: HashMap::new(),
+            market: Some(market.clone()),
+        };
+        let shares = env.lp_shares_of(&market, &lp.pubkey()) / 4;
+        for (form, payout, in_kind) in [
+            ("remove_liquidity", Payout::Cash, 0),
+            ("remove_liquidity_in_kind", Payout::InKind, 1),
+        ] {
+            let action = action(&m, form);
+            let values = HashMap::from([
+                ("lp", shares),
+                ("min_other", 1),
+                ("min_lent", 2),
+                ("in_kind", in_kind),
+            ]);
+            let built = Instruction::new_with_bytes(
+                strategy_id(),
+                &action_data(action, &values),
+                metas(&action["accounts"], &cx),
+            );
+            let mut min = [0u64; 2];
+            min[market.other_index()] = 1;
+            min[market.lent_index] = 2;
+            assert_eq!(
+                built,
+                env.remove_liquidity_instruction(&market, &lp.pubkey(), shares, min, payout),
+                "{form} on {name}"
+            );
+            env.send(&[built], &[&lp]).unwrap();
+        }
+        assert!(env.balance(&env.lp_ctoken_account(&market, &lp.pubkey())) > 0);
+
+        let action = action(&m, "lock_lp");
+        let values = HashMap::from([("amount", shares)]);
+        let built = Instruction::new_with_bytes(
+            strategy_id(),
+            &action_data(action, &values),
+            metas(&action["accounts"], &cx),
+        );
+        assert_eq!(
+            built,
+            env.lock_lp_instruction(&market, &lp.pubkey(), shares)
+        );
+        env.send(&[built], &[&lp]).unwrap();
+        assert_eq!(env.balance(&env.lock_account(&market)), shares);
+    }
+}
+
+#[test]
+fn seed_liquidity_built_from_the_metadata_form_is_what_the_program_takes_and_works() {
+    // Pipeline's metadata standard has no field for pipeline_seed_liquidity, so the lending AMM
+    // describes it in a `seed_liquidity` form shaped as `init` is (the validator allows unknown
+    // keys), which the SDK's `resolveInit` resolves for a launchpad.
+    let m = metadata();
+    let form = &m["seed_liquidity"];
+    assert_eq!(form["idl_type"], "InitParams");
+    // `data` is the creation parameters: init's arguments, word for word, in order.
+    assert_eq!(form["args"], m["init"]["args"]);
+    let description = form["description"].as_str().unwrap();
+    for needed in [
+        "SeedRequest.data",
+        "lent_index",
+        "lp_fee_bps",
+        "Borsh",
+        "LP recipient",
+        "lock account",
+        "register_existing_market",
+        "init_fee_account",
+        "SeedResult",
+    ] {
+        assert!(
+            description.contains(needed),
+            "the description names {needed}"
+        );
+    }
+
+    let mut env = Env::new();
+    let token = env.create_mint(&TOKEN);
+    let seed = [1_000_000_000_000, 10 * SOL];
+    let launch = env.launch([(token, TOKEN), (wsol(), TOKEN)], seed);
+    let values = HashMap::from([("lent_index", 1u64), ("lp_fee_bps", 30)]);
+    let args = encoded_args(&form["args"], &values);
+    let params = lending_amm::InitParams {
+        lent_index: 1,
+        lp_fee_bps: 30,
+    };
+    let lp_recipient = solana_keypair::Keypair::new().pubkey();
+    let lp_mint = launch.addresses(&params).lp_mint;
+    let cx = Context {
+        wallet: launch.creator.pubkey(),
+        market_state: Pubkey::default(),
+        inputs: HashMap::from([
+            ("seeder".to_string(), (launch.seeder, Pubkey::default())),
+            ("other_mint".to_string(), (token, TOKEN)),
+            ("lent_mint".to_string(), (wsol(), TOKEN)),
+            ("collateral_mint".to_string(), (lent(0).1, TOKEN)),
+            ("reserve".to_string(), (lent(0).2, Pubkey::default())),
+            (
+                "lp_recipient".to_string(),
+                (lp_recipient, Pubkey::default()),
+            ),
+            (
+                "lp_recipient_shares".to_string(),
+                (
+                    common::launchpad::lp_recipient_account(&lp_recipient, &lp_mint),
+                    Pubkey::default(),
+                ),
+            ),
+        ]),
+        args,
+        market: None,
+    };
+    let source = parse_account_source(form["market_state"].as_str().unwrap()).unwrap();
+    let market_state = resolve(&source, &cx);
+    assert_eq!(market_state, launch.market_state(&params));
+    let cx = Context { market_state, ..cx };
+    let own = metas(&form["accounts"], &cx);
+    // The launchpad's accounts: the market state and the LP recipient, mint, escrow and token
+    // program per mint, then the form's own, exactly as the program takes them.
+    let mut accounts = vec![
+        AccountMeta::new(market_state, false),
+        AccountMeta::new_readonly(lp_recipient, false),
+    ];
+    for i in 0..2 {
+        accounts.push(AccountMeta::new_readonly(launch.mints[i], false));
+        accounts.push(AccountMeta::new(launch.escrows[i], false));
+        accounts.push(AccountMeta::new_readonly(launch.token_programs[i], false));
+    }
+    accounts.extend(own);
+    assert_eq!(
+        accounts,
+        env.seed_liquidity_accounts(&launch, &params, &lp_recipient)
+    );
+
+    // And it works: graduated with those accounts and recorded in the same transaction.
+    let graduate = env.graduate_instruction(&launch, seed, init_data(&params), accounts);
+    let mut instructions = vec![graduate];
+    instructions.extend(env.register_instructions(
+        &launch.creator.pubkey(),
+        &market_state,
+        launch.mints,
+        launch.token_programs,
+    ));
+    env.send_as_creator(&launch, &instructions).unwrap();
+    assert_eq!(env.market_state(&market_state).reserves, seed);
 }

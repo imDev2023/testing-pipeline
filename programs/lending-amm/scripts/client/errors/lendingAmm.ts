@@ -49,7 +49,7 @@ export const LENDING_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED = 0x177e; // 6014
 export const LENDING_AMM_ERROR__ZERO_OUTPUT = 0x177f; // 6015
 /** WouldEmptySide: The trade would pay out a side's whole reserve */
 export const LENDING_AMM_ERROR__WOULD_EMPTY_SIDE = 0x1780; // 6016
-/** BeyondBuffer: The trade would pay out more of the lent side than the buffer holds */
+/** BeyondBuffer: The trade would pay out more of the lent side than the buffer holds plus what Kamino can pay right now */
 export const LENDING_AMM_ERROR__BEYOND_BUFFER = 0x1781; // 6017
 /** ZeroDeposit: The first deposit needs both amounts above 0 */
 export const LENDING_AMM_ERROR__ZERO_DEPOSIT = 0x1782; // 6018
@@ -83,16 +83,59 @@ export const LENDING_AMM_ERROR__RESERVE_WRONG_COLLATERAL_MINT = 0x178f; // 6031
 export const LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID = 0x1790; // 6032
 /** LendingMarketWrongAccount: The Kamino lending market account is not the lent mint's lending market */
 export const LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT = 0x1791; // 6033
+/** WithinBand: The buffer's share of the lent side is inside its band: there is nothing to rebalance */
+export const LENDING_AMM_ERROR__WITHIN_BAND = 0x1792; // 6034
+/** BelowMinRebalance: The move is smaller than the lent mint's MIN_REBALANCE, so it is skipped */
+export const LENDING_AMM_ERROR__BELOW_MIN_REBALANCE = 0x1793; // 6035
+/** KaminoAccountWrong: A Kamino account is not the one the lent mint's reserve names */
+export const LENDING_AMM_ERROR__KAMINO_ACCOUNT_WRONG = 0x1794; // 6036
+/** RedeemAccountsMissing: The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again */
+export const LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING = 0x1795; // 6037
+/** RedeemPaidShort: Kamino's redeem paid the market less than the swap's shortfall */
+export const LENDING_AMM_ERROR__REDEEM_PAID_SHORT = 0x1796; // 6038
+/** ZeroRemoval: The removal would burn no LP shares or pay out nothing */
+export const LENDING_AMM_ERROR__ZERO_REMOVAL = 0x1797; // 6039
+/** NotEnoughShares: The removal burns more LP shares than the market has minted */
+export const LENDING_AMM_ERROR__NOT_ENOUGH_SHARES = 0x1798; // 6040
+/** BelowMinOther: The removal would pay out less of the other mint than min_other */
+export const LENDING_AMM_ERROR__BELOW_MIN_OTHER = 0x1799; // 6041
+/** BelowMinLent: The removal would pay out less of the lent mint than min_lent */
+export const LENDING_AMM_ERROR__BELOW_MIN_LENT = 0x179a; // 6042
+/** KaminoAccountsMissing: A removal in cash needs the lent mint's Kamino accounts: add them, or remove in kind */
+export const LENDING_AMM_ERROR__KAMINO_ACCOUNTS_MISSING = 0x179b; // 6043
+/** KaminoCannotPay: Kamino cannot pay the cTokens' part right now: remove in kind */
+export const LENDING_AMM_ERROR__KAMINO_CANNOT_PAY = 0x179c; // 6044
+/** ZeroLock: Locking needs at least one LP share */
+export const LENDING_AMM_ERROR__ZERO_LOCK = 0x179d; // 6045
+/** KaminoStopped: Kamino redeems nothing right now (reserve or lending market emergency mode, or a deprecated reserve): rebalance refuses */
+export const LENDING_AMM_ERROR__KAMINO_STOPPED = 0x179e; // 6046
+/** KaminoDepositsBlocked: Kamino blocks cToken deposits into the reserve: rebalance skips the deposit */
+export const LENDING_AMM_ERROR__KAMINO_DEPOSITS_BLOCKED = 0x179f; // 6047
+/** ReserveDeprecated: The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only */
+export const LENDING_AMM_ERROR__RESERVE_DEPRECATED = 0x17a0; // 6048
+/** RebalanceNotAlone: rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls */
+export const LENDING_AMM_ERROR__REBALANCE_NOT_ALONE = 0x17a1; // 6049
+/** BadSeedAmounts: SeedRequest.amounts must hold exactly one amount for each of the market's two mints */
+export const LENDING_AMM_ERROR__BAD_SEED_AMOUNTS = 0x17a2; // 6050
 
 export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__BAD_INIT_DATA
   | typeof LENDING_AMM_ERROR__BAD_LENT_INDEX
+  | typeof LENDING_AMM_ERROR__BAD_SEED_AMOUNTS
+  | typeof LENDING_AMM_ERROR__BELOW_MIN_LENT
   | typeof LENDING_AMM_ERROR__BELOW_MIN_LP
+  | typeof LENDING_AMM_ERROR__BELOW_MIN_OTHER
+  | typeof LENDING_AMM_ERROR__BELOW_MIN_REBALANCE
   | typeof LENDING_AMM_ERROR__BEYOND_BUFFER
   | typeof LENDING_AMM_ERROR__EMPTY_SIDE
   | typeof LENDING_AMM_ERROR__EQUAL_MINTS
   | typeof LENDING_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED
   | typeof LENDING_AMM_ERROR__FIRST_DEPOSIT_TOO_SMALL
+  | typeof LENDING_AMM_ERROR__KAMINO_ACCOUNTS_MISSING
+  | typeof LENDING_AMM_ERROR__KAMINO_ACCOUNT_WRONG
+  | typeof LENDING_AMM_ERROR__KAMINO_CANNOT_PAY
+  | typeof LENDING_AMM_ERROR__KAMINO_DEPOSITS_BLOCKED
+  | typeof LENDING_AMM_ERROR__KAMINO_STOPPED
   | typeof LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT
   | typeof LENDING_AMM_ERROR__LENT_MINT_NOT_LISTED
   | typeof LENDING_AMM_ERROR__LENT_MINT_NOT_SPL_TOKEN
@@ -101,8 +144,13 @@ export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__MARKET_NOT_OPEN
   | typeof LENDING_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED
   | typeof LENDING_AMM_ERROR__NOT_A_MINT
+  | typeof LENDING_AMM_ERROR__NOT_ENOUGH_SHARES
   | typeof LENDING_AMM_ERROR__NOT_PIPELINE
   | typeof LENDING_AMM_ERROR__OVERFLOW
+  | typeof LENDING_AMM_ERROR__REBALANCE_NOT_ALONE
+  | typeof LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING
+  | typeof LENDING_AMM_ERROR__REDEEM_PAID_SHORT
+  | typeof LENDING_AMM_ERROR__RESERVE_DEPRECATED
   | typeof LENDING_AMM_ERROR__RESERVE_NOT_KAMINO
   | typeof LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_ADDRESS
@@ -111,13 +159,16 @@ export type LendingAmmError =
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_LENDING_MARKET
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_LIQUIDITY_MINT
   | typeof LENDING_AMM_ERROR__RESERVE_WRONG_SIZE
+  | typeof LENDING_AMM_ERROR__WITHIN_BAND
   | typeof LENDING_AMM_ERROR__WOULD_EMPTY_SIDE
   | typeof LENDING_AMM_ERROR__WRONG_ACCOUNT
   | typeof LENDING_AMM_ERROR__WRONG_COLLATERAL_MINT
   | typeof LENDING_AMM_ERROR__WRONG_MARKET_STATE
   | typeof LENDING_AMM_ERROR__WRONG_TOKEN_PROGRAM
   | typeof LENDING_AMM_ERROR__ZERO_DEPOSIT
+  | typeof LENDING_AMM_ERROR__ZERO_LOCK
   | typeof LENDING_AMM_ERROR__ZERO_OUTPUT
+  | typeof LENDING_AMM_ERROR__ZERO_REMOVAL
   | typeof LENDING_AMM_ERROR__ZERO_SHARES;
 
 let lendingAmmErrorMessages: Record<LendingAmmError, string> | undefined;
@@ -125,12 +176,21 @@ if (process.env["NODE_ENV"] !== "production") {
   lendingAmmErrorMessages = {
     [LENDING_AMM_ERROR__BAD_INIT_DATA]: `Init data is not valid creation parameters`,
     [LENDING_AMM_ERROR__BAD_LENT_INDEX]: `The lent index must be 0 or 1`,
+    [LENDING_AMM_ERROR__BAD_SEED_AMOUNTS]: `SeedRequest.amounts must hold exactly one amount for each of the market's two mints`,
+    [LENDING_AMM_ERROR__BELOW_MIN_LENT]: `The removal would pay out less of the lent mint than min_lent`,
     [LENDING_AMM_ERROR__BELOW_MIN_LP]: `The deposit would mint fewer shares than min_lp`,
-    [LENDING_AMM_ERROR__BEYOND_BUFFER]: `The trade would pay out more of the lent side than the buffer holds`,
+    [LENDING_AMM_ERROR__BELOW_MIN_OTHER]: `The removal would pay out less of the other mint than min_other`,
+    [LENDING_AMM_ERROR__BELOW_MIN_REBALANCE]: `The move is smaller than the lent mint's MIN_REBALANCE, so it is skipped`,
+    [LENDING_AMM_ERROR__BEYOND_BUFFER]: `The trade would pay out more of the lent side than the buffer holds plus what Kamino can pay right now`,
     [LENDING_AMM_ERROR__EMPTY_SIDE]: `A side of the market holds nothing to price a deposit against`,
     [LENDING_AMM_ERROR__EQUAL_MINTS]: `A market's two mints must differ`,
     [LENDING_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED]: `Exact-out swaps are not supported`,
     [LENDING_AMM_ERROR__FIRST_DEPOSIT_TOO_SMALL]: `The first deposit is too small to mint any shares above the locked minimum`,
+    [LENDING_AMM_ERROR__KAMINO_ACCOUNTS_MISSING]: `A removal in cash needs the lent mint's Kamino accounts: add them, or remove in kind`,
+    [LENDING_AMM_ERROR__KAMINO_ACCOUNT_WRONG]: `A Kamino account is not the one the lent mint's reserve names`,
+    [LENDING_AMM_ERROR__KAMINO_CANNOT_PAY]: `Kamino cannot pay the cTokens' part right now: remove in kind`,
+    [LENDING_AMM_ERROR__KAMINO_DEPOSITS_BLOCKED]: `Kamino blocks cToken deposits into the reserve: rebalance skips the deposit`,
+    [LENDING_AMM_ERROR__KAMINO_STOPPED]: `Kamino redeems nothing right now (reserve or lending market emergency mode, or a deprecated reserve): rebalance refuses`,
     [LENDING_AMM_ERROR__LENDING_MARKET_WRONG_ACCOUNT]: `The Kamino lending market account is not the lent mint's lending market`,
     [LENDING_AMM_ERROR__LENT_MINT_NOT_LISTED]: `The lent mint is not on this cluster's list of lent mints`,
     [LENDING_AMM_ERROR__LENT_MINT_NOT_SPL_TOKEN]: `The lent mint must be owned by SPL Token`,
@@ -139,8 +199,13 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__MARKET_NOT_OPEN]: `The market is not open: it has had no first deposit`,
     [LENDING_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED]: `The mint carries an extension the mint rules refuse`,
     [LENDING_AMM_ERROR__NOT_A_MINT]: `A market's mints must be SPL Token or Token-2022 mints`,
+    [LENDING_AMM_ERROR__NOT_ENOUGH_SHARES]: `The removal burns more LP shares than the market has minted`,
     [LENDING_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
     [LENDING_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
+    [LENDING_AMM_ERROR__REBALANCE_NOT_ALONE]: `rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls`,
+    [LENDING_AMM_ERROR__REDEEM_ACCOUNTS_MISSING]: `The trade needs a redeem from Kamino, but was built without the redeem accounts: resolve its accounts again`,
+    [LENDING_AMM_ERROR__REDEEM_PAID_SHORT]: `Kamino's redeem paid the market less than the swap's shortfall`,
+    [LENDING_AMM_ERROR__RESERVE_DEPRECATED]: `The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only`,
     [LENDING_AMM_ERROR__RESERVE_NOT_KAMINO]: `The Kamino reserve is not owned by Kamino Lend`,
     [LENDING_AMM_ERROR__RESERVE_SUPPLY_INVALID]: `The Kamino reserve's total supply cannot be computed`,
     [LENDING_AMM_ERROR__RESERVE_WRONG_ADDRESS]: `The Kamino reserve is not the one the market's lent mint lends to`,
@@ -149,13 +214,16 @@ if (process.env["NODE_ENV"] !== "production") {
     [LENDING_AMM_ERROR__RESERVE_WRONG_LENDING_MARKET]: `The Kamino reserve belongs to another lending market`,
     [LENDING_AMM_ERROR__RESERVE_WRONG_LIQUIDITY_MINT]: `The Kamino reserve lends another mint`,
     [LENDING_AMM_ERROR__RESERVE_WRONG_SIZE]: `The Kamino reserve does not have a reserve's size`,
+    [LENDING_AMM_ERROR__WITHIN_BAND]: `The buffer's share of the lent side is inside its band: there is nothing to rebalance`,
     [LENDING_AMM_ERROR__WOULD_EMPTY_SIDE]: `The trade would pay out a side's whole reserve`,
     [LENDING_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,
     [LENDING_AMM_ERROR__WRONG_COLLATERAL_MINT]: `The collateral mint is not the lent mint's Kamino reserve's`,
     [LENDING_AMM_ERROR__WRONG_MARKET_STATE]: `The market state is not the PDA of its mints, lent side and fee`,
     [LENDING_AMM_ERROR__WRONG_TOKEN_PROGRAM]: `The token program is not the mint's`,
     [LENDING_AMM_ERROR__ZERO_DEPOSIT]: `The first deposit needs both amounts above 0`,
+    [LENDING_AMM_ERROR__ZERO_LOCK]: `Locking needs at least one LP share`,
     [LENDING_AMM_ERROR__ZERO_OUTPUT]: `The trade would pay out nothing`,
+    [LENDING_AMM_ERROR__ZERO_REMOVAL]: `The removal would burn no LP shares or pay out nothing`,
     [LENDING_AMM_ERROR__ZERO_SHARES]: `The deposit would mint no shares`,
   };
 }
