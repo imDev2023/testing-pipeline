@@ -981,3 +981,120 @@ fn sos_h050_keeper_jobs_between_a_round_trips_legs_change_nothing() {
         "the round trip returned {plain} for {amount}"
     );
 }
+
+/// The least `a` in `lo..=hi` for which `reaches(a)` holds, `reaches` being monotone and
+/// holding at `hi`.
+fn least(mut lo: u64, mut hi: u64, reaches: impl Fn(u64) -> bool) -> u64 {
+    assert!(reaches(hi));
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if reaches(mid) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    hi
+}
+
+/// Round 2's back-run of a fall across one slot boundary (VERIFY-H003 residual 1, `POOL4-50`
+/// as the owner amended it on 2026-11-18): on the round 2 model's market (10 SOL curve, fee
+/// 25, a tight cap, a 1 SOL wall at the floor 0.98 of the opening square-root price and 0.02
+/// SOL idle), a third party dumps to half the price in slot N, which trims the curve and
+/// leaves its SOL idle; the back-runner buys the price back up to the floor in slot N, so at
+/// slot N+1 the floor stays up; it then calls `place_wall` and sells everything it bought.
+/// Under the slot-based floor alone the wall went up at the old floor with all the idle SOL,
+/// the dump's trimmed SOL included, and the back-runner sold into it for more than it paid.
+/// Every placement is now capped at the lowest close of the last slot that traded, the
+/// dump's low, so the wall goes there and the round trip never pays.
+#[test]
+fn sos_r2v_backrun_of_a_fall_across_one_slot_never_pays() {
+    let mut env = Env::new();
+    let mut params = launch_params(env.admin.pubkey());
+    params.fee_bps = 25;
+    let token = env.seedable_token(&TOKEN);
+    let (market, _) = env
+        .create_and_seed(token, TOKEN, &params, TOKENS, LAMPORTS)
+        .unwrap();
+    let opening = env.state(&market).sqrt_price();
+    let keeper = env.keeper();
+    let seller = env.trader(&market, 500_000_000_000, SOL);
+
+    // The floor and a 1 SOL wall at 0.98 of the opening square-root price: a sell to there,
+    // then from the next slot `place_wall`, then 0.02 SOL idle.
+    later(&mut env, 60);
+    let state = env.state(&market);
+    let to_floor = least(1, TOKENS, |x| {
+        spec::sell(&state, x).unwrap().sqrt_price <= opening * 98 / 100
+    });
+    trade(&mut env, &market, &seller, SELL, to_floor);
+    env.next_slot();
+    let idle = env.state(&market).idle_sol();
+    add_idle_sol(&mut env, &market, SOL - idle);
+    env.place_wall(&market, &keeper).unwrap();
+    add_idle_sol(&mut env, &market, 20_000_000);
+    let walled = env.state(&market);
+    let floor = walled.floor();
+    assert_eq!(walled.wall_top(), floor);
+    assert!(floor <= opening * 98 / 100 && floor > opening * 97 / 100);
+
+    // Slot N: the third party dumps to half the price, through the curve and the wall; the
+    // cap trims the curve and its SOL goes idle.
+    later(&mut env, 60);
+    let state = env.state(&market);
+    let dump = least(1, TOKENS, |x| {
+        spec::sell(&state, x).unwrap().sqrt_price <= floor * 7_071 / 10_000
+    });
+    let dumper = env.trader(&market, dump + dump / 300 + 1, SOL);
+    trade(&mut env, &market, &dumper, SELL, dump);
+    let dumped = env.state(&market);
+    let low = dumped.sqrt_price();
+    assert!(dumped.idle_sol() > walled.idle_sol() + SOL / 10, "the dump trimmed");
+
+    // Slot N, after it: the back-runner buys the price back up to the floor.
+    let cost = least(1, 10 * SOL, |a| {
+        spec::buy(&dumped, a).unwrap().sqrt_price >= floor
+    });
+    let back_runner = env.trader(&market, 0, cost + cost / 300 + 1);
+    let (bought, _) = trade(&mut env, &market, &back_runner, BUY, cost);
+    let back = env.state(&market);
+    assert!(back.sqrt_price() >= floor);
+    assert_eq!(back.floor(), floor, "a swap moved the floor in its own slot");
+    assert_eq!(back.last_slot_low(), low, "the slot's lowest close is the dump's");
+
+    // Slot N+1: `place_wall` by the back-runner. The floor stays up (the slot opened at the
+    // buy back's close), but the wall goes no higher than the dump's low.
+    env.next_slot();
+    let (tip, _) = env.place_wall(&market, &back_runner).unwrap();
+    let placed = env.state(&market);
+    assert_eq!(placed.floor(), floor);
+    assert!(
+        placed.wall_top() <= low,
+        "the wall went up at {} above the dump's low {low}",
+        placed.wall_top()
+    );
+    assert_eq!(placed.wall_top(), low);
+    assert_books(&env, &market);
+
+    // The back-runner sells everything it bought, with Pipeline's 0.25% on top from more
+    // tokens.
+    let held = env.balance(&pda::associated_token(
+        &back_runner.pubkey(),
+        &market.token_mint,
+        &TOKEN,
+    ));
+    write_token_account(
+        &mut env.svm,
+        &market.token_mint,
+        &TOKEN,
+        &back_runner.pubkey(),
+        held + bought / 300 + 1,
+    )
+    .unwrap();
+    let (sold, _) = trade(&mut env, &market, &back_runner, SELL, bought);
+    println!("back-run: bought {bought} units for {cost} lamports, tip {tip}, sold for {sold}");
+    assert!(
+        sold + tip <= cost,
+        "the back-run returned {sold} lamports and a {tip} tip for {cost}"
+    );
+}

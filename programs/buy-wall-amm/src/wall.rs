@@ -6,8 +6,8 @@
 //! top it is all SOL, `W × wall_top / Q` lamports; below it, it has bought tokens and holds
 //! `W × s / Q` lamports. Pricing trades through it (`pricing.rs`); `place_wall` closes it at
 //! the current price and places it again with everything idle (`place` below), only in a slot
-//! no swap has run in yet and under the floor brought up to date for that slot
-//! (`place_in_slot`, `POOL4-50`).
+//! no swap has run in yet, under the floor brought up to date for that slot and no higher
+//! than the last traded slot's lowest close (`place_in_slot`, `POOL4-50`).
 
 use crate::config::{KEEPER_TIP_CAP, WALL_THRESHOLD};
 use crate::guard::Guard;
@@ -120,6 +120,9 @@ pub struct At {
     pub liquidity: u128,
     /// The wall's floor, Q64.64.
     pub floor: u128,
+    /// The lowest close of the last slot that traded, Q64.64, the guard's `last_slot_low`;
+    /// 0 caps nothing.
+    pub last_slot_low: u128,
     /// The market's fee, in basis points.
     pub fee_bps: u16,
 }
@@ -188,6 +191,18 @@ pub fn converted(wall: Wall, wall_sol_placed: u64, s: u128) -> Option<u64> {
     Some(wall_sol_placed.saturating_sub(wall.sol_at(s)?))
 }
 
+/// Step 5's top: `min(s, floor, last_slot_low)`, so a placed wall's top is never above the
+/// price at placement, the floor, nor the last traded slot's lowest close (`POOL4-50`); a
+/// zero `last_slot_low`, a market written before that field, caps nothing.
+pub fn placement_top(s: u128, floor: u128, last_slot_low: u128) -> u128 {
+    let top = s.min(floor);
+    if last_slot_low == 0 {
+        top
+    } else {
+        top.min(last_slot_low)
+    }
+}
+
 /// Step 4's tip: `min(KEEPER_TIP_CAP, floor(work × fee_bps / 10,000), idle_sol)`, so it never
 /// exceeds the fee the market earned on the work (IMD's rule) nor what is idle.
 pub fn tip(work: u64, fee_bps: u16, idle_sol: u64) -> Option<u64> {
@@ -204,9 +219,9 @@ pub fn tip(work: u64, fee_bps: u16, idle_sol: u64) -> Option<u64> {
 ///    `idle_sol` and `retired_tokens`;
 /// 4. the caller's tip from `idle_sol`, on `work`, the larger of `converted` and step 1's
 ///    idle SOL;
-/// 5. the wall placed with everything left: `wall_top = min(s, floor)`, `W = floor(idle_sol
-///    × Q / wall_top)`, `wall_sol_placed = floor(W × wall_top / Q)`, and `idle_sol` into
-///    `pool_sol`.
+/// 5. the wall placed with everything left: `wall_top = min(s, floor, last_slot_low)`
+///    (`placement_top`), `W = floor(idle_sol × Q / wall_top)`, `wall_sol_placed = floor(W ×
+///    wall_top / Q)`, and `idle_sol` into `pool_sol`.
 ///
 /// It never moves the price or the curve, and it moves value only between the ledgers of
 /// each vault, except the tip, which leaves the SOL vault. Nothing it retires is rewardable
@@ -268,8 +283,9 @@ pub fn place(books: WallBooks, at: At) -> Result<(WallBooks, Placement), Refusal
     let tip = tip(work, at.fee_bps, idle_sol).ok_or(Refusal::Overflow)?;
     let idle_sol = idle_sol.checked_sub(tip).ok_or(Refusal::Overflow)?;
 
-    // 5. The new wall, with everything left, never above the floor or the price.
-    let top = s.min(at.floor);
+    // 5. The new wall, with everything left, never above the price, the floor or the last
+    // traded slot's lowest close.
+    let top = placement_top(s, at.floor, at.last_slot_low);
     let liquidity = U256::times_q(idle_sol as u128)
         .div_floor(U256::from(top))
         .and_then(U256::to_u128)
@@ -311,9 +327,11 @@ pub fn place(books: WallBooks, at: At) -> Result<(WallBooks, Placement), Refusal
 /// in a slot a swap already ran in (`slot` not later than the guard's `last_slot`);
 /// otherwise the floor is brought up to date as a swap's first update in the slot would
 /// (`Guard::open_floor`, which marks no slot), then `place` (steps 1 to 5) runs under that
-/// floor, whatever floor `at` holds. The floor is never above the last close, which is the
-/// price, since only a swap moves either, so the wall's top is the floor. Returns the books,
-/// what it did and the guard to store.
+/// floor and the guard's `last_slot_low`, whatever `at` holds for them. The floor is never
+/// above the last close, which is the price, since only a swap moves either, so the wall's
+/// top is the lower of the floor and the last traded slot's lowest close: a dip bought back
+/// in its own slot leaves the floor up but still caps this placement at the dip. Returns the
+/// books, what it did and the guard to store.
 pub fn place_in_slot(
     books: WallBooks,
     at: At,
@@ -329,6 +347,7 @@ pub fn place_in_slot(
         books,
         At {
             floor: guard.floor,
+            last_slot_low: guard.last_slot_low,
             ..at
         },
     )?;
@@ -381,7 +400,7 @@ mod proofs {
 
     /// Closing and placing the wall conserves the ledgers: the token ledgers keep their sum,
     /// the SOL ledgers lose exactly the tip, nothing stays idle, and the new wall's top is at
-    /// or below the floor and the price. Bounded as the pricing's step harnesses are: a price
+    /// or below the floor, the price and a nonzero last traded slot's low. Bounded as the pricing's step harnesses are: a price
     /// within 2^5 of one and liquidities within 2^5 of a small base keep each division's
     /// quotient near 20 bits, within the unwind.
     #[cfg(kani_full)]
@@ -393,6 +412,7 @@ mod proofs {
             sqrt_price: kani::any(),
             liquidity: kani::any(),
             floor: kani::any(),
+            last_slot_low: kani::any(),
             fee_bps: kani::any(),
         };
         let books = WallBooks {
@@ -410,6 +430,7 @@ mod proofs {
         };
         kani::assume(at.sqrt_price >= q && at.sqrt_price < q + (1 << 5));
         kani::assume(at.floor >= q && at.floor <= at.sqrt_price);
+        kani::assume(at.last_slot_low == 0 || (at.last_slot_low >= q && at.last_slot_low < q + (1 << 5)));
         kani::assume(at.liquidity >= 1 << 20 && at.liquidity < (1 << 20) + (1 << 5));
         kani::assume(books.wall.liquidity < 1 << 5);
         kani::assume(books.wall.top >= q && books.wall.top < q + (1 << 5));
@@ -421,6 +442,8 @@ mod proofs {
             assert_eq!(sol(&after) + placement.tip as u128, sol(&books));
             assert_eq!(after.idle_sol, 0);
             assert!(after.wall.top <= at.floor && after.wall.top <= at.sqrt_price);
+            assert!(at.last_slot_low == 0 || after.wall.top <= at.last_slot_low);
+            assert!(after.wall.top == placement_top(at.sqrt_price, at.floor, at.last_slot_low));
         }
     }
 
@@ -497,8 +520,10 @@ mod tests {
         sqrt_price: PRICE,
         liquidity: 99_166_666_666,
         // `place_wall`, in a later slot than the sell, brings the floor down to the sell's
-        // price, the price that slot opened at (`POOL4-50`).
+        // price, the price that slot opened at (`POOL4-50`), which is also the sell's slot's
+        // lowest close.
         floor: PRICE,
+        last_slot_low: PRICE,
         fee_bps: 100,
     };
 
@@ -535,6 +560,7 @@ mod tests {
         floor_time: 4_660,
         last_slot: 9_160,
         last_close: PRICE,
+        last_slot_low: PRICE,
     };
 
     #[test]
@@ -552,10 +578,11 @@ mod tests {
             place_in_slot(idle, AT, SOLD, SOLD.last_slot, 4_660),
             Err(Refusal::SwapThisSlot)
         );
-        // From the next slot: the floor drops to the sell's price, whatever `at` held, and
-        // the worked example's numbers follow.
+        // From the next slot: the floor drops to the sell's price and the guard's low caps
+        // the top, whatever `at` held, and the worked example's numbers follow.
         let stale = At {
             floor: SOLD.floor,
+            last_slot_low: 0,
             ..AT
         };
         let (after, placement, guard) =
@@ -573,6 +600,39 @@ mod tests {
             place_in_slot(idle, AT, SOLD, SOLD.last_slot + 1, 4_660),
             Err(Refusal::BelowThreshold)
         );
+    }
+
+    #[test]
+    fn the_last_traded_slots_low_caps_the_wall_below_the_floor_and_the_price() {
+        // A dip bought back in its own slot: the floor and the price stay up, the slot's low
+        // is the dip's, and the wall goes there, with the same idle SOL.
+        let dip = PRICE / 2;
+        let (after, _) = place(
+            BEFORE,
+            At {
+                last_slot_low: dip,
+                ..AT
+            },
+        )
+        .unwrap();
+        assert_eq!(after.wall.top, dip);
+        assert_eq!(after.idle_sol, 0);
+        // A low above the floor or the price caps nothing; 0, a market written before the
+        // field, caps nothing either.
+        for low in [PRICE, PRICE + 1, u128::MAX, 0] {
+            assert_eq!(placement_top(PRICE, PRICE + 7, low), PRICE);
+            assert_eq!(placement_top(PRICE + 7, PRICE, low), PRICE);
+        }
+        assert_eq!(placement_top(PRICE, PRICE, 1), 1);
+        // `place_in_slot` takes the low from the guard.
+        let dipped = Guard {
+            last_slot_low: dip,
+            ..SOLD
+        };
+        let (after, _, guard) =
+            place_in_slot(BEFORE, AT, dipped, SOLD.last_slot + 1, 4_660).unwrap();
+        assert_eq!(after.wall.top, dip);
+        assert_eq!(guard.last_slot_low, dip);
     }
 
     #[test]
@@ -668,8 +728,9 @@ mod tests {
 
     /// A market as trading could leave it: a curve from any pool sizes at a price within
     /// the trading bounds, a wall of up to twice the curve's liquidity with its top from half
-    /// to twice the price (or none), the floor at or below the price, and pool ledgers that
-    /// cover both with some dust; idle SOL from nothing to a lot.
+    /// to twice the price (or none), the floor at or below the price, the last traded slot's
+    /// low from a fifth to twice the price (or none), and pool ledgers that cover both with
+    /// some dust; idle SOL from nothing to a lot.
     fn market() -> impl Strategy<Value = (WallBooks, At)> {
         (
             (1_000_000u64..1 << 62, 1_000_000u64..1 << 62),
@@ -685,7 +746,7 @@ mod tests {
                 0u64..1_000,
                 MIN_FEE_BPS..=MAX_FEE_BPS,
             ),
-            (0u64..3, 0u64..1 << 30),
+            (0u64..3, 0u64..1 << 30, 0u128..=2_000),
         )
             .prop_filter_map(
                 "a price within the bounds and ledgers that fit in a u64",
@@ -693,7 +754,7 @@ mod tests {
                     (x, y),
                     (w_permille, top_permille, placed, floor_bps),
                     (idle, dust_t, dust_s, fee_bps),
-                    (sol_extra, retired),
+                    (sol_extra, retired, low_permille),
                 )| {
                     let s = crate::opening::opening_sqrt_price(x, y)?;
                     let liquidity = crate::opening::opening_liquidity(x, y, s)?;
@@ -711,6 +772,12 @@ mod tests {
                         Wall::NONE
                     };
                     let floor = s - (s - MIN_SQRT_PRICE) / 10_000 * floor_bps;
+                    // The last traded slot's low: none (0) or from a fifth to twice the price.
+                    let last_slot_low = if low_permille < 200 {
+                        0
+                    } else {
+                        (s / 1_000).checked_mul(low_permille)?.max(MIN_SQRT_PRICE)
+                    };
                     let curve_tokens =
                         U256::times_q(liquidity).div_ceil(U256::from(s))?.to_u64()?;
                     let curve_sol =
@@ -733,6 +800,7 @@ mod tests {
                             sqrt_price: s,
                             liquidity,
                             floor,
+                            last_slot_low,
                             fee_bps,
                         },
                     ))
@@ -745,8 +813,9 @@ mod tests {
 
         /// Closing and placing the wall conserves the ledgers: the token ledgers keep their
         /// sum, the SOL ledgers lose exactly the tip; the tip never exceeds `KEEPER_TIP_CAP`,
-        /// `floor(work × fee_bps / 10,000)` or what was idle; the new wall's top is at or
-        /// below both the floor and the price; everything idle is placed; the pool ledgers
+        /// `floor(work × fee_bps / 10,000)` or what was idle; the new wall's top is
+        /// `min(price, floor, last_slot_low)`, a zero low capping nothing; everything idle is
+        /// placed; the pool ledgers
         /// still cover the curve and the new wall; and it is refused exactly when neither
         /// idle SOL nor the wall's spent SOL reaches `WALL_THRESHOLD`.
         #[test]
@@ -772,6 +841,12 @@ mod tests {
                     prop_assert_eq!(after.tips_paid, placement.tip as u128);
                     prop_assert_eq!(after.wall_tokens_bought, placement.closed_tokens as u128);
                     prop_assert!(after.wall.top <= at.floor && after.wall.top <= at.sqrt_price);
+                    prop_assert!(at.last_slot_low == 0 || after.wall.top <= at.last_slot_low);
+                    let mut lowest = at.sqrt_price.min(at.floor);
+                    if at.last_slot_low > 0 {
+                        lowest = lowest.min(at.last_slot_low);
+                    }
+                    prop_assert_eq!(after.wall.top, lowest);
                     prop_assert_eq!(after.idle_sol, 0);
                     prop_assert!(after.wall_sol_placed <= after.pool_sol);
                     prop_assert!(covered(&after, at.liquidity, at.sqrt_price));
@@ -786,8 +861,9 @@ mod tests {
         /// `place_wall` in a slot (`POOL4-50`): refused with `SwapThisSlot` exactly when a
         /// swap already ran in the slot, whatever else holds; otherwise it is `place` under
         /// the floor brought up to date, which is never above the price (the last close) nor
-        /// the reference, so the wall's top is never above the price at placement nor that
-        /// floor, and only the floor and its clock change in the guard.
+        /// the reference, and the guard's last traded slot's low, so the wall's top is never
+        /// above the price at placement, that floor, nor that low, and only the floor and its
+        /// clock change in the guard.
         #[test]
         fn place_wall_runs_only_in_a_slot_no_swap_has_run_in(
             (books, at) in market(),
@@ -799,7 +875,12 @@ mod tests {
             // below the reference, either side of the price.
             let reference = (s + s / 10_000 * reference_bps).min(MAX_SQRT_PRICE);
             let floor = (MIN_SQRT_PRICE + (reference - MIN_SQRT_PRICE) / 10_000 * floor_bps).max(MIN_SQRT_PRICE);
-            let guard = Guard { reference, ref_time: floor_time, floor, floor_time, last_slot, last_close: s };
+            // The low as `market` drew it, and `at` holding a stale one.
+            let guard = Guard {
+                reference, ref_time: floor_time, floor, floor_time, last_slot, last_close: s,
+                last_slot_low: at.last_slot_low,
+            };
+            let at = At { last_slot_low: 0, ..at };
             let now = floor_time + dt;
             let result = place_in_slot(books, at, guard, last_slot + slots, now);
             if slots == 0 {
@@ -808,12 +889,13 @@ mod tests {
                 let opened = guard.open_floor(now).unwrap();
                 prop_assert!(opened.floor <= s && opened.floor <= reference);
                 prop_assert_eq!(opened, Guard { floor: opened.floor, floor_time: opened.floor_time, ..guard });
-                let expected = place(books, At { floor: opened.floor, ..at });
+                let expected = place(books, At { floor: opened.floor, last_slot_low: guard.last_slot_low, ..at });
                 match (result, expected) {
                     (Ok((after, placement, stored)), Ok((books_expected, placement_expected))) => {
                         prop_assert_eq!((after, placement), (books_expected, placement_expected));
                         prop_assert_eq!(stored, opened);
                         prop_assert!(after.wall.top <= s && after.wall.top <= opened.floor);
+                        prop_assert!(guard.last_slot_low == 0 || after.wall.top <= guard.last_slot_low);
                     }
                     (Err(refusal), Err(expected)) => prop_assert_eq!(refusal, expected),
                     (result, expected) => prop_assert!(false, "{:?} against {:?}", result, expected),
