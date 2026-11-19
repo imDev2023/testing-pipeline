@@ -17,6 +17,7 @@ Build tickets start here.
 | LiteSVM | 0.18.2 | Cargo | pinned by `pipeline-quoter` |
 | Kani | 0.67.0, with its nightly Rust (`nightly-2025-11-21`) | `~/.local/share/testing-pipeline/toolchain/kani-0.67.0/bin`, `~/.kani/kani-0.67.0` | the bar's maths proofs; Pipeline's CI pins it |
 | pnpm | 11.0.8 | Node 24's global packages | the repo's TypeScript workspace (`packageManager` in `package.json`) |
+| solana-verify | 0.5.2 | `~/.local/share/testing-pipeline/toolchain/solana-verify-0.5.2/bin` | Docker verified builds for devnet deploys; the bar asks 0.5.2 or later, and the machine's own is 0.4.9 |
 | Z3 | `z3-solver` 5.4.1.0 (Python) | a virtualenv of your choosing | the maths proofs Kani cannot finish (`programs/*/proofs/*_z3.py`) |
 
 The machine's own defaults stay as they were, because the owner's other projects use them:
@@ -31,7 +32,7 @@ bash scripts/install-toolchain.sh      # once per machine; safe to run again
 source scripts/toolchain-env.sh        # in every shell (and every agent Bash call) that needs it
 ```
 
-The install script takes the parts to install, `solana` and `kani`, and installs both when given none; CI installs each part in the job that needs it.
+The install script takes the parts to install, `solana`, `kani` and `verify`, and installs the first two when given none; CI installs each part in the job that needs it, and never `verify`, solana-verify for devnet deploys ("Deploy to devnet").
 
 The install script puts Rust 1.97.1, cargo-build-sbf 4.6.0, the platform tools and the Agave 4.4.1 release side by side under `~/.local/share/testing-pipeline/toolchain` (override with `TESTING_PIPELINE_TOOLCHAIN`).
 It checks the Agave tarball against the SHA-256 digest GitHub publishes for the release asset.
@@ -197,12 +198,16 @@ On a local validator the demo goes on to a thirteenth step: the stand-in launchp
 Passed on 2026-11-12 by [seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63), the whole demo with the tax authority's steps in 25 seconds, from a fresh validator started with flags only (`scripts/local-validator.sh --rpc-port 8999 --faucet-port 9910 --gossip-port 8100 --dynamic-port-range 8101-8130`) because another project's validator held port 8000: the graduation transaction was 1,214 of 1,232 bytes; the escrows lost exactly the seed (100,000,000,000 and 200,000,000,000), which `SeedResult.taken` reported, with `lp_amount` 0; `pipeline_seed_liquidity` used 41,357 units; the market state held the parameters sent with the launchpad's PDA as its seeder, open and holding the seed; and both swaps delivered their quotes, the spec's prices, leaving the reserves, owed amounts and counters equal to the spec's formulas.
 Since [pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61), the demo ends with two more steps.
 Step 14 pays out every slot of the token B market through the metadata's `distribute` action, and the burn slot through its `burn` action (the same instruction with the mint writable), giving the actions' `tax_mint` and `recipient` inputs from the market state and the suite treasury and the slot numbers from the generated client.
-Step 15 creates, seeds and trades a second market from its own named block, `SOL_MARKET`: token A against wrapped SOL, taxed in SOL and so with no burn, the script wrapping its seed and its buy, with Pipeline's fee, beforehand; then it pays that market out the same way.
+Step 15 creates, seeds and trades a second market from its own named block, `SOL_MARKET`: a token against wrapped SOL, taxed in SOL and so with no burn, the script wrapping its seed and its buy, with Pipeline's fee, beforehand; then it pays that market out the same way.
 Each payout stops the demo unless the wallet's token account grew by exactly what its slot was owed, a fresh recipient got its token account from the payout, the burn lowered the mint's supply by exactly its owed amount, and afterwards every owed amount is 0 and the tax-side vault holds exactly the real reserve.
 That passed on 2026-11-12 from a fresh validator, the whole demo in 42 seconds.
 In the SOL market, a buy of 50,000,000 lamports delivered 8,846,718,322 of token A, with a buy tax of 1,500,000, and a sell of 1,000,000,000 of token A delivered 5,651,371 lamports, with a sell tax of 297,441.
 `distribute` then paid the payer 970,619 and the fresh second recipient 647,078 in wrapped SOL, and the suite treasury 179,744, the last two into accounts the payouts created; the burn slot was owed nothing, the vault kept exactly its real reserve of 542,551,188, and each payout was one transaction of 446 or 478 bytes.
 In the token B market, after the tax authority's steps, the payer received 48,646,057, the wallet given slot 1 received its 24,323,027 into an account the payout created, the suite treasury received 9,008,527, and the burn lowered token B's supply by exactly 8,107,675.
+Since [the devnet ticket](https://github.com/imDev2023/testing-pipeline/issues/66), step 15 is the demo market, the one market the demo creates on devnet (`TAX-53`): `SOL_MARKET` holds every parameter it is created with, and it trades a fresh demo token, made in the step, with no virtual reserve, so `pipeline-check` checks it at its default amounts.
+Steps 4 to 14 run on a local validator only, and `--demo-market-only` skips them there too, to run exactly what devnet runs; `--register-only` stops after step 3, and `--record <file>` writes the run's addresses and signatures to a file.
+On 2026-11-16, from a validator started with `SKIP_PROGRAMS=tax-amm` and the tax AMM deployed by `scripts/deploy-devnet.sh` ("Deploy to devnet"), `--demo-market-only` passed in 13 seconds: the creation with both fee accounts and the seed was one transaction of 1,212 bytes; a buy of 50,000,000 lamports delivered its quote, 8,842,297,174 of the demo token, with a buy tax of 1,500,000, and a sell of 1,000,000,000 delivered its quote, 5,654,166 lamports, with a sell tax of 297,588; the payer received 970,698, the fresh second recipient 647,132 and the suite treasury 179,758, exactly what the market state owed each; and `pipeline-check --fail-on-warn` on the market reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped, and `--list-markets` listed it.
+The whole demo then passed on the same validator in 23 seconds, steps 4 to 14 with the numbers above.
 If another validator on the machine holds gossip port 8000, `solana-test-validator` stops at start with `gossip_addr bind_to port 8000: Address already in use`; a wrapper earlier on `PATH` that adds `--gossip-port 8030 --dynamic-port-range 8031-8060` lets `scripts/local-validator.sh` start without disturbing it.
 Earlier the same day, before the seed and trading, it passed in 19 seconds.
 The template's demo, before the tax AMM replaced its pool, passed on 2026-11-10, twice, the second time from fresh shells following these steps, in 8 seconds each.
@@ -317,9 +322,9 @@ The other order, with the deadline only 70 seconds away, stopped as it should be
 
 | Job | Runs | Does |
 | --- | --- | --- |
-| `changes` | always | Decides whether on-chain code changed: `programs/`, `packages/`, `fixtures/pins.env`, the scripts that install, fetch, build or run it, the pnpm workspace files or the workflow |
+| `changes` | always | Decides whether on-chain code changed: `programs/`, `packages/`, `fixtures/pins.env`, the scripts that install, fetch, build, deploy or run it, the pnpm workspace files or the workflow |
 | `no keypairs` | always | `scripts/test-check-no-keypairs.sh`, then `scripts/check-no-keypairs.sh` |
-| `rust` | on-chain changes | The toolchain from `scripts/install-toolchain.sh solana`, the router fixture's test and fetch, Pipeline's test programs from `scripts/fetch-pipeline.sh programs` (its clone cached by the pinned `rev`), `cargo fmt --check`, each program's SBF build by its manifest, the buy wall AMM release gate's four stranding test builds (`cargo run -p buy-wall-gate -- test-builds`, `POOL4-44`), clippy with `-D warnings`, the tests, the lending AMM's `mainnet` build with its clippy and unit tests, and the buy wall AMM built with `test-designer-recipient` (a test key as `DESIGNER_RECIPIENT`, `POOL4-39`) into `programs/target/deploy-designer`, with its clippy, unit tests and payout tests |
+| `rust` | on-chain changes | The toolchain from `scripts/install-toolchain.sh solana`, the router fixture's test and fetch, the devnet deploy script's test, Pipeline's test programs from `scripts/fetch-pipeline.sh programs` (its clone cached by the pinned `rev`), `cargo fmt --check`, each program's SBF build by its manifest, the buy wall AMM release gate's four stranding test builds (`cargo run -p buy-wall-gate -- test-builds`, `POOL4-44`), clippy with `-D warnings`, the tests, the lending AMM's `mainnet` build with its clippy and unit tests, and the buy wall AMM built with `test-designer-recipient` (a test key as `DESIGNER_RECIPIENT`, `POOL4-39`) into `programs/target/deploy-designer`, with its clippy, unit tests and payout tests |
 | `typescript` | on-chain changes | Pipeline's SDK from `scripts/fetch-pipeline.sh sdk`, `pnpm install --frozen-lockfile`, `pnpm typecheck`, and the shared packages' tests (`pnpm --recursive --if-present test`) |
 | `kani` | on-chain changes | Every program's Z3 proofs (`programs/*/proofs/*_z3.py`, with `z3-solver` 5.4.1.0), then Kani from `scripts/install-toolchain.sh kani` and `cargo kani --workspace -j --output-format=terse` |
 | `canary` | changes to `crates/`, the fixtures' pins or scripts, or the workflow | The toolchain, the router fixture and Pipeline's test programs as `rust` gets them, and Canary's own fixture programs (`crates/canary/tests/fixtures/build.sh`), then `cargo fmt --check`, clippy with `-D warnings` and the tests in `crates/` |
@@ -505,6 +510,70 @@ Of the 44 markets on devnet at 08:45 UTC, quoting 1,000,000 units of mint 0 into
 
 RPC simulation through the SDK fails the same way, so these are the markets' own states, not the quoter.
 `AccountDidNotDeserialize` on `pool` suggests markets created by an older version of the strategy program, whose state the upgraded program can no longer read.
+
+### Deploy to devnet
+
+Built by [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66) on 2026-11-16 for every program's devnet ticket (`BAR-42`, `TAX-53`, `TAX-54` in `docs/decisions.md`).
+A program may be deployed while the repo is still private (owner, 2026-11-19, `BAR-21`): the steps below run as they are, the registration takes the metadata's address on `main` with `--metadata-not-yet-public`, and `publish.ts verify`, which needs every link public, runs once the repo is public.
+
+`scripts/deploy-devnet.sh <program>` deploys one program from a verified build, from a clean checkout of a commit on `main`:
+
+- it refuses any cluster but devnet (checked by its genesis hash) or a local validator, and on devnet a worktree with changes or a `HEAD` that is not on `origin/main`;
+- it builds that commit, exported with `git archive` so nothing uncommitted reaches the bytes, with `solana-verify build --library-name <lib> --arch v3` in the Docker image `fixtures/pins.env` pins (`VERIFY_IMAGE`, the image solana-verify 0.5.2 picks for `[workspace.metadata.cli] solana` 4.3.0; the script refuses when the workspace pins another version);
+- it deploys, or upgrades, paid by `wallet.json`, with `upgrade-authority.json` as the upgrade authority, at the address of `<program>.json`;
+- it stops unless `solana-verify get-program-hash` on the cluster equals the build's executable hash and the program's upgrade authority is `upgrade-authority.json`'s key;
+- it records the program id, the executable hash, the commit, the image, the upgrade authority, the payer and the deploy slot under the program's name in `deployments/devnet.json` (on a local validator, only where `--record` says), moving the program's earlier deploy into its `history`, newest first, so a metadata still naming that deploy passes `tests/published.rs` until it is pinned again;
+- an uncommitted `deployments/devnet.json` alone does not count as a change, so several programs can be deployed before their records go through one PR.
+
+`--build-only` builds and prints the hash and sends nothing, `--out <dir>` keeps the built program, and `scripts/test-deploy-devnet.sh` tests the script without the network or Docker.
+The Docker image builds with the Solana 4.3.0 release's cargo-build-sbf and CI with 4.6.0, both on platform tools v1.58, so before a deploy the program's tests run on the very bytes to be deployed: `scripts/deploy-devnet.sh tax-amm --build-only --out <dir>`, then `SBF_OUT_DIR=<dir> cargo test -p tax-amm` from `programs/`.
+On 2026-11-16 every tax AMM test, the fuzzer, the compute ceilings and `pipeline-check` among them, passed on the Docker build of `f691993`.
+It needs solana-verify 0.5.2 or later, which `bash scripts/install-toolchain.sh verify` installs beside the machine's older one and `toolchain-env.sh` puts first, and Docker Desktop running.
+A Docker build from a fresh export fetches and compiles every dependency, 10 to 12 minutes in all on the owner's Mac (the compile itself under 2 minutes), and the first one also pulls the image, 17 minutes then.
+Built from `main` at `f691993` on 2026-11-16, the tax AMM's executable hash was `6b92098a176ee863e2176a687e4bac60569348f077d9ae04b71f73a5643e8be5` (341,336 bytes), and two builds from later commits that left `programs/tax-amm` unchanged gave the same hash.
+Rehearsed the same day on a local validator started with `SKIP_PROGRAMS=tax-amm scripts/local-validator.sh ...`, so the tax AMM was first deployed by the script, as on devnet: the first deploy and then an upgrade each passed the hash and authority checks and wrote their record (`--record`), the program left upgradeable by `Gf8tq5uE...` and no deploy buffer left behind.
+
+A program's metadata cannot name the commit that holds it, and a squash merge leaves a branch's commits off `main`, so a strategy goes public in three merges (`TAX-54`); for the tax AMM:
+
+1. **The deploy commit.** Merge the tooling, then from a clean checkout of `origin/main`, fund the keys (`devnet-airdrop ~/.config/testing-pipeline/devnet/wallet.json --target 8`, and `--target 1` for `upgrade-authority.json`), and run:
+
+   ```sh
+   source scripts/toolchain-env.sh
+   scripts/deploy-devnet.sh tax-amm --build-only --out <scratchpad>/verified
+   (cd programs && SBF_OUT_DIR=<scratchpad>/verified cargo test -p tax-amm)
+   scripts/deploy-devnet.sh tax-amm
+   cd programs/tax-amm/scripts
+   pnpm demo --cluster devnet \
+     --payer ~/.config/testing-pipeline/devnet/wallet.json \
+     --upgrade-authority ~/.config/testing-pipeline/devnet/upgrade-authority.json \
+     --metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/<deploy commit>/programs/tax-amm/metadata.json \
+     --record <scratchpad>/devnet-demo.json
+   ```
+
+   On devnet the demo stops unless the metadata URI resolves and passes Pipeline's validator with zero warnings; while the repo is private, pass `--metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json --metadata-not-yet-public` instead, which takes only this repo's `metadata.json` and checks the committed copy. It registers the strategy, signed and paid by the upgrade authority, and creates only the demo market, `SOL_MARKET` (`TAX-53`): created with both fee accounts and its seed in one transaction, bought, sold, and paid out slot by slot.
+2. **The record.** Take the conformance report and check the router lists the market, with `pipeline-check` from Pipeline's clone (`cargo build --release -p pipeline-check` in `fixtures/pipeline`):
+
+   ```sh
+   fixtures/pipeline/target/release/pipeline-check --url devnet --market <demo market> --fail-on-warn --json \
+     > programs/tax-amm/conformance/devnet.json
+   fixtures/pipeline/target/release/pipeline-check --url devnet --list-markets | grep <demo market>
+   ```
+
+   Merge `deployments/devnet.json`, the report, and the README and docs saying where the program is.
+3. **The metadata.** Run `node publish.ts pin --report-commit <the record's merge commit>` in `programs/tax-amm/scripts` and merge `metadata.json`; `tests/published.rs` fails if it names a commit other than the deployed one or a report other than the committed one.
+   Then point the router at it and check everything published, as anyone would see it:
+
+   ```sh
+   pnpm demo --cluster devnet --register-only --payer ... --upgrade-authority ... \
+     --metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/<metadata commit>/programs/tax-amm/metadata.json
+   node publish.ts verify --uri <that URI> --market <demo market>
+   ```
+
+   While the repo is private, `--register-only` takes `--metadata-not-yet-public` as well, and `verify` waits until the repo is public.
+
+   `verify` checks that the URI resolves with zero warnings, every link resolves, the report hashes to its SHA-256, every commit named is on `origin/main`, the router points at the URI, and Pipeline's hosted devnet API shows the strategy with valid metadata and the deployed code hash, and each of the market's mints with exactly the trust flags `tax-amm.md` ("Mint rules") predicts.
+
+A later deploy repeats the three steps: `deploy-devnet.sh` upgrades the program and records the new commit, and `--register-only` points the router at the new metadata.
 
 ## Local validator
 

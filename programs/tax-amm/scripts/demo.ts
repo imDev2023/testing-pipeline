@@ -37,9 +37,14 @@
 //      step 11 has none), the burn must lower the mint's supply by exactly its owed amount,
 //      and every owed amount must be 0 afterwards, with the tax-side vault holding exactly the
 //      real reserve;
-//  15. create, seed and trade a second market, taxed in wrapped SOL (Aviary's default tax
-//      side), from the metadata as in steps 5 to 9, and pay it out as in step 14: its
-//      recipients are paid wrapped SOL, and its burn slot is owed nothing.
+//  15. the demo market: create, seed and trade a market of a fresh demo token taxed in
+//      wrapped SOL (Aviary's default tax side), from the metadata as in steps 5 to 9, and pay
+//      it out as in step 14: its recipients are paid wrapped SOL, and its burn slot is owed
+//      nothing.
+//
+// Steps 4 to 14 run on a local validator only; on devnet the demo creates only the demo
+// market, whose parameters are all in one block, `SOL_MARKET`, and whose address the devnet
+// deploy publishes (docs/toolchain.md, "Deploy to devnet").
 //
 // Grown from Pipeline's strategy template (scripts/deploy-devnet.ts at 5ad130d). Deploy the
 // program first; docs/toolchain.md says how, on a local validator and on devnet.
@@ -48,7 +53,8 @@
 //
 //   node demo.ts --cluster <localnet|devnet|URL> \
 //     --payer <keypair.json> --upgrade-authority <keypair.json> \
-//     [--metadata-uri <URI>] [--program-id <address>]
+//     [--metadata-uri <URI>] [--program-id <address>] [--demo-market-only] [--register-only]
+//     [--record <file>]
 //
 //   --cluster            localnet (http://127.0.0.1:8899), devnet, or an RPC URL of either;
 //                        the cluster's genesis hash must be devnet's, or the URL a local
@@ -58,11 +64,25 @@
 //                        its listing fee (docs/spec/README.md, "Upgrade authority")
 //   --metadata-uri       where metadata.json is published (default: this repo's main branch)
 //   --program-id         the strategy program (default: the address in declare_id!)
+//   --demo-market-only   on a local validator, run only what runs on devnet: steps 1 to 3
+//                        and the demo market (step 15)
+//   --register-only      steps 1 to 3 only: register the strategy, or point it at a new
+//                        metadata URI, as each later deploy does
+//   --record             also write what the run did (addresses and signatures) to a file
+//   --metadata-not-yet-public
+//                        on devnet, register or point the strategy at a metadata URI of this
+//                        repo that cannot resolve yet because the repo is still private; the
+//                        URI must be this repo's raw.githubusercontent.com address, and the
+//                        copy committed beside the program is checked instead (TAX-54)
+//
+// On devnet the metadata URI must resolve and pass Pipeline's validator with zero warnings
+// before the script registers it or points the strategy at it, unless
+// --metadata-not-yet-public says the repo is still private.
 //
 // On a local cluster the script airdrops the SOL both keys need; on devnet it never does
 // (fund them with devnet-airdrop, docs/toolchain.md).
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 
 import {
@@ -124,18 +144,21 @@ import { price, swap as specSwap, type SpecMarket } from './spec-model.ts';
 const DEFAULT_PROGRAM_ID = 'J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t';
 // The all-zero key: an unused tax recipient slot.
 const DEFAULT_ADDRESS = address('11111111111111111111111111111111');
+// Where this repo's committed files are served, once it is public.
+const RAW_REPO = 'https://raw.githubusercontent.com/imDev2023/testing-pipeline';
 const DEFAULT_METADATA_URI =
     'https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json';
 
-// The demo market: the demo's own choices, in one place, not the program's policy values
-// (docs/spec/tax-amm.md, "Where its policy values live"). Taxes are taken in token B; the
-// payer is the tax authority, the seeder and the first tax recipient. Token A has 6
-// decimals and token B 9, so the seed is 100,000 A against 200 B, and side A prices 50 A
+// Each market's parameters are the demo's own choices, in one named block per market, not the
+// program's policy values (docs/spec/tax-amm.md, "Where its policy values live").
+const MINTED = 1_000_000_000_000n;
+// The token-taxed market of steps 4 to 14, on a local validator only: taxes are taken in
+// token B; the payer is the tax authority, the seeder and the first tax recipient. Token A has
+// 6 decimals and token B 9, so the seed is 100,000 A against 200 B, and side A prices 50 A
 // more than it holds through its virtual reserve. After trading, the tax authority moves
 // both rates inside their ranges, trades again, hands the second recipient's slot to a new
 // wallet, and renounces.
-const MINTED = 1_000_000_000_000n;
-const DEMO_MARKET = {
+const TOKEN_MARKET = {
     taxSide: 1,
     buyTaxBps: 300,
     sellTaxBps: 500,
@@ -158,7 +181,7 @@ const DEMO_MARKET = {
     newTaxesBps: [600, 900],
 } as const;
 // The launch the stand-in launchpad graduates in step 13, on a local validator only: the
-// demo market's parameters and seed, from escrows holding more than the seed, so the market
+// token-taxed market's parameters and seed, from escrows holding more than the seed, so the market
 // takes exactly the seed and leaves the rest; the launchpad lends the strategy at most
 // `maxPayerLamports` for rent and takes back what it did not spend.
 const LAUNCH = {
@@ -166,13 +189,27 @@ const LAUNCH = {
     escrowed: [150_000_000_000n, 300_000_000_000n],
     maxPayerLamports: 50_000_000n,
 } as const;
-// The second market, in step 15: token A against wrapped SOL, taxed in SOL, Aviary's default
-// tax side, so it burns nothing; its other parameters are the demo market's. The payer is
-// its tax authority, seeder and first tax recipient, and the second recipient a fresh wallet
-// with no token account. It buys token A with 0.05 SOL, then sells 1,000 A back.
+// The demo market, step 15: the one market the demo creates on devnet, where its address is
+// published (docs/toolchain.md, "Deploy to devnet"), and the second market on a local
+// validator. A fresh demo token (6 decimals) against wrapped SOL, taxed in wrapped SOL as
+// Aviary's launch form defaults the tax side, so it burns nothing; both taxes above 0, inside
+// ranges that leave its tax authority room to move them; two tax recipients and the suite
+// share. The payer is its tax authority, seeder and first tax recipient, and the second
+// recipient a fresh wallet with no token account. No virtual reserve, so `pipeline-check`
+// checks it at its default amounts. It is seeded with 100,000 tokens against 0.5 SOL, buys the
+// token with 0.05 SOL, then sells 1,000 back.
 const SOL_MARKET = {
+    tokenDecimals: 6,
+    taxSide: 1,
+    buyTaxBps: 300,
+    sellTaxBps: 500,
+    buyTaxRangeBps: [100, 800],
+    sellTaxRangeBps: [0, 900],
+    otherRecipients: 1,
     shares: [6_000, 4_000, 0, 0],
     burnShareBps: 0,
+    virtualSide: 0,
+    virtualReserve: 0n,
     seed: [100_000_000_000n, 500_000_000n],
     trades: [
         [1, 0, 50_000_000n],
@@ -207,6 +244,10 @@ const { values: options } = parseArgs({
         'upgrade-authority': { type: 'string' },
         'metadata-uri': { type: 'string', default: DEFAULT_METADATA_URI },
         'program-id': { type: 'string', default: DEFAULT_PROGRAM_ID },
+        'demo-market-only': { type: 'boolean', default: false },
+        'register-only': { type: 'boolean', default: false },
+        record: { type: 'string' },
+        'metadata-not-yet-public': { type: 'boolean', default: false },
     },
     strict: true,
 });
@@ -214,7 +255,7 @@ const { values: options } = parseArgs({
 function usage(message: string): never {
     console.error(`${message}\n`);
     console.error(
-        'Usage: node demo.ts --cluster <localnet|devnet|URL> --payer <keypair.json> --upgrade-authority <keypair.json> [--metadata-uri <URI>] [--program-id <address>]',
+        'Usage: node demo.ts --cluster <localnet|devnet|URL> --payer <keypair.json> --upgrade-authority <keypair.json> [--metadata-uri <URI>] [--program-id <address>] [--demo-market-only] [--register-only] [--record <file>]',
     );
     process.exit(2);
 }
@@ -241,6 +282,8 @@ const payerPath = options.payer ?? usage('--payer is required');
 const upgradeAuthorityPath = options['upgrade-authority'] ?? usage('--upgrade-authority is required');
 const metadataUri = options['metadata-uri'];
 const onDevnet = !cluster.local;
+// On devnet the demo creates only the demo market; --demo-market-only does the same locally.
+const onlyDemoMarket = onDevnet || options['demo-market-only'];
 
 // Public RPC endpoints rate-limit bursts (HTTP 429); retry those with back-off.
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
@@ -449,24 +492,39 @@ type SentParams = {
     virtualReserve: bigint;
 };
 
-/** The demo market's creation parameters, with the given tax authority, seeder and recipients. */
-function demoParams(taxAuthority: Address, seeder: Address, recipients: Address[]): SentParams {
+/** A market block's creation parameters, with the given tax authority, seeder and recipients. */
+function paramsOfBlock(
+    block: typeof TOKEN_MARKET | typeof SOL_MARKET,
+    taxAuthority: Address,
+    seeder: Address,
+    recipients: Address[],
+): SentParams {
     return {
-        taxSide: DEMO_MARKET.taxSide,
-        buyTaxBps: DEMO_MARKET.buyTaxBps,
-        sellTaxBps: DEMO_MARKET.sellTaxBps,
-        buyTaxMinBps: DEMO_MARKET.buyTaxRangeBps[0],
-        buyTaxMaxBps: DEMO_MARKET.buyTaxRangeBps[1],
-        sellTaxMinBps: DEMO_MARKET.sellTaxRangeBps[0],
-        sellTaxMaxBps: DEMO_MARKET.sellTaxRangeBps[1],
+        taxSide: block.taxSide,
+        buyTaxBps: block.buyTaxBps,
+        sellTaxBps: block.sellTaxBps,
+        buyTaxMinBps: block.buyTaxRangeBps[0],
+        buyTaxMaxBps: block.buyTaxRangeBps[1],
+        sellTaxMinBps: block.sellTaxRangeBps[0],
+        sellTaxMaxBps: block.sellTaxRangeBps[1],
         taxAuthority,
         seeder,
         recipients,
-        shares: [...DEMO_MARKET.shares],
-        burnShareBps: DEMO_MARKET.burnShareBps,
-        virtualSide: DEMO_MARKET.virtualSide,
-        virtualReserve: DEMO_MARKET.virtualReserve,
+        shares: [...block.shares],
+        burnShareBps: block.burnShareBps,
+        virtualSide: block.virtualSide,
+        virtualReserve: block.virtualReserve,
     };
+}
+
+/** The payer and `block.otherRecipients` fresh wallets, then empty slots. */
+async function recipientsOfBlock(payer: Address, block: typeof TOKEN_MARKET | typeof SOL_MARKET): Promise<Address[]> {
+    const others = await Promise.all(
+        Array.from({ length: block.otherRecipients }, async () => (await generateKeyPairSigner()).address),
+    );
+    const recipients = [payer, ...others];
+    while (recipients.length < block.shares.length) recipients.push(DEFAULT_ADDRESS);
+    return recipients;
 }
 
 /** The metadata's arguments, in its own names: the arrays flattened, as metadata has none. */
@@ -678,7 +736,7 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
     // anything is sent. `data` is the creation parameters; their seeder is ignored, since the
     // launchpad's PDA seeds the market, so the demo sends the default key there.
     const recipients = [payer.address, DEFAULT_ADDRESS, DEFAULT_ADDRESS, DEFAULT_ADDRESS];
-    const sent = { ...demoParams(payer.address, DEFAULT_ADDRESS, recipients), shares: [9_000, 0, 0, 0] };
+    const sent = { ...paramsOfBlock(TOKEN_MARKET, payer.address, DEFAULT_ADDRESS, recipients), shares: [9_000, 0, 0, 0] };
     const resolved = await pipeline.resolveInit({
         init: form,
         strategyProgram: programId,
@@ -715,7 +773,7 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
     const graduate = await graduateInstruction({
         creator: payer.address,
         strategyProgram: programId,
-        amounts: DEMO_MARKET.seed,
+        amounts: TOKEN_MARKET.seed,
         data: resolved.initData,
         maxPayerLamports: LAUNCH.maxPayerLamports,
         accounts: [
@@ -750,8 +808,8 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
     const logs = transaction?.meta?.logMessages ?? fail('the graduation left no logs');
     const graduation = graduationFromLogs(logs) ?? fail("the launchpad's return data is missing");
     const left = await Promise.all(escrows.map(async (escrow, i) => LAUNCH.escrowed[i]! - (await tokenBalance(escrow))));
-    if (show(graduation.leftEscrows) !== show(DEMO_MARKET.seed) || show(left) !== show(DEMO_MARKET.seed)) {
-        fail(`the escrows lost ${show(left)} (the launchpad measured ${show(graduation.leftEscrows)}), not the seed ${show(DEMO_MARKET.seed)}`);
+    if (show(graduation.leftEscrows) !== show(TOKEN_MARKET.seed) || show(left) !== show(TOKEN_MARKET.seed)) {
+        fail(`the escrows lost ${show(left)} (the launchpad measured ${show(graduation.leftEscrows)}), not the seed ${show(TOKEN_MARKET.seed)}`);
     }
     if (show(graduation.taken) !== show(left) || graduation.lpAmount !== 0n) {
         fail(`SeedResult says taken ${show(graduation.taken)}, lp_amount ${graduation.lpAmount}, but ${show(left)} left the escrows`);
@@ -777,13 +835,13 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
     if (show(paramsOf(state)) !== show(wanted)) {
         fail(`the market state holds ${show(paramsOf(state))}, but ${show(wanted)} was sent, with the launchpad's seeder`);
     }
-    if (state.status !== MarketStatus.Open || state.marketSigner !== market || show(state.reserves) !== show(DEMO_MARKET.seed)) {
+    if (state.status !== MarketStatus.Open || state.marketSigner !== market || show(state.reserves) !== show(TOKEN_MARKET.seed)) {
         fail(`the market state is ${state.status} with reserves ${show(state.reserves)} and market signer ${state.marketSigner}`);
     }
     info("the market state holds the parameters sent, with the launchpad's PDA as its seeder; open, holding the seed");
 
-    const spec = freshSpec(wanted, DEMO_MARKET.seed);
-    for (const [input, output, amount] of DEMO_MARKET.trades) {
+    const spec = freshSpec(wanted, TOKEN_MARKET.seed);
+    for (const [input, output, amount] of TOKEN_MARKET.trades) {
         await tradeChecked(payer, programId, view, spec, ['launched token', 'quote token'], input, output, amount);
     }
     await checkBooksAgainst(marketState, spec, wanted.virtualReserve);
@@ -873,17 +931,19 @@ async function payOut(
 }
 
 /**
- * Step 15: a market of token A against wrapped SOL, taxed in SOL, created and seeded from the
- * metadata in one transaction as in steps 5 and 6, its parameters and seed read back as in
- * step 7, traded both ways and its books checked as in steps 8 and 9, then paid out.
+ * Step 15, the demo market: a fresh demo token against wrapped SOL, taxed in SOL, created and
+ * seeded from the metadata in one transaction as in steps 5 and 6, its parameters and seed
+ * read back as in step 7, traded both ways and its books checked as in steps 8 and 9, then
+ * paid out.
  */
-async function solTaxedMarket(payer: KeyPairSigner, programId: Address, metadata: pipeline.StrategyMetadata, tokenA: Address) {
+async function solTaxedMarket(payer: KeyPairSigner, programId: Address, metadata: pipeline.StrategyMetadata) {
     const init = metadata.init ?? fail('metadata.json needs `init` for this demo');
-    const label = 'SOL market';
+    const label = 'demo market';
+    const token = await createTestToken(payer, 'demo token', SOL_MARKET.tokenDecimals, MINTED);
     // Wrap the seed and the buys, with Pipeline's fee on each.
-    const buys = SOL_MARKET.trades.filter(([input]) => input === DEMO_MARKET.taxSide).map(([, , amount]) => amount);
+    const buys = SOL_MARKET.trades.filter(([input]) => input === SOL_MARKET.taxSide).map(([, , amount]) => amount);
     const spend = (amount: bigint) => pipeline.maxTotalSpend(amount, 0) ?? fail(`a buy of ${amount} overflows`);
-    const wrap = buys.reduce<bigint>((sum, amount) => sum + spend(amount), SOL_MARKET.seed[DEMO_MARKET.taxSide]);
+    const wrap = buys.reduce<bigint>((sum, amount) => sum + spend(amount), SOL_MARKET.seed[SOL_MARKET.taxSide]);
     const holder = await walletTokenAccount(payer.address, WRAPPED_SOL);
     await send(`wrap ${Number(wrap) / 1e9} SOL`, payer, [
         await getCreateAssociatedTokenIdempotentInstructionAsync({ payer, owner: payer.address, mint: WRAPPED_SOL }),
@@ -891,16 +951,11 @@ async function solTaxedMarket(payer: KeyPairSigner, programId: Address, metadata
         getSyncNativeInstruction({ account: holder }),
     ]);
 
-    const mints = [tokenA, WRAPPED_SOL];
+    const mints = [token, WRAPPED_SOL];
     const tokenPrograms = mints.map(() => TOKEN_PROGRAM_ADDRESS);
     const marketStateKey = await generateKeyPairSigner();
     const marketState = marketStateKey.address;
-    const recipients = [payer.address, (await generateKeyPairSigner()).address, DEFAULT_ADDRESS, DEFAULT_ADDRESS];
-    const sent: SentParams = {
-        ...demoParams(payer.address, payer.address, recipients),
-        shares: [...SOL_MARKET.shares],
-        burnShareBps: SOL_MARKET.burnShareBps,
-    };
+    const sent = paramsOfBlock(SOL_MARKET, payer.address, payer.address, await recipientsOfBlock(payer.address, SOL_MARKET));
     const { instruction: createMarket } = await pipeline.buildCreateMarketFromMetadata({
         init,
         strategyProgram: programId,
@@ -942,7 +997,7 @@ async function solTaxedMarket(payer: KeyPairSigner, programId: Address, metadata
         ],
         [marketStateKey],
     );
-    record.push([`${label}: market`, market]);
+    record.push([`${label}: market`, market], [`${label}: market state`, marketState], [`${label}: demo token`, token]);
     const { data: state } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
     if (show(paramsOf(state)) !== show(sent)) fail(`the ${label}'s state holds ${show(paramsOf(state))}, but ${show(sent)} was sent`);
     if (state.status !== MarketStatus.Open || show(state.reserves) !== show(SOL_MARKET.seed)) {
@@ -952,105 +1007,20 @@ async function solTaxedMarket(payer: KeyPairSigner, programId: Address, metadata
 
     const spec = freshSpec(sent, SOL_MARKET.seed);
     for (const [input, output, amount] of SOL_MARKET.trades) {
-        await tradeChecked(payer, programId, view, spec, ['token A', 'wrapped SOL'], input, output, amount);
+        await tradeChecked(payer, programId, view, spec, ['demo token', 'wrapped SOL'], input, output, amount);
     }
     await checkBooksAgainst(marketState, spec, sent.virtualReserve);
     record.push([`${label}: swaps`, "both delivered their quotes, the spec's prices"]);
     await payOut(payer, metadata, view, spec, label, 'wrapped SOL');
 }
 
-async function main() {
-    const payer = await loadKey(payerPath);
-    const upgradeAuthority = await loadKey(upgradeAuthorityPath);
-    const programId = address(options['program-id']);
-    console.log(`Pipeline router ${pipeline.PIPELINE_PROGRAM_ADDRESS} on ${cluster.url}`);
-    console.log(`Strategy ${programId}`);
-    console.log(`Payer ${payer.address}, upgrade authority ${upgradeAuthority.address}`);
-    record.push(['strategy program', programId]);
-    await checkCluster();
-
-    if (cluster.local) {
-        step('0. Funding both keys on the local validator');
-        await fundLocally('payer', payer.address, LOCAL_FUNDING.payer);
-        await fundLocally('upgrade authority', upgradeAuthority.address, LOCAL_FUNDING.upgradeAuthority);
-    }
-
-    step('1. Checking the program');
-    const program = await pipeline.inspectProgram(rpc, programId, { hashExecutable: false });
-    if (!program.deployed) {
-        fail(`nothing is deployed at ${programId}. Deploy it first (docs/toolchain.md).`);
-    }
-    if (program.upgradeAuthority !== upgradeAuthority.address) {
-        fail(
-            `registration must be signed by the program's upgrade authority (${program.upgradeAuthority ?? 'none: the program is frozen'}), not ${upgradeAuthority.address}. Pass its key as --upgrade-authority.`,
-        );
-    }
-    info(`deployed (${program.loader} loader), upgrade authority ${program.upgradeAuthority}`);
-
-    step('2. Checking metadata');
-    const local = pipeline.parseStrategyMetadata(
-        JSON.parse(readFileSync(new URL('../metadata.json', import.meta.url), 'utf8')),
-    );
-    if (!local.ok) {
-        fail(`metadata.json is invalid:\n   ${local.errors.join('\n   ')}`);
-    }
-    if (local.warnings.length > 0) {
-        fail(`metadata.json must pass with zero warnings:\n   ${local.warnings.join('\n   ')}`);
-    }
-    info(`metadata.json is valid with zero warnings: "${local.value.name}"`);
-    const published = await pipeline.fetchStrategyMetadata(metadataUri);
-    if (published.ok) {
-        info(`${metadataUri} is valid`);
-    } else {
-        info(`warning: ${metadataUri} can't be used yet (${published.reason}: ${published.errors.join('; ')})`);
-        info('desks will show the strategy without metadata until it can be fetched');
-    }
-    const metadata = local.value;
-    if (!metadata.init) {
-        fail('metadata.json needs `init` for this demo');
-    }
-
-    step('3. Registering the strategy');
-    const config = pipeline.decodeConfig((await accountData(await pipeline.configPda())) ?? new Uint8Array());
-    if (!config) {
-        fail('the Pipeline router has no config on this cluster');
-    }
-    const strategyData = await accountData(await pipeline.strategyPda(programId));
-    if (!strategyData) {
-        info(`registering, which costs the listing fee: ${Number(config.listingFeeLamports) / 1e9} SOL`);
-        await send(
-            'register_strategy',
-            payer,
-            [
-                await pipeline.registerStrategy({
-                    payer: upgradeAuthority.address,
-                    registrar: upgradeAuthority.address,
-                    strategyProgram: programId,
-                    listingFeeRecipient: config.listingFeeRecipient,
-                    metadataUri,
-                    maxListingFeeLamports: config.listingFeeLamports,
-                }),
-            ],
-            [upgradeAuthority],
-        );
-    } else if (pipeline.decodeStrategy(strategyData)?.metadataUri !== metadataUri) {
-        info('already registered; pointing it at the new metadata URI');
-        await send(
-            'update_metadata',
-            payer,
-            [
-                await pipeline.updateMetadata({
-                    registrar: upgradeAuthority.address,
-                    strategyProgram: programId,
-                    metadataUri,
-                }),
-            ],
-            [upgradeAuthority],
-        );
-    } else {
-        info('already registered with this metadata URI');
-    }
-
+/**
+ * Steps 4 to 14, on a local validator only: the token-taxed market, created, seeded, traded,
+ * changed by its tax authority and paid out, and a launch graduated from the stand-in
+ * launchpad.
+ */
+async function tokenMarket(payer: KeyPairSigner, programId: Address, metadata: pipeline.StrategyMetadata) {
+    const init = metadata.init ?? fail('metadata.json needs `init` for this demo');
     step('4. Creating two test tokens');
     const mintA = await createTestToken(payer, 'token A', 6, MINTED);
     const mintB = await createTestToken(payer, 'token B', 9, MINTED);
@@ -1063,21 +1033,16 @@ async function main() {
     // `init` says how to create a market: the market state address, the init data and the
     // accounts. A desk does exactly this to show a "create market" form. The market state is
     // a fresh keypair, which signs the creation.
-    if ((metadata.init.market_state ?? 'new_keypair') !== 'new_keypair') {
+    if ((init.market_state ?? 'new_keypair') !== 'new_keypair') {
         fail('a tax market\'s state is a new keypair (docs/spec/tax-amm.md, "Addresses")');
     }
     const marketStateKey = await generateKeyPairSigner();
     const marketState = marketStateKey.address;
-    const otherRecipients = await Promise.all(
-        Array.from({ length: DEMO_MARKET.otherRecipients }, async () => (await generateKeyPairSigner()).address),
-    );
-    const recipients = [payer.address, ...otherRecipients];
-    while (recipients.length < DEMO_MARKET.shares.length) recipients.push(DEFAULT_ADDRESS);
-    const sent = demoParams(payer.address, payer.address, recipients);
+    const sent = paramsOfBlock(TOKEN_MARKET, payer.address, payer.address, await recipientsOfBlock(payer.address, TOKEN_MARKET));
     const args = metadataArgs(sent);
 
     const { instruction: createMarket, resolved } = await pipeline.buildCreateMarketFromMetadata({
-        init: metadata.init,
+        init,
         strategyProgram: programId,
         creator: payer.address,
         marketState,
@@ -1089,7 +1054,7 @@ async function main() {
     });
     // What the metadata resolved, by its account names, checked against the client's PDAs.
     const initAccount = (name: string) => {
-        const index = metadata.init!.accounts?.findIndex((account) => account.name === name) ?? -1;
+        const index = init.accounts?.findIndex((account) => account.name === name) ?? -1;
         return resolved.strategyAccounts[index]?.address ?? fail(`metadata init has no account "${name}"`);
     };
     const [authority] = await findAuthorityPda({ marketState }, { programAddress: programId });
@@ -1142,7 +1107,7 @@ async function main() {
         action: seedAction,
         market: view,
         wallet: payer.address,
-        args: { amount_0: DEMO_MARKET.seed[0], amount_1: DEMO_MARKET.seed[1] },
+        args: { amount_0: TOKEN_MARKET.seed[0], amount_1: TOKEN_MARKET.seed[1] },
     });
     await send(
         'create_market + init_fee_account x2 + seed',
@@ -1195,8 +1160,8 @@ async function main() {
     if (state.status !== MarketStatus.Open || state.marketSigner !== market) {
         fail(`the market state is ${state.status}, with market signer ${state.marketSigner}`);
     }
-    if (show(state.reserves) !== show(DEMO_MARKET.seed)) {
-        fail(`the market recorded reserves ${show(state.reserves)}, but ${show(DEMO_MARKET.seed)} was seeded`);
+    if (show(state.reserves) !== show(TOKEN_MARKET.seed)) {
+        fail(`the market recorded reserves ${show(state.reserves)}, but ${show(TOKEN_MARKET.seed)} was seeded`);
     }
     if (state.mints.join() !== [mintA, mintB].join() || state.vaults.join() !== vaults.join()) {
         fail('the market state records other mints or vaults');
@@ -1206,11 +1171,11 @@ async function main() {
 
     step('8. Trading both ways through the router');
     // The spec's own account of the market, from what was sent, never from the program.
-    const spec = freshSpec(sent, DEMO_MARKET.seed);
+    const spec = freshSpec(sent, TOKEN_MARKET.seed);
     const names = ['token A', 'token B'];
     const tradeAndCheck = (input: number, output: number, amount: bigint) =>
         tradeChecked(payer, programId, view, spec, names, input, output, amount);
-    for (const [input, output, amount] of DEMO_MARKET.trades) await tradeAndCheck(input, output, amount);
+    for (const [input, output, amount] of TOKEN_MARKET.trades) await tradeAndCheck(input, output, amount);
     record.push(['swaps', 'both delivered their quotes, the spec\'s prices']);
 
     step("9. Reading the market state back against the spec's formulas");
@@ -1231,7 +1196,7 @@ async function main() {
     };
 
     step("10. Changing both rates through the metadata's set_taxes action, then trading at them");
-    const [newBuy, newSell] = DEMO_MARKET.newTaxesBps;
+    const [newBuy, newSell] = TOKEN_MARKET.newTaxesBps;
     await send(`set_taxes (buy ${newBuy}, sell ${newSell})`, payer, [
         await authorityAction('set_taxes', { buy_tax_bps: newBuy, sell_tax_bps: newSell }),
     ]);
@@ -1243,7 +1208,7 @@ async function main() {
     spec.buyTaxBps = newBuy;
     spec.sellTaxBps = newSell;
     // The same trades again: each quote must be the spec's price at the new rates.
-    for (const [input, output, amount] of DEMO_MARKET.trades) await tradeAndCheck(input, output, amount);
+    for (const [input, output, amount] of TOKEN_MARKET.trades) await tradeAndCheck(input, output, amount);
     await checkBooks();
     record.push(['set_taxes', `the next swaps were taxed at ${newBuy} and ${newSell} bps`]);
 
@@ -1300,21 +1265,144 @@ async function main() {
     record.push(['renounce_tax_authority', 'set_taxes and set_recipients refused afterwards']);
 
     step('13. Graduating a token from a launchpad into a tax market');
-    if (cluster.local) {
-        await graduateFromLaunchpad(payer, programId, metadata);
-    } else {
-        info('skipped: the stand-in launchpad is a test program, never deployed to devnet');
-    }
+    await graduateFromLaunchpad(payer, programId, metadata);
 
     step("14. Paying out every slot of the market with the metadata's distribute and burn actions");
     await payOut(payer, metadata, view, spec, 'market', 'token B');
+}
 
-    step('15. A second market, taxed in wrapped SOL: created, seeded, traded and paid out');
-    await solTaxedMarket(payer, programId, metadata, mintA);
+async function main() {
+    const payer = await loadKey(payerPath);
+    const upgradeAuthority = await loadKey(upgradeAuthorityPath);
+    const programId = address(options['program-id']);
+    console.log(`Pipeline router ${pipeline.PIPELINE_PROGRAM_ADDRESS} on ${cluster.url}`);
+    console.log(`Strategy ${programId}`);
+    console.log(`Payer ${payer.address}, upgrade authority ${upgradeAuthority.address}`);
+    record.push(['strategy program', programId]);
+    await checkCluster();
+
+    if (cluster.local) {
+        step('0. Funding both keys on the local validator');
+        await fundLocally('payer', payer.address, LOCAL_FUNDING.payer);
+        await fundLocally('upgrade authority', upgradeAuthority.address, LOCAL_FUNDING.upgradeAuthority);
+    }
+
+    step('1. Checking the program');
+    const program = await pipeline.inspectProgram(rpc, programId, { hashExecutable: false });
+    if (!program.deployed) {
+        fail(`nothing is deployed at ${programId}. Deploy it first (docs/toolchain.md).`);
+    }
+    if (program.upgradeAuthority !== upgradeAuthority.address) {
+        fail(
+            `registration must be signed by the program's upgrade authority (${program.upgradeAuthority ?? 'none: the program is frozen'}), not ${upgradeAuthority.address}. Pass its key as --upgrade-authority.`,
+        );
+    }
+    info(`deployed (${program.loader} loader), upgrade authority ${program.upgradeAuthority}`);
+
+    step('2. Checking metadata');
+    const local = pipeline.parseStrategyMetadata(
+        JSON.parse(readFileSync(new URL('../metadata.json', import.meta.url), 'utf8')),
+    );
+    if (!local.ok) {
+        fail(`metadata.json is invalid:\n   ${local.errors.join('\n   ')}`);
+    }
+    if (local.warnings.length > 0) {
+        fail(`metadata.json must pass with zero warnings:\n   ${local.warnings.join('\n   ')}`);
+    }
+    info(`metadata.json is valid with zero warnings: "${local.value.name}"`);
+    const published = await pipeline.fetchStrategyMetadata(metadataUri);
+    if (published.ok && published.warnings.length === 0) {
+        info(`${metadataUri} is valid with zero warnings`);
+    } else if (onDevnet && options['metadata-not-yet-public']) {
+        // The router only stores the URI; it resolves once the repo is public (TAX-54).
+        if (!metadataUri.startsWith(`${RAW_REPO}/`) || !metadataUri.endsWith('/programs/tax-amm/metadata.json')) {
+            fail(`--metadata-not-yet-public takes only this repo's metadata.json on ${RAW_REPO}, not ${metadataUri}`);
+        }
+        info(`${metadataUri} does not resolve yet (${published.ok ? published.warnings.join('; ') : published.reason}); registering it anyway with --metadata-not-yet-public`);
+        info('the committed metadata.json was checked instead; desks show the strategy without metadata until the repo is public');
+    } else if (onDevnet) {
+        // Pipeline's registry and every terminal read the strategy through this URI.
+        fail(
+            `${metadataUri} must resolve and pass the validator with zero warnings before it is registered on devnet: ${
+                published.ok ? published.warnings.join('; ') : `${published.reason}: ${published.errors.join('; ')}`
+            }`,
+        );
+    } else {
+        info(`warning: ${metadataUri} can't be used yet (${published.ok ? published.warnings.join('; ') : `${published.reason}: ${published.errors.join('; ')}`})`);
+        info('desks will show the strategy without metadata until it can be fetched');
+    }
+    const metadata = local.value;
+    if (!metadata.init) {
+        fail('metadata.json needs `init` for this demo');
+    }
+
+    step('3. Registering the strategy');
+    const config = pipeline.decodeConfig((await accountData(await pipeline.configPda())) ?? new Uint8Array());
+    if (!config) {
+        fail('the Pipeline router has no config on this cluster');
+    }
+    const strategyData = await accountData(await pipeline.strategyPda(programId));
+    if (!strategyData) {
+        info(`registering, which costs the listing fee: ${Number(config.listingFeeLamports) / 1e9} SOL`);
+        await send(
+            'register_strategy',
+            payer,
+            [
+                await pipeline.registerStrategy({
+                    payer: upgradeAuthority.address,
+                    registrar: upgradeAuthority.address,
+                    strategyProgram: programId,
+                    listingFeeRecipient: config.listingFeeRecipient,
+                    metadataUri,
+                    maxListingFeeLamports: config.listingFeeLamports,
+                }),
+            ],
+            [upgradeAuthority],
+        );
+    } else if (pipeline.decodeStrategy(strategyData)?.metadataUri !== metadataUri) {
+        info('already registered; pointing it at the new metadata URI');
+        await send(
+            'update_metadata',
+            payer,
+            [
+                await pipeline.updateMetadata({
+                    registrar: upgradeAuthority.address,
+                    strategyProgram: programId,
+                    metadataUri,
+                }),
+            ],
+            [upgradeAuthority],
+        );
+    } else {
+        info('already registered with this metadata URI');
+    }
+
+    if (options['register-only']) {
+        info('--register-only: no market is created');
+    } else {
+        if (onlyDemoMarket) {
+            step('4 to 14. The token-taxed market and the launch');
+            info(
+                onDevnet
+                    ? 'skipped: on devnet the demo creates only the demo market, step 15'
+                    : 'skipped by --demo-market-only, as on devnet',
+            );
+        } else {
+            await tokenMarket(payer, programId, metadata);
+        }
+
+        step('15. The demo market, a demo token taxed in wrapped SOL: created, seeded, traded and paid out');
+        await solTaxedMarket(payer, programId, metadata);
+    }
 
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));
     for (const [label, value] of record) info(`${label.padEnd(width)}  ${value}`);
+    if (options.record) {
+        const run = { cluster: onDevnet ? 'devnet' : cluster.url, metadataUri, at: new Date().toISOString(), record };
+        writeFileSync(options.record, `${JSON.stringify(run, null, 2)}\n`);
+        info(`written to ${options.record}`);
+    }
 }
 
 main().catch((error) => {
