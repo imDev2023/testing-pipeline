@@ -17,8 +17,8 @@ wall](https://github.com/imDev2023/testing-pipeline/issues/50)):
 - the tip never exceeds `floor(work × fee_bps / 10,000)`;
 - closing and placing the wall conserves the ledgers, never finds them short of the curve's
   own holdings, and leaves them covering the curve and the new wall, placed at `min(s, floor,
-  last_slot_low)`, never above the price, the floor nor a nonzero last traded slot's lowest
-  close (`POOL4-50`).
+  low_since_placement)`, never above the price, the floor nor a nonzero lowest close since
+  the last placement (`POOL4-50`).
 
 And the Book of Knowledge invariant WG-5 (`.bok/confirmed-invariants/CONFIRMED.md`):
 `place_wall` cannot be called twice for two tips, since right after a placement there is no
@@ -253,7 +253,8 @@ results.append(
 # wall (V = W × Q, top `t`); `m` is min(s, t). Step 2 closes the wall with floors `ct`, `cs`;
 # step 3 keeps the curve's holdings rounded up, `Ct`, `Cs`; step 4 tips `tip` from what is
 # idle; step 5 places W' = floor(idle × Q / top') at top' = min(s, floor, low), at or below
-# s, where `low` is the last traded slot's lowest close and 0 caps nothing (`POOL4-50`).
+# s, where `low` is the lowest close since the last placement and 0 caps nothing
+# (`POOL4-50`); `place_in_slot` then resets the low to the price (`guard_z3.py`).
 # The floor is the one `place_in_slot` brought up to date for its slot, which `guard_z3.py`
 # proves is at or below the last close `lc` (`POOL4-50`); the last close is the price, since
 # only a swap moves either, so here the floor is assumed at or below `lc = s`.
@@ -292,7 +293,7 @@ results.append(
         before,
     )
 )
-lc, low = Int("last_close"), Int("last_slot_low")
+lc, low = Int("last_close"), Int("low_since_placement")
 min_s_floor = If(i_s < floor_, i_s, floor_)
 placed = And(
     before,
@@ -315,7 +316,7 @@ results.append(
 )
 results.append(
     prove(
-        "place_wall: the new wall's top is at or below the price, the floor and a nonzero last traded slot's low, above 0, and the ledgers cover the curve and the new wall",
+        "place_wall: the new wall's top is at or below the price, the floor and a nonzero low since the last placement, above 0, and the ledgers cover the curve and the new wall",
         And(
             top2 <= i_s,
             top2 <= floor_,
@@ -331,7 +332,7 @@ results.append(
 
 results.append(
     prove(
-        "place_wall in a slot (POOL4-50): under the floor brought up to date, the new wall's top is the lower of the floor and a nonzero last traded slot's low, at or below the last close, the price at placement",
+        "place_wall in a slot (POOL4-50): under the floor brought up to date, the new wall's top is the lower of the floor and a nonzero low since the last placement, at or below the last close, the price at placement",
         And(
             top2 == If(Or(low == 0, floor_ <= low), floor_, low),
             top2 <= lc,
@@ -342,7 +343,7 @@ results.append(
 )
 results.append(
     prove(
-        "place_wall in a slot (POOL4-50): a last traded slot's low below the floor, a dip bought back in its slot, caps the wall at the dip",
+        "place_wall in a slot (POOL4-50): a low since the last placement below the floor, a dip bought back since, whatever traded after it, caps the wall at the dip",
         top2 == low,
         in_slot,
         low > 0,

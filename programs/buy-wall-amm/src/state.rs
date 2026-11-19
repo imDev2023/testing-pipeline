@@ -1094,7 +1094,7 @@ mod proofs {
     }
 
     /// `place_wall`'s books read and write exactly their nine fields, never the price, the
-    /// curve's liquidity, the floor, the last traded slot's low or the fee, which it reads
+    /// curve's liquidity, the floor, the low since the last placement or the fee, which it reads
     /// through `wall_at` only.
     /// Verified in 28 seconds on the owner's Mac (2026-11-16).
     #[kani::proof]

@@ -444,7 +444,8 @@ mod proofs {
         kani::assume(at.sqrt_price >= q && at.sqrt_price < q + (1 << 5));
         kani::assume(at.floor >= q && at.floor <= at.sqrt_price);
         kani::assume(
-            at.low_since_placement == 0 || (at.low_since_placement >= q && at.low_since_placement < q + (1 << 5)),
+            at.low_since_placement == 0
+                || (at.low_since_placement >= q && at.low_since_placement < q + (1 << 5)),
         );
         kani::assume(at.liquidity >= 1 << 20 && at.liquidity < (1 << 20) + (1 << 5));
         kani::assume(books.wall.liquidity < 1 << 5);
@@ -458,7 +459,9 @@ mod proofs {
             assert_eq!(after.idle_sol, 0);
             assert!(after.wall.top <= at.floor && after.wall.top <= at.sqrt_price);
             assert!(at.low_since_placement == 0 || after.wall.top <= at.low_since_placement);
-            assert!(after.wall.top == placement_top(at.sqrt_price, at.floor, at.low_since_placement));
+            assert!(
+                after.wall.top == placement_top(at.sqrt_price, at.floor, at.low_since_placement)
+            );
         }
     }
 
@@ -549,8 +552,9 @@ mod tests {
     fn the_worked_examples_place_wall_lands_on_the_spec_numbers() {
         let (after, placement) = place(BEFORE, AT).unwrap();
         assert_eq!(placement.tip, 912_933);
-        assert_eq!(after.wall.top, 1_844_674_407_372_029_099);
-        assert_eq!(after.wall.liquidity, 903_804_009);
+        // The top is the opening price, the lowest close since the seed (`POOL4-50`).
+        assert_eq!(after.wall.top, OPENING);
+        assert_eq!(after.wall.liquidity, 903_804_010);
         assert_eq!(after.wall_sol_placed, 90_380_400);
         assert_eq!(after.pool_sol, 10_007_047_068);
         assert_eq!(placement.dust_tokens, 11);

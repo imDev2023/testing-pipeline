@@ -666,25 +666,26 @@ mod tests {
     }
 
     /// The worked example's market after `place_wall`: the curve trimmed to 99,166,666,666 and
-    /// a wall of 903,804,009 placed at the price.
+    /// a wall of 903,804,010 placed at the opening price, the lowest close since the seed, a
+    /// hair below the price (`POOL4-50`).
     const AFTER_PLACE_WALL: Curve = Curve {
         sqrt_price: 1_844_674_407_372_029_099,
         liquidity: 99_166_666_666,
     };
     const WALL: Wall = Wall {
-        liquidity: 903_804_009,
-        top: 1_844_674_407_372_029_099,
+        liquidity: 903_804_010,
+        top: 1_844_674_407_370_955_161,
     };
 
     #[test]
     fn the_worked_examples_sell_into_the_wall_prices_at_the_spec_numbers() {
         // 60 seconds after `place_wall`, a sell of 20,000,000,000 units, through the curve and
-        // the wall together (the price is at the wall's top).
+        // the wall together (from a hair above the wall's top, so the curve alone to it first).
         let sold = sell(AFTER_PLACE_WALL, WALL, 20_000_000_000, FEE_BPS).unwrap();
         assert_eq!(sold.amount_out + sold.fee, 196_081_138);
         assert_eq!(sold.fee, 1_960_812);
         assert_eq!(sold.amount_out, 194_120_326);
-        assert_eq!(sold.sqrt_price, 1_808_529_293_213_661_729);
+        assert_eq!(sold.sqrt_price, 1_808_529_293_214_755_428);
         // The wall has spent 1,770,941 lamports on 180,633,508 units.
         let placed = 90_380_400;
         assert_eq!(placed - WALL.sol_at(sold.sqrt_price).unwrap(), 1_770_941);

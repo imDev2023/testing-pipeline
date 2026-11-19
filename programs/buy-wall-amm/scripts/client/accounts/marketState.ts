@@ -170,10 +170,10 @@ export type MarketState = {
   /** 727: u64, token units, the part of `retired_tokens` that earns the reward share */
   retiredRewardable: ReadonlyUint8Array;
   /**
-   * 735: u128, Q64.64, the lowest close of the last slot that traded; 0 (a market written
-   * before this field) caps nothing
+   * 735: u128, Q64.64, the lowest close since the last placement (the seed counts as one);
+   * 0 (a market written before this field) caps nothing
    */
-  lastSlotLow: ReadonlyUint8Array;
+  lowSincePlacement: ReadonlyUint8Array;
   /** 751 to the end: zeroed, for fields later layouts append. */
   reserve: ReadonlyUint8Array;
 };
@@ -294,10 +294,10 @@ export type MarketStateArgs = {
   /** 727: u64, token units, the part of `retired_tokens` that earns the reward share */
   retiredRewardable: ReadonlyUint8Array;
   /**
-   * 735: u128, Q64.64, the lowest close of the last slot that traded; 0 (a market written
-   * before this field) caps nothing
+   * 735: u128, Q64.64, the lowest close since the last placement (the seed counts as one);
+   * 0 (a market written before this field) caps nothing
    */
-  lastSlotLow: ReadonlyUint8Array;
+  lowSincePlacement: ReadonlyUint8Array;
   /** 751 to the end: zeroed, for fields later layouts append. */
   reserve: ReadonlyUint8Array;
 };
@@ -367,7 +367,7 @@ export function getMarketStateEncoder(): FixedSizeEncoder<MarketStateArgs> {
       ["tipsPaid", fixEncoderSize(getBytesEncoder(), 16)],
       ["capFallUnmatched", fixEncoderSize(getBytesEncoder(), 8)],
       ["retiredRewardable", fixEncoderSize(getBytesEncoder(), 8)],
-      ["lastSlotLow", fixEncoderSize(getBytesEncoder(), 16)],
+      ["lowSincePlacement", fixEncoderSize(getBytesEncoder(), 16)],
       ["reserve", fixEncoderSize(getBytesEncoder(), 273)],
     ]),
     (value) => ({ ...value, discriminator: MARKET_STATE_DISCRIMINATOR }),
@@ -438,7 +438,7 @@ export function getMarketStateDecoder(): FixedSizeDecoder<MarketState> {
     ["tipsPaid", fixDecoderSize(getBytesDecoder(), 16)],
     ["capFallUnmatched", fixDecoderSize(getBytesDecoder(), 8)],
     ["retiredRewardable", fixDecoderSize(getBytesDecoder(), 8)],
-    ["lastSlotLow", fixDecoderSize(getBytesDecoder(), 16)],
+    ["lowSincePlacement", fixDecoderSize(getBytesDecoder(), 16)],
     ["reserve", fixDecoderSize(getBytesDecoder(), 273)],
   ]);
 }

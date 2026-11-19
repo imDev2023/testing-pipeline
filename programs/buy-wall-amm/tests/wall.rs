@@ -271,7 +271,9 @@ fn the_worked_examples_wall_numbers_are_reproduced_through_the_router() {
     assert_eq!(before.last_close(), 1_844_674_407_372_029_099);
 
     // `place_wall` is refused in the sell's slot; from the next slot it runs, bringing the
-    // floor down to the sell's price, the price that slot opened at.
+    // floor down to the sell's price, the price that slot opened at. The sell closed just
+    // above the opening price, the lowest close since the seed, so the wall goes there
+    // (`POOL4-50`), and the low is reset to the price at placement.
     let keeper = env.keeper();
     assert_refused(
         env.place_wall(&market, &keeper),
@@ -281,8 +283,8 @@ fn the_worked_examples_wall_numbers_are_reproduced_through_the_router() {
     let (tip, logs) = env.place_wall(&market, &keeper).unwrap();
     assert_eq!(tip, 912_933);
     let placed = env.state(&market);
-    assert_eq!(placed.wall_top(), 1_844_674_407_372_029_099);
-    assert_eq!(placed.wall_liquidity(), 903_804_009);
+    assert_eq!(placed.wall_top(), 1_844_674_407_370_955_161);
+    assert_eq!(placed.wall_liquidity(), 903_804_010);
     assert_eq!(placed.wall_sol_placed(), 90_380_400);
     assert_eq!(placed.pool_sol(), 10_007_047_068);
     assert_eq!(placed.retired_tokens(), 8_333_333_340);
@@ -292,7 +294,7 @@ fn the_worked_examples_wall_numbers_are_reproduced_through_the_router() {
     assert_eq!(placed.tips_paid(), 912_933);
     assert_eq!(placed.wall_tokens_bought(), 0);
     // `place_wall` never moves the price, the curve, the cap or the counters, and of the guard
-    // only the floor, at the same time, so its clock stays.
+    // only the floor, at the same time, so its clock stays, and the low.
     assert_eq!(placed.sqrt_price(), before.sqrt_price());
     assert_eq!(placed.liquidity(), before.liquidity());
     assert_eq!(placed.cap(), before.cap());
@@ -300,6 +302,7 @@ fn the_worked_examples_wall_numbers_are_reproduced_through_the_router() {
         placed.guard(),
         buy_wall_amm::guard::Guard {
             floor: 1_844_674_407_372_029_099,
+            low_since_placement: 1_844_674_407_372_029_099,
             ..before.guard()
         }
     );
@@ -317,8 +320,8 @@ fn the_worked_examples_wall_numbers_are_reproduced_through_the_router() {
             dust_sol: 2,
             dust_tokens: 11,
             tip: 912_933,
-            wall_top: 1_844_674_407_372_029_099,
-            wall_liquidity: 903_804_009,
+            wall_top: 1_844_674_407_370_955_161,
+            wall_liquidity: 903_804_010,
             wall_sol_placed: 90_380_400,
         }]
     );
@@ -332,7 +335,7 @@ fn the_worked_examples_wall_numbers_are_reproduced_through_the_router() {
     let sold = env.state(&market);
     assert_eq!(sold.fees_collected() - placed.fees_collected(), 1_960_812);
     assert_eq!(out + 1_960_812, 196_081_138);
-    assert_eq!(sold.sqrt_price(), 1_808_529_293_213_661_729);
+    assert_eq!(sold.sqrt_price(), 1_808_529_293_214_755_428);
     // The wall has spent 1,770,941 lamports on 180,633,508 units.
     let wall = sold.wall();
     assert_eq!(
@@ -351,9 +354,12 @@ fn pricing_above_across_and_inside_the_wall_matches_the_spec_both_ways() {
     env.place_wall(&market, &keeper).unwrap();
     let top = env.state(&market).wall_top();
     let price = |env: &Env| env.state(&market).sqrt_price();
-    assert_eq!(price(&env), top);
+    // The top is the opening price, the lowest close since the seed, a hair below the price
+    // (`POOL4-50`).
+    assert!(price(&env) > top && price(&env) - top < 2_000_000);
 
-    // Inside: at the top a sell goes through the curve and the wall, and stays below it.
+    // Across, downward from a hair above the top: a sell through the curve alone to the top,
+    // then through the curve and the wall, and stays below it.
     trade(&mut env, &market, &trader, SELL, 20_000_000_000);
     assert!(price(&env) < top);
     // A buy that stays below the top, through both.
@@ -738,7 +744,7 @@ fn after_a_pump_place_wall_places_the_wall_at_the_lagging_floor() {
 /// moves the floor, so the wall is never dragged down for good by a price that lasted only
 /// inside one slot; `place_wall` in that slot is refused. Since the placement cap (amended
 /// 2026-11-19), the next slot's `place_wall` puts the wall at the dip's low once, the griefing
-/// residual the owner accepted, and once a swap in a later slot has set a new low and idle
+/// residual the owner accepted, and resets the low to the price at placement, so once idle
 /// SOL has refilled, the next placement goes back up to the floor. A genuine fall, a sell
 /// nobody buys back, lowers the floor from the next slot on.
 #[test]
@@ -779,40 +785,34 @@ fn sos_h003_a_dip_bought_back_in_its_own_slot_never_moves_the_floor() {
     );
 
     // From the next slot it brings the floor up to date with the price the slot opened at,
-    // the buy back's close, which leaves it up; the slot's lowest close, the dip's, caps the
-    // placement, so this one wall goes at the dip (the placement cap, `POOL4-50`).
-    assert_eq!(back.last_slot_low(), dip);
+    // the buy back's close, which leaves it up; the lowest close since the last placement,
+    // the dip's, caps the placement, so this one wall goes at the dip (the placement cap,
+    // `POOL4-50`).
+    assert_eq!(back.low_since_placement(), dip);
     env.next_slot();
     env.place_wall(&market, &keeper).unwrap();
     let placed = env.state(&market);
     assert_eq!(placed.floor(), walled.floor().min(back.sqrt_price()));
     assert!(placed.floor() > dip + (opening - dip) * 9 / 10);
     assert_eq!(placed.wall_top(), dip);
-    // It brought only the floor up to date: the reference, its slot and the slot's low wait
-    // for a swap.
+    // It brought the floor up to date and reset the low to the price at placement (code
+    // review finding 1: before, it left the low alone and a later swap reset it); the
+    // reference and its slot wait for a swap.
     assert_eq!(
-        (
-            placed.reference(),
-            placed.ref_time(),
-            placed.last_slot(),
-            placed.last_slot_low()
-        ),
-        (
-            back.reference(),
-            back.ref_time(),
-            back.last_slot(),
-            back.last_slot_low()
-        )
+        (placed.reference(), placed.ref_time(), placed.last_slot()),
+        (back.reference(), back.ref_time(), back.last_slot())
     );
+    assert_eq!(placed.low_since_placement(), placed.sqrt_price());
     assert_books(&env, &market);
 
-    // A swap in a later slot starts a new low at its close, at the price; once idle SOL has
-    // refilled to the threshold, the next placement goes back up to the floor.
+    // A buy in a later slot leaves the low at the price at placement, at or above the
+    // floor; once idle SOL has refilled to the threshold, the next placement goes back up
+    // to the floor.
     later(&mut env, 60);
     trade(&mut env, &market, &attacker, BUY, 1_000_000);
     let refilled = env.state(&market);
-    assert_eq!(refilled.last_slot_low(), refilled.sqrt_price());
-    assert!(refilled.sqrt_price() >= placed.floor());
+    assert_eq!(refilled.low_since_placement(), placed.sqrt_price());
+    assert!(refilled.low_since_placement() >= placed.floor());
     add_idle_sol(&mut env, &market, WALL_THRESHOLD);
     env.next_slot();
     env.place_wall(&market, &keeper).unwrap();
@@ -1036,8 +1036,8 @@ fn least(mut lo: u64, mut hi: u64, reaches: impl Fn(u64) -> bool) -> u64 {
 /// slot N+1 the floor stays up; it then calls `place_wall` and sells everything it bought.
 /// Under the slot-based floor alone the wall went up at the old floor with all the idle SOL,
 /// the dump's trimmed SOL included, and the back-runner sold into it for more than it paid.
-/// Every placement is now capped at the lowest close of the last slot that traded, the
-/// dump's low, so the wall goes there and the round trip never pays.
+/// Every placement is now capped at the lowest close since the last placement, the dump's
+/// low, so the wall goes there and the round trip never pays.
 #[test]
 fn sos_r2v_backrun_of_a_fall_across_one_slot_never_pays() {
     let mut env = Env::new();
@@ -1099,9 +1099,9 @@ fn sos_r2v_backrun_of_a_fall_across_one_slot_never_pays() {
         "a swap moved the floor in its own slot"
     );
     assert_eq!(
-        back.last_slot_low(),
+        back.low_since_placement(),
         low,
-        "the slot's lowest close is the dump's"
+        "the lowest close since the last placement is the dump's"
     );
 
     // Slot N+1: `place_wall` by the back-runner. The floor stays up (the slot opened at the

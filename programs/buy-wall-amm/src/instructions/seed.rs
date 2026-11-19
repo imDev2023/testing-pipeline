@@ -12,6 +12,7 @@ use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::errors::StrategyError;
 use crate::events::MarketSeeded;
+use crate::instructions::init_market::mint_refusal_error;
 use crate::opening;
 use crate::state::{is_market_state, MarketState, STATUS_CREATED, STATUS_OPEN};
 use crate::token::{transfer_measured, Transfer};
@@ -173,27 +174,23 @@ fn check_authorities_removed(token_mint: &InterfaceAccount<'_, Mint>) -> Result<
     );
     let info = token_mint.to_account_info();
     let data = info.try_borrow_data()?;
-    require!(
-        transfer_hook_cleared(&info.owner.to_bytes(), &data),
-        StrategyError::TransferHookLive
-    );
-    Ok(())
+    check_transfer_hook(&info.owner.to_bytes(), &data).map_err(|refusal| error!(refusal))
 }
 
-/// Whether a mint's `data` carries no live transfer hook: no TransferHook extension at all
-/// (an SPL Token mint, or a Token-2022 mint without one), or one whose value, the hook
-/// authority then the hook program (32 bytes each, zero for none), is all zeros, the state
-/// a contained token reaches after its unlock. Once both are unset Token-2022 can never set
-/// them again. The extension is read through the shared `mint-rules` crate, after walking
-/// the mint's entries again with it as creation did, so a malformed walk, in which no entry
-/// can be found, is refused rather than taken for "no hook" (review finding R2-06).
-fn transfer_hook_cleared(owner: &[u8; 32], data: &[u8]) -> bool {
-    if mint_rules::check_mint(owner, data).is_err() {
-        return false;
-    }
+/// Refuses a mint whose `data` carries a live transfer hook, with `TransferHookLive`; passes
+/// one with no TransferHook extension at all (an SPL Token mint, or a Token-2022 mint without
+/// one), or one whose value, the hook authority then the hook program (32 bytes each, zero
+/// for none), is all zeros, the state a contained token reaches after its unlock. Once both
+/// are unset Token-2022 can never set them again. The extension is read through the shared
+/// `mint-rules` crate, after walking the mint's entries again with it as creation did, so a
+/// malformed walk, in which no entry can be found, is refused rather than taken for "no hook"
+/// (review finding R2-06), with the error creation reports for it (`mint_refusal_error`).
+fn check_transfer_hook(owner: &[u8; 32], data: &[u8]) -> core::result::Result<(), StrategyError> {
+    mint_rules::check_mint(owner, data).map_err(mint_refusal_error)?;
     match mint_rules::find_extension(data, mint_rules::extension::TRANSFER_HOOK) {
-        None => true,
-        Some(hook) => hook.len() == TRANSFER_HOOK_LEN && hook.iter().all(|&b| b == 0),
+        None => Ok(()),
+        Some(hook) if hook.len() == TRANSFER_HOOK_LEN && hook.iter().all(|&b| b == 0) => Ok(()),
+        Some(_) => Err(StrategyError::TransferHookLive),
     }
 }
 
@@ -274,30 +271,45 @@ mod tests {
 
     /// Round 2 finding R2-06: the seed reads the transfer hook only from a mint whose
     /// extension entries walk cleanly, so a malformed walk, which finds no entry, is refused
-    /// as a hook that cannot be shown cleared rather than taken for "no hook".
+    /// rather than taken for "no hook"; a mint the shared mint rules refuse is refused as
+    /// creation refuses it (code review finding 6: `WrongAccount` for a malformed mint,
+    /// `MintExtensionNotAllowed` for a refused extension), and `TransferHookLive` names only
+    /// a hook that is actually set.
     #[test]
     fn sos_r2_06_a_malformed_extension_walk_is_not_taken_for_no_hook() {
         let token_2022 = anchor_spl::token_2022::ID.to_bytes();
+        let refusal = |data: &[u8]| check_transfer_hook(&token_2022, data).map_err(|e| e as u32);
         // A cleared hook, and no hook at all, pass.
-        assert!(transfer_hook_cleared(
-            &token_2022,
-            &token_2022_mint(&hook_entry(&[0; 64]))
-        ));
-        assert!(transfer_hook_cleared(&token_2022, &token_2022_mint(&[])));
-        // A live hook is refused.
+        assert_eq!(refusal(&token_2022_mint(&hook_entry(&[0; 64]))), Ok(()));
+        assert_eq!(refusal(&token_2022_mint(&[])), Ok(()));
+        // A live hook is refused as one.
         let mut live = [0; 64];
         live[40] = 7;
-        assert!(!transfer_hook_cleared(
-            &token_2022,
-            &token_2022_mint(&hook_entry(&live))
-        ));
-        // An entry whose length runs past the account is malformed: refused.
+        assert_eq!(
+            refusal(&token_2022_mint(&hook_entry(&live))),
+            Err(StrategyError::TransferHookLive as u32)
+        );
+        // An entry whose length runs past the account is malformed: refused as a malformed
+        // mint, as creation refuses it.
         let mut malformed = 14u16.to_le_bytes().to_vec();
         malformed.extend_from_slice(&200u16.to_le_bytes());
         malformed.extend_from_slice(&[1; 64]);
-        assert!(!transfer_hook_cleared(
-            &token_2022,
-            &token_2022_mint(&malformed)
-        ));
+        assert_eq!(
+            refusal(&token_2022_mint(&malformed)),
+            Err(StrategyError::WrongAccount as u32)
+        );
+        // An extension outside the allowlist (PermanentDelegate, 12) is refused as one.
+        let mut delegate = 12u16.to_le_bytes().to_vec();
+        delegate.extend_from_slice(&32u16.to_le_bytes());
+        delegate.extend_from_slice(&[0; 32]);
+        assert_eq!(
+            refusal(&token_2022_mint(&delegate)),
+            Err(StrategyError::MintExtensionNotAllowed as u32)
+        );
+        // An account of neither token program is refused as the wrong account.
+        assert_eq!(
+            check_transfer_hook(&[9; 32], &token_2022_mint(&[])).map_err(|e| e as u32),
+            Err(StrategyError::WrongAccount as u32)
+        );
     }
 }

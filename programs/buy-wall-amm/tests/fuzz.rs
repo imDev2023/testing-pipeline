@@ -1406,8 +1406,7 @@ impl World {
         assert!(after.wall_top() <= after.floor());
         assert!(after.wall_top() <= after.sqrt_price());
         assert!(
-            before.low_since_placement() == 0
-                || after.wall_top() <= before.low_since_placement()
+            before.low_since_placement() == 0 || after.wall_top() <= before.low_since_placement()
         );
         assert_eq!(after.low_since_placement(), after.sqrt_price());
         self.placed.push((i, placement));
@@ -1686,7 +1685,8 @@ impl World {
                             )
                         );
                         // Of the guard, only `place_wall` moves anything, and then only the
-                        // floor and its clock (`POOL4-50`).
+                        // floor and its clock, and the low since the last placement, which it
+                        // resets to the price (`POOL4-50`).
                         if placements.is_empty() {
                             assert_eq!(state.guard(), last.guard());
                         } else {
@@ -1695,6 +1695,7 @@ impl World {
                                 buy_wall_amm::guard::Guard {
                                     floor: state.floor(),
                                     floor_time: state.floor_time(),
+                                    low_since_placement: state.sqrt_price(),
                                     ..last.guard()
                                 }
                             );

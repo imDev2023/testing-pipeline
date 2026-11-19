@@ -21,21 +21,23 @@ bound its `checked_mul` needs (docs/spec/pool4-for-solana.md, "After pricing" st
   the slot opened at, at or below the larger of its old value and the reference, and rises by
   at most `FLOOR_CRAWL_BPS / 2` of itself; it is idempotent at one time, and a swap's update
   after `place_wall`'s in the same slot leaves the floor as `place_wall` left it. `close_at`
-  changes only the last close and `last_slot_low`, so a swap's own price never moves the
-  floor: no pump lifts it and no dip drags it down in the swap's slot (SOS findings H003 and
-  H004); `last_slot_low` becomes the price at the slot's first swap (or while it is 0) and
-  is otherwise lowered to it, so after every swap it is the lowest close of the swap's slot,
-  at or below the last close.
+  changes only the last close and `low_since_placement`, so a swap's own price never moves
+  the floor: no pump lifts it and no dip drags it down in the swap's slot (SOS findings H003
+  and H004); `low_since_placement` is lowered to the price (or takes it while it is 0) and
+  never raised, so after every swap it is the lowest close since the last placement, at or
+  below the last close, and a dip bought back, then any swap in a later slot, leaves it at
+  or below the dip (code review finding 1).
 - WG-3: the state invariant `MIN_SQRT_PRICE <= floor <= reference <= MAX_SQRT_PRICE`,
   `MIN_SQRT_PRICE <= last_close <= MAX_SQRT_PRICE` holds at the seed and is kept by every
   swap (`follow`, then `close_at` at a price within the bounds, as `handle_swap` calls them)
   and every `place_wall` (`open_floor` in a slot later than `last_slot`), so every reachable
   state meets the preconditions of WG-1 and WG-2; and the floor `place_wall` places under is
   at or below the price at placement (the last close, since only a swap moves either). With
-  it `last_slot_low` is 0 (a market written before the field) or within the bounds and at or
-  below the last close, kept by every swap and left alone by `place_wall`, so the wall, placed
-  at `min(s, floor, last_slot_low)` (a zero low capping nothing, `POOL4-50`), never divides by
-  0 and never sits above the price.
+  it `low_since_placement` is 0 (a market written before the field) or within the bounds and
+  at or below the last close, kept by every swap and by `place_wall`, which resets it to the
+  price at placement after placing the wall at `min(s, floor, low_since_placement)` (a zero
+  low capping nothing, `POOL4-50`), so the wall never divides by 0 and never sits above the
+  price nor the low.
 
 The clock rule: each of the guard's clocks is written as `max(stored, now)`: `follow` sets
 `ref_time = max(ref_time, now)` and `open_floor` sets `floor_time = max(floor_time, now)`, so
@@ -142,16 +144,16 @@ class Guard:
         self.floor_time = Int(f"{name}_floor_time")
         self.last_slot = Int(f"{name}_last_slot")
         self.last_close = Int(f"{name}_last_close")
-        self.last_slot_low = Int(f"{name}_last_slot_low")
+        self.low_since_placement = Int(f"{name}_low_since_placement")
 
     def ranges(self):
         """Every field in its Rust type's range."""
         return And(
-            *[0 <= v for v in [self.reference, self.floor, self.last_close, self.last_slot, self.last_slot_low]],
+            *[0 <= v for v in [self.reference, self.floor, self.last_close, self.last_slot, self.low_since_placement]],
             self.reference < U128,
             self.floor < U128,
             self.last_close < U128,
-            self.last_slot_low < U128,
+            self.low_since_placement < U128,
             self.last_slot < U64,
             *[And(I64_MIN <= t, t <= I64_MAX) for t in [self.ref_time, self.floor_time]],
         )
@@ -180,12 +182,12 @@ def open_floor(g, now, name):
         floor_time=clock(g.floor_time, now),
         last_slot=g.last_slot,
         last_close=g.last_close,
-        last_slot_low=g.last_slot_low,
+        low_since_placement=g.low_since_placement,
     )
     return after, facts, Or(Not(crawls), some), dt
 
 
-FIELDS = ["reference", "ref_time", "floor", "floor_time", "last_slot", "last_close", "last_slot_low"]
+FIELDS = ["reference", "ref_time", "floor", "floor_time", "last_slot", "last_close", "low_since_placement"]
 
 
 def follow(g, slot, now, name):
@@ -203,19 +205,18 @@ def follow(g, slot, now, name):
         floor_time=g.floor_time,
         last_slot=slot,
         last_close=g.last_close,
-        last_slot_low=g.last_slot_low,
+        low_since_placement=g.low_since_placement,
     )
     opened, o_facts, o_some, floor_dt = open_floor(stepped, now, f"{name}_open")
     after = After(**{k: If(later, getattr(opened, k), getattr(g, k)) for k in FIELDS})
     return after, And(facts, o_facts), Or(Not(later), And(some, o_some)), dt, floor_dt
 
 
-def close_at(g, price, opens):
-    """`Guard::close_at` as written: the last close becomes the price, and `last_slot_low`
-    the price at the slot's first swap (`opens`) or while it is 0, otherwise the lower of
-    itself and the price."""
-    low = If(Or(opens, g.last_slot_low == 0), price, minimum(g.last_slot_low, price))
-    return After(**{**{k: getattr(g, k) for k in FIELDS}, "last_close": price, "last_slot_low": low})
+def close_at(g, price):
+    """`Guard::close_at` as written: the last close becomes the price, and
+    `low_since_placement` the lower of itself and the price, or the price while it is 0."""
+    low = If(g.low_since_placement == 0, price, minimum(g.low_since_placement, price))
+    return After(**{**{k: getattr(g, k) for k in FIELDS}, "last_close": price, "low_since_placement": low})
 
 
 def same(a, b, fields=FIELDS):
@@ -263,7 +264,7 @@ results.append(
                 (g.reference - f1.reference) * 2 * BPS <= g.reference * REF_STEP_BPS,
                 f1.last_slot == slot,
                 f1.last_close == g.last_close,
-                f1.last_slot_low == g.last_slot_low,
+                f1.low_since_placement == g.low_since_placement,
             ),
         ),
         *inputs,
@@ -343,7 +344,7 @@ results.append(
             o1.floor <= maximum(g.floor, g.reference),
             Implies(g.floor <= g.reference, o1.floor <= g.reference),
             Implies(o1.floor > g.floor, (o1.floor - g.floor) * 2 * BPS <= g.floor * FLOOR_CRAWL_BPS),
-            same(o1, g, ["reference", "ref_time", "last_slot", "last_close", "last_slot_low"]),
+            same(o1, g, ["reference", "ref_time", "last_slot", "last_close", "low_since_placement"]),
         ),
         *inputs,
         *prices_ok,
@@ -408,33 +409,30 @@ results.append(
 # to date with the price the slot opened at, so no pump lifts it and no dip drags it down.
 price, p1, p2 = Int("price"), Int("p1"), Int("p2")
 price_ok = [0 <= price, price < U128]
-opens = slot > g.last_slot
-for opened in (True, False):
-    c = close_at(g, price, opened)
-    results.append(
-        prove(
-            f"close_at (opens = {opened}): the last close becomes the price, the slot's low "
-            + ("the price" if opened else "the price while it is 0 and otherwise the lower of itself and the price")
-            + ", never above the price; nothing else changes",
-            And(
-                c.last_close == price,
-                c.last_slot_low <= price,
-                c.last_slot_low == (price if opened else If(g.last_slot_low == 0, price, minimum(g.last_slot_low, price))),
-                same(c, g, FIELDS[:5]),
-            ),
-            *inputs,
-            *price_ok,
-        )
-    )
-# A swap, as `Guard::swap_at` runs it: the slot's first swap starts the low at its close, a
-# later one in the slot lowers it, so a dip bought back in its slot leaves the low at the dip.
-sw = close_at(f1, price, opens)
+c = close_at(g, price)
 results.append(
     prove(
-        "a swap (follow, then close_at with opens = slot > last_slot): the slot's low is its close when it opens the slot (or the low was 0), otherwise the lower of the low and its close, never above the last close it leaves",
+        "close_at: the last close becomes the price, the low since the placement the lower of itself and the price (the price while it is 0), never above the price and never raised; nothing else changes",
         And(
-            sw.last_slot_low == If(Or(opens, g.last_slot_low == 0), price, minimum(g.last_slot_low, price)),
-            sw.last_slot_low <= sw.last_close,
+            c.last_close == price,
+            c.low_since_placement <= price,
+            c.low_since_placement == If(g.low_since_placement == 0, price, minimum(g.low_since_placement, price)),
+            Implies(g.low_since_placement != 0, c.low_since_placement <= g.low_since_placement),
+            same(c, g, FIELDS[:5]),
+        ),
+        *inputs,
+        *price_ok,
+    )
+)
+# A swap, as `Guard::swap_at` runs it, in any slot: it lowers the low to its close and never
+# raises it, so only a placement resets it.
+sw = close_at(f1, price)
+results.append(
+    prove(
+        "a swap (follow, then close_at), in any slot: the low since the placement is the lower of itself and its close (its close while it was 0), never above the last close it leaves",
+        And(
+            sw.low_since_placement == If(g.low_since_placement == 0, price, minimum(g.low_since_placement, price)),
+            sw.low_since_placement <= sw.last_close,
         ),
         *inputs,
         *prices_ok,
@@ -442,19 +440,29 @@ results.append(
         f1_facts,
     )
 )
-# A dip and a buy back in one slot: the low stays at the dip.
-dip, back = Int("dip"), Int("back")
-d1 = close_at(f1, dip, opens)
+# A dip and a buy back in one slot, then a swap at any price in any later slot (code review
+# finding 1's tiny swap): the low stays at or below the dip until a placement resets it.
+dip, back, nudge = Int("dip"), Int("back"), Int("nudge")
+slot2, now2 = Int("slot2"), Int("now2")
+d1 = close_at(f1, dip)
 d2, d2_facts, _, _, _ = follow(d1, slot, now, "d2")
-db = close_at(d2, back, slot > d1.last_slot)
+db = close_at(d2, back)
+d3, d3_facts, _, _, _ = follow(db, slot2, now2, "d3")
+dn = close_at(d3, nudge)
 results.append(
     prove(
-        "a dip bought back in its slot: after the buy back the slot's low is still at most the dip's close, while the floor is as the slot's first update left it",
-        And(db.last_slot_low <= dip, db.floor == d1.floor),
+        "a dip bought back in its slot: after the buy back the low is still at most the dip's close, while the floor is as the slot's first update left it; a swap at any price in any later slot leaves the low at most the dip's close",
+        And(db.low_since_placement <= dip, db.floor == d1.floor, dn.low_since_placement <= dip),
         *inputs,
         *prices_ok,
         f1_facts,
         d2_facts,
+        d3_facts,
+        0 <= slot2,
+        slot2 < U64,
+        i64(now2),
+        0 <= nudge,
+        nudge < U128,
         # A close is a trading price, at or above MIN_SQRT_PRICE, never the 0 that means an
         # unset low.
         MIN_SQRT_PRICE <= dip,
@@ -466,8 +474,8 @@ results.append(
     prove(
         "a swap's own price never moves the floor: swaps at any two prices leave the same floor and floor clock",
         And(
-            close_at(f1, p1, opens).floor == close_at(f1, p2, opens).floor,
-            close_at(f1, p1, opens).floor_time == close_at(f1, p2, opens).floor_time,
+            close_at(f1, p1).floor == close_at(f1, p2).floor,
+            close_at(f1, p1).floor_time == close_at(f1, p2).floor_time,
         ),
         *inputs,
         *prices_ok,
@@ -516,19 +524,19 @@ def top(s, floor, low):
 s0 = Int("s0")
 results.append(
     prove(
-        "guard invariant: the seed (reference = floor = last_close = last_slot_low = the opening price) meets it",
+        "guard invariant: the seed (reference = floor = last_close = low_since_placement = the opening price) meets it",
         invariant(s0, s0, s0, s0),
         MIN_OPENING_SQRT_PRICE <= s0,
         s0 <= MAX_OPENING_SQRT_PRICE,
     )
 )
-closed = close_at(f1, price, opens)
+closed = close_at(f1, price)
 results.append(
     prove(
         "guard invariant: kept by every swap (follow, then close_at at a price within the bounds), any slot and clock, and follow is Some",
-        And(f1_some, invariant(closed.floor, closed.reference, closed.last_close, closed.last_slot_low)),
+        And(f1_some, invariant(closed.floor, closed.reference, closed.last_close, closed.low_since_placement)),
         *inputs,
-        invariant(g.floor, g.reference, g.last_close, g.last_slot_low),
+        invariant(g.floor, g.reference, g.last_close, g.low_since_placement),
         MIN_SQRT_PRICE <= price,
         price <= MAX_SQRT_PRICE,
         f1_facts,
@@ -536,18 +544,18 @@ results.append(
 )
 results.append(
     prove(
-        "guard invariant: kept by every place_wall (open_floor in a slot later than last_slot), any clock; the floor it places under is at or below the price at placement (the last close), and the wall's top, min(price, floor, last_slot_low), is within the bounds and at or below all three",
+        "guard invariant: kept by every place_wall (open_floor in a slot later than last_slot, then the low reset to the price at placement), any clock; the floor it places under is at or below the price at placement (the last close), and the wall's top, min(price, floor, low_since_placement), is within the bounds and at or below all three",
         And(
             o1_some,
-            invariant(o1.floor, o1.reference, o1.last_close, o1.last_slot_low),
+            invariant(o1.floor, o1.reference, o1.last_close, g.last_close),
             o1.floor <= g.last_close,
-            MIN_SQRT_PRICE <= top(g.last_close, o1.floor, o1.last_slot_low),
-            top(g.last_close, o1.floor, o1.last_slot_low) <= o1.floor,
-            top(g.last_close, o1.floor, o1.last_slot_low) <= g.last_close,
-            Implies(o1.last_slot_low != 0, top(g.last_close, o1.floor, o1.last_slot_low) <= o1.last_slot_low),
+            MIN_SQRT_PRICE <= top(g.last_close, o1.floor, o1.low_since_placement),
+            top(g.last_close, o1.floor, o1.low_since_placement) <= o1.floor,
+            top(g.last_close, o1.floor, o1.low_since_placement) <= g.last_close,
+            Implies(o1.low_since_placement != 0, top(g.last_close, o1.floor, o1.low_since_placement) <= o1.low_since_placement),
         ),
         *inputs,
-        invariant(g.floor, g.reference, g.last_close, g.last_slot_low),
+        invariant(g.floor, g.reference, g.last_close, g.low_since_placement),
         o1_facts,
     )
 )

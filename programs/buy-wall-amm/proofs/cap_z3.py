@@ -458,7 +458,7 @@ budget = [
     seeded < U64,
 ]
 # `unmatched_after_fall`: unchanged when the cap did not fall, else the sum capped at one day's
-# allowance (`DECAY_CREDIT_WINDOW` is one day, so the allowance is `per_day`).
+# allowance, `per_day`, independent of `DECAY_CREDIT_WINDOW` (as `src/cap.rs` caps it).
 unmatched_after = If(cap - new_cap == 0, unmatched, minimum(unmatched + (cap - new_cap), per_day))
 results.append(
     prove(

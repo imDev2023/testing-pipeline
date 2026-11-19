@@ -294,13 +294,13 @@ reachable = [
     a64 < U64,
 ]
 I3, floor_price, top2, W2 = Int("I3"), Int("floor_price"), Int("top2"), Int("W2")
-# The last traded slot's lowest close, 0 (capping nothing) or a traded price (`POOL4-50`,
-# `guard_z3.py`'s WG-3).
-slot_low = Int("last_slot_low")
+# The lowest close since the last placement, 0 (capping nothing) or a traded price
+# (`POOL4-50`, `guard_z3.py`'s WG-3).
+slot_low = Int("low_since_placement")
 s_or_floor = If(s0 < floor_price, s0, floor_price)
 results.append(
     prove(
-        "place_wall: a wall placed with idle SOL below 2^64 at top = min(s, floor, last_slot_low) has W x top < 2^128, W < 2^96 and its top in the price bounds",
+        "place_wall: a wall placed with idle SOL below 2^64 at top = min(s, floor, low_since_placement) has W x top < 2^128, W < 2^96 and its top in the price bounds",
         And(W2 * top2 < U128, W2 < 2**96, top2 >= MIN_SQRT_PRICE, top2 <= MAX_SQRT_PRICE),
         I3 >= 0,
         I3 < U64,

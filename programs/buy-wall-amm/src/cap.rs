@@ -109,18 +109,13 @@ pub fn held_rounded_up(liquidity: u128, sqrt_price: u128) -> Option<(u128, u128)
 }
 
 /// The cap's unmatched fall after the ratchet lowers the cap by `by` more: their sum, but
-/// never more than one day's allowance, `cap_decay_per_day × DECAY_CREDIT_WINDOW / 86,400`,
-/// the most the decay credit ever holds (`POOL4-49`); a ratchet that lowers nothing leaves
-/// it as it was.
+/// never more than one day's allowance, `cap_decay_per_day`, whatever `DECAY_CREDIT_WINDOW`
+/// is (`POOL4-49`, review finding R2-01); a ratchet that lowers nothing leaves it as it was.
 pub fn unmatched_after_fall(unmatched: u64, by: u64, rules: CapRules) -> Option<u64> {
     if by == 0 {
         return Some(unmatched);
     }
-    let limit = (rules.cap_decay_per_day as u128)
-        .checked_mul(DECAY_CREDIT_WINDOW as u128)?
-        .checked_div(SECONDS_PER_DAY)?;
-    let sum = (unmatched as u128).checked_add(by as u128)?;
-    u64::try_from(sum.min(limit)).ok()
+    Some(unmatched.saturating_add(by).min(rules.cap_decay_per_day))
 }
 
 /// Step 5: `min(decay_credit + cap_decay_per_day × (now - decay_time),
@@ -440,6 +435,27 @@ mod tests {
     use proptest::prelude::*;
 
     const DAY: i64 = 86_400;
+
+    #[test]
+    fn the_unmatched_fall_never_holds_more_than_one_days_allowance() {
+        let rules = CapRules {
+            cap_floor: 0,
+            cap_decay_per_day: 200_000_000_000,
+        };
+        // Below the allowance the fall adds up; past it, it stops at `cap_decay_per_day`,
+        // one day's allowance, independent of the decay credit's window.
+        assert_eq!(unmatched_after_fall(5, 7, rules), Some(12));
+        assert_eq!(
+            unmatched_after_fall(199_999_999_999, 2, rules),
+            Some(200_000_000_000)
+        );
+        assert_eq!(
+            unmatched_after_fall(u64::MAX, u64::MAX, rules),
+            Some(200_000_000_000)
+        );
+        // A ratchet that lowered nothing leaves it as it was, even above the allowance.
+        assert_eq!(unmatched_after_fall(u64::MAX, 0, rules), Some(u64::MAX));
+    }
 
     /// The worked example's market after its buy an hour after the seed
     /// (docs/spec/pool4-for-solana.md, "Worked example").

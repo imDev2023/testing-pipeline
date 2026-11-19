@@ -30,7 +30,10 @@ pub fn handle_set_recipient(
 ) -> Result<()> {
     let market_state = ctx.accounts.market_state.key();
     let mut state = ctx.accounts.market_state.load_mut()?;
-    // The market's own addresses, none of them a wallet anyone can spend a payout from.
+    // The market's own addresses, none of them a wallet anyone can spend a payout from: the
+    // market state, its vault authority, both vaults, the program, the router's Market
+    // account (the market signer PDA, `["market", program, market_state]` under Pipeline)
+    // and both mints.
     let authority =
         vault_authority(&market_state, state.authority_bump).ok_or(StrategyError::WrongAccount)?;
     let own = [
@@ -39,6 +42,9 @@ pub fn handle_set_recipient(
         state.token_vault,
         state.sol_vault,
         crate::ID,
+        state.market_signer,
+        state.token_mint,
+        state.wsol_mint,
     ];
     let held = match role {
         RecipientRole::Fee => &mut state.fee_recipient,

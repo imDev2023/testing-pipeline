@@ -284,3 +284,25 @@ These have no security effect; they are recorded so they are not lost.
 - No test covers a MemoTransfer-required Token-2022 recipient account, on the program or the gate side (VERIFY-H058).
 - Aviary's panel does not yet show the seeder or warn when roles coincide (VERIFY-H061).
 - Several fixes are pinned by tests whose names carry another finding's ID (H031, H048, H056 and H061 by the `sos_h001`, `sos_h002` and `sos_h007` tests); the verifiers confirmed each exercises the attack.
+
+## Code review (high)
+
+A code review at high effort of the branch, after round 2's fixes, found two Important findings and five nits, all handled on 2026-11-19.
+
+- CR-1 (Important): the placement cap reset to the price at every slot's first swap, so a back-runner's tiny swap first in the slot after a dump bought back to the floor reset it to about the floor, and the next `place_wall` placed at the old floor and paid the back-run again (about 0.136 SOL on round 2's market).
+  Fixed: the field is now `low_since_placement`, the lowest close since the last placement, which the seed sets to the opening price, every swap lowers to its close and never raises, and `place_wall` caps the wall at, then resets to the price at placement ([`POOL4-50`](../../decisions.md#pool4-50-when-the-walls-floor-moves)).
+  It is pinned by `sos_cr1_a_tiny_swap_in_the_next_slot_does_not_clear_the_placement_cap` (the back-run with the tiny swap, which paid before the fix), the fuzzer's back-run step with a tiny-swap variant, `guard_z3.py` (a dip bought back, then a swap at any price in any later slot, leaves the low at or below the dip) and the Proptests.
+  The same layout offset is kept; the worked example's `place_wall` now places at the opening price, the lowest close since the seed, a hair below the sell's price, so its `wall_top`, `wall_liquidity` (903,804,010) and the next sell's `sqrt_price` changed in their last digits, and the spec carries the new numbers exactly.
+  `sos_h003_*` now expects `place_wall` to reset the low to the price at placement, where it used to leave the low for the next swap; `sos_h004_*`, `sos_h050_*` and `sos_r2v_*` pass unchanged but for the field's name.
+- CR-2 (Important, liveness, R2-03): the keeper runner's spec counted `SwapThisSlot` as a failure.
+  Fixed in the spec only: `docs/spec/keeper-runner.md` now treats it as "try again in a later slot", never a failure, and the spec's "For the keeper runner" says `place_wall` is sent at the start of a slot and retried on it.
+- CR-3 (nit): `place_in_slot`'s comment said the floor is brought up to date as a swap's first update would, though it does not step the reference first.
+  Fixed: the comments and the spec now say it is brought up to date against the stored reference, which can only leave it at or below where a swap's update would (R2-04); no behaviour change.
+- CR-4 (nit): the demo's model added every cap fall to the unmatched fall without limit.
+  Fixed: it caps it at one day's allowance, as the program does.
+- CR-5 (nit): a handover's `NotAWallet` list left out the router's Market account (the market signer PDA) and both mints.
+  Fixed: `set_fee_recipient` and `set_rewards_recipient` refuse all three, `sos_h022_*` covers them, and `POOL4-52` and the spec's "Recipients" name them.
+- CR-6 (nit): the seed reported a mint the shared mint rules refuse as `TransferHookLive`.
+  Fixed: it now reports the errors creation uses, `WrongAccount` for a malformed mint and `MintExtensionNotAllowed` for a refused extension, keeping `TransferHookLive` for a hook that is set; `sos_r2_06_*` asserts each.
+- CR-7 (nit): `unmatched_after_fall` capped at `cap_decay_per_day × DECAY_CREDIT_WINDOW / 86,400` where the spec and the proofs say `cap_decay_per_day`.
+  Fixed: it caps at `cap_decay_per_day`, one day's allowance whatever the window; with the window at one day nothing changes, and `cap_z3.py` states it the same way.

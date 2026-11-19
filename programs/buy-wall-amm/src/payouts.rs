@@ -208,8 +208,9 @@ pub fn slot_wallet(slot: u8, fee_recipient: &Pubkey) -> Result<Pubkey, Refusal> 
 /// Whether `signer` may hand a role held by `current` to `new`: only the current holder may,
 /// a role nobody holds (the default key) never gets one, and nobody may hand it to the
 /// default key, to the wallet that already holds it, or to one of the market's own
-/// addresses (`own`: its market state, its vault authority, both vaults and the program),
-/// where no key could ever spend what the role is paid (`POOL4-52`).
+/// addresses (`own`: its market state, its vault authority, both vaults, the program, the
+/// router's Market account and both mints), where no key could ever spend what the role is
+/// paid (`POOL4-52`).
 pub fn handover(
     current: &Pubkey,
     signer: &Pubkey,

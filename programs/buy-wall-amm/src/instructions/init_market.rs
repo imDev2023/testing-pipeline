@@ -226,14 +226,23 @@ pub(crate) fn is_wrapped_sol(mint: &Pubkey) -> bool {
 /// freeze authorities are removed, is checked at the seed.
 fn check_token_mint(mint: &AccountInfo) -> Result<()> {
     let data = mint.try_borrow_data()?;
-    mint_rules::check_mint(&mint.owner.to_bytes(), &data).map_err(|refusal| match refusal {
-        mint_rules::MintRefusal::ExtensionNotAllowed(extension) => {
+    mint_rules::check_mint(&mint.owner.to_bytes(), &data).map_err(|refusal| {
+        if let mint_rules::MintRefusal::ExtensionNotAllowed(extension) = refusal {
             msg!("Mint {} carries refused extension {}", mint.key, extension);
-            error!(StrategyError::MintExtensionNotAllowed)
         }
-        // Anchor has already checked it is a mint of the token program passed.
-        mint_rules::MintRefusal::NotATokenProgram | mint_rules::MintRefusal::NotAMint => {
-            error!(StrategyError::WrongAccount)
-        }
+        error!(mint_refusal_error(refusal))
     })
+}
+
+/// The error a refusal of the shared mint rules is reported as, at creation and at the seed:
+/// `MintExtensionNotAllowed` for a refused extension, `WrongAccount` for an account that is
+/// not a mint of either token program (Anchor has already checked it is a mint of the token
+/// program passed, so only a malformed one gets here).
+pub(crate) fn mint_refusal_error(refusal: mint_rules::MintRefusal) -> StrategyError {
+    match refusal {
+        mint_rules::MintRefusal::ExtensionNotAllowed(_) => StrategyError::MintExtensionNotAllowed,
+        mint_rules::MintRefusal::NotATokenProgram | mint_rules::MintRefusal::NotAMint => {
+            StrategyError::WrongAccount
+        }
+    }
 }

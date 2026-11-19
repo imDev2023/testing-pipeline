@@ -150,7 +150,7 @@ fn the_worked_examples_settle_is_reproduced_through_the_router() {
         swap(&mut env, &market, &trader, SELL, 20_000_000_000),
         194_120_326
     );
-    assert_eq!(env.state(&market).sqrt_price(), 1_808_529_293_213_661_729);
+    assert_eq!(env.state(&market).sqrt_price(), 1_808_529_293_214_755_428);
     assert_books(&env, &market);
 }
 
@@ -531,15 +531,19 @@ fn each_recipient_hands_over_its_own_role_and_what_it_is_owed() {
     env.send(&[ix], &[&new_fee]).unwrap();
 }
 
-/// The market's own addresses: its state, its vault authority, both vaults and the program.
-/// No key signs for a token account any of them owns, so income paid there would be stranded.
-fn own_addresses(market: &Market) -> [Pubkey; 5] {
+/// The market's own addresses: its state, its vault authority, both vaults, the program, the
+/// router's Market account (the market signer PDA) and both mints. No key signs for a token
+/// account any of them owns, so income paid there would be stranded.
+fn own_addresses(market: &Market) -> [Pubkey; 8] {
     [
         market.market_state,
         market.vault_authority,
         market.token_vault,
         market.sol_vault,
         strategy_id(),
+        market.market,
+        market.token_mint,
+        WSOL,
     ]
 }
 

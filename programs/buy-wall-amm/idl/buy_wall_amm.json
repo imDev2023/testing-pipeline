@@ -2213,10 +2213,10 @@
             }
           },
           {
-            "name": "last_slot_low",
+            "name": "low_since_placement",
             "docs": [
-              "735: u128, Q64.64, the lowest close of the last slot that traded; 0 (a market written",
-              "before this field) caps nothing"
+              "735: u128, Q64.64, the lowest close since the last placement (the seed counts as one);",
+              "0 (a market written before this field) caps nothing"
             ],
             "type": {
               "array": [

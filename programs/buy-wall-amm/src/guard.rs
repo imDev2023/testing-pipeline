@@ -260,7 +260,9 @@ mod proofs {
             next.low_since_placement.min(price)
         };
         assert!(closed.low_since_placement <= price);
-        assert!(next.low_since_placement == 0 || closed.low_since_placement <= next.low_since_placement);
+        assert!(
+            next.low_since_placement == 0 || closed.low_since_placement <= next.low_since_placement
+        );
         assert!(
             closed
                 == Guard {
@@ -337,7 +339,7 @@ mod tests {
         let sell = sell.close_at(SOLD_AT);
         assert_eq!(sell.floor, 1_844_700_027_848_835_313);
         // The sell closes just above the opening price, so the low stays there.
-        assert!(SOLD_AT > OPENING);
+        const { assert!(SOLD_AT > OPENING) };
         assert_eq!(
             (sell.last_close, sell.low_since_placement),
             (SOLD_AT, OPENING)

@@ -232,13 +232,13 @@ Every stored time (`ref_time`, `floor_time`, `decay_time`) becomes the later of 
    The fee is split (see "The fee").
 3. **Price.**
    `sqrt_price` and `last_close` become the new price.
-   So does `last_slot_low` at the slot's first swap, the one step 1 found in a later slot than `last_slot`, or while it is 0 (a market written before the field); a later swap in the same slot lowers it to the new price if that is lower, so it is always the lowest close of the last slot that traded ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
+   `low_since_placement` drops to the new price if that is lower (or takes it while it is 0, a market written before the field); no swap ever raises it, so it is always the lowest close since the last placement, which only `place_wall` resets, and the seed counts as a placement ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
 4. **Floor.**
    The floor changes only at the slot's first update, when step 1 found the Clock's slot later than `last_slot`, with the `ref` step 1 left and the `last_close` step 1 read, the previous slot's close from before step 3 replaced it ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
    If `floor < ref`, `dt = min(now - floor_time, 86,400)` and `floor` rises by `floor(floor × FLOOR_CRAWL_BPS × dt / (2 × 10,000 × 86,400))`, but not above `ref`.
    Then `floor` drops to that `last_close` if it is lower, and `floor_time = max(floor_time, now)`, at every slot's first update whether or not the floor crawled ([`POOL4-32`](../decisions.md#pool4-32-when-the-floors-clock-moves)).
    In a slot already brought up to date the floor and `floor_time` stay as they are, so no trade can move the floor in its own slot, and the floor is never above the price the slot opened at.
-   The floor reads only the previous slot's close, so a dip bought back within its slot leaves it up; the dip's low still caps the next placement, through `last_slot_low` ("`place_wall`" step 5).
+   The floor reads only the previous slot's close, so a dip bought back within its slot leaves it up; the dip's low still caps the next placement, through `low_since_placement` ("`place_wall`" step 5), whatever trades between the dip and that placement.
 5. **Decay credit.**
    `decay_credit = min(decay_credit + cap_decay_per_day × (now - decay_time), cap_decay_per_day × DECAY_CREDIT_WINDOW)` and `decay_time = max(decay_time, now)`, so the decay clock never runs backwards.
    The credit is in token-seconds, so nothing is lost to rounding, and at most one day's allowance ever builds up.
@@ -261,8 +261,9 @@ The halving in steps 1 and 4 turns a rate on the price into a rate on its square
 - IMD's hook lets decay allowance build up without limit while a market is idle; ours stops at one day's worth, so a long-idle market's cap can never drop many days at once.
 - The reward share is paid only on trimmed tokens the cap's own fall matched, so over a market's life the rewards never exceed `reward_share_bps` of `seeded_tokens - cap_floor`, the budget its creator published; a trim from a cap that has not fallen (a dip sold into a tight cap), the tokens a closed wall bought and `place_wall`'s dust all burn whole, and a market with no cap decay pays no rewards ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
 - The wall's floor follows IMD's guard, slot by slot: at a slot's first update it drops to the price the slot opened at, the previous slot's close, and it rises about 4% a day toward a reference that lags the price, but never above that close.
-  The wall can never be placed above the floor, nor above the lowest close of the last slot that traded, nor in a slot a swap has already run in, so pumping the price and placing the wall high earns nothing, a dip bought straight back inside one slot never drags the floor down, and no trade can lift the floor in its own slot, so a quiet spell's crawl never lifts it above the price a buy started from when that buy opens its slot ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
+  The wall can never be placed above the floor, nor above the lowest close since the last placement, nor in a slot a swap has already run in, so pumping the price and placing the wall high earns nothing, a dip bought straight back inside one slot never drags the floor down, and no trade can lift the floor in its own slot, so a quiet spell's crawl never lifts it above the price a buy started from when that buy opens its slot ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
   The placement cap closes a back-run of a fall across one slot boundary: a third party dumps in a slot, which trims the curve and leaves its SOL idle, the back-runner buys the price back to the floor in the same slot, so the floor stays up in the next, and then calls `place_wall` and sells into the wall; the wall now goes no higher than the dump's low, so the back-runner sells into the curve alone and the round trip never pays.
+  A swap between the dump and the placement cannot clear that cap, since only a placement resets the low (code review finding 1: when the cap was the last traded slot's low, a tiny swap first in the next slot reset it to about the floor).
   What remains is griefing, which nobody profits from inside the market: a dip bought back in one slot has the next `place_wall` put the wall at the dip once, until idle SOL refills to `WALL_THRESHOLD` and a keeper places it again at the floor, and a dip held across a slot boundary lowers the floor itself (review finding R2-02).
 - IMD's rates are per Ethereum block; ours are per second, because Solana's slot times vary.
 
@@ -295,7 +296,7 @@ These always hold, and the tests check them after every instruction:
 - The inventory cap never rises and never falls below the cap floor.
 - `retired_rewardable` never exceeds `retired_tokens`, `cap_fall_unmatched` never exceeds `cap_decay_per_day`, and every unit in `cap_fall_unmatched`, in `retired_rewardable` or settled as rewardable is a unit the cap has fallen since the seed, so the rewards owed and paid never exceed `reward_share_bps` of how far the cap has fallen.
 - The wall's floor is never above the reference, and never above the previous slot's close (`last_close` at the slot's first update); it changes only at a slot's first update.
-- A placed wall's top is never above the price at placement, the floor, nor the last traded slot's lowest close (`last_slot_low`, when not 0).
+- A placed wall's top is never above the price at placement, the floor, nor the lowest close since the last placement (`low_since_placement`, when not 0).
 
 ## Keeper jobs
 
@@ -305,10 +306,10 @@ None moves the price.
 ### `place_wall`
 
 It runs only in a slot no swap has run in yet, and is refused with `SwapThisSlot` when `last_slot` is the Clock's slot, that is when a swap, or the seed, ran in it ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
-In a later slot it first brings the floor up to date as "After pricing" step 4 does at a slot's first update, with `ref` and `last_close` as they are, but leaves `last_slot`, `ref` and `ref_time` alone, so a swap later in the same slot still runs steps 1 and 4, where the floor's update then changes nothing.
+In a later slot it first brings the floor up to date with "After pricing" step 4's rule against the stored `ref` and `last_close`, without step 1's reference step first, and leaves `last_slot`, `ref` and `ref_time` alone, so a swap later in the same slot still runs steps 1 and 4, where the floor's update then changes nothing.
 Since only a swap moves the price, `last_close` is the price at placement, so the floor it places under is never above it.
-That update reads the stale `ref`, since the slot's reference step waits for a swap, so the floor's crawl is capped there and spends its time; it can only leave the floor lower than a swap's update would (review finding R2-04).
-`place_wall` leaves `last_slot_low` alone: it is the lowest close of the last slot a swap, or the seed, ran in.
+That update reads the stale `ref`, since the slot's reference step waits for a swap, so the floor's crawl is capped there and spends its time; it is not the same as a swap's first update, and can only leave the floor at or below where that update would, never above (review finding R2-04).
+Step 5 places no higher than `low_since_placement`, the lowest close since the last placement, and then resets it to the price at placement, so the next placement is capped by the closes after this one.
 Then:
 
 1. `converted` is the SOL the placed wall has spent buying tokens: `wall_sol_placed - floor(W × min(s, wall_top) / Q)`, or 0 with no wall.
@@ -318,7 +319,7 @@ Then:
 4. The caller is tipped `min(KEEPER_TIP_CAP, floor(work × fee_bps / 10,000), idle_sol)` lamports from `idle_sol`, where `work` is the larger of `converted` and the idle SOL from step 1 if that reached the threshold.
    This is IMD's rule: the tip never exceeds the fee the market earned on the work, so faking work never pays.
    It is paid in wrapped SOL to a token account the caller names.
-5. The wall is placed with everything left: `wall_top = min(s, floor, last_slot_low)`, where a `last_slot_low` of 0 (a market written before the field) caps nothing ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)), `W = floor(idle_sol × Q / wall_top)`, `wall_sol_placed = floor(W × wall_top / Q)`, and `idle_sol` moves into `pool_sol`.
+5. The wall is placed with everything left: `wall_top = min(s, floor, low_since_placement)`, where a `low_since_placement` of 0 (a market written before the field) caps nothing ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)), `W = floor(idle_sol × Q / wall_top)`, `wall_sol_placed = floor(W × wall_top / Q)`, and `idle_sol` moves into `pool_sol`; then `low_since_placement` becomes `s`.
 
 The caller signs, and the tip account may be any wrapped SOL account but the market's own SOL vault; the metadata's form names the caller's own.
 It emits `WallPlaced` (the caller, the tip account, `converted`, what closing the old wall moved, the dust, the tip and the new wall), and the lifetime total of tokens the wall bought grows by what each closed wall bought ([`POOL4-34`](../decisions.md#pool4-34-what-place_wall-takes-and-reports)).
@@ -365,7 +366,7 @@ The runner is not specified yet (the map's "Not yet specified"); what it needs f
 
 | Job | Run it when |
 | --- | --- |
-| `place_wall` | `idle_sol` or the wall's `converted` reaches `WALL_THRESHOLD`, checked after each swap event on the market, and sent so it lands in a later slot than that swap, since in the swap's own slot it is refused with `SwapThisSlot` |
+| `place_wall` | `idle_sol` or the wall's `converted` reaches `WALL_THRESHOLD`, checked after each swap event on the market, and sent at the start of a slot later than that swap's, since in a slot a swap already ran in it is refused with `SwapThisSlot`; that refusal means "try again in a later slot", so the runner retries it from the next slot and never counts it as a failure (`docs/spec/keeper-runner.md`, review finding R2-03) |
 | `settle` | `retired_tokens` is above 0, at most hourly for each market |
 | `pay_rewards` | `rewards_owed` is above 0, daily |
 | `sweep_fees` | A slot's ledger is above 0, daily; slot 1 only once `DESIGNER_RECIPIENT` is set |
@@ -377,7 +378,7 @@ A payout into a recipient account that does not exist makes the caller pay its r
 ## Recipients
 
 - `set_fee_recipient { new }` is signed by the current fee recipient, and `set_rewards_recipient { new }` by the current rewards recipient; `new` must not be the default key.
-- `new` must not be the role's current wallet (refused with `SameRecipient`), nor one of the market's own addresses: its market state, its vault authority, either vault or the program (refused with `NotAWallet`), since no key signs for a token account any of them owns and the role's income would be stranded there ([`POOL4-52`](../decisions.md#pool4-52-which-wallets-a-role-may-be-handed-to)).
+- `new` must not be the role's current wallet (refused with `SameRecipient`), nor one of the market's own addresses: its market state, its vault authority, either vault, the program, the router's Market account (the market signer PDA, `["market", program, market_state]` under Pipeline) or either mint (refused with `NotAWallet`), since no key signs for a token account any of them owns and the role's income would be stranded there ([`POOL4-52`](../decisions.md#pool4-52-which-wallets-a-role-may-be-handed-to)).
   Any other key is accepted in one step, so a mistyped wallet remains the holder's own risk.
 - What the role is owed follows it to the new wallet.
 - A market created with no fee recipient or no rewards recipient never gets one.
@@ -436,7 +437,7 @@ Fields, in order:
 | Pricing | `sqrt_price`, `liquidity`, `wall_liquidity`, `wall_top`, `wall_sol_placed` |
 | Ledgers | `pool_tokens`, `pool_sol`, `retired_tokens`, `rewards_owed`, `idle_sol`, `fees_recipient`, `fees_designer`, `fees_suite` |
 | Cap | inventory cap, `decay_credit`, `decay_time` |
-| Wall guard | `ref`, `ref_time`, `floor`, `floor_time`, `last_slot`, `last_close`, `last_slot_low` ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)) |
+| Wall guard | `ref`, `ref_time`, `floor`, `floor_time`, `last_slot`, `last_close`, `low_since_placement` ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)) |
 | Totals | tokens trimmed, SOL trimmed, tokens the wall bought, tokens burned, rewards paid, tips paid |
 | Reward share | `cap_fall_unmatched`, `retired_rewardable` ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)) |
 | Reserve | zeroed to the end of the account |
@@ -513,10 +514,10 @@ The program's `state.rs` holds the same layout, and `tests/layout.rs` reads this
 | `tips_paid` | 703 | 16 | u128 |
 | `cap_fall_unmatched` | 719 | 8 | u64 |
 | `retired_rewardable` | 727 | 8 | u64 |
-| `last_slot_low` | 735 | 16 | u128 |
+| `low_since_placement` | 735 | 16 | u128 |
 | `reserve` | 751 | 273 | bytes |
 
-Square-root prices (`sqrt_price`, `wall_top`, `ref`, `floor`, `last_close`, `last_slot_low`) are Q64.64; times are Unix seconds; `cap` is the inventory cap and `ref` is the wall's reference; `decay_credit` is in token-seconds; `cap_fall_unmatched` and `retired_rewardable` are token units, appended before the first deployment, so still layout version 1 ([`POOL4-19`](../decisions.md#pool4-19-build-order-and-the-first-deploy), [`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)), and so is `last_slot_low` ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
+Square-root prices (`sqrt_price`, `wall_top`, `ref`, `floor`, `last_close`, `low_since_placement`) are Q64.64; times are Unix seconds; `cap` is the inventory cap and `ref` is the wall's reference; `decay_credit` is in token-seconds; `cap_fall_unmatched` and `retired_rewardable` are token units, appended before the first deployment, so still layout version 1 ([`POOL4-19`](../decisions.md#pool4-19-build-order-and-the-first-deploy), [`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)), and so is `low_since_placement` ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
 
 ### A release gate
 
@@ -617,9 +618,9 @@ A market is seeded with 1,000,000 tokens of 6 decimals (1,000,000,000,000 units)
 | Seed | `sqrt_price` 1,844,674,407,370,955,161; `liquidity` 99,999,999,999; cap 1,000,000,000,000 |
 | One hour later, a buy of 1 SOL | Fee 10,000,000: designer 1,000,000, suite 1,000,000, fee recipient 4,000,000, wall 4,000,000. Out 90,081,892,629 units; `sqrt_price` 2,027,297,173,702,505,949. The cap falls by one hour's allowance, 8,333,333,333 units, to 991,666,666,667 |
 | 60 seconds later, a sell of those 90,081,892,629 units | Gross 989,999,999; fee 9,900,000 (3,960,000 of it to the wall); out 980,099,999. `sqrt_price` 1,844,674,407,372,029,099. The trim retires 8,333,333,329 units, all matched by the cap's fall, and moves 83,333,332 lamports to idle SOL, leaving `liquidity` 99,166,666,666, `pool_tokens` 991,666,666,671, `pool_sol` 9,916,666,669 and `idle_sol` 91,293,332 |
-| `place_wall`, in a later slot | Tip 912,933. `wall_top` 1,844,674,407,372,029,099; `wall_liquidity` 903,804,009; `wall_sol_placed` 90,380,400; `pool_sol` 10,007,047,068; 11 units of dust join the retired tokens (8,333,333,340), leaving `pool_tokens` 991,666,666,660 |
+| `place_wall`, in a later slot | Tip 912,933. `wall_top` 1,844,674,407,370,955,161, the opening price: the floor drops to the sell's price, but the lowest close since the seed is the opening price, just below it; `wall_liquidity` 903,804,010; `wall_sol_placed` 90,380,400; `pool_sol` 10,007,047,068; 11 units of dust join the retired tokens (8,333,333,340), leaving `pool_tokens` 991,666,666,660 |
 | `settle` | The reward share of the 8,333,333,329 matched units, 1,249,999,999, joins `rewards_owed`; the other 7,083,333,341 units, the dust among them, are burned |
-| 60 seconds later, a sell of 20,000,000,000 units | Gross 196,081,138; fee 1,960,812; out 194,120,326, through the curve and the wall together. `sqrt_price` 1,808,529,293,213,661,729. The wall has spent 1,770,941 lamports on 180,633,508 units |
+| 60 seconds later, a sell of 20,000,000,000 units | Gross 196,081,138; fee 1,960,812; out 194,120,326, through the curve and the wall together. `sqrt_price` 1,808,529,293,214,755,428. The wall has spent 1,770,941 lamports on 180,633,508 units |
 
 In the same model, on a market seeded the same way with 5 SOL idle, buying with 30 SOL, placing the wall in the next slot (it is refused in the buy's own slot) and selling everything back loses 0.595 SOL, and the wall's top ends no higher than the price before the buy.
 
@@ -683,7 +684,7 @@ Beyond the shared three (value conserved, every holder can exit, each quote equa
   A trim lowers `L`, so it only shrinks that amount, which is less than one lamport whenever `L + W` is below 2^32.
 - A trim never changes `sqrt_price`.
 - A buy sold straight back never returns more than it cost, whatever keeper jobs run in between: in its own slot `place_wall` is refused, and a buy sold back after `place_wall` in a later slot with no time passed in between never returns more either, whether it opened its slot or followed a fall earlier in that slot (the back-run the placement cap closes, [`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
-- A placed wall's top is never above the lowest close of the last slot that traded, which every swap's close keeps and `place_wall` never changes.
+- A placed wall's top is never above the lowest close since the last placement, which every swap's close lowers and only `place_wall` resets, to the price at placement.
 - For the rewards recipient, settling and paying itself inside the round trip, the rewards it takes never exceed the reward share of the cap's fall and of the cap's fall left unmatched before it.
 - The reference and the floor never move on a trade in the slot they were last updated in, and `place_wall` is refused in a slot a swap has run in.
 - No instruction other than `pipeline_swap` changes `sqrt_price` or the counters.

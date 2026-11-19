@@ -574,10 +574,10 @@ const wallTokens = (wall: Wall, s: bigint) =>
  * `REF_STEP_BPS / 2` of itself per `REF_STEP_WINDOW`, then the floor crawls toward the
  * reference by at most `FLOOR_CRAWL_BPS / 2` of itself a day and drops to the last close, the
  * price the slot opened at, if that is lower; in a slot already brought up to date neither
- * moves, and a swap's own price only becomes the last close and keeps the slot's lowest close,
- * which the slot's first swap starts (as does any swap while it is 0) and later swaps lower
- * (`POOL4-50`). `place_wall` brings the floor up to date the same way without marking the
- * slot. Each clock only moves forward.
+ * moves, and a swap's own price only becomes the last close and lowers the lowest close since
+ * the last placement, which no swap raises (any swap takes its close while it is 0) and only
+ * `place_wall` resets (`POOL4-50`). `place_wall` brings the floor up to date against the
+ * stored reference without marking the slot. Each clock only moves forward.
  */
 type Guard = {
     reference: bigint;
@@ -586,7 +586,7 @@ type Guard = {
     floorTime: bigint;
     lastSlot: bigint;
     lastClose: bigint;
-    lastSlotLow: bigint;
+    lowSincePlacement: bigint;
 };
 
 function specOpenFloor(g: Guard, now: bigint): Guard {
@@ -607,17 +607,18 @@ function specFollow(g: Guard, slot: bigint, now: bigint): Guard {
     return specOpenFloor({ ...g, reference, refTime: max(g.refTime, now), lastSlot: slot }, now);
 }
 
-function specCloseAt(g: Guard, price: bigint, opensSlot: boolean): Guard {
-    const lastSlotLow = opensSlot || g.lastSlotLow === 0n ? price : min(g.lastSlotLow, price);
-    return { ...g, lastClose: price, lastSlotLow };
+function specCloseAt(g: Guard, price: bigint): Guard {
+    const lowSincePlacement = g.lowSincePlacement === 0n ? price : min(g.lowSincePlacement, price);
+    return { ...g, lastClose: price, lowSincePlacement };
 }
 
 /**
  * `place_wall` (docs/spec/pool4-for-solana.md, "`place_wall`"), written out from the spec:
  * refused below `WALL_THRESHOLD`; the old wall closed at the price; the pool's dust beyond
  * the curve's holdings, rounded up, swept to idle SOL and the retired tokens; the tip; and
- * the new wall placed with everything left at `min(price, floor, lastSlotLow)`, the last
- * traded slot's lowest close capping nothing when it is 0 (`POOL4-50`).
+ * the new wall placed with everything left at `min(price, floor, lowSincePlacement)`, the
+ * lowest close since the last placement capping nothing when it is 0, which is then reset to
+ * the price (`POOL4-50`).
  */
 type WallBooks = { wall: Wall; wallSolPlaced: bigint; poolTokens: bigint; poolSol: bigint; retiredTokens: bigint; idleSol: bigint };
 type Placement = { converted: bigint; closedSol: bigint; closedTokens: bigint; dustSol: bigint; dustTokens: bigint; tip: bigint };
@@ -627,7 +628,7 @@ function specPlaceWall(
     curve: Curve,
     guard: Guard,
     feeBps: bigint,
-): { books: WallBooks; placement: Placement } | null {
+): { books: WallBooks; placement: Placement; guard: Guard } | null {
     const s = curve.sqrtPrice;
     const converted = b.wall.liquidity > 0n ? max(b.wallSolPlaced - wallSol(b.wall, s), 0n) : 0n;
     if (b.idleSol < WALL_THRESHOLD && converted < WALL_THRESHOLD) return null;
@@ -639,7 +640,7 @@ function specPlaceWall(
     let idle = b.idleSol + closedSol + dustSol;
     const tip = min(min(KEEPER_TIP_CAP, (max(converted, b.idleSol) * feeBps) / 10_000n), idle);
     idle -= tip;
-    const top = guard.lastSlotLow === 0n ? min(s, guard.floor) : min(min(s, guard.floor), guard.lastSlotLow);
+    const top = guard.lowSincePlacement === 0n ? min(s, guard.floor) : min(min(s, guard.floor), guard.lowSincePlacement);
     const wall = { liquidity: (idle * Q) / top, top };
     return {
         books: {
@@ -651,6 +652,7 @@ function specPlaceWall(
             idleSol: 0n,
         },
         placement: { converted, closedSol, closedTokens, dustSol, dustTokens, tip },
+        guard: { ...guard, lowSincePlacement: s },
     };
 }
 
@@ -1487,7 +1489,7 @@ async function main() {
             floorTime: le(state.floorTime),
             lastSlot: le(state.lastSlot),
             lastClose: le(state.lastClose),
-            lastSlotLow: le(state.lastSlotLow),
+            lowSincePlacement: le(state.lowSincePlacement),
         } as Guard,
         tokensTrimmed: 0n,
         solTrimmed: 0n,
@@ -1501,7 +1503,7 @@ async function main() {
         books.guard.reference !== sqrtPrice ||
         books.guard.floor !== sqrtPrice ||
         books.guard.lastClose !== sqrtPrice ||
-        books.guard.lastSlotLow !== sqrtPrice
+        books.guard.lowSincePlacement !== sqrtPrice
     ) {
         fail('the seed did not start the wall\'s guard at the opening price');
     }
@@ -1584,8 +1586,7 @@ async function main() {
         const ranAt = le(afterSwap.decayTime);
         const events = await strategyEvents(signature);
         // Steps 1 and 4 at the slot's first update, the reference and the floor; steps 2 and
-        // 3, the books, the price, the last close and the slot's lowest close.
-        const opensSlot = events.slot > books.guard.lastSlot;
+        // 3, the books, the price, the last close and the lowest close since the placement.
         books.guard = specFollow(books.guard, events.slot, ranAt);
         const split = specSplit(spec.fee, BigInt(DEMO.wallSplitBps));
         if (input === 1) {
@@ -1596,7 +1597,7 @@ async function main() {
             books.poolSol -= spec.out + spec.fee;
         }
         books.curve = { sqrtPrice: spec.sqrtPrice, liquidity: books.curve.liquidity };
-        books.guard = specCloseAt(books.guard, spec.sqrtPrice, opensSlot);
+        books.guard = specCloseAt(books.guard, spec.sqrtPrice);
         books.idleSol += split.wall;
         books.feesRecipient += split.recipient;
         books.feesDesigner += split.designer;
@@ -1622,7 +1623,10 @@ async function main() {
             books.solTrimmed += moved.sol;
         }
         if (moved.kind === 'lowered') {
-            books.capFallUnmatched += moved.by;
+            // Never more than one day's allowance, as the program keeps it (review finding
+            // R2-01): what a fall adds beyond that is never rewarded.
+            const unmatched = books.capFallUnmatched + moved.by;
+            books.capFallUnmatched = unmatched < books.cap.capDecayPerDay ? unmatched : books.cap.capDecayPerDay;
             const [event] = events.lowered;
             if (
                 events.lowered.length !== 1 ||
@@ -1705,7 +1709,7 @@ async function main() {
     const { data: afterPlacing } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
     books.guard = specOpenFloor(books.guard, le(afterPlacing.floorTime));
     const expectedPlacement = specPlaceWall(wallBooks(), books.curve, books.guard, feeBps) ?? fail(`idle SOL ${books.idleSol} is still below WALL_THRESHOLD`);
-    const { books: placedBooks, placement } = expectedPlacement;
+    const { books: placedBooks, placement, guard: placedGuard } = expectedPlacement;
     const work = max(placement.converted, books.idleSol);
     const [placedEvent] = placedEvents.placed;
     if (
@@ -1729,11 +1733,14 @@ async function main() {
     books.tipsPaid += placement.tip;
     books.wallTokensBought += placement.closedTokens;
     if (books.wall.top > books.guard.floor || books.wall.top > books.curve.sqrtPrice) fail('the wall was placed above its floor or the price');
-    if (books.guard.lastSlotLow !== 0n && books.wall.top > books.guard.lastSlotLow) {
-        fail(`the wall was placed at ${books.wall.top}, above the last traded slot's lowest close ${books.guard.lastSlotLow}`);
+    const lowAtPlacement = books.guard.lowSincePlacement;
+    if (lowAtPlacement !== 0n && books.wall.top > lowAtPlacement) {
+        fail(`the wall was placed at ${books.wall.top}, above the lowest close since the last placement ${lowAtPlacement}`);
     }
+    // The low is reset to the price at placement.
+    books.guard = placedGuard;
     info(`tipped ${tip} lamports of wrapped SOL to the caller's account: the least of KEEPER_TIP_CAP (${KEEPER_TIP_CAP}) and the fee earned on ${work} lamports of work`);
-    info(`the wall: ${books.wallSolPlaced} lamports at sqrt_price ${books.wall.top} (liquidity ${books.wall.liquidity}), at the lowest of the price, the floor and the last traded slot's lowest close (${books.guard.lastSlotLow}); ${placement.dustTokens} units and ${placement.dustSol} lamports of dust swept; WallPlaced emitted`);
+    info(`the wall: ${books.wallSolPlaced} lamports at sqrt_price ${books.wall.top} (liquidity ${books.wall.liquidity}), at the lowest of the price, the floor and the lowest close since the last placement (${lowAtPlacement}); ${placement.dustTokens} units and ${placement.dustSol} lamports of dust swept; WallPlaced emitted`);
     record.push(['place_wall', `tip ${tip}, wall ${books.wallSolPlaced} lamports at ${books.wall.top}`]);
 
     step('9. Selling into the wall');
@@ -1767,7 +1774,7 @@ async function main() {
         floorTime: [le(traded.floorTime), books.guard.floorTime],
         lastSlot: [le(traded.lastSlot), books.guard.lastSlot],
         lastClose: [le(traded.lastClose), books.guard.lastClose],
-        lastSlotLow: [le(traded.lastSlotLow), books.guard.lastSlotLow],
+        lowSincePlacement: [le(traded.lowSincePlacement), books.guard.lowSincePlacement],
         tokensTrimmed: [le(traded.tokensTrimmed), books.tokensTrimmed],
         solTrimmed: [le(traded.solTrimmed), books.solTrimmed],
         wallTokensBought: [le(traded.wallTokensBought), books.wallTokensBought],
