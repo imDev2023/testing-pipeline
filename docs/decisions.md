@@ -507,6 +507,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
 
+### SUITE-46: Reaching a public repository
+
+- Question: How does the project become public when GitHub's read-only pull request refs of the old repository still hold the purged research files?
+- Answer: It moves to a new repository of the same name with every issue number kept and the purged history, the old one becomes `imDev2023/testing-pipeline-archive`, private for good, and the new one goes public only after a scan proves it clean and the owner says yes.
+- Alternatives: Asking GitHub Support to delete the two pull request refs and collect the old commits; a public mirror of the code beside the private repository.
+- Specified in: [`docs/toolchain.md`, The repository and its archive](toolchain.md#the-repository-and-its-archive)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-19 in [Move the project to a new repository without the old pull request refs, then make it public](https://github.com/imDev2023/testing-pipeline/issues/167)
+
+### SUITE-47: What the move carries
+
+- Question: What does the new repository keep of the old one's record?
+- Answer: Every issue with its comments and their original dates, labels, sub-issues and blocked-by links on its own number, a closed placeholder naming the archived pull request and its squash commit on each number that was a pull request, the open pull requests recreated under new numbers, and the few lines that quoted MetalLegBob reworded in every commit and issue.
+- Alternatives: Transferring the issues, which would carry their edit history and empty the archive; copying them without their dates; leaving the numbers that were pull requests unused, which GitHub cannot do.
+- Specified in: [`scripts/move-repo/README.md`, What it does](../scripts/move-repo/README.md#what-it-does)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-19 in [Move the project to a new repository without the old pull request refs, then make it public](https://github.com/imDev2023/testing-pipeline/issues/167)
+
 ## Engineering and security bar (BAR)
 
 ### BAR-01: Framework
@@ -4843,6 +4863,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-36`: set by the session of [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152) from the spec's existing rule that a trade reaching a price bound is refused, and not yet put to the owner, so it is that session's default until the owner has been asked.
+- `SUITE-47`: set by the session of [Move the project to a new repository without the old pull request refs, then make it public](https://github.com/imDev2023/testing-pipeline/issues/167) within the move the owner chose (`SUITE-46`), and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.

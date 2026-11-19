@@ -370,7 +370,7 @@ The person who runs this project: sets its scope, answers each decision with a d
 _Avoid_: user (that is a trader or LP), client
 
 **MetalLegBob**:
-Pipeline's author (display name mlbob), founder of The Fantastical Finance Factory, for whom the suite is built, so he may change any of its decisions; see `research/metallegbob.md`.
+Pipeline's author (display name mlbob), founder of The Fantastical Finance Factory, for whom the suite is built, so he may change any of its decisions; his profile is kept out of the repo, in `~/.config/testing-pipeline/research/metallegbob.md`.
 _Avoid_: Bob, the dev
 
 **Factory**:

@@ -22,3 +22,8 @@ test-ledger/
 *keypair*.json
 id.json
 __pycache__/
+
+# MetalLegBob's profile and the archive of his X posts never go into this repo (owner, 2026-11-10).
+# They live in ~/.config/testing-pipeline/research/, and the move of #167 purged them from every commit.
+research/metallegbob.md
+research/x/

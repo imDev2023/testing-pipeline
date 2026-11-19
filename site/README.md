@@ -59,6 +59,8 @@ Everything runs on the machine's default Node 26; if a tool breaks there, use No
   Each decision is reachable by its id, for example `/decisions/#tax-03`.
 - The six findings about Pipeline are picked by a phrase each, in `FOUND_IN_PIPELINE` at the top of `refresh.mjs`, and shown as their source wrote them.
   If a source is reworded, `refresh` stops and names the phrase to fix.
+- The repository moved on 2026-11-19 (#167) with every issue number kept, so the ticket pages keep their addresses; the numbers that were pull requests are placeholders, which the site never shows, since it reads only the map's sub-issues.
+  `refresh` reads only `imDev2023/testing-pipeline`, never the private archive.
 - The repo is private, so links into it, whether full addresses or relative links between files, are pointed at the site's own pages, and the ones with no page are turned into plain text.
   Headings get the anchors GitHub gives them, so a link to a section of a file lands on that section here.
 - To show another document, add one `addDocument` line in `refresh.mjs`.
