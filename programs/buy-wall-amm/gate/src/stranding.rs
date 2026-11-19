@@ -138,7 +138,9 @@ impl TestBuild {
                 let payouts = replace_once(
                     sources.get("payouts.rs")?,
                     "            FeeSlot::Suite => SUITE_TREASURY,\n",
-                    "            FeeSlot::Suite => Pubkey::default(),\n",
+                    // The treasury stays referenced, so the edited copy builds without an
+                    // unused-import warning.
+                    "            FeeSlot::Suite => {\n                let _ = SUITE_TREASURY;\n                Pubkey::default()\n            }\n",
                 )?;
                 sources.set("payouts.rs", payouts);
             }
