@@ -439,11 +439,12 @@ results.append(
 # --- POOL4-49: the reward share's budget -------------------------------------------------
 # `unmatched` is `cap_fall_unmatched`, `rewardable` is `retired_rewardable` and `settled` the
 # rewardable units every earlier `settle` emptied; `seeded` is `seeded_tokens`, the cap at the
-# seed. On every reachable market `rewardable <= retired` and `settled + rewardable + unmatched
-# == seeded - cap`, both 0 at the seed (the seed writes neither field and sets the cap to the
-# seeded tokens). The ratchet adds the units the cap fell to `unmatched`; a trim moves
-# `eligible = min(tokens, unmatched)` from `unmatched` to `rewardable` as it adds `tokens` to
-# `retired`.
+# seed. On every reachable market `rewardable <= retired`, `unmatched <= per_day` and
+# `settled + rewardable + unmatched <= seeded - cap`, all 0 at the seed (the seed writes neither
+# field and sets the cap to the seeded tokens). The ratchet adds the units the cap fell to
+# `unmatched`, up to one day's allowance (`unmatched_after_fall`, review finding R2-01: the
+# rest of the fall is never rewarded); a trim moves `eligible = min(tokens, unmatched)` from
+# `unmatched` to `rewardable` as it adds `tokens` to `retired`.
 unmatched, rewardable, settled, seeded, eligible = (
     Int(n) for n in ["unmatched", "rewardable", "settled", "seeded", "eligible"]
 )
@@ -452,15 +453,22 @@ budget = [
     rewardable >= 0,
     settled >= 0,
     rewardable <= retired,
-    settled + rewardable + unmatched == seeded - cap,
+    unmatched <= per_day,
+    settled + rewardable + unmatched <= seeded - cap,
     seeded < U64,
 ]
+# `unmatched_after_fall`: unchanged when the cap did not fall, else the sum capped at one day's
+# allowance (`DECAY_CREDIT_WINDOW` is one day, so the allowance is `per_day`).
+unmatched_after = If(cap - new_cap == 0, unmatched, minimum(unmatched + (cap - new_cap), per_day))
 results.append(
     prove(
-        "reward budget, the ratchet: every unit the cap falls joins cap_fall_unmatched, so the budget is kept and the checked add never overflows",
+        "reward budget, the ratchet: the cap's fall joins cap_fall_unmatched up to one day's allowance, so the budget is kept, the unmatched fall never exceeds the allowance and every narrowing fits",
         And(
-            settled + rewardable + (unmatched + (cap - new_cap)) == seeded - new_cap,
-            unmatched + (cap - new_cap) < U64,  # `cap_fall_unmatched.checked_add(by)`
+            settled + rewardable + unmatched_after <= seeded - new_cap,
+            unmatched_after <= per_day,
+            unmatched_after >= 0,
+            unmatched + (cap - new_cap) < 2**128,  # the u128 sum before the cap
+            unmatched_after < U64,  # `u64::try_from` of the capped sum
         ),
         *envelope,
         *ratchet,
@@ -479,7 +487,8 @@ results.append(
             unmatched - eligible >= 0,  # `cap_fall_unmatched.checked_sub(eligible)`
             rewardable + eligible <= retired + tokens,
             rewardable + eligible < U64,  # `retired_rewardable.checked_add(eligible)`
-            settled + (rewardable + eligible) + (unmatched - eligible) == seeded - cap,
+            settled + (rewardable + eligible) + (unmatched - eligible) <= seeded - cap,
+            unmatched - eligible <= per_day,
         ),
         *envelope,
         *trim,
