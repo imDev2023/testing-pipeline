@@ -7,7 +7,9 @@
 //! and sells through the router, `place_wall` by a keeper or by a trader, a buy sold
 //! straight back with or without `place_wall` in between, by a stranger, the fee recipient
 //! sweeping its fees or the rewards recipient settling and paying itself its rewards inside
-//! the round trip, a sell bought straight back with `place_wall` in between, `settle`,
+//! the round trip, a sell bought straight back with `place_wall` in between, a third
+//! party's dump back-run by a buy in its slot and a sell after `place_wall` in the next,
+//! `settle`,
 //! `pay_rewards` and `sweep_fees` for any slot to the right wallet or another, a
 //! recipient's handover signed by it or by anyone else to a fresh wallet, the default key,
 //! the role's current wallet or one of the market's own addresses, and a
@@ -28,8 +30,11 @@
 //!   the cap after a swap except where `MIN_LIQUIDITY` stopped a trim, the cap never rises
 //!   and never falls below the cap floor, the wall's floor is never above the reference and
 //!   changes only at a slot's first update, then never above the previous slot's close, and
-//!   a placed wall's top is never above the price at placement nor the floor it was placed
-//!   under (`POOL4-50`);
+//!   a placed wall's top is never above the price at placement, the floor it was placed
+//!   under, nor the last traded slot's lowest close (`POOL4-50`);
+//! - `last_slot_low` is always the lowest close of the last slot a swap or the seed ran in:
+//!   a step's swaps, all in one slot, set it to their lowest close when they open the slot,
+//!   and otherwise lower it to that, and nothing else moves it;
 //! - `place_wall` succeeds exactly when the program's own `wall::place_in_slot` allows it at
 //!   the Clock's slot and time (refused with `SwapThisSlot` in a slot a swap ran in), leaves
 //!   the books and the guard it computes, tips exactly what it computes, and moves value
@@ -52,7 +57,10 @@
 //!   round trip and any left unmatched before it (`POOL4-49`); and a sell bought straight
 //!   back with `place_wall` in between, spending what it sold for and its own share of the
 //!   tip, never buys back more than it sold (with `place_wall` in between, the buy opens its
-//!   slot and the wall is placed in the next, since in the buy's slot it is refused);
+//!   slot and the wall is placed in the next, since in the buy's slot it is refused); and
+//!   a back-run of a third party's dump (the dump opening its slot, the back-runner's buy
+//!   after it in that slot, `place_wall` in the next, then the sell of all it bought) never
+//!   returns more than the buy cost plus the part of the tip that was there before it;
 //! - the reward share is paid only on what the cap's fall matched (`POOL4-49`):
 //!   `retired_rewardable` never exceeds `retired_tokens`; every unit the cap has fallen since
 //!   the seed is still unmatched, rewardable or settled as rewardable, so the rewards owed
@@ -171,6 +179,16 @@ enum Step {
         amount: u64,
         by_trader: bool,
     },
+    /// A stranger sells `dump` tokens as the first swap of a new slot; in the same slot the
+    /// back-runner buys with `amount` lamports; in the next slot, at the same time,
+    /// `place_wall` (by the back-runner when `by_trader`, refused in the dump's slot), and the
+    /// back-runner sells everything it bought (round 2's back-run, `POOL4-50`).
+    BackRun {
+        market: usize,
+        dump: u64,
+        amount: u64,
+        by_trader: bool,
+    },
     /// `place_wall`, by a fresh keeper or by a trader who already holds wrapped SOL, in the
     /// clock's slot or, when `next_slot`, in the next one at the same time, as our keeper
     /// runner sends it after a swap (`POOL4-50`).
@@ -260,6 +278,7 @@ const NAMED: &[&str] = &[
     "round-trip-fee-recipient",
     "round-trip-rewards-recipient",
     "dump-buy-back",
+    "back-run",
 ];
 
 /// Named invariants that fail on today's code, so a plain run leaves them out; each runs
@@ -323,6 +342,8 @@ fn step() -> impl Strategy<Value = Step> {
             .prop_map(|(market, amount, place_wall, by_trader, role)| Step::RoundTrip { market, amount, place_wall, by_trader, role }),
         1 => (any::<usize>(), trade_amount(), prop::bool::weighted(0.8))
             .prop_map(|(market, amount, by_trader)| Step::DumpBuyBack { market, amount, by_trader }),
+        1 => (any::<usize>(), trade_amount(), trade_amount(), prop::bool::weighted(0.8))
+            .prop_map(|(market, dump, amount, by_trader)| Step::BackRun { market, dump, amount, by_trader }),
         3 => (any::<usize>(), any::<bool>(), prop::bool::weighted(0.7))
             .prop_map(|(market, by_trader, next_slot)| Step::PlaceWall { market, by_trader, next_slot }),
         2 => (clock_jump(), 0..1_000u64).prop_map(|(seconds, slots)| Step::Warp { seconds, slots }),
@@ -761,6 +782,15 @@ impl World {
                 let Some(i) = self.pick(market) else { return };
                 self.dump_buy_back(i, amount, by_trader);
             }
+            Step::BackRun {
+                market,
+                dump,
+                amount,
+                by_trader,
+            } => {
+                let Some(i) = self.pick(market) else { return };
+                self.back_run(i, dump, amount, by_trader);
+            }
             Step::PlaceWall {
                 market,
                 by_trader,
@@ -1022,6 +1052,57 @@ impl World {
                 "dump-buy-back: self-dealing profited: a sell of {amount} tokens for {out} \
                  lamports and a tip of {tip} (of which {free} was there before the sell) \
                  bought back {back}"
+            );
+        }
+    }
+
+    /// Round 2's back-run of a fall across one slot boundary (`POOL4-50`, `INV-WG-7`): a
+    /// stranger's sell of `dump` tokens opens a new slot on market `i`; the back-runner buys
+    /// with `amount` lamports in the same slot; `place_wall` is refused there and runs in the
+    /// next slot at the same time (by the back-runner when `by_trader`); then the back-runner
+    /// sells everything it bought. The wall goes no higher than the dump's low, so what it
+    /// receives, the SOL its sell pays and the tip it takes, never exceeds what its buy cost
+    /// plus the part of the tip that was already there before its buy (`tip_free`, as for
+    /// `round_trip`).
+    fn back_run(&mut self, i: usize, dump: u64, amount: u64, by_trader: bool) {
+        self.env.next_slot();
+        if self.trade(i, false, dump, Keypair::new()).is_none() {
+            return;
+        }
+        self.check_markets();
+        let m = self.markets[i].market.clone();
+        let dumped = self.env.state(&m);
+        let free = tip_free(&dumped);
+        let trader = Keypair::new();
+        let Some(bought) = self.trade(i, true, amount, trader.insecure_clone()) else {
+            return;
+        };
+        self.check_markets();
+        let keeper = if by_trader {
+            trader.insecure_clone()
+        } else {
+            Keypair::new()
+        };
+        assert_eq!(self.place_wall(i, &keeper), None);
+        self.check_markets();
+        self.env.next_slot();
+        let tipped = self.place_wall(i, &keeper);
+        self.check_markets();
+        if tipped.is_some() {
+            // The placement cap: no higher than the dump's slot's lowest close.
+            let placed = self.env.state(&m);
+            assert!(placed.wall_top() <= dumped.sqrt_price());
+        }
+        let tip = if by_trader { tipped.unwrap_or(0) } else { 0 };
+        let Some(sold) = self.trade(i, false, bought, trader) else {
+            return;
+        };
+        let free = tip.min(free);
+        if enabled("back-run") {
+            assert!(
+                sold as u128 + tip as u128 <= amount as u128 + free as u128,
+                "back-run: a buy of {amount} lamports after a dump of {dump} tokens returned \
+                 {sold} sold and a tip of {tip} (of which {free} was there before the buy)"
             );
         }
     }
@@ -1293,12 +1374,15 @@ impl World {
         assert_eq!(events::<buy_wall_amm::events::WallPlaced>(logs).len(), 1);
         // Only in a slot no swap ran in; the floor it brought up to date is never above the
         // price that slot opened at, the last close, which is the price at placement; the
-        // wall's top is never above that floor nor the price.
+        // wall's top is never above that floor, the price, nor the last traded slot's lowest
+        // close, which it leaves as it was.
         assert!(clock.slot > before.last_slot());
         assert_eq!(before.last_close(), before.sqrt_price());
         assert!(after.floor() <= before.last_close());
         assert!(after.wall_top() <= after.floor());
         assert!(after.wall_top() <= after.sqrt_price());
+        assert!(before.last_slot_low() == 0 || after.wall_top() <= before.last_slot_low());
+        assert_eq!(after.last_slot_low(), before.last_slot_low());
         self.placed.push((i, placement));
         let tracked = &mut self.markets[i];
         tracked.placed_under = Some(after.floor());
@@ -1667,6 +1751,16 @@ impl World {
                     // pricing put it.
                     assert_eq!(state.sqrt_price(), final_trade.sqrt_price);
                     assert_eq!(state.last_close(), state.sqrt_price());
+                    // The slot's lowest close (`POOL4-50`): the step's swaps share one slot;
+                    // opening it, they start it at their lowest close, and otherwise lower it
+                    // to that (a 0, a market written before the field, never stays).
+                    let lowest = trades.iter().map(|t| t.sqrt_price).min().unwrap();
+                    let expected_low = if slot > last.last_slot() || last.last_slot_low() == 0 {
+                        lowest
+                    } else {
+                        last.last_slot_low().min(lowest)
+                    };
+                    assert_eq!(state.last_slot_low(), expected_low, "last_slot_low");
                     // The trades' token flow moves the pool and retired ledgers together,
                     // and their SOL flow the SOL ledgers (the fee stays in the vault): a
                     // trim only moves value from the pool to the retired tokens and idle SOL.

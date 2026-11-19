@@ -192,6 +192,8 @@ fn seeded(e: &mut Expected, params: &InitParams, x: u64, y: u64, s: u128, slot: 
     e.set("floor_time", &time.to_le_bytes());
     e.set("last_slot", &slot.to_le_bytes());
     e.set("last_close", &s.to_le_bytes());
+    // The seed's slot is the last that traded, its lowest close the opening price (POOL4-50).
+    e.set("last_slot_low", &s.to_le_bytes());
     // The reward share's ledgers (POOL4-49) start empty: the cap has not fallen and nothing
     // is retired. Set here so a seed that wrote them would be named.
     e.set("cap_fall_unmatched", &0u64.to_le_bytes());

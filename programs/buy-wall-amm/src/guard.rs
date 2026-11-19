@@ -2,15 +2,19 @@
 //! "After pricing" steps 1, 3 and 4, and "`place_wall`"), so the proofs run against them
 //! directly.
 //!
-//! The wall can never be placed above its floor (`wall.rs`), so pumping the price and placing
-//! the wall high earns nothing. Both the reference and the floor change only at a slot's first
-//! update, toward or to the price the previous slot's trading ended at, so no trade can move
-//! either in its own slot (`POOL4-50`): the reference follows that price by at most
-//! `REF_STEP_BPS` per `REF_STEP_WINDOW`; the floor rises at most `FLOOR_CRAWL_BPS` a day
-//! toward the reference, never above it nor that price, and drops to that price if it is
-//! lower. A dip bought straight back inside one slot never drags the floor down, and no buy
-//! lifts it in its own slot, so a quiet spell's crawl can never be realised above the price a
-//! slot opened at.
+//! The wall can never be placed above its floor nor the last traded slot's lowest close
+//! (`wall.rs`), so pumping the price and placing the wall high earns nothing. Both the
+//! reference and the floor change only at a slot's first update, toward or to the price the
+//! previous slot's trading ended at, so no trade can move either in its own slot
+//! (`POOL4-50`): the reference follows that price by at most `REF_STEP_BPS` per
+//! `REF_STEP_WINDOW`; the floor rises at most `FLOOR_CRAWL_BPS` a day toward the reference,
+//! never above it nor that price, and drops to that price if it is lower. A dip bought
+//! straight back inside one slot never drags the floor down, and no buy lifts it in its own
+//! slot, so a quiet spell's crawl can never be realised above the price a slot opened at.
+//! Every swap's close also keeps `last_slot_low`, the lowest close of the slot it ran in,
+//! which caps the next placement, so a dip bought back in its own slot cannot have the wall
+//! placed above the dip's low with the SOL the dip left idle (the placement cap, `POOL4-50`
+//! as amended on 2026-11-19).
 //!
 //! Rates are on the price, and these values are square-root prices, so each step is halved:
 //! a price rising by `x` basis points is a square root rising by about `x / 2`. Every time
@@ -37,6 +41,9 @@ pub struct Guard {
     pub last_slot: u64,
     /// The price the last swap left, Q64.64.
     pub last_close: u128,
+    /// The lowest close of the last slot a swap or the seed ran in, Q64.64; `place_wall`
+    /// places no higher. 0, a market written before this field, caps nothing.
+    pub last_slot_low: u128,
 }
 
 /// `now - then` in seconds, saturating at 0; `reference_step` and `floor_crawl` cap it.
@@ -128,14 +135,32 @@ impl Guard {
         })
     }
 
-    /// Step 3, once the swap's price is set: `last_close` becomes `price`, and nothing else
-    /// changes, so a swap's own price never moves the floor; the next slot's first update
-    /// reads it.
-    pub fn close_at(self, price: u128) -> Guard {
+    /// Step 3, once the swap's price is set: `last_close` becomes `price`, and so does
+    /// `last_slot_low` at the slot's first swap (`opens`, the swap whose `follow` marked the
+    /// slot) or while it is 0 (a market written before the field); a later swap in the same
+    /// slot lowers it to `price` if that is lower. Nothing else changes, so a swap's own price
+    /// never moves the floor; the next slot's first update reads the close, and the next
+    /// placement the low.
+    pub fn close_at(self, price: u128, opens: bool) -> Guard {
+        let last_slot_low = if opens || self.last_slot_low == 0 {
+            price
+        } else {
+            self.last_slot_low.min(price)
+        };
         Guard {
             last_close: price,
+            last_slot_low,
             ..self
         }
+    }
+
+    /// Steps 1, 3 and 4 of a swap that leaves the price at `price`, in the Clock's `slot` at
+    /// time `now`, as `handle_swap` runs them: `follow`, then `close_at` with `opens` true
+    /// when `slot` is later than the slot last brought up to date. `None` only on an overflow,
+    /// as for `follow`.
+    pub fn swap_at(self, slot: u64, now: i64, price: u128) -> Option<Guard> {
+        let opens = slot > self.last_slot;
+        Some(self.follow(slot, now)?.close_at(price, opens))
     }
 }
 
@@ -160,6 +185,7 @@ mod proofs {
             floor_time: kani::any(),
             last_slot: kani::any(),
             last_close: kani::any(),
+            last_slot_low: kani::any(),
         }
     }
 
@@ -184,6 +210,7 @@ mod proofs {
             assert!(moved * 2 * 10_000 <= guard.reference * REF_STEP_BPS as u128);
             assert!(next.last_slot == slot && next.ref_time == guard.ref_time.max(now));
             assert!(next.last_close == guard.last_close);
+            assert!(next.last_slot_low == guard.last_slot_low);
         }
     }
 
@@ -202,12 +229,14 @@ mod proofs {
     /// `place_wall`'s) leaves it at or below the last close, the price the slot opened at,
     /// and at or below the larger of its old value and the reference, rising by at most
     /// `FLOOR_CRAWL_BPS / 2` of itself; its clock never moves backwards and nothing else
-    /// changes. A swap's `close_at` moves only the last close, so no trade moves the floor in
-    /// its own slot. (That a second update at the same time changes nothing is left to
-    /// Proptest and `proofs/guard_z3.py`: a second division keeps this tier past a minute.)
+    /// changes. A swap's `close_at` moves only the last close and the slot's low, which it
+    /// sets to the price at the slot's first swap (or while it is 0) and otherwise lowers to
+    /// the price, so no trade moves the floor in its own slot and the low is never above the
+    /// price. (That a second update at the same time changes nothing is left to Proptest and
+    /// `proofs/guard_z3.py`: a second division keeps this tier past a minute.)
     fn floor_stays_below_the_slots_opening_price(bound: u128) {
         let guard = any_guard();
-        let (price, now): (u128, i64) = (kani::any(), kani::any());
+        let (price, now, opens): (u128, i64, bool) = (kani::any(), kani::any(), kani::any());
         kani::assume(guard.reference <= bound && guard.floor <= bound);
         let next = guard.open_floor(now).unwrap();
         assert!(next.floor <= guard.last_close);
@@ -225,11 +254,18 @@ mod proofs {
                 ..guard
             }
         );
-        let closed = next.close_at(price);
+        let closed = next.close_at(price, opens);
+        let low = if opens || next.last_slot_low == 0 {
+            price
+        } else {
+            next.last_slot_low.min(price)
+        };
+        assert!(closed.last_slot_low <= price);
         assert!(
             closed
                 == Guard {
                     last_close: price,
+                    last_slot_low: low,
                     ..next
                 }
         );
@@ -263,6 +299,7 @@ mod tests {
         floor_time: 1_000,
         last_slot: 10,
         last_close: OPENING,
+        last_slot_low: OPENING,
     };
     const BOUGHT_AT: u128 = 2_027_297_173_702_505_949;
     const SOLD_AT: u128 = 1_844_674_407_372_029_099;
@@ -278,8 +315,12 @@ mod tests {
             (OPENING, 4_600, 9_010)
         );
         assert_eq!((buy.floor, buy.floor_time), (OPENING, 4_600));
-        let buy = buy.close_at(BOUGHT_AT);
-        assert_eq!((buy.floor, buy.last_close), (OPENING, BOUGHT_AT));
+        let buy = buy.close_at(BOUGHT_AT, true);
+        assert_eq!(
+            (buy.floor, buy.last_close, buy.last_slot_low),
+            (OPENING, BOUGHT_AT, BOUGHT_AT)
+        );
+        assert_eq!(SEEDED.swap_at(9_010, 4_600, BOUGHT_AT), Some(buy));
 
         // 60 seconds later, the sell back, the first update of its slot: the reference moves
         // toward the buy's price by its most, ref / 100 for a window of 12 seconds or more;
@@ -291,12 +332,14 @@ mod tests {
             (sell.floor, sell.floor_time),
             (1_844_700_027_848_835_313, 4_660)
         );
-        let sell = sell.close_at(SOLD_AT);
+        let sell = sell.close_at(SOLD_AT, true);
         assert_eq!(sell.floor, 1_844_700_027_848_835_313);
-        assert_eq!(sell.last_close, SOLD_AT);
+        assert_eq!((sell.last_close, sell.last_slot_low), (SOLD_AT, SOLD_AT));
+        assert_eq!(buy.swap_at(9_160, 4_660, SOLD_AT), Some(sell));
 
         // `place_wall` from a later slot, at the same time: the floor drops to the sell's
-        // price, the price that slot opened at, which is where the worked example's wall goes.
+        // price, the price that slot opened at, which is also the sell's slot's lowest close,
+        // so it is where the worked example's wall goes.
         let placing = sell.open_floor(4_660).unwrap();
         assert_eq!((placing.floor, placing.floor_time), (SOLD_AT, 4_660));
         assert_eq!(
@@ -338,13 +381,30 @@ mod tests {
         assert_eq!((back.ref_time, back.floor_time), (1_000, 1_000));
         // A dip inside the slot never reaches the floor: two swaps in one slot, the first to
         // half the price, leave the floor where the slot's first update put it.
-        let dipped = SEEDED.follow(11, 2_000).unwrap().close_at(OPENING / 2);
-        let bought_back = dipped.follow(11, 2_000).unwrap().close_at(OPENING);
+        let dipped = SEEDED.swap_at(11, 2_000, OPENING / 2).unwrap();
+        let bought_back = dipped.swap_at(11, 2_000, OPENING).unwrap();
         assert_eq!((dipped.floor, bought_back.floor), (OPENING, OPENING));
+        // The slot's lowest close is the dip's, whatever came after it in the slot.
+        assert_eq!(
+            (dipped.last_slot_low, bought_back.last_slot_low),
+            (OPENING / 2, OPENING / 2)
+        );
         // The next slot's first update reads the last close: bought back, the floor stays;
         // left at the dip, it drops there.
         assert_eq!(bought_back.follow(12, 2_001).unwrap().floor, OPENING);
         assert_eq!(dipped.follow(12, 2_001).unwrap().floor, OPENING / 2);
+        // The next slot's first swap starts its own low at its close.
+        let next = bought_back.swap_at(12, 2_001, OPENING).unwrap();
+        assert_eq!(next.last_slot_low, OPENING);
+        // A market written before the field (low 0) takes its first swap's close, in any slot.
+        let old = Guard {
+            last_slot_low: 0,
+            ..SEEDED
+        };
+        assert_eq!(
+            old.swap_at(10, 1_000, OPENING / 3).unwrap().last_slot_low,
+            OPENING / 3
+        );
     }
 
     #[test]
@@ -444,17 +504,21 @@ mod tests {
         /// the price that slot opened at; a swap in a slot already brought up to date, or its
         /// own price, never moves it; a `place_wall`, run only in a slot no swap has run in,
         /// changes only the floor and its clock, and a swap later in its slot then leaves the
-        /// floor where it put it; and neither clock ever moves backwards.
+        /// floor where it put it; `last_slot_low` is always the lowest close of the last slot
+        /// a swap or the seed ran in, kept here independently; and neither clock ever moves
+        /// backwards.
         #[test]
         fn the_floor_moves_only_at_a_slots_first_update(
             opening in price(),
             steps in prop::collection::vec((0u64..3, -30i64..100_000, price(), any::<bool>()), 1..40),
         ) {
             let mut guard = Guard {
-                reference: opening, floor: opening, last_close: opening, ..SEEDED
+                reference: opening, floor: opening, last_close: opening, last_slot_low: opening, ..SEEDED
             };
             let mut slot = SEEDED.last_slot;
             let mut now = SEEDED.ref_time;
+            // The lowest close of the last slot that traded, and that slot: the seed's.
+            let (mut low, mut low_slot) = (opening, slot);
             for (slots, seconds, price, place_wall) in steps {
                 slot += slots;
                 now += seconds;
@@ -466,19 +530,24 @@ mod tests {
                     guard = guard.open_floor(now).unwrap();
                     prop_assert!(guard.floor <= before.last_close);
                     prop_assert_eq!(guard, Guard { floor: guard.floor, floor_time: guard.floor_time, ..before });
+                    prop_assert_eq!(guard.last_slot_low, low);
                     // A swap later in the same slot leaves the floor as it is.
                     let swap = guard.follow(slot, now).unwrap();
                     prop_assert_eq!((swap.floor, swap.floor_time), (guard.floor, guard.floor_time));
                 } else {
                     let followed = guard.follow(slot, now).unwrap();
-                    guard = followed.close_at(price);
+                    guard = followed.close_at(price, slot > before.last_slot);
+                    prop_assert_eq!(Some(guard), before.swap_at(slot, now, price));
                     if slot <= before.last_slot {
                         prop_assert_eq!(followed, before);
                     } else {
                         prop_assert!(guard.floor <= before.last_close);
                     }
                     prop_assert_eq!(guard.last_close, price);
+                    low = if slot > low_slot { price } else { low.min(price) };
+                    low_slot = low_slot.max(slot);
                 }
+                prop_assert_eq!(guard.last_slot_low, low);
                 prop_assert!(guard.floor <= guard.reference);
                 prop_assert!(guard.floor >= MIN_SQRT_PRICE);
                 prop_assert!(guard.ref_time >= before.ref_time && guard.floor_time >= before.floor_time);

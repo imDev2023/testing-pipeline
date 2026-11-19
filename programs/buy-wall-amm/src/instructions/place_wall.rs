@@ -7,7 +7,8 @@
 //! the slot, closes the old wall at the current price, sweeps the pool's rounding dust, tips
 //! the caller at most `KEEPER_TIP_CAP` and never more than the fee the market earned on the
 //! work, in wrapped SOL to a token account the caller names, and places the new wall with
-//! everything left at `min(price, floor)` (`wall::place_in_slot`). It never moves the price.
+//! everything left at `min(price, floor, last_slot_low)`, the last of them the lowest close of
+//! the last slot that traded (`wall::place_in_slot`). It never moves the price.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::Token;
@@ -68,8 +69,8 @@ pub fn handle_place_wall(ctx: Context<PlaceWall>) -> Result<()> {
             authority,
             StrategyError::WrongAccount
         );
-        // Only in a slot no swap has run in, under the floor brought up to date for it
-        // (`POOL4-50`).
+        // Only in a slot no swap has run in, under the floor brought up to date for it and no
+        // higher than the last traded slot's lowest close (`POOL4-50`).
         let clock = Clock::get()?;
         let (placed, placement, guard) = wall::place_in_slot(
             state.wall_books(),

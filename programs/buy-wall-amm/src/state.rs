@@ -50,7 +50,7 @@ pub fn vault_authority(market_state: &Pubkey, bump: u8) -> Option<Pubkey> {
 }
 
 /// Bytes left zeroed and reserved after the last field.
-pub const RESERVE_LEN: usize = 289;
+pub const RESERVE_LEN: usize = 273;
 
 /// A buy wall market. The 8-byte discriminator comes first in the account and is not part
 /// of the struct; offsets in the comments are from the start of the account.
@@ -188,7 +188,12 @@ pub struct MarketState {
     /// 727: u64, token units, the part of `retired_tokens` that earns the reward share
     pub retired_rewardable: [u8; 8],
 
-    /// 735 to the end: zeroed, for fields later layouts append.
+    // The placement cap (`POOL4-50`), appended into the reserve before the first deployment.
+    /// 735: u128, Q64.64, the lowest close of the last slot that traded; 0 (a market written
+    /// before this field) caps nothing
+    pub last_slot_low: [u8; 16],
+
+    /// 751 to the end: zeroed, for fields later layouts append.
     pub reserve: [u8; RESERVE_LEN],
 }
 
@@ -259,6 +264,7 @@ le_fields! {
     tips_paid, set_tips_paid: u128;
     cap_fall_unmatched, set_cap_fall_unmatched: u64;
     retired_rewardable, set_retired_rewardable: u64;
+    last_slot_low, set_last_slot_low: u128;
 }
 
 impl MarketState {
@@ -396,6 +402,7 @@ impl MarketState {
             sqrt_price: self.sqrt_price(),
             liquidity: self.liquidity(),
             floor: self.floor(),
+            last_slot_low: self.last_slot_low(),
             fee_bps: self.fee_bps(),
         }
     }
@@ -409,6 +416,7 @@ impl MarketState {
             floor_time: self.floor_time(),
             last_slot: self.last_slot(),
             last_close: self.last_close(),
+            last_slot_low: self.last_slot_low(),
         }
     }
 
@@ -419,6 +427,7 @@ impl MarketState {
         self.set_floor_time(guard.floor_time);
         self.set_last_slot(guard.last_slot);
         self.set_last_close(guard.last_close);
+        self.set_last_slot_low(guard.last_slot_low);
     }
 
     /// The market's cap rules, fixed at its seed.
@@ -609,6 +618,7 @@ mod proofs {
             tips_paid: kani::any(),
             cap_fall_unmatched: kani::any(),
             retired_rewardable: kani::any(),
+            last_slot_low: kani::any(),
             reserve: kani::any(),
         }
     }
@@ -679,7 +689,8 @@ mod proofs {
             tips_paid: filled(55),
             cap_fall_unmatched: filled(56),
             retired_rewardable: filled(57),
-            reserve: filled(58),
+            last_slot_low: filled(58),
+            reserve: filled(59),
         }
     }
 
@@ -745,6 +756,7 @@ mod proofs {
             tips_paid,
             cap_fall_unmatched,
             retired_rewardable,
+            last_slot_low,
             reserve,
         } = a;
         *layout_version == b.layout_version
@@ -804,6 +816,7 @@ mod proofs {
             && *tips_paid == b.tips_paid
             && *cap_fall_unmatched == b.cap_fall_unmatched
             && *retired_rewardable == b.retired_rewardable
+            && *last_slot_low == b.last_slot_low
             && *reserve == b.reserve
     }
 
@@ -915,6 +928,16 @@ mod proofs {
             tokens_burned, set_tokens_burned: u128;
             rewards_paid, set_rewards_paid: u128;
             tips_paid, set_tips_paid: u128;
+        }
+    }
+
+    /// The placement cap's `last_slot_low` accessor (`POOL4-50`), on its own: with it the
+    /// cap, guard and total harness above took 72 seconds (2026-11-19), past the default
+    /// tier's minute. Verified in 49 seconds on the owner's Mac (2026-11-19).
+    #[kani::proof]
+    fn the_placement_caps_accessor_round_trips_and_writes_only_its_bytes() {
+        each_field_round_trips! {
+            last_slot_low, set_last_slot_low: u128;
         }
     }
 
@@ -1071,7 +1094,8 @@ mod proofs {
     }
 
     /// `place_wall`'s books read and write exactly their nine fields, never the price, the
-    /// curve's liquidity, the floor or the fee, which it reads through `wall_at` only.
+    /// curve's liquidity, the floor, the last traded slot's low or the fee, which it reads
+    /// through `wall_at` only.
     /// Verified in 28 seconds on the owner's Mac (2026-11-16).
     #[kani::proof]
     fn the_wall_books_read_and_write_exactly_their_fields() {
@@ -1100,6 +1124,7 @@ mod proofs {
                     sqrt_price: u128::from_le_bytes(state.sqrt_price),
                     liquidity: u128::from_le_bytes(state.liquidity),
                     floor: u128::from_le_bytes(state.floor),
+                    last_slot_low: u128::from_le_bytes(state.last_slot_low),
                     fee_bps: u16::from_le_bytes(state.fee_bps),
                 }
         );
@@ -1174,8 +1199,8 @@ mod proofs {
         written_exactly!(after, expected; retired_tokens, retired_rewardable, rewards_owed, fees_recipient, fees_designer, fees_suite, tokens_burned, rewards_paid);
     }
 
-    /// The guard reads and writes exactly its six fields. Verified in 34 seconds on the
-    /// owner's Mac (2026-11-16).
+    /// The guard reads and writes exactly its seven fields. Verified in 34 seconds on the
+    /// owner's Mac (2026-11-16), before `last_slot_low` was added.
     #[kani::proof]
     fn the_guard_reads_and_writes_exactly_its_fields() {
         let state = any_state();
@@ -1188,6 +1213,7 @@ mod proofs {
                     floor_time: i64::from_le_bytes(state.floor_time),
                     last_slot: u64::from_le_bytes(state.last_slot),
                     last_close: u128::from_le_bytes(state.last_close),
+                    last_slot_low: u128::from_le_bytes(state.last_slot_low),
                 }
         );
         let guard = crate::guard::Guard {
@@ -1197,6 +1223,7 @@ mod proofs {
             floor_time: kani::any(),
             last_slot: kani::any(),
             last_close: kani::any(),
+            last_slot_low: kani::any(),
         };
         let mut after = patterned();
         after.set_guard(&guard);
@@ -1207,6 +1234,7 @@ mod proofs {
         expected.floor_time = guard.floor_time.to_le_bytes();
         expected.last_slot = guard.last_slot.to_le_bytes();
         expected.last_close = guard.last_close.to_le_bytes();
-        written_exactly!(after, expected; reference, ref_time, floor, floor_time, last_slot, last_close);
+        expected.last_slot_low = guard.last_slot_low.to_le_bytes();
+        written_exactly!(after, expected; reference, ref_time, floor, floor_time, last_slot, last_close, last_slot_low);
     }
 }

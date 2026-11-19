@@ -225,13 +225,15 @@ pub fn open_market(
     state.set_pool_sol(y);
     state.set_cap(opened.cap);
     state.set_decay_time(now);
-    // The wall guard starts at the opening price, and every clock field at now.
+    // The wall guard starts at the opening price, and every clock field at now: the seed's
+    // slot is the last that traded, its lowest close the opening price (`POOL4-50`).
     state.set_reference(opened.sqrt_price);
     state.set_ref_time(now);
     state.set_floor(opened.sqrt_price);
     state.set_floor_time(now);
     state.set_last_slot(clock.slot);
     state.set_last_close(opened.sqrt_price);
+    state.set_last_slot_low(opened.sqrt_price);
 
     emit!(MarketSeeded {
         market_state,

@@ -2213,14 +2213,27 @@
             }
           },
           {
-            "name": "reserve",
+            "name": "last_slot_low",
             "docs": [
-              "735 to the end: zeroed, for fields later layouts append."
+              "735: u128, Q64.64, the lowest close of the last slot that traded; 0 (a market written",
+              "before this field) caps nothing"
             ],
             "type": {
               "array": [
                 "u8",
-                289
+                16
+              ]
+            }
+          },
+          {
+            "name": "reserve",
+            "docs": [
+              "751 to the end: zeroed, for fields later layouts append."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                273
               ]
             }
           }

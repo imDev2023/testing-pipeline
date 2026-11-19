@@ -56,8 +56,13 @@ fn one_transaction_creates_and_seeds_the_worked_example() {
     assert_eq!(state.cap_decay_per_day(), 200_000_000_000);
     let s = state.sqrt_price();
     assert_eq!(
-        (state.reference(), state.floor(), state.last_close()),
-        (s, s, s)
+        (
+            state.reference(),
+            state.floor(),
+            state.last_close(),
+            state.last_slot_low()
+        ),
+        (s, s, s, s)
     );
     assert_eq!(state.seed_time(), 1_800_000_000);
     assert_eq!(state.decay_time(), 1_800_000_000);
