@@ -371,7 +371,7 @@ How it is built ([Lending AMM: seeding by a launchpad](https://github.com/imDev2
 - Each escrow's balance is measured before and after its transfer, the seeder signing, and `SeedResult.taken` reports what left it; `lp_amount` is the shares minted.
 - The strategy creates the LP recipient's associated token account for the LP mint idempotently, from the payer's SOL, and refuses any other account there (`WrongAccount`); the metadata's `seed_liquidity` form takes it as the named input `lp_recipient_shares`, since metadata cannot describe the associated token account of a mint that is itself a PDA (LENDING-85).
 - It emits `MarketCreated`, then `MarketSeeded` with the seeder, the LP recipient, the shares account, the amounts, the shares and the share count (LENDING-87).
-- Signed by the creator alone, the graduation with `register_existing_market` and both `init_fee_account` calls fits a legacy transaction on SPL Token and plain Token-2022 tokens (1,157 to 1,221 bytes in the tests, with the stand-in launchpad), but not with a transfer hook's two accounts (1,255 and 1,287), so a launchpad graduating a hooked token sends a version 0 transaction with an address lookup table of the accounts every graduation shares (1,012 and 1,044 bytes) (LENDING-86).
+- Signed by the creator alone, the graduation with `register_existing_market` and both `init_fee_account` calls fits a legacy transaction on SPL Token and plain Token-2022 tokens (1,124 to 1,188 bytes in the tests, with the stand-in launchpad, since Pipeline 0.2 dropped the config account from `register_existing_market`), but with a transfer hook's two accounts it fits only when the shares are locked (1,222 bytes) and not when they go to a wallet (1,254), so a launchpad graduating a hooked token sends a version 0 transaction with an address lookup table of the accounts every graduation shares (1,010 and 1,042 bytes) (LENDING-86).
 - A seeded market then lends, redeems a swap's shortfall and pays removals in cash and in kind exactly as a market created through the router with the same amounts, on both lent mints; the invariant fuzzer seeds about half its markets, their shares locked, and `pipeline-check` passes them before and after they lend.
 
 ## Who earns what
@@ -440,6 +440,7 @@ In every state of "When Kamino can't pay" but a failed layout check, every call 
 `pipeline_seed_liquidity` measured at most 110.6k on both builds through the stand-in launchpad, on a hooked token with the shares to a wallet, which creates five accounts, the recipient's shares account among them; the ceiling stands ([Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84), 2026-11-16).
 
 Every instruction measured in every state of "When Kamino can't pay", a failed layout check included, on both builds, gave the Measured column, the highest cost of each row over every mint and state; every ceiling is that cost plus a quarter, rounded up to a multiple of 5,000, and the tests assert every cost against both its ceiling and the Measured column, so a change that costs more must update the column, and the rule against the table ([Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85), 2026-11-16).
+With Pipeline 0.2's crates (2026-11-19), CI's build measured `rebalance` and `lock_lp` 6 units higher, 71,764 and 36,987, which the column now records.
 Two rows depart from that rule.
 `add_liquidity` keeps 60,000 rather than 55,000, because its PDA searches make its cost depend on the LP's key and a hooked mint's, and on random keys the hooked first deposit measured up to 55,635.
 `lock_lp` rises from 40,000 to 50,000, because the market's first lock creates the lock account through the associated token program, whose address search costs 4,500 units for every bump it tries after the first: on a market whose lock account needs one bump more than the market measured before, it took 36,981 against the 32,500 recorded then.
@@ -457,8 +458,8 @@ Account resolution still answers while the reserve fails its layout check, since
 | `add_liquidity` | 40,662 | 60,000 | Two transfers in, an LP mint |
 | `remove_liquidity`, cash | 76,080 | 100,000 | Kamino's redeem, transfers out, an LP burn |
 | `remove_liquidity`, in kind | 62,710 | 80,000 | Transfers out, possibly creating the LP's cToken account |
-| `rebalance` | 71,758 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
-| `lock_lp` | 36,981 | 50,000 | One transfer, and the market's first lock creates the lock account |
+| `rebalance` | 71,764 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
+| `lock_lp` | 36,987 | 50,000 | One transfer, and the market's first lock creates the lock account |
 
 ### Invariants for test layer 3
 

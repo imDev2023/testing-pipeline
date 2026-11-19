@@ -201,7 +201,7 @@ fn the_init_form_builds_exactly_what_pipeline_init_market_takes() {
 #[test]
 fn the_seed_action_builds_exactly_what_seed_takes() {
     let metadata = metadata();
-    let action = metadata["actions"]
+    let action = metadata["aviary_actions"]
         .as_array()
         .unwrap()
         .iter()
@@ -229,7 +229,7 @@ fn the_seed_action_builds_exactly_what_seed_takes() {
 #[test]
 fn the_place_wall_action_builds_exactly_what_place_wall_takes() {
     let metadata = metadata();
-    let action = metadata["actions"]
+    let action = metadata["aviary_actions"]
         .as_array()
         .unwrap()
         .iter()
@@ -302,7 +302,7 @@ fn the_seed_liquidity_form_describes_exactly_what_pipeline_seed_liquidity_takes(
 }
 
 fn action(metadata: &Value, name: &str) -> Value {
-    metadata["actions"]
+    metadata["aviary_actions"]
         .as_array()
         .unwrap()
         .iter()

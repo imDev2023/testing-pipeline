@@ -79,10 +79,10 @@ impl Row {
             // Kept at 60,000 rather than the rule's 55,000: on random keys the hooked first
             // deposit measured up to 55,635 (see `fixed_key`).
             Row::AddLiquidity => (40_662, 60_000),
-            Row::Rebalance => (71_758, 90_000),
+            Row::Rebalance => (71_764, 90_000),
             Row::RemoveLiquidityCash => (76_080, 100_000),
             Row::RemoveLiquidityInKind => (62_710, 80_000),
-            Row::LockLp => (36_981, 50_000),
+            Row::LockLp => (36_987, 50_000),
         }
     }
 }
@@ -300,9 +300,13 @@ fn seeding_by_a_launchpad_fits_one_transaction_and_stays_under_its_ceiling() {
                 "{what}: {compressed_size} bytes"
             );
             let hooked = name == "hooked Token-2022";
+            // Since Pipeline 0.2 dropped the config account from register_existing_market, a
+            // hooked token's graduation fits a legacy transaction when its shares are locked
+            // (1,222 bytes), but not when they go to a wallet (1,254); a launchpad graduating a
+            // hooked token still sends it with a lookup table (LENDING-86).
             assert_eq!(
                 legacy_size <= PACKET_DATA_SIZE,
-                !hooked,
+                !hooked || locked,
                 "{what}: {legacy_size} bytes"
             );
             let tx = if hooked { compressed } else { legacy };

@@ -164,13 +164,13 @@ fn its_init_and_seed_accounts_and_arguments_are_the_metadatas() {
 
     // `seed`: the metadata's accounts and arguments, in order.
     let seed = named(&idl["instructions"], "seed");
-    let action = named(&metadata["actions"], "seed");
+    let action = named(&metadata["aviary_actions"], "seed");
     assert_eq!(names(&seed["accounts"]), names(&action["accounts"]));
     assert_eq!(names(&seed["args"]), names(&action["args"]));
 
     // `place_wall`: the metadata's accounts, and no arguments.
     let place_wall = named(&idl["instructions"], "place_wall");
-    let action = named(&metadata["actions"], "place_wall");
+    let action = named(&metadata["aviary_actions"], "place_wall");
     assert_eq!(names(&place_wall["accounts"]), names(&action["accounts"]));
     assert!(names(&place_wall["args"]).is_empty() && names(&action["args"]).is_empty());
 
@@ -183,7 +183,7 @@ fn its_init_and_seed_accounts_and_arguments_are_the_metadatas() {
         "set_rewards_recipient",
     ] {
         let instruction = named(&idl["instructions"], name);
-        let action = named(&metadata["actions"], name);
+        let action = named(&metadata["aviary_actions"], name);
         assert_eq!(
             names(&instruction["accounts"]),
             names(&action["accounts"]),

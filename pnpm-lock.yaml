@@ -8,6 +8,22 @@ importers:
 
   .: {}
 
+  packages/strategy-actions:
+    dependencies:
+      '@pipeline-placeholder/sdk':
+        specifier: link:../../fixtures/pipeline/sdk/ts
+        version: link:../../fixtures/pipeline/sdk/ts
+      '@solana/kit':
+        specifier: 8.6.0
+        version: 8.6.0(typescript@7.0.2)
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   programs/buy-wall-amm/scripts:
     dependencies:
       '@pipeline-placeholder/sdk':
@@ -22,6 +38,9 @@ importers:
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@7.0.2)
+      strategy-actions:
+        specifier: workspace:*
+        version: link:../../../packages/strategy-actions
     devDependencies:
       '@codama/nodes-from-anchor':
         specifier: 1.5.6
@@ -56,6 +75,9 @@ importers:
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@7.0.2)
+      strategy-actions:
+        specifier: workspace:*
+        version: link:../../../packages/strategy-actions
     devDependencies:
       '@codama/nodes-from-anchor':
         specifier: 1.5.6
@@ -87,6 +109,9 @@ importers:
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@7.0.2)
+      strategy-actions:
+        specifier: workspace:*
+        version: link:../../../packages/strategy-actions
     devDependencies:
       '@codama/nodes-from-anchor':
         specifier: 1.5.6
@@ -118,6 +143,9 @@ importers:
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@7.0.2)
+      strategy-actions:
+        specifier: workspace:*
+        version: link:../../../packages/strategy-actions
     devDependencies:
       '@codama/nodes-from-anchor':
         specifier: 1.5.6
