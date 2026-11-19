@@ -40,7 +40,7 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           # The programs, everything that builds, tests or runs them, and this workflow.
           ONCHAIN_PATHS: >-
-            ^programs/|^packages/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator)\.sh$|^scripts/workspace-programs\.py$
+            ^programs/|^packages/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator|deploy-devnet|test-deploy-devnet)\.sh$|^scripts/workspace-programs\.py$
           # Canary's crates, the fixtures its tests load (the router's pin, and Pipeline's test
           # programs at the rev programs/Cargo.toml pins), the scripts that fetch them, and this
           # workflow.
@@ -123,6 +123,8 @@ jobs:
         run: scripts/install-toolchain.sh solana
       - name: The router fixture script refuses a dump that differs from its pin
         run: scripts/test-fetch-router.sh
+      - name: The devnet deploy script refuses what it must, and records what it deployed
+        run: scripts/test-deploy-devnet.sh
       - name: Fetch devnet's router, checked against its pinned hash
         run: source scripts/toolchain-env.sh && scripts/fetch-router.sh
       - name: The Kamino fixture scripts refuse klend bytes that differ from their pins, and a changed account layout
