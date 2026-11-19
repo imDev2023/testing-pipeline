@@ -43,6 +43,7 @@ pipeline-client.workspace = true
 pipeline-events.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 solana-account.workspace = true
 solana-clock.workspace = true
 solana-keypair.workspace = true

@@ -4,10 +4,12 @@
 # active_release, so other projects keep their own versions. Safe to run again.
 # What it installs and why: docs/toolchain.md.
 #
-#   scripts/install-toolchain.sh [solana] [kani]    # default: both
+#   scripts/install-toolchain.sh [solana] [kani] [verify]    # default: solana and kani
 #
 # `solana` is Rust, cargo-build-sbf, the platform tools and the Agave CLI; `kani` is Rust and
-# the Kani model checker for the maths proofs. CI installs each part in the job that needs it.
+# the Kani model checker for the maths proofs; `verify` is solana-verify, for the Docker
+# verified builds a devnet deploy needs (docs/toolchain.md, "Deploy to devnet"), which CI does
+# not run. CI installs each part in the job that needs it.
 set -euo pipefail
 
 ROOT="${TESTING_PIPELINE_TOOLCHAIN:-$HOME/.local/share/testing-pipeline/toolchain}"
@@ -15,12 +17,13 @@ RUST_VERSION=1.97.1
 CARGO_BUILD_SBF_VERSION=4.6.0
 AGAVE_VERSION=v4.4.1
 KANI_VERSION=0.67.0
+SOLANA_VERIFY_VERSION=0.5.2
 
 PARTS="${*:-solana kani}"
 for part in $PARTS; do
   case "$part" in
-    solana | kani) ;;
-    *) echo "unknown part: $part (expected solana or kani)" >&2; exit 2 ;;
+    solana | kani | verify) ;;
+    *) echo "unknown part: $part (expected solana, kani or verify)" >&2; exit 2 ;;
   esac
 done
 want() { [[ " $PARTS " == *" $1 "* ]]; }
@@ -60,6 +63,7 @@ rustup toolchain list | grep -q "^$RUST_VERSION-" || rustup toolchain install "$
 CBS="$ROOT/cargo-build-sbf-$CARGO_BUILD_SBF_VERSION"
 AGAVE="$ROOT/agave-$AGAVE_VERSION"
 KANI="$ROOT/kani-$KANI_VERSION"
+VERIFY="$ROOT/solana-verify-$SOLANA_VERIFY_VERSION"
 
 install_solana() {
   echo "== cargo-build-sbf $CARGO_BUILD_SBF_VERSION"
@@ -139,8 +143,21 @@ install_kani() {
   fi
 }
 
+# The machine keeps the solana-verify it already has (0.4.9 in ~/.avm/bin, too old for --arch);
+# this one goes beside it and toolchain-env.sh puts it first.
+install_verify() {
+  echo "== solana-verify $SOLANA_VERIFY_VERSION"
+  if ! "$VERIFY/bin/solana-verify" --version 2>/dev/null | grep -q " $SOLANA_VERIFY_VERSION$"; then
+    build_dir="$(mktemp -d)"
+    CARGO_TARGET_DIR="$build_dir" cargo "+$RUST_VERSION" install solana-verify \
+      --version "$SOLANA_VERIFY_VERSION" --locked --root "$VERIFY"
+    rm -rf "$build_dir"
+  fi
+}
+
 if want solana; then install_solana; fi
 if want kani; then install_kani; fi
+if want verify; then install_verify; fi
 
 echo
 echo "Installed in $ROOT:"
@@ -152,5 +169,8 @@ if want solana; then
 fi
 if want kani; then
   PATH="$KANI/bin:$PATH" cargo kani --version
+fi
+if want verify; then
+  "$VERIFY/bin/solana-verify" --version
 fi
 echo "Use it in a shell with: source scripts/toolchain-env.sh"

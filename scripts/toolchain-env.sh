@@ -7,8 +7,8 @@
 TESTING_PIPELINE_TOOLCHAIN="${TESTING_PIPELINE_TOOLCHAIN:-$HOME/.local/share/testing-pipeline/toolchain}"
 
 # cargo-build-sbf 4.6.0 before Agave's bin, which ships its own older cargo-build-sbf, and
-# Kani for `cargo kani`.
-export PATH="$TESTING_PIPELINE_TOOLCHAIN/cargo-build-sbf-4.6.0/bin:$TESTING_PIPELINE_TOOLCHAIN/agave-v4.4.1/bin:$TESTING_PIPELINE_TOOLCHAIN/kani-0.67.0/bin:$PATH"
+# Kani for `cargo kani`, and solana-verify for verified builds (before the machine's older one).
+export PATH="$TESTING_PIPELINE_TOOLCHAIN/cargo-build-sbf-4.6.0/bin:$TESTING_PIPELINE_TOOLCHAIN/agave-v4.4.1/bin:$TESTING_PIPELINE_TOOLCHAIN/kani-0.67.0/bin:$TESTING_PIPELINE_TOOLCHAIN/solana-verify-0.5.2/bin:$PATH"
 
 # Platform tools v1.58, cargo-build-sbf 4.6.0's default, has no Intel macOS build, so there
 # a wrapper from install-toolchain.sh comes first and passes --tools-version v1.57 itself.

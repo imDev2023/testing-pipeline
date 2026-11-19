@@ -10,6 +10,7 @@
     "links": {
         "source": "https://github.com/imDev2023/testing-pipeline/tree/main/programs/tax-amm",
         "idl": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/idl/tax_amm.json",
+        "docs": "https://github.com/imDev2023/testing-pipeline/blob/main/programs/tax-amm/README.md",
         "github": "https://github.com/imDev2023/testing-pipeline"
     },
     "source": {
@@ -639,6 +640,7 @@
     ],
     "security": {
         "contact": "https://github.com/imDev2023/testing-pipeline/security/advisories/new",
-        "policy": "https://github.com/imDev2023/testing-pipeline/security/policy"
+        "policy": "https://github.com/imDev2023/testing-pipeline/security/policy",
+        "audits": []
     }
 }
