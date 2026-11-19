@@ -65,8 +65,8 @@ Dispositions: "fixed" means fixed in #55 and confirmed in round 2; "signed off" 
 | H025 | A seeder lured into a look-alike market (the seed binds no expected parameters) | Potential | Low | Spec-level design | Signed off |
 | H026 | The creator hands over a recipient between create and seed | Potential | Low | Spec-level design | Signed off |
 | H031 | CPI depth makes some hooked tokens unroutable; the hook as a kill switch | Potential | Low | Test or proof gap | Fixed (`POOL4-48`) |
-| H033 | The release gate judges keeper-job coverage by the candidate's own due rules | Potential | Low | Spec-level design (gate) | Fixed (with R2G-03); one narrow gap pending the owner |
-| H034 | The release gate is blind to value-moving constants, added instructions and handovers | Potential | Low | Spec-level design (gate) | Awaiting the owner's sign-off |
+| H033 | The release gate judges keeper-job coverage by the candidate's own due rules | Potential | Low | Spec-level design (gate) | Fixed (with R2G-03); one narrow gap accepted by the owner |
+| H034 | The release gate is blind to value-moving constants, added instructions and handovers | Potential | Low | Spec-level design (gate) | Accepted Low, owner's sign-off of 2026-11-19 |
 | H040 | A third party thins the curve at the full decay rate | Confirmed | Low | Spec-level design | Signed off |
 | H041 | The rewards recipient times `place_wall` to maximize retirement at dips | Potential | Low | Spec-level design | Motive fixed (`POOL4-49`) |
 | H048 | A hook-blocked `pay_rewards` strands the reward ledger | Potential | Low | Spec-level design | Fixed (`POOL4-48`) |
@@ -199,7 +199,7 @@ Fix: `POOL4-48` removes the flip and `POOL4-49` the recycling; what is left of t
 - **H031** (`src/token.rs`): a hooked buy ran the hook at stack height 4 (5 under an aggregator, where the hook can make no CPI), and a hook pointed at the router or Token-2022 was a kill switch.
   Closed by `POOL4-48`: no seeded market's token runs a hook; tests that a cleared-hook token seeds, trades and pays rewards with no hook invoked.
 - **H033** (`gate/src/keeper.rs:8`): the gate's due rules came from the candidate's own tree, so a tree that narrowed a due rule dropped that job from the replay.
-  Fixed: due jobs come from what the deployed build passed, and each replay asks the build it runs for a fee slot's wallet (R2G-03); the gate's own market still takes its due jobs from the candidate's tree, a narrow gap pending the owner; `sos_h033_a_keeper_job_the_deployed_build_ran_is_run_whatever_the_candidates_rules_say`.
+  Fixed: due jobs come from what the deployed build passed, and each replay asks the build it runs for a fee slot's wallet (R2G-03); the gate's own market still takes its due jobs from the candidate's tree, a narrow gap the owner accepted; `sos_h033_a_keeper_job_the_deployed_build_ran_is_run_whatever_the_candidates_rules_say`.
 - **H041** (`src/wall.rs:206-256`): closing the wall at a dip retired what it bought and gave the recipient the reward share of it.
   Motive removed by `POOL4-49`; the wall stays a buy-and-burn by design.
 - **H048** (`src/instructions/pay_rewards.rs`): a refusing hook stranded the rewards recipient's ledger.
@@ -241,10 +241,10 @@ Fix: `POOL4-48` removes the flip and `POOL4-49` the recycling; what is left of t
 - **H110** (`src/instructions/seed.rs:177-198`): the market opens in the seed, so the seeder can trade first at its own price.
 - **H111** (keeper jobs): every job is permissionless, so a stalled runner causes delay, never loss.
 
-### Awaiting sign-off
+### Accepted by the owner's later answer (4a, 2026-11-19)
 
 - **H034** (`gate/src/check.rs:221-366`, `gate/src/keeper.rs:80-107`): a candidate changing `SUITE_TREASURY`, the share constants or `KEEPER_TIP_CAP`, or adding a drain instruction, passes the gate; `sweep_fees` is reported "swept" without a balance check and handovers are never run.
-  Round 1 recommended accepting it, since the gate guards stranding rather than intent (`POOL4-41`) and the upgrade key is trusted; round 2 confirmed it open.
+  Round 1 recommended accepting it, since the gate guards stranding rather than intent (`POOL4-41`) and the upgrade key is trusted; round 2 confirmed it open, and the owner accepted it on 2026-11-19.
 
 ### Not fixed, Info
 

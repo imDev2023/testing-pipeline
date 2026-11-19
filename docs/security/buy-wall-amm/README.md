@@ -44,7 +44,7 @@ Round 1 ran on 2026-11-16 and 2026-11-17, the fixes landed on 2026-11-17, round 
 
 No Critical or High finding was found in either round.
 No Medium finding is open: every Medium is fixed, and one (H002) was re-rated Low by the owner on 2026-11-19, with its residual measured and disclosed.
-Every Low left open is accepted with the owner's sign-off of 2026-11-19 ([sign-offs.md](sign-offs.md)), except H034 and the narrow gap left by R2G-03's fix, which are listed there as awaiting it.
+Every Low left open is accepted with the owner's sign-off of 2026-11-19 (answers 3a and 4a on #55), each with its reason in [sign-offs.md](sign-offs.md); no Critical, High or Medium finding is open.
 
 Round 1 (37 confirmed or potential findings, 74 cleared):
 
@@ -53,7 +53,7 @@ Round 1 (37 confirmed or potential findings, 74 cleared):
 | Critical | 0 | - | - | - | - | 0 |
 | High | 0 | - | - | - | - | 0 |
 | Medium | 7 | 6 (H001, H003, H005, H020, H058, H061) | - | 1 (H002) | - | 0 |
-| Low | 28 | 14 (H004, H007, H013, H022, H031, H033, H041, H048, H050, H056, H062, H065, H066, H098) | 2 (H068, H097) | - | 11 (H008, H021, H024, H025, H026, H040, H059, H070, H096, H110, H111) | 1 awaiting sign-off (H034) |
+| Low | 28 | 14 (H004, H007, H013, H022, H031, H033, H041, H048, H050, H056, H062, H065, H066, H098) | 2 (H068, H097) | - | 12 (H008, H021, H024, H025, H026, H034, H040, H059, H070, H096, H110, H111) | - |
 | Info | 2 | 1 (H063) | - | - | - | 1, not gated (H069) |
 
 Round 2 (new findings):
@@ -61,7 +61,7 @@ Round 2 (new findings):
 | Severity | Found in round 2 | Fixed in #55 | Signed off | Info, not gated |
 | --- | --- | --- | --- | --- |
 | Medium | 3 (R2-01, R2-02, the back-run regression found in VERIFY-H003) | 2 (R2-01, the back-run regression) | 1, accepted as a Low residual of the hybrid floor (R2-02) | - |
-| Low | 6 (R2-03, R2G-01, R2G-02, R2G-03, R2G-06, R2G-07) | 3 (R2G-01, R2G-02, R2G-03; R2G-03 with a narrow gap pending the owner) | 3 (R2-03, R2G-06 with H097, R2G-07) | - |
+| Low | 6 (R2-03, R2G-01, R2G-02, R2G-03, R2G-06, R2G-07) | 3 (R2G-01, R2G-02, R2G-03; R2G-03's narrow remaining gap accepted) | 3 (R2-03, R2G-06 with H097, R2G-07) | - |
 | Info | 7 (R2-04, R2-05, R2-06, R2G-04, R2G-05, R2G-08, R2G-09) | 2 (R2-05, R2-06) | 2 (R2G-04, R2G-08) | 3 (R2-04, R2G-05, R2G-09) |
 
 Seven of round 1's cleared hypotheses were hardened anyway (H009, H023, H044, H064, H067, H076, H099), and round 2 confirmed each.
@@ -109,6 +109,5 @@ The owner gave the answers on 2026-11-19, in the hardening session, recorded on 
 [sign-offs.md](sign-offs.md) has one row per accepted Low with its reason and what would change it.
 
 - H002 re-rated from Medium to Low by the owner on 2026-11-19: the rewards recipient can draw the creator's published reward budget, `reward_share x (seeded - cap_floor)`, as fast as the cap may fall, measured at about 7.8% of a 10 SOL curve's SOL over 4 days at the defaults and up to 21.7% in one day at the most extreme parameters a creator may choose; the spec's explainer risks disclose it.
-- Accepted Lows: H002's residual; the hybrid floor's residuals (a dip bought back in one slot lets the next `place_wall` put the wall low once, until idle SOL refills; a dip held across a slot boundary lowers the floor, R2-02); H008, H021, H024, H025, H026, H040, H059, H068 (no full-tier Kani in CI), H070, H096, H097 with R2G-06 (the seconds between the gate's check and the upgrade landing), H110, H111, R2-03, R2G-04, R2G-07 and R2G-08.
+- Accepted Lows: H002's residual; the hybrid floor's residuals (any dip since the last placement caps the next `place_wall` at that low once, until idle SOL refills; a dip held across a slot boundary lowers the floor, R2-02, downgraded from Medium by the owner); H034; R2G-03's remaining gap; H008, H021, H024, H025, H026, H040, H059, H068 (no full-tier Kani in CI), H070, H096, H097 with R2G-06 (the seconds between the gate's check and the upgrade landing), H110, H111, R2-03, R2G-04, R2G-07 and R2G-08.
 - Info, not gated: H069, R2-04, R2G-05, R2G-09.
-- Awaiting the owner's sign-off: H034, and the narrow gap R2G-03's fix leaves (the gate's own market takes its due keeper jobs from the candidate's tree), a session default.

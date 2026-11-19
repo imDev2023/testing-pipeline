@@ -16,7 +16,7 @@ Code locations are relative to `programs/buy-wall-amm/` at the commit each part 
 - The regression: `POOL4-50`'s slot-based floor made a back-run of a fall across one slot boundary profitable (Medium), found in the verification of H003.
 - The program re-review found one confirmed Medium (R2-01), one potential Medium (R2-02), one Low and three Info.
 - The gate re-review found no Critical, High or Medium, five Lows (one of them a known residual) and four Info, and no permissionless permanent veto.
-- What was done: R2-01, the back-run regression (by the owner's "hybrid" amendment of `POOL4-50` on 2026-11-19), R2-05, R2-06, R2G-01, R2G-02 and R2G-03 are fixed in this ticket (R2G-03 leaving one narrow gap, a session default pending the owner); R2-02 and the hybrid's other residual, R2-03, R2G-04, R2G-06, R2G-07 and R2G-08 are accepted with the owner's sign-off of 2026-11-19; R2-04, R2G-05 and R2G-09 are Info and not gated.
+- What was done: R2-01, the back-run regression (by the owner's "hybrid" amendment of `POOL4-50` on 2026-11-19), R2-05, R2-06, R2G-01, R2G-02 and R2G-03 are fixed in this ticket (R2G-03 leaving one narrow gap, accepted); R2-02 (downgraded from Medium to Low by the owner, answer 4a) and the hybrid's other residual, H034, R2-03, R2G-04, R2G-06, R2G-07 and R2G-08 are accepted with the owner's sign-off of 2026-11-19; R2-04, R2G-05 and R2G-09 are Info and not gated.
 
 ## Verification of round 1
 
@@ -40,8 +40,8 @@ Status is the verifier's verdict on the code it read; the disposition is final, 
 | H025 | Low | OPEN (sign-off) | Signed off |
 | H026 | Low | OPEN (sign-off) | Signed off |
 | H031 | Low | FIXED | Fixed |
-| H033 | Low | PARTIALLY_FIXED | Fixed in this ticket, with R2G-03; one narrow gap pending the owner |
-| H034 | Low | OPEN (sign-off) | Awaiting the owner's sign-off |
+| H033 | Low | PARTIALLY_FIXED | Fixed in this ticket, with R2G-03; one narrow gap accepted by the owner (4a) |
+| H034 | Low | OPEN (sign-off) | Accepted with the owner's sign-off (4a, 2026-11-19) |
 | H040 | Low | OPEN (sign-off) | Signed off |
 | H041 | Low | FIXED (the motive) | Fixed |
 | H048 | Low | FIXED | Fixed |
@@ -147,7 +147,7 @@ The flip, the stage that took holders' money, is impossible under `POOL4-48`; re
 - **H022: FIXED.** All five of the market's own addresses refused for both roles, before the seed and on an open market; a stranger still sees `NotRecipient`.
 - **H031: FIXED.** No hook runs on a seeded market, so the stack never passes the buy wall AMM to Token-2022 (height 3 under the router, 4 under an aggregator).
 - **H033: PARTIALLY_FIXED, fixed in this ticket with R2G-03.** Narrowed due rules are closed; the wallet path of `sweep_fees`, which came from the candidate's tree, was R2G-03, now fixed.
-  One narrow gap remains, stated in the spec: the gate's own market takes its due keeper jobs from the candidate's tree, so a tree that refuses a fee slot's wallet is caught only on cluster markets where the deployed build swept that slot; it is a session default pending the owner ([sign-offs.md](sign-offs.md)).
+  One narrow gap remains, stated in the spec: the gate's own market takes its due keeper jobs from the candidate's tree, so a tree that refuses a fee slot's wallet is caught only on cluster markets where the deployed build swept that slot; the owner accepted it (4a, 2026-11-19; [sign-offs.md](sign-offs.md)).
 - **H034: OPEN (sign-off).** No fix touched it; under the new rules a moved treasury, raised shares or tip cap, an added drain instruction or a broken handover still pass.
   The verifier noted a cheap signal the relative rule now offers: a step the deployed build failed everywhere and the candidate passes is a behaviour change worth printing.
 - **H040, H059: OPEN (sign-off).** The mechanisms are unchanged; under `POOL4-49` a third party's trims are matched by the fall its own buy produced, so they pay the rewards recipient as before.
@@ -215,7 +215,7 @@ Fix (commit `9915e36`): a malformed walk is refused; `sos_r2_06_a_malformed_exte
 | --- | --- | --- | --- | --- |
 | R2G-01 | The relative rule compares the failing program, not the error | Confirmed | Low | Fixed in this ticket |
 | R2G-02 | The gate's own market is judged absolutely in the cluster's world | Confirmed | Low (Medium once `DESIGNER_RECIPIENT` is set) | Fixed in this ticket |
-| R2G-03 | The deployed build's outcomes are recorded by the candidate tree's gate | Confirmed | Low | Fixed in this ticket; one narrow gap pending the owner |
+| R2G-03 | The deployed build's outcomes are recorded by the candidate tree's gate | Confirmed | Low | Fixed in this ticket; one narrow gap accepted by the owner (4a) |
 | R2G-04 | Fixture baselines are trusted with no provenance | Confirmed | Info | Signed off |
 | R2G-05 | `pipeline_market_info` is checked against its own answer on markets the replay registers | Confirmed | Info | Not gated |
 | R2G-06 | The window between `verify-record` and the upgrade landing | Confirmed | Low | Signed off, with H097 |
@@ -242,7 +242,7 @@ The record run, meant to capture the deployed build's behaviour, took `sweep_fee
 Fix (commit `b53776f`, `POOL4-44` changed on 2026-11-18): each replay asks the build it runs for the wallet of every fee slot it sweeps, never the gate's own tree, by simulating the sweep and reading the wallet the build names when it refuses, so a tree that refuses a slot's wallet cannot drop that sweep from the deployed build's record and its own test alike.
 This also closes the wallet path left open in H033.
 One narrow gap remains, stated in the spec ([`docs/spec/pool4-for-solana.md`, A release gate](../../spec/pool4-for-solana.md#a-release-gate)): the gate's own market takes its due keeper jobs from the candidate's tree, so such a tree is caught on the cluster's markets where the deployed build swept that slot, and not on a cluster with no such market.
-It is this session's default, pending the owner ([sign-offs.md](sign-offs.md)).
+The owner accepted it on 2026-11-19 (answer 4a; [sign-offs.md](sign-offs.md)).
 
 ### R2G-04: fixture baselines without provenance (Info)
 
