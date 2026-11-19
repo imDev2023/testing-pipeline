@@ -501,20 +501,23 @@ async function push(rw) {
           .map((l) => l.split("\t").reverse()),
       );
   const n = Object.keys(rw.after).length;
-  if (Object.keys(remote).length) {
-    const same = Object.keys(rw.after).every((r) => remote[r] === rw.after[r]) && Object.keys(remote).every((r) => rw.after[r]);
-    if (!same) stop(`${R} has branches that differ from the rewrite; a session pushed to it. Tell Claude.`);
-    say(`all ${n} branches are there`);
-  } else {
+  // What is there already must be exactly the rewrite's (a run stopped halfway); anything else is a stranger's push.
+  if (Object.keys(remote).some((r) => remote[r] !== rw.after[r])) stop(`${R} has branches that differ from the rewrite; a session pushed to it. Tell Claude.`);
+  if (!DRY) {
+    state.run = rw.RUN; // before pushing, so a run stopped halfway resumes with this same rewrite
+    save();
+  }
+  const missing = Object.keys(rw.after).filter((r) => !remote[r]);
+  if (!missing.length) say(`all ${n} branches are there`);
+  else {
     // main first, so it becomes the default branch, then the rest in one go.
-    await change(`push main (${rw.after["refs/heads/main"].slice(0, 7)}) and then the other ${n - 1} branches`, async () => {
-      await gitNet(["push", "-q", url(NAME), "refs/heads/main:refs/heads/main"], { cwd: rw.G, timeout: 900_000 });
-      await gitNet(["push", "-q", "--atomic", url(NAME), "refs/heads/*:refs/heads/*"], { cwd: rw.G, timeout: 900_000 });
+    await change(`push ${remote["refs/heads/main"] ? "" : `main (${rw.after["refs/heads/main"].slice(0, 7)}) and then `}${missing.length - (remote["refs/heads/main"] ? 0 : 1)} other branches`, async () => {
+      if (!remote["refs/heads/main"]) await gitNet(["push", "-q", url(NAME), "refs/heads/main:refs/heads/main"], { cwd: rw.G, timeout: 900_000 });
+      const rest = missing.filter((r) => r !== "refs/heads/main").map((r) => `${r}:${r}`);
+      if (rest.length) await gitNet(["push", "-q", "--atomic", url(NAME), ...rest], { cwd: rw.G, timeout: 900_000 });
     });
   }
   if (!DRY) {
-    state.run = rw.RUN;
-    save();
     await api("PATCH", `repos/${R}`, { default_branch: "main" });
     const link = join(STATE_DIR, "last-pushed");
     rmSync(link, { force: true });
@@ -811,7 +814,7 @@ async function check(snapOld, transform, needles, movedOn) {
     const want = was.comments.totalCount + (notes.has(k) ? 1 : 0);
     if (now.comments.totalCount !== want) diffs.push(`${now.comments.totalCount} comments (expected ${want})`);
     else if (notes.has(k) && now.comments.nodes[want - 1].body !== notes.get(k)) diffs.push("the note of its moved pull request");
-    else if (now.comments.nodes.some((c, j) => c.body !== transform(was.comments.nodes[j].body))) diffs.push("a comment's text");
+    else if (was.comments.nodes.some((c, j) => now.comments.nodes[j].body !== transform(c.body))) diffs.push("a comment's text");
     if ((now.parent?.number || null) !== (was.parent?.number || null)) diffs.push("parent");
     if (JSON.stringify(now.subIssues.nodes.map((s) => s.number)) !== JSON.stringify(was.subIssues.nodes.map((s) => s.number))) diffs.push("sub-issues or their order");
     if (set(now.blockedBy.nodes.map((b) => b.number)) !== set(was.blockedBy.nodes.map((b) => b.number))) diffs.push("blocked-by");
