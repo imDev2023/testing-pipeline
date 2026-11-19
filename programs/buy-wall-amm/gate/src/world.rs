@@ -51,8 +51,8 @@ pub fn load(
 
 /// The world of the market the gate makes of its own (`POOL4-53`): the router the replay runs
 /// and `strategy_elf` at the program's address, at the snapshot's clock, and no account of the
-/// cluster's, so nothing on the cluster (a paused router, a fixed fee wallet's reassigned
-/// token account) can refuse every candidate there.
+/// cluster's, so nothing on the cluster (such as a fixed fee wallet's reassigned token account)
+/// can refuse every candidate there.
 pub fn own(
     snapshot: &Snapshot,
     strategy_elf: &[u8],

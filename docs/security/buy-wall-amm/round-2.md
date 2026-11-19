@@ -57,7 +57,7 @@ Status is the verifier's verdict on the code it read; the disposition is final, 
 | H068 | Low | PARTIALLY_FIXED | Docstring fixed; no full-tier Kani in CI signed off |
 | H069 | Info | NOT_FIXED | Info, not gated |
 | H070 | Low | OPEN (sign-off) | Signed off |
-| H096 | Low | OPEN (sign-off) | Signed off |
+| H096 | Low | CLOSED (upstream) | Pipeline 0.2.0 (rev `3fd85ce`, merged in #172) removed the router's pause |
 | H097 | Low | PARTIALLY_FIXED | Vacuous pass fixed; deploy window signed off with R2G-06 |
 | H098 | Low | FIXED | Fixed |
 | H110 | Low | OPEN (sign-off) | Signed off |
@@ -158,7 +158,8 @@ The flip, the stage that took holders' money, is impossible under `POOL4-48`; re
 - **H062, H063, H065, H066: FIXED.** Exact refusal codes in the fuzzer; `SameRecipient`; the `FeeSlot` enum; the slow harness in the full tier with an exhaustive remainder test in its place.
 - **H068: PARTIALLY_FIXED, signed off.** `proofs/pricing_z3.py` now says which Kani harnesses CI runs; no full-tier job was added.
 - **H069: NOT_FIXED.** No `LedgerShort` error was added; Info, every path fails closed, not gated.
-- **H070, H096, H110, H111: OPEN (sign-off).** Unchanged; on the gate side decoy CREATED markets no longer veto a release.
+- **H070, H110, H111: OPEN (sign-off).** Unchanged; on the gate side decoy CREATED markets no longer veto a release.
+- **H096: closed upstream.** Pipeline 0.2.0 (rev `3fd85ce`, which this branch builds against since #172) removed the router's admin pause, so no pause can stop holders' exits.
 - **H097: PARTIALLY_FIXED.** A cluster with no market now executes the candidate on the gate's own market ([`POOL4-53`](../../decisions.md#pool4-53-every-gate-run-trades-a-market-of-its-own)); the deploy window is unchanged and rated in R2G-06.
 - **H098: FIXED.** A build declared for another address is refused at "make a market of its own" with Anchor's 4100.
 
@@ -234,7 +235,7 @@ Fix (commit `b53776f`, `POOL4-46` changed on 2026-11-18): a failure shared with 
 ### R2G-02: the gate's own market vetoed by the cluster's configuration
 
 The gate's own market (`POOL4-53`) was built in the cluster's world and every failure there counted, so a router pause, or a reassigned wrapped SOL ATA of `SUITE_TREASURY` (or of `DESIGNER_RECIPIENT` once set, a third party's key), refused every candidate, an emergency fix included.
-Fix (commit `b53776f`, `POOL4-53` changed on 2026-11-18): the own market runs in a world of its own, holding only the router the replay runs and the candidate, with the router's config made as devnet's (not paused) and the market's payouts going to token accounts made fresh, so neither a router pause nor a fixed fee wallet's reassigned account can refuse every candidate.
+Fix (commit `b53776f`, `POOL4-53` changed on 2026-11-18): the own market runs in a world of its own, holding only the router the replay runs and the candidate, with the router's config made as devnet's and the market's payouts going to token accounts made fresh, so neither a router pause nor a fixed fee wallet's reassigned account can refuse every candidate.
 
 ### R2G-03: wallets taken from the candidate's tree
 

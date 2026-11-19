@@ -543,10 +543,11 @@ fn sos_r2g_01_a_shared_failure_must_be_the_same_error_not_only_the_same_program(
 }
 
 #[test]
-fn sos_r2g_02_a_paused_router_or_a_reassigned_treasury_account_cannot_refuse_every_candidate() {
-    // The router's admin pauses it, and `SUITE_TREASURY`'s wrapped SOL account belongs to
-    // another owner: on the cluster's market the trades and the slot 2 sweep fail under every
-    // build, and the gate's own market, in a world of its own, still runs every step.
+fn sos_r2g_02_a_reassigned_treasury_account_cannot_refuse_every_candidate() {
+    // `SUITE_TREASURY`'s wrapped SOL account belongs to another owner: on the cluster's market
+    // the slot 2 sweep fails under every build, and the gate's own market, in a world of its
+    // own, still runs every step. (Pipeline 0.2.0 removed the router's pause, the other block
+    // this test once held.)
     let build = programs::current_build();
     let mut lab = Lab::new(&build, &programs::pinned_router()).unwrap();
     let ordinary = lab.traded_market().unwrap().market_state;
@@ -560,26 +561,12 @@ fn sos_r2g_02_a_paused_router_or_a_reassigned_treasury_account_cannot_refuse_eve
         .svm
         .set_account(treasury_account, reassigned)
         .unwrap();
-    let admin = session.payer.pubkey();
-    let pause = client::update_config(
-        &admin,
-        &client::UpdateConfigArgs {
-            paused: Some(true),
-            ..Default::default()
-        },
-    );
-    session.send(&[pause], &[]).unwrap();
     synthetic::later(session, 60);
     let snapshot = lab.snapshot(&[ordinary], "R2G-02").unwrap();
 
-    // The snapshot holds both blocks.
+    // The snapshot holds the block.
     let accounts = snapshot.accounts().unwrap();
     let saved = |address: &Pubkey| &accounts.iter().find(|(a, _)| a == address).unwrap().1;
-    assert!(
-        client::decode_config(&saved(&pda::config()).data)
-            .unwrap()
-            .paused
-    );
     assert_ne!(&saved(&treasury_account).data[32..64], treasury.as_ref());
 
     let report = run(&snapshot, &build);
@@ -587,7 +574,7 @@ fn sos_r2g_02_a_paused_router_or_a_reassigned_treasury_account_cannot_refuse_eve
     assert!(report.passed(), "{report}");
     assert_eq!(
         shared_steps(&report, &ordinary),
-        ["sweep_fees { slot: 2 }", "buy", "sell"],
+        ["sweep_fees { slot: 2 }"],
         "{report}"
     );
     let own = report.own_market.as_ref().unwrap();
