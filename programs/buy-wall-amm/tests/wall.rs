@@ -1140,3 +1140,110 @@ fn sos_r2v_backrun_of_a_fall_across_one_slot_never_pays() {
         "the back-run returned {sold} lamports and a {tip} tip for {cost}"
     );
 }
+
+/// Code review (high) finding 1 (`POOL4-50`): the placement cap must survive a tiny swap in
+/// the slot after the dump. On round 2's back-run market, a third party dumps to about half
+/// the price in slot N (the curve trims, its SOL goes idle) and the back-runner buys back to
+/// the floor as slot N's last swap; in slot N+1 the back-runner sends one tiny buy first,
+/// which, when the cap was the last traded slot's lowest close, reset it to about the floor;
+/// in slot N+2 `place_wall` placed the wall at the old floor with the trimmed SOL and the
+/// back-runner sold into it for more than it paid. The cap is now the lowest close since
+/// the last placement, which only a placement resets, so the wall goes no higher than the
+/// dump's low and the round trip never pays.
+#[test]
+fn sos_cr1_a_tiny_swap_in_the_next_slot_does_not_clear_the_placement_cap() {
+    let mut env = Env::new();
+    let mut params = launch_params(env.admin.pubkey());
+    params.fee_bps = 25;
+    let token = env.seedable_token(&TOKEN);
+    let (market, _) = env
+        .create_and_seed(token, TOKEN, &params, TOKENS, LAMPORTS)
+        .unwrap();
+    let opening = env.state(&market).sqrt_price();
+    let keeper = env.keeper();
+    let seller = env.trader(&market, 500_000_000_000, SOL);
+
+    // The floor and a 1 SOL wall at 0.98 of the opening square-root price, then 0.02 SOL
+    // idle, as in `sos_r2v_backrun_of_a_fall_across_one_slot_never_pays`.
+    later(&mut env, 60);
+    let state = env.state(&market);
+    let to_floor = least(1, TOKENS, |x| {
+        spec::sell(&state, x).unwrap().sqrt_price <= opening * 98 / 100
+    });
+    trade(&mut env, &market, &seller, SELL, to_floor);
+    env.next_slot();
+    let idle = env.state(&market).idle_sol();
+    add_idle_sol(&mut env, &market, SOL - idle);
+    env.place_wall(&market, &keeper).unwrap();
+    add_idle_sol(&mut env, &market, 20_000_000);
+    let walled = env.state(&market);
+    let floor = walled.floor();
+    assert_eq!(walled.wall_top(), floor);
+
+    // Slot N: the dump, then the back-runner's buy back to the floor as the slot's last swap.
+    later(&mut env, 60);
+    let state = env.state(&market);
+    let dump = least(1, TOKENS, |x| {
+        spec::sell(&state, x).unwrap().sqrt_price <= floor * 7_071 / 10_000
+    });
+    let dumper = env.trader(&market, dump + dump / 300 + 1, SOL);
+    trade(&mut env, &market, &dumper, SELL, dump);
+    let dumped = env.state(&market);
+    let low = dumped.sqrt_price();
+    assert!(
+        dumped.idle_sol() > walled.idle_sol() + SOL / 10,
+        "the dump trimmed"
+    );
+    let cost = least(1, 10 * SOL, |a| {
+        spec::buy(&dumped, a).unwrap().sqrt_price >= floor
+    });
+    let tiny = 1_000_000;
+    let back_runner = env.trader(&market, 0, cost + tiny + (cost + tiny) / 300 + 2);
+    let (bought, _) = trade(&mut env, &market, &back_runner, BUY, cost);
+    assert!(env.state(&market).sqrt_price() >= floor);
+
+    // Slot N+1: the back-runner's tiny buy, the slot's first swap. The floor stays up.
+    env.next_slot();
+    let (tiny_bought, _) = trade(&mut env, &market, &back_runner, BUY, tiny);
+    let nudged = env.state(&market);
+    assert_eq!(nudged.floor(), floor);
+    assert!(nudged.sqrt_price() >= floor);
+
+    // Slot N+2: `place_wall` by the back-runner. The wall goes no higher than the dump's low.
+    env.next_slot();
+    let (tip, _) = env.place_wall(&market, &back_runner).unwrap();
+    let placed = env.state(&market);
+    assert_eq!(placed.floor(), floor);
+    assert!(
+        placed.wall_top() <= low,
+        "the wall went up at {} above the dump's low {low}",
+        placed.wall_top()
+    );
+    assert_books(&env, &market);
+
+    // The back-runner sells everything it bought, with Pipeline's 0.25% on top from more
+    // tokens.
+    let bought = bought + tiny_bought;
+    let held = env.balance(&pda::associated_token(
+        &back_runner.pubkey(),
+        &market.token_mint,
+        &TOKEN,
+    ));
+    write_token_account(
+        &mut env.svm,
+        &market.token_mint,
+        &TOKEN,
+        &back_runner.pubkey(),
+        held + bought / 300 + 1,
+    )
+    .unwrap();
+    let (sold, _) = trade(&mut env, &market, &back_runner, SELL, bought);
+    let paid = cost + tiny;
+    println!(
+        "back-run with a tiny swap: bought {bought} units for {paid} lamports, tip {tip}, sold for {sold}"
+    );
+    assert!(
+        sold + tip <= paid,
+        "the back-run returned {sold} lamports and a {tip} tip for {paid}"
+    );
+}

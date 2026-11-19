@@ -161,13 +161,13 @@ pub fn handle_swap<'info>(
     let mut state = ctx.accounts.market_state.load_mut()?;
     // Step 1 and, at the slot's first update, step 4: the reference and the floor, which read
     // the last close, the price the slot opened at, before step 3 replaces it; then step 3's
-    // last close and the slot's lowest close, which this swap starts if it opened the slot
-    // and otherwise lowers (`POOL4-50`).
+    // last close and the lowest close since the last placement, which this swap lowers to its
+    // close if that is lower and never raises (`POOL4-50`).
     let guard = state
         .guard()
         .swap_at(clock.slot, now, settled.priced.sqrt_price)
         .ok_or(StrategyError::Overflow)?;
-    // Steps 2 and 3: the books, the price, the last close and the slot's low.
+    // Steps 2 and 3: the books, the price, the last close and the low since the placement.
     state.set_books(&settled.books);
     state.set_sqrt_price(settled.priced.sqrt_price);
     state.set_guard(&guard);

@@ -7,7 +7,7 @@
 //! `W × s / Q` lamports. Pricing trades through it (`pricing.rs`); `place_wall` closes it at
 //! the current price and places it again with everything idle (`place` below), only in a slot
 //! no swap has run in yet, under the floor brought up to date for that slot and no higher
-//! than the last traded slot's lowest close (`place_in_slot`, `POOL4-50`).
+//! than the lowest close since the last placement (`place_in_slot`, `POOL4-50`).
 
 use crate::config::{KEEPER_TIP_CAP, WALL_THRESHOLD};
 use crate::guard::Guard;
@@ -120,9 +120,9 @@ pub struct At {
     pub liquidity: u128,
     /// The wall's floor, Q64.64.
     pub floor: u128,
-    /// The lowest close of the last slot that traded, Q64.64, the guard's `last_slot_low`;
-    /// 0 caps nothing.
-    pub last_slot_low: u128,
+    /// The lowest close since the last placement, Q64.64, the guard's
+    /// `low_since_placement`; 0 caps nothing.
+    pub low_since_placement: u128,
     /// The market's fee, in basis points.
     pub fee_bps: u16,
 }
@@ -191,15 +191,16 @@ pub fn converted(wall: Wall, wall_sol_placed: u64, s: u128) -> Option<u64> {
     Some(wall_sol_placed.saturating_sub(wall.sol_at(s)?))
 }
 
-/// Step 5's top: `min(s, floor, last_slot_low)`, so a placed wall's top is never above the
-/// price at placement, the floor, nor the last traded slot's lowest close (`POOL4-50`); a
-/// zero `last_slot_low`, a market written before that field, caps nothing.
-pub fn placement_top(s: u128, floor: u128, last_slot_low: u128) -> u128 {
+/// Step 5's top: `min(s, floor, low_since_placement)`, so a placed wall's top is never above
+/// the price at placement, the floor, nor the lowest close since the last placement
+/// (`POOL4-50`); a zero `low_since_placement`, a market written before that field, caps
+/// nothing.
+pub fn placement_top(s: u128, floor: u128, low_since_placement: u128) -> u128 {
     let top = s.min(floor);
-    if last_slot_low == 0 {
+    if low_since_placement == 0 {
         top
     } else {
-        top.min(last_slot_low)
+        top.min(low_since_placement)
     }
 }
 
@@ -219,7 +220,7 @@ pub fn tip(work: u64, fee_bps: u16, idle_sol: u64) -> Option<u64> {
 ///    `idle_sol` and `retired_tokens`;
 /// 4. the caller's tip from `idle_sol`, on `work`, the larger of `converted` and step 1's
 ///    idle SOL;
-/// 5. the wall placed with everything left: `wall_top = min(s, floor, last_slot_low)`
+/// 5. the wall placed with everything left: `wall_top = min(s, floor, low_since_placement)`
 ///    (`placement_top`), `W = floor(idle_sol × Q / wall_top)`, `wall_sol_placed = floor(W ×
 ///    wall_top / Q)`, and `idle_sol` into `pool_sol`.
 ///
@@ -283,9 +284,9 @@ pub fn place(books: WallBooks, at: At) -> Result<(WallBooks, Placement), Refusal
     let tip = tip(work, at.fee_bps, idle_sol).ok_or(Refusal::Overflow)?;
     let idle_sol = idle_sol.checked_sub(tip).ok_or(Refusal::Overflow)?;
 
-    // 5. The new wall, with everything left, never above the price, the floor or the last
-    // traded slot's lowest close.
-    let top = placement_top(s, at.floor, at.last_slot_low);
+    // 5. The new wall, with everything left, never above the price, the floor or the lowest
+    // close since the last placement.
+    let top = placement_top(s, at.floor, at.low_since_placement);
     let liquidity = U256::times_q(idle_sol as u128)
         .div_floor(U256::from(top))
         .and_then(U256::to_u128)
@@ -325,13 +326,17 @@ pub fn place(books: WallBooks, at: At) -> Result<(WallBooks, Placement), Refusal
 /// `place_wall` as the instruction runs it in the Clock's `slot` at time `now`
 /// (docs/spec/pool4-for-solana.md, "`place_wall`", `POOL4-50`): refused with `SwapThisSlot`
 /// in a slot a swap already ran in (`slot` not later than the guard's `last_slot`);
-/// otherwise the floor is brought up to date as a swap's first update in the slot would
-/// (`Guard::open_floor`, which marks no slot), then `place` (steps 1 to 5) runs under that
-/// floor and the guard's `last_slot_low`, whatever `at` holds for them. The floor is never
-/// above the last close, which is the price, since only a swap moves either, so the wall's
-/// top is the lower of the floor and the last traded slot's lowest close: a dip bought back
-/// in its own slot leaves the floor up but still caps this placement at the dip. Returns the
-/// books, what it did and the guard to store.
+/// otherwise the floor is brought up to date against the stored reference
+/// (`Guard::open_floor`, which marks no slot): unlike a swap's first update in the slot it
+/// does not step the reference toward the last close first, which can only leave the floor
+/// at or below where that update would put it, never above (round 2's R2-04). Then `place`
+/// (steps 1 to 5) runs under that floor and the guard's `low_since_placement`, whatever `at`
+/// holds for them, and the low is reset to the price at placement, so the next placement is
+/// capped by the closes after this one. The floor is never above the last close, which is
+/// the price, since only a swap moves either, so the wall's top is the lower of the floor and
+/// the lowest close since the last placement: a dip bought back, in its own slot or later,
+/// leaves the floor up but still caps this placement at the dip, whatever traded after it.
+/// Returns the books, what it did and the guard to store.
 pub fn place_in_slot(
     books: WallBooks,
     at: At,
@@ -347,11 +352,18 @@ pub fn place_in_slot(
         books,
         At {
             floor: guard.floor,
-            last_slot_low: guard.last_slot_low,
+            low_since_placement: guard.low_since_placement,
             ..at
         },
     )?;
-    Ok((placed, placement, guard))
+    Ok((
+        placed,
+        placement,
+        Guard {
+            low_since_placement: at.sqrt_price,
+            ..guard
+        },
+    ))
 }
 
 // Kani proofs of the wall, in the tiers Pipeline uses (see `opening.rs`). The tip needs no
@@ -400,7 +412,8 @@ mod proofs {
 
     /// Closing and placing the wall conserves the ledgers: the token ledgers keep their sum,
     /// the SOL ledgers lose exactly the tip, nothing stays idle, and the new wall's top is at
-    /// or below the floor, the price and a nonzero last traded slot's low. Bounded as the pricing's step harnesses are: a price
+    /// or below the floor, the price and a nonzero low since the last placement. Bounded as
+    /// the pricing's step harnesses are: a price
     /// within 2^5 of one and liquidities within 2^5 of a small base keep each division's
     /// quotient near 20 bits, within the unwind.
     #[cfg(kani_full)]
@@ -412,7 +425,7 @@ mod proofs {
             sqrt_price: kani::any(),
             liquidity: kani::any(),
             floor: kani::any(),
-            last_slot_low: kani::any(),
+            low_since_placement: kani::any(),
             fee_bps: kani::any(),
         };
         let books = WallBooks {
@@ -431,7 +444,7 @@ mod proofs {
         kani::assume(at.sqrt_price >= q && at.sqrt_price < q + (1 << 5));
         kani::assume(at.floor >= q && at.floor <= at.sqrt_price);
         kani::assume(
-            at.last_slot_low == 0 || (at.last_slot_low >= q && at.last_slot_low < q + (1 << 5)),
+            at.low_since_placement == 0 || (at.low_since_placement >= q && at.low_since_placement < q + (1 << 5)),
         );
         kani::assume(at.liquidity >= 1 << 20 && at.liquidity < (1 << 20) + (1 << 5));
         kani::assume(books.wall.liquidity < 1 << 5);
@@ -444,8 +457,8 @@ mod proofs {
             assert_eq!(sol(&after) + placement.tip as u128, sol(&books));
             assert_eq!(after.idle_sol, 0);
             assert!(after.wall.top <= at.floor && after.wall.top <= at.sqrt_price);
-            assert!(at.last_slot_low == 0 || after.wall.top <= at.last_slot_low);
-            assert!(after.wall.top == placement_top(at.sqrt_price, at.floor, at.last_slot_low));
+            assert!(at.low_since_placement == 0 || after.wall.top <= at.low_since_placement);
+            assert!(after.wall.top == placement_top(at.sqrt_price, at.floor, at.low_since_placement));
         }
     }
 
@@ -508,6 +521,9 @@ mod tests {
     /// The worked example's market just before `place_wall` (docs/spec/pool4-for-solana.md,
     /// "Worked example"): after the buy of 1 SOL and the sell back, which trimmed the curve.
     const PRICE: u128 = 1_844_674_407_372_029_099;
+    /// The opening price, where the seed set the low since the last placement; the buy and
+    /// the sell back both closed above it, so it is still the low.
+    const OPENING: u128 = 1_844_674_407_370_955_161;
     const BEFORE: WallBooks = WallBooks {
         wall: Wall::NONE,
         wall_sol_placed: 0,
@@ -522,10 +538,10 @@ mod tests {
         sqrt_price: PRICE,
         liquidity: 99_166_666_666,
         // `place_wall`, in a later slot than the sell, brings the floor down to the sell's
-        // price, the price that slot opened at (`POOL4-50`), which is also the sell's slot's
-        // lowest close.
+        // price, the price that slot opened at (`POOL4-50`); the lowest close since the seed,
+        // the last placement, is the opening price, just below it, which caps the top.
         floor: PRICE,
-        last_slot_low: PRICE,
+        low_since_placement: OPENING,
         fee_bps: 100,
     };
 
@@ -562,7 +578,7 @@ mod tests {
         floor_time: 4_660,
         last_slot: 9_160,
         last_close: PRICE,
-        last_slot_low: PRICE,
+        low_since_placement: OPENING,
     };
 
     #[test]
@@ -584,16 +600,19 @@ mod tests {
         // the top, whatever `at` held, and the worked example's numbers follow.
         let stale = At {
             floor: SOLD.floor,
-            last_slot_low: 0,
+            low_since_placement: 0,
             ..AT
         };
         let (after, placement, guard) =
             place_in_slot(BEFORE, stale, SOLD, SOLD.last_slot + 1, 4_660).unwrap();
         assert_eq!((after, placement), place(BEFORE, AT).unwrap());
+        // The guard keeps everything but the floor, brought up to date, and the low, reset to
+        // the price at placement.
         assert_eq!(
             guard,
             Guard {
                 floor: PRICE,
+                low_since_placement: PRICE,
                 ..SOLD
             }
         );
@@ -605,14 +624,14 @@ mod tests {
     }
 
     #[test]
-    fn the_last_traded_slots_low_caps_the_wall_below_the_floor_and_the_price() {
-        // A dip bought back in its own slot: the floor and the price stay up, the slot's low
-        // is the dip's, and the wall goes there, with the same idle SOL.
+    fn the_low_since_placement_caps_the_wall_below_the_floor_and_the_price() {
+        // A dip bought back since the last placement: the floor and the price stay up, the
+        // low is the dip's, and the wall goes there, with the same idle SOL.
         let dip = PRICE / 2;
         let (after, _) = place(
             BEFORE,
             At {
-                last_slot_low: dip,
+                low_since_placement: dip,
                 ..AT
             },
         )
@@ -626,15 +645,23 @@ mod tests {
             assert_eq!(placement_top(PRICE + 7, PRICE, low), PRICE);
         }
         assert_eq!(placement_top(PRICE, PRICE, 1), 1);
-        // `place_in_slot` takes the low from the guard.
+        // `place_in_slot` takes the low from the guard, then resets it to the price at
+        // placement, so the next placement is capped only by the closes after this one.
         let dipped = Guard {
-            last_slot_low: dip,
+            low_since_placement: dip,
             ..SOLD
         };
         let (after, _, guard) =
             place_in_slot(BEFORE, AT, dipped, SOLD.last_slot + 1, 4_660).unwrap();
         assert_eq!(after.wall.top, dip);
-        assert_eq!(guard.last_slot_low, dip);
+        assert_eq!(guard.low_since_placement, PRICE);
+        // Swaps after it lower the low again, and never raise it.
+        let lower = guard.swap_at(SOLD.last_slot + 2, 4_661, PRICE - 9).unwrap();
+        let back_up = lower.swap_at(SOLD.last_slot + 3, 4_662, PRICE * 2).unwrap();
+        assert_eq!(
+            (lower.low_since_placement, back_up.low_since_placement),
+            (PRICE - 9, PRICE - 9)
+        );
     }
 
     #[test]
@@ -730,8 +757,8 @@ mod tests {
 
     /// A market as trading could leave it: a curve from any pool sizes at a price within
     /// the trading bounds, a wall of up to twice the curve's liquidity with its top from half
-    /// to twice the price (or none), the floor at or below the price, the last traded slot's
-    /// low from a fifth to twice the price (or none), and pool ledgers that cover both with
+    /// to twice the price (or none), the floor at or below the price, the low since the last
+    /// placement from a fifth to twice the price (or none), and pool ledgers that cover both with
     /// some dust; idle SOL from nothing to a lot.
     fn market() -> impl Strategy<Value = (WallBooks, At)> {
         (
@@ -774,8 +801,9 @@ mod tests {
                         Wall::NONE
                     };
                     let floor = s - (s - MIN_SQRT_PRICE) / 10_000 * floor_bps;
-                    // The last traded slot's low: none (0) or from a fifth to twice the price.
-                    let last_slot_low = if low_permille < 200 {
+                    // The low since the last placement: none (0) or from a fifth to twice the
+                    // price.
+                    let low_since_placement = if low_permille < 200 {
                         0
                     } else {
                         (s / 1_000).checked_mul(low_permille)?.max(MIN_SQRT_PRICE)
@@ -802,7 +830,7 @@ mod tests {
                             sqrt_price: s,
                             liquidity,
                             floor,
-                            last_slot_low,
+                            low_since_placement,
                             fee_bps,
                         },
                     ))
@@ -816,7 +844,7 @@ mod tests {
         /// Closing and placing the wall conserves the ledgers: the token ledgers keep their
         /// sum, the SOL ledgers lose exactly the tip; the tip never exceeds `KEEPER_TIP_CAP`,
         /// `floor(work × fee_bps / 10,000)` or what was idle; the new wall's top is
-        /// `min(price, floor, last_slot_low)`, a zero low capping nothing; everything idle is
+        /// `min(price, floor, low_since_placement)`, a zero low capping nothing; everything idle is
         /// placed; the pool ledgers
         /// still cover the curve and the new wall; and it is refused exactly when neither
         /// idle SOL nor the wall's spent SOL reaches `WALL_THRESHOLD`.
@@ -843,10 +871,10 @@ mod tests {
                     prop_assert_eq!(after.tips_paid, placement.tip as u128);
                     prop_assert_eq!(after.wall_tokens_bought, placement.closed_tokens as u128);
                     prop_assert!(after.wall.top <= at.floor && after.wall.top <= at.sqrt_price);
-                    prop_assert!(at.last_slot_low == 0 || after.wall.top <= at.last_slot_low);
+                    prop_assert!(at.low_since_placement == 0 || after.wall.top <= at.low_since_placement);
                     let mut lowest = at.sqrt_price.min(at.floor);
-                    if at.last_slot_low > 0 {
-                        lowest = lowest.min(at.last_slot_low);
+                    if at.low_since_placement > 0 {
+                        lowest = lowest.min(at.low_since_placement);
                     }
                     prop_assert_eq!(after.wall.top, lowest);
                     prop_assert_eq!(after.idle_sol, 0);
@@ -863,9 +891,9 @@ mod tests {
         /// `place_wall` in a slot (`POOL4-50`): refused with `SwapThisSlot` exactly when a
         /// swap already ran in the slot, whatever else holds; otherwise it is `place` under
         /// the floor brought up to date, which is never above the price (the last close) nor
-        /// the reference, and the guard's last traded slot's low, so the wall's top is never
-        /// above the price at placement, that floor, nor that low, and only the floor and its
-        /// clock change in the guard.
+        /// the reference, and the guard's low since the last placement, so the wall's top is
+        /// never above the price at placement, that floor, nor that low; in the guard only the
+        /// floor and its clock change, and the low, reset to the price at placement.
         #[test]
         fn place_wall_runs_only_in_a_slot_no_swap_has_run_in(
             (books, at) in market(),
@@ -880,9 +908,9 @@ mod tests {
             // The low as `market` drew it, and `at` holding a stale one.
             let guard = Guard {
                 reference, ref_time: floor_time, floor, floor_time, last_slot, last_close: s,
-                last_slot_low: at.last_slot_low,
+                low_since_placement: at.low_since_placement,
             };
-            let at = At { last_slot_low: 0, ..at };
+            let at = At { low_since_placement: 0, ..at };
             let now = floor_time + dt;
             let result = place_in_slot(books, at, guard, last_slot + slots, now);
             if slots == 0 {
@@ -891,13 +919,13 @@ mod tests {
                 let opened = guard.open_floor(now).unwrap();
                 prop_assert!(opened.floor <= s && opened.floor <= reference);
                 prop_assert_eq!(opened, Guard { floor: opened.floor, floor_time: opened.floor_time, ..guard });
-                let expected = place(books, At { floor: opened.floor, last_slot_low: guard.last_slot_low, ..at });
+                let expected = place(books, At { floor: opened.floor, low_since_placement: guard.low_since_placement, ..at });
                 match (result, expected) {
                     (Ok((after, placement, stored)), Ok((books_expected, placement_expected))) => {
                         prop_assert_eq!((after, placement), (books_expected, placement_expected));
-                        prop_assert_eq!(stored, opened);
+                        prop_assert_eq!(stored, Guard { low_since_placement: s, ..opened });
                         prop_assert!(after.wall.top <= s && after.wall.top <= opened.floor);
-                        prop_assert!(guard.last_slot_low == 0 || after.wall.top <= guard.last_slot_low);
+                        prop_assert!(guard.low_since_placement == 0 || after.wall.top <= guard.low_since_placement);
                     }
                     (Err(refusal), Err(expected)) => prop_assert_eq!(refusal, expected),
                     (result, expected) => prop_assert!(false, "{:?} against {:?}", result, expected),

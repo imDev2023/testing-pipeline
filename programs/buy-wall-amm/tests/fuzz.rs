@@ -31,10 +31,10 @@
 //!   and never falls below the cap floor, the wall's floor is never above the reference and
 //!   changes only at a slot's first update, then never above the previous slot's close, and
 //!   a placed wall's top is never above the price at placement, the floor it was placed
-//!   under, nor the last traded slot's lowest close (`POOL4-50`);
-//! - `last_slot_low` is always the lowest close of the last slot a swap or the seed ran in:
-//!   a step's swaps, all in one slot, set it to their lowest close when they open the slot,
-//!   and otherwise lower it to that, and nothing else moves it;
+//!   under, nor the lowest close since the last placement (`POOL4-50`);
+//! - `low_since_placement` is always the lowest close since the seed or the last placement:
+//!   a step's swaps lower it to their lowest close and never raise it, and `place_wall`
+//!   resets it to the price at placement, and nothing else moves it;
 //! - `place_wall` succeeds exactly when the program's own `wall::place_in_slot` allows it at
 //!   the Clock's slot and time (refused with `SwapThisSlot` in a slot a swap ran in), leaves
 //!   the books and the guard it computes, tips exactly what it computes, and moves value
@@ -180,14 +180,17 @@ enum Step {
         by_trader: bool,
     },
     /// A stranger sells `dump` tokens as the first swap of a new slot; in the same slot the
-    /// back-runner buys with `amount` lamports; in the next slot, at the same time,
-    /// `place_wall` (by the back-runner when `by_trader`, refused in the dump's slot), and the
-    /// back-runner sells everything it bought (round 2's back-run, `POOL4-50`).
+    /// back-runner buys with `amount` lamports; when `tiny`, the back-runner sends a tiny buy
+    /// as the first swap of the next slot; in the slot after that, at the same time,
+    /// `place_wall` (by the back-runner when `by_trader`, refused in the slots swaps ran in),
+    /// and the back-runner sells everything it bought (round 2's back-run, and the code
+    /// review's tiny-swap variant, `POOL4-50`).
     BackRun {
         market: usize,
         dump: u64,
         amount: u64,
         by_trader: bool,
+        tiny: bool,
     },
     /// `place_wall`, by a fresh keeper or by a trader who already holds wrapped SOL, in the
     /// clock's slot or, when `next_slot`, in the next one at the same time, as our keeper
@@ -342,8 +345,8 @@ fn step() -> impl Strategy<Value = Step> {
             .prop_map(|(market, amount, place_wall, by_trader, role)| Step::RoundTrip { market, amount, place_wall, by_trader, role }),
         1 => (any::<usize>(), trade_amount(), prop::bool::weighted(0.8))
             .prop_map(|(market, amount, by_trader)| Step::DumpBuyBack { market, amount, by_trader }),
-        1 => (any::<usize>(), trade_amount(), trade_amount(), prop::bool::weighted(0.8))
-            .prop_map(|(market, dump, amount, by_trader)| Step::BackRun { market, dump, amount, by_trader }),
+        1 => (any::<usize>(), trade_amount(), trade_amount(), prop::bool::weighted(0.8), any::<bool>())
+            .prop_map(|(market, dump, amount, by_trader, tiny)| Step::BackRun { market, dump, amount, by_trader, tiny }),
         3 => (any::<usize>(), any::<bool>(), prop::bool::weighted(0.7))
             .prop_map(|(market, by_trader, next_slot)| Step::PlaceWall { market, by_trader, next_slot }),
         2 => (clock_jump(), 0..1_000u64).prop_map(|(seconds, slots)| Step::Warp { seconds, slots }),
@@ -479,6 +482,9 @@ struct Recipients {
 /// straight into the VM, so the fuzzer sets a supply that covers every balance, and checks
 /// that only `settle` lowers it.
 const SUPPLY: u64 = u64::MAX / 2;
+
+/// The back-run's tiny buy in the slot after the dump (`Step::BackRun`'s `tiny`): 0.001 SOL.
+const TINY_BUY: u64 = 1_000_000;
 
 struct World {
     env: Env,
@@ -787,9 +793,10 @@ impl World {
                 dump,
                 amount,
                 by_trader,
+                tiny,
             } => {
                 let Some(i) = self.pick(market) else { return };
-                self.back_run(i, dump, amount, by_trader);
+                self.back_run(i, dump, amount, by_trader, tiny);
             }
             Step::PlaceWall {
                 market,
@@ -1058,13 +1065,16 @@ impl World {
 
     /// Round 2's back-run of a fall across one slot boundary (`POOL4-50`, `INV-WG-7`): a
     /// stranger's sell of `dump` tokens opens a new slot on market `i`; the back-runner buys
-    /// with `amount` lamports in the same slot; `place_wall` is refused there and runs in the
-    /// next slot at the same time (by the back-runner when `by_trader`); then the back-runner
+    /// with `amount` lamports in the same slot; `place_wall` is refused there; when `tiny`,
+    /// the back-runner opens the next slot with a tiny buy of `TINY_BUY` lamports, which
+    /// under a cap of the last traded slot's low reset it to about the floor (code review
+    /// finding 1), and `place_wall` is refused in that slot too; then `place_wall` runs in the
+    /// next slot at the same time (by the back-runner when `by_trader`), and the back-runner
     /// sells everything it bought. The wall goes no higher than the dump's low, so what it
-    /// receives, the SOL its sell pays and the tip it takes, never exceeds what its buy cost
-    /// plus the part of the tip that was already there before its buy (`tip_free`, as for
-    /// `round_trip`).
-    fn back_run(&mut self, i: usize, dump: u64, amount: u64, by_trader: bool) {
+    /// receives, the SOL its sell pays and the tip it takes, never exceeds what its buys cost
+    /// plus the part of the tip that was already there before its first buy (`tip_free`, as
+    /// for `round_trip`).
+    fn back_run(&mut self, i: usize, dump: u64, amount: u64, by_trader: bool, tiny: bool) {
         self.env.next_slot();
         if self.trade(i, false, dump, Keypair::new()).is_none() {
             return;
@@ -1085,11 +1095,24 @@ impl World {
         };
         assert_eq!(self.place_wall(i, &keeper), None);
         self.check_markets();
+        let (mut bought, mut paid) = (bought, amount as u128);
+        if tiny {
+            self.env.next_slot();
+            let Some(more) = self.trade(i, true, TINY_BUY, trader.insecure_clone()) else {
+                return;
+            };
+            self.check_markets();
+            assert_eq!(self.place_wall(i, &keeper), None);
+            self.check_markets();
+            bought += more;
+            paid += TINY_BUY as u128;
+        }
         self.env.next_slot();
         let tipped = self.place_wall(i, &keeper);
         self.check_markets();
         if tipped.is_some() {
-            // The placement cap: no higher than the dump's slot's lowest close.
+            // The placement cap: no higher than the dump's low, however the price traded
+            // after it.
             let placed = self.env.state(&m);
             assert!(placed.wall_top() <= dumped.sqrt_price());
         }
@@ -1100,9 +1123,10 @@ impl World {
         let free = tip.min(free);
         if enabled("back-run") {
             assert!(
-                sold as u128 + tip as u128 <= amount as u128 + free as u128,
-                "back-run: a buy of {amount} lamports after a dump of {dump} tokens returned \
-                 {sold} sold and a tip of {tip} (of which {free} was there before the buy)"
+                sold as u128 + tip as u128 <= paid + free as u128,
+                "back-run: buys of {paid} lamports (tiny: {tiny}) after a dump of {dump} tokens \
+                 returned {sold} sold and a tip of {tip} (of which {free} was there before the \
+                 buy)"
             );
         }
     }
@@ -1374,15 +1398,18 @@ impl World {
         assert_eq!(events::<buy_wall_amm::events::WallPlaced>(logs).len(), 1);
         // Only in a slot no swap ran in; the floor it brought up to date is never above the
         // price that slot opened at, the last close, which is the price at placement; the
-        // wall's top is never above that floor, the price, nor the last traded slot's lowest
-        // close, which it leaves as it was.
+        // wall's top is never above that floor, the price, nor the lowest close since the last
+        // placement, which it then resets to the price.
         assert!(clock.slot > before.last_slot());
         assert_eq!(before.last_close(), before.sqrt_price());
         assert!(after.floor() <= before.last_close());
         assert!(after.wall_top() <= after.floor());
         assert!(after.wall_top() <= after.sqrt_price());
-        assert!(before.last_slot_low() == 0 || after.wall_top() <= before.last_slot_low());
-        assert_eq!(after.last_slot_low(), before.last_slot_low());
+        assert!(
+            before.low_since_placement() == 0
+                || after.wall_top() <= before.low_since_placement()
+        );
+        assert_eq!(after.low_since_placement(), after.sqrt_price());
         self.placed.push((i, placement));
         let tracked = &mut self.markets[i];
         tracked.placed_under = Some(after.floor());
@@ -1751,16 +1778,20 @@ impl World {
                     // pricing put it.
                     assert_eq!(state.sqrt_price(), final_trade.sqrt_price);
                     assert_eq!(state.last_close(), state.sqrt_price());
-                    // The slot's lowest close (`POOL4-50`): the step's swaps share one slot;
-                    // opening it, they start it at their lowest close, and otherwise lower it
-                    // to that (a 0, a market written before the field, never stays).
+                    // The lowest close since the last placement (`POOL4-50`): the step's swaps
+                    // lower it to their lowest close and never raise it, in any slot (a 0, a
+                    // market written before the field, never stays).
                     let lowest = trades.iter().map(|t| t.sqrt_price).min().unwrap();
-                    let expected_low = if slot > last.last_slot() || last.last_slot_low() == 0 {
+                    let expected_low = if last.low_since_placement() == 0 {
                         lowest
                     } else {
-                        last.last_slot_low().min(lowest)
+                        last.low_since_placement().min(lowest)
                     };
-                    assert_eq!(state.last_slot_low(), expected_low, "last_slot_low");
+                    assert_eq!(
+                        state.low_since_placement(),
+                        expected_low,
+                        "low_since_placement"
+                    );
                     // The trades' token flow moves the pool and retired ledgers together,
                     // and their SOL flow the SOL ledgers (the fee stays in the vault): a
                     // trim only moves value from the pool to the retired tokens and idle SOL.

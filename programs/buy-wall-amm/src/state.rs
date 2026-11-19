@@ -189,9 +189,9 @@ pub struct MarketState {
     pub retired_rewardable: [u8; 8],
 
     // The placement cap (`POOL4-50`), appended into the reserve before the first deployment.
-    /// 735: u128, Q64.64, the lowest close of the last slot that traded; 0 (a market written
-    /// before this field) caps nothing
-    pub last_slot_low: [u8; 16],
+    /// 735: u128, Q64.64, the lowest close since the last placement (the seed counts as one);
+    /// 0 (a market written before this field) caps nothing
+    pub low_since_placement: [u8; 16],
 
     /// 751 to the end: zeroed, for fields later layouts append.
     pub reserve: [u8; RESERVE_LEN],
@@ -264,7 +264,7 @@ le_fields! {
     tips_paid, set_tips_paid: u128;
     cap_fall_unmatched, set_cap_fall_unmatched: u64;
     retired_rewardable, set_retired_rewardable: u64;
-    last_slot_low, set_last_slot_low: u128;
+    low_since_placement, set_low_since_placement: u128;
 }
 
 impl MarketState {
@@ -402,7 +402,7 @@ impl MarketState {
             sqrt_price: self.sqrt_price(),
             liquidity: self.liquidity(),
             floor: self.floor(),
-            last_slot_low: self.last_slot_low(),
+            low_since_placement: self.low_since_placement(),
             fee_bps: self.fee_bps(),
         }
     }
@@ -416,7 +416,7 @@ impl MarketState {
             floor_time: self.floor_time(),
             last_slot: self.last_slot(),
             last_close: self.last_close(),
-            last_slot_low: self.last_slot_low(),
+            low_since_placement: self.low_since_placement(),
         }
     }
 
@@ -427,7 +427,7 @@ impl MarketState {
         self.set_floor_time(guard.floor_time);
         self.set_last_slot(guard.last_slot);
         self.set_last_close(guard.last_close);
-        self.set_last_slot_low(guard.last_slot_low);
+        self.set_low_since_placement(guard.low_since_placement);
     }
 
     /// The market's cap rules, fixed at its seed.
@@ -618,7 +618,7 @@ mod proofs {
             tips_paid: kani::any(),
             cap_fall_unmatched: kani::any(),
             retired_rewardable: kani::any(),
-            last_slot_low: kani::any(),
+            low_since_placement: kani::any(),
             reserve: kani::any(),
         }
     }
@@ -689,7 +689,7 @@ mod proofs {
             tips_paid: filled(55),
             cap_fall_unmatched: filled(56),
             retired_rewardable: filled(57),
-            last_slot_low: filled(58),
+            low_since_placement: filled(58),
             reserve: filled(59),
         }
     }
@@ -756,7 +756,7 @@ mod proofs {
             tips_paid,
             cap_fall_unmatched,
             retired_rewardable,
-            last_slot_low,
+            low_since_placement,
             reserve,
         } = a;
         *layout_version == b.layout_version
@@ -816,7 +816,7 @@ mod proofs {
             && *tips_paid == b.tips_paid
             && *cap_fall_unmatched == b.cap_fall_unmatched
             && *retired_rewardable == b.retired_rewardable
-            && *last_slot_low == b.last_slot_low
+            && *low_since_placement == b.low_since_placement
             && *reserve == b.reserve
     }
 
@@ -931,13 +931,13 @@ mod proofs {
         }
     }
 
-    /// The placement cap's `last_slot_low` accessor (`POOL4-50`), on its own: with it the
+    /// The placement cap's `low_since_placement` accessor (`POOL4-50`), on its own: with it the
     /// cap, guard and total harness above took 72 seconds (2026-11-19), past the default
     /// tier's minute. Verified in 49 seconds on the owner's Mac (2026-11-19).
     #[kani::proof]
     fn the_placement_caps_accessor_round_trips_and_writes_only_its_bytes() {
         each_field_round_trips! {
-            last_slot_low, set_last_slot_low: u128;
+            low_since_placement, set_low_since_placement: u128;
         }
     }
 
@@ -1124,7 +1124,7 @@ mod proofs {
                     sqrt_price: u128::from_le_bytes(state.sqrt_price),
                     liquidity: u128::from_le_bytes(state.liquidity),
                     floor: u128::from_le_bytes(state.floor),
-                    last_slot_low: u128::from_le_bytes(state.last_slot_low),
+                    low_since_placement: u128::from_le_bytes(state.low_since_placement),
                     fee_bps: u16::from_le_bytes(state.fee_bps),
                 }
         );
@@ -1200,7 +1200,7 @@ mod proofs {
     }
 
     /// The guard reads and writes exactly its seven fields. Verified in 34 seconds on the
-    /// owner's Mac (2026-11-16), before `last_slot_low` was added.
+    /// owner's Mac (2026-11-16), before `low_since_placement` was added.
     #[kani::proof]
     fn the_guard_reads_and_writes_exactly_its_fields() {
         let state = any_state();
@@ -1213,7 +1213,7 @@ mod proofs {
                     floor_time: i64::from_le_bytes(state.floor_time),
                     last_slot: u64::from_le_bytes(state.last_slot),
                     last_close: u128::from_le_bytes(state.last_close),
-                    last_slot_low: u128::from_le_bytes(state.last_slot_low),
+                    low_since_placement: u128::from_le_bytes(state.low_since_placement),
                 }
         );
         let guard = crate::guard::Guard {
@@ -1223,7 +1223,7 @@ mod proofs {
             floor_time: kani::any(),
             last_slot: kani::any(),
             last_close: kani::any(),
-            last_slot_low: kani::any(),
+            low_since_placement: kani::any(),
         };
         let mut after = patterned();
         after.set_guard(&guard);
@@ -1234,7 +1234,7 @@ mod proofs {
         expected.floor_time = guard.floor_time.to_le_bytes();
         expected.last_slot = guard.last_slot.to_le_bytes();
         expected.last_close = guard.last_close.to_le_bytes();
-        expected.last_slot_low = guard.last_slot_low.to_le_bytes();
-        written_exactly!(after, expected; reference, ref_time, floor, floor_time, last_slot, last_close, last_slot_low);
+        expected.low_since_placement = guard.low_since_placement.to_le_bytes();
+        written_exactly!(after, expected; reference, ref_time, floor, floor_time, last_slot, last_close, low_since_placement);
     }
 }

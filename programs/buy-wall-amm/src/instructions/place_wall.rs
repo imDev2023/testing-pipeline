@@ -3,12 +3,14 @@
 //! SOL the placed wall has spent, reaches `WALL_THRESHOLD`, in a slot no swap has run in yet
 //! (`SwapThisSlot` otherwise, `POOL4-50`); our keeper runner does.
 //!
-//! It brings the floor up to date as a swap's first update in the slot would, without marking
-//! the slot, closes the old wall at the current price, sweeps the pool's rounding dust, tips
+//! It brings the floor up to date against the stored reference, without marking the slot (a
+//! swap's first update would step the reference first, so this can only leave the floor
+//! lower, round 2's R2-04), closes the old wall at the current price, sweeps the pool's rounding dust, tips
 //! the caller at most `KEEPER_TIP_CAP` and never more than the fee the market earned on the
 //! work, in wrapped SOL to a token account the caller names, and places the new wall with
-//! everything left at `min(price, floor, last_slot_low)`, the last of them the lowest close of
-//! the last slot that traded (`wall::place_in_slot`). It never moves the price.
+//! everything left at `min(price, floor, low_since_placement)`, the last of them the lowest
+//! close since the last placement, which it then resets to the price (`wall::place_in_slot`).
+//! It never moves the price.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::Token;
@@ -70,7 +72,7 @@ pub fn handle_place_wall(ctx: Context<PlaceWall>) -> Result<()> {
             StrategyError::WrongAccount
         );
         // Only in a slot no swap has run in, under the floor brought up to date for it and no
-        // higher than the last traded slot's lowest close (`POOL4-50`).
+        // higher than the lowest close since the last placement (`POOL4-50`).
         let clock = Clock::get()?;
         let (placed, placement, guard) = wall::place_in_slot(
             state.wall_books(),

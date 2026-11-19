@@ -60,7 +60,7 @@ fn one_transaction_creates_and_seeds_the_worked_example() {
             state.reference(),
             state.floor(),
             state.last_close(),
-            state.last_slot_low()
+            state.low_since_placement()
         ),
         (s, s, s, s)
     );
