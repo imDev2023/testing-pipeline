@@ -346,8 +346,20 @@ No host folder is mounted: a job sees nothing of the Mac's files, keys or `~/.co
 - `scripts/ci-runner/start.sh` builds the image, registers each runner the first time (with a one-use token from `gh`) and starts them; they restart with Docker Desktop.
 - `docker compose -f scripts/ci-runner/compose.yml logs -f` follows them, and `docker compose -f scripts/ci-runner/compose.yml down` stops them and keeps their volumes.
 - A job waits in the queue while Docker Desktop is not running, so the iMac must be awake for CI to finish.
-- They are for a private repository only: their home volumes outlive each job, so a pull request from a fork must never run on them; `scripts/make-repo-public.sh` deletes `CI_RUNS_ON` before it makes the repository public, and `docker compose -f scripts/ci-runner/compose.yml down` stops the runners for good.
+- They are for a private repository only: their home volumes outlive each job, so a pull request from a fork must never run on them; `scripts/make-repo-public.sh` deletes `CI_RUNS_ON`, stops the runners and unregisters them before it makes the repository public.
 - To start a runner afresh, remove it under the repository's Settings, Actions, Runners, then its volume (`docker volume rm testing-pipeline-ci_runner-1`), and run `start.sh` again.
+
+### The repository and its archive
+
+Since the move of 2026-11-19 ([#167](https://github.com/imDev2023/testing-pipeline/issues/167), decision `SUITE-46`), `imDev2023/testing-pipeline` is a new repository, and the old one is `imDev2023/testing-pipeline-archive`, private for good.
+The move was needed because GitHub's read-only pull request refs of the old repository still pointed at commits holding MetalLegBob's profile and the archive of his X posts, and only GitHub Support could delete them.
+
+- The new repository's history is the old one's rewritten without `research/metallegbob.md` and `research/x/`, with the few lines that quoted him reworded, so every commit id changed; the ids in issue comments were pointed at the new commits, the ids inside committed files were not.
+- Every issue kept its number, its comments and their dates, its labels, its sub-issues and its blocked-by links; each number that was a pull request is a closed placeholder issue naming the archived pull request and its squash commit, and the pull requests open at the move go on under new numbers, noted on their tickets.
+- The archive holds the original pull request pages, their reviews and the history before the purge; read it, never write to it.
+- On the owner's Mac, the purge's hooks in the main checkout's git folder refuse, in every worktree, a commit that adds the purged files or the private outreach lines, and a push of any branch that still carries the old history.
+  A branch made before the move is moved onto the new history by `git rebase --onto origin/main <the old commit it started from>`.
+- `scripts/move-repo/README.md` describes the move and its check, `bash scripts/move-repo.sh check` proves every issue number against the archive and scans every object, issue, comment and revision of the new repository, and `scripts/make-repo-public.sh` makes it public with the owner's go-ahead, only if that check passes.
 
 ### Review skills
 
