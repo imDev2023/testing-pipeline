@@ -511,7 +511,7 @@ RPC simulation through the SDK fails the same way, so these are the markets' own
 ### Deploy to devnet
 
 Built by [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66) on 2026-11-16 for every program's devnet ticket (`BAR-42`, `TAX-53`, `TAX-54` in `docs/decisions.md`).
-The repo must be public before the first deploy of a program (`BAR-21`), since the metadata links into it.
+A program may be deployed while the repo is still private (owner, 2026-11-19, `BAR-21`): the steps below run as they are, the registration takes the metadata's address on `main` with `--metadata-not-yet-public`, and `publish.ts verify`, which needs every link public, runs once the repo is public.
 
 `scripts/deploy-devnet.sh <program>` deploys one program from a verified build, from a clean checkout of a commit on `main`:
 
@@ -547,7 +547,7 @@ A program's metadata cannot name the commit that holds it, and a squash merge le
      --record <scratchpad>/devnet-demo.json
    ```
 
-   On devnet the demo stops unless the metadata URI resolves and passes Pipeline's validator with zero warnings; it registers the strategy, signed and paid by the upgrade authority, and creates only the demo market, `SOL_MARKET` (`TAX-53`): created with both fee accounts and its seed in one transaction, bought, sold, and paid out slot by slot.
+   On devnet the demo stops unless the metadata URI resolves and passes Pipeline's validator with zero warnings; while the repo is private, pass `--metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json --metadata-not-yet-public` instead, which takes only this repo's `metadata.json` and checks the committed copy. It registers the strategy, signed and paid by the upgrade authority, and creates only the demo market, `SOL_MARKET` (`TAX-53`): created with both fee accounts and its seed in one transaction, bought, sold, and paid out slot by slot.
 2. **The record.** Take the conformance report and check the router lists the market, with `pipeline-check` from Pipeline's clone (`cargo build --release -p pipeline-check` in `fixtures/pipeline`):
 
    ```sh
@@ -565,6 +565,8 @@ A program's metadata cannot name the commit that holds it, and a squash merge le
      --metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/<metadata commit>/programs/tax-amm/metadata.json
    node publish.ts verify --uri <that URI> --market <demo market>
    ```
+
+   While the repo is private, `--register-only` takes `--metadata-not-yet-public` as well, and `verify` waits until the repo is public.
 
    `verify` checks that the URI resolves with zero warnings, every link resolves, the report hashes to its SHA-256, every commit named is on `origin/main`, the router points at the URI, and Pipeline's hosted devnet API shows the strategy with valid metadata and the deployed code hash, and each of the market's mints with exactly the trust flags `tax-amm.md` ("Mint rules") predicts.
 

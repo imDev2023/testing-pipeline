@@ -69,9 +69,15 @@
 //   --register-only      steps 1 to 3 only: register the strategy, or point it at a new
 //                        metadata URI, as each later deploy does
 //   --record             also write what the run did (addresses and signatures) to a file
+//   --metadata-not-yet-public
+//                        on devnet, register or point the strategy at a metadata URI of this
+//                        repo that cannot resolve yet because the repo is still private; the
+//                        URI must be this repo's raw.githubusercontent.com address, and the
+//                        copy committed beside the program is checked instead (TAX-54)
 //
 // On devnet the metadata URI must resolve and pass Pipeline's validator with zero warnings
-// before the script registers it or points the strategy at it.
+// before the script registers it or points the strategy at it, unless
+// --metadata-not-yet-public says the repo is still private.
 //
 // On a local cluster the script airdrops the SOL both keys need; on devnet it never does
 // (fund them with devnet-airdrop, docs/toolchain.md).
@@ -138,6 +144,8 @@ import { price, swap as specSwap, type SpecMarket } from './spec-model.ts';
 const DEFAULT_PROGRAM_ID = 'J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t';
 // The all-zero key: an unused tax recipient slot.
 const DEFAULT_ADDRESS = address('11111111111111111111111111111111');
+// Where this repo's committed files are served, once it is public.
+const RAW_REPO = 'https://raw.githubusercontent.com/imDev2023/testing-pipeline';
 const DEFAULT_METADATA_URI =
     'https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json';
 
@@ -239,6 +247,7 @@ const { values: options } = parseArgs({
         'demo-market-only': { type: 'boolean', default: false },
         'register-only': { type: 'boolean', default: false },
         record: { type: 'string' },
+        'metadata-not-yet-public': { type: 'boolean', default: false },
     },
     strict: true,
 });
@@ -1304,6 +1313,13 @@ async function main() {
     const published = await pipeline.fetchStrategyMetadata(metadataUri);
     if (published.ok && published.warnings.length === 0) {
         info(`${metadataUri} is valid with zero warnings`);
+    } else if (onDevnet && options['metadata-not-yet-public']) {
+        // The router only stores the URI; it resolves once the repo is public (TAX-54).
+        if (!metadataUri.startsWith(`${RAW_REPO}/`) || !metadataUri.endsWith('/programs/tax-amm/metadata.json')) {
+            fail(`--metadata-not-yet-public takes only this repo's metadata.json on ${RAW_REPO}, not ${metadataUri}`);
+        }
+        info(`${metadataUri} does not resolve yet (${published.ok ? published.warnings.join('; ') : published.reason}); registering it anyway with --metadata-not-yet-public`);
+        info('the committed metadata.json was checked instead; desks show the strategy without metadata until the repo is public');
     } else if (onDevnet) {
         // Pipeline's registry and every terminal read the strategy through this URI.
         fail(

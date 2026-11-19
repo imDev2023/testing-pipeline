@@ -128,7 +128,8 @@ A `pipeline-check` Warn, in layer 4 or 7, is accepted only with a written reason
 
 ### Published source
 
-- The source is published from this repo, which must be public before the first devnet deploy of an on-chain program; making it public is the owner's action.
+- The source is published from this repo; making it public is the owner's action.
+  A program may be deployed on devnet while the repo is still private (owner, 2026-11-19), and the criteria that need its public links (the metadata URI and every link in it resolving, Pipeline's hosted API reading them) are met once it is public (`BAR-21`).
 - `solana-verify verify-from-repo` takes this repo with the on-chain workspace as its mount path.
 - The on-chain workspace carries its own Apache-2.0 `LICENSE` ([ADR 0002](../adr/0002-on-chain-source-public-under-apache-2.md)).
 

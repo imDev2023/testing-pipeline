@@ -732,12 +732,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### BAR-21: Published source and licence
 
 - Question: Is our on-chain source public, and under which licence?
-- Answer: Yes: published from this repo, which is public before the first devnet deploy, with the on-chain workspace under Apache-2.0.
-- Alternatives: Business Source License 1.1, as Pipeline's router uses; a public mirror of only the on-chain workspace beside a private monorepo.
+- Answer: Yes: published from this repo, with the on-chain workspace under Apache-2.0; a program may be deployed on devnet while the repo is still private, and the criteria that need its public links (the metadata URI and every link in it resolving, Pipeline's hosted API reading them) are met once the repo is public.
+- Alternatives: The earlier default, the repo public before the first devnet deploy; Business Source License 1.1, as Pipeline's router uses; a public mirror of only the on-chain workspace beside a private monorepo.
 - Specified in: [`docs/adr/0002-on-chain-source-public-under-apache-2.md`, Our on-chain source is public under Apache-2.0](adr/0002-on-chain-source-public-under-apache-2.md#our-on-chain-source-is-public-under-apache-20)
 - Changes by: spec only
-- Status: default
-- Decided: 2026-11-10 in [Engineering and security bar for our on-chain programs](https://github.com/imDev2023/testing-pipeline/issues/4)
+- Status: changed 2026-11-19
+- Decided: 2026-11-10 in [Engineering and security bar for our on-chain programs](https://github.com/imDev2023/testing-pipeline/issues/4); changed by the owner on 2026-11-19, relayed to [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
 
 ### BAR-22: Strategy metadata
 
@@ -3129,11 +3129,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-54: Links that stay at commits on main
 
 - Question: How do the registered metadata URI and every link inside the metadata point at commits that stay reachable from `main`, when a squash merge leaves a branch's commits off it and a file cannot name the commit that holds it?
-- Answer: Three merges. The first lands the deploy tooling, and its merge commit is what is deployed and registered, at a metadata URI at that commit. The second records the deploy in `deployments/devnet.json` and commits the demo market's conformance report and the README that says where the program is. The third pins `metadata.json` with `publish.ts pin`: the source and the IDL at the deployed commit, the report and the README at the second merge's commit; then `update_metadata` points the router at the metadata at the third merge's commit, and `publish.ts verify` checks every link resolves at a commit on `main`. A test fails when the metadata names a commit other than the deployed one, or a report other than the committed one.
-- Alternatives: Two merges with the report linked at a branch commit, which a squash merge leaves off `main`; links at `main`, whose content can change after the report was taken; merge commits instead of squash merges, against the repo's convention.
+- Answer: Three merges. The first lands the deploy tooling, and its merge commit is what is deployed and registered; while the repo is private, the registration takes the metadata's address on `main`, which resolves once the repo is public, with the demo's `--metadata-not-yet-public`. The second records the deploy in `deployments/devnet.json` and commits the demo market's conformance report and the README that says where the program is. The third pins `metadata.json` with `publish.ts pin`: the source and the IDL at the deployed commit, the report and the README at the second merge's commit; then `update_metadata` points the router at the metadata at the third merge's commit, and, once the repo is public, `publish.ts verify` checks every link resolves at a commit on `main`. A test fails when the metadata names a commit other than the deployed one, or a report other than the committed one.
+- Alternatives: The earlier default, which registered at a metadata URI at the deploy commit and assumed the repo public before the deploy; two merges with the report linked at a branch commit, which a squash merge leaves off `main`; links at `main`, whose content can change after the report was taken; merge commits instead of squash merges, against the repo's convention.
 - Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-19
 - Decided: 2026-11-16 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
 
 ## Containment hook (HOOK)
