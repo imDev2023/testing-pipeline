@@ -273,8 +273,8 @@ impl Session<'_> {
     }
 
     /// A quote from a fresh `pipeline-quoter` holding only what an integrator holds: the
-    /// strategy, the market, the router config, the market state, mints and vaults and the
-    /// resolved accounts, as they stand in `svm`. When it fails, the strategy's own quote is
+    /// strategy, the market, the market state, mints and vaults and the resolved accounts
+    /// (the router's config, which no swap takes since Pipeline 0.2, is not among them), as they stand in `svm`. When it fails, the strategy's own quote is
     /// run in `svm` to name the failure from the full logs.
     pub fn quote(
         &self,
@@ -291,7 +291,6 @@ impl Session<'_> {
             let mut keys = vec![
                 market.strategy(),
                 market.address,
-                pipeline_client::pda::config(),
                 market.record.market_state,
             ];
             keys.extend(market.view.mints.iter());

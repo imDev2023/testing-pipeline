@@ -40,7 +40,7 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           # The programs, everything that builds, tests or runs them, and this workflow.
           ONCHAIN_PATHS: >-
-            ^programs/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator)\.sh$|^scripts/workspace-programs\.py$
+            ^programs/|^packages/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator)\.sh$|^scripts/workspace-programs\.py$
           # Canary's crates, the fixtures its tests load (the router's pin, and Pipeline's test
           # programs at the rev programs/Cargo.toml pins), the scripts that fetch them, and this
           # workflow.
@@ -183,6 +183,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Type-check
         run: pnpm typecheck
+      - name: The shared packages' tests (strategy-actions)
+        run: pnpm --recursive --if-present test
 
   kani:
     name: kani

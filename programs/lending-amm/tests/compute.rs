@@ -304,9 +304,13 @@ fn seeding_by_a_launchpad_fits_one_transaction_and_stays_under_its_ceiling() {
                 "{what}: {compressed_size} bytes"
             );
             let hooked = name == "hooked Token-2022";
+            // Since Pipeline 0.2 dropped the config account from register_existing_market, a
+            // hooked token's graduation fits a legacy transaction when its shares are locked
+            // (1,222 bytes), but not when they go to a wallet (1,254); a launchpad graduating a
+            // hooked token still sends it with a lookup table (LENDING-86).
             assert_eq!(
                 legacy_size <= PACKET_DATA_SIZE,
-                !hooked,
+                !hooked || locked,
                 "{what}: {legacy_size} bytes"
             );
             let tx = if hooked { compressed } else { legacy };

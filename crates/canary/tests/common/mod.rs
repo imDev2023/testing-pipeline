@@ -690,18 +690,6 @@ impl Cluster {
         market
     }
 
-    /// Pauses the router, as its admin can.
-    pub fn pause_router(&mut self) {
-        let ix = client::update_config(
-            &self.admin.pubkey(),
-            &client::UpdateConfigArgs {
-                paused: Some(true),
-                ..Default::default()
-            },
-        );
-        self.send(&[ix], &[]);
-    }
-
     /// Lets `seconds` pass on the cluster's clock, slot, epoch and Unix time together.
     pub fn pass_time(&mut self, seconds: u64) {
         let now: solana_clock::Clock = self.svm.get_sysvar();

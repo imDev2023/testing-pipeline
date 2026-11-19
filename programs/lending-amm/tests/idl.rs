@@ -136,7 +136,7 @@ fn its_init_accounts_and_arguments_are_the_metadatas() {
 fn every_actions_accounts_and_arguments_are_the_metadatas() {
     let idl = idl();
     let metadata = read_json("metadata.json");
-    for action in metadata["actions"].as_array().unwrap() {
+    for action in metadata["aviary_actions"].as_array().unwrap() {
         // An action with its own discriminator builds the instruction that has it: the in-kind
         // removal form builds `remove_liquidity`.
         let name = match action["discriminator"].as_str() {

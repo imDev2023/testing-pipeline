@@ -507,6 +507,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-10 in [Progress site on Vercel](https://github.com/imDev2023/testing-pipeline/issues/30)
 
+### SUITE-46: Reaching a public repository
+
+- Question: How does the project become public when GitHub's read-only pull request refs of the old repository still hold the purged research files?
+- Answer: It moves to a new repository of the same name with every issue number kept and the purged history, the old one becomes `imDev2023/testing-pipeline-archive`, private for good, and the new one goes public only after a scan proves it clean and the owner says yes.
+- Alternatives: Asking GitHub Support to delete the two pull request refs and collect the old commits; a public mirror of the code beside the private repository.
+- Specified in: [`docs/toolchain.md`, The repository and its archive](toolchain.md#the-repository-and-its-archive)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-19 in [Move the project to a new repository without the old pull request refs, then make it public](https://github.com/imDev2023/testing-pipeline/issues/167)
+
+### SUITE-47: What the move carries
+
+- Question: What does the new repository keep of the old one's record?
+- Answer: Every issue with its comments and their original dates, labels, sub-issues and blocked-by links on its own number, a closed placeholder naming the archived pull request and its squash commit on each number that was a pull request, the open pull requests recreated under new numbers, and the few lines that quoted MetalLegBob reworded in every commit and issue.
+- Alternatives: Transferring the issues, which would carry their edit history and empty the archive; copying them without their dates; leaving the numbers that were pull requests unused, which GitHub cannot do.
+- Specified in: [`scripts/move-repo/README.md`, What it does](../scripts/move-repo/README.md#what-it-does)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-19 in [Move the project to a new repository without the old pull request refs, then make it public](https://github.com/imDev2023/testing-pipeline/issues/167)
+
 ## Engineering and security bar (BAR)
 
 ### BAR-01: Framework
@@ -908,6 +928,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
+
+### BAR-41: Where our custom actions are described
+
+- Question: Where does a strategy's metadata describe its custom actions, now that Pipeline 0.2.0 dropped them from its metadata standard and SDK?
+- Answer: Under a top-level key of our own, `aviary_actions`, in the shape Pipeline's `actions` section had, which Pipeline's validator allows with no warning; the `strategy-actions` package, written for this repo on the public functions Pipeline's SDK still exports, validates it and builds each action into an instruction, for every demo script and for Aviary's action forms.
+- Alternatives: Dropping action descriptions from the metadata and building each product's instructions from its IDL client, which Pipeline's direction suggests but which replaces Aviary's generic forms; keeping `actions` and accepting the validator's warning, against `BAR-22`.
+- Specified in: [`docs/spec/README.md`, Metadata, IDL and conformance report](spec/README.md#metadata-idl-and-conformance-report)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-19 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
 
 ## Aviary, the terminal (PIPESCOPE)
 
@@ -2325,11 +2355,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-45: What the direct swap refuses
 
 - Question: Which of the router's rules does the swap implementation that calls the strategy directly keep?
-- Answer: Those a trader can meet: a paused router, a trader account that is not a token account of its mint, and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router.
-- Alternatives: Settling without the router's rules, so a paused router would look tradable.
+- Answer: Those a trader can meet: a trader account that is not a token account of its mint, a swap that lowers the trader's output balance (`OutputDecreased`, since Pipeline `3fd85ce`), and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router. The router has had no pause since Pipeline 0.2.0.
+- Alternatives: The earlier default, with a paused router among the refusals, before Pipeline 0.2.0 removed the pause and `3fd85ce` added the output-balance rule; settling without the router's rules, so a swap the router refuses would look tradable.
 - Specified in: [`docs/spec/pipescope-canary.md`, Built on](spec/pipescope-canary.md#built-on)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-19
 - Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
 
 ### CANARY-46: The instruction list in the snapshot
@@ -4889,6 +4919,9 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-36`: this lives only in its build ticket; `lending-pool.md` (Devnet) should state it, so it has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
 - `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `BAR-41`: answered on 2026-11-19 in a question dialog of the session of [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66), which cannot tell whether the owner or the coordinating session answered, so it stays that session's default until the owner confirms it.
+- `PIPESCOPE-20`, `pipescope.md` and `pipescope-architecture.md` name the SDK's `buildActionInstruction` and the metadata's `actions` forms, which Pipeline 0.2.0 dropped; under `BAR-41` Aviary renders our strategies' `aviary_actions` with the `strategy-actions` package, and whether it also renders another strategy's leftover `actions` section, which Pipeline now ignores, is Aviary's call.
+- `LENDING-86`: since Pipeline 0.2 dropped the config account from `register_existing_market`, a hooked token's graduation fits a legacy transaction when its shares are locked (1,222 bytes) but not when they go to a wallet (1,254); `lending-pool.md` has the new figures, and the decision's own figures (1,287) are the lending AMM session's to update.
 - `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `HOOK-35` to `HOOK-37`: set by the session of [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
@@ -4903,6 +4936,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-36`: set by the session of [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152) from the spec's existing rule that a trade reaching a price bound is refused, and not yet put to the owner, so it is that session's default until the owner has been asked.
+- `SUITE-47`: set by the session of [Move the project to a new repository without the old pull request refs, then make it public](https://github.com/imDev2023/testing-pipeline/issues/167) within the move the owner chose (`SUITE-46`), and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `MIN_OPENING_SQRT_PRICE` (`pool4-for-solana.md`, Constants) can never refuse a seed: with at least `MIN_SEED_LAMPORTS` (0.1 SOL) and at most 2^64 - 1 token units, the lowest opening square-root price is about 2^45.3, above 2^40; it stays as a guard, and whether the floor on the opening price should be higher, or `MIN_SEED_LAMPORTS` lower, is MetalLegBob's to decide.
 - `LENDING-43` to `LENDING-47`: set by the session of [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) while building, where the spec left the choice open or the metadata schema at `5ad130d` could not express what the spec first wrote (`LENDING-45`, `LENDING-46`, `LENDING-47`); the owner was not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.

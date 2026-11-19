@@ -148,15 +148,17 @@ impl SwapPath for ThroughRouter {
 /// Swaps without the router: Canary itself does what the router's `swap` does, in the same
 /// order, as Pipeline's strategy interface and its Apache-2.0 settlement code define it.
 ///
-/// 1. The router's own refusals that a trade can meet: a paused router, and a trader
-///    account that is not a token account of its mint.
+/// 1. The router's own refusal that a trade can meet before anything moves: a trader
+///    account that is not a token account of its mint (the router has had no pause since
+///    Pipeline 0.2.0).
 /// 2. The trader's transfer of `amount_in` into the input vault, with the input mint's hook
 ///    accounts, signed by the trader.
 /// 3. The strategy's `pipeline_swap` in a transaction the trader does not sign, its fixed
 ///    accounts as the router passes them and the market PDA marked as signing (signature
 ///    checks are off in the copy), followed by the strategy's accounts and the input mint's
 ///    hook accounts, none signing ([`call_directly`]).
-/// 4. `settlement::settle` on the balances the router measures.
+/// 4. The router's refusal of a swap that lowered the trader's output balance, then
+///    `settlement::settle` on the balances the router measures.
 /// 5. Pipeline's fee from the trader's input account to the market's fee account for that
 ///    mint.
 ///
@@ -252,13 +254,6 @@ impl SwapPath for DirectToStrategy {
         request: &SwapRequest,
     ) -> Result<SwapReceipt, Failure> {
         let (input, output, trader) = (request.input, request.output, request.trader);
-        let paused = svm
-            .get_account(&pda::config())
-            .and_then(|a| client::decode_config(&a.data))
-            .is_some_and(|config| config.paused);
-        if paused {
-            return Err(router_refused("Paused: the router is paused"));
-        }
         let trader_input = market.ata(&trader, input);
         let trader_output = market.ata(&trader, output);
         let vault = market.vault(input);
@@ -307,6 +302,14 @@ impl SwapPath for DirectToStrategy {
             Ok(balances) => balances,
             Err(failure) => return undo(svm, failure),
         };
+        // The router refuses any swap that leaves the trader with less of the output mint
+        // than before, whatever its minimum (Pipeline 3fd85ce, `OutputDecreased`).
+        if output_after < output_before {
+            return undo(
+                svm,
+                router_refused("OutputDecreased: the trader's output balance fell during the swap"),
+            );
+        }
         let settled = match settlement::settle(
             &settlement::Measured {
                 input_before,

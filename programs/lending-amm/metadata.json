@@ -152,7 +152,7 @@
             }
         ]
     },
-    "actions": [
+    "aviary_actions": [
         {
             "name": "add_liquidity",
             "label": "Add liquidity",

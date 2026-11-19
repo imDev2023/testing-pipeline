@@ -119,6 +119,7 @@ import {
 } from '@solana-program/token';
 import { resolveExtraAccountMetasForExecute } from '@solana-program/token-2022';
 import * as pipeline from '@pipeline-placeholder/sdk';
+import { buildActionInstruction, findAction } from 'strategy-actions';
 
 import {
     CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED,
@@ -913,8 +914,8 @@ async function launchToken(
     };
 
     step("6. Seeding the home market through the metadata's seed action, with the hook accounts");
-    const seedAction = metadata.actions?.find((action) => action.name === 'seed') ?? fail('metadata.json has no seed action');
-    const seed = await pipeline.buildActionInstruction({
+    const seedAction = findAction(metadata, 'seed') ?? fail('metadata.json has no seed action');
+    const seed = await buildActionInstruction({
         action: seedAction,
         market: view,
         wallet: launcher.address,

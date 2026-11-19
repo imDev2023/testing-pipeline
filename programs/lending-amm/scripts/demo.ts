@@ -172,6 +172,7 @@ import {
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
 import * as pipeline from '@pipeline-placeholder/sdk';
+import { buildActionInstruction, findAction, type AviaryAction } from 'strategy-actions';
 
 import {
     fetchLendingAmmMarket,
@@ -663,7 +664,7 @@ async function seedFromLaunchpad(input: {
     payer: KeyPairSigner;
     programId: Address;
     metadata: pipeline.StrategyMetadata;
-    rebalanceAction: pipeline.MetadataAction;
+    rebalanceAction: AviaryAction;
     minimumLiquidity: bigint;
 }) {
     const { payer, programId, metadata, minimumLiquidity } = input;
@@ -902,7 +903,7 @@ async function seedFromLaunchpad(input: {
     const asked = reserves[1] - (reserves[1] * targetBps) / BPS;
     const reserveBefore = await readReserve();
     await send('rebalance the seeded market', payer, [
-        await pipeline.buildActionInstruction({
+        await buildActionInstruction({
             action: input.rebalanceAction,
             market: view,
             wallet: payer.address,
@@ -990,11 +991,11 @@ async function main() {
     const metadata = local.value;
     const init = metadata.init ?? fail('metadata.json needs `init` for this demo');
     const addLiquidity =
-        metadata.actions?.find((action) => action.name === 'add_liquidity') ?? fail('metadata.json needs the add_liquidity action');
+        findAction(metadata, 'add_liquidity') ?? fail('metadata.json needs the add_liquidity action');
     const rebalanceAction =
-        metadata.actions?.find((action) => action.name === 'rebalance') ?? fail('metadata.json needs the rebalance action');
+        findAction(metadata, 'rebalance') ?? fail('metadata.json needs the rebalance action');
     const removeAction = (name: string) =>
-        metadata.actions?.find((action) => action.name === name) ?? fail(`metadata.json needs the ${name} action`);
+        findAction(metadata, name) ?? fail(`metadata.json needs the ${name} action`);
 
     step('3. Registering the strategy');
     const config = pipeline.decodeConfig((await accountData(await pipeline.configPda())) ?? new Uint8Array());
@@ -1106,7 +1107,7 @@ async function main() {
         supportsExactOut: false,
     };
     const deposit = (max: { token: bigint; wsol: bigint }, minLp: bigint) =>
-        pipeline.buildActionInstruction({
+        buildActionInstruction({
             action: addLiquidity,
             market: view,
             wallet: payer.address,
@@ -1330,7 +1331,7 @@ async function main() {
     const targetBps = idlConstant('BUFFER_TARGET_BPS');
     const maxBps = idlConstant('BUFFER_MAX_BPS');
     const rebalanceInstruction = () =>
-        pipeline.buildActionInstruction({
+        buildActionInstruction({
             action: rebalanceAction,
             market: view,
             wallet: payer.address,
@@ -1515,7 +1516,7 @@ async function main() {
     // raises its rate by the interest since its last refresh: the shares are fewer than at the
     // stored rate, so the wallet allows 1% less, then checks the spec's formula at the rate klend
     // refreshed to, which nothing else in the transaction changes.
-    const lp2Add = await pipeline.buildActionInstruction({
+    const lp2Add = await buildActionInstruction({
         action: addLiquidity,
         market: view,
         wallet: lp2.address,
@@ -1554,7 +1555,7 @@ async function main() {
     };
     const removeTokenPrograms = { ...tokenPrograms, [collateralMint]: TOKEN_PROGRAM_ADDRESS };
     const removeInstruction = (form: string, lp: bigint, min: [bigint, bigint], inKind: boolean) =>
-        pipeline.buildActionInstruction({
+        buildActionInstruction({
             action: removeAction(form),
             market: view,
             wallet: lp2.address,
@@ -1680,7 +1681,7 @@ async function main() {
     const [lockAccount] = await findAssociatedTokenPda({ owner: authority, mint: lpMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
     const lp2SharesBefore = await tokenBalance(lp2Shares);
     const lockSignature = await send('lock_lp', lp2, [
-        await pipeline.buildActionInstruction({
+        await buildActionInstruction({
             action: removeAction('lock_lp'),
             market: view,
             wallet: lp2.address,
@@ -1706,7 +1707,7 @@ async function main() {
     // it can, so the wallet simply gives up its part of it.
     const lentOnly = lp2Deposit.shares / 20n;
     const lentParts = removalParts(lentOnly);
-    const lentOnlyInstruction = await pipeline.buildActionInstruction({
+    const lentOnlyInstruction = await buildActionInstruction({
         action: removeAction('remove_lent_side'),
         market: view,
         wallet: lp2.address,

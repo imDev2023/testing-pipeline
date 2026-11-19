@@ -130,6 +130,7 @@ import {
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
 import * as pipeline from '@pipeline-placeholder/sdk';
+import { buildActionInstruction, findAction } from 'strategy-actions';
 
 import { findSeederPda, graduateInstruction, graduationFromLogs, LAUNCHPAD_PROGRAM_ADDRESS } from '../../tax-amm/scripts/launchpad.ts';
 import {
@@ -772,9 +773,9 @@ type OwedBooks = {
  * and checked against the spec's formulas, its event and the balances it moved.
  */
 async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata, view: pipeline.MarketView, token: Address, books: OwedBooks) {
-    const actionNamed = (name: string) => metadata.actions?.find((action) => action.name === name) ?? fail(`metadata.json has no ${name} action`);
+    const actionNamed = (name: string) => findAction(metadata, name) ?? fail(`metadata.json has no ${name} action`);
     const build = (name: string, args: Record<string, pipeline.ArgValue> = {}, inputs: Record<string, Address> = {}) =>
-        pipeline.buildActionInstruction({ action: actionNamed(name), market: view, wallet: payer.address, args, inputs });
+        buildActionInstruction({ action: actionNamed(name), market: view, wallet: payer.address, args, inputs });
     const marketState = view.marketState;
     const state = async () => (await fetchMarketState(rpc, marketState, { commitment: 'confirmed' })).data;
     const supply = async () => BigInt((await rpc.getTokenSupply(token, { commitment: 'confirmed' }).send()).value.amount);
@@ -1237,7 +1238,7 @@ async function main() {
         info('desks will show the strategy without metadata until it can be fetched');
     }
     const metadata = local.value;
-    const seedAction = metadata.actions?.find((action) => action.name === 'seed');
+    const seedAction = findAction(metadata, 'seed');
     if (!metadata.init || !seedAction) {
         fail('metadata.json needs `init` and a `seed` action for this demo');
     }
@@ -1347,7 +1348,7 @@ async function main() {
             pipeline.initFeeAccount({ payer: payer.address, market: resolved.market, mint, tokenProgram: tokenPrograms[i]! }),
         ),
     );
-    const seed = await pipeline.buildActionInstruction({
+    const seed = await buildActionInstruction({
         action: seedAction,
         market: view,
         wallet: payer.address,
@@ -1610,9 +1611,9 @@ async function main() {
     info(`the guard: reference ${books.guard.reference}, floor ${books.guard.floor}, as the spec's steps give for these trades`);
 
     step('8. Placing the buy wall');
-    const placeWallAction = metadata.actions?.find((action) => action.name === 'place_wall') ?? fail('metadata.json has no place_wall action');
+    const placeWallAction = findAction(metadata, 'place_wall') ?? fail('metadata.json has no place_wall action');
     const placeWall = async () =>
-        pipeline.buildActionInstruction({ action: placeWallAction, market: view, wallet: payer.address, args: {} });
+        buildActionInstruction({ action: placeWallAction, market: view, wallet: payer.address, args: {} });
     const wallBooks = (): WallBooks => ({
         wall: books.wall,
         wallSolPlaced: books.wallSolPlaced,
