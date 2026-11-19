@@ -137,6 +137,62 @@ fn a_swap_that_pays_less_than_its_quote_fails_the_same_way_on_both_paths() {
     assert_same_results(&router, &direct);
 }
 
+/// One buy of the token with 1 SOL, through `path`, by a trader who already holds 1,000
+/// units of it, on a market whose strategy pays out 1:1 and then takes one more unit than
+/// it paid back out of the trader's account (`PullOutputAsDelegate`), as the token's
+/// permanent delegate.
+fn buy_by_a_holder_whose_tokens_the_strategy_takes_back(
+    cluster: &Cluster,
+    market: &common::Market,
+    path: &dyn SwapPath,
+) -> canary::trade::Leg {
+    const PULL_OUTPUT_AS_DELEGATE: u8 = 11;
+    let mut source = SvmSource::new(cluster.svm.clone());
+    let copy = canary::market::Copy::build(
+        &mut source,
+        market.market,
+        &pipeline_check::CheckOptions::default(),
+    )
+    .unwrap();
+    let mut session = canary::market::Session::new(
+        &copy,
+        &mut source,
+        vec![PULL_OUTPUT_AS_DELEGATE],
+        Seed::from_hex(&"5e".repeat(32)).unwrap(),
+    );
+    let mut svm = session.fresh();
+    let trader = Pubkey::new_unique();
+    session.fund(&mut svm, &trader, 0, 1, SOL);
+    pipeline_check::write_token_account(
+        &mut svm,
+        &market.mint_b,
+        &pipeline_client::TOKEN_2022_PROGRAM_ID,
+        &trader,
+        1_000,
+    )
+    .unwrap();
+    session.leg(&mut svm, path, &trader, 0, 1, SOL)
+}
+
+#[test]
+fn a_swap_that_lowers_the_traders_output_balance_is_refused_on_both_paths() {
+    // Since Pipeline 3fd85ce the router refuses any swap that leaves the trader with less of
+    // the output mint than before (`OutputDecreased`), even with a minimum of 0; the direct
+    // path must refuse it the same way.
+    let mut cluster = Cluster::new();
+    let market = cluster.evil_market_whose_token_it_can_take_back(1_000 * SOL);
+
+    for path in [&ThroughRouter as &dyn SwapPath, &DirectToStrategy] {
+        let leg = buy_by_a_holder_whose_tokens_the_strategy_takes_back(&cluster, &market, path);
+        let failure = leg
+            .swap
+            .expect_err("the swap lowered the trader's output balance");
+        let failure = serde_json::to_value(&failure).unwrap();
+        assert_eq!(failure["class"], "router_refused", "{failure}");
+        assert!(failure.to_string().contains("OutputDecreased"), "{failure}");
+    }
+}
+
 #[test]
 fn a_strategy_that_tries_to_pull_more_from_the_trader_fails_the_same_way_on_both_paths() {
     // Under the router the strategy never holds the trader's signature, so the direct path

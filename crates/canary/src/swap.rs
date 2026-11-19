@@ -157,7 +157,8 @@ impl SwapPath for ThroughRouter {
 ///    accounts as the router passes them and the market PDA marked as signing (signature
 ///    checks are off in the copy), followed by the strategy's accounts and the input mint's
 ///    hook accounts, none signing ([`call_directly`]).
-/// 4. `settlement::settle` on the balances the router measures.
+/// 4. The router's refusal of a swap that lowered the trader's output balance, then
+///    `settlement::settle` on the balances the router measures.
 /// 5. Pipeline's fee from the trader's input account to the market's fee account for that
 ///    mint.
 ///
@@ -301,6 +302,14 @@ impl SwapPath for DirectToStrategy {
             Ok(balances) => balances,
             Err(failure) => return undo(svm, failure),
         };
+        // The router refuses any swap that leaves the trader with less of the output mint
+        // than before, whatever its minimum (Pipeline 3fd85ce, `OutputDecreased`).
+        if output_after < output_before {
+            return undo(
+                svm,
+                router_refused("OutputDecreased: the trader's output balance fell during the swap"),
+            );
+        }
         let settled = match settlement::settle(
             &settlement::Measured {
                 input_before,

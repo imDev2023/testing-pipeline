@@ -112,7 +112,8 @@ fn every_instruction(
 /// (`NotAMarket`), or Anchor's for a wrong owner (3007) or discriminator (3002) or an
 /// account too short to hold one (3001). For an account the strategy does not own, the
 /// router's `register_existing_market` refuses before calling the strategy
-/// (`MarketStateNotOwnedByStrategy`, the router's 6009).
+/// (`MarketStateNotOwnedByStrategy`, matched by name since the router's error numbers
+/// shifted in Pipeline 0.2).
 #[track_caller]
 fn assert_not_a_market(name: &str, result: &Result<(), String>) {
     let ours: u32 = NotAMarket.into();

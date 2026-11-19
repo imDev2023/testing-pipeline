@@ -440,6 +440,7 @@ In every state of "When Kamino can't pay" but a failed layout check, every call 
 `pipeline_seed_liquidity` measured at most 110.6k on both builds through the stand-in launchpad, on a hooked token with the shares to a wallet, which creates five accounts, the recipient's shares account among them; the ceiling stands ([Lending AMM: seeding by a launchpad](https://github.com/imDev2023/testing-pipeline/issues/84), 2026-11-16).
 
 Every instruction measured in every state of "When Kamino can't pay", a failed layout check included, on both builds, gave the Measured column, the highest cost of each row over every mint and state; every ceiling is that cost plus a quarter, rounded up to a multiple of 5,000, and the tests assert every cost against both its ceiling and the Measured column, so a change that costs more must update the column, and the rule against the table ([Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85), 2026-11-16).
+With Pipeline 0.2's crates (2026-11-19), CI's build measured `rebalance` and `lock_lp` 6 units higher, 71,764 and 36,987, which the column now records.
 Two rows depart from that rule.
 `add_liquidity` keeps 60,000 rather than 55,000, because its PDA searches make its cost depend on the LP's key and a hooked mint's, and on random keys the hooked first deposit measured up to 55,635.
 `lock_lp` rises from 40,000 to 50,000, because the market's first lock creates the lock account through the associated token program, whose address search costs 4,500 units for every bump it tries after the first: on a market whose lock account needs one bump more than the market measured before, it took 36,981 against the 32,500 recorded then.
@@ -457,8 +458,8 @@ Account resolution still answers while the reserve fails its layout check, since
 | `add_liquidity` | 40,662 | 60,000 | Two transfers in, an LP mint |
 | `remove_liquidity`, cash | 76,080 | 100,000 | Kamino's redeem, transfers out, an LP burn |
 | `remove_liquidity`, in kind | 62,710 | 80,000 | Transfers out, possibly creating the LP's cToken account |
-| `rebalance` | 71,758 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
-| `lock_lp` | 36,981 | 50,000 | One transfer, and the market's first lock creates the lock account |
+| `rebalance` | 71,764 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
+| `lock_lp` | 36,987 | 50,000 | One transfer, and the market's first lock creates the lock account |
 
 ### Invariants for test layer 3
 

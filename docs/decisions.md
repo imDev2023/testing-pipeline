@@ -932,7 +932,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### BAR-41: Where our custom actions are described
 
 - Question: Where does a strategy's metadata describe its custom actions, now that Pipeline 0.2.0 dropped them from its metadata standard and SDK?
-- Answer: Under a top-level key of our own, `aviary_actions`, in the shape Pipeline's `actions` section had, which Pipeline's validator allows with no warning; the `strategy-actions` package validates it and builds each action into an instruction, ported from Pipeline's Apache-2.0 SDK, for every demo script and for Aviary's action forms.
+- Answer: Under a top-level key of our own, `aviary_actions`, in the shape Pipeline's `actions` section had, which Pipeline's validator allows with no warning; the `strategy-actions` package, written for this repo on the public functions Pipeline's SDK still exports, validates it and builds each action into an instruction, for every demo script and for Aviary's action forms.
 - Alternatives: Dropping action descriptions from the metadata and building each product's instructions from its IDL client, which Pipeline's direction suggests but which replaces Aviary's generic forms; keeping `actions` and accepting the validator's warning, against `BAR-22`.
 - Specified in: [`docs/spec/README.md`, Metadata, IDL and conformance report](spec/README.md#metadata-idl-and-conformance-report)
 - Changes by: spec only
@@ -2355,11 +2355,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-45: What the direct swap refuses
 
 - Question: Which of the router's rules does the swap implementation that calls the strategy directly keep?
-- Answer: Those a trader can meet: a paused router, a trader account that is not a token account of its mint, and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router.
-- Alternatives: Settling without the router's rules, so a paused router would look tradable.
+- Answer: Those a trader can meet: a trader account that is not a token account of its mint, a swap that lowers the trader's output balance (`OutputDecreased`, since Pipeline `3fd85ce`), and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router. The router has had no pause since Pipeline 0.2.0.
+- Alternatives: The earlier default, with a paused router among the refusals, before Pipeline 0.2.0 removed the pause and `3fd85ce` added the output-balance rule; settling without the router's rules, so a swap the router refuses would look tradable.
 - Specified in: [`docs/spec/pipescope-canary.md`, Built on](spec/pipescope-canary.md#built-on)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-19
 - Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
 
 ### CANARY-46: The instruction list in the snapshot

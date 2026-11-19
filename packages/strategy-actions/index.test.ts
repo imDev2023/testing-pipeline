@@ -59,6 +59,18 @@ test('each malformed action is refused with the path of what is wrong', () => {
         ['an account source that does not parse', [{ ...ACTION, accounts: [{ name: 'x', source: 'nowhere:1' }] }], `${AVIARY_ACTIONS_KEY}[0].accounts[0].source`],
         ['a PDA seed naming no argument', [{ ...ACTION, accounts: [{ name: 'x', source: 'pda:strategy:arg:missing' }] }], 'unknown argument "missing"'],
         ['a discriminator that is not 16 hex digits', [{ ...ACTION, discriminator: 'abc' }], `${AVIARY_ACTIONS_KEY}[0].discriminator`],
+        ['an empty label', [{ ...ACTION, label: '' }], `${AVIARY_ACTIONS_KEY}[0].label: must not be empty`],
+        ['an account with an empty name', [{ ...ACTION, accounts: [{ name: '', source: 'wallet' }] }], `${AVIARY_ACTIONS_KEY}[0].accounts[0].name: must not be empty`],
+        [
+            'more than 32 arguments',
+            [{ ...ACTION, args: Array.from({ length: 33 }, (_, i) => ({ name: `a${i}`, type: 'u8' })) }],
+            `${AVIARY_ACTIONS_KEY}[0].args: at most 32`,
+        ],
+        [
+            'more than 64 accounts',
+            [{ ...ACTION, accounts: Array.from({ length: 65 }, (_, i) => ({ name: `x${i}`, source: 'wallet' })) }],
+            `${AVIARY_ACTIONS_KEY}[0].accounts: at most 64`,
+        ],
     ];
     for (const [what, actions, expected] of cases) {
         const parsed = parseAviaryActions(withActions(actions));

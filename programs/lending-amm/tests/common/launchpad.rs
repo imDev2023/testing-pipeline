@@ -391,9 +391,9 @@ impl Env {
     }
 
     /// The lookup table a launchpad keeps for graduating into the lending AMM: the programs
-    /// and accounts every graduation of a lent mint shares (the router's config, the lent
-    /// mint, its reserve and collateral mint, the token, associated token, system and hook
-    /// programs). Invoked programs stay in the message itself, as v0 messages require.
+    /// and accounts every graduation of a lent mint shares (the lent mint, its reserve and
+    /// collateral mint, the token, associated token, system and hook programs; the router's
+    /// config left graduations with Pipeline 0.2). Invoked programs stay in the message itself, as v0 messages require.
     pub fn graduation_lookup_table(
         &mut self,
         params: &InitParams,
@@ -405,7 +405,6 @@ impl Env {
             TOKEN,
             client::TOKEN_2022_PROGRAM_ID,
             associated_token_program(),
-            pda::config(),
             launch.mints[(params.lent_index & 1) as usize],
             reserve,
             collateral_mint,

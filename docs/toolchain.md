@@ -416,8 +416,12 @@ Checking which commit devnet runs needs `solana-verify` 0.5.2 or later (this Mac
 Devnet's router was upgraded twice on 2026-11-18: in slot 523,711,920 to Pipeline's Release 0.2.0 (`e9fbf1a`), and in slot 523,772,247 to `3fd85ce` ("a swap can never lower the trader's output balance; 10 SOL fee cap").
 Each upgrade made the router fixture refuse the dump, so every on-chain CI run stopped at "Fetch devnet's router" until this workspace moved, on 2026-11-19, in one PR from [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66):
 
-- **The router has no pause.** `swap`, `create_market` and `register_existing_market` no longer take the config account, and the router's error numbers shifted down. Transactions built with Pipeline's 0.1 clients fail on the new router with nothing moved: against it, 470 of 762 of our tests failed before the move, almost all with `AccountDiscriminatorMismatch` on `strategy` in `create_market`, where the accounts had shifted.
-- **Custom actions left Pipeline's metadata and SDK.** A document with an `actions` section is still valid but draws a warning, and `buildActionInstruction` is gone; our strategies describe their actions under `aviary_actions` instead, which the `strategy-actions` package validates and builds (`BAR-41`).
+- **The router has no pause.**
+  `swap`, `create_market` and `register_existing_market` no longer take the config account, and the router's error numbers shifted down.
+  Transactions built with Pipeline's 0.1 clients fail on the new router with nothing moved: against it, 470 of 762 of our tests failed before the move, almost all with `AccountDiscriminatorMismatch` on `strategy` in `create_market`, where the accounts had shifted.
+- **A swap can never lower the trader's output balance** (`OutputDecreased`, since `3fd85ce`), whatever its minimum; Canary's direct path refuses it too (`CANARY-45`).
+- **Custom actions left Pipeline's metadata and SDK.**
+  A document with an `actions` section is still valid but draws a warning, and `buildActionInstruction` is gone; our strategies describe their actions under `aviary_actions` instead, which the `strategy-actions` package validates and builds (`BAR-41`).
 - `pipeline-strategy-interface` is unchanged (0.1.0), so our programs' source did not change; the crates and the SDK we build with are 0.2.0.
 
 `programs/Cargo.toml` pins `rev = "3fd85ce"`, `fixtures/pins.env` pins its router, and Canary (`crates/`) takes `pipeline-check`, `pipeline-client` and `pipeline-quoter` 0.2.0 from crates.io.
