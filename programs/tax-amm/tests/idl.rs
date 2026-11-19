@@ -340,7 +340,7 @@ fn its_events_and_errors_are_the_programs() {
 fn its_actions_accounts_and_args_are_the_metadatas() {
     let idl = idl();
     let metadata = read_json("metadata.json");
-    let actions = metadata["actions"].as_array().unwrap();
+    let actions = metadata["aviary_actions"].as_array().unwrap();
     for action in actions {
         let name = action["name"].as_str().unwrap();
         // `burn` is `distribute` for the burn slot, with the mint writable: its own action,

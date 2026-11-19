@@ -929,6 +929,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-12 in [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65)
 
+### BAR-41: Where our custom actions are described
+
+- Question: Where does a strategy's metadata describe its custom actions, now that Pipeline 0.2.0 dropped them from its metadata standard and SDK?
+- Answer: Under a top-level key of our own, `aviary_actions`, in the shape Pipeline's `actions` section had, which Pipeline's validator allows with no warning; the `strategy-actions` package, written for this repo on the public functions Pipeline's SDK still exports, validates it and builds each action into an instruction, for every demo script and for Aviary's action forms.
+- Alternatives: Dropping action descriptions from the metadata and building each product's instructions from its IDL client, which Pipeline's direction suggests but which replaces Aviary's generic forms; keeping `actions` and accepting the validator's warning, against `BAR-22`.
+- Specified in: [`docs/spec/README.md`, Metadata, IDL and conformance report](spec/README.md#metadata-idl-and-conformance-report)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-19 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -2345,11 +2355,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-45: What the direct swap refuses
 
 - Question: Which of the router's rules does the swap implementation that calls the strategy directly keep?
-- Answer: Those a trader can meet: a paused router, a trader account that is not a token account of its mint, and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router.
-- Alternatives: Settling without the router's rules, so a paused router would look tradable.
+- Answer: Those a trader can meet: a trader account that is not a token account of its mint, a swap that lowers the trader's output balance (`OutputDecreased`, since Pipeline `3fd85ce`), and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router. The router has had no pause since Pipeline 0.2.0.
+- Alternatives: The earlier default, with a paused router among the refusals, before Pipeline 0.2.0 removed the pause and `3fd85ce` added the output-balance rule; settling without the router's rules, so a swap the router refuses would look tradable.
 - Specified in: [`docs/spec/pipescope-canary.md`, Built on](spec/pipescope-canary.md#built-on)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-19
 - Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
 
 ### CANARY-46: The instruction list in the snapshot
@@ -4849,6 +4859,9 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-36`: this lives only in its build ticket; `lending-pool.md` (Devnet) should state it, so it has a home once its ticket closes.
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
 - `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `BAR-41`: answered on 2026-11-19 in a question dialog of the session of [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66), which cannot tell whether the owner or the coordinating session answered, so it stays that session's default until the owner confirms it.
+- `PIPESCOPE-20`, `pipescope.md` and `pipescope-architecture.md` name the SDK's `buildActionInstruction` and the metadata's `actions` forms, which Pipeline 0.2.0 dropped; under `BAR-41` Aviary renders our strategies' `aviary_actions` with the `strategy-actions` package, and whether it also renders another strategy's leftover `actions` section, which Pipeline now ignores, is Aviary's call.
+- `LENDING-86`: since Pipeline 0.2 dropped the config account from `register_existing_market`, a hooked token's graduation fits a legacy transaction when its shares are locked (1,222 bytes) but not when they go to a wallet (1,254); `lending-pool.md` has the new figures, and the decision's own figures (1,287) are the lending AMM session's to update.
 - `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `HOOK-35` to `HOOK-37`: set by the session of [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.

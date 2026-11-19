@@ -97,10 +97,14 @@ fn strategy_refused_names_the_error_and_its_source_line() {
 #[test]
 fn router_refused_names_the_router() {
     let mut cluster = Cluster::new();
-    let market = cluster.sol_cp_market(30);
-    cluster.pause_router();
+    // Pays out 1:1 and refunds more input than was sent, which the router refuses.
+    const REFUND_MORE: u8 = 3;
+    let market = cluster.evil_market(1_000 * SOL);
 
-    let failure = find(&run(&cluster, market.market, vec![]), "router_refused");
+    let failure = find(
+        &run(&cluster, market.market, vec![REFUND_MORE]),
+        "router_refused",
+    );
 
     assert_eq!(failure["program"], client::PROGRAM_ID.to_string());
     assert_eq!(failure["stage"], "swap");

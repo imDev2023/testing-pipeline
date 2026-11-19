@@ -477,4 +477,71 @@ impl Cluster {
             mint_b: token,
         }
     }
+
+    /// A market on `test-strategy-evil` between wrapped SOL and a Token-2022 token whose
+    /// permanent delegate is the market itself, 1:1 with `reserve` of each in its vaults, so
+    /// the strategy's `PullOutputAsDelegate` can take tokens back out of a buyer's account
+    /// with the market signer. The market's address follows from the token's, so the token's
+    /// keypair is chosen first.
+    pub fn evil_market_whose_token_it_can_take_back(&mut self, reserve: u64) -> Market {
+        use spl_token_2022_interface::instruction as token;
+        self.register(&super::EVIL, "test_strategy_evil");
+        let sol = self.wrapped_sol();
+        let mint = Keypair::new();
+        let state = Pubkey::find_program_address(
+            &[b"evil", sol.as_ref(), mint.pubkey().as_ref()],
+            &super::EVIL,
+        )
+        .0;
+        let market = pda::market(&super::EVIL, &state);
+        let admin = self.admin.pubkey();
+        let space =
+            ExtensionType::try_calculate_account_len::<spl_token_2022_interface::state::Mint>(&[
+                ExtensionType::PermanentDelegate,
+            ])
+            .unwrap();
+        let ixs = vec![
+            create_account(
+                &admin,
+                &mint.pubkey(),
+                self.svm.minimum_balance_for_rent_exemption(space),
+                space as u64,
+                &TOKEN_2022,
+            ),
+            token::initialize_permanent_delegate(&TOKEN_2022, &mint.pubkey(), &market).unwrap(),
+            token::initialize_mint2(&TOKEN_2022, &mint.pubkey(), &admin, None, 9).unwrap(),
+        ];
+        self.send(&ixs, &[&mint]);
+        let token = mint.pubkey();
+        let vault_a = self.give(&sol, &state, reserve);
+        let vault_b = self.give_on(&token, &TOKEN_2022, &state, reserve);
+        let ix = client::create_market(&client::CreateMarket {
+            creator: admin,
+            strategy_program: super::EVIL,
+            market_state: state,
+            market_state_signs: false,
+            init_data: vec![0],
+            max_creator_lamports: SOL,
+            strategy_accounts: vec![
+                AccountMeta::new_readonly(sol, false),
+                AccountMeta::new_readonly(token, false),
+                AccountMeta::new(vault_a, false),
+                AccountMeta::new(vault_b, false),
+            ],
+        });
+        self.send(&[ix], &[]);
+        self.send(
+            &[
+                client::init_fee_account(&admin, &market, &sol, &TOKEN),
+                client::init_fee_account(&admin, &market, &token, &TOKEN_2022),
+            ],
+            &[],
+        );
+        Market {
+            market,
+            state,
+            mint_a: sol,
+            mint_b: token,
+        }
+    }
 }
