@@ -167,8 +167,10 @@ export function scanGitDir(dir, needles) {
   return { hits: out, blobs, commits };
 }
 
+// Page sizes keep each query under GitHub's limit of 500,000 nodes; the totalCount guards below
+// report anything a page did not hold, so nothing goes unscanned silently.
 const ISSUE_TEXT = `number title body userContentEdits(first:100){totalCount nodes{diff}}
-  comments(first:100){totalCount nodes{body userContentEdits(first:100){totalCount nodes{diff}}}}`;
+  comments(first:100){totalCount nodes{body userContentEdits(first:20){totalCount nodes{diff}}}}`;
 
 // Every hit in a repository's issues and pull requests: titles, bodies, comments, reviews, review
 // comments, and every edit revision GitHub keeps of a body or a comment.
@@ -180,8 +182,8 @@ export async function scanTracker(owner, name, needles) {
     { o: owner, n: name },
   );
   const prs = await graphqlAll(
-    `query($o:String!,$n:String!,$after:String){repository(owner:$o,name:$n){pullRequests(first:10,after:$after){pageInfo{hasNextPage endCursor} nodes{${ISSUE_TEXT}
-      reviews(first:50){totalCount nodes{body comments(first:100){totalCount nodes{body userContentEdits(first:50){nodes{diff}}}}}}}}}}`,
+    `query($o:String!,$n:String!,$after:String){repository(owner:$o,name:$n){pullRequests(first:5,after:$after){pageInfo{hasNextPage endCursor} nodes{${ISSUE_TEXT}
+      reviews(first:20){totalCount nodes{body comments(first:30){totalCount nodes{body userContentEdits(first:10){totalCount nodes{diff}}}}}}}}}}`,
     ["repository", "pullRequests"],
     { o: owner, n: name },
   );
@@ -209,11 +211,13 @@ export async function scanTracker(owner, name, needles) {
         full(`${at} comment ${k + 1} revisions`, c.userContentEdits);
         c.userContentEdits.nodes.forEach((e, j) => check(`${at} comment ${k + 1} revision ${j + 1}`, e.diff, marks));
       });
+      if (i.reviews) full(`${at} reviews`, i.reviews);
       for (const [k, r] of (i.reviews?.nodes || []).entries()) {
         check(`${at} review ${k + 1}`, r.body, marks);
         full(`${at} review ${k + 1} comments`, r.comments);
         r.comments.nodes.forEach((c, j) => {
           check(`${at} review ${k + 1} comment ${j + 1}`, c.body, marks);
+          full(`${at} review ${k + 1} comment ${j + 1} revisions`, c.userContentEdits);
           c.userContentEdits.nodes.forEach((e, m) => check(`${at} review ${k + 1} comment ${j + 1} revision ${m + 1}`, e.diff, marks));
         });
       }

@@ -280,6 +280,8 @@ async function buildRewrite(fromName) {
   say(`cloning ${OWNER}/${fromName} into ${RUN}`);
   await gitNet(["clone", "-q", "--bare", url(fromName), G]);
   const before = refsOf(G);
+  const tags = git(G, "for-each-ref", "--format=%(refname)", "refs/tags").trim();
+  if (tags) stop(`the old repository has tags (${tags.split("\n").slice(0, 3).join(", ")}), which the move does not carry; tell Claude.`);
   writeFileSync(join(RUN, "refs-before.json"), JSON.stringify(before, null, 2));
   say(`${Object.keys(before).length} branches, ${git(G, "rev-list", "--all", "--count").trim()} commits`);
   run("git", ["filter-repo", "--quiet", "--invert-paths", ...PURGED_PATHS.flatMap((p) => ["--path", p]), "--replace-text", REPLACEMENTS, "--replace-message", REPLACEMENTS, "--prune-empty", "never"], { cwd: G, timeout: 1_800_000 });
@@ -501,6 +503,11 @@ async function push(rw) {
           .map((l) => l.split("\t").reverse()),
       );
   const n = Object.keys(rw.after).length;
+  if (state.pushed === rw.RUN) {
+    // Sessions may push again once the move is past this step; their branches are theirs.
+    say(`pushed before, from ${rw.RUN}`);
+    return;
+  }
   // What is there already must be exactly the rewrite's (a run stopped halfway); anything else is a stranger's push.
   if (Object.keys(remote).some((r) => remote[r] !== rw.after[r])) stop(`${R} has branches that differ from the rewrite; a session pushed to it. Tell Claude.`);
   if (!DRY) {
@@ -518,6 +525,8 @@ async function push(rw) {
     });
   }
   if (!DRY) {
+    state.pushed = rw.RUN;
+    save();
     await api("PATCH", `repos/${R}`, { default_branch: "main" });
     const link = join(STATE_DIR, "last-pushed");
     rmSync(link, { force: true });
@@ -547,7 +556,12 @@ async function waitImport(id) {
   for (let i = 0; i < 120; i++) {
     const r = await api("GET", `repos/${R}/import/issues/${id}`, undefined, { accept: IMPORT_ACCEPT });
     if (r.status === "imported") return +r.issue_url.split("/").pop();
-    if (r.status === "failed") stop(`GitHub refused an issue import: ${JSON.stringify(r.errors || r).slice(0, 400)}. Tell Claude.`);
+    if (r.status === "failed") {
+      // Nothing landed, so the next run may import this number afresh.
+      delete state.pendingImport;
+      save();
+      stop(`GitHub refused an issue import: ${JSON.stringify(r.errors || r).slice(0, 400)}. Tell Claude.`);
+    }
     await sleep(i < 10 ? 1000 : 3000);
   }
   stop(`issue import ${id} is still pending after six minutes; run this again later (it resumes).`);
@@ -561,7 +575,9 @@ async function createNumber(it) {
       issue: { title: it.title, body: it.body, closed: it.closed, labels: it.labels, ...(it.createdAt && { created_at: it.createdAt }), ...(it.closed && it.closedAt && { closed_at: it.closedAt }), ...(it.assignees[0] && { assignee: it.assignees[0] }) },
       comments: it.comments.map((c) => ({ body: c.body, created_at: c.createdAt })),
     };
-    const r = await api("POST", `repos/${R}/import/issues`, body, { accept: IMPORT_ACCEPT, allowFail: true });
+    state.creating = it.n; // a crash between the POST and the record below must not post twice
+    save();
+    const r = await api("POST", `repos/${R}/import/issues`, body, { accept: IMPORT_ACCEPT, allowFail: true, tries: 1 });
     if (r?.error && /HTTP 404|HTTP 410/.test(r.error) && it.n === 1) {
       say("GitHub's issue import API is gone; using the plain issue API (dates are not kept)");
       state.mode = "rest";
@@ -570,6 +586,7 @@ async function createNumber(it) {
       stop(`importing #${it.n} failed: ${r.error.slice(0, 400)}. Tell Claude.`);
     } else {
       state.pendingImport = { n: it.n, id: r.id };
+      delete state.creating;
       save();
       const got = await waitImport(r.id);
       delete state.pendingImport;
@@ -577,7 +594,11 @@ async function createNumber(it) {
       return got;
     }
   }
-  const made = await api("POST", `repos/${R}/issues`, { title: it.title, body: it.body, labels: it.labels, assignees: it.assignees });
+  state.creating = it.n;
+  save();
+  const made = await api("POST", `repos/${R}/issues`, { title: it.title, body: it.body, labels: it.labels, assignees: it.assignees }, { tries: 1 });
+  delete state.creating;
+  save();
   return made.number;
 }
 
@@ -589,7 +610,7 @@ async function finishNumber(it, have) {
   if (missing.length) await api("POST", `repos/${R}/issues/${it.n}/assignees`, { assignees: missing });
   if (cur.comments < it.comments.length) {
     for (const c of it.comments.slice(cur.comments)) {
-      await api("POST", `repos/${R}/issues/${it.n}/comments`, { body: c.body });
+      await api("POST", `repos/${R}/issues/${it.n}/comments`, { body: c.body }, { tries: 1 });
       await sleep(PAUSE_MS);
     }
   }
@@ -616,6 +637,18 @@ async function issues(p) {
     delete state.pendingImport;
     save();
     have = await newIssues();
+  }
+  if (state.creating) {
+    // The last run stopped right after sending a number; give GitHub time to show it before sending it again.
+    const n = state.creating;
+    for (let i = 0; i < 20 && !have.has(n); i++) {
+      say(`waiting to see whether #${n}, sent before the last run stopped, lands`);
+      await sleep(15_000);
+      have = await newIssues();
+    }
+    if (!have.has(n) && Math.max(0, ...have.keys()) !== n - 1) stop(`#${n} was sent before the last run stopped and the numbers moved on; tell Claude.`);
+    delete state.creating;
+    save();
   }
   for (const it of p.items) {
     const h = have.get(it.n);
@@ -676,14 +709,14 @@ async function pullRequests(p, commitMap, movedOn) {
     const open = await api("GET", `repos/${R}/pulls?state=all&head=${OWNER}:${encodeURIComponent(pr.head)}`);
     let num = open.find((x) => x.state === "open")?.number;
     if (!num) {
-      num = (await api("POST", `repos/${R}/pulls`, { title: pr.title, head: pr.head, base: pr.base, body: pr.body, draft: pr.draft })).number;
+      num = (await api("POST", `repos/${R}/pulls`, { title: pr.title, head: pr.head, base: pr.base, body: pr.body, draft: pr.draft }, { tries: 1 })).number;
       say(`#${pr.old} -> #${num}`);
     }
     state.prMap[pr.old] = num;
     save();
     const have = (await api("GET", `repos/${R}/issues/${num}`)).comments;
     for (const c of pr.comments.slice(have)) {
-      await api("POST", `repos/${R}/issues/${num}/comments`, { body: c });
+      await api("POST", `repos/${R}/issues/${num}/comments`, { body: c }, { tries: 1 });
       await sleep(PAUSE_MS);
     }
     if (num !== pr.predicted) {
@@ -693,7 +726,7 @@ async function pullRequests(p, commitMap, movedOn) {
     const note = prNote(pr.old, num, pr.head, movedOn);
     if (pr.ticket) {
       const cs = await api("GET", `repos/${R}/issues/${pr.ticket}/comments?per_page=100`, undefined, { paginate: true });
-      if (!cs.some((c) => c.body === note)) await api("POST", `repos/${R}/issues/${pr.ticket}/comments`, { body: note });
+      if (!cs.some((c) => c.body === note)) await api("POST", `repos/${R}/issues/${pr.ticket}/comments`, { body: note }, { tries: 1 });
     }
   }
   if (DRY) return;
@@ -730,7 +763,7 @@ async function moveCheckouts(rw) {
     const target = remoteOld && head === remoteOld ? rw.after[`refs/heads/${branch}`] : newOf(head);
     if (target) {
       if (target === head) continue;
-      const dirty = git(wt, "status", "--porcelain", "--untracked-files=no").trim() ? " (keeping its uncommitted changes)" : "";
+      const dirty = git(wt, "--no-optional-locks", "status", "--porcelain", "--untracked-files=no").trim() ? " (keeping its uncommitted changes)" : "";
       await change(`${wt}: ${head.slice(0, 7)} -> ${target.slice(0, 7)}${dirty}`, () => {
         if (!run("git", ["reset", "-q", "--keep", target], { cwd: wt, allowFail: true }).ok) checks.push(`${wt} has uncommitted changes that clash with the rewrite; left on ${head.slice(0, 7)}`);
       });
@@ -743,7 +776,7 @@ async function moveCheckouts(rw) {
       continue;
     }
     const n = git(wt, "rev-list", "--count", `${base}..${head}`).trim();
-    if (git(wt, "status", "--porcelain", "--untracked-files=no").trim()) {
+    if (git(wt, "--no-optional-locks", "status", "--porcelain", "--untracked-files=no").trim()) {
       checks.push(`${wt} has ${n} local commit(s) and uncommitted changes; left on the old history`);
       continue;
     }
@@ -785,7 +818,7 @@ async function check(snapOld, transform, needles, movedOn) {
     const m = fresh.prs.find((x) => x.headRefName === pr.headRefName && x.state === "OPEN");
     if (!m) continue;
     prMap[pr.number] = m.number;
-    if (ticketOf(pr)) notes.set(ticketOf(pr), prNote(pr.number, m.number, pr.headRefName, movedOn));
+    if (ticketOf(pr)) notes.set(ticketOf(pr), [...(notes.get(ticketOf(pr)) || []), prNote(pr.number, m.number, pr.headRefName, movedOn)]);
   }
   for (let k = 1; k <= snapOld.max; k++) {
     const was = snapOld.byNumber.get(k);
@@ -806,14 +839,15 @@ async function check(snapOld, transform, needles, movedOn) {
     }
     const diffs = [];
     if (now.title !== transform(was.title)) diffs.push("title");
-    if (now.body !== remapPrs(transform(was.body), prMap)) diffs.push("body");
+    if (now.body !== (k === 1 ? remapPrs(transform(was.body), prMap) : transform(was.body))) diffs.push("body");
     if (now.state !== was.state) diffs.push(`state ${now.state} (was ${was.state})`);
     if (was.state === "CLOSED" && (now.stateReason || "COMPLETED") !== (was.stateReason || "COMPLETED")) diffs.push(`closed as ${now.stateReason} (was ${was.stateReason})`);
     if (set(now.labels.nodes.map((l) => l.name)) !== set(was.labels.nodes.map((l) => l.name))) diffs.push("labels");
     if (set(now.assignees.nodes.map((l) => l.login)) !== set(was.assignees.nodes.map((l) => l.login))) diffs.push("assignees");
-    const want = was.comments.totalCount + (notes.has(k) ? 1 : 0);
+    const added = notes.get(k) || [];
+    const want = was.comments.totalCount + added.length;
     if (now.comments.totalCount !== want) diffs.push(`${now.comments.totalCount} comments (expected ${want})`);
-    else if (notes.has(k) && now.comments.nodes[want - 1].body !== notes.get(k)) diffs.push("the note of its moved pull request");
+    else if (added.some((note) => !now.comments.nodes.slice(was.comments.totalCount).some((c) => c.body === note))) diffs.push("the note of its moved pull request");
     else if (was.comments.nodes.some((c, j) => now.comments.nodes[j].body !== transform(c.body))) diffs.push("a comment's text");
     if ((now.parent?.number || null) !== (was.parent?.number || null)) diffs.push("parent");
     if (JSON.stringify(now.subIssues.nodes.map((s) => s.number)) !== JSON.stringify(was.subIssues.nodes.map((s) => s.number))) diffs.push("sub-issues or their order");

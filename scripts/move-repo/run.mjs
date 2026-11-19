@@ -31,6 +31,7 @@ const THROTTLED = /secondary rate limit|was submitted too quickly|abuse|HTTP 429
 
 // gh with retries for the network trouble this Mac sees and for GitHub's secondary rate limit,
 // which asks for at least a minute's wait.
+// A call that creates something passes tries: 1, since a retry after a lost answer could create it twice.
 export async function gh(args, { input, allowFail = false, tries = 8 } = {}) {
   for (let i = 1; ; i++) {
     const r = run("gh", args, { input, allowFail: true, timeout: 120_000 });
@@ -53,7 +54,7 @@ export async function api(method, path, body, opts = {}) {
   if (opts.accept) args.push("-H", `Accept: ${opts.accept}`);
   if (opts.paginate) args.push("--paginate", "--slurp");
   if (body !== undefined) args.push("--input", "-");
-  const r = await gh(args, { input: body === undefined ? undefined : JSON.stringify(body), allowFail: opts.allowFail });
+  const r = await gh(args, { input: body === undefined ? undefined : JSON.stringify(body), allowFail: opts.allowFail, tries: opts.tries });
   if (opts.allowFail) {
     if (!r.ok) return { error: `${r.err}\n${r.out}`.trim() };
     return r.out.trim() ? JSON.parse(r.out) : null;
