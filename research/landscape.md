@@ -9,7 +9,7 @@ Facts about Jupiter and Meteora come from the owner's canonical knowledge base a
 - On 2026-10-26 neither Jupiter's Metis router nor Titan routed live DBC transfer-hook pools; OKX's router, DFlow and Axiom carried 85% of those swaps, with Padre, Maestro, GMGN and Photon also seen (`raw/findings/2026-10-26-dbc-hook-routing.md`).
 - After DBC revokes a token's transfer hook (program and authority set to the zero key), its pools route normally through Jupiter: the precedent for a containment hook's unlock.
 - Photon adds launchpads one by one; DexScreener, Birdeye, GMGN and Codex identify sources by program or launchpad, each through its own request process (`raw/findings/2026-10-26-terminal-distribution.md`).
-- MetalLegBob's own Factory pools waited just over 7 months for Jupiter routing (see `metallegbob.md`).
+- MetalLegBob's own Factory pools waited just over 7 months for Jupiter routing.
 
 ## Prior art for the ideas we weighed
 

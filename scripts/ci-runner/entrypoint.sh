@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # The runner container's entrypoint (docs/toolchain.md, "CI on the owner's iMac"):
 #   registered   exits 0 if this runner's home volume holds a registration
+#   forget       deletes that registration from the volume only (for one GitHub no longer lists,
+#                such as the archive's after the move of #167); GitHub drops its offline entry
 #   configure    registers it, with RUNNER_TOKEN, RUNNER_NAME and REPO_URL from the environment
 #   run          runs it, taking jobs labelled `testing-pipeline` (the default)
 set -euo pipefail
@@ -9,6 +11,9 @@ cd "$HOME/actions-runner"
 case "${1:-run}" in
   registered)
     test -f .runner
+    ;;
+  forget)
+    rm -f .runner .credentials .credentials_rsaparams
     ;;
   configure)
     : "${RUNNER_TOKEN:?a registration token is needed; scripts/ci-runner/start.sh gets one}"
@@ -25,7 +30,7 @@ case "${1:-run}" in
     exec ./run.sh
     ;;
   *)
-    echo "usage: ci-runner-entrypoint [registered|configure|run]" >&2
+    echo "usage: ci-runner-entrypoint [registered|forget|configure|run]" >&2
     exit 2
     ;;
 esac

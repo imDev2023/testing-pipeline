@@ -71,7 +71,7 @@ The swap's measurement and fees are now one pure function, `pipeline_strategy_in
 
 ## Our verdict (2026-11-09)
 
-Pipeline moves the distribution problem up one level rather than solving it: it matters once integrators carry its markets, and on 2026-11-09 none had committed (see `research/x/pipeline-launch-thread.md`).
+Pipeline moves the distribution problem up one level rather than solving it: it matters once integrators carry its markets, and on 2026-11-09 none had committed (the launch thread, in the owner's private archive of his X posts).
 Its realistic early integrators are the ones that already chase long-tail venues (OKX, DFlow and Axiom carried 85% of DBC transfer-hook pool swaps on 2026-10-26, see `landscape.md`).
 The 0.25% Pipeline fee rules it out for pairs that trade cheaply elsewhere (SOL-USDC); it suits markets whose assets or rules exist only there.
-MetalLegBob asked publicly for a terminal (see `metallegbob.md`), which is why our first product is Pipescope.
+MetalLegBob asked publicly for a terminal, which is why our first product is Pipescope.
