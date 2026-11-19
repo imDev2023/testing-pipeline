@@ -48,7 +48,7 @@ fn the_metadata_describes_a_tax_amm() {
     );
     // The template's deposit action is gone: a tax market's liquidity is seeded once. The
     // tax authority's three actions follow.
-    let actions: Vec<&str> = m["actions"]
+    let actions: Vec<&str> = m["aviary_actions"]
         .as_array()
         .unwrap()
         .iter()
@@ -251,7 +251,7 @@ fn the_seed_liquidity_form_describes_exactly_what_the_program_takes() {
 }
 
 fn action(name: &str) -> Value {
-    metadata()["actions"]
+    metadata()["aviary_actions"]
         .as_array()
         .unwrap()
         .iter()

@@ -25,10 +25,10 @@ anchor-lang = "=1.2.2"
 anchor-spl = "=1.2.2"
 # Pipeline's crates, pinned by commit, never by branch. scripts/fetch-pipeline.sh reads this
 # rev to clone Pipeline for the TypeScript SDK and its test programs.
-pipeline-strategy-interface = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d" }
-pipeline-client = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d" }
-pipeline-check = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d", default-features = false }
-pipeline-events = { git = "https://github.com/MetalLegBob/pipeline", rev = "5ad130d" }
+pipeline-strategy-interface = { git = "https://github.com/MetalLegBob/pipeline", rev = "3fd85ce" }
+pipeline-client = { git = "https://github.com/MetalLegBob/pipeline", rev = "3fd85ce" }
+pipeline-check = { git = "https://github.com/MetalLegBob/pipeline", rev = "3fd85ce", default-features = false }
+pipeline-events = { git = "https://github.com/MetalLegBob/pipeline", rev = "3fd85ce" }
 solana-security-txt = "=1.1.3"
 mint-rules = { path = "mint-rules" }
 # The buy wall AMM's zero-copy market state (Anchor's `zero_copy` derives through it).

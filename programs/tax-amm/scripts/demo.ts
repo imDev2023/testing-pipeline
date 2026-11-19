@@ -114,6 +114,7 @@ import {
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
 import * as pipeline from '@pipeline-placeholder/sdk';
+import { buildActionInstruction, findAction } from 'strategy-actions';
 
 import {
     fetchTaxMarket,
@@ -863,7 +864,7 @@ async function payOut(
     taxedIn: string,
 ) {
     const actionNamed = (name: string) =>
-        metadata.actions?.find((candidate) => candidate.name === name) ?? fail(`metadata.json has no ${name} action`);
+        findAction(metadata, name) ?? fail(`metadata.json has no ${name} action`);
     const [distribute, burn] = [actionNamed('distribute'), actionNamed('burn')];
     const { data: before } = await fetchTaxMarket(rpc, view.marketState, { commitment: 'confirmed' });
     const taxSide = before.taxSide;
@@ -885,7 +886,7 @@ async function payOut(
         const existed = (await accountData(account)) !== null;
         const balance = existed ? await tokenBalance(account) : 0n;
         const supply = slot === BURN_SLOT ? await mintSupply(taxMint) : 0n;
-        const instruction = await pipeline.buildActionInstruction({
+        const instruction = await buildActionInstruction({
             action: slot === BURN_SLOT ? burn : distribute,
             market: view,
             wallet: payer.address,
@@ -969,7 +970,7 @@ async function solTaxedMarket(payer: KeyPairSigner, programId: Address, metadata
         tokenPrograms,
         supportsExactOut: false,
     };
-    const seedAction = metadata.actions?.find((action) => action.name === 'seed') ?? fail('metadata.json has no seed action');
+    const seedAction = findAction(metadata, 'seed') ?? fail('metadata.json has no seed action');
     await send(
         `${label}: create_market + init_fee_account x2 + seed`,
         payer,
@@ -978,7 +979,7 @@ async function solTaxedMarket(payer: KeyPairSigner, programId: Address, metadata
             ...(await Promise.all(
                 mints.map((mint, i) => pipeline.initFeeAccount({ payer: payer.address, market, mint, tokenProgram: tokenPrograms[i]! })),
             )),
-            await pipeline.buildActionInstruction({
+            await buildActionInstruction({
                 action: seedAction,
                 market: view,
                 wallet: payer.address,
@@ -1083,7 +1084,7 @@ async function tokenMarket(payer: KeyPairSigner, programId: Address, metadata: p
     );
     // The metadata's `seed` action, built against the market as it will be once
     // create_market has run: every address is known before anything is sent.
-    const seedAction = metadata.actions?.find((action) => action.name === 'seed') ?? fail('metadata.json has no seed action');
+    const seedAction = findAction(metadata, 'seed') ?? fail('metadata.json has no seed action');
     const view: pipeline.MarketView = {
         market,
         strategyProgram: programId,
@@ -1093,7 +1094,7 @@ async function tokenMarket(payer: KeyPairSigner, programId: Address, metadata: p
         tokenPrograms: mints.map(({ tokenProgram }) => tokenProgram),
         supportsExactOut: false,
     };
-    const seed = await pipeline.buildActionInstruction({
+    const seed = await buildActionInstruction({
         action: seedAction,
         market: view,
         wallet: payer.address,
@@ -1175,9 +1176,9 @@ async function tokenMarket(payer: KeyPairSigner, programId: Address, metadata: p
 
     // The tax authority's actions, from the metadata, as Aviary's generic forms build them.
     const actionNamed = (name: string) =>
-        metadata.actions?.find((action) => action.name === name) ?? fail(`metadata.json has no ${name} action`);
+        findAction(metadata, name) ?? fail(`metadata.json has no ${name} action`);
     const authorityAction = async (name: string, actionArgs: Record<string, number | bigint | Address>) =>
-        pipeline.buildActionInstruction({ action: actionNamed(name), market: view, wallet: payer.address, args: actionArgs });
+        buildActionInstruction({ action: actionNamed(name), market: view, wallet: payer.address, args: actionArgs });
     const recipientArgs = (recipients: readonly Address[], shares: readonly number[], burnShareBps: number) => {
         const result: Record<string, number | Address> = { burn_share_bps: burnShareBps };
         recipients.forEach((recipient, i) => (result[`recipient_${i}`] = recipient));

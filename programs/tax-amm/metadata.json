@@ -319,7 +319,7 @@
             }
         ]
     },
-    "actions": [
+    "aviary_actions": [
         {
             "name": "seed",
             "label": "Seed liquidity",

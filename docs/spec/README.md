@@ -135,7 +135,8 @@ A `pipeline-check` Warn, in layer 4 or 7, is accepted only with a written reason
 ### Metadata, IDL and conformance report
 
 - Every strategy publishes complete `pipeline-strategy-metadata/1` metadata that passes `pipeline-client`'s validator with zero warnings.
-- `source` names this repo, the deployed commit and the program's directory; `links.idl` points at the program's Anchor IDL; `conformance` points at the devnet demo's `pipeline-check` JSON report with its SHA-256; `security.contact` is set; and every `init` form and custom action is listed.
+- `source` names this repo, the deployed commit and the program's directory; `links.idl` points at the program's Anchor IDL; `conformance` points at the devnet demo's `pipeline-check` JSON report with its SHA-256; `security.contact` is set; and the `init` form and every custom action are listed.
+- Custom actions are described under a top-level key of our own, `aviary_actions`, in the shape Pipeline's metadata gave its `actions` section before Pipeline 0.2.0 dropped custom actions from its standard and SDK (BAR-41); Pipeline's validator allows the unknown key with no warning, and the `strategy-actions` package in `packages/` validates the section and builds each action, for the demo scripts and Aviary.
 - The metadata, the IDL and the report are committed beside the program and linked through `raw.githubusercontent.com` at the commit hash, so the content behind a link never changes.
 - Each deploy updates the router's metadata URI for the strategy.
 - `security.audits` stays empty.

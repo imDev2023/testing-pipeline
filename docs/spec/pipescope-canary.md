@@ -291,10 +291,10 @@ A change to any of them changes the `harness` version that every Canary result c
 
 ## Built on
 
-- Pipeline's Apache-2.0 crates, from crates.io at exact versions (published 2026-11-10 at Pipeline's `5ac3121`; see [`pipescope-architecture.md`](pipescope-architecture.md#pipelines-packages)): `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
+- Pipeline's Apache-2.0 crates, from crates.io at exact versions (0.2.0 since 2026-11-19, published 2026-11-18 at Pipeline's `e9fbf1a`, for the router without a pause; first 0.1.0, published 2026-11-10 at `5ac3121`; see [`pipescope-architecture.md`](pipescope-architecture.md#pipelines-packages)): `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
 - The router's program is loaded from the cluster's own bytes, never built or copied into this repo; `pipeline-check` does the same.
 - Every trade in the checks goes through one swap function, so the architecture's licence seam holds: on devnet it calls the router, and it can be replaced by a direct call to the strategy plus Pipeline's Apache-2.0 settlement code if running the router's bytes in production is not allowed.
-  The direct implementation refuses what the router's own rules refuse a trader (a paused router, an account that is not a token account of its mint, and every refusal of the settlement code, named in that code's words), undoes the swap on any refusal, and is chosen in one place, Canary's config module; the strategy then runs one call level higher than under the router, the one difference (`CANARY-45`).
+  The direct implementation refuses what the router's own rules refuse a trader (an account that is not a token account of its mint, a swap that lowers the trader's output balance, and every refusal of the settlement code, named in that code's words), undoes the swap on any refusal, and is chosen in one place, Canary's config module; the strategy then runs one call level higher than under the router, the one difference (`CANARY-45`).
   `conformance` is the exception, because `pipeline-check` itself runs the router; without the router it is "not run".
 
 ## A correction to earlier research
