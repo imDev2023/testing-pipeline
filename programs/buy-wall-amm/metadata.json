@@ -57,7 +57,7 @@
             { "name": "sol_vault", "source": "pda:strategy:str:vault,key:market_state,key:fixed:So11111111111111111111111111111111111111112", "writable": true }
         ]
     },
-    "actions": [
+    "aviary_actions": [
         {
             "name": "seed",
             "label": "Seed the market",

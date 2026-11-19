@@ -2269,9 +2269,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pipeline-check"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09040af7da1ec0dde74fdcbd8677d555e631bbfcb0bf3dcbf3e940fa6e54149d"
+checksum = "6bffb7992e062364ada00d68814d9440e798d1291672c35cc1533af12ab3f015"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -2295,9 +2295,9 @@ dependencies = [
 
 [[package]]
 name = "pipeline-client"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afcc45232d073096fae0802c89c951512e661a903c5b9d6e6829e432c9d8aa81"
+checksum = "e460a5445fbb043bb1a245cbe58f6cc8724bf1b2a84da4fabdf8410fd0eeffd6"
 dependencies = [
  "borsh",
  "pipeline-strategy-interface",
@@ -2310,9 +2310,9 @@ dependencies = [
 
 [[package]]
 name = "pipeline-quoter"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a2940ecb339b59e12d89daacd8d71fdf85e96fc6a2481d1eb1a9d2a8377a536"
+checksum = "fff6a0e710eb396d12097e7454c6a83726df3d5c7cacb8f786c429277f8583ae"
 dependencies = [
  "borsh",
  "litesvm",

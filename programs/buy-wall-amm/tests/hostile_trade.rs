@@ -220,14 +220,15 @@ fn substituted_input_vaults_and_mints_are_refused() {
             0,
         )
     };
-    // Router accounts: 7 the input vault, 8 the input mint, 9 the output mint.
+    // Router accounts (Pipeline 0.2, without the config account): 6 the input vault, 7 the
+    // input mint, 8 the output mint.
     for (index, substitute) in [
-        (7, other.sol_vault),
-        (7, market.token_vault),
-        (8, market.token_mint),
+        (6, other.sol_vault),
+        (6, market.token_vault),
+        (7, market.token_mint),
+        (7, other.token_mint),
         (8, other.token_mint),
-        (9, other.token_mint),
-        (9, WSOL),
+        (8, WSOL),
     ] {
         let mut ix = swap(&env);
         ix.accounts[index].pubkey = substitute;
@@ -266,8 +267,9 @@ fn a_substituted_output_token_program_is_refused() {
                 SOL / 10,
                 0,
             );
-            assert_eq!(ix.accounts[11].pubkey, TOKEN);
-            ix.accounts[11].pubkey = substitute;
+            // Router account 10 is the output token program (Pipeline 0.2).
+            assert_eq!(ix.accounts[10].pubkey, TOKEN);
+            ix.accounts[10].pubkey = substitute;
             assert_fails(env.send(&[ix], &[&trader]));
         }
     }
@@ -294,8 +296,8 @@ fn a_swap_whose_output_account_is_not_the_traders_pays_nothing_wrong() {
             SOL / 10,
             0,
         );
-        // Router account 6 is the trader's output account.
-        ix.accounts[6].pubkey = vault;
+        // Router account 5 is the trader's output account (Pipeline 0.2).
+        ix.accounts[5].pubkey = vault;
         assert_fails(env.send(&[ix], &[&trader]));
     }
     assert_eq!(snapshot(&env, &market), before);
@@ -314,7 +316,7 @@ fn a_swap_whose_output_account_is_not_the_traders_pays_nothing_wrong() {
         SOL / 10,
         0,
     );
-    ix.accounts[6].pubkey = strangers_token;
+    ix.accounts[5].pubkey = strangers_token;
     env.send(&[ix], &[&trader]).unwrap();
     assert_eq!(env.balance(&strangers_token), quote.amount_out);
     let (_, token_vault, sol_vault) = snapshot(&env, &market);

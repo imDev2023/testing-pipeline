@@ -138,24 +138,6 @@ fn a_swap_that_pays_less_than_its_quote_fails_the_same_way_on_both_paths() {
 }
 
 #[test]
-fn a_paused_router_refuses_every_swap_on_the_direct_path_too() {
-    let mut cluster = Cluster::new();
-    let market = cluster.sol_cp_market(30);
-    cluster.pause_router();
-
-    let direct = run(&cluster, market.market, &DirectToStrategy, vec![]);
-
-    let record = outcome(&direct, "quote_matches_swap");
-    assert_eq!(record.outcome, Outcome::Fail, "{}", record.reason);
-    let failure = &record.numbers["disagreements"][0]["swap_failure"];
-    assert_eq!(failure["class"], "router_refused", "{failure}");
-    assert!(
-        failure["error"].as_str().unwrap().contains("Paused"),
-        "{failure}"
-    );
-}
-
-#[test]
 fn a_strategy_that_tries_to_pull_more_from_the_trader_fails_the_same_way_on_both_paths() {
     // Under the router the strategy never holds the trader's signature, so the direct path
     // must not give it one either.

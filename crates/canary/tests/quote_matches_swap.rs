@@ -24,6 +24,9 @@ fn run(cluster: &Cluster, market: Pubkey, extra: Vec<u8>) -> MarketResults {
 /// `test-strategy-evil`'s behaviours, chosen by the first byte of `TradeRequest::extra`.
 const QUOTE_LIES: u8 = 7;
 const QUOTE_HOG: u8 = 8;
+// Sends the output to another account, so the trader receives nothing for its input,
+// which the router refuses.
+const WRONG_DESTINATION: u8 = 5;
 
 #[test]
 fn every_swap_equals_its_quote_in_an_honest_market_and_the_count_is_reported() {
@@ -70,10 +73,9 @@ fn a_quote_that_promises_more_than_the_swap_pays_fails() {
 #[test]
 fn a_quoted_swap_the_router_refuses_fails_and_names_the_router() {
     let mut cluster = Cluster::new();
-    let market = cluster.sol_cp_market(30);
-    cluster.pause_router();
+    let market = cluster.evil_market(1_000 * SOL);
 
-    let results = run(&cluster, market.market, vec![]);
+    let results = run(&cluster, market.market, vec![WRONG_DESTINATION]);
 
     let record = results.record("quote_matches_swap");
     assert_eq!(record.outcome, Outcome::Fail, "{}", record.reason);

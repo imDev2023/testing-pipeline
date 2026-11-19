@@ -130,7 +130,7 @@ fn the_metadata_names_only_the_config_modules_klend() {
     // twice each, as the program and as the lending market authority's PDA program, from the
     // config module's constant; the in-kind form names no Kamino account at all.
     let calling = ["rebalance", "remove_liquidity"];
-    for action in metadata["actions"].as_array().unwrap() {
+    for action in metadata["aviary_actions"].as_array().unwrap() {
         let name = action["name"].as_str().unwrap();
         let sources: Vec<&str> = action["accounts"]
             .as_array()

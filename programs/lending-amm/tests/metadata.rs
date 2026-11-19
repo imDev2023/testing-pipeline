@@ -49,7 +49,7 @@ fn the_metadata_describes_a_lending_amm() {
     );
     assert_eq!(m["init"]["idl_type"], "InitParams");
     // Every action that exists so far, with its kind and signer.
-    let actions: Vec<(&str, &str)> = m["actions"]
+    let actions: Vec<(&str, &str)> = m["aviary_actions"]
         .as_array()
         .unwrap()
         .iter()
@@ -67,7 +67,7 @@ fn the_metadata_describes_a_lending_amm() {
     );
     // An LP signs removals and locks, as the writable wallet that pays for any account
     // created, and nothing else signs.
-    for action in &m["actions"].as_array().unwrap()[2..] {
+    for action in &m["aviary_actions"].as_array().unwrap()[2..] {
         let signers: Vec<&Value> = action["accounts"]
             .as_array()
             .unwrap()
@@ -79,7 +79,7 @@ fn the_metadata_describes_a_lending_amm() {
         assert_eq!(signers[0]["writable"], true);
     }
     // rebalance is signed by anyone: the wallet that calls it, read-only, and nothing else.
-    let rebalance = &m["actions"][1];
+    let rebalance = &m["aviary_actions"][1];
     let signers: Vec<&Value> = rebalance["accounts"]
         .as_array()
         .unwrap()
@@ -270,7 +270,7 @@ fn create_market_and_add_liquidity_built_from_the_metadata_are_what_the_program_
     let lp = solana_keypair::Keypair::new();
     cx.wallet = lp.pubkey();
     cx.market = Some(market.clone());
-    let action = &m["actions"][0];
+    let action = &m["aviary_actions"][0];
     let amounts = [4_000_000_000u64, 2 * SOL];
     let values = HashMap::from([("max_0", amounts[0]), ("max_1", amounts[1]), ("min_lp", 1)]);
     let action_args = encoded_args(&action["args"], &values);
@@ -333,7 +333,7 @@ fn rebalance_built_from_the_metadata_is_the_programs_and_works() {
         args: HashMap::new(),
         market: Some(market.clone()),
     };
-    let action = &m["actions"][1];
+    let action = &m["aviary_actions"][1];
     assert_eq!(action["name"], "rebalance");
     assert!(action["args"].as_array().unwrap().is_empty());
     let rebalance = Instruction::new_with_bytes(
@@ -354,7 +354,7 @@ fn rebalance_built_from_the_metadata_is_the_programs_and_works() {
 
 /// The action named `name`.
 fn action<'a>(m: &'a Value, name: &str) -> &'a Value {
-    m["actions"]
+    m["aviary_actions"]
         .as_array()
         .unwrap()
         .iter()

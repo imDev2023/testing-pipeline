@@ -2349,8 +2349,8 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pipeline-check"
-version = "0.1.0"
-source = "git+https://github.com/MetalLegBob/pipeline?rev=5ad130d#5ad130d69e9e55420946199dfa81e6c75a8d595b"
+version = "0.2.0"
+source = "git+https://github.com/MetalLegBob/pipeline?rev=3fd85ce#3fd85ce07ca4ab458c91e7682780fe76f73c396d"
 dependencies = [
  "bincode",
  "borsh",
@@ -2372,8 +2372,8 @@ dependencies = [
 
 [[package]]
 name = "pipeline-client"
-version = "0.1.0"
-source = "git+https://github.com/MetalLegBob/pipeline?rev=5ad130d#5ad130d69e9e55420946199dfa81e6c75a8d595b"
+version = "0.2.0"
+source = "git+https://github.com/MetalLegBob/pipeline?rev=3fd85ce#3fd85ce07ca4ab458c91e7682780fe76f73c396d"
 dependencies = [
  "borsh",
  "pipeline-strategy-interface",
@@ -2386,8 +2386,8 @@ dependencies = [
 
 [[package]]
 name = "pipeline-events"
-version = "0.1.0"
-source = "git+https://github.com/MetalLegBob/pipeline?rev=5ad130d#5ad130d69e9e55420946199dfa81e6c75a8d595b"
+version = "0.2.0"
+source = "git+https://github.com/MetalLegBob/pipeline?rev=3fd85ce#3fd85ce07ca4ab458c91e7682780fe76f73c396d"
 dependencies = [
  "borsh",
  "solana-pubkey 4.3.0",
@@ -2395,8 +2395,8 @@ dependencies = [
 
 [[package]]
 name = "pipeline-quoter"
-version = "0.1.0"
-source = "git+https://github.com/MetalLegBob/pipeline?rev=5ad130d#5ad130d69e9e55420946199dfa81e6c75a8d595b"
+version = "0.2.0"
+source = "git+https://github.com/MetalLegBob/pipeline?rev=3fd85ce#3fd85ce07ca4ab458c91e7682780fe76f73c396d"
 dependencies = [
  "borsh",
  "litesvm",
@@ -2416,7 +2416,7 @@ dependencies = [
 [[package]]
 name = "pipeline-strategy-interface"
 version = "0.1.0"
-source = "git+https://github.com/MetalLegBob/pipeline?rev=5ad130d#5ad130d69e9e55420946199dfa81e6c75a8d595b"
+source = "git+https://github.com/MetalLegBob/pipeline?rev=3fd85ce#3fd85ce07ca4ab458c91e7682780fe76f73c396d"
 dependencies = [
  "borsh",
 ]

@@ -1,4 +1,6 @@
 # One pnpm workspace for every TypeScript package in the repo. Each program's demo scripts
-# live beside it; Aviary's apps and packages join here when they are built.
+# live beside it; shared packages (strategy-actions) live in packages/, and Aviary's apps and
+# packages join here when they are built.
 packages:
   - programs/*/scripts
+  - packages/*
