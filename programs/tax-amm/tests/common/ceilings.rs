@@ -41,8 +41,13 @@ pub fn distribute_bump_search(env: &super::Env, market: &super::Market, slot: u8
     let wallet = super::slot_wallet(&state, slot);
     let account = pipeline_client::pda::associated_token(&wallet, &mint, &token_program);
     let owed = state.owed.get(slot as usize).copied().unwrap_or(0);
-    let creates =
-        env.svm.get_account(&account).is_none() && slot != tax_amm::state::BURN_SLOT && owed > 0;
+    // Missing as the program judges it: no data, whatever lamports the address holds
+    // (hardening finding T05, #67).
+    let missing = env
+        .svm
+        .get_account(&account)
+        .is_none_or(|existing| existing.data.is_empty());
+    let creates = missing && slot != tax_amm::state::BURN_SLOT && owed > 0;
     let (_, bump) = pipeline_client::Pubkey::find_program_address(
         &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
         &pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,

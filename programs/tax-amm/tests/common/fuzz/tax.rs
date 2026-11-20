@@ -1037,7 +1037,15 @@ impl TaxWorld {
                 if let Ok(meta) = &sent {
                     outcome.costs = costs_of(&meta.logs, "distribute")
                         .into_iter()
-                        .map(|(name, cost)| (name, cost.saturating_sub(search)))
+                        .map(|(name, cost)| {
+                            // A search counted beyond what the payout spent is a mistake in
+                            // `distribute_bump_search`, never something to clamp away
+                            // (hardening finding T03, #67).
+                            let left = cost.checked_sub(search).unwrap_or_else(|| {
+                                panic!("a bump search of {search} CU in a payout of {cost}")
+                            });
+                            (name, left)
+                        })
                         .collect();
                     outcome.bump_search = search;
                     outcome.logs = meta.logs.clone();

@@ -200,24 +200,41 @@ fn regression_a_market_created_without_its_seed() {
 /// this pins what it costs, so the rule a keeper sizes its compute by stays true.
 #[test]
 fn each_further_bump_of_the_slot_wallets_address_costs_a_payout_the_same() {
-    let mut env = Env::new();
-    let mints = [
-        (env.create_mint(&TOKEN), TOKEN),
-        (env.create_mint(&TOKEN), TOKEN),
-    ];
-    let tax_mint = mints[1].0;
-    // Two wallets whose token accounts for the tax-side mint need 1 bump and 6 bumps.
-    let wallet_with_bump = |bump: u8| loop {
+    each_further_bump_costs_a_payout_the_same(TOKEN);
+}
+
+/// Hardening finding T03 (#67): the three derivations a payout that creates the account
+/// spends were pinned only on SPL Token, though `ceilings::distribute_bump_search` assumes
+/// them for every token program; this pins them on Token-2022 too.
+#[test]
+fn sos_t03_each_further_bump_costs_a_token_2022_payout_the_same() {
+    each_further_bump_costs_a_payout_the_same(TOKEN_2022);
+}
+
+/// A wallet whose associated token account for `mint` of `token_program` takes `bump`.
+fn wallet_with_bump(mint: &Pubkey, token_program: &Pubkey, bump: u8) -> Pubkey {
+    loop {
         let wallet = Pubkey::new_unique();
         let (_, found) = Pubkey::find_program_address(
-            &[wallet.as_ref(), TOKEN.as_ref(), tax_mint.as_ref()],
+            &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
             &pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
         );
         if found == bump {
             break wallet;
         }
-    };
-    let (first, sixth) = (wallet_with_bump(255), wallet_with_bump(250));
+    }
+}
+
+fn each_further_bump_costs_a_payout_the_same(token_program: Pubkey) {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&token_program), token_program),
+        (env.create_mint(&token_program), token_program),
+    ];
+    let tax_mint = mints[1].0;
+    // Two wallets whose token accounts for the tax-side mint need 1 bump and 6 bumps.
+    let first = wallet_with_bump(&tax_mint, &token_program, 255);
+    let sixth = wallet_with_bump(&tax_mint, &token_program, 250);
     let mut params = valid_params(&Pubkey::new_unique());
     params.recipients[0] = ak(&first);
     params.recipients[1] = ak(&sixth);
@@ -227,8 +244,9 @@ fn each_further_bump_of_the_slot_wallets_address_costs_a_payout_the_same() {
     env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
     let payout = |env: &mut Env, slot: u8| {
         env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
+        let search = ceilings::distribute_bump_search(env, &market, slot);
         let meta = env.distribute(&market, &caller, slot).unwrap();
-        strategy_compute(&meta.logs)[0]
+        (strategy_compute(&meta.logs)[0], search)
     };
     let creating = [payout(&mut env, 0), payout(&mut env, 1)];
     let existing = [payout(&mut env, 0), payout(&mut env, 1)];
@@ -236,11 +254,48 @@ fn each_further_bump_of_the_slot_wallets_address_costs_a_payout_the_same() {
     // Comparing keys stops at their first differing byte, so a few units also depend on
     // the addresses.
     let near = |measured: u64, expected: u64| measured.abs_diff(expected) <= 100;
-    assert!(near(creating[1] - creating[0], 5 * 3 * ceilings::BUMP_TRY));
-    assert!(near(existing[1] - existing[0], 5 * ceilings::BUMP_TRY));
-    // Within the ceiling once the search beyond the first bump is left out.
-    assert!(creating[1] - 5 * 3 * ceilings::BUMP_TRY <= ceilings::DISTRIBUTE);
-    assert!(existing[1] - 5 * ceilings::BUMP_TRY <= ceilings::DISTRIBUTE);
+    assert!(near(creating[1].0 - creating[0].0, 5 * 3 * ceilings::BUMP_TRY));
+    assert!(near(existing[1].0 - existing[0].0, 5 * ceilings::BUMP_TRY));
+    // The search the ceilings leave out is what the bumps cost, and within the ceiling
+    // once it is left out.
+    assert_eq!(
+        [creating[0].1, creating[1].1, existing[0].1, existing[1].1],
+        [0, 5 * 3 * ceilings::BUMP_TRY, 0, 5 * ceilings::BUMP_TRY]
+    );
+    for (cost, search) in creating.into_iter().chain(existing) {
+        assert!(cost - search <= ceilings::DISTRIBUTE);
+    }
+}
+
+/// Hardening finding T05 (#67): `ceilings::distribute_bump_search` took a slot wallet's
+/// token account address holding lamports but no data for an account that exists, which
+/// the program treats as missing (`data_is_empty`) and creates, so it counted one
+/// derivation where the payout spends three.
+#[test]
+fn sos_t05_a_token_account_address_holding_only_lamports_is_created_and_counted_so() {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN), TOKEN),
+    ];
+    let tax_mint = mints[1].0;
+    let sixth = wallet_with_bump(&tax_mint, &TOKEN, 250);
+    let mut params = valid_params(&Pubkey::new_unique());
+    params.recipients[0] = ak(&sixth);
+    let market = env.seeded_market(mints, &params, [100_000_000_000, 200_000_000_000]);
+    let trader = env.funded_wallet(&market, 1_000_000_000_000);
+    env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
+    // Someone sends lamports to the wallet's token account address before its payout.
+    let account = pipeline_client::pda::associated_token(&sixth, &tax_mint, &TOKEN);
+    env.svm.airdrop(&account, 1_000_000).unwrap();
+    assert!(env.svm.get_account(&account).unwrap().data.is_empty());
+    let search = ceilings::distribute_bump_search(&env, &market, 0);
+    let caller = Keypair::new();
+    env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
+    let meta = env.distribute(&market, &caller, 0).unwrap();
+    assert!(!env.svm.get_account(&account).unwrap().data.is_empty(), "created");
+    assert_eq!(search, 5 * 3 * ceilings::BUMP_TRY);
+    assert!(strategy_compute(&meta.logs)[0] - search <= ceilings::DISTRIBUTE);
 }
 
 /// Hardening finding T01 (#67, docs/security/tax-amm/round-1.md): the fuzzer took the first
