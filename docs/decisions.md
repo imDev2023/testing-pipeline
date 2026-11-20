@@ -942,11 +942,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### BAR-42: How a program is deployed to devnet
 
 - Question: How does a program of ours get from a commit to devnet, so that the deploy can be checked and repeated?
-- Answer: One script for every program, `scripts/deploy-devnet.sh <program>`: it refuses any cluster but devnet or a local validator, and on devnet any commit not on `origin/main` or a worktree with changes; it builds that commit, exported with `git archive`, with solana-verify in the Docker image pinned in `fixtures/pins.env` and `--arch v3`; it deploys paid by `wallet.json` with `upgrade-authority.json` as the upgrade authority, on devnet resending dropped writes and paying a priority fee, both named at the top of the script; it stops unless the cluster's program hash equals the build's and the upgrade authority is that key; and it records the program id, the hash, the commit, the image, the authority, the payer and the slot under the program's name in `deployments/devnet.json`, keeping the program's earlier deploys in its `history`.
-- Alternatives: Each program's devnet ticket writing its own deploy steps; building in the worktree, where an uncommitted file could reach the bytes; letting solana-verify choose the image without recording which.
+- Answer: One script for every program, `scripts/deploy-devnet.sh <program>`: it refuses any cluster but devnet or a local validator, and on devnet any commit not on `origin/main` or a worktree with changes; it builds that commit, exported with `git archive`, with solana-verify in the Docker image pinned in `fixtures/pins.env` and `--arch v3`; it deploys paid by `wallet.json` with `upgrade-authority.json` as the upgrade authority, on devnet sending its writes to the validators over TPU, resending dropped ones and paying a priority fee, the transport, the resends and the fee each named at the top of the script; it stops unless the cluster's program hash equals the build's and the upgrade authority is that key; and it records the program id, the hash, the commit, the image, the authority, the payer and the slot under the program's name in `deployments/devnet.json`, keeping the program's earlier deploys in its `history`.
+- Alternatives: The earlier default, sending the writes through the RPC with `--use-rpc`, which public devnet dropped (2026-11-19 and 2026-11-20); Each program's devnet ticket writing its own deploy steps; building in the worktree, where an uncommitted file could reach the bytes; letting solana-verify choose the image without recording which.
 - Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-20
 - Decided: 2026-11-16 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
 
 ## Aviary, the terminal (PIPESCOPE)
@@ -4042,6 +4042,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: changed 2026-11-18
 - Decided: 2026-11-18 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
+### POOL4-54: One deploy path with the release gate in front
+
+- Question: How does the buy wall AMM reach devnet when the shared verified-build deploy script and the release gate's own deploy script both exist?
+- Answer: Through one path, `scripts/deploy-devnet.sh buy-wall-amm`, which builds the commit with solana-verify in Docker as for every program and, before it sends anything, runs the program's own pre-deploy check, `programs/buy-wall-amm/scripts/pre-deploy.sh`, on the very bytes built: it asks `buy-wall-gate verify-record` for a passing gate record for that executable hash on that cluster, made against the build deployed there now and covering every market there now, and a refusal stops the deploy. The gate is run first on the same verified build (`--build-only --out`), and its record, like `deployments/devnet.json`, does not count as an uncommitted change. The gate's own `deploy.sh`, which deployed any `.so` it was given, is gone.
+- Alternatives: Keeping `deploy.sh` beside the shared script, two ways to deploy one program, only one of them verified; `deploy.sh` taking the verified build from the shared script, which keeps two deploy commands; a case for the buy wall AMM written into the shared script, where a hook in the program's folder keeps the gate's knowledge beside the gate.
+- Specified in: [`docs/spec/pool4-for-solana.md`, How to run it](spec/pool4-for-solana.md#how-to-run-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56)
+
+### POOL4-55: The devnet demo market
+
+- Question: Which market does the demo create on devnet, where Pipeline's registry and anyone looking will see it?
+- Answer: One, the worked example's market: a fresh test token of 6 decimals with its mint authority removed (it never has a freeze authority), seeded with 1,000,000 tokens and 10 SOL at IMD's launch values (a 1% fee, half of the market's part to the wall, a 15% reward share, a cap floor and a cap decay of 20% a day), all in the demo's `DEMO` block, so the devnet market reproduces the worked example's two trades to the unit before it places its wall, settles, hands both recipient roles over and pays everything out. Its 10 SOL seed stays in it for good. The launchpad's graduated market stays on local validators.
+- Alternatives: A market a tenth the size, which saves 9 devnet SOL but leaves the worked example unproved on devnet and needs many more buys before idle SOL reaches `WALL_THRESHOLD`; the whole local demo on devnet, which would add the stand-in launchpad, a test program never deployed there.
+- Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56)
+
+### POOL4-56: What shows a live market survived an upgrade
+
+- Question: After an upgrade on devnet, what must the live demo market still do before the upgrade counts as done?
+- Answer: The demo run again with `--market <the demo market's state>`: from the market state as read, it buys and sells back through the router, the buy lowering the cap and the sell trimmed, places the wall, sells into it, settles, pays the rewards and sweeps fee slots 0 and 2 to the market's recipients as they are, with slot 1 refused while `DESIGNER_RECIPIENT` is unset, every quote and every step checked against the spec's formulas and the whole market state read back after each; then `pipeline-check --fail-on-warn` against devnet, and on devnet Pipeline's hosted API quotes the market both ways at the program's own quotes.
+- Alternatives: Only quoting the market, which proves the layout still reads but not that every instruction still runs; a separate after-upgrade script, which would repeat the demo's spec model.
+- Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
@@ -5056,3 +5086,5 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `PIPESCOPE-86` to `PIPESCOPE-97`, `CANARY-28`, `CANARY-29`, `EXPLAINER-21`: set by the session of [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22) and not yet put to the owner, so they are that session's defaults until the owner has been asked; `CANARY-29` carries a seam that [Cut the containment hook and tax AMM build tickets](https://github.com/imDev2023/testing-pipeline/issues/23) named.
 - `BAR-04`, `BAR-29`, `PIPESCOPE-87`: Pipeline's crates are on crates.io and its SDK on npm since 2026-11-10; the terminal uses the published packages, while the bar still pins the on-chain workspace's crates by git `rev` and the programs' demo scripts link a local SDK build from `scripts/fetch-pipeline.sh`; whether they move to the published packages is for the bar's owner.
 - `BAR-40`, `TAX-51`, `TAX-52`: set by the session of [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
+- `POOL4-54` to `POOL4-56`: set by the session of [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
+- `TAX-54`, `POOL4-54`: `programs/tax-amm/scripts/publish.ts` and `tests/published.rs` were copied for the buy wall AMM with only the program's names changed; the lending AMM's devnet ticket will need a third copy, so the shared part belongs in one helper the three programs call.

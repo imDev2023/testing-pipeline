@@ -175,10 +175,11 @@ if run toy; then
   # many times, and pays a small priority fee so they land.
   attempts="$(sed -n 's/^DEVNET_MAX_SIGN_ATTEMPTS=//p' "$DEPLOY")"
   price="$(sed -n 's/^DEVNET_COMPUTE_UNIT_PRICE=//p' "$DEPLOY")"
-  if [ -n "$attempts" ] && [ -n "$price" ] && [[ "$deploy_call" == *"--max-sign-attempts $attempts "* && "$deploy_call" == *"--with-compute-unit-price $price "* ]]; then
-    pass "a devnet deploy resends dropped writes and pays a priority fee"
+  # Its writes go to the validators over TPU: public devnet's RPC dropped most of them.
+  if [ -n "$attempts" ] && [ -n "$price" ] && [[ "$deploy_call" == *"--max-sign-attempts $attempts "* && "$deploy_call" == *"--with-compute-unit-price $price "* && "$deploy_call" != *"--use-rpc"* ]]; then
+    pass "a devnet deploy resends dropped writes, pays a priority fee and sends its writes over TPU, not through the RPC"
   else
-    fail "deploy call without retries or a priority fee: $deploy_call"
+    fail "deploy call without retries or a priority fee, or through the RPC: $deploy_call"
   fi
   record="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["programs"]["toy"], sort_keys=True))' "$repo/deployments/devnet.json")"
   for want in "\"programId\": \"$PROGRAM_ID\"" "\"executableHash\": \"$HASH\"" "\"commit\": \"$commit\"" \
@@ -216,6 +217,16 @@ ALREADY_DEPLOYED=1 FAKE_PROGRAM_HASH=3333 expect_refused "an on-chain hash other
 ALREADY_DEPLOYED=1 FAKE_AUTHORITY_AFTER=$WALLET expect_refused "an upgrade authority other than upgrade-authority.json" "not upgrade-authority.json's" toy
 [ ! -f "$repo/deployments/devnet.json" ] || fail "a failed check still wrote the record"
 
+# --send-via rpc sends the writes through the RPC instead, where a network blocks TPU.
+rm -f "$repo/deployments/devnet.json"
+if run toy --send-via rpc && [[ "$(grep "program deploy" "$work/calls")" == *"--use-rpc"* ]]; then
+  pass "--send-via rpc sends a devnet deploy's writes through the RPC"
+else
+  fail "--send-via rpc: $(cat "$work/out") / $(grep "program deploy" "$work/calls")"
+fi
+rm -f "$repo/deployments/devnet.json"
+expect_refused "a transport other than tpu or rpc" "--send-via" toy --send-via carrier-pigeon
+
 # A local validator: no main or genesis checks needed, and the record goes where --record says.
 echo "// local" >> "$repo/programs/toy/src/lib.rs"
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q -am "local only"
@@ -232,6 +243,48 @@ else
   fail "local: $(cat "$work/out")"
 fi
 expect_refused "a local deploy without --record" "--record" toy --url http://127.0.0.1:8999
+# A local port can be a tunnel or a proxy to a real cluster: only a local validator's own
+# genesis, or devnet's, will do.
+FAKE_GENESIS=$MAINNET_GENESIS expect_refused "a local URL that answers as mainnet" "mainnet or testnet" toy --url http://127.0.0.1:8999 --record "$work/local.json"
+FAKE_GENESIS=4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY expect_refused "a local URL that answers as testnet" "mainnet or testnet" toy --url http://127.0.0.1:8999 --record "$work/local.json"
+
+# A program's own pre-deploy check (programs/<program>/scripts/pre-deploy.sh), such as the buy
+# wall AMM's release gate: it gets the cluster, the very bytes built and the program id, after
+# the build and before anything is sent, and a refusal stops the deploy.
+git -C "$repo" reset -q --hard origin/main
+mkdir -p "$repo/programs/toy/scripts"
+cat > "$repo/programs/toy/scripts/pre-deploy.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "pre-deploy $*" >> "$WORK/calls"
+prev=""
+for arg in "$@"; do [ "$prev" = --so ] && cp "$arg" "$WORK/checked.so"; prev="$arg"; done
+[ "${FAKE_PRE_DEPLOY:-pass}" = pass ] || { echo "the gate has not passed this build"; exit 1; }
+EOF
+git -C "$repo" -c user.name=t -c user.email=t@t add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "pre-deploy check" && git -C "$repo" push -q origin main
+FAKE_PRE_DEPLOY=refuse expect_refused "a build the program's pre-deploy check refuses" "pre-deploy check refused" toy
+grep -q "^pre-deploy --url https://api.devnet.solana.com --so .*/toy.so --program $PROGRAM_ID$" "$work/calls" \
+  || fail "the pre-deploy check's arguments: $(grep pre-deploy "$work/calls")"
+[ "$(cat "$work/checked.so" 2>/dev/null)" = bytes ] || fail "the pre-deploy check did not get the built bytes"
+if run toy --build-only && ! grep -q "^pre-deploy" "$work/calls"; then
+  pass "--build-only runs no pre-deploy check"
+else
+  fail "--build-only and the pre-deploy check: $(cat "$work/calls")"
+fi
+# The gate's record of a passing run is written before the deploy and merged after it, so
+# like deployments/devnet.json it does not count as a change.
+mkdir -p "$repo/deployments/release-gate/toy"
+echo '{}' > "$repo/deployments/release-gate/toy/devnet.json"
+if run toy && grep -q "^pre-deploy" "$work/calls" && grep -q "program deploy" "$work/calls"; then
+  pass "a build the pre-deploy check passes is deployed, with the gate's record uncommitted"
+else
+  fail "a passing pre-deploy check: $(cat "$work/out")"
+fi
+# Only the deployed program's own gate records may be uncommitted, never another's.
+mkdir -p "$repo/deployments/release-gate/other"
+echo '{}' > "$repo/deployments/release-gate/other/devnet.json"
+expect_refused "another program's uncommitted gate record" "uncommitted" toy
+rm -rf "$repo/deployments/release-gate" "$repo/deployments/devnet.json"
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures failed" >&2

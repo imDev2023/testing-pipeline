@@ -262,7 +262,7 @@ Passed on 2026-11-16 from a fresh validator in 76 seconds, on its own ports (`sc
 `cargo test --workspace` runs its checks on every fixture in `programs/buy-wall-amm/gate/fixtures/` against the current build, and on the seven stranding test builds, which `cargo run -p buy-wall-gate -- test-builds` writes to `programs/target/gate-test-builds`, from edited copies of the workspace built in a target directory of their own there.
 Every gate run, on a cluster or a fixture, also makes and trades a market of its own with the candidate (`POOL4-53`), so `cargo test -p buy-wall-gate --test empty_cluster` checks that a cluster with no market passes the current build and refuses a broken one.
 Kani builds the crate without its dependencies (`cfg(not(kani))` in its `Cargo.toml`), because Kani's nightly Rust refuses LiteSVM's Solana crates and the gate has no proofs.
-The buy wall AMM's deploy script, `programs/buy-wall-amm/scripts/deploy.sh`, deploys only a build the gate has passed against the cluster it deploys to.
+`scripts/deploy-devnet.sh buy-wall-amm` deploys only a build the gate has passed against the cluster it deploys to: before it sends anything it runs the program's pre-deploy check, `programs/buy-wall-amm/scripts/pre-deploy.sh`, which asks `buy-wall-gate verify-record` (`POOL4-54`; "Deploy to devnet").
 
 ### Containment hook
 
@@ -525,9 +525,9 @@ A program may be deployed while the repo is still private (owner, 2026-11-19, `B
 - it stops unless `solana-verify get-program-hash` on the cluster equals the build's executable hash and the program's upgrade authority is `upgrade-authority.json`'s key;
 - it records the program id, the executable hash, the commit, the image, the upgrade authority, the payer and the deploy slot under the program's name in `deployments/devnet.json` (on a local validator, only where `--record` says), moving the program's earlier deploy into its `history`, newest first, so a metadata still naming that deploy passes `tests/published.rs` until it is pinned again;
 - an uncommitted `deployments/devnet.json` alone does not count as a change, so several programs can be deployed before their records go through one PR.
-- on devnet it signs its write transactions up to `DEVNET_MAX_SIGN_ATTEMPTS` times in all, resending the unconfirmed ones with a fresh blockhash each round, and pays a priority fee of `DEVNET_COMPUTE_UNIT_PRICE` micro-lamports per compute unit (both named at the top of the script), because public devnet drops writes under load: the first devnet deploy of the tax AMM, on 2026-11-19, failed twice without them with "Data writes to account failed: Max retries exceeded"; each round waits about a minute for a blockhash to expire, so a deploy during a devnet outage gives up after about 20 minutes.
+- on devnet it signs its write transactions up to `DEVNET_MAX_SIGN_ATTEMPTS` times in all, resending the unconfirmed ones with a fresh blockhash each round, and pays a priority fee of `DEVNET_COMPUTE_UNIT_PRICE` micro-lamports per compute unit, and sends the writes to the validators over TPU, the CLI's default, rather than through the RPC (`DEVNET_SEND_VIA`, which `--send-via rpc` overrides for a network that blocks QUIC to the validators; all three named at the top of the script): the tax AMM's first devnet deploys, on 2026-11-19 and 2026-11-20, sent them through public devnet's RPC with `--use-rpc` and failed three times with "Data writes to account failed: Max retries exceeded", once with the retries and the fee, after only about a quarter of the program had reached the buffer, while over TPU the whole program wrote in 14 seconds; each round waits about a minute for a blockhash to expire, so a deploy during a devnet outage gives up after about 20 minutes.
 
-A deploy that fails part way leaves its buffer account, which holds rent for the program's full size (the two the tax AMM's failed attempts left on 2026-11-19 held 1.74 SOL each).
+A deploy that fails part way leaves its buffer account, which holds rent for the program's full size (the three the tax AMM's failed attempts left on 2026-11-19 and 2026-11-20 held 1.74 SOL each).
 The script leaves buffers alone, since another program's deploy under the same upgrade authority may be using one; list them with `solana program show --buffers -u devnet --buffer-authority <upgrade authority>` and close each failed one into the wallet with `solana program close <buffer> -u devnet -k ~/.config/testing-pipeline/devnet/wallet.json --authority ~/.config/testing-pipeline/devnet/upgrade-authority.json --recipient <wallet> --bypass-warning`.
 
 `--build-only` builds and prints the hash and sends nothing, `--out <dir>` keeps the built program, and `scripts/test-deploy-devnet.sh` tests the script without the network or Docker.
@@ -579,6 +579,24 @@ A program's metadata cannot name the commit that holds it, and a squash merge le
    `verify` checks that the URI resolves with zero warnings, every link resolves, the report hashes to its SHA-256, every commit named is on `origin/main`, the router points at the URI, and Pipeline's hosted devnet API shows the strategy with valid metadata and the deployed code hash, and each of the market's mints with exactly the trust flags `tax-amm.md` ("Mint rules") predicts.
 
 A later deploy repeats the three steps: `deploy-devnet.sh` upgrades the program and records the new commit, and `--register-only` points the router at the new metadata.
+
+The buy wall AMM goes the same way, with `programs/buy-wall-amm/scripts/` for `programs/tax-amm/scripts/`, and the release gate in front of every deploy (`POOL4-54`): `deploy-devnet.sh` runs any program's `programs/<program>/scripts/pre-deploy.sh` on the bytes it built, before sending anything, and the buy wall AMM's refuses unless the gate has passed that build on that cluster.
+So between the build and the deploy, the gate runs on the same build, and its record, in `deployments/release-gate/buy-wall-amm/devnet.json`, goes into the record PR with `deployments/devnet.json`:
+
+```sh
+scripts/deploy-devnet.sh buy-wall-amm --build-only --out <scratchpad>/verified
+(cd programs && SBF_OUT_DIR=<scratchpad>/verified cargo test -p buy-wall-amm)
+(cd programs && cargo run -p buy-wall-gate -- run --cluster devnet --candidate <scratchpad>/verified/buy_wall_amm.so)
+scripts/deploy-devnet.sh buy-wall-amm
+cd programs/buy-wall-amm/scripts
+pnpm demo --cluster devnet --payer ... --upgrade-authority ... \
+  --metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/buy-wall-amm/metadata.json \
+  --metadata-not-yet-public --record <scratchpad>/devnet-demo.json
+```
+
+On devnet the demo creates one market, the worked example's (`POOL4-55`), and walks its whole life through the router: the two trades of the worked example, the wall placed and sold into, `settle`, both handovers, `pay_rewards` and `sweep_fees` for slots 0 and 2 with slot 1 refused; after every step it reads the whole market state back against the spec's formulas, and at the end it checks Pipeline's hosted API quotes the market both ways at the program's own quotes.
+After the deploy, `cargo run -p buy-wall-gate -- snapshot --cluster devnet --out programs/buy-wall-amm/gate/fixtures/layout-1-devnet.json` saves the demo market as layout version 1's fixture from a real market (`POOL4-20`).
+After an upgrade, `pnpm demo --cluster devnet ... --market <the demo market's state>` trades the market and runs its keeper jobs again from its state as read (`POOL4-56`), and `pipeline-check` runs against it again.
 
 ## Local validator
 

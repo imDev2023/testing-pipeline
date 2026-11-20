@@ -7,8 +7,10 @@
 #   2. builds that commit, exported with `git archive` so nothing uncommitted can reach the
 #      bytes, with solana-verify (0.5.2 or later) in Docker: the image pinned in
 #      fixtures/pins.env for the workspace's `[workspace.metadata.cli] solana`, `--arch v3`;
-#   3. deploys it (or upgrades it) paid by wallet.json, with upgrade-authority.json as its
-#      upgrade authority, at the address in the program's keypair file;
+#   3. runs the program's own pre-deploy check, when it has one, on the very bytes built, and
+#      stops if it refuses; then deploys them (or upgrades to them) paid by wallet.json, with
+#      upgrade-authority.json as the upgrade authority, at the address in the program's keypair
+#      file;
 #   4. stops unless the cluster's program hash equals the build's executable hash and the
 #      program's upgrade authority is upgrade-authority.json's key;
 #   5. records the program id, the executable hash, the commit, the Docker image, the upgrade
@@ -16,7 +18,7 @@
 #      program's earlier deploy into its `history`.
 #
 #   scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only]
-#                            [--record <file>] [--out <dir>]
+#                            [--record <file>] [--out <dir>] [--send-via tpu|rpc]
 #
 #   <program>      a deployable workspace member, such as tax-amm
 #   --url          devnet (the default) or a local validator's RPC URL, for a rehearsal
@@ -25,6 +27,12 @@
 #                  deployments/devnet.json
 #   --out          also copy the built program into this directory, so the program's tests
 #                  can run on the very bytes deployed (SBF_OUT_DIR=<dir> cargo test -p <program>)
+#   --send-via     how a devnet deploy sends its writes, tpu or rpc (default DEVNET_SEND_VIA)
+#
+# A program's pre-deploy check is programs/<program>/scripts/pre-deploy.sh, run as
+# `pre-deploy.sh --url <cluster URL> --so <built program> --program <program id>`; it exits 0 to
+# let the deploy go ahead. The buy wall AMM's asks its release gate for a passing record
+# (docs/spec/pool4-for-solana.md, "A release gate").
 #
 # Keys come from $KEYS_DIR (default ~/.config/testing-pipeline/devnet): wallet.json,
 # upgrade-authority.json and <program>.json, the program's own keypair. Needs the toolchain
@@ -36,6 +44,8 @@ ROOT="${TESTING_PIPELINE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 KEYS_DIR="${KEYS_DIR:-$HOME/.config/testing-pipeline/devnet}"
 DEVNET_URL=https://api.devnet.solana.com
 DEVNET_GENESIS=EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+MAINNET_GENESIS=5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d
+TESTNET_GENESIS=4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY
 MIN_VERIFY_VERSION=0.5.2
 # Public devnet drops write transactions under load ("Data writes to account failed: Max
 # retries exceeded", 2026-11-19): a devnet deploy signs its writes up to this many times in all,
@@ -44,9 +54,14 @@ MIN_VERIFY_VERSION=0.5.2
 # pays this priority fee (micro-lamports per compute unit) so the writes land.
 DEVNET_MAX_SIGN_ATTEMPTS=20
 DEVNET_COMPUTE_UNIT_PRICE=10000
+# How a devnet deploy sends its writes: `tpu`, straight to the validators, the CLI's default,
+# or `rpc` (--use-rpc), through the RPC. Through public devnet's RPC most writes were dropped
+# (2026-11-20), and over TPU the whole tax AMM wrote in 14 s; `--send-via rpc` is for a network
+# that blocks QUIC to the validators, or an RPC whose websocket the CLI cannot derive.
+DEVNET_SEND_VIA=tpu
 
 usage() {
-  echo "Usage: scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only] [--record <file>] [--out <dir>]" >&2
+  echo "Usage: scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only] [--record <file>] [--out <dir>] [--send-via tpu|rpc]" >&2
   exit 2
 }
 stop() {
@@ -61,16 +76,22 @@ url=devnet
 build_only=false
 record=""
 out=""
+send_via="$DEVNET_SEND_VIA"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --url) url="${2:?--url needs a value}"; shift 2 ;;
     --build-only) build_only=true; shift ;;
     --record) record="${2:?--record needs a value}"; shift 2 ;;
     --out) out="${2:?--out needs a value}"; shift 2 ;;
+    --send-via) send_via="${2:?--send-via needs a value}"; shift 2 ;;
     *) usage ;;
   esac
 done
 
+case "$send_via" in
+  tpu | rpc) ;;
+  *) echo "--send-via takes tpu or rpc, not $send_via" >&2; exit 2 ;;
+esac
 if ! python3 "$ROOT/scripts/workspace-programs.py" | grep -qx "$program"; then
   echo "$program is not a deployable program of the workspace; these are:" >&2
   python3 "$ROOT/scripts/workspace-programs.py" >&2
@@ -89,9 +110,17 @@ case "$url" in
   https://*) ;; # another devnet RPC, checked by its genesis hash below
   *) stop "$url is neither devnet nor a local validator: this script deploys only to devnet or a local validator" ;;
 esac
-if ! $local_cluster && ! $build_only; then
+if ! $build_only; then
   genesis="$(solana genesis-hash -u "$url")"
-  [ "$genesis" = "$DEVNET_GENESIS" ] || stop "$url is not devnet (genesis hash $genesis)"
+  if $local_cluster; then
+    # A local port can be a tunnel or a proxy to a real cluster: only a local validator's own
+    # genesis, or devnet's, will do.
+    case "$genesis" in
+      "$MAINNET_GENESIS" | "$TESTNET_GENESIS") stop "$url answers as mainnet or testnet (genesis hash $genesis)" ;;
+    esac
+  else
+    [ "$genesis" = "$DEVNET_GENESIS" ] || stop "$url is not devnet (genesis hash $genesis)"
+  fi
 fi
 if $local_cluster && ! $build_only && [ -z "$record" ]; then
   stop "a local validator's deploy is recorded only where --record says, never in deployments/devnet.json"
@@ -104,8 +133,10 @@ if [ "$(printf '%s\n%s\n' "$MIN_VERIFY_VERSION" "$verify_version" | sort -V | he
 fi
 
 # The commit: on devnet it must be a commit on main, with nothing uncommitted beside it but
-# deployments/devnet.json, whose new records reach main through a PR after the deploys.
-if [ -n "$(git -C "$ROOT" status --porcelain -- . ':(exclude)deployments/devnet.json')" ]; then
+# deployments/devnet.json and this program's release gate records in
+# deployments/release-gate/<program>/, which are written before a deploy and reach main through
+# a PR after it.
+if [ -n "$(git -C "$ROOT" status --porcelain -- . ':(exclude)deployments/devnet.json' ":(exclude)deployments/release-gate/$program")" ]; then
   if $local_cluster; then
     echo "note: the worktree has uncommitted changes, which the build leaves out" >&2
   else
@@ -145,7 +176,15 @@ if $build_only; then
   exit 0
 fi
 
-# 3. Deploy: the wallet pays, the upgrade authority is the program's authority.
+# 3. The program's own pre-deploy check, on the bytes about to be deployed.
+pre_deploy="$ROOT/programs/$program/scripts/pre-deploy.sh"
+if [ -f "$pre_deploy" ]; then
+  echo "== The pre-deploy check of $program (programs/$program/scripts/pre-deploy.sh)"
+  bash "$pre_deploy" --url "$url" --so "$so" --program "$program_id" \
+    || stop "the pre-deploy check refused build $hash of $program"
+fi
+
+# Deploy: the wallet pays, the upgrade authority is the program's authority.
 wallet="$KEYS_DIR/wallet.json"
 authority_key="$KEYS_DIR/upgrade-authority.json"
 program_key="$KEYS_DIR/$program.json"
@@ -157,7 +196,12 @@ authority="$(solana-keygen pubkey "$authority_key")"
 payer="$(solana-keygen pubkey "$wallet")"
 echo "== Deploying $program_id to $url, paid by $payer, upgrade authority $authority"
 deploy_flags=()
-$local_cluster || deploy_flags+=(--use-rpc --max-sign-attempts "$DEVNET_MAX_SIGN_ATTEMPTS" --with-compute-unit-price "$DEVNET_COMPUTE_UNIT_PRICE")
+if ! $local_cluster; then
+  deploy_flags+=(--max-sign-attempts "$DEVNET_MAX_SIGN_ATTEMPTS" --with-compute-unit-price "$DEVNET_COMPUTE_UNIT_PRICE")
+  if [ "$send_via" = rpc ]; then
+    deploy_flags+=(--use-rpc)
+  fi
+fi
 solana program deploy -u "$url" -k "$wallet" --program-id "$program_key" \
   --upgrade-authority "$authority_key" ${deploy_flags[@]+"${deploy_flags[@]}"} "$so"
 
@@ -176,13 +220,15 @@ retry() {
 }
 # Right after an upgrade a cluster can still answer with the old bytes, so wait for the new.
 for _ in $(seq 1 "${DEPLOY_CHECK_TRIES:-30}"); do
-  onchain_hash="$(retry solana-verify get-program-hash -u "$url" "$program_id")"
+  onchain_hash="$(retry solana-verify get-program-hash -u "$url" "$program_id")" \
+    || stop "could not read the program's hash from $url; it may be deployed: check with solana program show"
   [ "$onchain_hash" = "$hash" ] && break
   sleep 2
 done
 [ "$onchain_hash" = "$hash" ] || stop "the cluster's program hash $onchain_hash does not match the build's $hash"
 # Read once the new bytes are served, so the slot and the authority are this deploy's.
-show="$(retry solana program show -u "$url" --commitment confirmed "$program_id" --output json)"
+show="$(retry solana program show -u "$url" --commitment confirmed "$program_id" --output json)" \
+  || stop "could not read the deployed program from $url; check with solana program show"
 onchain_authority="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["authority"])' "$show")"
 slot="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["lastDeploySlot"])' "$show")"
 [ "$onchain_authority" = "$authority" ] \

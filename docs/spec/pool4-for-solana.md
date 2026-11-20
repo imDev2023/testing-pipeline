@@ -555,15 +555,17 @@ How it does each of these ([`POOL4-41`](../decisions.md#pool4-41-what-the-releas
 
 #### How to run it
 
-From the repo root, with the toolchain on `PATH` (`source scripts/toolchain-env.sh`) and the program built (`cargo build-sbf --manifest-path programs/buy-wall-amm/Cargo.toml`):
+The gate stands in front of the one deploy path every program takes, `scripts/deploy-devnet.sh` ([`POOL4-54`](../decisions.md#pool4-54-one-deploy-path-with-the-release-gate-in-front)): that script builds the commit with solana-verify in Docker and, before it sends anything, runs `programs/buy-wall-amm/scripts/pre-deploy.sh` on the very bytes built, which refuses unless a passing gate run covers that build on that cluster now.
+From a clean checkout of `main`, with the toolchain on `PATH` (`source scripts/toolchain-env.sh`):
 
 ```sh
-cd programs
-# Replay every market on the cluster with the candidate; records the pass, or exits 1 naming
+# The verified build, and nothing sent; prints its executable hash.
+scripts/deploy-devnet.sh buy-wall-amm --build-only --out <dir>
+# Replay every market on the cluster with that build; records the pass, or exits 1 naming
 # each market and step that failed.
-cargo run -p buy-wall-gate -- run --cluster devnet --candidate target/deploy/buy_wall_amm.so
-# Deploy or upgrade: refused unless a passing run covers this build on this cluster now.
-buy-wall-amm/scripts/deploy.sh --url devnet --so target/deploy/buy_wall_amm.so
+(cd programs && cargo run -p buy-wall-gate -- run --cluster devnet --candidate <dir>/buy_wall_amm.so)
+# Deploy or upgrade: the same build again, refused unless a passing run covers it on this cluster now.
+scripts/deploy-devnet.sh buy-wall-amm
 ```
 
 - `--cluster` takes `devnet`, `localnet` or an RPC URL; `--snapshot-out <file>` keeps what was downloaded, and `cargo run -p buy-wall-gate -- check --snapshot <file> --candidate <build>` replays it again offline.
