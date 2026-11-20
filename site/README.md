@@ -12,7 +12,8 @@ Run them in `site/`, after `npm ci`.
 
 | Command | What it does |
 | --- | --- |
-| `npm run refresh` | Rebuilds `content.json` from the project's record and prints what it left out. `-- --dropped` lists every dropped block; `-- --ref HEAD` reads `README.md` and `docs/` from your branch instead of `origin/main`, to see its docs on the site before it merges. |
+| `npm test` | Runs the tests of the link rules in `links.mjs`. |
+| `npm run refresh` | Rebuilds `content.json` from the project's record and prints what it left out. `-- --dropped` lists every dropped block; `-- --ref HEAD` reads `README.md` and `docs/` from your branch instead of `origin/main`, to see its docs on the site before it merges: their links point at `main` and are checked at that commit, so they resolve once it merges. Commit and deploy only content refreshed from `origin/main`. |
 | `npm run build` | Renders `content.json` into `dist/`. |
 | `npm run preview` | Builds, then serves `dist/` at http://127.0.0.1:4310. |
 | `npm run deploy` | Builds, runs the privacy gate, and deploys to production on Vercel. |
@@ -37,6 +38,7 @@ Everything runs on the machine's default Node 26; if a tool breaks there, use No
 | --- | --- |
 | `content.json` | The site's only content. Generated, committed, and served as `/content.json`. Never edit it by hand. |
 | `refresh.mjs` | Writes `content.json` from the map and its tickets on GitHub, `README.md` and `docs/` on `origin/main`, and the findings on the `research/*` branches. |
+| `links.mjs` | Points every link into the repository at it on GitHub and stops on one that names something the repository does not hold; `links.test.mjs` tests it. |
 | `approved.txt` | The blocks that mention a third party and may be shown. |
 | `private.mjs` | The privacy gate, used by `refresh` and `deploy`. |
 | `build.mjs` | Renders the pages, their Markdown twins and `llms.txt` into `dist/`. One dependency, `marked`. |
@@ -61,9 +63,12 @@ Everything runs on the machine's default Node 26; if a tool breaks there, use No
   If a source is reworded, `refresh` stops and names the phrase to fix.
 - The repository moved on 2026-11-19 (#167) with every issue number kept, so the ticket pages keep their addresses; the numbers that were pull requests are placeholders, which the site never shows, since it reads only the map's sub-issues.
   `refresh` reads only `imDev2023/testing-pipeline`, never the private archive.
-- The repo was private when the site was built, so links into it, whether full addresses or relative links between files, are pointed at the site's own pages, and the ones with no page are turned into plain text.
-  It is public since 2026-11-20, so those links could point at GitHub instead; `refresh.mjs` has not been changed for that yet.
-  Headings get the anchors GitHub gives them, so a link to a section of a file lands on that section here.
+- The repo is public since 2026-11-20 (#167), so every link into it points straight at it on GitHub (decision `SUITE-48`).
+  A link written relative to a file points at that file on the research branch it was read from, or else on `main`, and a full address is kept, except that one written out in running text becomes a short link, a file by its name and a ticket by its number (`#186`).
+  `refresh` stops on a link to a file, a folder, a section, a commit or a ticket the repository does not hold, naming the link, so the site never shows a broken one.
+  It reads what the repository holds from the local clone, and asks GitHub for what the clone lacks, such as a tag or the commit of a merged pull request whose branch is gone.
+  Code is an example and is shown as written; images are shown by their text; links to Claude Code sessions, which only the owner can open, are shown as plain text; and the content may link to no other repository of the owner's, since those may be private.
+- Headings get the anchors GitHub gives them, so a section has the same address here as in the file on GitHub.
 - To show another document, add one `addDocument` line in `refresh.mjs`.
 
 ### For agents reading the site
@@ -72,7 +77,7 @@ Every page has a Markdown twin (`/7/` is also `/7.md`, the front page is `/index
 
 ## Privacy
 
-The site is public and the project's record is not.
+The site and the repository are public, but some of the project's record is not: the outreach, MetalLegBob's profile and the archive of his X posts live outside the repo, and the site is a summary that leaves out anything about him as a person.
 Never show MetalLegBob's words, his messages, the outreach drafts, his profile or the archive of his X posts, and never show a key.
 Public devnet addresses and transaction links are fine.
 
@@ -80,7 +85,7 @@ Public devnet addresses and transaction links are fine.
 
 1. It reads only the owner's own resolution comments (and addenda), never the "Input from" comments, and skips the outreach tickets (`OUTREACH_TICKETS`, and any title that reads like one).
 2. It judges every block of text (a paragraph, a list item, a table row, a code block).
-   A block that touches the outreach, or says what he was asked, asked for or said, is dropped (`DROP`).
+   A block that touches the outreach, says what he was asked, asked for or said, or names his profile or the archive of his X posts, is dropped (`DROP`).
    A block that names him or refers to him is dropped unless that exact block is in `approved.txt` (`REVIEW`).
    The standing rule's own phrases, such as "a default he may change", are not mentions (`NOT_A_MENTION`).
    A block that names the address or the handle the owner has chosen but not registered yet, or says which names are free, is dropped too, so nobody can register them first; remove that rule from `DROP` once the owner has registered both.

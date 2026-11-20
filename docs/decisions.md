@@ -527,6 +527,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-19 in [Move the project to a new repository without the old pull request refs, then make it public](https://github.com/imDev2023/testing-pipeline/issues/167)
 
+### SUITE-48: Progress site: links into the repository
+
+- Question: Where do the site's links into the repository point now that the repository is public?
+- Answer: Straight at it on GitHub, a file written relative to another at the branch it was read from, and a refresh stops on a link to a file, a folder or a commit the repository does not hold, so no link the site shows is broken.
+- Alternatives: The site's own page where it has one and GitHub otherwise; the site's own pages and plain text for the rest, as while the repository was private.
+- Specified in: [`site/README.md`, What is shown](../site/README.md#what-is-shown)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186)
+
 ## Engineering and security bar (BAR)
 
 ### BAR-01: Framework
@@ -5028,3 +5038,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `BAR-40`, `TAX-51`, `TAX-52`: set by the session of [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-54` to `POOL4-56`: set by the session of [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `TAX-54`, `POOL4-54`: `programs/tax-amm/scripts/publish.ts` and `tests/published.rs` were copied for the buy wall AMM with only the program's names changed; the lending AMM's devnet ticket will need a third copy, so the shared part belongs in one helper the three programs call.
+- `SUITE-48`: set by the session of [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186), which read its ticket as every link going to GitHub, and not yet put to the owner, so it is that session's default until the owner has been asked.
