@@ -942,11 +942,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### BAR-42: How a program is deployed to devnet
 
 - Question: How does a program of ours get from a commit to devnet, so that the deploy can be checked and repeated?
-- Answer: One script for every program, `scripts/deploy-devnet.sh <program>`: it refuses any cluster but devnet or a local validator, and on devnet any commit not on `origin/main` or a worktree with changes; it builds that commit, exported with `git archive`, with solana-verify in the Docker image pinned in `fixtures/pins.env` and `--arch v3`; it deploys paid by `wallet.json` with `upgrade-authority.json` as the upgrade authority, on devnet resending dropped writes and paying a priority fee, both named at the top of the script; it stops unless the cluster's program hash equals the build's and the upgrade authority is that key; and it records the program id, the hash, the commit, the image, the authority, the payer and the slot under the program's name in `deployments/devnet.json`, keeping the program's earlier deploys in its `history`.
-- Alternatives: Each program's devnet ticket writing its own deploy steps; building in the worktree, where an uncommitted file could reach the bytes; letting solana-verify choose the image without recording which.
+- Answer: One script for every program, `scripts/deploy-devnet.sh <program>`: it refuses any cluster but devnet or a local validator, and on devnet any commit not on `origin/main` or a worktree with changes; it builds that commit, exported with `git archive`, with solana-verify in the Docker image pinned in `fixtures/pins.env` and `--arch v3`; it deploys paid by `wallet.json` with `upgrade-authority.json` as the upgrade authority, on devnet sending its writes to the validators over TPU, resending dropped ones and paying a priority fee, the transport, the resends and the fee each named at the top of the script; it stops unless the cluster's program hash equals the build's and the upgrade authority is that key; and it records the program id, the hash, the commit, the image, the authority, the payer and the slot under the program's name in `deployments/devnet.json`, keeping the program's earlier deploys in its `history`.
+- Alternatives: The earlier default, sending the writes through the RPC with `--use-rpc`, which public devnet dropped (2026-11-19 and 2026-11-20); Each program's devnet ticket writing its own deploy steps; building in the worktree, where an uncommitted file could reach the bytes; letting solana-verify choose the image without recording which.
 - Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-20
 - Decided: 2026-11-16 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
 
 ## Aviary, the terminal (PIPESCOPE)
