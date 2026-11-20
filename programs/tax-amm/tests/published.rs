@@ -192,8 +192,10 @@ fn check_report(report: &Value, deployed: &Value) -> Result<(), String> {
             Some(count) => return Err(format!("the report has {count} {outcome} results")),
         }
     }
-    if report["summary"]["pass"].as_u64().unwrap_or(0) == 0 {
-        return Err("no check passed in the report".into());
+    match report["summary"]["pass"].as_u64() {
+        None => return Err("the report has no pass count".into()),
+        Some(0) => return Err("no check passed in the report".into()),
+        Some(_) => {}
     }
     Ok(())
 }
@@ -252,6 +254,10 @@ fn a_report_of_other_code_or_with_a_warning_is_refused() {
     no_summary.as_object_mut().unwrap().remove("summary");
     let err = check_report(&no_summary, &deployed).unwrap_err();
     assert!(err.contains("no warn count"), "{err}");
+    let mut no_pass = report("Prog", "aa", 0, 0);
+    no_pass["summary"]["pass"] = json!("13");
+    let err = check_report(&no_pass, &deployed).unwrap_err();
+    assert!(err.contains("no pass count"), "{err}");
 }
 
 #[test]
