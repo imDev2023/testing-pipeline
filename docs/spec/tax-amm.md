@@ -30,7 +30,7 @@ Terms are as in `GLOSSARY.md`: tax market, tax side, buy tax, sell tax, tax auth
 
 | Name | Value | Meaning |
 | --- | --- | --- |
-| `MAX_TAX_BPS` | 1000 (10%) | The highest buy or sell tax any tax market may ever charge, so no tax market can be a honeypot through its tax |
+| `MAX_TAX_BPS` | 1000 (10%) | The highest buy or sell tax any tax market may ever charge, so the tax alone can never stop a holder selling; what a mint's own authorities and transfer hook can do is the mint rules' to govern (hardening finding H100, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)) |
 | `SUITE_SHARE_BPS` | 1000 (10% of the tax) | The suite share, taken from every tax before the creator's split |
 | `SUITE_TREASURY` | set at build time | The wallet the suite share is paid to; on devnet a wallet whose key is in `~/.config/testing-pipeline/devnet/` |
 | `MAX_RECIPIENTS` | 4 | Tax recipients per market |

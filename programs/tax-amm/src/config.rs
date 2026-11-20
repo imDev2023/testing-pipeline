@@ -10,8 +10,10 @@
 
 use anchor_lang::prelude::*;
 
-/// The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so no
-/// tax market can be a honeypot through its tax. Published in the IDL (`#[constant]`).
+/// The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so the
+/// tax alone can never stop a holder selling. It says nothing of the mints, whose own
+/// authorities and transfer hooks the mint rules govern. Published in the IDL
+/// (`#[constant]`).
 #[constant]
 pub const MAX_TAX_BPS: u16 = 1_000;
 
