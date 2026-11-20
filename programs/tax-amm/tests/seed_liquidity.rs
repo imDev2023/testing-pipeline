@@ -545,3 +545,27 @@ fn the_graduation_transaction_fits_for_mints_of_one_token_program() {
         );
     }
 }
+
+/// Hardening finding H064 (#67): nothing tested a seeded market whose address, which anyone
+/// can compute from the seeder and the mints, already held lamports before its graduation,
+/// nor its vaults'. The graduation still creates and opens the market, and the lamports stay
+/// with the accounts they were sent to.
+#[test]
+fn sos_h064_a_pre_funded_seeded_market_address_and_vaults_still_graduate() {
+    let mut env = Env::new();
+    let launch = launch_on_spl_token(&mut env);
+    let market_state = launch.market_state();
+    let (authority, vaults) = tax_market_addresses(&market_state, launch.mints);
+    for address in [market_state, authority, vaults[0], vaults[1]] {
+        env.svm.airdrop(&address, 1_000_000).unwrap();
+    }
+    let graduated = env
+        .graduate(&launch, &valid_params(&Pubkey::new_unique()), AMOUNTS)
+        .unwrap();
+    let state = env.tax_market(&graduated.market.market_state);
+    assert_eq!(state.status, MarketStatus::Open);
+    assert_eq!(state.reserves, AMOUNTS);
+    let trader = env.funded_wallet(&graduated.market, 10_000_000_000);
+    env.swap(&graduated.market, &trader, (0, 1), 1_000_000_000)
+        .unwrap();
+}
