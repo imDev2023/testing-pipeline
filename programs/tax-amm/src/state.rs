@@ -187,6 +187,18 @@ impl TaxMarket {
         let (i, o) = Self::direction(input, output)?;
         Some((self.vaults[i], self.vaults[o]))
     }
+
+    /// The addresses of this market and the programs it runs on, which can't be tax
+    /// recipients ([`crate::params::own_addresses`]).
+    pub fn own_addresses(&self, market_state: &Pubkey, vault_authority: &Pubkey) -> [Pubkey; 12] {
+        crate::params::own_addresses(
+            market_state,
+            vault_authority,
+            &self.mints,
+            &self.vaults,
+            &self.market_signer,
+        )
+    }
 }
 
 /// The vault authority of a market state, `["authority", market_state]` with the bump the

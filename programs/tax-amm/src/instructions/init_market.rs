@@ -14,7 +14,7 @@ use pipeline_strategy_interface as psi;
 
 use crate::errors::StrategyError;
 use crate::events::MarketCreated;
-use crate::params::InitParams;
+use crate::params::{check_wallets, own_addresses, InitParams};
 use crate::state::{
     MarketStatus, TaxMarket, AUTHORITY_SEED, RESERVED_LEN, STATE_VERSION, VAULT_SEED,
 };
@@ -111,6 +111,17 @@ impl NewMarket<'_, '_> {
             check_mint(self.mints[i], self.token_programs[i])?;
         }
         params.validate(&mints)?;
+        let vaults = self.vaults.map(|vault| vault.key());
+        check_wallets(
+            &params.recipients,
+            &own_addresses(
+                &self.market_state,
+                &self.authority.key(),
+                &mints,
+                &vaults,
+                &self.market_signer,
+            ),
+        )?;
 
         for i in 0..2 {
             let bump = [self.vault_bumps[i]];
@@ -132,7 +143,6 @@ impl NewMarket<'_, '_> {
         }
 
         let clock = Clock::get()?;
-        let vaults = self.vaults.map(|vault| vault.key());
         emit!(MarketCreated {
             market_state: self.market_state,
             mints,

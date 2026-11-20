@@ -83,4 +83,8 @@ pub enum StrategyError {
     NotSlotTokenAccount,
     #[msg("The burn lowers the tax-side mint's supply, so it needs the mint writable")]
     BurnNeedsWritableMint,
+    #[msg(
+        "A tax recipient can't be one of the market's own addresses or programs, which could never move what it is paid"
+    )]
+    NotAWallet,
 }

@@ -11,7 +11,8 @@ use crate::config::MAX_RECIPIENTS;
 use crate::errors::StrategyError;
 use crate::events::RecipientsChanged;
 use crate::instructions::{Authorized, TaxAuthorityAction};
-use crate::params::{check_split, used_slots};
+use crate::params::{check_split, check_wallets, used_slots};
+use crate::state::vault_authority;
 
 pub fn change_recipients(
     ctx: Context<TaxAuthorityAction>,
@@ -26,6 +27,9 @@ pub fn change_recipients(
     } = ctx.accounts.authorize()?;
     let tax_mint = market.mints[market.tax_side as usize];
     check_split(&recipients, &shares, burn_share_bps, &tax_mint)?;
+    let authority = vault_authority(&market_state, market.authority_bump)
+        .ok_or(StrategyError::WrongAccount)?;
+    check_wallets(&recipients, &market.own_addresses(&market_state, &authority))?;
     let used = used_slots(&recipients);
     require!(
         market.owed[used..MAX_RECIPIENTS]

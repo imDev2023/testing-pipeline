@@ -754,3 +754,45 @@ fn set_recipients_may_empty_a_slot_that_is_owed_nothing() {
         only_first
     );
 }
+
+/// Hardening finding H024 (#67): `set_recipients` follows the rules of creation, so it too
+/// refuses a recipient that is one of the market's own addresses.
+#[test]
+fn sos_h024_set_recipients_refuses_one_of_the_markets_own_addresses() {
+    let mut env = Env::new();
+    let authority = Keypair::new();
+    let market = market_with_authority(&mut env, &authority);
+    let signer = ck(&tax_amm::instructions::pipeline_market_signer(&ak(
+        &market.market_state,
+    )));
+    let own = [
+        market.market_state,
+        market.authority,
+        market.vaults[0],
+        market.vaults[1],
+        market.mints[0],
+        market.mints[1],
+        strategy_id(),
+        signer,
+        market.market,
+        pipeline_client::PROGRAM_ID,
+        TOKEN,
+        TOKEN_2022,
+        pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
+    ];
+    let none = Pubkey::default();
+    for address in own {
+        let split = Split {
+            recipients: [Pubkey::new_unique(), address, none, none],
+            shares: [5_000, 5_000, 0, 0],
+            burn_share_bps: 0,
+        };
+        assert_refused(
+            env.send_signed(
+                set_recipients_instruction(&market.market_state, &authority.pubkey(), &split),
+                &authority,
+            ),
+            tax_amm::StrategyError::NotAWallet,
+        );
+    }
+}

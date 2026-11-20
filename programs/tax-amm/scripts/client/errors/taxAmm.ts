@@ -89,6 +89,8 @@ export const TAX_AMM_ERROR__NOT_SLOT_WALLET = 0x1792; // 6034
 export const TAX_AMM_ERROR__NOT_SLOT_TOKEN_ACCOUNT = 0x1793; // 6035
 /** BurnNeedsWritableMint: The burn lowers the tax-side mint's supply, so it needs the mint writable */
 export const TAX_AMM_ERROR__BURN_NEEDS_WRITABLE_MINT = 0x1794; // 6036
+/** NotAWallet: A tax recipient can't be one of the market's own addresses or programs, which could never move what it is paid */
+export const TAX_AMM_ERROR__NOT_A_WALLET = 0x1795; // 6037
 
 export type TaxAmmError =
   | typeof TAX_AMM_ERROR__ALREADY_RENOUNCED
@@ -108,6 +110,7 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__NO_SEEDER
   | typeof TAX_AMM_ERROR__NO_SUCH_SLOT
   | typeof TAX_AMM_ERROR__NOT_A_MINT
+  | typeof TAX_AMM_ERROR__NOT_A_WALLET
   | typeof TAX_AMM_ERROR__NO_TAX_AUTHORITY
   | typeof TAX_AMM_ERROR__NOT_PIPELINE
   | typeof TAX_AMM_ERROR__NOT_SEEDER
@@ -149,6 +152,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__NO_SEEDER]: `The seeder must not be the default key`,
     [TAX_AMM_ERROR__NO_SUCH_SLOT]: `No such tax slot: there is one per tax recipient, then the burn's and the suite share's`,
     [TAX_AMM_ERROR__NOT_A_MINT]: `A market's mints must be SPL Token or Token-2022 mints`,
+    [TAX_AMM_ERROR__NOT_A_WALLET]: `A tax recipient can't be one of the market's own addresses or programs, which could never move what it is paid`,
     [TAX_AMM_ERROR__NO_TAX_AUTHORITY]: `The market has no tax authority, so its taxes and recipients never change`,
     [TAX_AMM_ERROR__NOT_PIPELINE]: `Caller is not this market's Pipeline market`,
     [TAX_AMM_ERROR__NOT_SEEDER]: `Only the market's seeder can seed it`,

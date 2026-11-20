@@ -316,3 +316,49 @@ fn init_data_that_does_not_decode_is_refused() {
         );
     }
 }
+
+/// The market's own addresses and the programs it runs on, none of which can ever spend a
+/// token sent to its associated token account (hardening finding H024, #67).
+fn own_addresses(state: &Pubkey, mints: [Pubkey; 2]) -> Vec<Pubkey> {
+    let (authority, vaults) = tax_market_addresses(state, mints);
+    let signer = ck(&tax_amm::instructions::pipeline_market_signer(&ak(state)));
+    vec![
+        *state,
+        authority,
+        vaults[0],
+        vaults[1],
+        mints[0],
+        mints[1],
+        strategy_id(),
+        signer,
+        pipeline_client::PROGRAM_ID,
+        TOKEN,
+        TOKEN_2022,
+        pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
+    ]
+}
+
+/// Hardening finding H024 (#67): nothing refused a tax recipient that is one of the
+/// market's own addresses, whose associated token account nobody can ever move tokens out
+/// of, so `distribute` would strand its tax there while the payout event reads as paid.
+#[test]
+fn sos_h024_a_market_whose_tax_recipient_is_one_of_its_own_addresses_is_refused() {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN), TOKEN),
+    ];
+    let state = Keypair::new();
+    let own = own_addresses(&state.pubkey(), [mints[0].0, mints[1].0]);
+    for (slot, address) in own.iter().enumerate().map(|(i, a)| (i % 2, a)) {
+        let mut params = valid_params(&Pubkey::new_unique());
+        params.recipients[slot] = ak(address);
+        assert_refused(
+            env.create_tax_market_with(&state, mints, init_data(&params)),
+            E::NotAWallet,
+        );
+    }
+    // The same market with wallets for recipients is created.
+    env.create_tax_market_with(&state, mints, init_data(&valid_params(&Pubkey::new_unique())))
+        .unwrap();
+}
