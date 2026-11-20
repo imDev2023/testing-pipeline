@@ -38,9 +38,11 @@ DEVNET_URL=https://api.devnet.solana.com
 DEVNET_GENESIS=EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
 MIN_VERIFY_VERSION=0.5.2
 # Public devnet drops write transactions under load ("Data writes to account failed: Max
-# retries exceeded", 2026-11-19): a devnet deploy re-signs and resends unconfirmed writes up to
-# this many times, and pays this priority fee (micro-lamports per compute unit) so they land.
-DEVNET_MAX_SIGN_ATTEMPTS=50
+# retries exceeded", 2026-11-19): a devnet deploy signs its writes up to this many times in all,
+# each round resending the unconfirmed ones with a fresh blockhash once the last has expired
+# (about a minute), so a deploy during a devnet outage gives up after about 20 minutes; and it
+# pays this priority fee (micro-lamports per compute unit) so the writes land.
+DEVNET_MAX_SIGN_ATTEMPTS=20
 DEVNET_COMPUTE_UNIT_PRICE=10000
 
 usage() {
