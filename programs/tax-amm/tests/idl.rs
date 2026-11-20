@@ -321,19 +321,28 @@ fn its_events_and_errors_are_the_programs() {
         ]
     );
 
-    // Errors are numbered from 6000 in the enum's order, the last being
-    // `BurnNeedsWritableMint`.
+    // Errors are numbered from 6000 in the enum's order, new ones only ever at the end:
+    // the last before the hardening (#67) was `BurnNeedsWritableMint`, and the hardening
+    // added these after it.
     let errors = idl["errors"].as_array().unwrap();
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
-    let last = errors.last().unwrap();
-    assert_eq!(last["name"], "BurnNeedsWritableMint");
-    assert_eq!(
-        last["code"].as_u64().unwrap() as u32,
-        anchor_lang::error::ERROR_CODE_OFFSET
-            + tax_amm::StrategyError::BurnNeedsWritableMint as u32
-    );
+    use tax_amm::StrategyError as E;
+    let tail = [
+        E::BurnNeedsWritableMint,
+        E::NotAWallet,
+        E::NewerStateVersion,
+        E::Underflow,
+    ];
+    let named = &errors[errors.len() - tail.len()..];
+    for (error, expected) in named.iter().zip(tail) {
+        assert_eq!(error["name"], format!("{expected:?}"));
+        assert_eq!(
+            error["code"].as_u64().unwrap() as u32,
+            anchor_lang::error::ERROR_CODE_OFFSET + expected as u32
+        );
+    }
 }
 
 #[test]
