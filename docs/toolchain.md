@@ -691,6 +691,9 @@ Two things to know:
 - **LuLu, the Mac's outbound firewall, allows binaries by path.**
   A binary copied or built at a new path, such as `fixtures/pipeline/target/release/pipeline-check` copied into a new worktree, fails its first RPC call (`getSlot: error sending request`) until the owner allows it; run the copy LuLu already allows, or ask the owner to allow the new one.
 - **Downloads from GitHub are flaky on this network**: `gh` calls hit TLS timeouts and connection resets; retry.
+- **`cargo-build-sbf --install-only` asks GitHub's REST API without a token.**
+  On GitHub's shared runners that call is rate limited, and on 2026-11-20 the first cold install there failed with `Failed to install platform-tools: Failed to parse Github response: error decoding response body`.
+  So `install-toolchain.sh` downloads the platform tools itself, from the release's file URL with retries, checks the archive against the SHA-256 it pins for each host, and unpacks it where cargo-build-sbf looks (`SOLANA_PLATFORM_TOOLS_DIR`, or `~/.cache/solana`).
 - **`Invalid syscall code 131074`.**
   `cargo build-sbf` 4.6.0 on platform tools v1.57 prints `WARN cargo_build_sbf::post_processing] Invalid syscall code 131074` for every Anchor program built here, Pipeline's own `test-strategy-cp` included (its native `test-hook` does not print it).
   CI's Linux build on platform tools v1.58 does not print it, so it belongs to v1.57, which only the owner's Intel Mac uses.
