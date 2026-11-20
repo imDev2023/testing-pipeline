@@ -31,7 +31,9 @@ done
 verify=(verify-record --cluster "$url" --candidate "$so" --program "$program")
 [ -n "${BUY_WALL_GATE_RECORDS:-}" ] && verify+=(--records "$BUY_WALL_GATE_RECORDS")
 if ! (cd "$ROOT/programs" && cargo run --quiet -p buy-wall-gate -- "${verify[@]}"); then
-  echo "pre-deploy.sh: refused: the release gate has not passed this build against this cluster;" >&2
-  echo "  run: cd programs && cargo run -p buy-wall-gate -- run --cluster <cluster> --candidate $so" >&2
+  # The build deploy-devnet.sh made is gone once it stops, so name the steps that keep one.
+  echo "pre-deploy.sh: refused: the release gate has not passed this build against this cluster; run:" >&2
+  echo "  scripts/deploy-devnet.sh buy-wall-amm --build-only --out <dir>" >&2
+  echo "  (cd programs && cargo run -p buy-wall-gate -- run --cluster <cluster> --candidate <dir>/buy_wall_amm.so)" >&2
   exit 1
 fi

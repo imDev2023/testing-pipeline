@@ -219,6 +219,10 @@ const WSOL = address('So11111111111111111111111111111111111111112');
 const HOSTED_API = 'https://pipeline-devnet.up.railway.app';
 // Pipeline's fee, which the router takes from the trader on top of a swap's input.
 const PIPELINE_FEE_BPS = 25n;
+// The tokens a run with --market leaves the payer after selling into the wall, so the next
+// run's sell-back can pay Pipeline's fee on top (a quarter of the worked example's wall sell,
+// many times the fee on step 7's sell-back).
+const REVISIT_RESERVE = 5_000_000_000n;
 
 // The demo market: the spec's worked example (docs/spec/pool4-for-solana.md, "Worked
 // example"), seeded with 1,000,000 tokens of 6 decimals and 10 SOL. These are the demo's
@@ -1570,12 +1574,13 @@ async function main() {
     const published = await pipeline.fetchStrategyMetadata(metadataUri);
     if (published.ok && published.warnings.length === 0) {
         info(`${metadataUri} is valid with zero warnings`);
-    } else if (onDevnet && options['metadata-not-yet-public']) {
+    } else if (onDevnet && options['metadata-not-yet-public'] && !published.ok) {
         // The router only stores the URI; it resolves once the repo is public (TAX-54).
         if (!metadataUri.startsWith(`${RAW_REPO}/`) || !metadataUri.endsWith('/programs/buy-wall-amm/metadata.json')) {
             fail(`--metadata-not-yet-public takes only this repo's programs/buy-wall-amm/metadata.json on ${RAW_REPO}, not ${metadataUri}`);
         }
-        info(`${metadataUri} does not resolve yet (${published.ok ? published.warnings.join('; ') : published.reason}); registering it anyway with --metadata-not-yet-public`);
+        // Only a URI that cannot be fetched; one that resolves with warnings still stops below.
+        info(`${metadataUri} does not resolve yet (${published.reason}); registering it anyway with --metadata-not-yet-public`);
         info('the committed metadata.json was checked instead; desks show the strategy without metadata until the repo is public');
     } else if (onDevnet) {
         // Pipeline's registry and every terminal read the strategy through this URI.
@@ -1929,10 +1934,12 @@ async function main() {
     step('9. Selling into the wall');
     const top = books.wall.top;
     // A fresh market sells what step 8 bought and as much again as the worked example sells
-    // into its wall; a market revisited sells every token the payer still holds, less room for
-    // Pipeline's fee on top (PIPELINE_FEE_BPS, rounded up).
+    // into its wall; a market revisited sells every token the payer holds beyond REVISIT_RESERVE,
+    // which pays Pipeline's fee on later runs' sells, less room for this sell's own fee
+    // (PIPELINE_FEE_BPS, on top).
     const held = await tokenBalance(payerAccounts[0]!);
-    const intoWallAmount = revisit ? (held * 10_000n) / (10_000n + PIPELINE_FEE_BPS) - 1n : topUp + DEMO.wallSell;
+    const intoWallAmount = revisit ? ((held - REVISIT_RESERVE) * 10_000n) / (10_000n + PIPELINE_FEE_BPS) - 1n : topUp + DEMO.wallSell;
+    if (intoWallAmount <= 0n) fail(`the payer holds ${held} units of the token, not more than the ${REVISIT_RESERVE} it keeps for later runs; send it some to sell into the wall`);
     const intoWall = await trade('sell into the wall', 0, intoWallAmount);
     if (intoWall.spec.sqrtPrice >= top) fail(`the sell left the price at ${intoWall.spec.sqrtPrice}, not below the wall's top ${top}`);
     const spent = books.wallSolPlaced - wallSol(books.wall, books.curve.sqrtPrice);
@@ -2010,7 +2017,14 @@ async function compareHostedQuotes(payer: KeyPairSigner, recorded: pipeline.Mark
             }
             const listed = hosted.strategyAccounts.join();
             if (listed !== [view.vaults[output], vaultAuthority].join()) fail(`the hosted API resolved ${listed} for the ${label}, not the output vault and the vault authority`);
-            if (hosted.amountOut !== quote.amountOut) fail(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut}, the program ${quote.amountOut}, on the same state`);
+            if (hosted.amountOut !== quote.amountOut) {
+                // The hosted API reads the cluster through its own RPC, which can trail ours by a
+                // few slots after the demo's last write; it must catch up within the retries.
+                if (attempt >= 5) fail(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, the program ${quote.amountOut}, on the same state`);
+                info(`the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, not yet the program's ${quote.amountOut}; again`);
+                await sleep(3_000);
+                continue;
+            }
             info(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, exactly the program's quote on the same state`);
             record.push([`hosted API quote, ${label}`, `${amount} in, ${hosted.amountOut} out, equal to the program's`]);
             break;

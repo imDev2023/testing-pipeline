@@ -43,6 +43,8 @@ ROOT="${TESTING_PIPELINE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 KEYS_DIR="${KEYS_DIR:-$HOME/.config/testing-pipeline/devnet}"
 DEVNET_URL=https://api.devnet.solana.com
 DEVNET_GENESIS=EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+MAINNET_GENESIS=5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d
+TESTNET_GENESIS=4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY
 MIN_VERIFY_VERSION=0.5.2
 # Public devnet drops write transactions under load ("Data writes to account failed: Max
 # retries exceeded", 2026-11-19): a devnet deploy signs its writes up to this many times in all,
@@ -96,9 +98,17 @@ case "$url" in
   https://*) ;; # another devnet RPC, checked by its genesis hash below
   *) stop "$url is neither devnet nor a local validator: this script deploys only to devnet or a local validator" ;;
 esac
-if ! $local_cluster && ! $build_only; then
+if ! $build_only; then
   genesis="$(solana genesis-hash -u "$url")"
-  [ "$genesis" = "$DEVNET_GENESIS" ] || stop "$url is not devnet (genesis hash $genesis)"
+  if $local_cluster; then
+    # A local port can be a tunnel or a proxy to a real cluster: only a local validator's own
+    # genesis, or devnet's, will do.
+    case "$genesis" in
+      "$MAINNET_GENESIS" | "$TESTNET_GENESIS") stop "$url answers as mainnet or testnet (genesis hash $genesis)" ;;
+    esac
+  else
+    [ "$genesis" = "$DEVNET_GENESIS" ] || stop "$url is not devnet (genesis hash $genesis)"
+  fi
 fi
 if $local_cluster && ! $build_only && [ -z "$record" ]; then
   stop "a local validator's deploy is recorded only where --record says, never in deployments/devnet.json"
@@ -111,9 +121,10 @@ if [ "$(printf '%s\n%s\n' "$MIN_VERIFY_VERSION" "$verify_version" | sort -V | he
 fi
 
 # The commit: on devnet it must be a commit on main, with nothing uncommitted beside it but
-# deployments/devnet.json and the release gate's records in deployments/release-gate/, which
-# are written before a deploy and reach main through a PR after it.
-if [ -n "$(git -C "$ROOT" status --porcelain -- . ':(exclude)deployments/devnet.json' ':(exclude)deployments/release-gate')" ]; then
+# deployments/devnet.json and this program's release gate records in
+# deployments/release-gate/<program>/, which are written before a deploy and reach main through
+# a PR after it.
+if [ -n "$(git -C "$ROOT" status --porcelain -- . ':(exclude)deployments/devnet.json' ":(exclude)deployments/release-gate/$program")" ]; then
   if $local_cluster; then
     echo "note: the worktree has uncommitted changes, which the build leaves out" >&2
   else
