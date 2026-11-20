@@ -1,0 +1,75 @@
+{
+  "cluster": "devnet",
+  "metadataUri": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json",
+  "at": "2026-11-20T02:40:10.238Z",
+  "record": [
+    [
+      "strategy program",
+      "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"
+    ],
+    [
+      "register_strategy",
+      "5eAbEK6dzFb9KPkwkPzq88ht99ovHFGv3Zyd6DfMAv3asSTs1D49xZTXauvAUy9c8vY7kdgct6WdiUTdn6Tjjsu3"
+    ],
+    [
+      "create demo token",
+      "3tELB18LwbnVXfVYaNRYuFvXW3qaFTZgDhhuFHRRuGkXrnwHeUSZd9TLe65nJHJVKh3qnVfBbVeJcwNiETrePFSD"
+    ],
+    [
+      "wrap 0.550125 SOL",
+      "Hp6zfSpradvVqdfCsjeGP9Fiu8nXoma9mNdtGS5iWRCGKQU2hArCd3kFKphPywrGcmRw7twhY5WbNaTnkoTAUhV"
+    ],
+    [
+      "demo market: create_market + init_fee_account x2 + seed",
+      "5pUtjurQbsuscY4JJteu9SfjYxaSaG77kZyXS3ZXfoYJxTJd9qVyBtHygwpvtzkNJepEQkx7TMWEkbqKNY5CgudB"
+    ],
+    [
+      "demo market: market",
+      "C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w"
+    ],
+    [
+      "demo market: market state",
+      "FJ1PJovxT4Njfn3fkufxcKeCF8XtsPRAFLKadZZYXgDB"
+    ],
+    [
+      "demo market: demo token",
+      "4gqiCkoxxD72nbXGc7XtxQx4UjBHD3KiJyXpMvEZ6u8c"
+    ],
+    [
+      "swap 50000000 wrapped SOL for demo token",
+      "2HRjZaHZZzw5bpJxpTSjaVGWMpNBL3RkoUcSo1mwZkhfsorjeiowgCif47Q3WMc68xA5DkEtesQtc3C5yqyQyxr1"
+    ],
+    [
+      "swap 1000000000 demo token for wrapped SOL",
+      "4wkueGWApEBLQUndD8byhPRy4Lfa7VeHkFbvp1pj5m2Gj1oS2bQL2C74HMEinU4bM6d7vgAaS578uUwMcFPdtkA2"
+    ],
+    [
+      "demo market: swaps",
+      "both delivered their quotes, the spec's prices"
+    ],
+    [
+      "demo market: distribute slot 0 (tax recipient 1)",
+      "5VpYEcDG7J18DK91f7qsbFn3EtMVK1g7PQgV9eUrLfxJi2GnpTyrF8sDLEovQCXgEmFUkPGzq3Q5iUwKfEPviFL8"
+    ],
+    [
+      "demo market: distribute slot 1 (tax recipient 2)",
+      "42khEhxGYvmQzaZvYvLbzPvw73Lkj7qVuPvQEwXjcc7adz2tEj16AcjXs6HGyozvhtUm211dnifqYo8Dua9nU8SN"
+    ],
+    [
+      "demo market: tax recipient 2",
+      "had no token account and got one, ACrn3UD4DLgyCKbNMiqx6Vcs2d49RSbHdbLJ82uw61s8"
+    ],
+    [
+      "demo market: burn slot 4 (burn)",
+      "4D38KYL2rvAZ63LGAfxuTHLCHZGGZeXR1UFSwQhVXiKVBmm9mcrV6XoH4gjLgPG1LqZUiTVwK17p93LFEHyta2YC"
+    ],
+    [
+      "demo market: distribute slot 5 (suite share)",
+      "5iBarWPEnj1oPSudPx7DF9c6xQ9hDeKj1Dvnni2mDHq4qFQYPGnFCLYw2gFjoha99UZxVcxi1qYenS9GPaLXiwTi"
+    ],
+    [
+      "demo market: payouts",
+      "every slot paid exactly what it was owed"
+    ]
+  ]
+}
