@@ -50,6 +50,13 @@ pub mod layout {
     pub const LEN: usize = 596;
 }
 
+// The layout the containment hook reads is the account's real size, at compile time, so no
+// build can disagree with it (hardening finding H041, #67; `tests/layout.rs` pins every
+// field's offset and the discriminator).
+const _: () = assert!(TaxMarket::SPACE == layout::LEN);
+const _: () = assert!(layout::TAX_SIDE == TaxMarket::DISCRIMINATOR.len() + 2);
+const _: () = assert!(layout::TAX_COLLECTED + 16 <= layout::LEN - RESERVED_LEN);
+
 /// Where a market is in its life. New states are only ever added after the last.
 #[derive(AnchorSerialize, AnchorDeserialize, InitSpace, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MarketStatus {

@@ -234,3 +234,16 @@ fn sos_h069_a_market_state_written_by_a_newer_version_is_refused_by_every_instru
     env.quote(&market, &exact_in(0, 1, 1_000)).unwrap();
     env.distribute(&market, &caller, 0).unwrap();
 }
+
+/// Hardening finding H041 (#67): the market state's discriminator was only ever compared
+/// with itself (the IDL's is built from the same code), so renaming the account type would
+/// pass every test while every live market and the containment hook's check of its bytes
+/// stopped matching. It is pinned here as the bytes live markets carry: the first eight of
+/// `sha256("account:TaxMarket")`.
+#[test]
+fn sos_h041_the_market_states_discriminator_is_the_one_live_markets_carry() {
+    assert_eq!(
+        TaxMarket::DISCRIMINATOR,
+        [160, 70, 114, 42, 147, 206, 67, 97]
+    );
+}

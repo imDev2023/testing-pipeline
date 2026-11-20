@@ -30,6 +30,15 @@ pub const SUITE_TREASURY: Pubkey = pubkey!("CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhW
 /// Tax recipients per market.
 pub const MAX_RECIPIENTS: usize = 4;
 
+// Each value's safe range, at compile time, so no build can carry one outside it
+// (hardening finding H047, #67): a tax rate of 10,000 basis points or more would leave a
+// buy nothing, a suite share above 10,000 would underflow the creator's part of every tax,
+// and the tax slots (the recipients, then the burn and the suite share) are numbered in a
+// `u8`.
+const _: () = assert!(MAX_TAX_BPS < 10_000);
+const _: () = assert!(SUITE_SHARE_BPS <= 10_000);
+const _: () = assert!(MAX_RECIPIENTS >= 1 && MAX_RECIPIENTS + 2 <= u8::MAX as usize);
+
 // The `security.txt` every program of ours embeds (docs/spec/README.md, "Verified builds").
 // `name` is the program's public name, which lives only here and in `metadata.json`
 // (docs/spec/README.md, "Names"). The contact is this repo's private vulnerability
