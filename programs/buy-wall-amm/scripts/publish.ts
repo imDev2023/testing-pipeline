@@ -131,7 +131,11 @@ function fileAt(commit: string, path: string): Buffer | undefined {
 }
 
 function fetchMain() {
-    execFileSync('perl', ['-e', 'alarm 120; exec @ARGV', 'git', '-C', repoRoot, 'fetch', '-q', 'origin', 'main']);
+    try {
+        execFileSync('perl', ['-e', 'alarm 120; exec @ARGV', 'git', '-C', repoRoot, 'fetch', '-q', 'origin', 'main'], { stdio: 'ignore' });
+    } catch {
+        fail('git fetch origin main failed (it stalls on this network now and then); try again');
+    }
 }
 
 function onMain(commit: string) {
@@ -161,7 +165,9 @@ async function predictedMintFlags(rpc: ReturnType<typeof createSolanaRpc>, mint:
 }
 
 async function verify(uri: string, market: string | undefined) {
-    const deployments = JSON.parse(readFileSync(`${repoRoot}/deployments/devnet.json`, 'utf8'));
+    // The deploy main records, not this checkout's copy.
+    fetchMain();
+    const deployments = JSON.parse(fileAt('origin/main', 'deployments/devnet.json')?.toString('utf8') ?? fail('origin/main has no deployments/devnet.json'));
     const deployed = deployments.programs?.[PROGRAM] ?? fail(`deployments/devnet.json records no ${PROGRAM}`);
     const programId = address(deployed.programId);
     const published = await pipeline.fetchStrategyMetadata(uri);
