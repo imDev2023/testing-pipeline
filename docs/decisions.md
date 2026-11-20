@@ -3565,11 +3565,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-06: Trimmed tokens and SOL
 
 - Question: What happens to trimmed tokens and trimmed SOL?
-- Answer: A reward share of 0% to 30% per market (the form pre-fills 15%) goes to one rewards recipient and the rest is burned; all trimmed SOL becomes the buy wall, and tokens the wall buys go through the same split.
-- Alternatives: Burning everything; IMD's fixed 85/15 with its three-way reward split.
+- Answer: A reward share of 0% to 30% per market (the form pre-fills 15%) goes to one rewards recipient and the rest is burned, the reward share paid only on trimmed tokens the cap's own fall matched ([POOL4-49](#pool4-49-which-retired-tokens-earn-the-reward-share)); all trimmed SOL becomes the buy wall, and tokens the wall buys are burned whole.
+- Alternatives: The earlier default, in which tokens the wall buys went through the same split and every retired token earned the reward share; burning everything; IMD's fixed 85/15 with its three-way reward split.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Creation parameters](spec/pool4-for-solana.md#creation-parameters)
 - Changes by: market-creation parameter
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20)
 
 ### POOL4-07: Staking
@@ -3625,11 +3625,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-12: The buy wall's guard
 
 - Question: How is the buy wall kept from being placed at a pumped price?
-- Answer: By IMD's guard: the wall's floor drops at once with the price and rises about 4% a day (`FLOOR_CRAWL_BPS`) toward a reference that follows the price by at most 2% per 12 seconds (`REF_STEP_BPS`, `REF_STEP_WINDOW`).
-- Alternatives: Refusing to place the wall when the price is far above a reference.
+- Answer: By IMD's guard, per slot ([`POOL4-50`](#pool4-50-when-the-walls-floor-moves)): at a slot's first update the wall's floor drops to the previous slot's close and rises about 4% a day (`FLOOR_CRAWL_BPS`) toward a reference that follows the price by at most 2% per 12 seconds (`REF_STEP_BPS`, `REF_STEP_WINDOW`).
+- Alternatives: The earlier default, the floor dropping at once with every swap's price; refusing to place the wall when the price is far above a reference.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Constants](spec/pool4-for-solana.md#constants)
 - Changes by: build-time constant
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20)
 
 ### POOL4-13: Cap decay while idle
@@ -3675,11 +3675,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-17: Mint rules
 
 - Question: Which tokens may a buy wall market hold?
-- Answer: The token against wrapped SOL only, with the token's mint and freeze authorities removed by the time of the seed and only the tax AMM's allowlist of Token-2022 extensions.
-- Alternatives: Allowing mint and freeze authorities, as the tax AMM does; other quote mints.
+- Answer: The token against wrapped SOL only, with the token's mint and freeze authorities removed and any transfer hook cleared by the time of the seed (the hook as `POOL4-48` says), and only the tax AMM's allowlist of Token-2022 extensions.
+- Alternatives: The earlier default, the same with any transfer hook accepted whatever its program and authority; allowing mint and freeze authorities, as the tax AMM does; other quote mints.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Mint rules](spec/pool4-for-solana.md#mint-rules)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Pool4 for Solana design](https://github.com/imDev2023/testing-pipeline/issues/20)
 
 ### POOL4-18: Mainnet upgrade policy
@@ -3825,11 +3825,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-32: When the floor's clock moves
 
 - Question: Does the wall's floor reset its clock (`floor_time`) on every swap, or only on a swap where it crawls toward the reference?
-- Answer: On every swap, as step 4 of "After pricing" reads ("Then `floor_time = now`"), so the floor crawls only by the time since the last swap and never by a whole day at once when the reference first rises above it after a quiet spell.
-- Alternatives: Only when the floor crawls, which would let a floor that sat at the reference for a long time jump a full day's crawl on the first swap after the reference moved up.
+- Answer: At every slot's first update, a swap's or `place_wall`'s, whether or not the floor crawled, as step 4 of "After pricing" reads ([`POOL4-50`](#pool4-50-when-the-walls-floor-moves)), so the floor crawls only by the time since that update and never by a whole day at once when the reference first rises above it after a quiet spell.
+- Alternatives: The earlier default, on every swap, which the floor's slot rule replaced since the floor no longer changes inside a slot; only when the floor crawls, which would let a floor that sat at the reference for a long time jump a full day's crawl on the first swap after the reference moved up.
 - Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-16 in [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50)
 
 ### POOL4-33: When a wall counts as placed
@@ -3915,12 +3915,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-41: What the release gate runs on each market
 
 - Question: What exactly does the release gate run on each market, and which quotes does it compare?
-- Answer: With the candidate and the cluster's router it resolves a buy and a sell, compares exact-in quotes both ways at a tenth, a hundredth and a thousandth of the input vault with the deployed build's on the same state, runs each keeper job the program's own rules say is due on the state as downloaded, seeds a market waiting for its seed as its seeder would, then buys with a hundredth of the SOL vault and sells what that bought, each delivering exactly the candidate's quote.
-- Alternatives: One quote each way; judging keeper jobs due after the trades; comparing whole market states after the trades.
+- Answer: With the candidate and the cluster's router it resolves a buy and a sell, compares exact-in quotes both ways at a tenth, a hundredth and a thousandth of the input vault with the deployed build's on the same state, checks `pipeline_market_info` against the router's record, seeds a market waiting for its seed as its seeder would, runs each keeper job that this tree's rules say is due on the state as downloaded or that the deployed build ran on the snapshot, then buys with a hundredth of the SOL vault and sells what that bought, each delivering exactly the candidate's quote.
+- Alternatives: The earlier default, the same without `pipeline_market_info` and with only the keeper jobs this tree's rules say are due, which let a candidate that narrows a rule drop that job from its own test; one quote each way; judging keeper jobs due after the trades; comparing whole market states after the trades.
 - Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
 - Changes by: spec only
-- Status: default
-- Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+- Status: changed 2026-11-16
+- Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ### POOL4-42: How a release declares a pricing change
 
@@ -3945,12 +3945,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-44: How the gate is proved to catch stranding
 
 - Question: How are the test builds made that prove the gate catches stranding?
-- Answer: From edited copies of the workspace, built in a target directory of their own, never from features in the program's source: a moved field, the market state type renamed with its discriminator left to Anchor, an account 8 bytes larger, all refused, and a field appended into the reserve as layout version 2, passed, on every fixture in CI.
-- Alternatives: Cargo features that switch layouts in `state.rs`, which would put stranding layouts into the audited source.
+- Answer: From edited copies of the workspace, built in a target directory of their own, never from features in the program's source: a moved field, the market state type renamed with its discriminator left to Anchor and an account 8 bytes larger, each refused on every open market, a payout rule narrowed so fee slot 2 can no longer be swept and a fee slot 2 whose wallet is refused as unset, each refused on every market the deployed build swept it on and on the gate's own market, and a field appended into the reserve as layout version 2 and the designer's wallet set as the upgrade that sets `DESIGNER_RECIPIENT` will set it, each passed, on every fixture in CI.
+- Alternatives: The earlier default, the same without the refused fee slot wallet and the designer's wallet set, which proved nothing about a wallet the gate's own tree would also refuse (review finding R2G-03); the default before it, the same without the narrowed payout rule, which proved nothing about keeper jobs; Cargo features that switch layouts in `state.rs`, which would put stranding layouts into the audited source.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Fixtures in CI](spec/pool4-for-solana.md#fixtures-in-ci)
 - Changes by: spec only
-- Status: default
-- Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+- Status: changed 2026-11-18
+- Decided: 2026-11-18 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ### POOL4-45: How the gate reads a cluster
 
@@ -3961,6 +3961,86 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-16 in [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54)
+
+### POOL4-46: When a failed step counts against a candidate
+
+- Question: Which of the steps a candidate fails refuse it, when a market's token, its recipients or the router can make a step fail under every build?
+- Answer: A failed step counts unless the deployed build failed the same step, matched by kind and not by name, on the same snapshot with the same error (the instruction error, which carries the failing program's own error code, or the whole message when no program raised it) starting in the same program, as recorded in the snapshot when it is taken (so fixtures compare without the deployed program); each replay asks the build it runs for the wallet of every fee slot it sweeps, never the gate's own tree, so the deployed build's record shows what that build pays; the layout checks (reading the market state, finding the market, account resolution, the quotes and `pipeline_market_info`) always run and always count, both replays sign with the same keys derived from the market, and the failures that do not count are printed and recorded with the pass.
+- Alternatives: The earlier default, the same failure matched by its program alone and each fee slot's wallet taken from the gate's own tree, which let a third party's block of a market inside the buy wall AMM excuse a different regression of that step there (review finding R2G-01) and a tree that refuses a slot's wallet drop that sweep from both replays (R2G-03); the default before it, every step must pass, which any market whose token's hook refuses the gate's trader or whose fee recipient made its account unpayable vetoes forever, for every build; excusing a shared failure whatever program it starts in, which would let a candidate fail in its own code where the deployed build failed in a hook; running the deployed build again at check time, which fixtures cannot, since they carry no programs.
+- Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
+- Changes by: spec only
+- Status: changed 2026-11-18
+- Decided: 2026-11-18 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-47: Markets the router has not recorded
+
+- Question: What does the gate do with a market state the router has no Market for, or a market missing a router fee account?
+- Answer: The snapshot copies such a market as if the router had recorded what `pipeline_market_info` gives and saves it marked unregistered, and the replay registers it with the router's `register_existing_market` and `init_fee_account` for both mints, and creates any missing fee account of a recorded market, as anyone may, then checks it like the rest.
+- Alternatives: The earlier behaviour, aborting the whole run, which let anyone block every upgrade with one direct `pipeline_seed_liquidity` call; leaving such markets out of the check, which would not check them at all.
+- Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-48: A transfer hook at the seed
+
+- Question: May a buy wall market be seeded with a Token-2022 token whose transfer hook can still change or refuse transfers, when whoever controls the hook could make it refuse every sell but their own once holders have bought and then sell into the curve and the buy wall?
+- Answer: No: both seeding paths refuse with `TransferHookLive` a token whose transfer hook extension still names a hook program or a hook authority, so a hooked token is seeded only with both unset (all 64 bytes of the extension zero), the state a contained token reaches after its unlock, and a token without the extension is unaffected.
+- Alternatives: Requiring only the hook authority removed, which leaves a hook program that can be upgraded or that reads an admin account of its own; accepting any hook and disclosing the risk, the earlier rule, under which a live hook could turn a market into a honeypot.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Mint rules](spec/pool4-for-solana.md#mint-rules)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-49: Which retired tokens earn the reward share
+
+- Question: Which retired tokens earn the reward share, now that a rewards recipient can retire tokens itself by washing a buy against the decay credit, selling a dip into a tight cap or selling into the wall and closing it, all in one transaction?
+- Answer: Only trimmed tokens matched by the cap's own fall: the ratchet adds every unit the cap falls to `cap_fall_unmatched`, which never holds more than one day's allowance (the most the decay credit holds, so no single trim draws on days of others' buying, review finding R2-01), a trim moves `min(trimmed tokens, cap_fall_unmatched)` from it into `retired_rewardable`, and `settle` pays `floor(retired_rewardable x reward_share_bps / 10,000)` and burns the rest of `retired_tokens`, so the rest of a trim, the tokens a closed wall bought and `place_wall`'s dust burn whole and the rewards never exceed `reward_share_bps` of `seeded_tokens - cap_floor`.
+- Alternatives: The earlier rule, in which every retired token earned the reward share; lagging the ratchet by a slot so a same-transaction round trip never trims; paying no reward share on trims; accepting the behaviour and disclosing it.
+- Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-50: When the wall's floor moves
+
+- Question: When may the wall's floor change, and when may `place_wall` run, so that neither a price that lasts only inside one transaction or slot nor a quiet spell's crawl can move the buy wall?
+- Answer: Only at a slot's first update, as the reference already moves (a swap's in "After pricing" step 4, or `place_wall`'s own when no swap has run in the slot yet, which leaves the slot unmarked): the floor crawls toward the reference, never above it nor the previous slot's close `last_close`, and drops to that close if it is lower, so it never changes inside a slot and is never above the price the slot opened at; `place_wall` is refused with `SwapThisSlot` in a slot a swap already ran in, and places the wall at `min(price, floor, low_since_placement)` with the floor brought up to date, where `low_since_placement` is the lowest close since the last placement (the seed counts as one; every swap lowers it to its close and none raises it; 0, a market written before the field, caps nothing), then resets it to the price at placement, so a dump bought back, in its own slot or later, still caps the next placement at its low whatever trades in between; the owner chose this hybrid of the slot-based floor and a placement cap on 2026-11-19, after round 2 of the review found that the floor alone let a back-runner buy a third party's dump back to the floor within its slot and sell into a wall placed at the old floor with the dump's trimmed SOL, for 1% to 5% of the curve's SOL.
+- Alternatives: The earlier default, the same slot-based floor with the wall placed at `min(price, floor)`, which round 2's back-run of a fall across one slot boundary profited from (VERIFY-H003); capping the placement at the lowest close of the last slot that traded instead, which a tiny swap first in the slot after the dump reset to about the floor, so the back-run paid again (the branch's code review, 2026-11-19); refusing, rather than lowering, a placement when the previous slot's lowest close is below the floor, which stops a one-boundary back-run but not one that holds the price for a further slot; IMD's rule, the floor crawling and dropping to every swap's own price, which let a sell to a dip bought straight back in one transaction drag the whole wall down for days (SOS finding H003) and a buy after a quiet day capture the crawl by placing the wall above its own starting price and selling into it (H004, H050); keeping IMD's rule and disclosing both risks.
+- Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
+- Changes by: fixed on-chain once deployed
+- Status: changed 2026-11-19
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-51: The market's clocks never run backwards
+
+- Question: What does a market do with a Clock whose Unix time is earlier than a time it has stored, the cap's `decay_time` or the guard's `ref_time` and `floor_time`?
+- Answer: Each stored time becomes the later of itself and the Clock's time, so a clock that goes back credits nothing and the same seconds are never counted twice for the cap's decay credit, the reference's step or the floor's crawl; Agave's Clock never goes back from one slot to the next (review finding H009), so on a live cluster this changes nothing and is defence in depth.
+- Alternatives: The earlier rule, storing the Clock's time as it is, under which a clock that went back and then forward would count the overlap twice; refusing a swap whose clock is earlier than a stored time, which would stop trading over a validator's error.
+- Specified in: [`docs/spec/pool4-for-solana.md`, After pricing](spec/pool4-for-solana.md#after-pricing)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-52: Which wallets a role may be handed to
+
+- Question: Besides the default key, which wallets does a handover refuse?
+- Answer: The role's current wallet, refused with `SameRecipient` so every `RecipientChanged` reports a change, and the market's own addresses (its market state, its vault authority, either vault, the program, the router's Market account, which is the market signer PDA, and both mints), refused with `NotAWallet`, since no key signs for a token account any of them owns and the role's income would be stranded there; any other key is still accepted in one step, so a typo stays the holder's own risk.
+- Alternatives: The earlier default, refusing only the default key, which let a holder strand a role's income in an account of the market's own and emit a `RecipientChanged` that changed nothing; a two-step handover that the new wallet accepts by signing, which would also catch typos but needs a pending recipient for each role in the market state and a second instruction.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Recipients](spec/pool4-for-solana.md#recipients)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
+
+### POOL4-53: Every gate run trades a market of its own
+
+- Question: What does the release gate check on a cluster with no market, where replaying the cluster's markets checks nothing and a build that refuses every instruction, such as one declared for another address, would pass?
+- Answer: Every gate run, `run` and `check` alike, also makes a market of its own with the candidate in a LiteSVM world of its own, holding only the router the replay runs and the candidate at the snapshot's clock, with the router's config made as devnet's (a 0.01 SOL listing fee) and the program registered, so no account of the cluster's (a fixed fee wallet's reassigned token account) can refuse every candidate there; it creates and seeds the market through the router, trades it past its first wall and settlement and checks it as a cluster's market, every keeper job that has become due included and every quote required to serve, its payouts paid into token accounts made fresh, and refuses the candidate if any step there fails, none excused as shared with the deployed build; a record of a pass says so, and a record without it never covers a deploy (review findings H097, H098 and R2G-02).
+- Alternatives: The earlier default, the same market made in the cluster's own world after the cluster's markets, readying the router's config and registration only where the snapshot lacked them, under which a router pause or a reassigned wrapped SOL account of `SUITE_TREASURY` or `DESIGNER_RECIPIENT` refused every candidate, an emergency fix included (review finding R2G-02); running the market with the deployed build too and excusing what fails under both, which fixtures cannot, since they carry no programs; refusing a cluster with no market outright unless told to allow it, which would block a first deploy or demand a separate smoke test; leaving it, under which a cluster with no market passed any build vacuously and the deploy script accepted it.
+- Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
+- Changes by: spec only
+- Status: changed 2026-11-18
+- Decided: 2026-11-18 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ## Lending AMM (LENDING)
 
@@ -4905,6 +4985,9 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-73` to `LENDING-83`: set by the session of [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83) while building, where the spec left the choice open, and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-46`, `POOL4-47`, and the changes to `POOL4-41` and `POOL4-44`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix review findings H013, H020 and H033 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-51` to `POOL4-53`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to harden the market's clocks (review finding H009), fix review findings H022 and H063 in the handovers and fix review findings H097 and H098 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- The 2026-11-18 changes to `POOL4-44`, `POOL4-46` and `POOL4-53`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix findings R2G-01 to R2G-03 of the second internal review of the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-32` to `POOL4-35`: set by the session of [Buy wall AMM: the buy wall (two-step pricing, the guard and `place_wall`)](https://github.com/imDev2023/testing-pipeline/issues/50) while building, where the spec left the choice open or read two ways, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-36`: set by the session of [Buy wall AMM: a holder can be refused an exit with PriceBoundReached](https://github.com/imDev2023/testing-pipeline/issues/152) from the spec's existing rule that a trade reaching a price bound is refused, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `SUITE-47`: set by the session of [Move the project to a new repository without the old pull request refs, then make it public](https://github.com/imDev2023/testing-pipeline/issues/167) within the move the owner chose (`SUITE-46`), and not yet put to the owner, so it is that session's default until the owner has been asked.

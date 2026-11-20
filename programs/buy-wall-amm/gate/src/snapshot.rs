@@ -1,14 +1,16 @@
 //! A snapshot: every market state of the program on a cluster at one moment, with every
 //! account a trade or a keeper job on it reads (its mints, vaults, the router's Market,
 //! config and fee accounts, the strategy's registration, the recipients' token accounts),
-//! and the quotes the deployed build gave on that state.
+//! and what the deployed build did on that state: its quotes, and whether each of the
+//! gate's other steps passed with it, which decides whether a step the candidate fails
+//! counts against it (`check.rs`).
 //!
 //! One file, one format, for both uses: a cluster run downloads one into a scratch file and
 //! replays it, and the repo keeps one per layout version as a fixture
 //! (docs/spec/pool4-for-solana.md, "Fixtures in CI"). A cluster snapshot also holds the
 //! programs it ran (the router and the deployed build, as their ProgramData accounts); a
 //! fixture leaves them out, because CI replays it with the pinned router and the build under
-//! test, and compares quotes with the ones recorded here.
+//! test, and compares its quotes and step outcomes with the ones recorded here.
 
 use std::path::Path;
 
@@ -18,7 +20,10 @@ use serde::{Deserialize, Serialize};
 use solana_account::Account;
 
 /// The format this build reads and writes.
-pub const FORMAT: &str = "buy-wall-gate-snapshot/1";
+pub const FORMAT: &str = "buy-wall-gate-snapshot/2";
+/// The format before the deployed build's step outcomes were recorded, which only `rerecord`
+/// reads, to record them.
+pub const FORMAT_1: &str = "buy-wall-gate-snapshot/1";
 
 /// The upgradeable loader, which owns every deployed program and its ProgramData.
 pub const LOADER_V3: Pubkey =
@@ -53,13 +58,27 @@ pub struct Cluster {
     pub unix_timestamp: i64,
 }
 
-/// The build the snapshot's quotes came from: on a cluster the deployed build, for a
-/// synthetic fixture the build that made it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// The build the snapshot's quotes and step outcomes came from: on a cluster the deployed
+/// build, for a synthetic fixture the build that made it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Baseline {
     /// SHA-256 of the executable with trailing zeros removed, as `solana-verify` computes it.
     pub executable_sha256: Option<String>,
     pub quotes: Vec<Quote>,
+    /// Each of the gate's other steps on each market, as the baseline build ran it, every
+    /// keeper job included whether due or not.
+    #[serde(default)]
+    pub steps: Vec<RecordedStep>,
+}
+
+impl Baseline {
+    /// What the baseline build did at step `kind` on `market_state`, if it got that far.
+    pub fn outcome(&self, market_state: &str, kind: &StepKind) -> Option<&Outcome> {
+        self.steps
+            .iter()
+            .find(|s| s.market_state == market_state && s.kind == *kind)
+            .map(|s| &s.outcome)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +87,83 @@ pub struct SavedMarket {
     pub market: String,
     pub market_state: String,
     pub layout_version: u8,
+    /// Whether the router had a Market for it; one it had none for (a market a wallet made
+    /// by calling `pipeline_seed_liquidity` itself) is registered in the replay.
+    #[serde(default = "registered_by_default")]
+    pub registered: bool,
+}
+
+fn registered_by_default() -> bool {
+    true
+}
+
+/// One step of the gate on one market, as the baseline build ran it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedStep {
+    pub market_state: String,
+    #[serde(flatten)]
+    pub kind: StepKind,
+    pub outcome: Outcome,
+}
+
+/// What a step is, without the amounts its name shows, which can drift between replays.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "step", rename_all = "snake_case")]
+pub enum StepKind {
+    ReadState,
+    Register,
+    FindMarket,
+    FeeAccounts,
+    Resolve {
+        input_index: u8,
+    },
+    Quote {
+        input_index: u8,
+        amount: u64,
+    },
+    MarketInfo,
+    Seed,
+    Job {
+        job: crate::keeper::Job,
+    },
+    Buy,
+    Sell,
+    /// Making the gate's own market (`POOL4-53`): readying the router as on devnet, creating
+    /// and seeding the market through it, and trading it past its first wall and settlement.
+    /// Never in a baseline, since the deployed build never makes one.
+    MakeMarket,
+}
+
+impl StepKind {
+    /// Whether a failure of this step can be one the deployed build shares: a step that moves
+    /// tokens, so a market's token, its recipients or the router can make it fail under any
+    /// build. The layout checks (reading the market state, finding the market, account
+    /// resolution, the quotes and `pipeline_market_info`) never are, so a build that breaks
+    /// the layout is refused even on a market whose trades are blocked.
+    pub fn may_fail_under_any_build(&self) -> bool {
+        matches!(
+            self,
+            StepKind::Register
+                | StepKind::FeeAccounts
+                | StepKind::Seed
+                | StepKind::Job { .. }
+                | StepKind::Buy
+                | StepKind::Sell
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Outcome {
+    Passed,
+    Failed {
+        /// The program the failure started in, as the logs show it, or `None` when no
+        /// program raised it (the gate could not even send the step).
+        program: Option<String>,
+        /// The error, without the logs.
+        error: String,
+    },
 }
 
 /// One exact-in quote and what the baseline build answered.
@@ -145,11 +241,27 @@ pub fn parse_key(text: &str) -> Result<Pubkey, String> {
 
 impl Snapshot {
     pub fn read(path: &Path) -> Result<Self, String> {
+        let snapshot = Self::read_any(path)?;
+        if snapshot.format == FORMAT_1 {
+            return Err(format!(
+                "{} is in format {FORMAT_1:?}, which does not record the deployed build's step \
+                 outcomes; record them with its baseline build: cargo run -p buy-wall-gate -- \
+                 rerecord --fixture {} --build <the build whose hash it names>",
+                path.display(),
+                path.display()
+            ));
+        }
+        Ok(snapshot)
+    }
+
+    /// Reads a snapshot in this format or the one before it, for `rerecord`, which records
+    /// its whole baseline again and writes it in this format.
+    pub fn read_any(path: &Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let snapshot: Snapshot = serde_json::from_str(&text)
             .map_err(|e| format!("{} is not a snapshot: {e}", path.display()))?;
-        if snapshot.format != FORMAT {
+        if snapshot.format != FORMAT && snapshot.format != FORMAT_1 {
             return Err(format!(
                 "{} is in format {:?}; this build reads {FORMAT:?}",
                 path.display(),

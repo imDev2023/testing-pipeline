@@ -100,7 +100,7 @@ fn seeded_markets_pass_every_check() {
 }
 
 #[test]
-fn a_seeded_market_of_a_token_with_a_transfer_hook_passes_every_check() {
+fn a_seeded_market_of_a_token_whose_transfer_hook_was_cleared_passes_every_check() {
     let mut env = Env::new();
     let token = env.seedable_hooked_token();
     let market = env
@@ -111,13 +111,15 @@ fn a_seeded_market_of_a_token_with_a_transfer_hook_passes_every_check() {
             10 * SOL,
         )
         .unwrap();
-    check(&env, &market, "a token with Pipeline's test-hook");
+    check(&env, &market, "a token whose transfer hook was cleared");
 }
 
 #[test]
 fn a_market_with_a_placed_wall_passes_every_check_at_above_and_inside_it() {
-    // The worked example's market through `place_wall`: the wall sits at the price, so the
-    // checker's sells go through the curve and the wall together.
+    // The worked example's market through `place_wall`, with a sell back of a little more
+    // than it bought, so it closes below the opening price and the lowest close since the
+    // seed is the price (`POOL4-50`): the wall sits at the price, so the checker's sells go
+    // through the curve and the wall together.
     let mut env = Env::new();
     let token = env.seedable_token(&TOKEN);
     let (market, _) = env
@@ -146,7 +148,8 @@ fn a_market_with_a_placed_wall_passes_every_check_at_above_and_inside_it() {
     advance(&mut env, 3_600);
     let bought = swap(&mut env, (1, 0), SOL);
     advance(&mut env, 60);
-    swap(&mut env, (0, 1), bought);
+    swap(&mut env, (0, 1), bought + 1_000_000);
+    env.next_slot();
     env.place_wall(&market, &keeper).unwrap();
     let top = env.state(&market).wall_top();
     assert!(env.state(&market).wall_liquidity() > 0);
@@ -265,7 +268,7 @@ fn markets_seeded_by_another_program_pass_every_check() {
             false,
         ),
         (
-            "a token with Pipeline's test-hook, seeded by the stand-in launchpad",
+            "a token whose transfer hook was cleared, seeded by the stand-in launchpad",
             true,
         ),
     ] {

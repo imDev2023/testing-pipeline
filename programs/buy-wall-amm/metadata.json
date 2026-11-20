@@ -62,7 +62,7 @@
             "name": "seed",
             "label": "Seed the market",
             "kind": "add_liquidity",
-            "description": "Seeds and opens the market, once, signed by its seeder, from the seeder's own token and wrapped SOL accounts. The token's mint and freeze authorities must be removed first. The seed stays in the market for good: there is no withdrawal. A token with a transfer hook needs the hook's accounts after these, which this form cannot add.",
+            "description": "Seeds and opens the market, once, signed by its seeder, from the seeder's own token and wrapped SOL accounts. The token's mint and freeze authorities must be removed first, and a transfer hook, if the token has one, cleared (no hook program and no hook authority), so no hook ever runs on the market's token. The seed stays in the market for good: there is no withdrawal.",
             "args": [
                 { "name": "token_amount", "type": "u64", "label": "Tokens", "decimals_of": "mint:0" },
                 { "name": "sol_amount", "type": "u64", "label": "Wrapped SOL", "decimals_of": "mint:1" }
@@ -84,7 +84,7 @@
             "name": "place_wall",
             "label": "Place the buy wall",
             "kind": "other",
-            "description": "A keeper job anyone may run. Closes the buy wall at the current price and places it again with all the market's idle SOL, below the price at the lower of the price and the wall's floor, which rises only slowly after a pump, so a pumped price earns nothing. Refused until the market's idle SOL, or the SOL the placed wall has spent buying tokens, reaches the program's WALL_THRESHOLD. Tips the caller in wrapped SOL to their own wrapped SOL account, which must exist: at most the program's KEEPER_TIP_CAP and never more than the market's fee on that SOL. It never moves the price.",
+            "description": "A keeper job anyone may run, in a later slot than the market's last swap: in a slot a swap or the seed already ran in it is refused with SwapThisSlot. Closes the buy wall at the current price and places it again with all the market's idle SOL, at the lowest of the price, the wall's floor and the lowest close since the last placement (which only a placement resets); the floor changes only at a slot's first update and rises only slowly after a pump, so a pumped price earns nothing, a dip inside one slot never drags the floor down, and a dump bought back still caps the next placement at its low whatever trades in between, so buying a dump back and selling into the wall never pays. Refused until the market's idle SOL, or the SOL the placed wall has spent buying tokens, reaches the program's WALL_THRESHOLD. Tips the caller in wrapped SOL to their own wrapped SOL account, which must exist: at most the program's KEEPER_TIP_CAP and never more than the market's fee on that SOL. It never moves the price.",
             "args": [],
             "accounts": [
                 { "name": "caller", "source": "wallet", "signer": true },
@@ -100,7 +100,7 @@
             "name": "settle",
             "label": "Settle retired tokens",
             "kind": "other",
-            "description": "A keeper job anyone may run. Splits the market's retired tokens: the market's reward share of them is kept for the rewards recipient and the rest is burned, lowering the token's supply. Refused when nothing is retired. No tip, and no signature but the transaction fee payer's. It never moves the price.",
+            "description": "A keeper job anyone may run. Splits the market's retired tokens: the market's reward share of the trimmed tokens the inventory cap's fall matched is kept for the rewards recipient and the rest, the tokens the buy wall bought among them, is burned, lowering the token's supply. Refused when nothing is retired. No tip, and no signature but the transaction fee payer's. It never moves the price.",
             "args": [],
             "accounts": [
                 { "name": "market_state", "source": "market_state", "writable": true },
@@ -114,7 +114,7 @@
             "name": "pay_rewards",
             "label": "Pay the rewards",
             "kind": "claim",
-            "description": "A keeper job anyone may run. Pays everything the market owes its rewards recipient, in the token, to the recipient's associated token account, which the caller pays to create if it is missing. Enter the market's current rewards recipient; any other wallet is refused. Refused when nothing is owed. No tip. A token with a transfer hook needs the hook's accounts after these, which this form cannot add.",
+            "description": "A keeper job anyone may run. Pays everything the market owes its rewards recipient, in the token, to the recipient's associated token account, which the caller pays to create if it is missing. Enter the market's current rewards recipient; any other wallet is refused. Refused when nothing is owed. No tip.",
             "args": [],
             "accounts": [
                 { "name": "payer", "source": "wallet", "signer": true, "writable": true },

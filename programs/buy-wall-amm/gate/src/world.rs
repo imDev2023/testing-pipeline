@@ -1,5 +1,5 @@
 //! A LiteSVM holding a snapshot: every saved account, the router and a build of the
-//! program, at the cluster's clock when the snapshot was taken.
+//! program, at the cluster's clock when the snapshot was taken, one slot on.
 
 use litesvm::LiteSVM;
 use pipeline_client::{self as client, pda, Pubkey};
@@ -20,12 +20,7 @@ pub fn load(
     let mut svm = LiteSVM::new().with_sigverify(false);
     set_clock(&mut svm, snapshot);
 
-    let router = match router_elf {
-        Some(elf) => elf.to_vec(),
-        None => snapshot
-            .program_elf(&client::PROGRAM_ID)?
-            .ok_or("the snapshot holds no router; pass the pinned router")?,
-    };
+    let router = router_of(snapshot, router_elf)?;
     // The two programs are loaded from their bytes, never from the saved accounts.
     let replaced = [
         program,
@@ -54,6 +49,33 @@ pub fn load(
     Ok(svm)
 }
 
+/// The world of the market the gate makes of its own (`POOL4-53`): the router the replay runs
+/// and `strategy_elf` at the program's address, at the snapshot's clock, and no account of the
+/// cluster's, so nothing on the cluster (such as a fixed fee wallet's reassigned token account)
+/// can refuse every candidate there.
+pub fn own(
+    snapshot: &Snapshot,
+    strategy_elf: &[u8],
+    router_elf: Option<&[u8]>,
+) -> Result<LiteSVM, String> {
+    let mut svm = LiteSVM::new().with_sigverify(false);
+    set_clock(&mut svm, snapshot);
+    svm.add_program(client::PROGRAM_ID, &router_of(snapshot, router_elf)?)
+        .map_err(|e| format!("the router does not load: {e}"))?;
+    load_program(&mut svm, snapshot.program_id()?, strategy_elf)?;
+    Ok(svm)
+}
+
+/// The router to run: `router_elf` when given, else the snapshot's copy of the cluster's.
+fn router_of(snapshot: &Snapshot, router_elf: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    match router_elf {
+        Some(elf) => Ok(elf.to_vec()),
+        None => snapshot
+            .program_elf(&client::PROGRAM_ID)?
+            .ok_or_else(|| "the snapshot holds no router; pass the pinned router".to_string()),
+    }
+}
+
 /// Replaces the program's executable with `elf`, as an upgrade would.
 pub fn load_program(svm: &mut LiteSVM, program: Pubkey, elf: &[u8]) -> Result<(), String> {
     svm.add_program(program, elf)
@@ -69,10 +91,13 @@ fn install(svm: &mut LiteSVM, address: Pubkey, account: Account) -> Result<(), S
         .map_err(|e| format!("account {address} does not load: {e}"))
 }
 
+/// The cluster's clock, one slot on: the keeper runner sends its jobs after a swap's event,
+/// so in a later slot, and `place_wall` is refused in a slot a swap already ran in
+/// (`POOL4-50`); the time stays the snapshot's.
 fn set_clock(svm: &mut LiteSVM, snapshot: &Snapshot) {
     let cluster = &snapshot.cluster;
     if cluster.slot > 0 {
-        svm.warp_to_slot(cluster.slot);
+        svm.warp_to_slot(cluster.slot + 1);
     }
     let mut clock: solana_clock::Clock = svm.get_sysvar();
     clock.epoch = cluster.epoch;

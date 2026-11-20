@@ -23,7 +23,7 @@ use crate::errors::StrategyError;
 use crate::events::{CapLowered, Trimmed};
 use crate::pricing::{self, Side};
 use crate::state::{is_market_state, vault_authority, MarketState, AUTHORITY_SEED};
-use crate::token::{token_balance, transfer_checked, Transfer};
+use crate::token::{mint_decimals, token_balance, transfer_checked, Transfer};
 
 /// The router's ten fixed trade accounts.
 #[derive(Accounts)]
@@ -159,18 +159,17 @@ pub fn handle_swap<'info>(
     let clock = Clock::get()?;
     let now = clock.unix_timestamp;
     let mut state = ctx.accounts.market_state.load_mut()?;
-    // Step 1: the reference, which reads the last close before step 3 replaces it.
+    // Step 1 and, at the slot's first update, step 4: the reference and the floor, which read
+    // the last close, the price the slot opened at, before step 3 replaces it; then step 3's
+    // last close and the lowest close since the last placement, which this swap lowers to its
+    // close if that is lower and never raises (`POOL4-50`).
     let guard = state
         .guard()
-        .follow(clock.slot, now)
+        .swap_at(clock.slot, now, settled.priced.sqrt_price)
         .ok_or(StrategyError::Overflow)?;
-    // Steps 2 and 3: the books and the price.
+    // Steps 2 and 3: the books, the price, the last close and the low since the placement.
     state.set_books(&settled.books);
     state.set_sqrt_price(settled.priced.sqrt_price);
-    // Steps 3 and 4: the last close, then the floor.
-    let guard = guard
-        .close_at(settled.priced.sqrt_price, now)
-        .ok_or(StrategyError::Overflow)?;
     state.set_guard(&guard);
 
     // Steps 5 and 6: the decay credit, then the ratchet or the trim, at the price just set,
@@ -203,13 +202,4 @@ pub fn handle_swap<'info>(
         .set_counters(&settled.counters)
         .ok_or(StrategyError::Overflow)?;
     Ok(())
-}
-
-/// The decimals of the output mint, byte 44 of both token programs' mint layouts. The
-/// account's key is the market's stored mint, so its data is that mint's.
-fn mint_decimals(mint: &AccountInfo) -> Result<u8> {
-    let data = mint.try_borrow_data()?;
-    data.get(44)
-        .copied()
-        .ok_or_else(|| error!(StrategyError::WrongAccount))
 }

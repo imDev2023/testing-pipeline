@@ -6,14 +6,18 @@
 //!
 //! - **The decay credit** builds up in token-seconds, `cap_decay_per_day` for every second
 //!   since the last swap, and stops at `DECAY_CREDIT_WINDOW` seconds' worth: at most one
-//!   day's allowance, however long the market sat idle.
+//!   day's allowance, however long the market sat idle. Its clock, `decay_time`, never runs
+//!   backwards: it becomes `max(decay_time, now)`.
 //! - **The ratchet**: a curve holding less than the cap lowers the cap to
 //!   `max(held, cap - floor(decay_credit / 86,400), cap_floor)`, spending 86,400
-//!   token-seconds of credit for every unit it fell.
+//!   token-seconds of credit for every unit it fell, and every unit it fell joins
+//!   `cap_fall_unmatched`.
 //! - **The trim**: a curve holding more than the cap gives its excess back without moving
 //!   the price: its liquidity falls to `new_L = max(floor(cap × s / Q), MIN_LIQUIDITY)`, the
 //!   tokens and SOL that frees leave the pool ledgers for `retired_tokens` and `idle_sol`,
-//!   and `sqrt_price` is not touched.
+//!   and `sqrt_price` is not touched. As many of those tokens as `cap_fall_unmatched` holds
+//!   are matched by the cap's fall and move from it into `retired_rewardable`, the part of
+//!   `retired_tokens` that earns the reward share (`POOL4-49`); the rest burn whole.
 //!
 //! None of it changes the trade just priced, and pricing reads no clock, so quotes still
 //! equal swaps. Every product of a 128-bit value runs on the program's checked 256-bit
@@ -48,6 +52,11 @@ pub struct Inventory {
     pub tokens_trimmed: u128,
     /// Lifetime total of lamports trimmed.
     pub sol_trimmed: u128,
+    /// Token units the ratchet has lowered the cap by that no trim has matched yet.
+    pub cap_fall_unmatched: u64,
+    /// The part of `retired_tokens` that earns the reward share: trimmed tokens the cap's
+    /// fall matched.
+    pub retired_rewardable: u64,
 }
 
 /// A market's cap rules, fixed at its seed.
@@ -97,6 +106,16 @@ pub fn held_rounded_up(liquidity: u128, sqrt_price: u128) -> Option<(u128, u128)
         .to_u128()?;
     let sol = U256::mul(liquidity, sqrt_price)?.checked_ceil_shr64()?;
     Some((tokens, sol))
+}
+
+/// The cap's unmatched fall after the ratchet lowers the cap by `by` more: their sum, but
+/// never more than one day's allowance, `cap_decay_per_day`, whatever `DECAY_CREDIT_WINDOW`
+/// is (`POOL4-49`, review finding R2-01); a ratchet that lowers nothing leaves it as it was.
+pub fn unmatched_after_fall(unmatched: u64, by: u64, rules: CapRules) -> Option<u64> {
+    if by == 0 {
+        return Some(unmatched);
+    }
+    Some(unmatched.saturating_add(by).min(rules.cap_decay_per_day))
 }
 
 /// Step 5: `min(decay_credit + cap_decay_per_day × (now - decay_time),
@@ -156,7 +175,9 @@ pub fn trim(cap: u64, sqrt_price: u128, liquidity: u128, held: u128) -> Option<O
 impl Inventory {
     /// Steps 5 and 6 at Unix time `now`: the decay credit brought up to date, then the
     /// ratchet or the trim. `None` on an overflow or a ledger that cannot pay a trim, which
-    /// the ledgers covering the curve rule out.
+    /// the ledgers covering the curve rule out, as `cap_fall_unmatched` staying within the
+    /// cap's fall since the seed and `retired_rewardable` within `retired_tokens` rule out
+    /// an overflow of the reward share's ledgers.
     pub fn after_swap(self, rules: CapRules, now: i64) -> Option<(Inventory, Moved)> {
         let mut next = Inventory {
             decay_credit: accrue(
@@ -165,7 +186,9 @@ impl Inventory {
                 self.decay_time,
                 now,
             ),
-            decay_time: now,
+            // The clock never runs backwards, so a clock that went back and forward again
+            // can never count the same seconds twice.
+            decay_time: self.decay_time.max(now),
             ..self
         };
         let held = held(self.liquidity, self.sqrt_price)?;
@@ -175,6 +198,10 @@ impl Inventory {
             next.decay_credit = credit;
             let by = self.cap.checked_sub(lowered)?;
             next.cap = lowered;
+            // At most one day's allowance of the fall waits unmatched, as the decay credit
+            // never builds up more than one day's worth (`POOL4-49`, review finding R2-01), so
+            // no single trim draws on days of others' buying.
+            next.cap_fall_unmatched = unmatched_after_fall(self.cap_fall_unmatched, by, rules)?;
             if by == 0 {
                 Moved::Nothing
             } else {
@@ -191,6 +218,11 @@ impl Inventory {
                     next.liquidity = trim.liquidity;
                     next.pool_tokens = self.pool_tokens.checked_sub(trim.tokens)?;
                     next.retired_tokens = self.retired_tokens.checked_add(trim.tokens)?;
+                    // POOL4-49: only the part the cap's own fall matched earns the reward
+                    // share.
+                    let matched = trim.tokens.min(self.cap_fall_unmatched);
+                    next.cap_fall_unmatched = self.cap_fall_unmatched.checked_sub(matched)?;
+                    next.retired_rewardable = self.retired_rewardable.checked_add(matched)?;
                     next.pool_sol = self.pool_sol.checked_sub(trim.sol)?;
                     next.idle_sol = self.idle_sol.checked_add(trim.sol)?;
                     next.tokens_trimmed = self.tokens_trimmed.checked_add(trim.tokens as u128)?;
@@ -301,6 +333,8 @@ mod proofs {
             decay_time: kani::any(),
             tokens_trimmed: kani::any(),
             sol_trimmed: kani::any(),
+            cap_fall_unmatched: kani::any(),
+            retired_rewardable: kani::any(),
         };
         let rules = CapRules {
             cap_floor: kani::any(),
@@ -321,6 +355,11 @@ mod proofs {
         kani::assume(
             before.tokens_trimmed <= u64::MAX as u128 && before.sol_trimmed <= u64::MAX as u128,
         );
+        // The reward share's ledgers: the unmatched fall is part of the cap's fall since the
+        // seed, which started at most at u64::MAX, and the rewardable part of the retired
+        // tokens is a part of them (`POOL4-49`).
+        kani::assume(before.cap_fall_unmatched as u128 + before.cap as u128 <= u64::MAX as u128);
+        kani::assume(before.retired_rewardable <= before.retired_tokens);
         kani::assume(
             U256::mul(before.liquidity, q).unwrap()
                 <= U256::mul(before.pool_tokens as u128, before.sqrt_price).unwrap(),
@@ -361,6 +400,30 @@ mod proofs {
                 after.sol_trimmed - before.sol_trimmed,
                 (after.idle_sol - before.idle_sol) as u128
             );
+            // Every unit the cap fell joins the unmatched fall, up to one day's allowance
+            // (R2-01), and a trim makes rewardable only what it retires and the cap's fall
+            // matched: the two ledgers together grow by at most the cap's fall, the unmatched
+            // fall is exactly the capped sum after a fall, and the rewardable part stays
+            // within the retired.
+            let fall = (before.cap - after.cap) as u128;
+            assert!(
+                after.cap_fall_unmatched as u128 + after.retired_rewardable as u128
+                    <= before.cap_fall_unmatched as u128 + before.retired_rewardable as u128 + fall
+            );
+            if fall > 0 {
+                assert_eq!(
+                    after.cap_fall_unmatched as u128,
+                    (before.cap_fall_unmatched as u128 + fall).min(rules.cap_decay_per_day as u128)
+                );
+                assert_eq!(after.retired_rewardable, before.retired_rewardable);
+            } else {
+                assert_eq!(
+                    after.cap_fall_unmatched as u128 + after.retired_rewardable as u128,
+                    before.cap_fall_unmatched as u128 + before.retired_rewardable as u128
+                );
+            }
+            assert!(after.retired_rewardable <= after.retired_tokens);
+            assert!(after.decay_time >= before.decay_time);
         }
     }
 }
@@ -372,6 +435,27 @@ mod tests {
     use proptest::prelude::*;
 
     const DAY: i64 = 86_400;
+
+    #[test]
+    fn the_unmatched_fall_never_holds_more_than_one_days_allowance() {
+        let rules = CapRules {
+            cap_floor: 0,
+            cap_decay_per_day: 200_000_000_000,
+        };
+        // Below the allowance the fall adds up; past it, it stops at `cap_decay_per_day`,
+        // one day's allowance, independent of the decay credit's window.
+        assert_eq!(unmatched_after_fall(5, 7, rules), Some(12));
+        assert_eq!(
+            unmatched_after_fall(199_999_999_999, 2, rules),
+            Some(200_000_000_000)
+        );
+        assert_eq!(
+            unmatched_after_fall(u64::MAX, u64::MAX, rules),
+            Some(200_000_000_000)
+        );
+        // A ratchet that lowered nothing leaves it as it was, even above the allowance.
+        assert_eq!(unmatched_after_fall(u64::MAX, 0, rules), Some(u64::MAX));
+    }
 
     /// The worked example's market after its buy an hour after the seed
     /// (docs/spec/pool4-for-solana.md, "Worked example").
@@ -388,6 +472,8 @@ mod tests {
             decay_time: 1_000_000,
             tokens_trimmed: 0,
             sol_trimmed: 0,
+            cap_fall_unmatched: 0,
+            retired_rewardable: 0,
         };
         let rules = CapRules {
             cap_floor: 200_000_000_000,
@@ -403,6 +489,9 @@ mod tests {
         assert_eq!(after.cap, 991_666_666_667);
         assert_eq!(after.decay_credit, 28_800);
         assert_eq!(after.decay_time, 1_003_600);
+        // The fall waits, unmatched, for a trim.
+        assert_eq!(after.cap_fall_unmatched, 8_333_333_333);
+        assert_eq!(after.retired_rewardable, 0);
         assert_eq!(
             (after.sqrt_price, after.liquidity),
             (inventory.sqrt_price, inventory.liquidity)
@@ -433,6 +522,8 @@ mod tests {
             decay_time: 1_003_600,
             tokens_trimmed: 0,
             sol_trimmed: 0,
+            cap_fall_unmatched: 8_333_333_333,
+            retired_rewardable: 0,
         };
         let (_, rules) = after_the_buy();
         let (after, moved) = inventory.after_swap(rules, 1_003_660).unwrap();
@@ -450,8 +541,47 @@ mod tests {
         assert_eq!(after.pool_sol, 9_916_666_669);
         assert_eq!(after.idle_sol, 91_293_332);
         assert_eq!(after.retired_tokens, 8_333_333_329);
+        // All of it matched by the cap's fall of 8,333,333,333, 4 units of which stay
+        // unmatched (POOL4-49).
+        assert_eq!(after.retired_rewardable, 8_333_333_329);
+        assert_eq!(after.cap_fall_unmatched, 4);
         assert_eq!(after.cap, 991_666_666_667);
         assert_eq!(after.decay_credit, 28_800 + 200_000_000_000 * 60);
+    }
+
+    #[test]
+    fn a_trim_from_a_cap_that_has_not_fallen_earns_no_reward_share() {
+        // The worked example's sell back with the cap's fall already matched: the trim
+        // retires the same tokens, none of them rewardable (a dip sold into a tight cap).
+        let (buy, rules) = after_the_buy();
+        let (bought, _) = buy.after_swap(rules, 1_003_600).unwrap();
+        let sold = Inventory {
+            sqrt_price: 1_844_674_407_372_029_099,
+            pool_tokens: 1_000_000_000_000,
+            cap_fall_unmatched: 0,
+            retired_rewardable: 3,
+            retired_tokens: 3,
+            ..bought
+        };
+        let (after, moved) = sold.after_swap(rules, 1_003_660).unwrap();
+        let Moved::Trimmed(trim) = moved else {
+            panic!("{moved:?}")
+        };
+        assert_eq!(trim.tokens, 8_333_333_329);
+        assert_eq!(after.retired_tokens, 3 + 8_333_333_329);
+        assert_eq!((after.retired_rewardable, after.cap_fall_unmatched), (3, 0));
+    }
+
+    #[test]
+    fn the_decay_clock_never_runs_backwards() {
+        let (inventory, rules) = after_the_buy();
+        // A clock behind the stored time leaves the time where it was and builds no credit,
+        // so the seconds it went back are never counted twice when it comes forward again.
+        let (back, _) = inventory.after_swap(rules, 1_000_000 - 3_600).unwrap();
+        assert_eq!((back.decay_time, back.decay_credit), (1_000_000, 0));
+        let (forward, _) = back.after_swap(rules, 1_000_000 + 3_600).unwrap();
+        let (direct, _) = inventory.after_swap(rules, 1_000_000 + 3_600).unwrap();
+        assert_eq!(forward, direct);
     }
 
     #[test]
@@ -546,6 +676,8 @@ mod tests {
                     let sol = U256::mul(liquidity, s)?.checked_ceil_shr64()?;
                     let pool_tokens = tokens.checked_add(token_slack)?;
                     let pool_sol = u64::try_from(sol).ok()?.checked_add(sol_slack)?;
+                    // Caps from far below to above what the curve holds.
+                    let cap = cap % pool_tokens.saturating_mul(2).max(1);
                     Some(Inventory {
                         sqrt_price: s,
                         liquidity,
@@ -553,12 +685,15 @@ mod tests {
                         pool_sol,
                         retired_tokens: token_slack,
                         idle_sol: sol_slack,
-                        // Caps from far below to above what the curve holds.
-                        cap: cap % pool_tokens.saturating_mul(2).max(1),
+                        cap,
                         decay_credit: credit,
                         decay_time: 0,
                         tokens_trimmed: token_slack as u128,
                         sol_trimmed: sol_slack as u128,
+                        // Any unmatched fall the cap has room for, and any rewardable part
+                        // of the retired tokens.
+                        cap_fall_unmatched: credit as u64 % (u64::MAX - cap).saturating_add(1),
+                        retired_rewardable: (credit >> 64) as u64 % (token_slack + 1),
                     })
                 },
             )
@@ -587,7 +722,7 @@ mod tests {
             let market = Inventory { decay_credit: market.decay_credit % (limit + 1), ..market };
             let (after, moved) = market.after_swap(rules, elapsed).unwrap();
             prop_assert_eq!(after.sqrt_price, market.sqrt_price);
-            prop_assert_eq!(after.decay_time, elapsed);
+            prop_assert_eq!(after.decay_time, elapsed.max(market.decay_time));
             prop_assert!(after.decay_credit <= limit);
             prop_assert!(after.cap <= market.cap && after.cap >= rules.cap_floor);
             prop_assert!(after.liquidity <= market.liquidity && after.liquidity >= MIN_LIQUIDITY);
@@ -606,6 +741,24 @@ mod tests {
 
             if !matches!(moved, Moved::Trimmed(_)) {
                 prop_assert_eq!((after.tokens_trimmed, after.sol_trimmed), (market.tokens_trimmed, market.sol_trimmed));
+                prop_assert_eq!(after.retired_rewardable, market.retired_rewardable);
+            }
+            // POOL4-49: the cap's fall joins the unmatched fall, up to one day's allowance
+            // (R2-01), the rewardable part stays within the retired tokens, and the two
+            // ledgers grow by at most the fall (exactly, when nothing is cut at the limit).
+            prop_assert!(after.retired_rewardable <= after.retired_tokens);
+            let fall = (market.cap - after.cap) as u128;
+            if fall > 0 {
+                prop_assert_eq!(
+                    after.cap_fall_unmatched as u128,
+                    (market.cap_fall_unmatched as u128 + fall).min(per_day as u128)
+                );
+                prop_assert_eq!(after.retired_rewardable, market.retired_rewardable);
+            } else {
+                prop_assert_eq!(
+                    after.cap_fall_unmatched as u128 + after.retired_rewardable as u128,
+                    market.cap_fall_unmatched as u128 + market.retired_rewardable as u128
+                );
             }
 
             // The spec's step 5, written out here.
@@ -624,6 +777,14 @@ mod tests {
                     prop_assert_eq!(after.cap as u128, spec);
                     prop_assert_eq!(by, market.cap - after.cap);
                     prop_assert_eq!(after.decay_credit, credit - by as u128 * 86_400);
+                    prop_assert_eq!(
+                        after.cap_fall_unmatched as u128,
+                        if by == 0 {
+                            market.cap_fall_unmatched as u128
+                        } else {
+                            (market.cap_fall_unmatched as u128 + by as u128).min(per_day as u128)
+                        }
+                    );
                 }
                 Moved::Trimmed(trim) => {
                     prop_assert!(held_before > market.cap as u128);
@@ -636,6 +797,10 @@ mod tests {
                     prop_assert_eq!(after.idle_sol, market.idle_sol + trim.sol);
                     prop_assert_eq!(after.tokens_trimmed, market.tokens_trimmed + trim.tokens as u128);
                     prop_assert_eq!(after.sol_trimmed, market.sol_trimmed + trim.sol as u128);
+                    // The spec's match, written out here.
+                    let matched = trim.tokens.min(market.cap_fall_unmatched);
+                    prop_assert_eq!(after.retired_rewardable, market.retired_rewardable + matched);
+                    prop_assert_eq!(after.cap_fall_unmatched, market.cap_fall_unmatched - matched);
                 }
             }
         }

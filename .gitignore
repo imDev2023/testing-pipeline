@@ -23,6 +23,12 @@ test-ledger/
 id.json
 __pycache__/
 
+# Working folders of the review skills (Stronghold of Security, Book of Knowledge); their reports are
+# kept in docs/security/<program>/.
+.audit/
+.audit-history/
+.bok/
+
 # MetalLegBob's profile and the archive of his X posts never go into this repo (owner, 2026-11-10).
 # They live in ~/.config/testing-pipeline/research/, and the move of #167 purged them from every commit.
 research/metallegbob.md

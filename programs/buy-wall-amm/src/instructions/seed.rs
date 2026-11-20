@@ -12,6 +12,7 @@ use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::errors::StrategyError;
 use crate::events::MarketSeeded;
+use crate::instructions::init_market::mint_refusal_error;
 use crate::opening;
 use crate::state::{is_market_state, MarketState, STATUS_CREATED, STATUS_OPEN};
 use crate::token::{transfer_measured, Transfer};
@@ -123,10 +124,11 @@ pub struct SeedSource<'a, 'info> {
     pub hook_accounts: &'a [AccountInfo<'info>],
 }
 
-/// Refuses the seed unless the token's mint and freeze authorities are removed, then
-/// transfers `token_amount` and `sol_amount` into the vaults and returns what actually
-/// arrived in each, `x` token units and `y` lamports, so anything sent to a vault earlier
-/// stays a donation. Every path that seeds a market brings its seed through this.
+/// Refuses the seed unless the token's mint and freeze authorities are removed and its
+/// transfer hook, if it has one, is cleared, then transfers `token_amount` and
+/// `sol_amount` into the vaults and returns what actually arrived in each, `x` token units
+/// and `y` lamports, so anything sent to a vault earlier stays a donation. Every path that
+/// seeds a market brings its seed through this.
 pub fn bring_seed(source: SeedSource, token_amount: u64, sol_amount: u64) -> Result<(u64, u64)> {
     check_authorities_removed(source.token_mint)?;
     let x = transfer_measured(
@@ -158,8 +160,10 @@ pub fn bring_seed(source: SeedSource, token_amount: u64, sol_amount: u64) -> Res
 
 /// The token's mint and freeze authorities must both be removed before a seed: a live mint
 /// authority could mint and sell into the curve and the wall, and a live freeze authority
-/// could freeze the vault (the spec's "Mint rules").
-fn check_authorities_removed(token_mint: &Mint) -> Result<()> {
+/// could freeze the vault (the spec's "Mint rules"). So must a Token-2022 token's transfer
+/// hook, both its program and its authority (`POOL4-48`): whoever could still set the hook
+/// could make it refuse every sell but their own.
+fn check_authorities_removed(token_mint: &InterfaceAccount<'_, Mint>) -> Result<()> {
     require!(
         token_mint.mint_authority.is_none(),
         StrategyError::MintAuthorityLive
@@ -168,8 +172,31 @@ fn check_authorities_removed(token_mint: &Mint) -> Result<()> {
         token_mint.freeze_authority.is_none(),
         StrategyError::FreezeAuthorityLive
     );
-    Ok(())
+    let info = token_mint.to_account_info();
+    let data = info.try_borrow_data()?;
+    check_transfer_hook(&info.owner.to_bytes(), &data).map_err(|refusal| error!(refusal))
 }
+
+/// Refuses a mint whose `data` carries a live transfer hook, with `TransferHookLive`; passes
+/// one with no TransferHook extension at all (an SPL Token mint, or a Token-2022 mint without
+/// one), or one whose value, the hook authority then the hook program (32 bytes each, zero
+/// for none), is all zeros, the state a contained token reaches after its unlock. Once both
+/// are unset Token-2022 can never set them again. The extension is read through the shared
+/// `mint-rules` crate, after walking the mint's entries again with it as creation did, so a
+/// malformed walk, in which no entry can be found, is refused rather than taken for "no hook"
+/// (review finding R2-06), with the error creation reports for it (`mint_refusal_error`).
+fn check_transfer_hook(owner: &[u8; 32], data: &[u8]) -> core::result::Result<(), StrategyError> {
+    mint_rules::check_mint(owner, data).map_err(mint_refusal_error)?;
+    match mint_rules::find_extension(data, mint_rules::extension::TRANSFER_HOOK) {
+        None => Ok(()),
+        Some(hook) if hook.len() == TRANSFER_HOOK_LEN && hook.iter().all(|&b| b == 0) => Ok(()),
+        Some(_) => Err(StrategyError::TransferHookLive),
+    }
+}
+
+/// The length of Token-2022's TransferHook extension value: an optional authority and an
+/// optional program, 32 bytes each.
+const TRANSFER_HOOK_LEN: usize = 64;
 
 /// Opens a created market from what its seed brought, `x` token units and `y` lamports
 /// (`opening::open`, refusing a seed the spec refuses), and emits `MarketSeeded`. Both
@@ -195,13 +222,16 @@ pub fn open_market(
     state.set_pool_sol(y);
     state.set_cap(opened.cap);
     state.set_decay_time(now);
-    // The wall guard starts at the opening price, and every clock field at now.
+    // The wall guard starts at the opening price, and every clock field at now: the seed's
+    // slot is the last that traded, and the seed counts as the last placement, so the lowest
+    // close since it is the opening price (`POOL4-50`).
     state.set_reference(opened.sqrt_price);
     state.set_ref_time(now);
     state.set_floor(opened.sqrt_price);
     state.set_floor_time(now);
     state.set_last_slot(clock.slot);
     state.set_last_close(opened.sqrt_price);
+    state.set_low_since_placement(opened.sqrt_price);
 
     emit!(MarketSeeded {
         market_state,
@@ -215,4 +245,71 @@ pub fn open_market(
         seed_time: now,
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Token-2022 mint initialised with no authorities, padded to 165 bytes, its account
+    /// type at 165, then `entries` (type-length-value) after it.
+    fn token_2022_mint(entries: &[u8]) -> Vec<u8> {
+        let mut data = vec![0; 166];
+        data[45] = 1; // is_initialized
+        data[165] = 1; // AccountType::Mint
+        data.extend_from_slice(entries);
+        data
+    }
+
+    /// A TransferHook entry (type 14) with `value`.
+    fn hook_entry(value: &[u8]) -> Vec<u8> {
+        let mut entry = 14u16.to_le_bytes().to_vec();
+        entry.extend_from_slice(&(value.len() as u16).to_le_bytes());
+        entry.extend_from_slice(value);
+        entry
+    }
+
+    /// Round 2 finding R2-06: the seed reads the transfer hook only from a mint whose
+    /// extension entries walk cleanly, so a malformed walk, which finds no entry, is refused
+    /// rather than taken for "no hook"; a mint the shared mint rules refuse is refused as
+    /// creation refuses it (code review finding 6: `WrongAccount` for a malformed mint,
+    /// `MintExtensionNotAllowed` for a refused extension), and `TransferHookLive` names only
+    /// a hook that is actually set.
+    #[test]
+    fn sos_r2_06_a_malformed_extension_walk_is_not_taken_for_no_hook() {
+        let token_2022 = anchor_spl::token_2022::ID.to_bytes();
+        let refusal = |data: &[u8]| check_transfer_hook(&token_2022, data).map_err(|e| e as u32);
+        // A cleared hook, and no hook at all, pass.
+        assert_eq!(refusal(&token_2022_mint(&hook_entry(&[0; 64]))), Ok(()));
+        assert_eq!(refusal(&token_2022_mint(&[])), Ok(()));
+        // A live hook is refused as one.
+        let mut live = [0; 64];
+        live[40] = 7;
+        assert_eq!(
+            refusal(&token_2022_mint(&hook_entry(&live))),
+            Err(StrategyError::TransferHookLive as u32)
+        );
+        // An entry whose length runs past the account is malformed: refused as a malformed
+        // mint, as creation refuses it.
+        let mut malformed = 14u16.to_le_bytes().to_vec();
+        malformed.extend_from_slice(&200u16.to_le_bytes());
+        malformed.extend_from_slice(&[1; 64]);
+        assert_eq!(
+            refusal(&token_2022_mint(&malformed)),
+            Err(StrategyError::WrongAccount as u32)
+        );
+        // An extension outside the allowlist (PermanentDelegate, 12) is refused as one.
+        let mut delegate = 12u16.to_le_bytes().to_vec();
+        delegate.extend_from_slice(&32u16.to_le_bytes());
+        delegate.extend_from_slice(&[0; 32]);
+        assert_eq!(
+            refusal(&token_2022_mint(&delegate)),
+            Err(StrategyError::MintExtensionNotAllowed as u32)
+        );
+        // An account of neither token program is refused as the wrong account.
+        assert_eq!(
+            check_transfer_hook(&[9; 32], &token_2022_mint(&[])).map_err(|e| e as u32),
+            Err(StrategyError::WrongAccount as u32)
+        );
+    }
 }

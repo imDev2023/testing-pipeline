@@ -45,6 +45,33 @@ impl MarketView {
         Ok((1 - sol, sol))
     }
 
+    /// The market as its market state describes it, for a market the router has no Market
+    /// for: its mints and vaults in the order `pipeline_market_info` gives them.
+    pub fn from_state(
+        svm: &LiteSVM,
+        program: &Pubkey,
+        market_state: &Pubkey,
+        state: &MarketState,
+    ) -> Result<MarketView, String> {
+        let mints = vec![key(&state.token_mint), key(&state.wsol_mint)];
+        let token_programs = mints
+            .iter()
+            .map(|mint| {
+                svm.get_account(mint)
+                    .map(|a| a.owner)
+                    .ok_or_else(|| format!("its mint {mint} is missing"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(MarketView {
+            market: pda::market(program, market_state),
+            market_state: *market_state,
+            mints,
+            vaults: vec![key(&state.token_vault), key(&state.sol_vault)],
+            token_programs,
+            vault_authority: vault_authority(program, market_state),
+        })
+    }
+
     pub fn token_index(&self) -> usize {
         self.sides().map_or(0, |(token, _)| token)
     }
@@ -55,6 +82,11 @@ impl MarketView {
 }
 
 /// A LiteSVM, the program it trades and a wallet that pays for everything.
+///
+/// Every wallet the gate signs with (the payer, and each market's trader and keeper) has a
+/// key derived from the program or the market, never a random one, so the deployed build's
+/// replay and the candidate's sign with the same keys and derive the same addresses: a step
+/// whose compute depends on a PDA's bump cannot pass in one replay and fail in the other.
 pub struct Session {
     pub svm: LiteSVM,
     pub program: Pubkey,
@@ -65,7 +97,7 @@ pub struct Session {
 
 impl Session {
     pub fn new(mut svm: LiteSVM, program: Pubkey) -> Self {
-        let payer = Keypair::new();
+        let payer = role_key(&program, b"payer", &program);
         svm.airdrop(&payer.pubkey(), 1_000 * SOL)
             .expect("airdrop to the payer");
         Session {
@@ -151,6 +183,35 @@ impl Session {
             .map_err(|e| e.to_string())
     }
 
+    /// Clears a Token-2022 mint's transfer hook, its program and its authority, in the
+    /// replay only, as a seed requires (`POOL4-48`); a mint without one is left as it is.
+    pub fn clear_transfer_hook(&mut self, mint: &Pubkey) -> Result<(), String> {
+        use spl_token_2022_interface::extension::{
+            BaseStateWithExtensionsMut, StateWithExtensionsMut,
+        };
+        let mut account = self
+            .svm
+            .get_account(mint)
+            .ok_or_else(|| format!("the mint {mint} is missing"))?;
+        if account.owner != TOKEN_2022 {
+            return Ok(());
+        }
+        {
+            let mut state =
+                StateWithExtensionsMut::<spl_token_2022_interface::state::Mint>::unpack(
+                    &mut account.data,
+                )
+                .map_err(|e| format!("the mint {mint}: {e}"))?;
+            match state.get_extension_mut::<transfer_hook::TransferHook>() {
+                Ok(hook) => *hook = transfer_hook::TransferHook::default(),
+                Err(_) => return Ok(()),
+            }
+        }
+        self.svm
+            .set_account(*mint, account)
+            .map_err(|e| e.to_string())
+    }
+
     /// Adds `amount` to a mint's supply, in the replay only, for tokens written into an
     /// account rather than minted.
     pub fn add_supply(&mut self, mint: &Pubkey, amount: u64) -> Result<(), String> {
@@ -205,12 +266,20 @@ impl Session {
             vaults: record.vaults[..mints.len()].to_vec(),
             mints,
             token_programs,
-            vault_authority: Pubkey::find_program_address(
-                &[buy_wall_amm::state::AUTHORITY_SEED, market_state.as_ref()],
-                &self.program,
-            )
-            .0,
+            vault_authority: vault_authority(&self.program, market_state),
         })
+    }
+
+    /// `pipeline_market_info`, run in simulation as the router runs it: the mints, vaults and
+    /// exact-out support the program reads from the market state.
+    pub fn market_info(&self, market_state: &Pubkey) -> Result<psi::MarketInfo, String> {
+        let ix = Instruction::new_with_bytes(
+            self.program,
+            &discriminator::MARKET_INFO,
+            vec![AccountMeta::new_readonly(*market_state, false)],
+        );
+        let output = self.simulate(ix)?;
+        psi::MarketInfo::try_from_slice(&output).map_err(|_| "malformed return data".to_string())
     }
 
     /// The market state read with layout version 1, the layout of this tree.
@@ -312,6 +381,21 @@ impl Session {
         amount: u64,
         resolved: &[AccountMeta],
     ) -> QuoteOutcome {
+        match self.quote_amount(view, input, output, amount, resolved) {
+            Ok(out) => QuoteOutcome::AmountOut(out),
+            Err(error) => QuoteOutcome::Refused(first_line(&error)),
+        }
+    }
+
+    /// What [`Session::quote`] quotes, or the error with the logs.
+    pub fn quote_amount(
+        &self,
+        view: &MarketView,
+        input: usize,
+        output: usize,
+        amount: u64,
+        resolved: &[AccountMeta],
+    ) -> Result<u64, String> {
         let mut accounts = self.read_accounts(view, input, output);
         accounts.extend(
             resolved
@@ -319,18 +403,16 @@ impl Session {
                 .map(|m| AccountMeta::new_readonly(m.pubkey, false)),
         );
         let data = psi::instruction_data(discriminator::QUOTE, &exact_in(input, output, amount));
-        match self.simulate(Instruction::new_with_bytes(self.program, &data, accounts)) {
-            Ok(output) => match psi::QuoteResult::try_from_slice(&output) {
-                Ok(quote) => QuoteOutcome::AmountOut(quote.amount_out),
-                Err(_) => QuoteOutcome::Refused("malformed return data".into()),
-            },
-            Err(error) => QuoteOutcome::Refused(first_line(&error)),
-        }
+        let output = self.simulate(Instruction::new_with_bytes(self.program, &data, accounts))?;
+        psi::QuoteResult::try_from_slice(&output)
+            .map(|quote| quote.amount_out)
+            .map_err(|_| "malformed return data".to_string())
     }
 
-    /// A wallet holding `lamports` of wrapped SOL and an empty account for the token.
+    /// The market's trader, holding `lamports` of wrapped SOL and an empty account for the
+    /// token.
     pub fn trader(&mut self, view: &MarketView, lamports: u64) -> Result<Keypair, String> {
-        let trader = Keypair::new();
+        let trader = role_key(&self.program, b"trader", &view.market_state);
         self.svm
             .airdrop(&trader.pubkey(), SOL)
             .map_err(|e| format!("{e:?}"))?;
@@ -444,9 +526,9 @@ impl Session {
         transfer_hook::get_program_id(&state).map(|id| Pubkey::new_from_array(id.to_bytes()))
     }
 
-    /// A keeper with an empty wrapped SOL account for its tips.
-    pub fn keeper(&mut self) -> Result<Keypair, String> {
-        let keeper = Keypair::new();
+    /// The market's keeper, with an empty wrapped SOL account for its tips.
+    pub fn keeper(&mut self, market_state: &Pubkey) -> Result<Keypair, String> {
+        let keeper = role_key(&self.program, b"keeper", market_state);
         self.svm
             .airdrop(&keeper.pubkey(), SOL)
             .map_err(|e| format!("{e:?}"))?;
@@ -616,6 +698,90 @@ pub fn sweep_fees_ix(
     )
 }
 
+/// The vault authority of a market, the PDA `["authority", market_state]`.
+pub fn vault_authority(program: &Pubkey, market_state: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[buy_wall_amm::state::AUTHORITY_SEED, market_state.as_ref()],
+        program,
+    )
+    .0
+}
+
+/// The wallet the gate plays `role` with for `of` (the program, or a market state): its
+/// secret key is the PDA `["buy-wall-gate", role, of]` of the program, so it is the same in
+/// every replay of the same snapshot and no two roles or markets share one.
+pub fn role_key(program: &Pubkey, role: &[u8], of: &Pubkey) -> Keypair {
+    let seed = Pubkey::find_program_address(&[b"buy-wall-gate", role, of.as_ref()], program).0;
+    Keypair::new_from_array(seed.to_bytes())
+}
+
+/// The program whose failure an error's logs show first: the innermost one, where the
+/// failure started (a transfer hook's, say, under the token program and the router). `None`
+/// for an error no program raised, such as the gate's own.
+pub fn failing_program(error: &str) -> Option<String> {
+    error.lines().find_map(|line| {
+        let rest = line.strip_prefix("Program ")?;
+        let (program, tail) = rest.split_once(' ')?;
+        let valid = program.len() >= 32 && program.parse::<Pubkey>().is_ok();
+        (valid && tail.starts_with("failed")).then(|| program.to_string())
+    })
+}
+
+/// What tells one failure from another: the instruction error in its first line, which
+/// carries the failing program's own error code (`InstructionError(0, Custom(6033))`), or the
+/// whole first line when no program raised it.
+pub fn failure_error(message: &str) -> String {
+    let line = first_line(message);
+    let Some(start) = line.find("InstructionError(") else {
+        return line;
+    };
+    let mut depth = 0;
+    for (at, c) in line[start..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => continue,
+        }
+        if depth == 0 {
+            return line[start..=start + at].to_string();
+        }
+    }
+    line
+}
+
+/// The two keys a failed `require_keys_eq!` compared, as Anchor logs them: the left, then the
+/// right.
+pub fn compared_keys(message: &str) -> Option<(Pubkey, Pubkey)> {
+    let logs: Vec<&str> = message
+        .lines()
+        .filter_map(|line| line.strip_prefix("Program log: "))
+        .collect();
+    let at = logs.iter().position(|line| *line == "Left:")?;
+    match logs.get(at + 1..at + 4)? {
+        [left, "Right:", right] => Some((left.parse().ok()?, right.parse().ok()?)),
+        _ => None,
+    }
+}
+
+/// A program's name for the report: the buy wall AMM, the router or a token program by
+/// name, any other by its address.
+pub fn program_name(program: &str, ours: &Pubkey) -> String {
+    let known = [
+        (*ours, "the buy wall AMM"),
+        (client::PROGRAM_ID, "the router"),
+        (TOKEN, "SPL Token"),
+        (TOKEN_2022, "Token-2022"),
+        (ATA_PROGRAM, "the associated token program"),
+    ];
+    known
+        .iter()
+        .find(|(id, _)| id.to_string() == program)
+        .map_or_else(
+            || format!("program {program}"),
+            |(_, name)| name.to_string(),
+        )
+}
+
 /// A pubkey of the program's own (`anchor_lang`) type as the client's.
 pub fn key(anchor: &anchor_lang::prelude::Pubkey) -> Pubkey {
     Pubkey::new_from_array(anchor.to_bytes())
@@ -628,4 +794,66 @@ fn failure(error: &impl std::fmt::Debug, logs: &[String]) -> String {
 /// The error alone, without the logs.
 pub fn first_line(message: &str) -> String {
     message.lines().next().unwrap_or_default().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_gates_wallets_are_the_same_in_every_replay_and_differ_by_role_and_market() {
+        let program = crate::programs::program_id();
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let key = |role: &[u8], of: &Pubkey| role_key(&program, role, of).pubkey();
+        assert_eq!(key(b"trader", &a), key(b"trader", &a));
+        assert_ne!(key(b"trader", &a), key(b"trader", &b));
+        assert_ne!(key(b"trader", &a), key(b"keeper", &a));
+        let payer = |svm| Session::new(svm, program).payer.pubkey();
+        assert_eq!(payer(LiteSVM::new()), payer(LiteSVM::new()));
+    }
+
+    #[test]
+    fn two_failures_differ_by_their_instruction_error_or_else_their_whole_message() {
+        assert_eq!(
+            failure_error("InstructionError(0, Custom(6033))\nProgram log: anything"),
+            "InstructionError(0, Custom(6033))"
+        );
+        assert_eq!(
+            failure_error("its quote was refused: InstructionError(1, InvalidAccountData) then"),
+            "InstructionError(1, InvalidAccountData)"
+        );
+        assert_eq!(
+            failure_error("received 5, not the quote 6\nmore"),
+            "received 5, not the quote 6"
+        );
+    }
+
+    #[test]
+    fn the_keys_a_failed_comparison_logged_are_read_back_in_order() {
+        let (left, right) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let logs = format!(
+            "InstructionError(0, Custom(6000))\nProgram log: AnchorError occurred.\nProgram log: \
+             Left:\nProgram log: {left}\nProgram log: Right:\nProgram log: {right}\nProgram x \
+             failed"
+        );
+        assert_eq!(compared_keys(&logs), Some((left, right)));
+        assert_eq!(compared_keys("InstructionError(0, Custom(6000))"), None);
+    }
+
+    #[test]
+    fn a_failure_is_placed_in_the_innermost_program_that_failed() {
+        let (hook, token, router) = (
+            Pubkey::new_unique(),
+            TOKEN_2022.to_string(),
+            client::PROGRAM_ID.to_string(),
+        );
+        let logs = format!(
+            "InstructionError(0, Custom(32343))\nProgram {router} invoke [1]\nProgram log: \
+             transfer failed to go through\nProgram {hook} invoke [3]\nProgram {hook} failed: \
+             custom program error: 0x7e57\nProgram {token} failed: custom program error: \
+             0x7e57\nProgram {router} failed: custom program error: 0x7e57"
+        );
+        assert_eq!(failing_program(&logs), Some(hook.to_string()));
+        assert_eq!(failing_program("not run: the buy before it failed"), None);
+    }
 }

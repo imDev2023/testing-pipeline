@@ -93,6 +93,14 @@ export const BUY_WALL_AMM_ERROR__NOT_RECIPIENT = 0x1794; // 6036
 export const BUY_WALL_AMM_ERROR__NEW_RECIPIENT_REQUIRED = 0x1795; // 6037
 /** RecipientAccountNotTheirs: The recipient's token account belongs to someone else */
 export const BUY_WALL_AMM_ERROR__RECIPIENT_ACCOUNT_NOT_THEIRS = 0x1796; // 6038
+/** TransferHookLive: The token's transfer hook program and authority must both be removed before the seed */
+export const BUY_WALL_AMM_ERROR__TRANSFER_HOOK_LIVE = 0x1797; // 6039
+/** SwapThisSlot: A swap or the seed already ran in this slot; the wall can be placed from the next slot */
+export const BUY_WALL_AMM_ERROR__SWAP_THIS_SLOT = 0x1798; // 6040
+/** SameRecipient: The new recipient is the role's current recipient */
+export const BUY_WALL_AMM_ERROR__SAME_RECIPIENT = 0x1799; // 6041
+/** NotAWallet: The new recipient is one of the market's own addresses, not a wallet */
+export const BUY_WALL_AMM_ERROR__NOT_A_WALLET = 0x179a; // 6042
 
 export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__ALREADY_SEEDED
@@ -112,6 +120,7 @@ export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED
   | typeof BUY_WALL_AMM_ERROR__NEW_RECIPIENT_REQUIRED
   | typeof BUY_WALL_AMM_ERROR__NOT_A_MARKET
+  | typeof BUY_WALL_AMM_ERROR__NOT_A_WALLET
   | typeof BUY_WALL_AMM_ERROR__NOTHING_AFTER_FEE
   | typeof BUY_WALL_AMM_ERROR__NOTHING_OWED
   | typeof BUY_WALL_AMM_ERROR__NOTHING_TO_SETTLE
@@ -126,9 +135,12 @@ export type BuyWallAmmError =
   | typeof BUY_WALL_AMM_ERROR__REWARD_SHARE_OUT_OF_RANGE
   | typeof BUY_WALL_AMM_ERROR__REWARDS_RECIPIENT_MISMATCH
   | typeof BUY_WALL_AMM_ERROR__SAME_MINT
+  | typeof BUY_WALL_AMM_ERROR__SAME_RECIPIENT
   | typeof BUY_WALL_AMM_ERROR__SEEDER_REQUIRED
   | typeof BUY_WALL_AMM_ERROR__SEED_TOO_SMALL
+  | typeof BUY_WALL_AMM_ERROR__SWAP_THIS_SLOT
   | typeof BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE
+  | typeof BUY_WALL_AMM_ERROR__TRANSFER_HOOK_LIVE
   | typeof BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD
   | typeof BUY_WALL_AMM_ERROR__WALL_SPLIT_OUT_OF_RANGE
   | typeof BUY_WALL_AMM_ERROR__WRONG_ACCOUNT
@@ -155,6 +167,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [BUY_WALL_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED]: `The token carries a Token-2022 extension outside the allowlist`,
     [BUY_WALL_AMM_ERROR__NEW_RECIPIENT_REQUIRED]: `The new recipient must not be the default key`,
     [BUY_WALL_AMM_ERROR__NOT_A_MARKET]: `Not a buy wall market state of a deployed layout`,
+    [BUY_WALL_AMM_ERROR__NOT_A_WALLET]: `The new recipient is one of the market's own addresses, not a wallet`,
     [BUY_WALL_AMM_ERROR__NOTHING_AFTER_FEE]: `Nothing is left of the input after the fee`,
     [BUY_WALL_AMM_ERROR__NOTHING_OWED]: `Nothing is owed`,
     [BUY_WALL_AMM_ERROR__NOTHING_TO_SETTLE]: `No retired tokens to settle`,
@@ -169,9 +182,12 @@ if (process.env["NODE_ENV"] !== "production") {
     [BUY_WALL_AMM_ERROR__REWARD_SHARE_OUT_OF_RANGE]: `The reward share must be at most MAX_REWARD_SHARE_BPS`,
     [BUY_WALL_AMM_ERROR__REWARDS_RECIPIENT_MISMATCH]: `A rewards recipient is required exactly when the reward share is above 0`,
     [BUY_WALL_AMM_ERROR__SAME_MINT]: `The token must not be wrapped SOL, SPL Token's or Token-2022's`,
+    [BUY_WALL_AMM_ERROR__SAME_RECIPIENT]: `The new recipient is the role's current recipient`,
     [BUY_WALL_AMM_ERROR__SEEDER_REQUIRED]: `The seeder must not be the default key`,
     [BUY_WALL_AMM_ERROR__SEED_TOO_SMALL]: `The seed must bring at least MIN_SEED_LAMPORTS`,
+    [BUY_WALL_AMM_ERROR__SWAP_THIS_SLOT]: `A swap or the seed already ran in this slot; the wall can be placed from the next slot`,
     [BUY_WALL_AMM_ERROR__TRADING_NOT_AVAILABLE]: `Trading is not available in this build`,
+    [BUY_WALL_AMM_ERROR__TRANSFER_HOOK_LIVE]: `The token's transfer hook program and authority must both be removed before the seed`,
     [BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD]: `Neither idle SOL nor the SOL the wall has spent reaches WALL_THRESHOLD`,
     [BUY_WALL_AMM_ERROR__WALL_SPLIT_OUT_OF_RANGE]: `The wall split must be at most 10,000 basis points`,
     [BUY_WALL_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,

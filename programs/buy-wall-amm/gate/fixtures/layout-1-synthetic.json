@@ -1,5 +1,5 @@
 {
-  "format": "buy-wall-gate-snapshot/1",
+  "format": "buy-wall-gate-snapshot/2",
   "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
   "cluster": {
     "genesis_hash": null,
@@ -140,23 +140,287 @@
           "refused": "InstructionError(0, Custom(6022))"
         }
       }
+    ],
+    "steps": [
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "resolve",
+        "input_index": 1,
+        "outcome": "passed"
+      },
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "resolve",
+        "input_index": 0,
+        "outcome": "passed"
+      },
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "market_info",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "job",
+        "job": "place_wall",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "job",
+        "job": "settle",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "job",
+        "job": "pay_rewards",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "job",
+        "job": "sweep_fees { slot: 0 }",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "job",
+        "job": "sweep_fees { slot: 1 }",
+        "outcome": {
+          "failed": {
+            "program": null,
+            "error": "slot 1 has no wallet: RecipientUnset"
+          }
+        }
+      },
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "job",
+        "job": "sweep_fees { slot: 2 }",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "buy",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
+        "step": "sell",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "resolve",
+        "input_index": 1,
+        "outcome": "passed"
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "resolve",
+        "input_index": 0,
+        "outcome": "passed"
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "market_info",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "job",
+        "job": "place_wall",
+        "outcome": {
+          "failed": {
+            "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+            "error": "InstructionError(0, Custom(6031))"
+          }
+        }
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "job",
+        "job": "settle",
+        "outcome": {
+          "failed": {
+            "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+            "error": "InstructionError(0, Custom(6032))"
+          }
+        }
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "job",
+        "job": "pay_rewards",
+        "outcome": {
+          "failed": {
+            "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+            "error": "InstructionError(0, Custom(6034))"
+          }
+        }
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "job",
+        "job": "sweep_fees { slot: 0 }",
+        "outcome": {
+          "failed": {
+            "program": null,
+            "error": "slot 0 has no wallet: RecipientUnset"
+          }
+        }
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "job",
+        "job": "sweep_fees { slot: 1 }",
+        "outcome": {
+          "failed": {
+            "program": null,
+            "error": "slot 1 has no wallet: RecipientUnset"
+          }
+        }
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "job",
+        "job": "sweep_fees { slot: 2 }",
+        "outcome": {
+          "failed": {
+            "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+            "error": "InstructionError(0, Custom(6033))"
+          }
+        }
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "buy",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
+        "step": "sell",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "resolve",
+        "input_index": 1,
+        "outcome": "passed"
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "resolve",
+        "input_index": 0,
+        "outcome": "passed"
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "market_info",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "seed",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "job",
+        "job": "place_wall",
+        "outcome": {
+          "failed": {
+            "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+            "error": "InstructionError(0, Custom(6031))"
+          }
+        }
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "job",
+        "job": "settle",
+        "outcome": {
+          "failed": {
+            "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+            "error": "InstructionError(0, Custom(6032))"
+          }
+        }
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "job",
+        "job": "pay_rewards",
+        "outcome": {
+          "failed": {
+            "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+            "error": "InstructionError(0, Custom(6033))"
+          }
+        }
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "job",
+        "job": "sweep_fees { slot: 0 }",
+        "outcome": {
+          "failed": {
+            "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+            "error": "InstructionError(0, Custom(6033))"
+          }
+        }
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "job",
+        "job": "sweep_fees { slot: 1 }",
+        "outcome": {
+          "failed": {
+            "program": null,
+            "error": "slot 1 has no wallet: RecipientUnset"
+          }
+        }
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "job",
+        "job": "sweep_fees { slot: 2 }",
+        "outcome": {
+          "failed": {
+            "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+            "error": "InstructionError(0, Custom(6033))"
+          }
+        }
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "buy",
+        "outcome": "passed"
+      },
+      {
+        "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
+        "step": "sell",
+        "outcome": "passed"
+      }
     ]
   },
   "markets": [
     {
       "market": "5Aks7sdSTaMDkpUkpjxg3KYaWcBkFjjXtsc5yfACfm33",
       "market_state": "Ga2koTZnQT7dwe2uZGDDvVjNY2YPDbWt8MxTLFYKKx3t",
-      "layout_version": 1
+      "layout_version": 1,
+      "registered": true
     },
     {
       "market": "138XLBgjjRWGehF5yVUBsDNcabndD9HWFfHocZPMUAKc",
       "market_state": "8P2KRSthYX3z9AfNnv2xeD8ah1SXmPt3N8VKwxRVANR7",
-      "layout_version": 1
+      "layout_version": 1,
+      "registered": true
     },
     {
       "market": "B4DPB1qhcHbSUAJAvG6kZJ2D2yaaiDmnBhSxPdCz433n",
       "market_state": "65wRSzgJzQ8EVe4y2GT7kwJ1gY7cowhHtWea7YBu2j76",
-      "layout_version": 1
+      "layout_version": 1,
+      "registered": true
     }
   ],
   "accounts": [

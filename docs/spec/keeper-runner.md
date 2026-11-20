@@ -35,6 +35,7 @@ Like every decision in this spec, each one here is a default MetalLegBob may cha
 - Each job's due rule is a pure function of the market state in one shared package, `packages/keeper-jobs`, with the instruction builder for that job.
 - The keeper runner and Aviary's panels both use it, so a button shows in Aviary exactly when the runner would act.
 - Each product's package entry also names the refusal codes that mean "nothing to do" (for example the lending AMM's `WithinBand`, or a payout with nothing owed), which the runner treats as a skip, not a failure.
+- It also names the refusal codes that mean "try again in a later slot", which the runner retries from the next slot, never counting them as a failure: the buy wall AMM's `SwapThisSlot`, which refuses `place_wall` in a slot a swap already ran in ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves); a market with a swap in every slot can starve it, the Low residual R2-03 the owner signed off).
 
 ## Which markets
 
@@ -62,8 +63,10 @@ Like every decision in this spec, each one here is a default MetalLegBob may cha
 ## Sending a job
 
 1. Build the job's transaction from `packages/keeper-jobs`, with the keeper wallet as fee payer and, for `place_wall`, the keeper wallet's wrapped-SOL account as the tip account (created in the same transaction if missing).
+   A buy wall market's token never has a live transfer hook (the seed refuses one, `POOL4-48`), so its `pay_rewards` needs no hook accounts.
 2. Simulate it.
-   A "nothing to do" refusal is a skip and costs nothing; any other simulation error counts as a failure (below).
+   A "nothing to do" refusal is a skip and costs nothing; a "try again in a later slot" refusal is sent again from a later slot and costs nothing; any other simulation error counts as a failure (below).
+   The same holds for a job that passed simulation and then lands refused with a "try again in a later slot" code, as `place_wall` does when a swap reaches the slot first: it costs that transaction's fee, is sent again from a later slot, and is not a failure.
 3. Estimate its cost (the fee plus the rent of any account it creates) and check it against every cap; a job over a cap is held, not sent.
 4. Send it at `PRIORITY_FEE_MICROLAMPORTS` (0 on devnet) and wait for confirmation.
 - One job is sent at a time, so two jobs never race each other or count the same cap headroom twice.

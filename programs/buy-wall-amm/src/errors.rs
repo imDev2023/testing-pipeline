@@ -85,4 +85,14 @@ pub enum StrategyError {
     NewRecipientRequired,
     #[msg("The recipient's token account belongs to someone else")]
     RecipientAccountNotTheirs,
+    #[msg("The token's transfer hook program and authority must both be removed before the seed")]
+    TransferHookLive,
+    #[msg(
+        "A swap or the seed already ran in this slot; the wall can be placed from the next slot"
+    )]
+    SwapThisSlot,
+    #[msg("The new recipient is the role's current recipient")]
+    SameRecipient,
+    #[msg("The new recipient is one of the market's own addresses, not a wallet")]
+    NotAWallet,
 }
