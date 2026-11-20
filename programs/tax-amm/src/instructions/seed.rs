@@ -10,7 +10,7 @@ use anchor_spl::token_interface::{Mint, TokenInterface};
 
 use crate::errors::StrategyError;
 use crate::events::Seeded;
-use crate::state::{MarketStatus, TaxMarket};
+use crate::state::{MarketStatus, TaxMarket, STATE_VERSION};
 use crate::token::{token_balance, token_owner, transfer_checked};
 
 /// The order is `metadata.json`'s `seed` action; keep them in step. Transfer-hook
@@ -18,7 +18,11 @@ use crate::token::{token_balance, token_owner, transfer_checked};
 #[derive(Accounts)]
 pub struct Seed<'info> {
     pub seeder: Signer<'info>,
-    #[account(mut, has_one = seeder @ StrategyError::NotSeeder)]
+    #[account(
+        mut,
+        has_one = seeder @ StrategyError::NotSeeder,
+        constraint = market_state.version <= STATE_VERSION @ StrategyError::NewerStateVersion
+    )]
     pub market_state: Account<'info, TaxMarket>,
     /// CHECK: the seeder's own token account of mint 0: the handler checks its owner, and
     /// the token program the rest.

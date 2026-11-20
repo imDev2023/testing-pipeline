@@ -763,7 +763,7 @@ fn sos_h024_set_recipients_refuses_one_of_the_markets_own_addresses() {
     let authority = Keypair::new();
     let market = market_with_authority(&mut env, &authority);
     let signer = ck(&tax_amm::instructions::pipeline_market_signer(&ak(
-        &market.market_state,
+        &market.market_state
     )));
     let own = [
         market.market_state,

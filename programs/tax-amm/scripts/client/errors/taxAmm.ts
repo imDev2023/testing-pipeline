@@ -91,6 +91,8 @@ export const TAX_AMM_ERROR__NOT_SLOT_TOKEN_ACCOUNT = 0x1793; // 6035
 export const TAX_AMM_ERROR__BURN_NEEDS_WRITABLE_MINT = 0x1794; // 6036
 /** NotAWallet: A tax recipient can't be one of the market's own addresses or programs, which could never move what it is paid */
 export const TAX_AMM_ERROR__NOT_A_WALLET = 0x1795; // 6037
+/** NewerStateVersion: The market state was written by a newer version of this program than the one running */
+export const TAX_AMM_ERROR__NEWER_STATE_VERSION = 0x1796; // 6038
 
 export type TaxAmmError =
   | typeof TAX_AMM_ERROR__ALREADY_RENOUNCED
@@ -106,6 +108,7 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__INSUFFICIENT_LIQUIDITY
   | typeof TAX_AMM_ERROR__MARKET_NOT_OPEN
   | typeof TAX_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED
+  | typeof TAX_AMM_ERROR__NEWER_STATE_VERSION
   | typeof TAX_AMM_ERROR__NO_RECIPIENT
   | typeof TAX_AMM_ERROR__NO_SEEDER
   | typeof TAX_AMM_ERROR__NO_SUCH_SLOT
@@ -148,6 +151,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__INSUFFICIENT_LIQUIDITY]: `The trade would pay out more than the market's real reserve`,
     [TAX_AMM_ERROR__MARKET_NOT_OPEN]: `The market is not open: it has not been seeded`,
     [TAX_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED]: `The mint carries an extension the mint rules refuse`,
+    [TAX_AMM_ERROR__NEWER_STATE_VERSION]: `The market state was written by a newer version of this program than the one running`,
     [TAX_AMM_ERROR__NO_RECIPIENT]: `A market needs at least one tax recipient`,
     [TAX_AMM_ERROR__NO_SEEDER]: `The seeder must not be the default key`,
     [TAX_AMM_ERROR__NO_SUCH_SLOT]: `No such tax slot: there is one per tax recipient, then the burn's and the suite share's`,

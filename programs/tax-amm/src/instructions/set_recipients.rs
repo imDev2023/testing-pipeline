@@ -27,9 +27,12 @@ pub fn change_recipients(
     } = ctx.accounts.authorize()?;
     let tax_mint = market.mints[market.tax_side as usize];
     check_split(&recipients, &shares, burn_share_bps, &tax_mint)?;
-    let authority = vault_authority(&market_state, market.authority_bump)
-        .ok_or(StrategyError::WrongAccount)?;
-    check_wallets(&recipients, &market.own_addresses(&market_state, &authority))?;
+    let authority =
+        vault_authority(&market_state, market.authority_bump).ok_or(StrategyError::WrongAccount)?;
+    check_wallets(
+        &recipients,
+        &market.own_addresses(&market_state, &authority),
+    )?;
     let used = used_slots(&recipients);
     require!(
         market.owed[used..MAX_RECIPIENTS]

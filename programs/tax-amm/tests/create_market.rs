@@ -359,6 +359,10 @@ fn sos_h024_a_market_whose_tax_recipient_is_one_of_its_own_addresses_is_refused(
         );
     }
     // The same market with wallets for recipients is created.
-    env.create_tax_market_with(&state, mints, init_data(&valid_params(&Pubkey::new_unique())))
-        .unwrap();
+    env.create_tax_market_with(
+        &state,
+        mints,
+        init_data(&valid_params(&Pubkey::new_unique())),
+    )
+    .unwrap();
 }

@@ -1100,6 +1100,11 @@
       "code": 6037,
       "name": "NotAWallet",
       "msg": "A tax recipient can't be one of the market's own addresses or programs, which could never move what it is paid"
+    },
+    {
+      "code": 6038,
+      "name": "NewerStateVersion",
+      "msg": "The market state was written by a newer version of this program than the one running"
     }
   ],
   "types": [

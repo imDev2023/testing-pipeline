@@ -87,4 +87,6 @@ pub enum StrategyError {
         "A tax recipient can't be one of the market's own addresses or programs, which could never move what it is paid"
     )]
     NotAWallet,
+    #[msg("The market state was written by a newer version of this program than the one running")]
+    NewerStateVersion,
 }
