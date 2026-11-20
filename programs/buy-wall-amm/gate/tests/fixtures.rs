@@ -28,6 +28,12 @@ fn every_deployed_layout_version_has_a_fixture_with_its_mints_and_vaults() {
             !holding.is_empty(),
             "no fixture holds a layout version {version} market"
         );
+        // Every deployed version has one taken from a real market, not only a synthetic one
+        // (POOL4-20): layout version 1's is the devnet demo market.
+        assert!(
+            holding.iter().any(|(_, s)| !s.synthetic),
+            "no fixture of a real market holds a layout version {version} market"
+        );
     }
     for (path, snapshot) in &fixtures {
         let addresses: Vec<&str> = snapshot
@@ -51,7 +57,7 @@ fn every_deployed_layout_version_has_a_fixture_with_its_mints_and_vaults() {
         assert!(
             snapshot.clone().without_programs().unwrap().accounts.len() == snapshot.accounts.len()
         );
-        // Until the devnet deploy saves a real market, the fixture is marked synthetic (POOL4-20).
+        // A fixture is a real cluster's snapshot or is marked synthetic (POOL4-20).
         assert!(
             snapshot.synthetic || snapshot.cluster.name.is_some(),
             "{}",

@@ -1864,6 +1864,8 @@ async function main() {
     info(`the guard: reference ${books.guard.reference}, floor ${books.guard.floor}, as the spec's steps give for these trades`);
     if (options['trade-only']) {
         info(`--trade-only: the keeper jobs are left due (${books.retiredTokens} units retired, ${books.feesRecipient} / ${books.feesDesigner} / ${books.feesSuite} lamports of fees owed, ${books.idleSol} idle)`);
+        await checkBooks('trading', view, books, true);
+        record.push(['market state after trading', "equal to the spec's formulas, its keeper jobs due"]);
         finish();
         return;
     }

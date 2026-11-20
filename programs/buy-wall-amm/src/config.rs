@@ -99,7 +99,8 @@ pub const MARKET_STATE_SIZE: usize = 1_024;
 // vulnerability reporting page, never a personal address. Internal reviews are never
 // presented as audits, so `auditors` stays "None". `source_release` is the crate's version,
 // which each release raises (tests/security_txt.rs keeps the two equal): 0.1.0, the first
-// devnet deploy, had none; 0.1.1 added it, the upgrade that proved the release gate on devnet.
+// devnet deploy, had none; 0.1.1 adds it, the first upgrade, which the release gate must
+// pass against the live devnet demo market.
 //
 // The macro joins its values with `concat!`, so they must be string literals.
 #[cfg(not(feature = "no-entrypoint"))]

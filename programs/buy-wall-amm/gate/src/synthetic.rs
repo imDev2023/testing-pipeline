@@ -1,6 +1,7 @@
-//! The synthetic layout fixture (`POOL4-20`): until devnet has a market of ours, layout
-//! version 1 is represented by markets made in a LiteSVM run through the real router, then
-//! snapshotted exactly as a cluster is, through pipeline-check's cloning from that LiteSVM.
+//! The synthetic layout fixture (`POOL4-20`): made before devnet had a market of ours, layout
+//! version 1's markets from a LiteSVM run through the real router, snapshotted exactly as a
+//! cluster is, through pipeline-check's cloning from that LiteSVM; CI keeps it beside the
+//! fixture of the devnet demo market, `layout-1-devnet.json`.
 //!
 //! Three markets, so the gate meets a market with every keeper job due, one with none, and
 //! one waiting for its seed:

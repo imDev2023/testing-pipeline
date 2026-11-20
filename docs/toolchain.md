@@ -592,7 +592,7 @@ pnpm demo --cluster devnet --payer ... --upgrade-authority ... \
 ```
 
 On devnet the demo creates one market, the worked example's (`POOL4-55`), and walks its whole life through the router: the two trades of the worked example, the wall placed and sold into, `settle`, both handovers, `pay_rewards` and `sweep_fees` for slots 0 and 2 with slot 1 refused; after every step it reads the whole market state back against the spec's formulas, and at the end it checks Pipeline's hosted API quotes the market both ways at the program's own quotes.
-After the deploy, `pnpm demo --cluster devnet ... --market <the demo market's state> --trade-only` buys and sells once more and leaves every keeper job due, and `cargo run -p buy-wall-gate -- snapshot --cluster devnet --out programs/buy-wall-amm/gate/fixtures/layout-1-devnet.json` saves the market so as layout version 1's fixture from a real market (`POOL4-20`); the gate's stranding test needs each fixture to hold a market whose fee slot 2 the deployed build sweeps.
+After the deploy, `pnpm demo --cluster devnet ... --market <the demo market's state> --trade-only` buys and sells once more and leaves every keeper job due, and `cargo run -p buy-wall-gate -- snapshot --cluster devnet --out programs/buy-wall-amm/gate/fixtures/layout-1-devnet.json` saves that market, with its jobs due, as layout version 1's fixture from a real market (`POOL4-20`); the gate's stranding test needs each fixture to hold a market whose fee slot 2 the deployed build sweeps.
 After an upgrade, `pnpm demo --cluster devnet ... --market <the demo market's state>` trades the market and runs its keeper jobs again from its state as read (`POOL4-56`), and `pipeline-check` runs against it again.
 
 Done on 2026-11-20 from `main` at `a941f9c`.

@@ -80,6 +80,7 @@ What the fixes changed, in one line each:
 | [README.md](README.md) | This summary, the decisions the fixes rest on and the owner's sign-offs |
 | [round-1.md](round-1.md) | Round 1: every finding, its evidence and its disposition, the 74 cleared hypotheses, the combination analysis, the attack trees and the coverage |
 | [round-2.md](round-2.md) | Round 2: the verification of each finding, the new findings R2-01 to R2-06 and R2G-01 to R2G-09, and what was done about each |
+| [release-0.1.1.md](release-0.1.1.md) | The verify pass on release 0.1.1, the first upgrade on devnet: no finding reopened and no new one |
 | [maths-properties.md](maths-properties.md) | Book of Knowledge: every maths property of the program and the tools that establish it |
 | [sign-offs.md](sign-offs.md) | Every accepted Low, why it is accepted and what would change it |
 
