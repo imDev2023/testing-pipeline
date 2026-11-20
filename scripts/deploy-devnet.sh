@@ -16,7 +16,7 @@
 #      program's earlier deploy into its `history`.
 #
 #   scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only]
-#                            [--record <file>] [--out <dir>]
+#                            [--record <file>] [--out <dir>] [--send-via tpu|rpc]
 #
 #   <program>      a deployable workspace member, such as tax-amm
 #   --url          devnet (the default) or a local validator's RPC URL, for a rehearsal
@@ -25,6 +25,7 @@
 #                  deployments/devnet.json
 #   --out          also copy the built program into this directory, so the program's tests
 #                  can run on the very bytes deployed (SBF_OUT_DIR=<dir> cargo test -p <program>)
+#   --send-via     how a devnet deploy sends its writes, tpu or rpc (default DEVNET_SEND_VIA)
 #
 # Keys come from $KEYS_DIR (default ~/.config/testing-pipeline/devnet): wallet.json,
 # upgrade-authority.json and <program>.json, the program's own keypair. Needs the toolchain
@@ -44,9 +45,14 @@ MIN_VERIFY_VERSION=0.5.2
 # pays this priority fee (micro-lamports per compute unit) so the writes land.
 DEVNET_MAX_SIGN_ATTEMPTS=20
 DEVNET_COMPUTE_UNIT_PRICE=10000
+# How a devnet deploy sends its writes: `tpu`, straight to the validators, the CLI's default,
+# or `rpc` (--use-rpc), through the RPC. Through public devnet's RPC most writes were dropped
+# (2026-11-20), and over TPU the whole tax AMM wrote in 14 s; `--send-via rpc` is for a network
+# that blocks QUIC to the validators, or an RPC whose websocket the CLI cannot derive.
+DEVNET_SEND_VIA=tpu
 
 usage() {
-  echo "Usage: scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only] [--record <file>] [--out <dir>]" >&2
+  echo "Usage: scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only] [--record <file>] [--out <dir>] [--send-via tpu|rpc]" >&2
   exit 2
 }
 stop() {
@@ -61,16 +67,22 @@ url=devnet
 build_only=false
 record=""
 out=""
+send_via="$DEVNET_SEND_VIA"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --url) url="${2:?--url needs a value}"; shift 2 ;;
     --build-only) build_only=true; shift ;;
     --record) record="${2:?--record needs a value}"; shift 2 ;;
     --out) out="${2:?--out needs a value}"; shift 2 ;;
+    --send-via) send_via="${2:?--send-via needs a value}"; shift 2 ;;
     *) usage ;;
   esac
 done
 
+case "$send_via" in
+  tpu | rpc) ;;
+  *) echo "--send-via takes tpu or rpc, not $send_via" >&2; exit 2 ;;
+esac
 if ! python3 "$ROOT/scripts/workspace-programs.py" | grep -qx "$program"; then
   echo "$program is not a deployable program of the workspace; these are:" >&2
   python3 "$ROOT/scripts/workspace-programs.py" >&2
@@ -157,7 +169,12 @@ authority="$(solana-keygen pubkey "$authority_key")"
 payer="$(solana-keygen pubkey "$wallet")"
 echo "== Deploying $program_id to $url, paid by $payer, upgrade authority $authority"
 deploy_flags=()
-$local_cluster || deploy_flags+=(--use-rpc --max-sign-attempts "$DEVNET_MAX_SIGN_ATTEMPTS" --with-compute-unit-price "$DEVNET_COMPUTE_UNIT_PRICE")
+if ! $local_cluster; then
+  deploy_flags+=(--max-sign-attempts "$DEVNET_MAX_SIGN_ATTEMPTS" --with-compute-unit-price "$DEVNET_COMPUTE_UNIT_PRICE")
+  if [ "$send_via" = rpc ]; then
+    deploy_flags+=(--use-rpc)
+  fi
+fi
 solana program deploy -u "$url" -k "$wallet" --program-id "$program_key" \
   --upgrade-authority "$authority_key" ${deploy_flags[@]+"${deploy_flags[@]}"} "$so"
 
@@ -176,13 +193,15 @@ retry() {
 }
 # Right after an upgrade a cluster can still answer with the old bytes, so wait for the new.
 for _ in $(seq 1 "${DEPLOY_CHECK_TRIES:-30}"); do
-  onchain_hash="$(retry solana-verify get-program-hash -u "$url" "$program_id")"
+  onchain_hash="$(retry solana-verify get-program-hash -u "$url" "$program_id")" \
+    || stop "could not read the program's hash from $url; it may be deployed: check with solana program show"
   [ "$onchain_hash" = "$hash" ] && break
   sleep 2
 done
 [ "$onchain_hash" = "$hash" ] || stop "the cluster's program hash $onchain_hash does not match the build's $hash"
 # Read once the new bytes are served, so the slot and the authority are this deploy's.
-show="$(retry solana program show -u "$url" --commitment confirmed "$program_id" --output json)"
+show="$(retry solana program show -u "$url" --commitment confirmed "$program_id" --output json)" \
+  || stop "could not read the deployed program from $url; check with solana program show"
 onchain_authority="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["authority"])' "$show")"
 slot="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["lastDeploySlot"])' "$show")"
 [ "$onchain_authority" = "$authority" ] \
