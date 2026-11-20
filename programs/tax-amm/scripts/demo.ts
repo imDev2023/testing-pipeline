@@ -82,6 +82,7 @@
 // On a local cluster the script airdrops the SOL both keys need; on devnet it never does
 // (fund them with devnet-airdrop, docs/toolchain.md).
 
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 
@@ -1315,11 +1316,41 @@ async function main() {
         info(`${metadataUri} is valid with zero warnings`);
     } else if (onDevnet && options['metadata-not-yet-public']) {
         // The router only stores the URI; it resolves once the repo is public (TAX-54).
-        if (!metadataUri.startsWith(`${RAW_REPO}/`) || !metadataUri.endsWith('/programs/tax-amm/metadata.json')) {
-            fail(`--metadata-not-yet-public takes only this repo's metadata.json on ${RAW_REPO}, not ${metadataUri}`);
+        // It takes this repo's metadata.json on main, or at a commit on main, whose copy is
+        // checked as the link will serve it.
+        const at = new RegExp(`^${RAW_REPO.replaceAll('.', '\\.')}/(main|[0-9a-f]{40})/programs/tax-amm/metadata\\.json$`).exec(metadataUri)?.[1];
+        if (!at) fail(`--metadata-not-yet-public takes only this repo's metadata.json on main or at a full commit on ${RAW_REPO}, not ${metadataUri}`);
+        // The copy the link will serve: origin/main's, or the commit's (fetch origin main first
+        // if it is new), which must pin the deploy deployments/devnet.json records and carry
+        // its report.
+        const git = (args: string[]) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        const ref = at === 'main' ? 'origin/main' : at;
+        if (at !== 'main') {
+            try {
+                git(['merge-base', '--is-ancestor', at, 'origin/main']);
+            } catch {
+                fail(`${at} is not a commit on origin/main (git fetch origin main first if it is new)`);
+            }
+        }
+        let served: unknown;
+        try {
+            served = JSON.parse(git(['show', `${ref}:programs/tax-amm/metadata.json`]));
+        } catch (error) {
+            fail(`cannot read programs/tax-amm/metadata.json at ${ref}: ${String(error).split('\n')[0]}`);
+        }
+        const copy = pipeline.parseStrategyMetadata(served);
+        if (!copy.ok || copy.warnings.length > 0) {
+            fail(`the metadata.json at ${ref} does not pass the validator with zero warnings: ${copy.ok ? copy.warnings.join('; ') : copy.errors.join('; ')}`);
+        }
+        if (at !== 'main') {
+            const deployed = JSON.parse(readFileSync(new URL('../../../deployments/devnet.json', import.meta.url), 'utf8')).programs?.['tax-amm'];
+            const pinned = served as { source?: { commit?: string }; conformance?: unknown };
+            if (pinned.source?.commit !== deployed?.commit || !pinned.conformance) {
+                fail(`the metadata.json at ${at} pins ${pinned.source?.commit ?? 'no commit'}${pinned.conformance ? '' : ' and no report'}, not the deploy of ${deployed?.commit ?? 'nothing'} with its report`);
+            }
         }
         info(`${metadataUri} does not resolve yet (${published.ok ? published.warnings.join('; ') : published.reason}); registering it anyway with --metadata-not-yet-public`);
-        info('the committed metadata.json was checked instead; desks show the strategy without metadata until the repo is public');
+        info(`the metadata.json at ${ref} was checked instead; desks show the strategy without metadata until the repo is public`);
     } else if (onDevnet) {
         // Pipeline's registry and every terminal read the strategy through this URI.
         fail(
