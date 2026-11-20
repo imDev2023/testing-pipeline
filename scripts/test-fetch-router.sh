@@ -107,6 +107,40 @@ else
   pass "transient download failures are retried"
 fi
 
+# 5b. A rate-limited RPC is outlasted: public devnet answered 429 to several downloads in a
+# row during CI on 2026-11-20, so five failures, then the pinned bytes, still succeed.
+rm -rf "$fixtures/router"
+echo 5 > "$work/failures"
+if ! FAKE_FAILURES="$work/failures" run_fetch 'the pinned router'; then
+  fail "five transient failures were not outlasted: $(cat "$work/out.log")"
+elif ! cmp -s "$fixtures/router/pipeline.so" "$work/pinned.so"; then
+  fail "the router was not written after five retries"
+else
+  pass "five transient download failures in a row are outlasted"
+fi
+
+# 5c. A download that keeps failing stops after six tries, each wait twice the one before.
+rm -rf "$fixtures/router"
+echo 100 > "$work/failures"
+cat > "$work/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+echo "$1" >> "$(dirname "$0")/../sleeps"
+EOF
+chmod +x "$work/bin/sleep"
+: > "$work/sleeps"
+dumps_before="$(grep -c "^program" "$work/calls")"
+if PATH="$work/bin:$PATH" FIXTURES_DIR="$fixtures" FAKE_ROUTER_BYTES='the pinned router' \
+  FAKE_FAILURES="$work/failures" FETCH_RETRY_DELAY=3 "$FETCH" > "$work/out.log" 2>&1; then
+  fail "a download that never succeeds was accepted"
+elif [ "$(grep -c "^program" "$work/calls")" -ne "$((dumps_before + 6))" ]; then
+  fail "a failing download was tried $(($(grep -c "^program" "$work/calls") - dumps_before)) times, not 6"
+elif [ "$(tr '\n' ' ' < "$work/sleeps")" != "3 6 12 24 48 " ]; then
+  fail "the waits between tries were $(tr '\n' ' ' < "$work/sleeps"), not 3 6 12 24 48"
+else
+  pass "a failing download stops after six tries, its waits doubling"
+fi
+rm "$work/bin/sleep"
+
 # 6. A hash mismatch is not retried: the stand-in is called once.
 echo 0 > "$work/failures"
 dumps_before="$(grep -c "^program" "$work/calls")"
