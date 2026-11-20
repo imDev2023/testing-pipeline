@@ -124,6 +124,7 @@
 // (fund them with devnet-airdrop, docs/toolchain.md).
 
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1634,10 +1635,22 @@ async function main() {
         if (at !== 'main') {
             // The deploy main records, not this checkout's copy.
             const deployed = JSON.parse(git(['show', 'origin/main:deployments/devnet.json'])).programs?.['buy-wall-amm'];
-            const pinned = served as { source?: { commit?: string }; conformance?: unknown };
+            const pinned = served as { source?: { commit?: string }; conformance?: { report?: string; sha256?: string } };
             if (pinned.source?.commit !== deployed?.commit || !pinned.conformance) {
                 fail(`the metadata.json at ${at} pins ${pinned.source?.commit ?? 'no commit'}${pinned.conformance ? '' : ' and no report'}, not the deploy of ${deployed?.commit ?? 'nothing'} with its report`);
             }
+            // Its report must be linked at a commit on main, and hash as that commit holds it.
+            const reportCommit = new RegExp(`^${RAW_REPO.replaceAll('.', '\\.')}/([0-9a-f]{40})/programs/buy-wall-amm/conformance/devnet\\.json$`).exec(pinned.conformance.report ?? '')?.[1];
+            if (!reportCommit) fail(`the metadata.json at ${at} links its report at ${pinned.conformance.report}, not at a full commit of this repo`);
+            let reportBytes: Buffer;
+            try {
+                git(['merge-base', '--is-ancestor', reportCommit, 'origin/main']);
+                reportBytes = execFileSync('git', ['-C', repoRoot, 'show', `${reportCommit}:programs/buy-wall-amm/conformance/devnet.json`]);
+            } catch {
+                fail(`the report commit ${reportCommit} is not on origin/main or holds no programs/buy-wall-amm/conformance/devnet.json`);
+            }
+            const reportHash = createHash('sha256').update(reportBytes).digest('hex');
+            if (reportHash !== pinned.conformance.sha256) fail(`the report at ${reportCommit} hashes to ${reportHash}, not the ${pinned.conformance.sha256} the metadata names`);
         }
         info(`${metadataUri} does not resolve yet (${published.reason}); registering it anyway with --metadata-not-yet-public`);
         info(`the metadata.json at ${ref} was checked instead; desks show the strategy without metadata until the repo is public`);
