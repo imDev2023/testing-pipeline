@@ -72,8 +72,11 @@
 //   --metadata-not-yet-public
 //                        on devnet, register or point the strategy at a metadata URI of this
 //                        repo that cannot resolve yet because the repo is still private; the
-//                        URI must be this repo's raw.githubusercontent.com address, and the
-//                        copy committed beside the program is checked instead (TAX-54)
+//                        URI must be this repo's metadata.json on main, before the metadata
+//                        is pinned, or at a full commit on origin/main once it is; the copy
+//                        the link will serve (origin/main's or the commit's) is checked
+//                        instead, a commit's pinning the deploy main records with its report
+//                        (TAX-54)
 //
 // On devnet the metadata URI must resolve and pass Pipeline's validator with zero warnings
 // before the script registers it or points the strategy at it, unless
@@ -83,7 +86,9 @@
 // (fund them with devnet-airdrop, docs/toolchain.md).
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import {
@@ -99,11 +104,13 @@ import {
     getAddressDecoder,
     getBase64EncodedWireTransaction,
     getSignatureFromTransaction,
+    isSolanaError,
     lamports,
     pipe,
     setTransactionMessageFeePayerSigner,
     setTransactionMessageLifetimeUsingBlockhash,
     signTransactionMessageWithSigners,
+    SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR,
     type Address,
     type Instruction,
     type KeyPairSigner,
@@ -286,19 +293,33 @@ const onDevnet = !cluster.local;
 // On devnet the demo creates only the demo market; --demo-market-only does the same locally.
 const onlyDemoMarket = onDevnet || options['demo-market-only'];
 
-// Public RPC endpoints rate-limit bursts (HTTP 429); retry those with back-off.
+// Public RPC endpoints rate-limit bursts (HTTP 429) and drop connections now and then
+// (`fetch failed`, seen on public devnet on 2026-11-20); retry both with back-off, a rate limit
+// recognised by its HTTP status. A transaction sent is never resent here: a dropped connection
+// can come after the node took it, so `send` looks for its signature instead.
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
+const rateLimited = (error: unknown) =>
+    (isSolanaError(error, SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR) && error.context.statusCode === 429) ||
+    // Some providers answer a burst with HTTP 200 and a JSON-RPC error instead.
+    (isSolanaError(error) && /too many requests|rate limit/i.test(error.message));
+const dropped = (error: unknown) => error instanceof TypeError && error.message === 'fetch failed';
 const retryingTransport = (async (...args: Parameters<typeof baseTransport>) => {
+    const sending = (args[0].payload as { method?: string } | undefined)?.method === 'sendTransaction';
     for (let attempt = 0; ; attempt++) {
         try {
             return await baseTransport(...args);
         } catch (error) {
-            if (attempt >= 8 || !String(error).includes('429')) throw error;
+            if (attempt >= 8 || !(rateLimited(error) || (dropped(error) && !sending))) throw error;
             await sleep(500 * 2 ** attempt);
         }
     }
 }) as typeof baseTransport;
 const rpc = createSolanaRpcFromTransport(retryingTransport);
+
+/** The repository's root, wherever the script is run from. */
+function repoRoot(): string {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim();
+}
 
 /** What the run did, printed at the end for the record. */
 const record: [string, string][] = [];
@@ -364,14 +385,44 @@ async function buildSigned(feePayer: KeyPairSigner, instructions: Instruction[],
         (m) => addSignersToTransactionMessage(extra, m),
     );
     const signed = await signTransactionMessageWithSigners(message);
-    return { signature: getSignatureFromTransaction(signed), wire: getBase64EncodedWireTransaction(signed) };
+    return {
+        signature: getSignatureFromTransaction(signed),
+        wire: getBase64EncodedWireTransaction(signed),
+        lastValidBlockHeight: blockhash.lastValidBlockHeight,
+    };
+}
+
+/**
+ * After a send whose connection dropped: waits for the transaction until its blockhash
+ * expires, so a late landing is seen, and stops saying whether it landed.
+ */
+async function waitAfterDrop(label: string, signature: Signature, lastValidBlockHeight: bigint) {
+    for (;;) {
+        const { value } = await rpc.getSignatureStatuses([signature], { searchTransactionHistory: true }).send();
+        const status = value[0];
+        if (status?.err) fail(`${label} failed: ${JSON.stringify(status.err)} (${explorer('tx', signature)})`);
+        if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return;
+        const height = await rpc.getBlockHeight({ commitment: 'confirmed' }).send();
+        if (height > lastValidBlockHeight) {
+            fail(`${label}: the connection dropped while sending and ${signature} never landed before its blockhash expired; nothing was done, so the step can be run again`);
+        }
+        await sleep(1000);
+    }
 }
 
 /** Sends a transaction and waits for confirmation by polling (public RPCs often refuse WebSockets). */
 async function send(label: string, feePayer: KeyPairSigner, instructions: Instruction[], extra: KeyPairSigner[] = []) {
-    const { signature, wire } = await buildSigned(feePayer, instructions, extra);
-    await rpc.sendTransaction(wire, { encoding: 'base64' }).send();
-    await waitFor(label, signature);
+    const { signature, wire, lastValidBlockHeight } = await buildSigned(feePayer, instructions, extra);
+    let sent = true;
+    try {
+        await rpc.sendTransaction(wire, { encoding: 'base64' }).send();
+    } catch (error) {
+        // The node may have taken it before the connection dropped: its signature says.
+        if (!dropped(error)) throw error;
+        sent = false;
+        info(`${label}: the connection dropped while sending; looking for ${signature} until its blockhash expires`);
+    }
+    await (sent ? waitFor(label, signature) : waitAfterDrop(label, signature, lastValidBlockHeight));
     const bytes = Buffer.from(wire, 'base64').length;
     info(`${label}: ${explorer('tx', signature)} (${bytes} of ${MAX_TRANSACTION_BYTES} bytes)`);
     record.push([label, signature]);
@@ -1311,25 +1362,45 @@ async function main() {
         fail(`metadata.json must pass with zero warnings:\n   ${local.warnings.join('\n   ')}`);
     }
     info(`metadata.json is valid with zero warnings: "${local.value.name}"`);
+    // Once the metadata pins a deploy, the router is pointed at it at its commit, never at main's
+    // link, whose content moves with every later change; whether or not that link resolves yet.
+    if (onDevnet && metadataUri === `${RAW_REPO}/main/programs/tax-amm/metadata.json`) {
+        let onMain: { source?: { commit?: string } } | undefined;
+        try {
+            onMain = JSON.parse(execFileSync('git', ['-C', repoRoot(), 'show', 'origin/main:programs/tax-amm/metadata.json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+        } catch {
+            // No git or no origin/main here: the checkout's copy says.
+        }
+        const pinned = onMain?.source?.commit ?? (local.value as { source?: { commit?: string } }).source?.commit;
+        if (pinned) fail(`the metadata.json on main is pinned to the deploy of ${pinned}: register it at the commit that holds it, not on main`);
+    }
     const published = await pipeline.fetchStrategyMetadata(metadataUri);
     if (published.ok && published.warnings.length === 0) {
         info(`${metadataUri} is valid with zero warnings`);
-    } else if (onDevnet && options['metadata-not-yet-public']) {
-        // The router only stores the URI; it resolves once the repo is public (TAX-54).
-        // It takes this repo's metadata.json on main, or at a commit on main, whose copy is
+    } else if (onDevnet && options['metadata-not-yet-public'] && !published.ok) {
+        // The router only stores the URI; it resolves once the repo is public (TAX-54). Only a
+        // URI that cannot be fetched: one that resolves with warnings still stops below. It
+        // takes this repo's metadata.json on main, or at a commit on main, whose copy is
         // checked as the link will serve it.
         const at = new RegExp(`^${RAW_REPO.replaceAll('.', '\\.')}/(main|[0-9a-f]{40})/programs/tax-amm/metadata\\.json$`).exec(metadataUri)?.[1];
-        if (!at) fail(`--metadata-not-yet-public takes only this repo's metadata.json on main or at a full commit on ${RAW_REPO}, not ${metadataUri}`);
-        // The copy the link will serve: origin/main's, or the commit's (fetch origin main first
-        // if it is new), which must pin the deploy deployments/devnet.json records and carry
-        // its report.
-        const git = (args: string[]) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        if (!at) fail(`--metadata-not-yet-public takes only this repo's programs/tax-amm/metadata.json on main or at a full commit on ${RAW_REPO}, not ${metadataUri}`);
+        // The copy the link will serve, origin/main's or the commit's, read from the repo's root
+        // wherever the script is run from, after fetching main so it is the one served now. A
+        // commit's copy must pin the deploy main records and carry its report.
+        const root = repoRoot();
+        const git = (args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        try {
+            execFileSync('perl', ['-e', 'alarm 120; exec @ARGV', 'git', '-C', root, 'fetch', '-q', 'origin', 'main'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        } catch (error) {
+            const stderr = String((error as { stderr?: string }).stderr ?? '').trim();
+            fail(`git fetch origin main failed${stderr ? `: ${stderr}` : ' (timed out after 120 s)'}; the copy the link serves could not be checked (if git names a lock under .git, a stalled fetch left it: remove it and try again)`);
+        }
         const ref = at === 'main' ? 'origin/main' : at;
         if (at !== 'main') {
             try {
                 git(['merge-base', '--is-ancestor', at, 'origin/main']);
             } catch {
-                fail(`${at} is not a commit on origin/main (git fetch origin main first if it is new)`);
+                fail(`${at} is not a commit on origin/main`);
             }
         }
         let served: unknown;
@@ -1343,13 +1414,31 @@ async function main() {
             fail(`the metadata.json at ${ref} does not pass the validator with zero warnings: ${copy.ok ? copy.warnings.join('; ') : copy.errors.join('; ')}`);
         }
         if (at !== 'main') {
-            const deployed = JSON.parse(readFileSync(new URL('../../../deployments/devnet.json', import.meta.url), 'utf8')).programs?.['tax-amm'];
-            const pinned = served as { source?: { commit?: string }; conformance?: unknown };
-            if (pinned.source?.commit !== deployed?.commit || !pinned.conformance) {
+            // The deploy main records, not this checkout's copy.
+            let deployed: { commit?: string } | undefined;
+            try {
+                deployed = JSON.parse(git(['show', 'origin/main:deployments/devnet.json'])).programs?.['tax-amm'];
+            } catch {
+                fail('origin/main has no readable deployments/devnet.json, so there is no deploy to register metadata for');
+            }
+            const pinned = served as { source?: { commit?: string }; conformance?: { report?: string; sha256?: string } };
+            if (!deployed?.commit || !pinned.source?.commit || pinned.source.commit !== deployed.commit || !pinned.conformance) {
                 fail(`the metadata.json at ${at} pins ${pinned.source?.commit ?? 'no commit'}${pinned.conformance ? '' : ' and no report'}, not the deploy of ${deployed?.commit ?? 'nothing'} with its report`);
             }
+            // Its report must be linked at a commit on main, and hash as that commit holds it.
+            const reportCommit = new RegExp(`^${RAW_REPO.replaceAll('.', '\\.')}/([0-9a-f]{40})/programs/tax-amm/conformance/devnet\\.json$`).exec(pinned.conformance.report ?? '')?.[1];
+            if (!reportCommit) fail(`the metadata.json at ${at} links its report at ${pinned.conformance.report}, not at a full commit of this repo`);
+            let reportBytes: Buffer;
+            try {
+                git(['merge-base', '--is-ancestor', reportCommit, 'origin/main']);
+                reportBytes = execFileSync('git', ['-C', root, 'show', `${reportCommit}:programs/tax-amm/conformance/devnet.json`], { stdio: ['ignore', 'pipe', 'pipe'] });
+            } catch {
+                fail(`the report commit ${reportCommit} is not on origin/main or holds no programs/tax-amm/conformance/devnet.json`);
+            }
+            const reportHash = createHash('sha256').update(reportBytes).digest('hex');
+            if (reportHash !== pinned.conformance.sha256) fail(`the report at ${reportCommit} hashes to ${reportHash}, not the ${pinned.conformance.sha256} the metadata names`);
         }
-        info(`${metadataUri} does not resolve yet (${published.ok ? published.warnings.join('; ') : published.reason}); registering it anyway with --metadata-not-yet-public`);
+        info(`${metadataUri} does not resolve yet (${published.reason}); registering it anyway with --metadata-not-yet-public`);
         info(`the metadata.json at ${ref} was checked instead; desks show the strategy without metadata until the repo is public`);
     } else if (onDevnet) {
         // Pipeline's registry and every terminal read the strategy through this URI.

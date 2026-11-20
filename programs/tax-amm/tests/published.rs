@@ -99,6 +99,14 @@ fn check_published(
     // While a redeploy's record is merged and the metadata still pins the earlier deploy (a
     // commit in the record's history), the committed report is already the new deploy's.
     if commit != deployed.first().copied() {
+        // The earlier report is not committed any more, but its hash must still be one.
+        let sha = conformance["sha256"].as_str().unwrap_or_default();
+        if sha.len() != 64 || !sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err(format!(
+                "conformance.sha256 must be a SHA-256 in lowercase hex, not {}",
+                conformance["sha256"]
+            ));
+        }
         return Ok(());
     }
     let Some(report) = report else {
@@ -184,6 +192,11 @@ fn check_report(report: &Value, deployed: &Value) -> Result<(), String> {
             Some(count) => return Err(format!("the report has {count} {outcome} results")),
         }
     }
+    match report["summary"]["pass"].as_u64() {
+        None => return Err("the report has no pass count".into()),
+        Some(0) => return Err("no check passed in the report".into()),
+        Some(_) => {}
+    }
     Ok(())
 }
 
@@ -232,10 +245,19 @@ fn a_report_of_other_code_or_with_a_warning_is_refused() {
     // Missing fields are refused as missing, never matched as empty.
     let err = check_report(&json!({ "source": { "cluster": "devnet" } }), &json!({})).unwrap_err();
     assert!(err.contains("names no"), "{err}");
+    // A report whose every check was skipped passed nothing.
+    let mut skipped = report("Prog", "aa", 0, 0);
+    skipped["summary"] = json!({ "pass": 0, "warn": 0, "fail": 0, "skip": 14 });
+    let err = check_report(&skipped, &deployed).unwrap_err();
+    assert!(err.contains("no check passed"), "{err}");
     let mut no_summary = report("Prog", "aa", 0, 0);
     no_summary.as_object_mut().unwrap().remove("summary");
     let err = check_report(&no_summary, &deployed).unwrap_err();
     assert!(err.contains("no warn count"), "{err}");
+    let mut no_pass = report("Prog", "aa", 0, 0);
+    no_pass["summary"]["pass"] = json!("13");
+    let err = check_report(&no_pass, &deployed).unwrap_err();
+    assert!(err.contains("no pass count"), "{err}");
 }
 
 #[test]
@@ -324,6 +346,12 @@ fn a_redeploys_record_merges_while_the_metadata_still_names_the_earlier_report()
     // Pinned to the current deploy, the report must be the committed one.
     let err = check_published(&m, &[COMMIT], Some(b"the new deploy's report")).unwrap_err();
     assert!(err.contains("hashes to"), "{err}");
+    // Even before the new pin, the earlier report's hash must be a SHA-256.
+    let mut typo = m.clone();
+    typo["conformance"]["sha256"] = json!("not a hash");
+    let err =
+        check_published(&typo, &[OTHER, COMMIT], Some(b"the new deploy's report")).unwrap_err();
+    assert!(err.contains("lowercase hex"), "{err}");
 }
 
 #[test]
