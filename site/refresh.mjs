@@ -13,16 +13,16 @@
 //      mentions a third party is dropped unless approved.txt lists that exact block.
 //   3. The result must pass the privacy gate (private.mjs) before it replaces content.json.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { REPO_URL, withRepoLinks } from './links.mjs';
 import { assertPublic } from './private.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const REPO = 'imDev2023/testing-pipeline';
 const MAIN = process.argv.includes('--ref') ? process.argv[process.argv.indexOf('--ref') + 1] : 'origin/main';
-const REPO_URL = `https://github.com/${REPO}`;
 const MAP = 1;
 
 // Tickets about the outreach never appear: these numbers, and any title that reads like one.
@@ -42,6 +42,9 @@ const DROP = [
   /\b(metallegbob|he) is (not )?building\b/i,
   // What the owner leaves to him is a claim about him, not about the suite.
   /\bleaves? it to (metallegbob|him)\b/i,
+  /\b(is|are) (metallegbob's|his) to decide\b/i,
+  // His profile and the archive of his X posts, which are kept out of the repo.
+  /metallegbob's profile|archive of his x posts/i,
   /\badam\b/i,
   /metallegbob's (five )?public repositories|gh repo list/i,
   /metallegbob's (asks?|ideas?|views?|wish(es)?|list|protocol-owned)/i,
@@ -274,51 +277,38 @@ function publicPartOf(markdown, where, wholeSections = 0) {
 
 // ---- Links ----
 
-/** The site's page for a file of the repo ("docs/spec/tax-amm.md#constants"), or null when there is none. */
-function pageForFile(file, pages) {
-  const [path, anchor] = file.split('#');
-  const doc = path.match(/^docs\/(.+)\.md$/) ?? path.match(/^(research\/.+)\.md$/);
-  const page = doc && `/${doc[1]}/`;
-  return pages.has(page) ? page + (anchor ? `#${anchor}` : '') : null;
+/** What the repository holds, read from the local clone: a file ('blob'), a folder ('tree') or nothing (null). */
+const kinds = new Map();
+const repo = {
+  kind(ref, path) {
+    const key = `${ref}:${path}`;
+    if (!kinds.has(key)) kinds.set(key, kindOf(ref, path));
+    return kinds.get(key);
+  },
+};
+function kindOf(ref, path) {
+  const quiet = (...args) => spawnSync('git', args, { cwd: here, encoding: 'utf8' });
+  let at = `origin/${ref}`;
+  if (ref === 'main') at = MAIN;
+  else if (/^[0-9a-f]{7,40}$/.test(ref)) {
+    // A commit counts only when GitHub has it: on a branch of origin, not just in this clone.
+    const on = quiet('for-each-ref', '--count=1', '--contains', ref, 'refs/remotes/origin');
+    if (on.status !== 0 || !on.stdout.trim()) return null;
+    at = ref;
+  }
+  const type = quiet('cat-file', '-t', path ? `${at}:${path}` : at);
+  if (type.status !== 0) return null;
+  return { blob: 'blob', tree: 'tree', commit: 'tree' }[type.stdout.trim()] ?? null;
 }
 
-/** The site's page for a link into the private repo, or null when there is none. */
-function pageFor(url, pages) {
-  const path = url.slice(REPO_URL.length).replace(/\?[^#]*/, '');
-  const ticket = path.match(/^\/issues\/(\d+)(#.*)?$/);
-  if (ticket) return pages.has(`/${ticket[1]}/`) ? `/${ticket[1]}/` : null;
-  const file = path.match(/^\/blob\/[^/]+(?:\/[^/]+)?\/((?:docs|research)\/.+)$/);
-  return file ? pageForFile(file[1], pages) : null;
-}
-
-/** Points links at the site's own pages and unwraps the ones a visitor could not open. */
-function withPublicLinks(markdown, pages, folder = '') {
+/** The text with links into the repository pointing at it, and with paths on the owner's machine cut down. */
+function withPublicLinks(markdown, folder = '', ref = 'main') {
   for (const [pattern, replacement] of SCRUB) markdown = markdown.replace(pattern, replacement);
-  // A code block is an example, shown as written: only an address of the private repo is replaced in it.
-  return markdown
-    .split(/^(```[\s\S]*?^```)/m)
-    .map((part) => linksIn(part, pages, folder, part.startsWith('```')))
-    .join('');
-}
-
-function linksIn(markdown, pages, folder, isCode) {
-  return markdown
-    .replace(/\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^)\s]+)\)/g, (link, text, url) => {
-      if (/^(https?:|#)/.test(url) && !url.startsWith(REPO_URL)) {
-        return /^https:\/\/claude\.ai\//.test(url) ? text : link;
-      }
-      if (isCode && !url.startsWith(REPO_URL)) return link;
-      // A link into the repo, by its address or relative to the file it is written in.
-      const page = url.startsWith(REPO_URL)
-        ? pageFor(url, pages)
-        : pageForFile(posix.normalize(posix.join(folder, url)), pages);
-      return page ? `[${text}](${page})` : text;
-    })
-    .replace(new RegExp(`(?<!\\]\\()${REPO_URL}/[^\\s)]+`, 'g'), (url) => {
-      const page = pageFor(url, pages);
-      if (!page) fail(`${url} is a bare link into the private repo with no page on the site.`);
-      return `[${url.split('/').pop()}](${page})`;
-    });
+  try {
+    return withRepoLinks(markdown, { folder, ref, repo });
+  } catch (error) {
+    fail(`${error.message} Fix the link at its source.`);
+  }
 }
 
 // ---- The record, read ----
@@ -376,7 +366,7 @@ tickets.sort(
 );
 
 const documents = [];
-const folders = new Map(); // where each document sits in the repo, for the links written relative to it
+const homes = new Map(); // where each document sits in the repo, for the links written relative to it
 const addDocument = (ref, file) => {
   const path = file.replace(/^docs\//, '').replace(/\.md$/, '');
   const markdown = fileAt(ref, file);
@@ -384,7 +374,8 @@ const addDocument = (ref, file) => {
   if (!title) fail(`${file} has no title.`);
   if (judge(title[1].trim(), `${path}, title (the document is left out until this is settled)`) !== 'keep') return;
   documents.push({ path, title: title[1].trim(), body: markdown.replace(title[0], '') });
-  folders.set(path, posix.dirname(file));
+  // A research branch's findings link to that branch; everything else was read from main (or --ref).
+  homes.set(path, { folder: posix.dirname(file), ref: ref.startsWith('origin/') ? ref.slice('origin/'.length) : 'main' });
 };
 const onMain = git('ls-tree', '--full-tree', '--name-only', '-r', MAIN, 'docs/').split('\n');
 // The decision register arrives with "Decision register open to MetalLegBob's review"; until then there is none.
@@ -397,12 +388,8 @@ for (const ref of git('for-each-ref', '--format=%(refname:short)', 'refs/remotes
 
 // ---- The record, made public ----
 
-const pages = new Set([
-  ...tickets.filter((ticket) => ticket.resolution).map((ticket) => `/${ticket.number}/`),
-  ...documents.map((document) => `/${document.path}/`),
-]);
-const shown = (markdown, where, folder, wholeSections) =>
-  withPublicLinks(publicPartOf(markdown, where, wholeSections), pages, folder);
+const shown = (markdown, where, home = {}, wholeSections = 0) =>
+  withPublicLinks(publicPartOf(markdown, where, wholeSections), home.folder, home.ref);
 
 for (const ticket of tickets) {
   const where = `ticket ${ticket.number}`;
@@ -411,7 +398,7 @@ for (const ticket of tickets) {
 }
 for (const document of documents) {
   // In the register a decision is a third-level section.
-  document.body = shown(document.body, document.path, folders.get(document.path), document.path === 'decisions' ? 3 : 0);
+  document.body = shown(document.body, document.path, homes.get(document.path), document.path === 'decisions' ? 3 : 0);
 }
 
 const sources = new Map([
@@ -455,7 +442,8 @@ const content = {
 // ---- Checks, then the swap ----
 
 const json = `${JSON.stringify(content, null, 2)}\n`;
-const leak = json.match(/github\.com\/imDev2023|claude\.ai\/|\/Volumes\/|\/Users\//);
+// The private archive of the repository is never linked: a visitor could not open it.
+const leak = json.match(/github\.com\/imDev2023\/testing-pipeline-archive|claude\.ai\/|\/Volumes\/|\/Users\//);
 if (leak) fail(`"${leak[0]}" is still in the content. Extend the link or path rules.`);
 
 // If the gate stops here, content.next.json stays (untracked) so the lines it names can be read.
