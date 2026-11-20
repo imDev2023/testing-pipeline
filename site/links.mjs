@@ -6,13 +6,16 @@ export const REPO_URL = 'https://github.com/imDev2023/testing-pipeline';
 
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
-// One pass over prose finds, in this order: a Markdown link or image, an autolink, a bare address into the repo.
+// One pass over prose finds whichever comes first: a Markdown link or image, an autolink, a bare address
+// into the repo, or an inline code span (so a link's text may hold code, and code never holds a link).
 const LINK = /(!?)\[((?:[^\[\]]|\[[^\]]*\])*)\]\((<[^>\n]*>|[^)\s]+)\)/.source;
 const AUTOLINK = /<(https?:\/\/[^>\s]+)>/.source;
 const BARE = `(${escaped(REPO_URL)}/[^\\s()<>\\[\\]\`*"']+)`;
-const ANY = new RegExp(`${LINK}|${AUTOLINK}|${BARE}`, 'g');
+const CODE = /((?<!`)(?<run>`+)(?!`)(?:(?!\n\s*\n)[\s\S])*?(?<!`)\k<run>(?!`))/.source;
+const ANY = new RegExp(`${LINK}|${AUTOLINK}|${BARE}|${CODE}`, 'g');
 
 const PRIVATE = /^https:\/\/claude\.ai\//; // a Claude Code session, which only the owner can open
+const unwrapPrivate = (code) => code.replace(new RegExp(LINK, 'g'), (link, bang, label, url) => (PRIVATE.test(url) ? label : link));
 
 /**
  * Returns the Markdown with every link into the repository pointing at it on GitHub, and throws when one
@@ -29,16 +32,16 @@ const PRIVATE = /^https:\/\/claude\.ai\//; // a Claude Code session, which only 
  */
 export function withRepoLinks(markdown, { folder = '', ref = 'main', repo }) {
   return pieces(markdown)
-    .map(({ code, text }) => (code ? text.replace(new RegExp(LINK, 'g'), (link, bang, label, url) => (PRIVATE.test(url) ? label : link)) : linksIn(text, folder, ref, repo)))
+    .map(({ code, text }) => (code ? unwrapPrivate(text) : linksIn(text, folder, ref, repo)))
     .join('');
 }
 
-/** Splits Markdown into code (fenced blocks at any indent, and inline code spans) and the prose around it. */
+/** Splits Markdown into fenced code blocks, at any indent, and the text around them. */
 function pieces(markdown) {
   const out = [];
   let prose = [];
   const flush = () => {
-    if (prose.length) out.push(...spans(prose.join('')));
+    if (prose.length) out.push({ code: false, text: prose.join('') });
     prose = [];
   };
   const lines = markdown.split(/(?<=\n)/);
@@ -60,15 +63,9 @@ function pieces(markdown) {
   return out;
 }
 
-function spans(text) {
-  return text
-    .split(/((?<!`)(`+)(?!`)(?:(?!\n\s*\n)[\s\S])*?(?<!`)\2(?!`))/)
-    .filter((part, i) => i % 3 !== 2) // the backtick run the split also captures
-    .map((part, i) => ({ code: i % 2 === 1, text: part }));
-}
-
 function linksIn(prose, folder, ref, repo) {
-  return prose.replace(ANY, (match, bang, label, destination, autolink, bare) => {
+  return prose.replace(ANY, (match, bang, label, destination, autolink, bare, code) => {
+    if (code) return unwrapPrivate(match);
     if (bare) {
       // A full address in running text reads badly on a phone, so it becomes a short link.
       const url = bare.replace(/[.,;:!?]+$/, '');

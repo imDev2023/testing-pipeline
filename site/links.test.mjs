@@ -115,3 +115,10 @@ test('code is an example and is shown as written, except that a private claude.a
 test('an image is left alone: the site shows its text, not the picture', () => {
   assert.equal(links('![chart](chart.png)'), '![chart](chart.png)');
 });
+
+test('a link whose text is code is still a link', () => {
+  assert.equal(
+    links(`[\`docs/spec/tax-amm.md\`](${REPO}/blob/main/docs/spec/tax-amm.md) and [\`the ADR\`](../adr/0003-x.md)`),
+    `[\`docs/spec/tax-amm.md\`](${REPO}/blob/main/docs/spec/tax-amm.md) and [\`the ADR\`](${REPO}/blob/main/docs/adr/0003-x.md)`,
+  );
+});
