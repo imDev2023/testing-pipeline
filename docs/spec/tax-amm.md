@@ -377,7 +377,7 @@ How the fuzzer checks them, built by [Tax AMM: invariant fuzzing across every in
 ### Maths proofs
 
 The properties the pricing, tax and split maths satisfy for every input, and the tool that establishes each, are listed in [`docs/security/tax-amm/maths-properties.md`](../security/tax-amm/maths-properties.md), chosen with Book of Knowledge as the bar's "Test layers" 2 asks.
-Kani proves what it can in `src/pricing.rs`, `src/split.rs` and `src/params.rs`, Z3 proves the division and rounding claims for every input in `proofs/pricing_z3.py`, and Proptest checks every property on at least 10,000 cases in `tests/maths.rs`.
+Kani proves what it can in `src/pricing.rs`, `src/split.rs` and `src/params.rs`, Z3 proves the division and rounding claims for every input in `proofs/pricing_z3.py`, and Proptest checks every property on at least 10,000 cases in `tests/maths.rs` (the mint walk, against Token-2022's own state code, in `tests/mint_rules.rs`).
 
 ### `pipeline-check` warns
 
