@@ -219,10 +219,6 @@ const WSOL = address('So11111111111111111111111111111111111111112');
 const HOSTED_API = 'https://pipeline-devnet.up.railway.app';
 // Pipeline's fee, which the router takes from the trader on top of a swap's input.
 const PIPELINE_FEE_BPS = 25n;
-// The tokens a run with --market leaves the payer after selling into the wall, so the next
-// run's sell-back can pay Pipeline's fee on top (a quarter of the worked example's wall sell,
-// many times the fee on step 7's sell-back).
-const REVISIT_RESERVE = 5_000_000_000n;
 
 // The demo market: the spec's worked example (docs/spec/pool4-for-solana.md, "Worked
 // example"), seeded with 1,000,000 tokens of 6 decimals and 10 SOL. These are the demo's
@@ -239,9 +235,10 @@ const DEMO = {
     capDecayBps: 2_000,
     // Step 7's buy (and step 8's, if the wall needs more idle SOL), and the tokens and SOL
     // beyond the seed the payer keeps so that each trade can pay Pipeline's fee on top of its
-    // input and step 9 can sell into the wall.
+    // input and step 9 can sell into the wall, this run and the later runs with --market,
+    // each of which sells `wallSell` more into the wall than it buys.
     buy: 1_000_000_000n,
-    spareTokens: 30_000_000_000n,
+    spareTokens: 300_000_000_000n,
     spareLamports: 1_200_000_000n,
     // Step 9 sells what step 8 bought, if anything, and this many more units: as many as the
     // worked example sells into its wall.
@@ -1092,6 +1089,9 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
     }
 
     const seed = [DEMO.tokens, DEMO.lamports];
+    // The escrows are the launchpad's for this creator, so an earlier run on the same cluster
+    // can have left something in them: what the graduation takes is measured from here.
+    const escrowed = await Promise.all(escrows.map((escrow) => tokenBalance(escrow!)));
     const graduate = await graduateInstruction({
         creator: payer.address,
         strategyProgram: programId,
@@ -1131,7 +1131,6 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
         .send();
     const logs = transaction?.meta?.logMessages ?? fail('the graduation left no logs');
     const graduation = graduationFromLogs(logs) ?? fail("the launchpad's return data is missing");
-    const escrowed = [LAUNCH.escrowedTokens, LAUNCH.escrowedLamports];
     const left = await Promise.all(escrows.map(async (escrow, i) => escrowed[i]! - (await tokenBalance(escrow))));
     if (show(graduation.leftEscrows) !== show(seed) || show(left) !== show(seed)) {
         fail(`the escrows lost ${show(left)} (the launchpad measured ${show(graduation.leftEscrows)}), not the seed ${show(seed)}`);
@@ -1933,13 +1932,14 @@ async function main() {
 
     step('9. Selling into the wall');
     const top = books.wall.top;
-    // A fresh market sells what step 8 bought and as much again as the worked example sells
-    // into its wall; a market revisited sells every token the payer holds beyond REVISIT_RESERVE,
-    // which pays Pipeline's fee on later runs' sells, less room for this sell's own fee
-    // (PIPELINE_FEE_BPS, on top).
+    // It sells what step 8 bought, if anything, and as much again as the worked example sells
+    // into its wall, from the stock of tokens the first run kept (`DEMO.spareTokens`), with
+    // Pipeline's fee on top (PIPELINE_FEE_BPS, rounded up).
+    const intoWallAmount = topUp + DEMO.wallSell;
     const held = await tokenBalance(payerAccounts[0]!);
-    const intoWallAmount = revisit ? ((held - REVISIT_RESERVE) * 10_000n) / (10_000n + PIPELINE_FEE_BPS) - 1n : topUp + DEMO.wallSell;
-    if (intoWallAmount <= 0n) fail(`the payer holds ${held} units of the token, not more than the ${REVISIT_RESERVE} it keeps for later runs; send it some to sell into the wall`);
+    if (held < intoWallAmount + ceilBps(intoWallAmount, PIPELINE_FEE_BPS)) {
+        fail(`the payer holds ${held} units of the token, too few to sell ${intoWallAmount} into the wall with Pipeline's fee on top`);
+    }
     const intoWall = await trade('sell into the wall', 0, intoWallAmount);
     if (intoWall.spec.sqrtPrice >= top) fail(`the sell left the price at ${intoWall.spec.sqrtPrice}, not below the wall's top ${top}`);
     const spent = books.wallSolPlaced - wallSol(books.wall, books.curve.sqrtPrice);
