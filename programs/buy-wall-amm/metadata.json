@@ -7,6 +7,7 @@
     "links": {
         "source": "https://github.com/imDev2023/testing-pipeline/tree/main/programs/buy-wall-amm",
         "idl": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/buy-wall-amm/idl/buy_wall_amm.json",
+        "docs": "https://github.com/imDev2023/testing-pipeline/blob/main/programs/buy-wall-amm/README.md",
         "github": "https://github.com/imDev2023/testing-pipeline"
     },
     "source": {
@@ -179,6 +180,7 @@
     ],
     "security": {
         "contact": "https://github.com/imDev2023/testing-pipeline/security/advisories/new",
-        "policy": "https://github.com/imDev2023/testing-pipeline/security/policy"
+        "policy": "https://github.com/imDev2023/testing-pipeline/security/policy",
+        "audits": []
     }
 }

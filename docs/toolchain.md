@@ -259,7 +259,7 @@ Passed on 2026-11-16 from a fresh validator in 76 seconds, on its own ports (`sc
 `cargo test --workspace` runs its checks on every fixture in `programs/buy-wall-amm/gate/fixtures/` against the current build, and on the seven stranding test builds, which `cargo run -p buy-wall-gate -- test-builds` writes to `programs/target/gate-test-builds`, from edited copies of the workspace built in a target directory of their own there.
 Every gate run, on a cluster or a fixture, also makes and trades a market of its own with the candidate (`POOL4-53`), so `cargo test -p buy-wall-gate --test empty_cluster` checks that a cluster with no market passes the current build and refuses a broken one.
 Kani builds the crate without its dependencies (`cfg(not(kani))` in its `Cargo.toml`), because Kani's nightly Rust refuses LiteSVM's Solana crates and the gate has no proofs.
-The buy wall AMM's deploy script, `programs/buy-wall-amm/scripts/deploy.sh`, deploys only a build the gate has passed against the cluster it deploys to.
+`scripts/deploy-devnet.sh buy-wall-amm` deploys only a build the gate has passed against the cluster it deploys to: before it sends anything it runs the program's pre-deploy check, `programs/buy-wall-amm/scripts/pre-deploy.sh`, which asks `buy-wall-gate verify-record` (`POOL4-54`; "Deploy to devnet").
 
 ### Containment hook
 
@@ -591,6 +591,24 @@ The tax AMM went to devnet this way on 2026-11-20, while the repo was private:
   Every signature and address is in `deployments/devnet-demo-tax-amm.json`, the run's `--record`.
 - **Conformance.** `pipeline-check` 0.2.0 `--fail-on-warn` reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped (`programs/tax-amm/conformance/devnet.json`), and `--list-markets` listed the market.
 - **Pipeline's hosted API.** It showed the strategy with the deployed code hash, upgradeable, its metadata unreachable until the repo is public, and the market with its own checks passed and the mint flags `tax-amm.md` predicts (`mint-authority` on the demo token, none on wrapped SOL).
+
+The buy wall AMM goes the same way, with `programs/buy-wall-amm/scripts/` for `programs/tax-amm/scripts/`, and the release gate in front of every deploy (`POOL4-54`): `deploy-devnet.sh` runs any program's `programs/<program>/scripts/pre-deploy.sh` on the bytes it built, before sending anything, and the buy wall AMM's refuses unless the gate has passed that build on that cluster.
+So between the build and the deploy, the gate runs on the same build, and its record, in `deployments/release-gate/buy-wall-amm/devnet.json`, goes into the record PR with `deployments/devnet.json`:
+
+```sh
+scripts/deploy-devnet.sh buy-wall-amm --build-only --out <scratchpad>/verified
+(cd programs && SBF_OUT_DIR=<scratchpad>/verified cargo test -p buy-wall-amm)
+(cd programs && cargo run -p buy-wall-gate -- run --cluster devnet --candidate <scratchpad>/verified/buy_wall_amm.so)
+scripts/deploy-devnet.sh buy-wall-amm
+cd programs/buy-wall-amm/scripts
+pnpm demo --cluster devnet --payer ... --upgrade-authority ... \
+  --metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/buy-wall-amm/metadata.json \
+  --metadata-not-yet-public --record <scratchpad>/devnet-demo.json
+```
+
+On devnet the demo creates one market, the worked example's (`POOL4-55`), and walks its whole life through the router: the two trades of the worked example, the wall placed and sold into, `settle`, both handovers, `pay_rewards` and `sweep_fees` for slots 0 and 2 with slot 1 refused; after every step it reads the whole market state back against the spec's formulas, and at the end it checks Pipeline's hosted API quotes the market both ways at the program's own quotes.
+After the deploy, `cargo run -p buy-wall-gate -- snapshot --cluster devnet --out programs/buy-wall-amm/gate/fixtures/layout-1-devnet.json` saves the demo market as layout version 1's fixture from a real market (`POOL4-20`).
+After an upgrade, `pnpm demo --cluster devnet ... --market <the demo market's state>` trades the market and runs its keeper jobs again from its state as read (`POOL4-56`), and `pipeline-check` runs against it again.
 
 ## Local validator
 

@@ -243,6 +243,48 @@ else
   fail "local: $(cat "$work/out")"
 fi
 expect_refused "a local deploy without --record" "--record" toy --url http://127.0.0.1:8999
+# A local port can be a tunnel or a proxy to a real cluster: only a local validator's own
+# genesis, or devnet's, will do.
+FAKE_GENESIS=$MAINNET_GENESIS expect_refused "a local URL that answers as mainnet" "mainnet or testnet" toy --url http://127.0.0.1:8999 --record "$work/local.json"
+FAKE_GENESIS=4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY expect_refused "a local URL that answers as testnet" "mainnet or testnet" toy --url http://127.0.0.1:8999 --record "$work/local.json"
+
+# A program's own pre-deploy check (programs/<program>/scripts/pre-deploy.sh), such as the buy
+# wall AMM's release gate: it gets the cluster, the very bytes built and the program id, after
+# the build and before anything is sent, and a refusal stops the deploy.
+git -C "$repo" reset -q --hard origin/main
+mkdir -p "$repo/programs/toy/scripts"
+cat > "$repo/programs/toy/scripts/pre-deploy.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "pre-deploy $*" >> "$WORK/calls"
+prev=""
+for arg in "$@"; do [ "$prev" = --so ] && cp "$arg" "$WORK/checked.so"; prev="$arg"; done
+[ "${FAKE_PRE_DEPLOY:-pass}" = pass ] || { echo "the gate has not passed this build"; exit 1; }
+EOF
+git -C "$repo" -c user.name=t -c user.email=t@t add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "pre-deploy check" && git -C "$repo" push -q origin main
+FAKE_PRE_DEPLOY=refuse expect_refused "a build the program's pre-deploy check refuses" "pre-deploy check refused" toy
+grep -q "^pre-deploy --url https://api.devnet.solana.com --so .*/toy.so --program $PROGRAM_ID$" "$work/calls" \
+  || fail "the pre-deploy check's arguments: $(grep pre-deploy "$work/calls")"
+[ "$(cat "$work/checked.so" 2>/dev/null)" = bytes ] || fail "the pre-deploy check did not get the built bytes"
+if run toy --build-only && ! grep -q "^pre-deploy" "$work/calls"; then
+  pass "--build-only runs no pre-deploy check"
+else
+  fail "--build-only and the pre-deploy check: $(cat "$work/calls")"
+fi
+# The gate's record of a passing run is written before the deploy and merged after it, so
+# like deployments/devnet.json it does not count as a change.
+mkdir -p "$repo/deployments/release-gate/toy"
+echo '{}' > "$repo/deployments/release-gate/toy/devnet.json"
+if run toy && grep -q "^pre-deploy" "$work/calls" && grep -q "program deploy" "$work/calls"; then
+  pass "a build the pre-deploy check passes is deployed, with the gate's record uncommitted"
+else
+  fail "a passing pre-deploy check: $(cat "$work/out")"
+fi
+# Only the deployed program's own gate records may be uncommitted, never another's.
+mkdir -p "$repo/deployments/release-gate/other"
+echo '{}' > "$repo/deployments/release-gate/other/devnet.json"
+expect_refused "another program's uncommitted gate record" "uncommitted" toy
+rm -rf "$repo/deployments/release-gate" "$repo/deployments/devnet.json"
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures failed" >&2
