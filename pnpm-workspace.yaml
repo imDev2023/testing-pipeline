@@ -1,6 +1,12 @@
 # One pnpm workspace for every TypeScript package in the repo. Each program's demo scripts
-# live beside it; shared packages (strategy-actions) live in packages/, and Aviary's apps and
-# packages join here when they are built.
+# live beside it; shared packages (strategy-actions, keeper-jobs) live in packages/, and apps
+# (the keeper runner, Aviary's later) in apps/.
 packages:
   - programs/*/scripts
   - packages/*
+  - apps/*
+
+# esbuild, the keeper runner's bundler, needs no install script: its binary comes from its
+# platform package.
+allowBuilds:
+  esbuild: false
