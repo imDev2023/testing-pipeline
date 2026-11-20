@@ -6,16 +6,23 @@ export const REPO_URL = 'https://github.com/imDev2023/testing-pipeline';
 
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
-// One pass over prose finds whichever comes first: a Markdown link or image, an autolink, a bare address
-// into the repo, or an inline code span (so a link's text may hold code, and code never holds a link).
-const LINK = /(!?)\[((?:[^\[\]]|\[[^\]]*\])*)\]\((<[^>\n]*>|[^)\s]+)\)/.source;
-const AUTOLINK = /<(https?:\/\/[^>\s]+)>/.source;
-const BARE = `(${escaped(REPO_URL)}/[^\\s()<>\\[\\]\`*"']+)`;
-const CODE = /((?<!`)(?<run>`+)(?!`)(?:(?!\n\s*\n)[\s\S])*?(?<!`)\k<run>(?!`))/.source;
-const ANY = new RegExp(`${LINK}|${AUTOLINK}|${BARE}|${CODE}`, 'g');
+// One pass over prose finds whichever comes first: a Markdown link or image (with or without a title), a
+// reference definition, an autolink, a bare address into the repo, or an inline code span, so a link's
+// text may hold code and code never holds a link.
+const LINK = /(?<bang>!?)\[(?<label>(?:[^\[\]]|\[[^\]]*\])*)\]\((?<destination><[^>\n]*>|[^)\s]+)(?<title>\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\)/.source;
+const DEFINITION = /^(?<head> {0,3}\[[^\]\n]+\]:[ \t]*)(?<target><[^>\n]*>|\S+)/.source;
+const AUTOLINK = /<(?<autolink>https?:\/\/[^>\s]+)>/.source;
+// Not an attribute's value, and ending at a space, a bracket, a quote, a pipe or emphasis.
+const BARE = `(?<!=["']?)(?<bare>${escaped(REPO_URL)}/[^\\s()<>\\[\\]\`*"'|]+)`;
+const CODE = /(?<code>(?<!`)(?<run>`+)(?!`)(?:(?!\n\s*\n)[\s\S])*?(?<!`)\k<run>(?!`))/.source;
+const ANY = new RegExp(`${LINK}|${DEFINITION}|${AUTOLINK}|${BARE}|${CODE}`, 'gm');
 
 const PRIVATE = /^https:\/\/claude\.ai\//; // a Claude Code session, which only the owner can open
-const unwrapPrivate = (code) => code.replace(new RegExp(LINK, 'g'), (link, bang, label, url) => (PRIVATE.test(url) ? label : link));
+const unwrapPrivate = (code) =>
+  code.replace(new RegExp(LINK, 'g'), (link, ...args) => {
+    const { label, destination } = args.at(-1);
+    return PRIVATE.test(destination) ? label : link;
+  });
 
 /**
  * Returns the Markdown with every link into the repository pointing at it on GitHub, and throws when one
@@ -36,7 +43,22 @@ export function withRepoLinks(markdown, { folder = '', ref = 'main', repo }) {
     .join('');
 }
 
-/** Splits Markdown into fenced code blocks, at any indent, and the text around them. */
+// ---- Code ----
+
+/** The marks of a line that opens a fence, as CommonMark reads it, also inside a block quote; null when it does not. */
+function fenceOpening(line) {
+  const fence = line.replace(/^(\s*>)+/, '').replace(/\r?\n$/, '').match(/^\s*(`{3,}|~{3,})(.*)$/);
+  if (!fence || (fence[1][0] === '`' && fence[2].includes('`'))) return null;
+  return fence[1];
+}
+
+/** True for a line that closes the fence `opening`: its own marks, at least as many, and nothing else. */
+function closes(line, opening) {
+  const fence = line.replace(/^(\s*>)+/, '').match(/^\s*(`{3,}|~{3,})\s*$/);
+  return !!fence && fence[1][0] === opening[0] && fence[1].length >= opening.length;
+}
+
+/** Splits Markdown into fenced code blocks and the text around them. */
 function pieces(markdown) {
   const out = [];
   let prose = [];
@@ -46,8 +68,8 @@ function pieces(markdown) {
   };
   const lines = markdown.split(/(?<=\n)/);
   for (let i = 0; i < lines.length; i++) {
-    const fence = lines[i].match(/^\s*(`{3,}|~{3,})/);
-    if (!fence) {
+    const opening = fenceOpening(lines[i]);
+    if (!opening) {
       prose.push(lines[i]);
       continue;
     }
@@ -55,7 +77,7 @@ function pieces(markdown) {
     const block = [lines[i]];
     while (++i < lines.length) {
       block.push(lines[i]);
-      if (lines[i].trim().startsWith(fence[1])) break;
+      if (closes(lines[i], opening)) break;
     }
     out.push({ code: true, text: block.join('') });
   }
@@ -63,12 +85,15 @@ function pieces(markdown) {
   return out;
 }
 
+// ---- Links ----
+
 function linksIn(prose, folder, ref, repo) {
-  return prose.replace(ANY, (match, bang, label, destination, autolink, bare, code) => {
+  return prose.replace(ANY, (match, ...args) => {
+    const { bang, label, destination, head, target, autolink, bare, code } = args.at(-1);
     if (code) return unwrapPrivate(match);
     if (bare) {
       // A full address in running text reads badly on a phone, so it becomes a short link.
-      const url = bare.replace(/[.,;:!?]+$/, '');
+      const url = bare.replace(/[.,;:!?_~]+$/, '');
       checked(url, repo);
       return `[${shortName(url)}](${url})${match.slice(url.length)}`;
     }
@@ -76,26 +101,49 @@ function linksIn(prose, folder, ref, repo) {
       if (autolink.startsWith(`${REPO_URL}/`)) checked(autolink, repo);
       return match;
     }
+    if (head !== undefined) {
+      const url = target.replace(/^<(.*)>$/, '$1');
+      return `${head}${pointed(url, match, folder, ref, repo) ?? target}`;
+    }
     if (bang) return match; // an image: the site shows its text
     const url = destination.replace(/^<(.*)>$/, '$1');
     if (PRIVATE.test(url)) return label;
-    if (url.startsWith(`${REPO_URL}/`)) return checked(url, repo) && match;
-    if (/^([a-z][a-z0-9+.-]*:|#|\/\/)/i.test(url)) return match;
-
-    // A link relative to the file the text sits in, or to the root of the repo, as GitHub reads it.
-    const [file, anchor] = url.split('#');
-    const path = posix.normalize(file.startsWith('/') ? file.slice(1) : posix.join(folder, file)).replace(/\/$/, '');
-    const kind = path.startsWith('../') ? null : repo.kind(ref, path);
-    if (!kind) throw new Error(`[${label}](${url}) links to a file that is not there: ${path} is not on ${ref}.`);
-    if (anchor) checkSection(ref, path, kind, anchor, repo);
-    return `[${label}](${REPO_URL}/${kind}/${ref}/${path}${anchor ? `#${anchor}` : ''})`;
+    const repointed = pointed(url, match, folder, ref, repo);
+    return repointed ? `[${label}](${repointed}${args.at(-1).title ?? ''})` : match;
   });
+}
+
+/**
+ * Where a link's address points on GitHub when it was written relative to a file or to the root of the
+ * repo, as GitHub reads it; null when it stays as written: it leads elsewhere, or it is a full address
+ * into the repo that checks out.
+ */
+function pointed(url, written, folder, ref, repo) {
+  if (url.startsWith(`${REPO_URL}/`)) return checked(url, repo) && null;
+  if (/^([a-z][a-z0-9+.-]*:|#|\/\/)/i.test(url)) return null;
+
+  const [name, anchor] = url.split('#');
+  let file = name;
+  try {
+    file = decodeURI(name);
+  } catch {}
+  const path = posix.normalize(file.startsWith('/') ? file.slice(1) : posix.join(folder, file)).replace(/\/$/, '');
+  const kind = path.startsWith('../') ? null : repo.kind(ref, path);
+  if (!kind) throw new Error(`${written} links to a file that is not there: ${path} is not on ${ref}.`);
+  if (anchor) checkSection(ref, path, kind, anchor, repo);
+  return `${REPO_URL}/${kind}/${encodeURI(ref)}/${encodeURI(path)}${anchor ? `#${anchor}` : ''}`;
 }
 
 /** True when what a full address into the repository names is there; throws when it is not. */
 function checked(url, repo) {
   const [path, anchor] = url.slice(REPO_URL.length + 1).replace(/\?[^#]*/, '').split('#');
-  const [route, ...rest] = path.split('/');
+  const [route, ...rest] = path.split('/').map((part) => {
+    try {
+      return decodeURIComponent(part);
+    } catch {
+      return part;
+    }
+  });
   let there = true;
   if (route === 'blob' || route === 'tree') {
     // A branch can hold slashes ("research/quoter-hosting"), so try each split, as GitHub does.
@@ -113,9 +161,11 @@ function checked(url, repo) {
   return true;
 }
 
-/** Throws unless a Markdown file has the section an anchor names (line anchors and other files are not checked). */
+// ---- Sections ----
+
+/** Throws unless a Markdown file has the section an anchor names; a line anchor, or another kind of file, is not checked. */
 function checkSection(ref, path, kind, anchor, repo) {
-  if (kind !== 'blob' || !/\.md$/i.test(path)) return;
+  if (kind !== 'blob' || !/\.md$/i.test(path) || /^L\d+(C\d+)?(-L\d+(C\d+)?)?$/.test(anchor)) return;
   let wanted = anchor;
   try {
     wanted = decodeURIComponent(anchor);
@@ -125,24 +175,22 @@ function checkSection(ref, path, kind, anchor, repo) {
   }
 }
 
-/** The anchors GitHub gives the headings of a Markdown file. */
+/** The anchors GitHub gives the headings of a Markdown file, made from each heading's text as it is shown. */
 function sectionsOf(markdown) {
   const ids = new Set();
-  let fence = null;
+  let opening = null;
   for (const line of markdown.split('\n')) {
-    const marker = line.match(/^\s*(`{3,}|~{3,})/);
-    if (fence) {
-      if (line.trim().startsWith(fence)) fence = null;
+    if (opening) {
+      if (closes(line, opening)) opening = null;
       continue;
     }
-    if (marker) {
-      fence = marker[1];
-      continue;
-    }
-    const heading = line.match(/^ {0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$/);
+    opening = fenceOpening(line);
+    const heading = !opening && line.match(/^ {0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$/);
     if (!heading) continue;
-    const plain = heading[1].replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/<[^>]+>/g, '');
-    const base = plain.toLowerCase().trim().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
+    const shown = heading[1]
+      .replace(/!?\[((?:[^\[\]]|\[[^\]]*\])*)\]\([^)]*\)/g, '$1')
+      .replace(/(`+)(.+?)\1|<[^>]+>/g, (tag, run, code) => (run ? code : ''));
+    const base = shown.toLowerCase().trim().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
     let id = base;
     for (let n = 1; ids.has(id); n++) id = `${base}-${n}`;
     ids.add(id);
@@ -154,5 +202,10 @@ function sectionsOf(markdown) {
 function shortName(url) {
   const parts = url.slice(REPO_URL.length + 1).replace(/[?#].*$/, '').split('/').filter(Boolean);
   if ((parts[0] === 'issues' || parts[0] === 'pull') && /^\d+$/.test(parts[1] ?? '')) return `#${parts[1]}`;
-  return parts.at(-1);
+  const last = parts.at(-1);
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
 }

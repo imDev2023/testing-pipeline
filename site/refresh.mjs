@@ -280,7 +280,8 @@ function publicPartOf(markdown, where, wholeSections = 0) {
 /**
  * What the repository holds, for the link checks in links.mjs: read from this clone, and from GitHub for
  * what the clone lacks (tags, the commits of merged pull requests whose branch is gone).
- * A link names `main`, so it is checked against origin/main even when --ref reads the docs from elsewhere.
+ * A link to `main` is checked at the commit the docs were read from: origin/main, or the commit --ref names,
+ * so a branch's docs can be previewed with links to the files the branch adds; they resolve once it merges.
  */
 const answers = new Map();
 const remembered = (key, answer) => (answers.has(key) ? answers.get(key) : answers.set(key, answer()).get(key));
@@ -297,7 +298,7 @@ const repo = {
 
 /** The ref of this clone that a GitHub ref names, or null when this clone cannot vouch for it. */
 function localRef(ref) {
-  if (ref === 'main') return 'origin/main';
+  if (ref === 'main') return MAIN;
   if (!/^[0-9a-f]{7,40}$/.test(ref)) return `origin/${ref}`;
   // A commit counts here only when a branch of origin holds it: this clone may keep commits GitHub does not.
   const on = spawnSync('git', ['for-each-ref', '--count=1', '--contains', ref, 'refs/remotes/origin'], { cwd: here, encoding: 'utf8' });
@@ -401,8 +402,8 @@ const addDocument = (ref, file) => {
   if (!title) fail(`${file} has no title.`);
   if (judge(title[1].trim(), `${path}, title (the document is left out until this is settled)`) !== 'keep') return;
   documents.push({ path, title: title[1].trim(), body: markdown.replace(title[0], '') });
-  // A research branch's findings link to that branch; everything else was read from main (or --ref).
-  homes.set(path, { folder: posix.dirname(file), ref: ref.startsWith('origin/') ? ref.slice('origin/'.length) : 'main' });
+  // A research branch's findings link to that branch; everything else links to main, even when --ref read it.
+  homes.set(path, { folder: posix.dirname(file), ref: ref.startsWith('origin/research/') ? ref.slice('origin/'.length) : 'main' });
 };
 const onMain = git('ls-tree', '--full-tree', '--name-only', '-r', MAIN, 'docs/').split('\n');
 // The decision register arrives with "Decision register open to MetalLegBob's review"; until then there is none.
@@ -470,7 +471,7 @@ const content = {
 
 const json = `${JSON.stringify(content, null, 2)}\n`;
 // Of the owner's repositories only this one is shown: the others, the private archive among them, may be private.
-const leak = json.match(/github\.com\/imDev2023\/(?!testing-pipeline(?:\.git)?(?![\w.-]))\S*|claude\.ai\/|\/Volumes\/|\/Users\//i);
+const leak = json.match(/github\.com\/imDev2023(?!\/testing-pipeline(?:\.git)?(?![\w.-]))\S*|claude\.ai\/|\/Volumes\/|\/Users\//i);
 if (leak) fail(`"${leak[0]}" is still in the content. Extend the link or path rules.`);
 
 // If the gate stops here, content.next.json stays (untracked) so the lines it names can be read.

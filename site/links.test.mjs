@@ -122,3 +122,41 @@ test('a link whose text is code is still a link', () => {
     `[\`docs/spec/tax-amm.md\`](${REPO}/blob/main/docs/spec/tax-amm.md) and [\`the ADR\`](${REPO}/blob/main/docs/adr/0003-x.md)`,
   );
 });
+
+test('a link to a line of a file is kept: line anchors are not sections', () => {
+  const line = `${REPO}/blob/main/docs/spec/tax-amm.md?plain=1#L10-L12`;
+  assert.equal(links(`[l](${line}) [m](tax-amm.md#L3)`), `[l](${line}) [m](${REPO}/blob/main/docs/spec/tax-amm.md#L3)`);
+});
+
+test('an address in a reference definition, an HTML attribute or a titled link is not taken for a bare one', () => {
+  const kept = `[ref]: ${REPO}/issues/7\n<a href="${REPO}/issues/7">x</a>\n[x](${REPO}/issues/7 "title")`;
+  assert.equal(links(kept), kept);
+  assert.equal(links('[ref]: ../adr/0003-x.md'), `[ref]: ${REPO}/blob/main/docs/adr/0003-x.md`);
+  assert.throws(() => links(`[ref]: ${REPO}/issues/700`), /issues\/700 names something/);
+});
+
+test('a bare address ends at a table pipe or the emphasis around it', () => {
+  assert.equal(links(`| ${REPO}/issues/7| _${REPO}/issues/8_ |`), `| [#7](${REPO}/issues/7)| _[#8](${REPO}/issues/8)_ |`);
+});
+
+test('a heading with code that holds angle brackets has the anchor GitHub gives it', () => {
+  const vec = repo({ main: { 'docs/v.md': '# V\n\n## `Vec<u8>` layout\n\n## A <b>bold</b> one\n' } });
+  const at = (anchor) => withRepoLinks(`[x](v.md#${anchor})`, { folder: 'docs', ref: 'main', repo: vec });
+  assert.equal(at('vecu8-layout'), `[x](${REPO}/blob/main/docs/v.md#vecu8-layout)`);
+  assert.equal(at('a-bold-one'), `[x](${REPO}/blob/main/docs/v.md#a-bold-one)`);
+  assert.throws(() => at('vec-layout'), /has no section #vec-layout/);
+});
+
+test('a file name with a space works written either way, and its address is encoded', () => {
+  const spaced = repo({ main: { 'docs/a b.md': '# A\n' } });
+  const at = (url) => withRepoLinks(`[x](${url})`, { folder: 'docs/spec', ref: 'main', repo: spaced });
+  assert.equal(at('../a%20b.md'), `[x](${REPO}/blob/main/docs/a%20b.md)`);
+  assert.equal(at('<../a b.md>'), `[x](${REPO}/blob/main/docs/a%20b.md)`);
+});
+
+test('a fence closes only on a line of its own marks, and a quoted fence is code too', () => {
+  const nested = '````markdown\n```js\n[x](missing.md)\n```\n````';
+  const info = '```\n```js\n[x](missing.md)\n```';
+  const quoted = '> ~~~\n> [x](missing.md)\n> ~~~';
+  assert.equal(links(`${nested}\n\n${info}\n\n${quoted}`), `${nested}\n\n${info}\n\n${quoted}`);
+});

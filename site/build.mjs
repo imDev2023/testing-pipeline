@@ -46,16 +46,16 @@ function markdown(sections = []) {
         const html = this.parser.parseInline(tokens);
         const text = unescape(html);
         // The same anchors GitHub gives the file, so a link written for the repo lands here too;
-        // a decision ("TAX-03: ...") is also reachable by its id alone.
-        const decision = text.match(/^([A-Z0-9]+-\d{2}): /);
-        const base = decision
-          ? decision[1].toLowerCase()
-          : text.toLowerCase().trim().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-') || 'section';
+        // a decision ("TAX-03: ...") is also reachable by its id alone (`/decisions/#tax-03`).
+        const base = text.toLowerCase().trim().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-') || 'section';
         let id = base;
         for (let n = 1; ids.has(id); n++) id = `${base}-${n}`;
         ids.add(id);
+        const decision = text.match(/^([A-Z0-9]+-\d{2}): /)?.[1].toLowerCase();
+        const alias = decision && !ids.has(decision) ? `<span id="${decision}"></span>` : '';
+        if (alias) ids.add(decision);
         if (depth === 2) sections.push({ id, text });
-        return `<h${depth} id="${id}">${whole(html)}</h${depth}>\n`;
+        return `<h${depth} id="${id}">${alias}${whole(html)}</h${depth}>\n`;
       },
       listitem(item) {
         // A numbered item keeps the number it was written with, even when an item before it is not shown.
