@@ -65,7 +65,22 @@
 //      program as built here and the cluster's own router, and must pass; then, when the
 //      stranding test builds have been built (`cargo run -p buy-wall-gate -- test-builds`),
 //      with the build that moves a field, which it must refuse, naming the markets and
-//      steps that failed. Its pass records go to a scratch folder, never the repo's.
+//      steps that failed. Its pass records go to a scratch folder, never the repo's. On
+//      devnet the gate runs before each deploy instead (scripts/deploy-devnet.sh), so the
+//      step is skipped;
+//  16. on devnet, ask Pipeline's hosted API for a quote each way and check it equals the
+//      program's own quote on the same state (the market state unchanged in between).
+//
+// After every trade and keeper job the script reads the whole market state back and checks
+// the price, the wall, the guard, every ledger, the cap and the counters against its own
+// account of the market from the spec's formulas, and prints each transaction's signature.
+//
+// With --market it runs the trades and the keeper jobs again on a market an earlier run
+// created, as after an upgrade: steps 4 to 6 load the market and wrap the SOL for the buys,
+// the spec's account starts from the market state as read, step 7 buys and sells back (the
+// buy lowering the cap and the sell trimmed, as in the first run), steps 8 to 11 and 13 run
+// as before with the market's recipients as they are now, and step 12 (the handovers) and
+// step 14 are skipped.
 //
 // On the pattern of the tax AMM's demo (programs/tax-amm/scripts/demo.ts). Deploy the
 // program first; docs/toolchain.md says how, on a local validator and on devnet.
@@ -74,7 +89,8 @@
 //
 //   node demo.ts --cluster <localnet|devnet|URL> \
 //     --payer <keypair.json> --upgrade-authority <keypair.json> \
-//     [--metadata-uri <URI>] [--program-id <address>]
+//     [--metadata-uri <URI>] [--program-id <address>] [--register-only]
+//     [--metadata-not-yet-public] [--market <market state>] [--record <file>]
 //
 //   --cluster            localnet (http://127.0.0.1:8899), devnet, or an RPC URL of either;
 //                        the cluster's genesis hash must be devnet's, or the URL a local
@@ -84,12 +100,27 @@
 //                        its listing fee (docs/spec/README.md, "Upgrade authority")
 //   --metadata-uri       where metadata.json is published (default: this repo's main branch)
 //   --program-id         the strategy program (default: the address in declare_id!)
+//   --register-only      steps 1 to 3 only: register the strategy, or point it at a new
+//                        metadata URI, as each later deploy does
+//   --metadata-not-yet-public
+//                        on devnet, register or point the strategy at a metadata URI of this
+//                        repo that cannot resolve yet because the repo is still private; the
+//                        URI must be this repo's raw.githubusercontent.com address of this
+//                        program's metadata.json, and the committed copy is checked instead
+//                        (TAX-54)
+//   --market             the market state of a market an earlier run created: trade it and
+//                        run its keeper jobs again instead of creating one
+//   --record             also write what the run did (addresses and signatures) to a file
+//
+// On devnet the metadata URI must resolve and pass Pipeline's validator with zero warnings
+// before the script registers it or points the strategy at it, unless
+// --metadata-not-yet-public says the repo is still private.
 //
 // On a local cluster the script airdrops the SOL both keys need; on devnet it never does
 // (fund them with devnet-airdrop, docs/toolchain.md).
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -170,6 +201,7 @@ import {
     SUITE_SHARE_BPS,
     WALL_THRESHOLD,
     type CapLoweredEvent,
+    type MarketState,
     type TrimmedEvent,
     type WallPlacedEvent,
     type SettledEvent,
@@ -180,9 +212,13 @@ import {
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
 const DEFAULT_PROGRAM_ID = 'BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6';
-const DEFAULT_METADATA_URI =
-    'https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/buy-wall-amm/metadata.json';
+const RAW_REPO = 'https://raw.githubusercontent.com/imDev2023/testing-pipeline';
+const DEFAULT_METADATA_URI = `${RAW_REPO}/main/programs/buy-wall-amm/metadata.json`;
 const WSOL = address('So11111111111111111111111111111111111111112');
+// Pipeline's hosted API on devnet (Pipeline's docs/API.md).
+const HOSTED_API = 'https://pipeline-devnet.up.railway.app';
+// Pipeline's fee, which the router takes from the trader on top of a swap's input.
+const PIPELINE_FEE_BPS = 25n;
 
 // The demo market: the spec's worked example (docs/spec/pool4-for-solana.md, "Worked
 // example"), seeded with 1,000,000 tokens of 6 decimals and 10 SOL. These are the demo's
@@ -199,9 +235,10 @@ const DEMO = {
     capDecayBps: 2_000,
     // Step 7's buy (and step 8's, if the wall needs more idle SOL), and the tokens and SOL
     // beyond the seed the payer keeps so that each trade can pay Pipeline's fee on top of its
-    // input and step 9 can sell into the wall.
+    // input and step 9 can sell into the wall, this run and the later runs with --market,
+    // each of which sells `wallSell` more into the wall than it buys.
     buy: 1_000_000_000n,
-    spareTokens: 30_000_000_000n,
+    spareTokens: 300_000_000_000n,
     spareLamports: 1_200_000_000n,
     // Step 9 sells what step 8 bought, if anything, and this many more units: as many as the
     // worked example sells into its wall.
@@ -257,6 +294,10 @@ const { values: options } = parseArgs({
         'upgrade-authority': { type: 'string' },
         'metadata-uri': { type: 'string', default: DEFAULT_METADATA_URI },
         'program-id': { type: 'string', default: DEFAULT_PROGRAM_ID },
+        'register-only': { type: 'boolean', default: false },
+        'metadata-not-yet-public': { type: 'boolean', default: false },
+        market: { type: 'string' },
+        record: { type: 'string' },
     },
     strict: true,
 });
@@ -264,7 +305,7 @@ const { values: options } = parseArgs({
 function usage(message: string): never {
     console.error(`${message}\n`);
     console.error(
-        'Usage: node demo.ts --cluster <localnet|devnet|URL> --payer <keypair.json> --upgrade-authority <keypair.json> [--metadata-uri <URI>] [--program-id <address>]',
+        'Usage: node demo.ts --cluster <localnet|devnet|URL> --payer <keypair.json> --upgrade-authority <keypair.json> [--metadata-uri <URI>] [--program-id <address>] [--register-only] [--metadata-not-yet-public] [--market <market state>] [--record <file>]',
     );
     process.exit(2);
 }
@@ -291,6 +332,9 @@ const payerPath = options.payer ?? usage('--payer is required');
 const upgradeAuthorityPath = options['upgrade-authority'] ?? usage('--upgrade-authority is required');
 const metadataUri = options['metadata-uri'];
 const onDevnet = !cluster.local;
+// An earlier run's market, traded again (after an upgrade), or a new one.
+const revisit = options.market === undefined ? null : address(options.market);
+if (revisit && options['register-only']) usage('--market and --register-only do not go together');
 
 // Public RPC endpoints rate-limit bursts (HTTP 429); retry those with back-off.
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
@@ -795,24 +839,21 @@ function specSplit(fee: bigint, wallSplitBps: bigint) {
 /** A token amount and a wrapped SOL amount, for messages. */
 const show = (amounts: readonly bigint[]) => amounts.map(String).join(' / ');
 
-/** What steps 11 to 13 read of the spec's own account of the market (`books` in `main`). */
-type OwedBooks = {
-    poolTokens: bigint;
-    poolSol: bigint;
-    idleSol: bigint;
-    retiredTokens: bigint;
-    retiredRewardable: bigint;
-    feesRecipient: bigint;
-    feesDesigner: bigint;
-    feesSuite: bigint;
-};
-
 /**
- * Steps 11 to 13: `settle`, both recipients' handovers, then `pay_rewards` and every
- * `sweep_fees` slot, each built from its metadata action as Aviary's generic forms would,
- * and checked against the spec's formulas, its event and the balances it moved.
+ * Steps 11 to 13: `settle`, both recipients' handovers (on a fresh market), then `pay_rewards`
+ * and every `sweep_fees` slot, each built from its metadata action as Aviary's generic forms
+ * would, checked against the spec's formulas, its event and the balances it moved, and the
+ * whole market state read back after each.
  */
-async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata, view: pipeline.MarketView, token: Address, books: OwedBooks) {
+async function payOut(
+    payer: KeyPairSigner,
+    metadata: pipeline.StrategyMetadata,
+    view: pipeline.MarketView,
+    token: Address,
+    books: Books,
+    params: { rewardShareBps: bigint },
+    fresh: boolean,
+) {
     const actionNamed = (name: string) => findAction(metadata, name) ?? fail(`metadata.json has no ${name} action`);
     const build = (name: string, args: Record<string, pipeline.ArgValue> = {}, inputs: Record<string, Address> = {}) =>
         buildActionInstruction({ action: actionNamed(name), market: view, wallet: payer.address, args, inputs });
@@ -821,26 +862,23 @@ async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata,
     const supply = async () => BigInt((await rpc.getTokenSupply(token, { commitment: 'confirmed' }).send()).value.amount);
     const balanceOf = async (account: Address) => ((await accountData(account)) === null ? 0n : tokenBalance(account));
     const json = (value: unknown) => JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? `${v}` : v));
-    const before = await state();
-    const rewardShareBps = BigInt(DEMO.rewardShareBps);
-    let rewardsOwed = le(before.rewardsOwed);
-    let tokensBurned = le(before.tokensBurned);
-    let rewardsPaid = le(before.rewardsPaid);
 
     step('11. Settling the retired tokens');
     const retired = books.retiredTokens;
     if (retired === 0n) fail('nothing is retired to settle');
     // POOL4-49: the reward share is paid only on the part the cap's fall matched.
     const rewardable = books.retiredRewardable;
-    const toRewards = (rewardable * rewardShareBps) / 10_000n;
+    const toRewards = (rewardable * params.rewardShareBps) / 10_000n;
     const burned = retired - toRewards;
     const [supplyBefore, vaultBefore] = [await supply(), await tokenBalance(view.vaults[0]!)];
     const { signature: settledSignature } = await send('settle', payer, [await build('settle')]);
     const { settled } = await strategyEvents(settledSignature);
     const supplyFell = supplyBefore - (await supply());
     const vaultFell = vaultBefore - (await tokenBalance(view.vaults[0]!));
-    rewardsOwed += toRewards;
-    tokensBurned += burned;
+    books.rewardsOwed += toRewards;
+    books.tokensBurned += burned;
+    books.retiredTokens = 0n;
+    books.retiredRewardable = 0n;
     const [event] = settled;
     if (
         settled.length !== 1 ||
@@ -848,135 +886,119 @@ async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata,
         event!.rewardable !== rewardable ||
         event!.burned !== burned ||
         event!.toRewards !== toRewards ||
-        event!.rewardsOwed !== rewardsOwed ||
-        event!.tokensBurned !== tokensBurned ||
+        event!.rewardsOwed !== books.rewardsOwed ||
+        event!.tokensBurned !== books.tokensBurned ||
         supplyFell !== burned ||
         vaultFell !== burned
     ) {
         fail(`settle of ${retired}: expected ${burned} burned and ${toRewards} to the rewards; the supply fell ${supplyFell}, the vault ${vaultFell}, events ${json(settled)}`);
     }
-    books.retiredTokens = 0n;
-    books.retiredRewardable = 0n;
-    info(`${retired} retired units, ${rewardable} of them matched by the cap's fall: ${toRewards} (the ${DEMO.rewardShareBps} basis point reward share of those) now owed as rewards, ${burned} burned; the token's supply fell by exactly ${burned}; Settled emitted`);
+    info(`${retired} retired units, ${rewardable} of them matched by the cap's fall: ${toRewards} (the ${params.rewardShareBps} basis point reward share of those) now owed as rewards, ${burned} burned; the token's supply fell by exactly ${burned}; Settled emitted`);
     record.push(['settle', `${burned} burned, ${toRewards} to the rewards`]);
+    await checkBooks('settle', view, books);
 
     step('12. Handing both recipient roles to new wallets');
-    const [newFee, newRewards] = await Promise.all([generateKeyPairSigner(), generateKeyPairSigner()]);
-    for (const [name, role, wallet] of [
-        ['set_fee_recipient', RecipientRole.Fee, newFee.address],
-        ['set_rewards_recipient', RecipientRole.Rewards, newRewards.address],
-    ] as const) {
-        const { signature } = await send(name, payer, [await build(name, { new: wallet })]);
-        const { recipientChanged } = await strategyEvents(signature);
-        const [changed] = recipientChanged;
-        if (recipientChanged.length !== 1 || changed!.role !== role || changed!.old !== payer.address || changed!.new !== wallet) {
-            fail(`${name}: expected RecipientChanged from ${payer.address} to ${wallet}, got ${json(recipientChanged)}`);
+    let feeRecipient: Address;
+    let rewardsRecipient: Address;
+    if (fresh) {
+        const [newFee, newRewards] = await Promise.all([generateKeyPairSigner(), generateKeyPairSigner()]);
+        for (const [name, role, wallet] of [
+            ['set_fee_recipient', RecipientRole.Fee, newFee.address],
+            ['set_rewards_recipient', RecipientRole.Rewards, newRewards.address],
+        ] as const) {
+            const { signature } = await send(name, payer, [await build(name, { new: wallet })]);
+            const { recipientChanged } = await strategyEvents(signature);
+            const [changed] = recipientChanged;
+            if (recipientChanged.length !== 1 || changed!.role !== role || changed!.old !== payer.address || changed!.new !== wallet) {
+                fail(`${name}: expected RecipientChanged from ${payer.address} to ${wallet}, got ${json(recipientChanged)}`);
+            }
         }
+        const handed = await state();
+        if (handed.feeRecipient !== newFee.address || handed.rewardsRecipient !== newRewards.address) {
+            fail(`the market's recipients are ${handed.feeRecipient} and ${handed.rewardsRecipient}, not the new wallets`);
+        }
+        await checkBooks('the handovers', view, books);
+        await expectRefused(
+            'set_fee_recipient by the old recipient',
+            payer,
+            [await build('set_fee_recipient', { new: payer.address })],
+            BUY_WALL_AMM_ERROR__NOT_RECIPIENT,
+            'NotRecipient',
+        );
+        info(`fee recipient ${newFee.address} and rewards recipient ${newRewards.address}, each handed over by the payer, RecipientChanged emitted; the old recipient can no longer hand the role on (NotRecipient); ${books.rewardsOwed} rewards and ${books.feesRecipient} lamports of fees still owed to the roles`);
+        record.push(['fee recipient', newFee.address], ['rewards recipient', newRewards.address]);
+        [feeRecipient, rewardsRecipient] = [newFee.address, newRewards.address];
+    } else {
+        const now = await state();
+        [feeRecipient, rewardsRecipient] = [now.feeRecipient, now.rewardsRecipient];
+        info(`skipped: the market's recipients stay ${feeRecipient} (fees) and ${rewardsRecipient} (rewards)`);
     }
-    const handed = await state();
-    if (handed.feeRecipient !== newFee.address || handed.rewardsRecipient !== newRewards.address) {
-        fail(`the market's recipients are ${handed.feeRecipient} and ${handed.rewardsRecipient}, not the new wallets`);
-    }
-    if (le(handed.rewardsOwed) !== rewardsOwed || le(handed.feesRecipient) !== books.feesRecipient) {
-        fail('a handover changed what a role is owed');
-    }
-    await expectRefused(
-        'set_fee_recipient by the old recipient',
-        payer,
-        [await build('set_fee_recipient', { new: payer.address })],
-        BUY_WALL_AMM_ERROR__NOT_RECIPIENT,
-        'NotRecipient',
-    );
-    info(`fee recipient ${newFee.address} and rewards recipient ${newRewards.address}, each handed over by the payer, RecipientChanged emitted; the old recipient can no longer hand the role on (NotRecipient); ${rewardsOwed} rewards and ${books.feesRecipient} lamports of fees still owed to the roles`);
 
     step('13. Paying out the rewards and the fees');
-    // The rewards, into an account the payout creates for the new recipient.
-    const [rewardsAccount] = await findAssociatedTokenPda({ owner: newRewards.address, mint: token, tokenProgram: TOKEN_PROGRAM_ADDRESS });
-    if ((await accountData(rewardsAccount)) !== null) fail('the new rewards recipient already has a token account');
-    const { signature: paidSignature } = await send('pay_rewards', payer, [await build('pay_rewards', {}, { rewards_recipient: newRewards.address })]);
+    // The rewards, on a fresh market into an account the payout creates for the new recipient.
+    const [rewardsAccount] = await findAssociatedTokenPda({ owner: rewardsRecipient, mint: token, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+    const rewardsHeld = await balanceOf(rewardsAccount);
+    if (fresh && (await accountData(rewardsAccount)) !== null) fail('the new rewards recipient already has a token account');
+    const owed = books.rewardsOwed;
+    if (owed === 0n) fail('no rewards are owed to pay');
+    const { signature: paidSignature } = await send('pay_rewards', payer, [await build('pay_rewards', {}, { rewards_recipient: rewardsRecipient })]);
     const { rewardsPaid: paidEvents } = await strategyEvents(paidSignature);
-    const received = await tokenBalance(rewardsAccount);
-    rewardsPaid += rewardsOwed;
+    const received = (await tokenBalance(rewardsAccount)) - rewardsHeld;
+    books.rewardsPaid += owed;
+    books.rewardsOwed = 0n;
     const [paid] = paidEvents;
     if (
-        received !== rewardsOwed ||
+        received !== owed ||
         paidEvents.length !== 1 ||
-        paid!.amount !== rewardsOwed ||
-        paid!.recipient !== newRewards.address ||
+        paid!.amount !== owed ||
+        paid!.recipient !== rewardsRecipient ||
         paid!.tokenAccount !== rewardsAccount ||
-        paid!.rewardsPaid !== rewardsPaid
+        paid!.rewardsPaid !== books.rewardsPaid
     ) {
-        fail(`pay_rewards: expected ${rewardsOwed} paid into ${rewardsAccount}; it holds ${received}, events ${json(paidEvents)}`);
+        fail(`pay_rewards: expected ${owed} paid into ${rewardsAccount}; it received ${received}, events ${json(paidEvents)}`);
     }
-    info(`${received} units of the token paid to the new rewards recipient, into the account the payout created; RewardsPaid emitted`);
+    info(`${received} units of the token paid to the rewards recipient${fresh ? ', into the account the payout created' : ''}; RewardsPaid emitted`);
     record.push(['pay_rewards', `${received} units`]);
+    await checkBooks('pay_rewards', view, books);
     await expectRefused(
         'pay_rewards with nothing owed',
         payer,
-        [await build('pay_rewards', {}, { rewards_recipient: newRewards.address })],
+        [await build('pay_rewards', {}, { rewards_recipient: rewardsRecipient })],
         BUY_WALL_AMM_ERROR__NOTHING_OWED,
         'NothingOwed',
     );
-    rewardsOwed = 0n;
 
     // The fees, slot by slot: each into its wallet's wrapped SOL account.
     const designerUnset = DESIGNER_RECIPIENT === address('11111111111111111111111111111111');
-    for (const [slot, wallet, owed] of [
-        [0, newFee.address, books.feesRecipient],
-        [1, DESIGNER_RECIPIENT, books.feesDesigner],
-        [2, SUITE_TREASURY, books.feesSuite],
+    for (const [slot, wallet, ledger] of [
+        [0, feeRecipient, 'feesRecipient'],
+        [1, DESIGNER_RECIPIENT, 'feesDesigner'],
+        [2, SUITE_TREASURY, 'feesSuite'],
     ] as const) {
+        const slotOwed = books[ledger];
         const sweep = await build('sweep_fees', { slot }, { recipient: wallet });
         if (slot === 1 && designerUnset) {
             await expectRefused('sweep_fees slot 1', payer, [sweep], BUY_WALL_AMM_ERROR__RECIPIENT_UNSET, 'RecipientUnset');
-            info(`slot 1, the designer share: refused with RecipientUnset while DESIGNER_RECIPIENT is unset; its ${owed} lamports wait in the vault`);
+            info(`slot 1, the designer share: refused with RecipientUnset while DESIGNER_RECIPIENT is unset; its ${slotOwed} lamports wait in the vault`);
             continue;
         }
         const account = await walletTokenAccount(wallet, WSOL);
-        const held = await balanceOf(account);
-        const created = held === 0n && (await accountData(account)) === null;
+        const heldBefore = await balanceOf(account);
+        const created = heldBefore === 0n && (await accountData(account)) === null;
         const { signature } = await send(`sweep_fees slot ${slot}`, payer, [sweep]);
         const { feesSwept } = await strategyEvents(signature);
-        const gained = (await tokenBalance(account)) - held;
+        const gained = (await tokenBalance(account)) - heldBefore;
         const [swept] = feesSwept;
-        if (gained !== owed || feesSwept.length !== 1 || swept!.slot !== slot || swept!.amount !== owed || swept!.recipient !== wallet || swept!.tokenAccount !== account) {
-            fail(`sweep_fees slot ${slot}: expected ${owed} lamports to ${wallet}; it gained ${gained}, events ${json(feesSwept)}`);
+        if (gained !== slotOwed || feesSwept.length !== 1 || swept!.slot !== slot || swept!.amount !== slotOwed || swept!.recipient !== wallet || swept!.tokenAccount !== account) {
+            fail(`sweep_fees slot ${slot}: expected ${slotOwed} lamports to ${wallet}; it gained ${gained}, events ${json(feesSwept)}`);
         }
-        if (slot === 0) books.feesRecipient = 0n;
-        if (slot === 1) books.feesDesigner = 0n;
-        if (slot === 2) books.feesSuite = 0n;
-        info(`slot ${slot}: ${owed} lamports of wrapped SOL to ${wallet}${created ? ', into an account the payout created' : ''}; FeesSwept emitted`);
-        record.push([`sweep_fees slot ${slot}`, `${owed} lamports`]);
+        books[ledger] = 0n;
+        info(`slot ${slot}: ${slotOwed} lamports of wrapped SOL to ${wallet}${created ? ', into an account the payout created' : ''}; FeesSwept emitted`);
+        record.push([`sweep_fees slot ${slot}`, `${slotOwed} lamports`]);
+        await checkBooks(`sweep_fees slot ${slot}`, view, books);
     }
-
-    const after = await state();
-    const read = {
-        retiredTokens: [le(after.retiredTokens), 0n],
-        retiredRewardable: [le(after.retiredRewardable), 0n],
-        rewardsOwed: [le(after.rewardsOwed), rewardsOwed],
-        tokensBurned: [le(after.tokensBurned), tokensBurned],
-        rewardsPaid: [le(after.rewardsPaid), rewardsPaid],
-        feesRecipient: [le(after.feesRecipient), books.feesRecipient],
-        feesDesigner: [le(after.feesDesigner), books.feesDesigner],
-        feesSuite: [le(after.feesSuite), books.feesSuite],
-        poolTokens: [le(after.poolTokens), books.poolTokens],
-        poolSol: [le(after.poolSol), books.poolSol],
-        idleSol: [le(after.idleSol), books.idleSol],
-        sqrtPrice: [le(after.sqrtPrice), le(before.sqrtPrice)],
-        swapCount: [le(after.swapCount), le(before.swapCount)],
-        feesCollected: [le(after.feesCollected), le(before.feesCollected)],
-    };
-    for (const [key, [got, wanted]] of Object.entries(read)) {
-        if (got !== wanted) fail(`after the payouts the market state's ${key} is ${got}, but the spec gives ${wanted}`);
-        info(`${key.padEnd(16)} ${got}`);
-    }
-    const [vaultTokens, vaultSol] = await Promise.all(view.vaults.map((vault) => tokenBalance(vault!)));
-    const tokenLedgers = books.poolTokens + rewardsOwed;
-    const solLedgers = books.poolSol + books.idleSol + books.feesRecipient + books.feesDesigner + books.feesSuite;
-    if (vaultTokens !== tokenLedgers || vaultSol !== solLedgers) {
-        fail(`after the payouts the vaults hold ${vaultTokens} and ${vaultSol}, not their ledgers' ${tokenLedgers} and ${solLedgers}`);
-    }
-    info('the payouts moved only the ledgers they pay, never the price or the counters, and each vault holds exactly its ledgers');
+    await checkBooks('the payouts', view, books, true);
+    info('the payouts moved only the ledgers they pay, never the price or the counters');
     record.push(['market state after the payouts', "equal to the spec's formulas"]);
 }
 
@@ -1067,6 +1089,9 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
     }
 
     const seed = [DEMO.tokens, DEMO.lamports];
+    // The escrows are the launchpad's for this creator, so an earlier run on the same cluster
+    // can have left something in them: what the graduation takes is measured from here.
+    const escrowed = await Promise.all(escrows.map((escrow) => tokenBalance(escrow!)));
     const graduate = await graduateInstruction({
         creator: payer.address,
         strategyProgram: programId,
@@ -1106,7 +1131,6 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
         .send();
     const logs = transaction?.meta?.logMessages ?? fail('the graduation left no logs');
     const graduation = graduationFromLogs(logs) ?? fail("the launchpad's return data is missing");
-    const escrowed = [LAUNCH.escrowedTokens, LAUNCH.escrowedLamports];
     const left = await Promise.all(escrows.map(async (escrow, i) => escrowed[i]! - (await tokenBalance(escrow))));
     if (show(graduation.leftEscrows) !== show(seed) || show(left) !== show(seed)) {
         fail(`the escrows lost ${show(left)} (the launchpad measured ${show(graduation.leftEscrows)}), not the seed ${show(seed)}`);
@@ -1236,109 +1260,34 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
     record.push(['seeded market, traded', "graduated, recorded, traded at the spec's prices"]);
 }
 
-async function main() {
-    const payer = await loadKey(payerPath);
-    const upgradeAuthority = await loadKey(upgradeAuthorityPath);
-    const programId = address(options['program-id']);
-    console.log(`Pipeline router ${pipeline.PIPELINE_PROGRAM_ADDRESS} on ${cluster.url}`);
-    console.log(`Strategy ${programId}`);
-    console.log(`Payer ${payer.address}, upgrade authority ${upgradeAuthority.address}`);
-    record.push(['strategy program', programId]);
-    await checkCluster();
+/** What steps 4 to 6 give the rest of the demo: the market and how to reach it. */
+type OpenedMarket = {
+    token: Address;
+    view: pipeline.MarketView;
+    recorded: pipeline.MarketView;
+    vaultAuthority: Address;
+};
 
-    if (cluster.local) {
-        step('0. Funding both keys on the local validator');
-        await fundLocally('payer', payer.address, LOCAL_FUNDING.payer);
-        await fundLocally('upgrade authority', upgradeAuthority.address, LOCAL_FUNDING.upgradeAuthority);
-    }
-
-    step('1. Checking the program');
-    const program = await pipeline.inspectProgram(rpc, programId, { hashExecutable: false });
-    if (!program.deployed) {
-        fail(`nothing is deployed at ${programId}. Deploy it first (docs/toolchain.md).`);
-    }
-    if (program.upgradeAuthority !== upgradeAuthority.address) {
-        fail(
-            `registration must be signed by the program's upgrade authority (${program.upgradeAuthority ?? 'none: the program is frozen'}), not ${upgradeAuthority.address}. Pass its key as --upgrade-authority.`,
-        );
-    }
-    info(`deployed (${program.loader} loader), upgrade authority ${program.upgradeAuthority}`);
-
-    step('2. Checking metadata');
-    const local = pipeline.parseStrategyMetadata(
-        JSON.parse(readFileSync(new URL('../metadata.json', import.meta.url), 'utf8')),
-    );
-    if (!local.ok) {
-        fail(`metadata.json is invalid:\n   ${local.errors.join('\n   ')}`);
-    }
-    if (local.warnings.length > 0) {
-        fail(`metadata.json must pass with zero warnings:\n   ${local.warnings.join('\n   ')}`);
-    }
-    info(`metadata.json is valid with zero warnings: "${local.value.name}"`);
-    const published = await pipeline.fetchStrategyMetadata(metadataUri);
-    if (published.ok) {
-        info(`${metadataUri} is valid`);
-    } else {
-        info(`warning: ${metadataUri} can't be used yet (${published.reason}: ${published.errors.join('; ')})`);
-        info('desks will show the strategy without metadata until it can be fetched');
-    }
-    const metadata = local.value;
-    const seedAction = findAction(metadata, 'seed');
-    if (!metadata.init || !seedAction) {
-        fail('metadata.json needs `init` and a `seed` action for this demo');
-    }
-
-    step('3. Registering the strategy');
-    const config = pipeline.decodeConfig((await accountData(await pipeline.configPda())) ?? new Uint8Array());
-    if (!config) {
-        fail('the Pipeline router has no config on this cluster');
-    }
-    const strategyData = await accountData(await pipeline.strategyPda(programId));
-    if (!strategyData) {
-        info(`registering, which costs the listing fee: ${Number(config.listingFeeLamports) / 1e9} SOL`);
-        await send(
-            'register_strategy',
-            payer,
-            [
-                await pipeline.registerStrategy({
-                    payer: upgradeAuthority.address,
-                    registrar: upgradeAuthority.address,
-                    strategyProgram: programId,
-                    listingFeeRecipient: config.listingFeeRecipient,
-                    metadataUri,
-                    maxListingFeeLamports: config.listingFeeLamports,
-                }),
-            ],
-            [upgradeAuthority],
-        );
-    } else if (pipeline.decodeStrategy(strategyData)?.metadataUri !== metadataUri) {
-        info('already registered; pointing it at the new metadata URI');
-        await send(
-            'update_metadata',
-            payer,
-            [
-                await pipeline.updateMetadata({
-                    registrar: upgradeAuthority.address,
-                    strategyProgram: programId,
-                    metadataUri,
-                }),
-            ],
-            [upgradeAuthority],
-        );
-    } else {
-        info('already registered with this metadata URI');
-    }
-
+/**
+ * Steps 4 to 6 for a new market: a fresh test token, the market created from the metadata's
+ * `init` form with both fee accounts and the seed in one transaction, then read back.
+ */
+async function createMarket(
+    payer: KeyPairSigner,
+    programId: Address,
+    metadata: pipeline.StrategyMetadata,
+    seedAction: NonNullable<ReturnType<typeof findAction>>,
+    tokenPrograms: Address[],
+): Promise<OpenedMarket> {
     step('4. Creating a test token and wrapping the SOL for the seed and the buy');
     const token = await createTestToken(payer, DEMO.decimals, DEMO.tokens + DEMO.spareTokens);
     await wrapSol(payer, DEMO.lamports + DEMO.buy + DEMO.spareLamports);
-    const tokenPrograms = [TOKEN_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS];
 
     step("5. Creating the market from the metadata's init form, with its fee accounts and the seed, in one transaction");
     // `init` says how to create a market: the market state is a fresh keypair, which signs.
     const marketStateKey = await generateKeyPairSigner();
     const { instruction: createMarket, resolved } = await pipeline.buildCreateMarketFromMetadata({
-        init: metadata.init,
+        init: metadata.init!,
         strategyProgram: programId,
         creator: payer.address,
         marketState: marketStateKey.address,
@@ -1456,33 +1405,78 @@ async function main() {
     }
     info(`the opening matches the spec's maths, and the vaults hold exactly the seed`);
     record.push(['sqrt_price', `${sqrtPrice}`], ['liquidity', `${liquidity}`], ['cap', `${cap}`]);
+    return { token, view, recorded, vaultAuthority };
+}
 
-    step('7. Trading both ways through the router');
-    // The spec's own account of the market, from the seed and what each trade does.
-    const feeBps = BigInt(DEMO.feeBps);
-    const books = {
-        curve: { sqrtPrice, liquidity },
-        wall: NO_WALL,
-        wallSolPlaced: 0n,
-        poolTokens: DEMO.tokens,
-        poolSol: DEMO.lamports,
-        idleSol: 0n,
-        feesRecipient: 0n,
-        feesDesigner: 0n,
-        feesSuite: 0n,
-        retiredTokens: 0n,
+/**
+ * Steps 4 to 6 for a market an earlier run created (--market): the market state read and
+ * checked, the router's record of it, and the SOL for the buys wrapped.
+ */
+async function loadMarket(payer: KeyPairSigner, marketState: Address, tokenPrograms: Address[]): Promise<OpenedMarket> {
+    step('4. Loading the market an earlier run created, and wrapping the SOL for the buys');
+    const raw = (await accountData(marketState)) ?? fail(`no account at ${marketState}`);
+    const { data: state } = await fetchMarketState(rpc, marketState, { commitment: 'confirmed' });
+    const discriminator = new TextDecoder().decode(state.discriminator as Uint8Array);
+    if (raw.length !== getMarketStateSize() || discriminator !== new TextDecoder().decode(MARKET_STATE_DISCRIMINATOR as Uint8Array)) {
+        fail(`${marketState} is not a buy wall market state (${raw.length} bytes, "${discriminator}")`);
+    }
+    if (state.status !== STATUS_OPEN) fail(`the market is not open (status ${state.status})`);
+    const token = state.tokenMint;
+    info(`market state ${marketState}: layout ${state.layoutVersion}, open, token ${token}`);
+    await wrapSol(payer, DEMO.buy + DEMO.spareLamports);
+
+    step('5. Skipped: the market exists');
+
+    step('6. Reading the market back');
+    const market = state.marketSigner;
+    const marketAccount = pipeline.decodeMarket((await accountData(market)) ?? new Uint8Array());
+    if (!marketAccount) fail(`the router has no market at ${market}`);
+    const recorded = pipeline.marketViewFromMarket(market, marketAccount, tokenPrograms);
+    if (
+        recorded.marketState !== marketState ||
+        recorded.mints.join() !== [token, WSOL].join() ||
+        recorded.vaults.join() !== [state.tokenVault, state.solVault].join() ||
+        recorded.supportsExactOut
+    ) {
+        fail(`the router's market ${market} records another market state, other mints or vaults, or exact-out`);
+    }
+    const [vaultAuthority] = await findVaultAuthorityPda({ marketState });
+    info(`router: market ${explorer('address', market)}, token at index 0, wrapped SOL at index 1, supports_exact_out = false`);
+    info(`sqrt_price ${le(state.sqrtPrice)}, liquidity ${le(state.liquidity)}, cap ${le(state.cap)}, ${le(state.swapCount)} swaps so far`);
+    record.push(['market', market], ['market state', marketState]);
+    return { token, view: recorded, recorded, vaultAuthority };
+}
+
+/**
+ * The spec's own account of a market: everything the market state holds that a step of the
+ * demo changes, which the demo brings up to date by the spec's formulas after each step.
+ */
+type Books = ReturnType<typeof booksFromState>;
+
+function booksFromState(state: MarketState) {
+    return {
+        curve: { sqrtPrice: le(state.sqrtPrice), liquidity: le(state.liquidity) } as Curve,
+        wall: { liquidity: le(state.wallLiquidity), top: le(state.wallTop) } as Wall,
+        wallSolPlaced: le(state.wallSolPlaced),
+        poolTokens: le(state.poolTokens),
+        poolSol: le(state.poolSol),
+        idleSol: le(state.idleSol),
+        feesRecipient: le(state.feesRecipient),
+        feesDesigner: le(state.feesDesigner),
+        feesSuite: le(state.feesSuite),
+        retiredTokens: le(state.retiredTokens),
         // The reward share's ledgers (POOL4-49): the cap's fall no trim has matched yet, and
         // the part of the retired tokens that earns the reward share.
-        capFallUnmatched: 0n,
-        retiredRewardable: 0n,
+        capFallUnmatched: le(state.capFallUnmatched),
+        retiredRewardable: le(state.retiredRewardable),
+        rewardsOwed: le(state.rewardsOwed),
         cap: {
-            cap,
+            cap: le(state.cap),
             decayCredit: le(state.decayCredit),
             decayTime: le(state.decayTime),
             capFloor: le(state.capFloor),
             capDecayPerDay: le(state.capDecayPerDay),
         } as Cap,
-        // The seed starts the guard at the opening price and the seed's own clock.
         guard: {
             reference: le(state.reference),
             refTime: le(state.refTime),
@@ -1492,22 +1486,211 @@ async function main() {
             lastClose: le(state.lastClose),
             lowSincePlacement: le(state.lowSincePlacement),
         } as Guard,
-        tokensTrimmed: 0n,
-        solTrimmed: 0n,
-        wallTokensBought: 0n,
-        tipsPaid: 0n,
-        volume: [0n, 0n],
-        feesCollected: 0n,
-        swapCount: 0n,
+        tokensTrimmed: le(state.tokensTrimmed),
+        solTrimmed: le(state.solTrimmed),
+        wallTokensBought: le(state.wallTokensBought),
+        tipsPaid: le(state.tipsPaid),
+        tokensBurned: le(state.tokensBurned),
+        rewardsPaid: le(state.rewardsPaid),
+        volume: [le(state.volume[0]!), le(state.volume[1]!)],
+        feesCollected: le(state.feesCollected),
+        swapCount: le(state.swapCount),
     };
-    if (
-        books.guard.reference !== sqrtPrice ||
-        books.guard.floor !== sqrtPrice ||
-        books.guard.lastClose !== sqrtPrice ||
-        books.guard.lowSincePlacement !== sqrtPrice
-    ) {
-        fail('the seed did not start the wall\'s guard at the opening price');
+}
+
+/** Every field of `Books`, flattened, for comparing and printing. */
+function flatBooks(books: Books): [string, bigint][] {
+    const out: [string, bigint][] = [];
+    for (const [key, value] of Object.entries(books)) {
+        if (typeof value === 'bigint') out.push([key, value]);
+        else if (Array.isArray(value)) value.forEach((v, i) => out.push([`${key}${i}`, v as bigint]));
+        else for (const [inner, v] of Object.entries(value as Record<string, bigint>)) out.push([`${key}.${inner}`, v]);
     }
+    return out;
+}
+
+/**
+ * Reads the whole market state back after `label` and stops unless every field equals the
+ * spec's account of it, and each vault holds exactly the sum of its ledgers; with `print`,
+ * lists every field.
+ */
+async function checkBooks(label: string, view: pipeline.MarketView, books: Books, print = false) {
+    const { data } = await fetchMarketState(rpc, view.marketState, { commitment: 'confirmed' });
+    const read = new Map(flatBooks(booksFromState(data)));
+    for (const [key, wanted] of flatBooks(books)) {
+        const got = read.get(key);
+        if (got !== wanted) fail(`after ${label} the market state's ${key} is ${got}, but the spec's formulas give ${wanted}`);
+        if (print) info(`${key.padEnd(24)} ${got}`);
+    }
+    const [vaultTokens, vaultSol] = await Promise.all(view.vaults.map((vault) => tokenBalance(vault!)));
+    const tokenLedgers = books.poolTokens + books.retiredTokens + books.rewardsOwed;
+    const solLedgers = books.poolSol + books.idleSol + books.feesRecipient + books.feesDesigner + books.feesSuite;
+    if (vaultTokens !== tokenLedgers || vaultSol !== solLedgers) {
+        fail(`after ${label} the vaults hold ${vaultTokens} and ${vaultSol}, not their ledgers' ${tokenLedgers} and ${solLedgers}`);
+    }
+    info(`after ${label}: the price, the wall, the guard, every ledger, the cap and the counters equal the spec's formulas; each vault holds exactly its ledgers`);
+}
+
+async function main() {
+    const payer = await loadKey(payerPath);
+    const upgradeAuthority = await loadKey(upgradeAuthorityPath);
+    const programId = address(options['program-id']);
+    console.log(`Pipeline router ${pipeline.PIPELINE_PROGRAM_ADDRESS} on ${cluster.url}`);
+    console.log(`Strategy ${programId}`);
+    console.log(`Payer ${payer.address}, upgrade authority ${upgradeAuthority.address}`);
+    record.push(['strategy program', programId]);
+    await checkCluster();
+
+    if (cluster.local) {
+        step('0. Funding both keys on the local validator');
+        await fundLocally('payer', payer.address, LOCAL_FUNDING.payer);
+        await fundLocally('upgrade authority', upgradeAuthority.address, LOCAL_FUNDING.upgradeAuthority);
+    }
+
+    step('1. Checking the program');
+    const program = await pipeline.inspectProgram(rpc, programId, { hashExecutable: false });
+    if (!program.deployed) {
+        fail(`nothing is deployed at ${programId}. Deploy it first (docs/toolchain.md).`);
+    }
+    if (program.upgradeAuthority !== upgradeAuthority.address) {
+        fail(
+            `registration must be signed by the program's upgrade authority (${program.upgradeAuthority ?? 'none: the program is frozen'}), not ${upgradeAuthority.address}. Pass its key as --upgrade-authority.`,
+        );
+    }
+    info(`deployed (${program.loader} loader), upgrade authority ${program.upgradeAuthority}`);
+
+    step('2. Checking metadata');
+    const local = pipeline.parseStrategyMetadata(
+        JSON.parse(readFileSync(new URL('../metadata.json', import.meta.url), 'utf8')),
+    );
+    if (!local.ok) {
+        fail(`metadata.json is invalid:\n   ${local.errors.join('\n   ')}`);
+    }
+    if (local.warnings.length > 0) {
+        fail(`metadata.json must pass with zero warnings:\n   ${local.warnings.join('\n   ')}`);
+    }
+    info(`metadata.json is valid with zero warnings: "${local.value.name}"`);
+    const published = await pipeline.fetchStrategyMetadata(metadataUri);
+    if (published.ok && published.warnings.length === 0) {
+        info(`${metadataUri} is valid with zero warnings`);
+    } else if (onDevnet && options['metadata-not-yet-public'] && !published.ok) {
+        // The router only stores the URI; it resolves once the repo is public (TAX-54).
+        if (!metadataUri.startsWith(`${RAW_REPO}/`) || !metadataUri.endsWith('/programs/buy-wall-amm/metadata.json')) {
+            fail(`--metadata-not-yet-public takes only this repo's programs/buy-wall-amm/metadata.json on ${RAW_REPO}, not ${metadataUri}`);
+        }
+        // Only a URI that cannot be fetched; one that resolves with warnings still stops below.
+        info(`${metadataUri} does not resolve yet (${published.reason}); registering it anyway with --metadata-not-yet-public`);
+        info('the committed metadata.json was checked instead; desks show the strategy without metadata until the repo is public');
+    } else if (onDevnet) {
+        // Pipeline's registry and every terminal read the strategy through this URI.
+        fail(
+            `${metadataUri} must resolve and pass the validator with zero warnings before it is registered on devnet: ${
+                published.ok ? published.warnings.join('; ') : `${published.reason}: ${published.errors.join('; ')}`
+            }`,
+        );
+    } else {
+        info(`warning: ${metadataUri} can't be used yet (${published.ok ? published.warnings.join('; ') : `${published.reason}: ${published.errors.join('; ')}`})`);
+        info('desks will show the strategy without metadata until it can be fetched');
+    }
+    const metadata = local.value;
+    const seedAction = findAction(metadata, 'seed');
+    if (!metadata.init || !seedAction) {
+        fail('metadata.json needs `init` and a `seed` action for this demo');
+    }
+
+    step('3. Registering the strategy');
+    const config = pipeline.decodeConfig((await accountData(await pipeline.configPda())) ?? new Uint8Array());
+    if (!config) {
+        fail('the Pipeline router has no config on this cluster');
+    }
+    const strategyData = await accountData(await pipeline.strategyPda(programId));
+    if (!strategyData) {
+        info(`registering, which costs the listing fee: ${Number(config.listingFeeLamports) / 1e9} SOL`);
+        await send(
+            'register_strategy',
+            payer,
+            [
+                await pipeline.registerStrategy({
+                    payer: upgradeAuthority.address,
+                    registrar: upgradeAuthority.address,
+                    strategyProgram: programId,
+                    listingFeeRecipient: config.listingFeeRecipient,
+                    metadataUri,
+                    maxListingFeeLamports: config.listingFeeLamports,
+                }),
+            ],
+            [upgradeAuthority],
+        );
+    } else if (pipeline.decodeStrategy(strategyData)?.metadataUri !== metadataUri) {
+        info('already registered; pointing it at the new metadata URI');
+        await send(
+            'update_metadata',
+            payer,
+            [
+                await pipeline.updateMetadata({
+                    registrar: upgradeAuthority.address,
+                    strategyProgram: programId,
+                    metadataUri,
+                }),
+            ],
+            [upgradeAuthority],
+        );
+    } else {
+        info('already registered with this metadata URI');
+    }
+
+    if (options['register-only']) {
+        info('--register-only: no market is created');
+        finish();
+        return;
+    }
+
+    const tokenPrograms = [TOKEN_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS];
+    const opened = revisit ? await loadMarket(payer, revisit, tokenPrograms) : await createMarket(payer, programId, metadata, seedAction, tokenPrograms);
+    const { token, view, recorded, vaultAuthority } = opened;
+    const marketState = view.marketState;
+    const { data: state } = await fetchMarketState(rpc, marketState, { commitment: 'confirmed' });
+    // The market's own parameters, which a fresh market must hold exactly as sent.
+    const params = {
+        feeBps: le(state.feeBps),
+        wallSplitBps: le(state.wallSplitBps),
+        rewardShareBps: le(state.rewardShareBps),
+    };
+    if (!revisit) {
+        const sent: Record<string, [bigint, number]> = {
+            feeBps: [params.feeBps, DEMO.feeBps],
+            wallSplitBps: [params.wallSplitBps, DEMO.wallSplitBps],
+            rewardShareBps: [params.rewardShareBps, DEMO.rewardShareBps],
+            capFloorBps: [le(state.capFloorBps), DEMO.capFloorBps],
+            capDecayBps: [le(state.capDecayBps), DEMO.capDecayBps],
+        };
+        for (const [key, [got, wanted]] of Object.entries(sent)) {
+            if (got !== BigInt(wanted)) fail(`the market state's ${key} is ${got}, not the ${wanted} sent`);
+        }
+        if (state.feeRecipient !== payer.address || state.rewardsRecipient !== payer.address) fail('the market state records other recipients than the payer');
+        info('the market state holds every creation parameter as sent');
+    }
+
+    step('7. Trading both ways through the router');
+    // The spec's own account of the market: from the market state as read, then from what each
+    // step does by the spec's formulas.
+    const feeBps = params.feeBps;
+    const books = booksFromState(state);
+    if (!revisit) {
+        // A fresh market holds only the seed: nothing traded, retired, owed or placed yet.
+        const zero = Object.entries(books).filter(([key, value]) => typeof value === 'bigint' && !['poolTokens', 'poolSol'].includes(key) && value !== 0n);
+        if (zero.length > 0) fail(`a fresh market's ${zero.map(([key]) => key).join(', ')} are not 0`);
+        const sqrtPrice = books.curve.sqrtPrice;
+        if (
+            books.guard.reference !== sqrtPrice ||
+            books.guard.floor !== sqrtPrice ||
+            books.guard.lastClose !== sqrtPrice ||
+            books.guard.lowSincePlacement !== sqrtPrice
+        ) {
+            fail('the seed did not start the wall\'s guard at the opening price');
+        }
+    }
+    await checkBooks(revisit ? 'the market as found' : 'the market as seeded', view, books);
     const payerAccounts = await Promise.all([token, WSOL].map((mint) => walletTokenAccount(payer.address, mint)));
 
     /**
@@ -1555,7 +1738,7 @@ async function main() {
                 {
                     trader: payer.address,
                     strategyProgram: programId,
-                    marketState: resolved.marketState,
+                    marketState,
                     traderInput: payerAccounts[input]!,
                     traderOutput: payerAccounts[output]!,
                     inputVault: view.vaults[input]!,
@@ -1583,13 +1766,13 @@ async function main() {
         // "After pricing", in its order. The market state records the time the swap ran as
         // its decay_time, and the transaction its slot: the only values the demo takes from
         // the program here.
-        const { data: afterSwap } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
+        const { data: afterSwap } = await fetchMarketState(rpc, marketState, { commitment: 'confirmed' });
         const ranAt = le(afterSwap.decayTime);
         const events = await strategyEvents(signature);
         // Steps 1 and 4 at the slot's first update, the reference and the floor; steps 2 and
         // 3, the books, the price, the last close and the lowest close since the placement.
         books.guard = specFollow(books.guard, events.slot, ranAt);
-        const split = specSplit(spec.fee, BigInt(DEMO.wallSplitBps));
+        const split = specSplit(spec.fee, params.wallSplitBps);
         if (input === 1) {
             books.poolSol += amount - spec.fee;
             books.poolTokens -= spec.out;
@@ -1658,18 +1841,20 @@ async function main() {
         } else if (events.lowered.length + events.trimmed.length !== 0) {
             fail(`${label}: the cap did not move, but the swap emitted ${events.lowered.length + events.trimmed.length} cap events`);
         }
+        await checkBooks(label, view, books);
         return { received, spec, moved, crossing };
     }
 
     // A buy that finds no decay credit leaves the cap alone, and its sell-back then finds the
     // curve within the cap; waiting a few seconds lets the demo show both of the cap's steps.
     await waitForClock(books.cap.decayTime + DECAY_WAIT_SECONDS);
-    info(`waited until ${DECAY_WAIT_SECONDS} seconds after the seed, so the buy finds cap decay credit`);
-    const bought = await trade('buy', 1, DEMO.buy, WORKED.buyOut);
-    if (bought.spec.sqrtPrice !== WORKED.buySqrtPrice) fail(`buy: the spec's formulas move the price to ${bought.spec.sqrtPrice}, not ${WORKED.buySqrtPrice}`);
+    info(`waited until ${DECAY_WAIT_SECONDS} seconds after the last swap or the seed, so the buy finds cap decay credit`);
+    // A fresh market is the worked example, whose two trades the demo reproduces exactly.
+    const bought = await trade('buy', 1, DEMO.buy, revisit ? undefined : WORKED.buyOut);
+    if (!revisit && bought.spec.sqrtPrice !== WORKED.buySqrtPrice) fail(`buy: the spec's formulas move the price to ${bought.spec.sqrtPrice}, not ${WORKED.buySqrtPrice}`);
     if (bought.moved.kind !== 'lowered') fail(`buy: the spec's formulas give "${bought.moved.kind}" for the cap, not "lowered"`);
-    const sold = await trade('sell', 0, bought.received, WORKED.sellOut);
-    if (sold.spec.sqrtPrice !== WORKED.sellSqrtPrice) fail(`sell: the spec's formulas move the price to ${sold.spec.sqrtPrice}, not ${WORKED.sellSqrtPrice}`);
+    const sold = await trade('sell', 0, bought.received, revisit ? undefined : WORKED.sellOut);
+    if (!revisit && sold.spec.sqrtPrice !== WORKED.sellSqrtPrice) fail(`sell: the spec's formulas move the price to ${sold.spec.sqrtPrice}, not ${WORKED.sellSqrtPrice}`);
     if (sold.moved.kind !== 'trimmed') fail(`sell: the spec's formulas give "${sold.moved.kind}" for the cap, not "trimmed"`);
     info(`the guard: reference ${books.guard.reference}, floor ${books.guard.floor}, as the spec's steps give for these trades`);
 
@@ -1707,7 +1892,7 @@ async function main() {
     if (placedEvents.slot <= books.guard.lastSlot) fail(`place_wall ran in slot ${placedEvents.slot}, not after the last swap's ${books.guard.lastSlot}`);
     // It brings the floor up to date for its slot first, at the time it ran, which it records
     // as the floor's clock (the clock never moves backwards, so that is its time or later).
-    const { data: afterPlacing } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
+    const { data: afterPlacing } = await fetchMarketState(rpc, marketState, { commitment: 'confirmed' });
     books.guard = specOpenFloor(books.guard, le(afterPlacing.floorTime));
     const expectedPlacement = specPlaceWall(wallBooks(), books.curve, books.guard, feeBps) ?? fail(`idle SOL ${books.idleSol} is still below WALL_THRESHOLD`);
     const { books: placedBooks, placement, guard: placedGuard } = expectedPlacement;
@@ -1743,10 +1928,19 @@ async function main() {
     info(`tipped ${tip} lamports of wrapped SOL to the caller's account: the least of KEEPER_TIP_CAP (${KEEPER_TIP_CAP}) and the fee earned on ${work} lamports of work`);
     info(`the wall: ${books.wallSolPlaced} lamports at sqrt_price ${books.wall.top} (liquidity ${books.wall.liquidity}), at the lowest of the price, the floor and the lowest close since the last placement (${lowAtPlacement}); ${placement.dustTokens} units and ${placement.dustSol} lamports of dust swept; WallPlaced emitted`);
     record.push(['place_wall', `tip ${tip}, wall ${books.wallSolPlaced} lamports at ${books.wall.top}`]);
+    await checkBooks('place_wall', view, books);
 
     step('9. Selling into the wall');
     const top = books.wall.top;
-    const intoWall = await trade('sell into the wall', 0, topUp + DEMO.wallSell);
+    // It sells what step 8 bought, if anything, and as much again as the worked example sells
+    // into its wall, from the stock of tokens the first run kept (`DEMO.spareTokens`), with
+    // Pipeline's fee on top (PIPELINE_FEE_BPS, rounded up).
+    const intoWallAmount = topUp + DEMO.wallSell;
+    const held = await tokenBalance(payerAccounts[0]!);
+    if (held < intoWallAmount + ceilBps(intoWallAmount, PIPELINE_FEE_BPS)) {
+        fail(`the payer holds ${held} units of the token, too few to sell ${intoWallAmount} into the wall with Pipeline's fee on top`);
+    }
+    const intoWall = await trade('sell into the wall', 0, intoWallAmount);
     if (intoWall.spec.sqrtPrice >= top) fail(`the sell left the price at ${intoWall.spec.sqrtPrice}, not below the wall's top ${top}`);
     const spent = books.wallSolPlaced - wallSol(books.wall, books.curve.sqrtPrice);
     const boughtByWall = wallTokens(books.wall, books.curve.sqrtPrice);
@@ -1754,68 +1948,103 @@ async function main() {
     record.push(['the wall bought', `${boughtByWall} units for ${spent} lamports`]);
 
     step("10. Reading the books back against the spec's formulas");
-    const { data: traded } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
-    const read = {
-        sqrtPrice: [le(traded.sqrtPrice), books.curve.sqrtPrice],
-        liquidity: [le(traded.liquidity), books.curve.liquidity],
-        wallLiquidity: [le(traded.wallLiquidity), books.wall.liquidity],
-        wallTop: [le(traded.wallTop), books.wall.top],
-        wallSolPlaced: [le(traded.wallSolPlaced), books.wallSolPlaced],
-        poolTokens: [le(traded.poolTokens), books.poolTokens],
-        poolSol: [le(traded.poolSol), books.poolSol],
-        retiredTokens: [le(traded.retiredTokens), books.retiredTokens],
-        retiredRewardable: [le(traded.retiredRewardable), books.retiredRewardable],
-        capFallUnmatched: [le(traded.capFallUnmatched), books.capFallUnmatched],
-        idleSol: [le(traded.idleSol), books.idleSol],
-        cap: [le(traded.cap), books.cap.cap],
-        decayCredit: [le(traded.decayCredit), books.cap.decayCredit],
-        reference: [le(traded.reference), books.guard.reference],
-        refTime: [le(traded.refTime), books.guard.refTime],
-        floor: [le(traded.floor), books.guard.floor],
-        floorTime: [le(traded.floorTime), books.guard.floorTime],
-        lastSlot: [le(traded.lastSlot), books.guard.lastSlot],
-        lastClose: [le(traded.lastClose), books.guard.lastClose],
-        lowSincePlacement: [le(traded.lowSincePlacement), books.guard.lowSincePlacement],
-        tokensTrimmed: [le(traded.tokensTrimmed), books.tokensTrimmed],
-        solTrimmed: [le(traded.solTrimmed), books.solTrimmed],
-        wallTokensBought: [le(traded.wallTokensBought), books.wallTokensBought],
-        tipsPaid: [le(traded.tipsPaid), books.tipsPaid],
-        feesRecipient: [le(traded.feesRecipient), books.feesRecipient],
-        feesDesigner: [le(traded.feesDesigner), books.feesDesigner],
-        feesSuite: [le(traded.feesSuite), books.feesSuite],
-        volume0: [le(traded.volume[0]!), books.volume[0]!],
-        volume1: [le(traded.volume[1]!), books.volume[1]!],
-        feesCollected: [le(traded.feesCollected), books.feesCollected],
-        swapCount: [le(traded.swapCount), books.swapCount],
-    };
-    for (const [key, [got, wanted]] of Object.entries(read)) {
-        if (got !== wanted) fail(`the market state's ${key} is ${got}, but the spec's formulas give ${wanted}`);
-        info(`${key.padEnd(16)} ${got}`);
-    }
-    const [vaultTokensAfter, vaultSolAfter] = await Promise.all(view.vaults.map((vault) => tokenBalance(vault!)));
-    const solLedgers = books.poolSol + books.idleSol + books.feesRecipient + books.feesDesigner + books.feesSuite;
-    const tokenLedgers = books.poolTokens + books.retiredTokens;
-    if (vaultTokensAfter !== tokenLedgers || vaultSolAfter !== solLedgers) {
-        fail(`the vaults hold ${vaultTokensAfter} and ${vaultSolAfter}, not their ledgers' ${tokenLedgers} and ${solLedgers}`);
-    }
-    info("the price, the wall, the guard, the ledgers, the cap and the counters equal the spec's formulas to the unit; each vault holds exactly its ledgers");
+    await checkBooks('trading', view, books, true);
     record.push(['market state after trading', "equal to the spec's formulas"]);
 
-    await payOut(payer, metadata, view, token, books);
+    await payOut(payer, metadata, view, token, books, params, revisit === null);
 
     step('14. Graduating a token from a launchpad into a buy wall market');
-    if (cluster.local) {
+    if (revisit) {
+        info('skipped: only a new run graduates a token');
+    } else if (cluster.local) {
         await graduateFromLaunchpad(payer, programId, metadata);
     } else {
         info('skipped: the stand-in launchpad is a test program, never deployed to devnet');
     }
 
     step('15. The release gate on this cluster');
-    runReleaseGate();
+    if (cluster.local) {
+        runReleaseGate();
+    } else {
+        info('skipped: on devnet the gate runs before each deploy (scripts/deploy-devnet.sh, programs/buy-wall-amm/scripts/pre-deploy.sh)');
+    }
 
+    step("16. Pipeline's hosted API quoting the market");
+    if (onDevnet) {
+        await compareHostedQuotes(payer, recorded, view, vaultAuthority);
+    } else {
+        info("skipped: Pipeline's hosted API reads devnet only");
+    }
+
+    finish();
+}
+
+/** Prints what the run did and, with --record, writes it to a file. */
+function finish() {
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));
     for (const [label, value] of record) info(`${label.padEnd(width)}  ${value}`);
+    if (options.record) {
+        const run = { cluster: cluster.local ? cluster.url : 'devnet', at: new Date().toISOString(), record: Object.fromEntries(record.map(([label, value], i) => [`${String(i).padStart(2, '0')} ${label}`, value])) };
+        writeFileSync(options.record, `${JSON.stringify(run, null, 2)}\n`);
+        info(`written to ${options.record}`);
+    }
+}
+
+/**
+ * Step 16: Pipeline's hosted devnet API quotes the market both ways, and each quote equals
+ * the program's own, simulated through the router on the same state: the market state and both
+ * vaults read the same before and after, or the comparison runs again.
+ */
+async function compareHostedQuotes(payer: KeyPairSigner, recorded: pipeline.MarketView, view: pipeline.MarketView, vaultAuthority: Address) {
+    const snapshot = async () =>
+        JSON.stringify(await Promise.all([view.marketState, ...view.vaults].map(async (account) => Buffer.from((await accountData(account!)) ?? []).toString('base64'))));
+    const { data: state } = await fetchMarketState(rpc, view.marketState, { commitment: 'confirmed' });
+    // A hundredth of the curve's SOL, then of its tokens.
+    for (const [label, input, amount] of [['buy', 1, le(state.poolSol) / 100n], ['sell', 0, le(state.poolTokens) / 100n]] as const) {
+        const output = input === 1 ? 0 : 1;
+        for (let attempt = 0; ; attempt++) {
+            const before = await snapshot();
+            const hosted = await hostedQuote(view, input, output, amount);
+            const request = { mode: pipeline.TradeMode.ExactIn, inputIndex: input, outputIndex: output, amount, trader: payer.address, extra: new Uint8Array() };
+            const simulation = { commitment: 'confirmed' } as const;
+            const accounts = await pipeline.resolveAccounts(rpc, recorded, request, payer.address, simulation);
+            const { quote } = await pipeline.quoteStrategy(rpc, recorded, request, accounts, payer.address, simulation);
+            if ((await snapshot()) !== before) {
+                if (attempt >= 5) fail('the market kept changing while its quotes were compared');
+                info('the market changed while its quotes were compared; again');
+                continue;
+            }
+            const listed = hosted.strategyAccounts.join();
+            if (listed !== [view.vaults[output], vaultAuthority].join()) fail(`the hosted API resolved ${listed} for the ${label}, not the output vault and the vault authority`);
+            if (hosted.amountOut !== quote.amountOut) {
+                // The hosted API reads the cluster through its own RPC, which can trail ours by a
+                // few slots after the demo's last write; it must catch up within the retries.
+                if (attempt >= 5) fail(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, the program ${quote.amountOut}, on the same state`);
+                info(`the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, not yet the program's ${quote.amountOut}; again`);
+                await sleep(3_000);
+                continue;
+            }
+            info(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, exactly the program's quote on the same state`);
+            record.push([`hosted API quote, ${label}`, `${amount} in, ${hosted.amountOut} out, equal to the program's`]);
+            break;
+        }
+    }
+}
+
+/** A quote from Pipeline's hosted devnet API (its docs/API.md, "Quotes"), retried while it is busy. */
+async function hostedQuote(view: pipeline.MarketView, input: 0 | 1, output: 0 | 1, amount: bigint) {
+    const url = `${HOSTED_API}/v1/quote?market=${view.market}&input_mint=${view.mints[input]}&output_mint=${view.mints[output]}&amount=${amount}&mode=exact_in`;
+    for (let attempt = 0; ; attempt++) {
+        const response = await fetch(url, { headers: { 'user-agent': 'testing-pipeline-demo' } });
+        if (response.ok) {
+            const body = (await response.json()) as { amount_in: string; amount_out: string; slot: number; strategy_accounts: { address: string }[] };
+            if (BigInt(body.amount_in) !== amount) fail(`the hosted API quoted ${body.amount_in} in, not ${amount}`);
+            return { amountOut: BigInt(body.amount_out), slot: body.slot, strategyAccounts: body.strategy_accounts.map((account) => account.address) };
+        }
+        if (attempt >= 5 || (response.status !== 429 && response.status < 500)) fail(`the hosted API answered HTTP ${response.status}: ${await response.text()}`);
+        await sleep(2_000 * (attempt + 1));
+    }
 }
 
 // The release gate (docs/spec/pool4-for-solana.md, "A release gate"), run as its command

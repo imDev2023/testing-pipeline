@@ -1,0 +1,40 @@
+# Buy Wall AMM
+
+The buy wall AMM, published under the name in [`metadata.json`](metadata.json) and in the program's embedded `security.txt`, the only two places it lives ([SUITE-20](../../docs/decisions.md#suite-20-names-of-the-on-chain-products)), is a strategy for [Pipeline](https://github.com/MetalLegBob/pipeline)'s router and a port of IMD's Pool4 design: each market pairs a token with wrapped SOL on a constant-product curve that owns all its liquidity, seeded once and never withdrawn.
+An inventory cap trims the curve when sells leave it holding too many tokens; trimmed tokens are burned except for the market's reward share, and trimmed SOL becomes a buy wall below the price.
+Every swap pays the market's fee in SOL, split between IMD and Adam, the suite and the market's fee recipient and buy wall.
+Nobody controls a market after its seed: anyone may run its four keeper jobs, and each recipient may only hand its own role to another wallet.
+
+The full rules are in [`docs/spec/pool4-for-solana.md`](../../docs/spec/pool4-for-solana.md), and the terms (inventory cap, trim, buy wall, keeper job, reward share) in [`GLOSSARY.md`](../../GLOSSARY.md).
+
+## Open to change
+
+Every rule below is a default chosen for Pipeline's author to review, and each is one he may change.
+To change one, name its ID from the [decision register](../../docs/decisions.md) in an issue, in a comment on a pull request, or in a message to the repo's owner.
+Each block in the register says what else was weighed, the one place the value lives and what changing it takes.
+
+| Area | Decisions |
+| --- | --- |
+| The fee | [POOL4-02](../../docs/decisions.md#pool4-02-fee-rate) fee rate, [POOL4-03](../../docs/decisions.md#pool4-03-fee-token) always in SOL, [POOL4-04](../../docs/decisions.md#pool4-04-who-gets-the-fee) who gets it, [POOL4-05](../../docs/decisions.md#pool4-05-where-the-designer-share-waits) where the designer share waits, [POOL4-25](../../docs/decisions.md#pool4-25-the-fee-shares-in-the-idl) the shares in the IDL |
+| The cap, the trim and the wall | [POOL4-06](../../docs/decisions.md#pool4-06-trimmed-tokens-and-sol) trimmed tokens and SOL, [POOL4-12](../../docs/decisions.md#pool4-12-the-buy-walls-guard) the wall's guard, [POOL4-13](../../docs/decisions.md#pool4-13-cap-decay-while-idle) cap decay while idle, [POOL4-14](../../docs/decisions.md#pool4-14-minimum-trim-and-exact-out) minimum trim and exact-out, [POOL4-31](../../docs/decisions.md#pool4-31-the-ratchet-after-a-sell) to [POOL4-36](../../docs/decisions.md#pool4-36-every-holder-can-exit-at-a-price-bound), [POOL4-49](../../docs/decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share) to [POOL4-51](../../docs/decisions.md#pool4-51-the-markets-clocks-never-run-backwards) |
+| Markets and who controls them | [POOL4-09](../../docs/decisions.md#pool4-09-how-markets-are-created) how markets are created, [POOL4-10](../../docs/decisions.md#pool4-10-control-after-the-seed) control after the seed, [POOL4-11](../../docs/decisions.md#pool4-11-what-a-creator-chooses) what a creator chooses, [POOL4-17](../../docs/decisions.md#pool4-17-mint-rules) mint rules, [POOL4-48](../../docs/decisions.md#pool4-48-a-transfer-hook-at-the-seed) a transfer hook at the seed, [POOL4-28](../../docs/decisions.md#pool4-28-how-metadata-describes-seeding-from-another-program) and [POOL4-29](../../docs/decisions.md#pool4-29-how-a-seed-request-is-checked) seeding from another program |
+| Keeper jobs and payouts | [POOL4-15](../../docs/decisions.md#pool4-15-keeper-jobs-and-tips) keeper jobs and tips, [POOL4-37](../../docs/decisions.md#pool4-37-how-a-payout-names-and-checks-its-recipients-account) to [POOL4-40](../../docs/decisions.md#pool4-40-the-fee-slots-wallets-in-the-idl) payouts, [POOL4-52](../../docs/decisions.md#pool4-52-which-wallets-a-role-may-be-handed-to) handovers |
+| Layout and upgrades | [POOL4-16](../../docs/decisions.md#pool4-16-upgrades-never-strand-a-market) upgrades never strand a market, [POOL4-21](../../docs/decisions.md#pool4-21-the-market-states-discriminator) to [POOL4-23](../../docs/decisions.md#pool4-23-what-the-market-state-keeps-beyond-the-specs-field-list) the market state, [POOL4-41](../../docs/decisions.md#pool4-41-what-the-release-gate-runs-on-each-market) to [POOL4-47](../../docs/decisions.md#pool4-47-markets-the-router-has-not-recorded) and [POOL4-53](../../docs/decisions.md#pool4-53-every-gate-run-trades-a-market-of-its-own) the release gate, [POOL4-18](../../docs/decisions.md#pool4-18-mainnet-upgrade-policy) mainnet upgrade policy |
+| On devnet | [POOL4-19](../../docs/decisions.md#pool4-19-build-order-and-the-first-deploy) the first deploy, [POOL4-20](../../docs/decisions.md#pool4-20-the-first-layout-fixture) the first layout fixture, [POOL4-54](../../docs/decisions.md#pool4-54-one-deploy-path-with-the-release-gate-in-front) one deploy path with the gate in front, [POOL4-55](../../docs/decisions.md#pool4-55-the-devnet-demo-market) the devnet demo market, [POOL4-56](../../docs/decisions.md#pool4-56-what-shows-a-live-market-survived-an-upgrade) what shows a live market survived an upgrade |
+| Shared bar for every program | [BAR-20](../../docs/decisions.md#bar-20-verified-builds-of-our-programs) verified builds, [BAR-21](../../docs/decisions.md#bar-21-published-source-and-licence) published source, [BAR-22](../../docs/decisions.md#bar-22-strategy-metadata) metadata, [BAR-23](../../docs/decisions.md#bar-23-upgrade-authority-on-devnet) upgrade authority, [BAR-26](../../docs/decisions.md#bar-26-external-audits) no external audit, [TAX-54](../../docs/decisions.md#tax-54-links-that-stay-at-commits-on-main) links at commits on `main`, [SUITE-20](../../docs/decisions.md#suite-20-names-of-the-on-chain-products) the name |
+
+## On devnet
+
+Not deployed yet.
+The program id is `BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6`; the first deploy, its registration with the router and the demo market are recorded in [`deployments/devnet.json`](../../deployments/devnet.json) once they happen.
+It stays upgradeable on devnet under one project upgrade authority, every upgrade there passing the [release gate](gate/) first, and Aviary shows it as upgradeable by a single key, like anyone else's strategy.
+
+## Using it
+
+- **Metadata**: [`metadata.json`](metadata.json), Pipeline's `pipeline-strategy-metadata/1`, describes market creation (`init`), seeding from another program (`seed_liquidity`) and every custom action (`aviary_actions`), so a terminal can build each transaction with Pipeline's SDK.
+- **IDL and client**: the Anchor IDL is [`idl/buy_wall_amm.json`](idl/buy_wall_amm.json), and [`scripts/client/`](scripts/client/) is a TypeScript client generated from it with Codama.
+- **Demo**: [`scripts/demo.ts`](scripts/demo.ts) creates, seeds and trades a market built from the metadata, places its wall and runs every keeper job, on a local validator or on devnet; [`docs/toolchain.md`](../../docs/toolchain.md) says how to build, test, deploy and run it.
+- **Security**: report a vulnerability through this repo's [private vulnerability reporting](https://github.com/imDev2023/testing-pipeline/security/advisories/new).
+  The program has had internal reviews only ([`docs/security/buy-wall-amm/`](../../docs/security/buy-wall-amm/)), and no external audit.
+
+Licensed Apache-2.0, as is the whole on-chain workspace ([`programs/LICENSE`](../LICENSE)).
