@@ -144,6 +144,74 @@ fn deployed_commits() -> Vec<String> {
         .collect()
 }
 
+/// Checks that a `pipeline-check` report is of the deployed code (its program and executable
+/// hash are the deploy record's, as Pipeline's own staleness check compares them) and that it
+/// passed with no warning and no failure (the bar's "Test layers" 7).
+fn check_report(report: &Value, deployed: &Value) -> Result<(), String> {
+    let field = |value: &Value, key: &str| value[key].as_str().unwrap_or_default().to_owned();
+    let (program, hash) = (
+        field(&report["strategy"], "program_id"),
+        field(&report["strategy"], "executable_sha256"),
+    );
+    if program != field(deployed, "programId") {
+        return Err(format!(
+            "the report checks program {program}, not the deployed {}",
+            field(deployed, "programId")
+        ));
+    }
+    if hash != field(deployed, "executableHash") {
+        return Err(format!(
+            "the report checks executable {hash}, not the deployed {}",
+            field(deployed, "executableHash")
+        ));
+    }
+    for outcome in ["warn", "fail"] {
+        let count = report["summary"][outcome].as_u64().unwrap_or(u64::MAX);
+        if count != 0 {
+            return Err(format!("the report has {count} {outcome} results"));
+        }
+    }
+    Ok(())
+}
+
+/// The program's current entry in `deployments/devnet.json`, if it records one.
+fn deployed_entry() -> Option<Value> {
+    let path = manifest_dir().join("../../deployments/devnet.json");
+    path.exists()
+        .then(|| read_json(&path)["programs"][PROGRAM].clone())
+        .filter(|entry| !entry.is_null())
+}
+
+#[test]
+fn the_committed_report_is_of_the_deployed_code_and_passes() {
+    let Ok(report) = std::fs::read(manifest_dir().join(REPORT)) else {
+        return; // before the first deploy's record there is no report
+    };
+    let report: Value = serde_json::from_slice(&report).unwrap();
+    let deployed = deployed_entry().expect("a committed report needs the deploy it describes");
+    check_report(&report, &deployed).unwrap();
+}
+
+#[test]
+fn a_report_of_other_code_or_with_a_warning_is_refused() {
+    let deployed = json!({ "programId": "Prog", "executableHash": "aa" });
+    let report = |program: &str, hash: &str, warn: u64, fail: u64| {
+        json!({
+            "strategy": { "program_id": program, "executable_sha256": hash },
+            "summary": { "pass": 13, "warn": warn, "fail": fail, "skip": 1 },
+        })
+    };
+    check_report(&report("Prog", "aa", 0, 0), &deployed).unwrap();
+    let err = check_report(&report("Other", "aa", 0, 0), &deployed).unwrap_err();
+    assert!(err.contains("program"), "{err}");
+    let err = check_report(&report("Prog", "bb", 0, 0), &deployed).unwrap_err();
+    assert!(err.contains("executable"), "{err}");
+    let err = check_report(&report("Prog", "aa", 1, 0), &deployed).unwrap_err();
+    assert!(err.contains("warn"), "{err}");
+    let err = check_report(&report("Prog", "aa", 0, 1), &deployed).unwrap_err();
+    assert!(err.contains("fail"), "{err}");
+}
+
 #[test]
 fn the_committed_metadata_publishes_what_was_deployed() {
     let metadata = read_json(&manifest_dir().join("metadata.json"));

@@ -82,6 +82,7 @@
 // On a local cluster the script airdrops the SOL both keys need; on devnet it never does
 // (fund them with devnet-airdrop, docs/toolchain.md).
 
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 
@@ -1315,11 +1316,24 @@ async function main() {
         info(`${metadataUri} is valid with zero warnings`);
     } else if (onDevnet && options['metadata-not-yet-public']) {
         // The router only stores the URI; it resolves once the repo is public (TAX-54).
-        if (!metadataUri.startsWith(`${RAW_REPO}/`) || !metadataUri.endsWith('/programs/tax-amm/metadata.json')) {
-            fail(`--metadata-not-yet-public takes only this repo's metadata.json on ${RAW_REPO}, not ${metadataUri}`);
+        // It takes this repo's metadata.json on main, or at a commit on main, whose copy is
+        // checked as the link will serve it.
+        const at = new RegExp(`^${RAW_REPO.replaceAll('.', '\\.')}/(main|[0-9a-f]{40})/programs/tax-amm/metadata\\.json$`).exec(metadataUri)?.[1];
+        if (!at) fail(`--metadata-not-yet-public takes only this repo's metadata.json on main or at a full commit on ${RAW_REPO}, not ${metadataUri}`);
+        if (at !== 'main') {
+            const git = (args: string[]) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+            try {
+                git(['merge-base', '--is-ancestor', at, 'origin/main']);
+            } catch {
+                fail(`${at} is not a commit on origin/main (git fetch origin main first if it is new)`);
+            }
+            const copy = pipeline.parseStrategyMetadata(JSON.parse(git(['show', `${at}:programs/tax-amm/metadata.json`])));
+            if (!copy.ok || copy.warnings.length > 0) {
+                fail(`the metadata.json at ${at} does not pass the validator with zero warnings: ${copy.ok ? copy.warnings.join('; ') : copy.errors.join('; ')}`);
+            }
         }
         info(`${metadataUri} does not resolve yet (${published.ok ? published.warnings.join('; ') : published.reason}); registering it anyway with --metadata-not-yet-public`);
-        info('the committed metadata.json was checked instead; desks show the strategy without metadata until the repo is public');
+        info(`the metadata.json ${at === 'main' ? 'in this checkout' : `at ${at}`} was checked instead; desks show the strategy without metadata until the repo is public`);
     } else if (onDevnet) {
         // Pipeline's registry and every terminal read the strategy through this URI.
         fail(

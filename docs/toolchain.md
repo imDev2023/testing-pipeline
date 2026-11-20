@@ -562,7 +562,9 @@ A program's metadata cannot name the commit that holds it, and a squash merge le
    ```
 
    Merge `deployments/devnet.json`, the report, and the README and docs saying where the program is.
-3. **The metadata.** Run `node publish.ts pin --report-commit <the record's merge commit>` in `programs/tax-amm/scripts` and merge `metadata.json`; `tests/published.rs` fails if it names a commit other than the deployed one or a report other than the committed one.
+3. **The metadata.** Run `node publish.ts pin --report-commit <the record's merge commit>` in `programs/tax-amm/scripts` and merge `metadata.json`.
+   `pin` refuses a report commit that is not on `origin/main` or does not hold the report, and hashes the report as that commit holds it.
+   `tests/published.rs` fails if the metadata names a commit other than the deployed one or a report other than the committed one, or if the committed report is of other code than the deploy record's or has a warning or a failure.
    Then point the router at it and check everything published, as anyone would see it:
 
    ```sh

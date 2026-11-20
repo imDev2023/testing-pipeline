@@ -80,7 +80,12 @@ function pin(reportCommit: string | undefined) {
     metadata.source = { ...metadata.source, commit };
     if (reportCommit !== undefined) {
         if (!isCommit(reportCommit)) fail(`--report-commit must be a full commit hash, not ${reportCommit}`);
-        const report = readFileSync(here(`../${REPORT}`));
+        // The link must name a commit on main that holds the report, and the hash must be of
+        // the copy at that commit, which is what the link serves.
+        fetchMain();
+        if (!onMain(reportCommit)) fail(`--report-commit ${reportCommit} is not a commit on origin/main`);
+        const report = fileAt(reportCommit, `${DIR}/${REPORT}`) ?? fail(`${reportCommit} holds no ${DIR}/${REPORT}`);
+        if (!onMain(commit)) fail(`the deployed commit ${commit} is not on origin/main`);
         metadata.conformance = { report: `${RAW}/${reportCommit}/${DIR}/${REPORT}`, sha256: sha256(report) };
     } else {
         // An earlier deploy's report does not describe this one.
@@ -103,6 +108,15 @@ async function getOk(url: string): Promise<Uint8Array> {
 
 async function getJson(url: string) {
     return JSON.parse(Buffer.from(await getOk(url)).toString('utf8'));
+}
+
+/** The bytes of `path` at `commit`, or undefined if the commit does not hold it. */
+function fileAt(commit: string, path: string): Buffer | undefined {
+    try {
+        return execFileSync('git', ['-C', repoRoot, 'show', `${commit}:${path}`], { maxBuffer: 1 << 26 });
+    } catch {
+        return undefined;
+    }
 }
 
 function fetchMain() {
