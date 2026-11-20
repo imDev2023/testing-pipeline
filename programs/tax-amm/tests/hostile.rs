@@ -271,3 +271,131 @@ fn a_pre_funded_native_sol_vault_opens_with_a_donation_the_market_never_counts()
         assert_eq!(env.tax_market(&market.market_state).reserves, [0, 0]);
     }
 }
+
+/// `market` as a caller might describe it with other token programs.
+fn with_token_programs(market: &Market, token_programs: [Pubkey; 2]) -> Market {
+    Market {
+        market: market.market,
+        market_state: market.market_state,
+        authority: market.authority,
+        mints: market.mints,
+        token_programs,
+        vaults: market.vaults,
+        created: Default::default(),
+    }
+}
+
+/// Every token balance and the market state, to show a refused step moved nothing.
+fn holdings(env: &Env, market: &Market, wallets: &[Pubkey]) -> (Vec<u64>, Vec<u8>) {
+    let mut balances: Vec<u64> = market.vaults.iter().map(|v| env.balance(v)).collect();
+    for wallet in wallets {
+        for i in 0..2 {
+            let account =
+                pda::associated_token(wallet, &market.mints[i], &market.token_programs[i]);
+            balances.push(env.balance_or_zero(&account));
+        }
+    }
+    let state = env.svm.get_account(&market.market_state).unwrap().data;
+    (balances, state)
+}
+
+/// Hardening finding H004 (#67): nothing tested a swap whose output names the other token
+/// program than its mint's. The swap is refused and nothing moves.
+#[test]
+fn sos_h004_a_swap_naming_the_other_token_program_for_its_output_is_refused() {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN_2022), TOKEN_2022),
+    ];
+    let params = valid_params(&Pubkey::new_unique());
+    let market = env.seeded_market(mints, &params, [1_000_000_000, 1_000_000_000]);
+    let trader = env.funded_wallet(&market, 1_000_000_000);
+    let before = holdings(&env, &market, &[trader.pubkey()]);
+    for input in 0..2 {
+        let swapped = with_token_programs(&market, [TOKEN_2022, TOKEN]);
+        let options = SwapOptions {
+            strategy_accounts: Some(
+                env.resolve_accounts(&market, &exact_in(input, 1 - input, 1_000_000))
+                    .unwrap(),
+            ),
+            ..SwapOptions::default()
+        };
+        assert!(env
+            .swap_with(&swapped, &trader, (input, 1 - input), 1_000_000, &options)
+            .is_err());
+    }
+    assert_eq!(holdings(&env, &market, &[trader.pubkey()]), before);
+}
+
+/// Hardening finding H004 (#67): `distribute` naming another token program than the tax
+/// mint's is refused, and the slot keeps what it is owed.
+#[test]
+fn sos_h004_distribute_naming_another_token_program_is_refused() {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN_2022), TOKEN_2022),
+    ];
+    let mut params = valid_params(&Pubkey::new_unique());
+    params.tax_side = 1;
+    let market = env.seeded_market(mints, &params, [1_000_000_000, 1_000_000_000]);
+    let trader = env.funded_wallet(&market, 1_000_000_000);
+    env.swap(&market, &trader, (1, 0), 100_000_000).unwrap();
+    let state = env.tax_market(&market.market_state);
+    assert!(state.owed[0] > 0);
+    let wallet = slot_wallet(&state, 0);
+    let caller = Keypair::new();
+    env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
+    let before = holdings(&env, &market, &[wallet]);
+    let swapped = with_token_programs(&market, [TOKEN, TOKEN]);
+    let instruction = distribute_instruction(&swapped, 1, &caller.pubkey(), 0, &wallet, vec![]);
+    assert!(env.send_meta(&[instruction], &[&caller]).is_err());
+    assert_eq!(holdings(&env, &market, &[wallet]), before);
+    env.distribute(&market, &caller, 0).unwrap();
+}
+
+/// Hardening finding H004 (#67): a seed naming another token program than a mint's is
+/// refused, and the market stays waiting for its seed.
+#[test]
+fn sos_h004_a_seed_naming_another_token_program_is_refused() {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN_2022), TOKEN_2022),
+    ];
+    let seeder = Keypair::new();
+    let market = env
+        .create_tax_market(mints, &valid_params(&seeder.pubkey()))
+        .unwrap();
+    env.fund(&seeder.pubkey(), &market, [1_000_000, 1_000_000]);
+    let before = holdings(&env, &market, &[seeder.pubkey()]);
+    for programs in [[TOKEN_2022, TOKEN_2022], [TOKEN, TOKEN], [TOKEN_2022, TOKEN]] {
+        let swapped = with_token_programs(&market, programs);
+        let instruction =
+            seed_instruction(&swapped, &seeder.pubkey(), [1_000_000, 1_000_000], vec![]);
+        assert!(env.send_meta(&[instruction], &[&seeder]).is_err());
+    }
+    assert_eq!(holdings(&env, &market, &[seeder.pubkey()]), before);
+    env.seed(&market, &seeder, [1_000_000, 1_000_000]).unwrap();
+}
+
+/// Hardening finding H001 (#67): the router id compiled into the program, which every
+/// market's swap signer is derived under, is the router pinned for devnet. The tests load
+/// the router at the same constant, so only this pin would notice a Pipeline upgrade that
+/// moved it.
+#[test]
+fn sos_h001_the_compiled_router_id_is_the_pinned_devnet_router() {
+    let pins = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/pins.env"),
+    )
+    .unwrap();
+    let pinned = pins
+        .lines()
+        .find_map(|line| line.strip_prefix("ROUTER_PROGRAM="))
+        .expect("fixtures/pins.env pins ROUTER_PROGRAM");
+    assert_eq!(
+        Pubkey::new_from_array(pipeline_strategy_interface::PIPELINE_PROGRAM_ID).to_string(),
+        pinned
+    );
+}
