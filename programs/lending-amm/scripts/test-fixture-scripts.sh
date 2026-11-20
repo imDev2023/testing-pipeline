@@ -108,6 +108,37 @@ else
   pass "a hash mismatch fails without retrying"
 fi
 
+# 4a. A rate-limited RPC is outlasted (public devnet answered 429 to several downloads in a
+# row during CI on 2026-11-20), and one that keeps failing stops after six tries, each wait
+# twice the one before.
+echo 5 > "$work/failures"
+if FAKE_FAILURES="$work/failures" run_fetch 'pinned mainnet klend' 'pinned devnet klend' devnet && holds devnet 'pinned devnet klend'; then
+  pass "five transient download failures in a row are outlasted"
+else
+  fail "five transient failures were not outlasted: $(cat "$work/out.log")"
+fi
+echo 100 > "$work/failures"
+cat > "$work/bin/sleep" <<'STUB'
+#!/usr/bin/env bash
+echo "$1" >> "$(dirname "$0")/../sleeps"
+STUB
+chmod +x "$work/bin/sleep"
+: > "$work/sleeps"
+before="$(grep -c devnet "$work/calls")"
+if PATH="$work/bin:$PATH" FIXTURES_DIR="$fixtures" FAKE_MAINNET_BYTES='pinned mainnet klend' \
+  FAKE_DEVNET_BYTES='pinned devnet klend' FAKE_FAILURES="$work/failures" FETCH_RETRY_DELAY=3 \
+  bash "$FETCH" devnet > "$work/out.log" 2>&1; then
+  fail "a download that never succeeds was accepted"
+elif [ "$(grep -c devnet "$work/calls")" -ne "$((before + 6))" ]; then
+  fail "a failing download was tried $(($(grep -c devnet "$work/calls") - before)) times, not 6"
+elif [ "$(tr '\n' ' ' < "$work/sleeps")" != "3 6 12 24 48 " ]; then
+  fail "the waits between tries were $(tr '\n' ' ' < "$work/sleeps"), not 3 6 12 24 48"
+else
+  pass "a failing download stops after six tries, its waits doubling"
+fi
+rm "$work/bin/sleep"
+echo 0 > "$work/failures"
+
 # 4b. A cluster whose RPC never answers fails, after its retries, without stopping the
 # other cluster's fetch.
 rm -f "$fixtures/klend/devnet.so"

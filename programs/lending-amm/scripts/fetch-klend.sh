@@ -33,15 +33,18 @@ clusters=("$@")
 OUT="$FIXTURES_DIR/klend"
 sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
 
-# Public RPC sometimes fails a request outright, so each download gets three tries; a hash
-# mismatch is never retried.
+# Public RPC sometimes fails a request outright (429 Too Many Requests several times in a
+# row among the causes), so each download gets six tries, each wait twice the one before
+# (5 seconds, then 10, 20, 40 and 80: under three minutes in all), as in
+# scripts/fetch-router.sh; a hash mismatch is never retried.
 retry() {
-  local attempt
-  for attempt in 1 2 3; do
+  local attempt delay="${FETCH_RETRY_DELAY:-5}"
+  for attempt in 1 2 3 4 5 6; do
     if "$@"; then return 0; fi
-    if [ "$attempt" -lt 3 ]; then
-      echo "Download failed (try $attempt of 3); retrying." >&2
-      sleep "${FETCH_RETRY_DELAY:-5}"
+    if [ "$attempt" -lt 6 ]; then
+      echo "Download failed (try $attempt of 6); retrying in ${delay}s." >&2
+      sleep "$delay"
+      delay=$((delay * 2))
     fi
   done
   return 1
