@@ -81,6 +81,8 @@ The constants are compiled into the program; changing one is a program upgrade, 
 | `virtual_reserve` | u64 | 0 for none |
 
 - There is at least one recipient, and the used shares plus `burn_share_bps` sum to exactly 10,000.
+- No recipient is one of the market's own addresses or the programs it runs on: its market state, its vault authority, its vaults, its mints, the tax AMM, the router, the market's signer under the router, SPL Token, Token-2022 or the associated token program (`NotAWallet`).
+  None of them can ever move a token out of its associated token account, so tax paid there would be stuck for good while its payout event read as paid (hardening finding H024, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
 - Each rule refuses with an error of its own (`programs/tax-amm/src/errors.rs`), so Aviary's launch form can say which rule a market breaks; a mint refused for an extension is also logged with Token-2022's number for that extension.
 - `pipeline_init_market` refuses anything that breaks a rule, checks that the market signer is the router's PDA `["market", program, market_state]` and stores it, creates the vaults, and records the creation slot and Unix time.
 - `pipeline_seed_liquidity` takes the same fields in `SeedRequest.data`, with `seeder` ignored because the calling program's PDA is the seeder.
@@ -130,6 +132,8 @@ A real launchpad's own accounts change these numbers, and a pair across token pr
 
 - There is no instruction that takes liquidity out of a market, and no LP shares, so nobody, the creator and us included, can pull liquidity.
 - Tokens sent to a vault outside a swap or the seed are donations: they are never credited as input, never paid out, and stay in the vault.
+- Locked means that no instruction removes liquidity; it does not mean the seed's value is safe from sellers.
+  Tokens held outside the market, whether kept back at launch or minted later by a mint authority, sell into the curve like any others, and on a market with a virtual reserve they can take everything buyers paid in, since the virtual side is priced but never paid out (hardening findings H036, H086, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
 
 ### Virtual reserve
 
@@ -237,6 +241,8 @@ The market state keeps these totals, changed only by `pipeline_swap` calls signe
 
 With the creation slot and time, the fixed tax ranges and the tax side, that is everything [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18) might measure an unlock goal by (volume, tax paid, age, or a minimum tax), so the hook can choose without changing the tax AMM.
 The market state starts with an 8-byte account discriminator and a version byte, and these fields sit at fixed offsets that later versions never move, because the hook reads them directly.
+Every instruction refuses a market state whose version byte is newer than the version the running program writes (`NewerStateVersion`), so a build rolled back under markets a newer build wrote never reads them with an older layout's meaning (hardening finding H069, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+The account's size, the tax side's offset and the room left after `tax_collected` are checked against the account's real layout when the program compiles, and `tests/layout.rs` pins every field's offset and the discriminator's eight bytes (H041).
 The build fixes the offsets in the ticket that creates markets, publishes them as constants in the tax AMM's crate and pins them with a test, so the two programs cannot drift apart unnoticed.
 [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) fixed them on 2026-11-12: the market state is 596 bytes, the tax side is the byte at offset 10 and `tax_collected` the little-endian u128 at offset 460, published as `state::layout::TAX_SIDE`, `TAX_COLLECTED` and `LEN` and pinned with every other field's offset by `programs/tax-amm/tests/layout.rs`.
 Besides the fields this file names, the market state holds its status (created; the seed adds open), the vault authority's bump, a flag set when the tax authority renounces, so Aviary can tell a renounced market from one created without an authority, and 64 zero bytes at the end, so a later version can add a field without moving any or reallocating existing markets.
@@ -284,6 +290,10 @@ Everything here is read from the market state and the strategy metadata, and not
 
 ## Upgrades and freezing
 
+- Before a new build replaces the one deployed, its release gate reads every tax market on the cluster and quotes each one both ways with the new bytes, at the spec's price and exactly as the deployed build does, so an upgrade strands no market (hardening finding H038, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  `scripts/deploy-devnet.sh` runs it on the very bytes it deploys (`programs/tax-amm/scripts/pre-deploy.sh`, `tests/release_gate.rs`) and records what it read in `deployments/release-gate/tax-amm/devnet.json`, and every `cargo test` runs it on the devnet markets copied into `tests/fixtures/release-gate/devnet/`.
+- Every market stores the router's market signer when it is created, and liquidity leaves a market only through swaps that signer signs, so the router is each market's only exit: a router that stopped signing for it, or a frozen build compiled with another router's address, would lock its reserves for good, although `distribute` and the tax authority's actions never need the router (hardening finding H034, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  So before the program is frozen, the router's address compiled into it (`sos_h001_the_compiled_router_id_is_the_pinned_devnet_router` checks it against `fixtures/pins.env`) must be the live router's on that cluster.
 - On devnet the program stays upgradeable, with its upgrade authority in `~/.config/testing-pipeline/devnet/`.
 - It is frozen (upgrade authority removed) before any mainnet deployment, because the containment hook's unlock will trust its counters and the vaults hold locked liquidity.
 - The general upgrade policy is in `docs/spec/README.md`.
