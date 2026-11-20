@@ -1576,6 +1576,18 @@ pub fn invariants() -> Vec<Invariant<TaxAmm>> {
             "compute_stays_under_its_ceilings",
             compute_stays_under_its_ceilings,
         ),
+        Invariant::new(
+            "every_owed_recipient_slot_names_a_wallet",
+            every_owed_recipient_slot_names_a_wallet,
+        ),
+        Invariant::new(
+            "tax_collected_never_passes_the_tax_sides_volume",
+            tax_collected_never_passes_the_tax_sides_volume,
+        ),
+        Invariant::new(
+            "a_side_without_a_virtual_reserve_never_empties",
+            a_side_without_a_virtual_reserve_never_empties,
+        ),
     ]
 }
 
@@ -1989,6 +2001,54 @@ fn compute_stays_under_its_ceilings(c: &Checked<'_, TaxAmm>) -> Result<(), Strin
         ensure!(
             cost <= ceiling,
             "{name} took {cost} CU, over its ceiling of {ceiling}"
+        );
+    }
+    Ok(())
+}
+
+/// Book of Knowledge INV-04 (#67): tax is only ever owed to a recipient slot that names a
+/// wallet, so no owed amount is ever stranded with nobody to pay it to, even once the tax
+/// authority renounces (docs/spec/tax-amm.md, "Payout").
+fn every_owed_recipient_slot_names_a_wallet(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
+    let state = &c.after.state;
+    for slot in 0..MAX_RECIPIENTS {
+        ensure!(
+            state.owed[slot] == 0 || state.recipients[slot] != Default::default(),
+            "recipient slot {slot} is owed {} with no wallet",
+            state.owed[slot]
+        );
+    }
+    Ok(())
+}
+
+/// Book of Knowledge INV-05 (#67): the tax collected never passes the tax side's volume,
+/// since every tax is taken out of what that side's volume counts (the credited input of a
+/// buy; a sell's tax is at most 10% of its curve output, so at most a ninth of what the
+/// trader receives); the counters' u128 adds can't overflow before `swap_count` does.
+fn tax_collected_never_passes_the_tax_sides_volume(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
+    let state = &c.after.state;
+    ensure!(
+        state.tax_collected <= state.volume[state.tax_side as usize],
+        "tax collected {} passes the tax side's volume {}",
+        state.tax_collected,
+        state.volume[state.tax_side as usize]
+    );
+    Ok(())
+}
+
+/// Book of Knowledge INV-06 (#67): once a market is open, a side without a virtual reserve
+/// always keeps some of its real reserve: the seed puts more than 0 there and the curve
+/// never pays out all of a side it alone prices.
+fn a_side_without_a_virtual_reserve_never_empties(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
+    let state = &c.after.state;
+    if state.status != MarketStatus::Open {
+        return Ok(());
+    }
+    for side in 0..2 {
+        let virtual_side = state.virtual_side as usize == side && state.virtual_reserve > 0;
+        ensure!(
+            virtual_side || state.reserves[side] > 0,
+            "side {side}, which has no virtual reserve, emptied"
         );
     }
     Ok(())

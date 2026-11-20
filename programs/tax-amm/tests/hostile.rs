@@ -370,7 +370,11 @@ fn sos_h004_a_seed_naming_another_token_program_is_refused() {
         .unwrap();
     env.fund(&seeder.pubkey(), &market, [1_000_000, 1_000_000]);
     let before = holdings(&env, &market, &[seeder.pubkey()]);
-    for programs in [[TOKEN_2022, TOKEN_2022], [TOKEN, TOKEN], [TOKEN_2022, TOKEN]] {
+    for programs in [
+        [TOKEN_2022, TOKEN_2022],
+        [TOKEN, TOKEN],
+        [TOKEN_2022, TOKEN],
+    ] {
         let swapped = with_token_programs(&market, programs);
         let instruction =
             seed_instruction(&swapped, &seeder.pubkey(), [1_000_000, 1_000_000], vec![]);
