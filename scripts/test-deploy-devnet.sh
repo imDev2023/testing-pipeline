@@ -171,6 +171,13 @@ if run toy; then
   else
     fail "deploy call: $deploy_call"
   fi
+  # Public devnet drops write transactions under load: the deploy re-signs and resends them
+  # many times, and pays a small priority fee so they land.
+  if [[ "$deploy_call" == *"--max-sign-attempts 50"* && "$deploy_call" == *"--with-compute-unit-price 10000"* ]]; then
+    pass "a devnet deploy resends dropped writes and pays a priority fee"
+  else
+    fail "deploy call without retries or a priority fee: $deploy_call"
+  fi
   record="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["programs"]["toy"], sort_keys=True))' "$repo/deployments/devnet.json")"
   for want in "\"programId\": \"$PROGRAM_ID\"" "\"executableHash\": \"$HASH\"" "\"commit\": \"$commit\"" \
     "\"dockerImage\": \"$IMAGE\"" "\"upgradeAuthority\": \"$AUTHORITY\"" "\"deployedBy\": \"$WALLET\"" "\"slot\": 4242"; do

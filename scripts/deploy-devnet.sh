@@ -37,6 +37,11 @@ KEYS_DIR="${KEYS_DIR:-$HOME/.config/testing-pipeline/devnet}"
 DEVNET_URL=https://api.devnet.solana.com
 DEVNET_GENESIS=EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
 MIN_VERIFY_VERSION=0.5.2
+# Public devnet drops write transactions under load ("Data writes to account failed: Max
+# retries exceeded", 2026-11-19): a devnet deploy re-signs and resends unconfirmed writes up to
+# this many times, and pays this priority fee (micro-lamports per compute unit) so they land.
+DEVNET_MAX_SIGN_ATTEMPTS=50
+DEVNET_COMPUTE_UNIT_PRICE=10000
 
 usage() {
   echo "Usage: scripts/deploy-devnet.sh <program> [--url devnet|<local validator URL>] [--build-only] [--record <file>] [--out <dir>]" >&2
@@ -150,7 +155,7 @@ authority="$(solana-keygen pubkey "$authority_key")"
 payer="$(solana-keygen pubkey "$wallet")"
 echo "== Deploying $program_id to $url, paid by $payer, upgrade authority $authority"
 deploy_flags=()
-$local_cluster || deploy_flags+=(--use-rpc)
+$local_cluster || deploy_flags+=(--use-rpc --max-sign-attempts "$DEVNET_MAX_SIGN_ATTEMPTS" --with-compute-unit-price "$DEVNET_COMPUTE_UNIT_PRICE")
 solana program deploy -u "$url" -k "$wallet" --program-id "$program_key" \
   --upgrade-authority "$authority_key" ${deploy_flags[@]+"${deploy_flags[@]}"} "$so"
 
