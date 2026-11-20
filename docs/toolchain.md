@@ -330,11 +330,14 @@ The other order, with the deadline only 70 seconds away, stopped as it should be
 
 `gate` is the one check `main` requires, so a pull request that touches no on-chain code still gets a passing result in a minute.
 `scripts/github-settings.sh` makes it required, through a repository ruleset that admins may bypass (so a history rewrite can still be force-pushed), and switches on private vulnerability reporting, which every program's `security.txt` names as its contact.
-Both settings need the repository public on GitHub Free, so the owner runs `bash scripts/github-settings.sh` once it is.
+Both settings need the repository public on GitHub Free; `scripts/make-repo-public.sh` ran it when the repository went public on 2026-11-20, and both are on.
 
 The first run, on [the PR that added CI](https://github.com/imDev2023/testing-pipeline/pull/102) on 2026-11-12, took 9 minutes from cold caches: `rust` 9 minutes (2 minutes 13 seconds of it compiling cargo-build-sbf, then the SBF build in 44 seconds, clippy in 64 seconds and the test build in 49 seconds), `kani` 3 minutes with Kani's install, `typescript` 28 seconds, and `changes`, `no keypairs` and `gate` a few seconds each.
 
 ### CI on the owner's iMac
+
+Since the repository went public on 2026-11-20, CI runs on GitHub's runners, which cost nothing for a public repository: `CI_RUNS_ON` is deleted and the iMac's runners are stopped and unregistered, so a pull request from a fork can never reach them.
+The rest of this section is how CI ran before, kept for a private repository.
 
 While the repository is private, GitHub's included Actions minutes run out, and from 2026-11-12 GitHub refused to start any job; so on 2026-11-13 the owner moved CI to the iMac (`BAR-39`).
 Both workflows run where the repository variable `CI_RUNS_ON` says, as a JSON list of runner labels, and on GitHub's runners when it is unset:
@@ -364,7 +367,7 @@ The move was needed because GitHub's read-only pull request refs of the old repo
 - The archive holds the original pull request pages, their reviews and the history before the purge; read it, never write to it.
 - On the owner's Mac, the purge's hooks in the main checkout's git folder refuse, in every worktree, a commit that adds the purged files or the private outreach lines, and a push of any branch that still carries the old history.
   A branch made before the move is moved onto the new history by `git rebase --onto origin/main <the old commit it started from>`.
-- `scripts/move-repo/README.md` describes the move and its check, `bash scripts/move-repo.sh check` proves every issue number against the archive and scans every object, issue, comment and revision of the new repository, and `scripts/make-repo-public.sh` makes it public with the owner's go-ahead, only if that check passes.
+- `scripts/move-repo/README.md` describes the move and its check, `bash scripts/move-repo.sh check` proves every issue number against the archive and scans every object, issue, comment and revision of the new repository, and `scripts/make-repo-public.sh`, which ran that check first, made it public on 2026-11-20 with the owner's go-ahead.
 
 ### Review skills
 

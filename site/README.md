@@ -61,7 +61,8 @@ Everything runs on the machine's default Node 26; if a tool breaks there, use No
   If a source is reworded, `refresh` stops and names the phrase to fix.
 - The repository moved on 2026-11-19 (#167) with every issue number kept, so the ticket pages keep their addresses; the numbers that were pull requests are placeholders, which the site never shows, since it reads only the map's sub-issues.
   `refresh` reads only `imDev2023/testing-pipeline`, never the private archive.
-- The repo is private, so links into it, whether full addresses or relative links between files, are pointed at the site's own pages, and the ones with no page are turned into plain text.
+- The repo was private when the site was built, so links into it, whether full addresses or relative links between files, are pointed at the site's own pages, and the ones with no page are turned into plain text.
+  It is public since 2026-11-20, so those links could point at GitHub instead; `refresh.mjs` has not been changed for that yet.
   Headings get the anchors GitHub gives them, so a link to a section of a file lands on that section here.
 - To show another document, add one `addDocument` line in `refresh.mjs`.
 

@@ -38,7 +38,7 @@ Every decision settled so far is one block in `docs/decisions.md`, the decision 
 - Never hold users' private keys, in Aviary or a Telegram bot.
 - Ask the owner before every paid call, including LLM calls for the explainer and paid RPC tiers, and log approved ones in `~/.config/spend/ledger.csv`.
 - MetalLegBob is a third party: agents draft messages to him in `~/.config/testing-pipeline/outreach.md`, the owner sends them, and his answers are recorded there with dates.
-  The repo goes public (owner, 2026-11-09), so his words and the messages never go into the repo, its issues or its PRs; those record only the decisions his answers settle.
+  The repo is public (since 2026-11-20, the owner's decision of 2026-11-09), so his words and the messages never go into the repo, its issues or its PRs; those record only the decisions his answers settle.
 - This project's devnet keys live outside the repo in `~/.config/testing-pipeline/devnet/`; it does not use Top-pad's (Heat's) devnet bank.
 - MetalLegBob's profile and the archive of his X posts live only in `~/.config/testing-pipeline/research/` and never go into the repo, its issues or its PRs (owner, 2026-11-10).
   `.gitignore` lists their old paths, and hooks on the owner's Mac refuse commits that add them and pushes of the old history.
@@ -48,7 +48,8 @@ Every decision settled so far is one block in `docs/decisions.md`, the decision 
 ## The repository
 
 Since 2026-11-19 (#167), `imDev2023/testing-pipeline` is a new repository with every issue number of the old one, whose history was purged of MetalLegBob's profile and X archive; the old repository is `imDev2023/testing-pipeline-archive`, private for good: read it, never write to it.
-Numbers that were pull requests are closed placeholder issues naming the archived pull request; `docs/toolchain.md`, "The repository and its archive", says the rest, and `scripts/make-repo-public.sh` makes the new repository public with the owner's go-ahead.
+Numbers that were pull requests are closed placeholder issues naming the archived pull request; `docs/toolchain.md`, "The repository and its archive", says the rest.
+The new repository is public since 2026-11-20 (`scripts/make-repo-public.sh`), and CI runs on GitHub's runners again.
 
 ## Progress site
 
