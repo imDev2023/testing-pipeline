@@ -43,10 +43,14 @@ const sol: Pick<Definition<bigint>, 'parse' | 'show'> = {
 };
 
 const UNITS = { h: 3_600_000, m: 60_000, s: 1_000 } as const;
+const MAX_TIMER_MS = 2 ** 31 - 1;
 function parseDuration(value: string): number {
     const match = /^(\d+)(s|m|h)$/.exec(value.trim());
     if (!match || Number(match[1]) === 0) throw new Error('a duration above 0 such as 30s, 2m or 1h');
-    return Number(match[1]) * UNITS[match[2] as keyof typeof UNITS];
+    const ms = Number(match[1]) * UNITS[match[2] as keyof typeof UNITS];
+    // A timer holds at most 2^31 - 1 ms; a longer one would fire at once, and again, and again.
+    if (ms > MAX_TIMER_MS) throw new Error('a duration of at most 596h (24 days), the longest timer Node holds');
+    return ms;
 }
 function showDuration(ms: number): string {
     for (const [unit, size] of Object.entries(UNITS)) if (ms % size === 0) return `${ms / size}${unit}`;

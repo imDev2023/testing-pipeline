@@ -115,6 +115,26 @@ async function ask<T>(what: string, call: () => Promise<T>): Promise<T> {
     }
 }
 
+/**
+ * The RPC handed to the jobs' builders, with every request's transport failure turned into a
+ * ChainError, so an RPC hiccup while building is never taken for the job failing (SUITE-52).
+ */
+function guarded<T extends object>(rpc: T): T {
+    return new Proxy(rpc, {
+        get(target, method) {
+            const call = Reflect.get(target, method);
+            if (typeof call !== 'function') return call;
+            return (...args: unknown[]) => {
+                const request = call.apply(target, args) as { send(options?: unknown): Promise<unknown> };
+                return { ...request, send: (options?: unknown) => ask(String(method), () => request.send(options)) };
+            };
+        },
+    });
+}
+
+/** How long a sent transaction is followed when the RPC keeps failing, before giving up on knowing. */
+const FOLLOW_MS = 120_000;
+
 export function rpcChain(urls: { rpcUrl: string; discoveryRpcUrl: string; wsUrl: string }): Chain {
     const rpc: Rpc<SolanaRpcApi> = createSolanaRpc(urls.rpcUrl);
     const discovery: Rpc<SolanaRpcApi> = urls.discoveryRpcUrl === urls.rpcUrl ? rpc : createSolanaRpc(urls.discoveryRpcUrl);
@@ -122,7 +142,7 @@ export function rpcChain(urls: { rpcUrl: string; discoveryRpcUrl: string; wsUrl:
     const base64 = getBase64Encoder();
 
     return {
-        rpc,
+        rpc: guarded(rpc),
 
         async balance(address) {
             return (await ask('getBalance', () => rpc.getBalance(address, { commitment: COMMITMENT }).send())).value;
@@ -188,15 +208,29 @@ export function rpcChain(urls: { rpcUrl: string; discoveryRpcUrl: string; wsUrl:
                 // The node may have taken it before the connection dropped: its status says.
                 dropped = true;
             }
+            // Followed until it is confirmed or its blockhash has expired; a failed poll is asked
+            // again, so one hiccup never leaves a landed transaction uncounted.
+            const giveUp = Date.now() + FOLLOW_MS;
+            let lastError: unknown = null;
             for (;;) {
                 await sleep(POLL_MS);
-                const status = await ask('getSignatureStatuses', () =>
-                    rpc.getSignatureStatuses([transaction.signature], { searchTransactionHistory: dropped }).send(),
-                ).then(({ value }) => value[0]);
-                if (status && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) return;
-                const height = await ask('getBlockHeight', () => rpc.getBlockHeight({ commitment: COMMITMENT }).send());
-                if (height > transaction.lastValidBlockHeight) {
-                    throw new ChainError(`${transaction.signature} did not land before its blockhash expired${dropped ? ' (the send was dropped)' : ''}`);
+                try {
+                    const { value } = await rpc.getSignatureStatuses([transaction.signature], { searchTransactionHistory: true }).send();
+                    const status = value[0];
+                    if (status && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) return;
+                    const height = await rpc.getBlockHeight({ commitment: COMMITMENT }).send();
+                    if (height > transaction.lastValidBlockHeight) {
+                        // One last look, in case it landed in the blockhash's final slots.
+                        const last = (await rpc.getSignatureStatuses([transaction.signature], { searchTransactionHistory: true }).send()).value[0];
+                        if (last?.confirmationStatus === 'confirmed' || last?.confirmationStatus === 'finalized') return;
+                        throw new ChainError(`${transaction.signature} did not land before its blockhash expired${dropped ? ' (the send was dropped)' : ''}`);
+                    }
+                } catch (error) {
+                    if (error instanceof ChainError) throw error;
+                    lastError = error;
+                }
+                if (Date.now() > giveUp) {
+                    throw new ChainError(`whether ${transaction.signature} landed is unknown: the RPC kept failing (${String((lastError as Error)?.message ?? lastError)})`);
                 }
             }
         },

@@ -83,6 +83,9 @@ describe('settings', () => {
         assert.throws(() => loadSettings({ ...ALCHEMY, KEEPER_MAX_TX_COST: '0.0000000001' }), /KEEPER_MAX_TX_COST/);
         assert.throws(() => loadSettings({ ...ALCHEMY, KEEPER_DAILY_PASS_UTC: '24:00' }), /KEEPER_DAILY_PASS_UTC/);
         assert.throws(() => loadSettings({ ...ALCHEMY, KEEPER_RETRY_DELAYS: '30' }), /KEEPER_RETRY_DELAYS/);
+        // Longer than a Node timer holds, which would fire at once and repeat.
+        assert.throws(() => loadSettings({ ...ALCHEMY, KEEPER_SWEEP_INTERVAL: '600h' }), /KEEPER_SWEEP_INTERVAL/);
+        assert.equal(loadSettings({ ...ALCHEMY, KEEPER_SWEEP_INTERVAL: '596h' }).sweepIntervalMs, 596 * 3_600_000);
     });
 
     test('with no RPC URL and no ALCHEMY_API_KEY the runner refuses to start', () => {

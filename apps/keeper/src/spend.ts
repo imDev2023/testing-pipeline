@@ -27,40 +27,58 @@ export function spendOf(transaction: LandedTransaction, keeper: Address): bigint
     return out > transaction.fee ? out : transaction.fee;
 }
 
-/** The market a transaction worked on: the first of its accounts that is a known market. */
-export function marketOf(transaction: LandedTransaction, isMarket: (address: Address) => boolean): Address | null {
-    return transaction.accountKeys.find(isMarket) ?? null;
-}
-
+/**
+ * Today's spend. Each transaction keeps its accounts, so it is put to its market (the first of
+ * its accounts that is a known market) whenever asked: a market found after the rebuild, as
+ * when discovery failed at start, still gets its share and a restart never resets its cap.
+ */
 export class Spend {
-    total = 0n;
-    readonly byMarket = new Map<Address, bigint>();
-
     readonly day: string;
+    private readonly isMarket: (address: Address) => boolean;
+    private readonly entries: { accounts: readonly Address[]; amount: bigint }[] = [];
 
-    constructor(day: string) {
+    constructor(day: string, isMarket: (address: Address) => boolean) {
         this.day = day;
+        this.isMarket = isMarket;
     }
 
-    add(market: Address | null, amount: bigint) {
-        this.total += amount;
-        if (market !== null) this.byMarket.set(market, this.of(market) + amount);
+    add(accounts: readonly Address[], amount: bigint) {
+        this.entries.push({ accounts, amount });
     }
 
+    get total(): bigint {
+        return this.entries.reduce((sum, entry) => sum + entry.amount, 0n);
+    }
+
+    /** What was spent today on `market`. */
     of(market: Address): bigint {
-        return this.byMarket.get(market) ?? 0n;
+        return this.entries.reduce((sum, entry) => (entry.accounts.find(this.isMarket) === market ? sum + entry.amount : sum), 0n);
+    }
+
+    byMarket(): Map<Address, bigint> {
+        const found = new Map<Address, bigint>();
+        for (const { accounts, amount } of this.entries) {
+            const market = accounts.find(this.isMarket);
+            if (market !== undefined) found.set(market, (found.get(market) ?? 0n) + amount);
+        }
+        return found;
     }
 
     toJSON() {
-        return { day: this.day, total: this.total, byMarket: Object.fromEntries(this.byMarket) };
+        return { day: this.day, total: this.total, byMarket: Object.fromEntries(this.byMarket()) };
     }
 }
 
 /** A landed transaction, asking again while the node has its signature but not yet its details. */
 export async function landed(chain: Chain, signature: Signature): Promise<LandedTransaction> {
     for (let attempt = 0; attempt < 20; attempt++) {
-        const transaction = await chain.transaction(signature);
-        if (transaction !== null) return transaction;
+        try {
+            const transaction = await chain.transaction(signature);
+            if (transaction !== null) return transaction;
+        } catch (error) {
+            // A passing transport error: ask again, until the attempts run out.
+            if (!(error instanceof ChainError)) throw error;
+        }
         await sleep(500);
     }
     throw new ChainError(`the node has no details of ${signature} after 10 s`);
@@ -68,13 +86,13 @@ export async function landed(chain: Chain, signature: Signature): Promise<Landed
 
 /** Today's spend, from the keeper wallet's transactions since 00:00 UTC of `nowMs`. */
 export async function rebuildSpend(chain: Chain, keeper: Address, nowMs: number, isMarket: (address: Address) => boolean): Promise<Spend> {
-    const spend = new Spend(utcDay(nowMs));
+    const spend = new Spend(utcDay(nowMs), isMarket);
     const since = dayStart(nowMs) / 1000;
     for (const signature of await chain.signaturesSince(keeper, since)) {
         // A missing transaction would undercount, so a rebuild that cannot read one fails.
         const transaction = await landed(chain, signature);
         if (transaction.blockTime !== null && transaction.blockTime < since) continue;
-        spend.add(marketOf(transaction, isMarket), spendOf(transaction, keeper));
+        spend.add(transaction.accountKeys, spendOf(transaction, keeper));
     }
     return spend;
 }

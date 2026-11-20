@@ -14,7 +14,7 @@ import { ChainError, type Chain, type Result, type SignedTransaction } from './c
 import type { Clock, Timer } from './clock.ts';
 import type { Logger } from './log.ts';
 import { describeSettings, type Settings } from './settings.ts';
-import { dayStart, landed, marketOf, rebuildSpend, spendOf, utcDay, type Spend } from './spend.ts';
+import { dayStart, landed, rebuildSpend, spendOf, utcDay, type Spend } from './spend.ts';
 
 /** Which pass is running: `start` and `once` run every job; the others their own jobs. */
 export type PassKind = 'start' | 'once' | 'sweep' | 'hourly' | 'daily' | 'transaction';
@@ -100,10 +100,10 @@ export class Runner {
         for (const product of this.products) {
             this.unsubscribes.push(
                 this.chain.subscribeLogs(product.programAddress, {
-                    onSignature: (signature) => void this.exclusive(() => this.onTransaction(signature)),
+                    onSignature: (signature) => this.background(() => this.onTransaction(signature)),
                     onReconnect: () => {
                         this.log.write({ row: 'socket', event: 'reconnected', program: product.programAddress });
-                        void this.exclusive(() => this.pass('sweep'));
+                        this.background(() => this.pass('sweep'));
                     },
                     onError: (error) => this.log.write({ row: 'socket', event: 'error', program: product.programAddress, error: String(error) }),
                 }),
@@ -151,27 +151,39 @@ export class Runner {
         return run;
     }
 
+    /**
+     * Queues work no caller waits for (a timer's, a retry's, the socket's): its failure is
+     * logged by `exclusive` and goes no further, so it can never stop the process.
+     */
+    private background(work: () => Promise<unknown>, then?: () => void) {
+        this.exclusive(work)
+            .catch(() => {})
+            .finally(() => !this.stopped && then?.());
+    }
+
     private every(ms: number, kind: PassKind) {
         const timer = this.clock.setTimer(ms, () => {
             this.timers.delete(timer);
-            void this.exclusive(() => this.pass(kind)).finally(() => !this.stopped && this.every(ms, kind));
+            this.background(() => this.pass(kind), () => this.every(ms, kind));
         });
         this.timers.add(timer);
     }
 
-    /** The next DAILY_PASS_UTC after now, in milliseconds from now. */
-    private untilDaily(): number {
+    /** The next DAILY_PASS_UTC after now. */
+    private nextDaily(): number {
         const now = this.clock.now();
         const { hour, minute } = this.settings.dailyPassUtc;
         let at = dayStart(now) + (hour * 60 + minute) * 60_000;
         if (at <= now) at += DAY_MS;
-        return at - now;
+        return at;
     }
 
-    private scheduleDaily() {
-        const timer = this.clock.setTimer(this.untilDaily(), () => {
+    /** Arms the daily pass for `at`; a timer that fires early is armed again for the rest. */
+    private scheduleDaily(at = this.nextDaily()) {
+        const timer = this.clock.setTimer(at - this.clock.now(), () => {
             this.timers.delete(timer);
-            void this.exclusive(() => this.pass('daily')).finally(() => !this.stopped && this.scheduleDaily());
+            if (this.clock.now() < at) return this.scheduleDaily(at);
+            this.background(() => this.pass('daily'), () => this.scheduleDaily());
         });
         this.timers.add(timer);
     }
@@ -333,7 +345,8 @@ export class Runner {
 
         // The fee and the rent of anything the job creates: what the simulation took from the wallet.
         const estimate = balance > simulation.payerLamportsAfter ? balance - simulation.payerLamportsAfter : 0n;
-        const spend = this.spend!;
+        const spend = this.spend;
+        if (spend === null) throw new ChainError("today's spend is unknown until it is rebuilt from the chain");
         if (estimate > this.settings.maxTxCost) return this.hold(market, current, 'MAX_TX_COST', { estimate, limit: this.settings.maxTxCost }, summary);
         if (spend.of(market.address) + estimate > this.settings.marketDailyCap) {
             return this.hold(market, current, 'MARKET_DAILY_CAP', { estimate, spent: spend.of(market.address), limit: this.settings.marketDailyCap }, summary);
@@ -344,10 +357,18 @@ export class Runner {
     }
 
     private async send(market: Market, job: AnyJob, unit: JobUnit, key: string, transaction: SignedTransaction, estimate: bigint, summary: PassSummary) {
-        await this.chain.sendAndConfirm(transaction);
-        const result = await landed(this.chain, transaction.signature);
+        let result;
+        try {
+            await this.chain.sendAndConfirm(transaction);
+            result = await landed(this.chain, transaction.signature);
+        } catch (error) {
+            // Sent, but whether it landed (and what it cost) is unknown: today's spend is
+            // rebuilt from the chain before anything else is sent, so a cap is never undercounted.
+            this.spend = null;
+            throw error;
+        }
         const cost = spendOf(result, this.wallet.address);
-        this.spend!.add(marketOf(result, (account) => this.markets.has(account)), cost);
+        this.spend!.add(result.accountKeys, cost);
         if (this.settled(market, job, unit, key, result, summary, { signature: transaction.signature, cost })) return;
         this.failures.delete(key);
         this.jobRow(market, unit, 'sent', { signature: transaction.signature, cost, estimate });
@@ -368,7 +389,7 @@ export class Runner {
         } else if (outcome === 'later-slot') {
             this.jobRow(market, unit, 'later-slot', { ...(sent ?? {}), error: result.error });
             summary.skipped++;
-            void this.exclusive(() => this.laterSlot(market.address, job, unit));
+            this.background(() => this.laterSlot(market.address, job, unit));
         } else {
             this.failed(market, job, unit, key, result.error ?? 'failed', summary, sent);
         }
@@ -400,7 +421,7 @@ export class Runner {
             this.jobRow(market, unit, 'failed', { attempt: failures, retryInMs: delay, error, ...(sent ?? {}) });
             const timer = this.clock.setTimer(delay, () => {
                 this.retries.delete(key);
-                void this.exclusive(async () => {
+                this.background(async () => {
                     const current = this.markets.get(market.address);
                     if (!current) return;
                     const retry: PassSummary = { pass: 'transaction', markets: 1, sent: 0, held: 0, parked: 0, skipped: 0, failed: 0 };

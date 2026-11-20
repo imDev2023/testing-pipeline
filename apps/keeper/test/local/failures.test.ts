@@ -5,6 +5,8 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 
+import { ChainError, type Chain } from '../../src/chain.ts';
+
 import {
     checkLocalValidator,
     createMarket,
@@ -76,5 +78,43 @@ test('a failing payout is retried at RETRY_DELAYS, then parked until its market 
     await clock.advance(24 * 60 * 60_000, () => runner.idle());
     assert.deepEqual(slot1().slice(3).map((row) => row.outcome), ['unparked', 'sent']);
     assert.equal((await tokenBalance(frozen, mints[1])) - before, owedNow);
+    assert.deepEqual(await owed(market), [0n, 0n, 0n, 0n, 0n, 0n]);
+});
+
+test('an RPC that cannot be asked while a payout is built is not the payout failing (SUITE-52)', async () => {
+    const owner = await wallet(10n);
+    const mints = await tokens(owner);
+    const market = await createMarket(owner, mints, 0);
+    await trade(market);
+    const keeper = await wallet();
+    // The builder's first read (the tax-side mint) times out once.
+    let hiccups = 1;
+    const flaky = (real: Chain): Chain => ({
+        ...real,
+        rpc: new Proxy(real.rpc, {
+            get(target, method) {
+                const call = Reflect.get(target, method);
+                if (method !== 'getAccountInfo' || typeof call !== 'function') return call;
+                return (...args: unknown[]) => {
+                    const request = call.apply(target, args);
+                    return {
+                        ...request,
+                        send: async (options?: unknown) => {
+                            if (hiccups-- > 0) throw new ChainError('getAccountInfo: request timed out');
+                            return request.send(options);
+                        },
+                    };
+                };
+            },
+        }),
+    });
+    const { runner, log } = testRunner(keeper, mints, { chain: flaky(testRunner(keeper, mints).chain) });
+    await runner.once();
+    const rows = jobRows(log, market);
+    assert.deepEqual(rows.map((row) => row.outcome), ['chain-error', 'sent', 'sent']);
+    assert.match(String(rows[0]!.error), /timed out/);
+    // Not counted as a failure: nothing retried or parked, and the next pass pays the slot.
+    await runner.once();
+    assert.deepEqual(jobRows(log, market).slice(3).map((row) => row.outcome), ['sent']);
     assert.deepEqual(await owed(market), [0n, 0n, 0n, 0n, 0n, 0n]);
 });

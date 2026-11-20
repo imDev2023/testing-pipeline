@@ -136,7 +136,8 @@ A `KEEPER_` variable that names no setting stops the runner at start, so a missp
 
 - A new market's first payouts may create up to five recipient token accounts (a tax market with four recipients and the suite share), about 0.0102 SOL, so on its first day the last one can wait for the next day's cap; that is accepted.
 - What the runner has spent today is rebuilt from the chain whenever it starts: the keeper wallet's own transactions since 00:00 UTC (`getSignaturesForAddress`, then each one's fee and balance changes), per market from the accounts each one touched.
-  A transaction's spend is what left the keeper wallet, and never less than its fee, so one that brings lamports back (unwrapping tips) still counts its fee; it is put to the first known market among its accounts. A sent job is counted the same way once it lands, so the spend the runner tracks and the spend a restart rebuilds are one sum ([`SUITE-51`](../decisions.md#suite-51-keeper-runner-what-a-job-costs)).
+  A transaction's spend is what left the keeper wallet, and never less than its fee, so one that brings lamports back (unwrapping tips) still counts its fee; it is put to the first known market among its accounts.
+  A sent job is counted the same way once it lands, so the spend the runner tracks and the spend a restart rebuilds are one sum ([`SUITE-51`](../decisions.md#suite-51-keeper-runner-what-a-job-costs)).
   So the runner keeps no state file, and a restart can never reset a cap.
   This holds because the keeper wallet is used by the runner alone.
 

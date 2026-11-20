@@ -19,7 +19,8 @@ export const systemClock: Clock = {
     now: () => Date.now(),
     setTimer(ms, fn) {
         const id = nextHandle++;
-        // setTimeout holds at most 2^31 - 1 ms (about 24.8 days); every timer here is shorter.
+        // setTimeout holds at most 2^31 - 1 ms (about 24.8 days): settings.ts refuses longer
+        // durations, and the daily pass is at most a day away.
         handles.set(
             id,
             setTimeout(() => {

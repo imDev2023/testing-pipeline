@@ -22,6 +22,11 @@ function loaded(): boolean {
 }
 
 const command = process.argv[2];
+if (process.platform !== 'darwin' && command === 'state') {
+    // `pnpm keeper:status` asks this first; off macOS there is no agent, and the status still follows.
+    console.log('no launchd here: the agent is for macOS');
+    process.exit(0);
+}
 if (process.platform !== 'darwin') {
     console.error('the launchd agent is for macOS; elsewhere run the Docker image (apps/keeper/README.md)');
     process.exit(1);

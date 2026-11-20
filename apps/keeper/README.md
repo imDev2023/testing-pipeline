@@ -106,5 +106,5 @@ scripts/local-validator.sh          # in another shell
 pnpm --filter keeper test:local     # LOCAL_VALIDATOR_URL names another validator
 ```
 
-They show a job sent when due and only then, a market owing nothing sending nothing, another keeper paying first costing only a simulation, each cap and the minimum balance holding a job, today's spend rebuilt after a restart equal to the spend before it, a failing job retried at `RETRY_DELAYS` and then parked until its market changes, and `keeper once` running one pass and exiting without ever printing the key.
+They show a job sent when due and only then, a market owing nothing sending nothing, another keeper paying first costing only a simulation, each cap and the minimum balance holding a job, today's spend rebuilt after a restart equal to the spend before it, a failing job retried at `RETRY_DELAYS` and then parked until its market changes, an RPC hiccup while building a job not counted as its failure, and `keeper once` running one pass and exiting without ever printing the key.
 Each test makes its own markets and sees only those, so the tests can share one validator.
