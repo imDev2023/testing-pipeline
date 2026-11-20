@@ -34,16 +34,22 @@ case "$(uname -sm)" in
     AGAVE_SHA256=2ae847d320d4be7c2a732c7821e570f7927cadaf385fb94b2853841c0d6a5b18
     # Platform tools v1.58, cargo-build-sbf 4.6.0's default, has no Intel macOS build.
     SBF_TOOLS_VERSION=v1.57
+    SBF_TOOLS_ASSET=platform-tools-osx-x86_64.tar.bz2
+    SBF_TOOLS_SHA256=e6f6231b149e64ad6cc12605d0f993405ce55862aa44406c023563159f8c3caf
     ;;
   "Darwin arm64")
     AGAVE_TARGET=aarch64-apple-darwin
     AGAVE_SHA256=e60d66468977f6a5b5f17523ea3a1846ececfa7cc657efa0b9af279bd58db369
     SBF_TOOLS_VERSION=v1.58
+    SBF_TOOLS_ASSET=platform-tools-osx-aarch64.tar.bz2
+    SBF_TOOLS_SHA256=17a89dae89936f045789d484140fd19a7bd992d4522d4ab0e9adeae565e35d12
     ;;
   "Linux x86_64")
     AGAVE_TARGET=x86_64-unknown-linux-gnu
     AGAVE_SHA256=5b0f0fc7e4eedace05f6455de00aa1f2f3d1642068f1e8d50760ba49112c3941
     SBF_TOOLS_VERSION=v1.58
+    SBF_TOOLS_ASSET=platform-tools-linux-x86_64.tar.bz2
+    SBF_TOOLS_SHA256=7b82eb420b5aebd1e5590db0ae25c523eca06724d4238ae02139690535636c37
     ;;
   *)
     echo "unsupported host: $(uname -sm)" >&2
@@ -75,8 +81,22 @@ install_solana() {
   fi
 
   echo "== platform tools $SBF_TOOLS_VERSION"
-  if [ ! -x "$HOME/.cache/solana/$SBF_TOOLS_VERSION/platform-tools/rust/bin/rustc" ]; then
-    (cd "$ROOT" && "$CBS/bin/cargo-build-sbf" --install-only --tools-version "$SBF_TOOLS_VERSION")
+  # Downloaded here, from the release's file URL, into the folder cargo-build-sbf looks in.
+  # `cargo-build-sbf --install-only` asks GitHub's REST API for the release first, without a
+  # token, and on GitHub's shared runners that is rate limited: on 2026-11-20 the first cold
+  # install there failed with "Failed to parse Github response: error decoding response body".
+  tools_dir="${SOLANA_PLATFORM_TOOLS_DIR:-$HOME/.cache/solana}/$SBF_TOOLS_VERSION"
+  if [ ! -x "$tools_dir/platform-tools/rust/bin/rustc" ]; then
+    mkdir -p "$tools_dir"
+    staging="$(mktemp -d "$tools_dir/.staging.XXXXXX")"
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -o "$staging/$SBF_TOOLS_ASSET" \
+      "https://github.com/anza-xyz/platform-tools/releases/download/$SBF_TOOLS_VERSION/$SBF_TOOLS_ASSET"
+    echo "$SBF_TOOLS_SHA256  $staging/$SBF_TOOLS_ASSET" | shasum -a 256 -c -
+    mkdir "$staging/platform-tools"
+    tar -xjf "$staging/$SBF_TOOLS_ASSET" -C "$staging/platform-tools"
+    rm -rf "$tools_dir/platform-tools"
+    mv "$staging/platform-tools" "$tools_dir/platform-tools"
+    rm -rf "$staging"
   fi
 
   # cargo-build-sbf reads the platform tools version only from --tools-version, and Pipeline's
