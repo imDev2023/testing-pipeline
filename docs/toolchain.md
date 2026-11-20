@@ -627,6 +627,20 @@ Done on 2026-11-20 from `main` at `a941f9c`.
 - `pipeline-check --fail-on-warn` on the demo market reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped.
 - A `pipeline-check` copied from another worktree failed with `getSlot: error sending request` until it was run from the path LuLu already allowed ("Known problems").
 
+The first upgrade, to release 0.1.1 from `main` at `d83e048`, went through the gate on the same day.
+- `deploy-devnet.sh buy-wall-amm` first built it (executable hash `e4bd061ef3a7662ad92deed019368d8a89f46fe07b86dc1e8e277aa708aeb5da`) and stopped before sending anything: `REFUSED: no passing release gate run for build e4bd061e…`.
+- All 227 buy wall AMM tests passed on those bytes.
+- `cargo run -p buy-wall-gate -- run --cluster devnet` replayed the live demo market and a market of its own with them, and passed.
+- `deploy-devnet.sh` then found that pass against the deployed `89093fa7…`, upgraded the program in slot 524,292,769, and checked the hash on chain.
+- `demo.ts --market GJaWKKtnFXs8CiVDz3WqFwK6hdAZ2VLwh4vpBbEAb9EU` then passed on the upgraded program:
+  - the buy lowered the cap by 331,018,518 units and the sell back trimmed 331,018,523;
+  - `place_wall` tipped 1,860,835 lamports and placed 738,810,291;
+  - the sell into the wall crossed it, and `settle` burned 19,900,480,826 units;
+  - `pay_rewards` paid 49,652,777 units, slots 0 and 2 swept 8,685,860 and 2,171,464 lamports, and slot 1 was refused;
+  - the hosted API's quotes equalled the program's.
+- `pipeline-check --fail-on-warn` reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped, on build `e4bd061e…`.
+- Two of the day's Docker builds failed part way with `can't find crate for ...` (`syn`, then `solana-epoch-schedule`), and the same commit built cleanly when run again ("Known problems").
+
 ## Local validator
 
 Pipeline's `docs/DEVNET.md` gives the command, adapted here to this project's wallet (the programs' upgrade authority, so the script initialises the router's config and registers the example strategy itself) and a ledger outside the clone:
@@ -663,6 +677,9 @@ Two things to know:
 - **Helius devnet and the smoke script.**
   With `RPC_URL` and `WS_URL` on Helius devnet, the script sent its first transaction, which landed, and then waited for its confirmation for over ten minutes before it was stopped; not diagnosed, so use public devnet for the script.
 - **Platform tools v1.58 has no Intel macOS build**, so on this Mac `cargo build-sbf` must run on v1.57, which has the same Rust (1.95.0) and builds sBPF v3; the wrapper `toolchain-env.sh` puts first does this (see Install).
+- **A verified build can fail part way with `can't find crate for ...`.**
+  On 2026-11-20 two of about ten `solana-verify` builds failed with `error[E0463]: can't find crate for` a dependency the same build had just compiled, while the iMac's CI runner containers ran in the same Docker VM; the same commit built cleanly, to the same hash, when `deploy-devnet.sh` ran again, so run it again.
+  A build that fails or is stopped leaves its container (an idle `bash` from the verifiable-build image) running; `docker ps --filter ancestor=<the image>` lists them, and the owner removes them.
 - **LuLu, the Mac's outbound firewall, allows binaries by path.**
   A binary copied or built at a new path, such as `fixtures/pipeline/target/release/pipeline-check` copied into a new worktree, fails its first RPC call (`getSlot: error sending request`) until the owner allows it; run the copy LuLu already allows, or ask the owner to allow the new one.
 - **Downloads from GitHub are flaky on this network**: `gh` calls hit TLS timeouts and connection resets; retry.

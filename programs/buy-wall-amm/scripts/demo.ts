@@ -122,7 +122,7 @@
 // On a local cluster the script airdrops the SOL both keys need; on devnet it never does
 // (fund them with devnet-airdrop, docs/toolchain.md).
 
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -341,14 +341,18 @@ const revisit = options.market === undefined ? null : address(options.market);
 if (revisit && options['register-only']) usage('--market and --register-only do not go together');
 if (options['trade-only'] && !revisit) usage('--trade-only needs --market');
 
-// Public RPC endpoints rate-limit bursts (HTTP 429); retry those with back-off.
+// Public RPC endpoints rate-limit bursts (HTTP 429) and drop connections now and then
+// (`fetch failed`, its cause ETIMEDOUT or ECONNRESET, seen on public devnet on 2026-11-20);
+// retry both with back-off. Every request is safe to repeat: reads, and a signed transaction
+// sent again, which the cluster takes once.
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
+const retryable = (error: unknown) => String(error).includes('429') || String(error).includes('fetch failed');
 const retryingTransport = (async (...args: Parameters<typeof baseTransport>) => {
     for (let attempt = 0; ; attempt++) {
         try {
             return await baseTransport(...args);
         } catch (error) {
-            if (attempt >= 8 || !String(error).includes('429')) throw error;
+            if (attempt >= 8 || !retryable(error)) throw error;
             await sleep(500 * 2 ** attempt);
         }
     }
@@ -1579,13 +1583,43 @@ async function main() {
     if (published.ok && published.warnings.length === 0) {
         info(`${metadataUri} is valid with zero warnings`);
     } else if (onDevnet && options['metadata-not-yet-public'] && !published.ok) {
-        // The router only stores the URI; it resolves once the repo is public (TAX-54).
-        if (!metadataUri.startsWith(`${RAW_REPO}/`) || !metadataUri.endsWith('/programs/buy-wall-amm/metadata.json')) {
-            fail(`--metadata-not-yet-public takes only this repo's programs/buy-wall-amm/metadata.json on ${RAW_REPO}, not ${metadataUri}`);
+        // The router only stores the URI; it resolves once the repo is public (TAX-54). Only a
+        // URI that cannot be fetched: one that resolves with warnings still stops below. It
+        // takes this repo's metadata.json on main, or at a commit on main, whose copy is
+        // checked as the link will serve it.
+        const at = new RegExp(`^${RAW_REPO.replaceAll('.', '\\.')}/(main|[0-9a-f]{40})/programs/buy-wall-amm/metadata\\.json$`).exec(metadataUri)?.[1];
+        if (!at) fail(`--metadata-not-yet-public takes only this repo's programs/buy-wall-amm/metadata.json on main or at a full commit on ${RAW_REPO}, not ${metadataUri}`);
+        // The copy the link will serve: origin/main's, or the commit's (fetch origin main first
+        // if it is new), which must pin the deploy deployments/devnet.json records and carry
+        // its report.
+        const git = (args: string[]) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        const ref = at === 'main' ? 'origin/main' : at;
+        if (at !== 'main') {
+            try {
+                git(['merge-base', '--is-ancestor', at, 'origin/main']);
+            } catch {
+                fail(`${at} is not a commit on origin/main (git fetch origin main first if it is new)`);
+            }
         }
-        // Only a URI that cannot be fetched; one that resolves with warnings still stops below.
+        let served: unknown;
+        try {
+            served = JSON.parse(git(['show', `${ref}:programs/buy-wall-amm/metadata.json`]));
+        } catch (error) {
+            fail(`cannot read programs/buy-wall-amm/metadata.json at ${ref}: ${String(error).split('\n')[0]}`);
+        }
+        const copy = pipeline.parseStrategyMetadata(served);
+        if (!copy.ok || copy.warnings.length > 0) {
+            fail(`the metadata.json at ${ref} does not pass the validator with zero warnings: ${copy.ok ? copy.warnings.join('; ') : copy.errors.join('; ')}`);
+        }
+        if (at !== 'main') {
+            const deployed = JSON.parse(readFileSync(new URL('../../../deployments/devnet.json', import.meta.url), 'utf8')).programs?.['buy-wall-amm'];
+            const pinned = served as { source?: { commit?: string }; conformance?: unknown };
+            if (pinned.source?.commit !== deployed?.commit || !pinned.conformance) {
+                fail(`the metadata.json at ${at} pins ${pinned.source?.commit ?? 'no commit'}${pinned.conformance ? '' : ' and no report'}, not the deploy of ${deployed?.commit ?? 'nothing'} with its report`);
+            }
+        }
         info(`${metadataUri} does not resolve yet (${published.reason}); registering it anyway with --metadata-not-yet-public`);
-        info('the committed metadata.json was checked instead; desks show the strategy without metadata until the repo is public');
+        info(`the metadata.json at ${ref} was checked instead; desks show the strategy without metadata until the repo is public`);
     } else if (onDevnet) {
         // Pipeline's registry and every terminal read the strategy through this URI.
         fail(
@@ -2048,7 +2082,15 @@ async function compareHostedQuotes(payer: KeyPairSigner, recorded: pipeline.Mark
 async function hostedQuote(view: pipeline.MarketView, input: 0 | 1, output: 0 | 1, amount: bigint) {
     const url = `${HOSTED_API}/v1/quote?market=${view.market}&input_mint=${view.mints[input]}&output_mint=${view.mints[output]}&amount=${amount}&mode=exact_in`;
     for (let attempt = 0; ; attempt++) {
-        const response = await fetch(url, { headers: { 'user-agent': 'testing-pipeline-demo' } });
+        let response: Response;
+        try {
+            response = await fetch(url, { headers: { 'user-agent': 'testing-pipeline-demo' } });
+        } catch (error) {
+            // A dropped connection, as the RPC transport retries.
+            if (attempt >= 5) throw error;
+            await sleep(2_000 * (attempt + 1));
+            continue;
+        }
         if (response.ok) {
             const body = (await response.json()) as { amount_in: string; amount_out: string; slot: number; strategy_accounts: { address: string }[] };
             if (BigInt(body.amount_in) !== amount) fail(`the hosted API quoted ${body.amount_in} in, not ${amount}`);

@@ -1,13 +1,13 @@
 {
   "schema": "pipeline-check-report/1",
   "checker_version": "0.2.0",
-  "generated_at": 1795148925,
+  "generated_at": 1795163657,
   "source": {
     "kind": "rpc",
     "cluster": "devnet",
     "genesis_hash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
-    "slot": 524232013,
-    "unix_timestamp": 1795148923
+    "slot": 524293609,
+    "unix_timestamp": 1795163654
   },
   "router": {
     "program_id": "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34",
@@ -20,10 +20,10 @@
   "strategy": {
     "program_id": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
     "loader": "bpf-loader-upgradeable",
-    "executable_sha256": "89093fa7feed9f6400cb8b405e0bfe094c1d04327a231b7d1fed449d3c14dac9",
-    "executable_len": 421057,
+    "executable_sha256": "e4bd061ef3a7662ad92deed019368d8a89f46fe07b86dc1e8e277aa708aeb5da",
+    "executable_len": 421073,
     "upgrade_authority": "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe",
-    "deploy_slot": 524228154
+    "deploy_slot": 524292769
   },
   "strategy_metadata_uri": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/buy-wall-amm/metadata.json",
   "market": {
@@ -39,7 +39,7 @@
         "freeze_authority": null,
         "extensions": [],
         "vault": "8xZyjFv9maYh227Y4yyrSbMLiruna8sHKzmuoViv6dZc",
-        "vault_balance": 999959616234,
+        "vault_balance": 965500689853,
         "fee_account": "HUUYsAwAysAf26idcwD65Dcu1aawG4CEoMD7TMGUoDA2",
         "fee_account_exists": true
       },
@@ -51,7 +51,7 @@
         "freeze_authority": null,
         "extensions": [],
         "vault": "AsXnGex7us8spZKJ75ygGAk5y9Ghg22dCmNAtr4fgRig",
-        "vault_balance": 9824673905,
+        "vault_balance": 9482491650,
         "fee_account": "ALJ2d1LKajzkEyTSBETEGbpkuTu1HGkxjwQzSyQXfuKY",
         "fee_account_exists": true
       }
@@ -182,37 +182,37 @@
         "swaps": [
           {
             "account_keys": 17,
-            "case": "mint 0→1 exact-in 9999596 (small)",
+            "case": "mint 0→1 exact-in 9655006 (small)",
             "estimated_bytes_with_lookup_table": 317,
             "serialized_bytes": 715
           },
           {
             "account_keys": 17,
-            "case": "mint 0→1 exact-in 999959616 (medium)",
+            "case": "mint 0→1 exact-in 965500689 (medium)",
             "estimated_bytes_with_lookup_table": 317,
             "serialized_bytes": 715
           },
           {
             "account_keys": 17,
-            "case": "mint 0→1 exact-in 49997980811 (large)",
+            "case": "mint 0→1 exact-in 48275034492 (large)",
             "estimated_bytes_with_lookup_table": 317,
             "serialized_bytes": 715
           },
           {
             "account_keys": 17,
-            "case": "mint 1→0 exact-in 98246 (small)",
+            "case": "mint 1→0 exact-in 94824 (small)",
             "estimated_bytes_with_lookup_table": 317,
             "serialized_bytes": 715
           },
           {
             "account_keys": 17,
-            "case": "mint 1→0 exact-in 9824673 (medium)",
+            "case": "mint 1→0 exact-in 9482491 (medium)",
             "estimated_bytes_with_lookup_table": 317,
             "serialized_bytes": 715
           },
           {
             "account_keys": 17,
-            "case": "mint 1→0 exact-in 491233695 (large)",
+            "case": "mint 1→0 exact-in 474124582 (large)",
             "estimated_bytes_with_lookup_table": 317,
             "serialized_bytes": 715
           }
@@ -223,9 +223,9 @@
       "id": "quotes",
       "title": "Quotes in every direction and size",
       "status": "pass",
-      "message": "All 6 quotes succeeded through pipeline-quoter using only the resolved accounts (up to 19109 compute units each).",
+      "message": "All 6 quotes succeeded through pipeline-quoter using only the resolved accounts (up to 19285 compute units each).",
       "details": {
-        "max_quote_compute_units": 19109,
+        "max_quote_compute_units": 19285,
         "quote_compute_limit": 200000,
         "quotes": [
           {
@@ -238,53 +238,53 @@
             "size": "dust"
           },
           {
-            "amount": 9999596,
-            "case": "mint 0→1 exact-in 9999596 (small)",
+            "amount": 9655006,
+            "case": "mint 0→1 exact-in 9655006 (small)",
             "direction": "0→1",
             "error": null,
             "mode": "ExactIn",
             "quote": {
-              "amount_in": 9999596,
-              "amount_out": 95154,
-              "compute_units": 12948,
-              "net_sent": 9999596,
-              "pipeline_fee": 24999,
-              "strategy_amount_out": 95154,
-              "total_spend": 10024595
+              "amount_in": 9655006,
+              "amount_out": 85094,
+              "compute_units": 12029,
+              "net_sent": 9655006,
+              "pipeline_fee": 24138,
+              "strategy_amount_out": 85094,
+              "total_spend": 9679144
             },
             "size": "small"
           },
           {
-            "amount": 999959616,
-            "case": "mint 0→1 exact-in 999959616 (medium)",
+            "amount": 965500689,
+            "case": "mint 0→1 exact-in 965500689 (medium)",
             "direction": "0→1",
             "error": null,
             "mode": "ExactIn",
             "quote": {
-              "amount_in": 999959616,
-              "amount_out": 9506132,
-              "compute_units": 12693,
-              "net_sent": 999959616,
-              "pipeline_fee": 2499900,
-              "strategy_amount_out": 9506132,
-              "total_spend": 1002459516
+              "amount_in": 965500689,
+              "amount_out": 8501724,
+              "compute_units": 12684,
+              "net_sent": 965500689,
+              "pipeline_fee": 2413752,
+              "strategy_amount_out": 8501724,
+              "total_spend": 967914441
             },
             "size": "medium"
           },
           {
-            "amount": 49997980811,
-            "case": "mint 0→1 exact-in 49997980811 (large)",
+            "amount": 48275034492,
+            "case": "mint 0→1 exact-in 48275034492 (large)",
             "direction": "0→1",
             "error": null,
             "mode": "ExactIn",
             "quote": {
-              "amount_in": 49997980811,
-              "amount_out": 453151493,
-              "compute_units": 13113,
-              "net_sent": 49997980811,
-              "pipeline_fee": 124994953,
-              "strategy_amount_out": 453151493,
-              "total_spend": 50122975764
+              "amount_in": 48275034492,
+              "amount_out": 406698033,
+              "compute_units": 12686,
+              "net_sent": 48275034492,
+              "pipeline_fee": 120687587,
+              "strategy_amount_out": 406698033,
+              "total_spend": 48395722079
             },
             "size": "large"
           },
@@ -298,53 +298,53 @@
             "size": "dust"
           },
           {
-            "amount": 98246,
-            "case": "mint 1→0 exact-in 98246 (small)",
+            "amount": 94824,
+            "case": "mint 1→0 exact-in 94824 (small)",
             "direction": "1→0",
             "error": null,
             "mode": "ExactIn",
             "quote": {
-              "amount_in": 98246,
-              "amount_out": 10118671,
-              "compute_units": 11751,
-              "net_sent": 98246,
-              "pipeline_fee": 246,
-              "strategy_amount_out": 10118671,
-              "total_spend": 98492
+              "amount_in": 94824,
+              "amount_out": 10544486,
+              "compute_units": 11932,
+              "net_sent": 94824,
+              "pipeline_fee": 238,
+              "strategy_amount_out": 10544486,
+              "total_spend": 95062
             },
             "size": "small"
           },
           {
-            "amount": 9824673,
-            "case": "mint 1→0 exact-in 9824673 (medium)",
+            "amount": 9482491,
+            "case": "mint 1→0 exact-in 9482491 (medium)",
             "direction": "1→0",
             "error": null,
             "mode": "ExactIn",
             "quote": {
-              "amount_in": 9824673,
-              "amount_out": 1010868765,
-              "compute_units": 12908,
-              "net_sent": 9824673,
-              "pipeline_fee": 24562,
-              "strategy_amount_out": 1010868765,
-              "total_spend": 9849235
+              "amount_in": 9482491,
+              "amount_out": 1053415358,
+              "compute_units": 13768,
+              "net_sent": 9482491,
+              "pipeline_fee": 23707,
+              "strategy_amount_out": 1053415358,
+              "total_spend": 9506198
             },
             "size": "medium"
           },
           {
-            "amount": 491233695,
-            "case": "mint 1→0 exact-in 491233695 (large)",
+            "amount": 474124582,
+            "case": "mint 1→0 exact-in 474124582 (large)",
             "direction": "1→0",
             "error": null,
             "mode": "ExactIn",
             "quote": {
-              "amount_in": 491233695,
-              "amount_out": 48159700694,
-              "compute_units": 19109,
-              "net_sent": 491233695,
-              "pipeline_fee": 1228085,
-              "strategy_amount_out": 48159700694,
-              "total_spend": 492461780
+              "amount_in": 474124582,
+              "amount_out": 50115863221,
+              "compute_units": 19285,
+              "net_sent": 474124582,
+              "pipeline_fee": 1185312,
+              "strategy_amount_out": 50115863221,
+              "total_spend": 475309894
             },
             "size": "large"
           }
@@ -360,76 +360,76 @@
         "mismatches": [],
         "swaps": [
           {
-            "case": "mint 0→1 exact-in 9999596 (small)",
-            "compute_units": 58204,
+            "case": "mint 0→1 exact-in 9655006 (small)",
+            "compute_units": 57198,
             "error": null,
             "matched": true,
-            "net_sent": 9999596,
-            "pipeline_fee": 24999,
-            "quoted_net_sent": 9999596,
-            "quoted_out": 95154,
-            "quoted_pipeline_fee": 24999,
-            "received": 95154
+            "net_sent": 9655006,
+            "pipeline_fee": 24138,
+            "quoted_net_sent": 9655006,
+            "quoted_out": 85094,
+            "quoted_pipeline_fee": 24138,
+            "received": 85094
           },
           {
-            "case": "mint 0→1 exact-in 999959616 (medium)",
-            "compute_units": 57936,
+            "case": "mint 0→1 exact-in 965500689 (medium)",
+            "compute_units": 58036,
             "error": null,
             "matched": true,
-            "net_sent": 999959616,
-            "pipeline_fee": 2499900,
-            "quoted_net_sent": 999959616,
-            "quoted_out": 9506132,
-            "quoted_pipeline_fee": 2499900,
-            "received": 9506132
+            "net_sent": 965500689,
+            "pipeline_fee": 2413752,
+            "quoted_net_sent": 965500689,
+            "quoted_out": 8501724,
+            "quoted_pipeline_fee": 2413752,
+            "received": 8501724
           },
           {
-            "case": "mint 0→1 exact-in 49997980811 (large)",
-            "compute_units": 58367,
+            "case": "mint 0→1 exact-in 48275034492 (large)",
+            "compute_units": 58547,
             "error": null,
             "matched": true,
-            "net_sent": 49997980811,
-            "pipeline_fee": 124994953,
-            "quoted_net_sent": 49997980811,
-            "quoted_out": 453151493,
-            "quoted_pipeline_fee": 124994953,
-            "received": 453151493
+            "net_sent": 48275034492,
+            "pipeline_fee": 120687587,
+            "quoted_net_sent": 48275034492,
+            "quoted_out": 406698033,
+            "quoted_pipeline_fee": 120687587,
+            "received": 406698033
           },
           {
-            "case": "mint 1→0 exact-in 98246 (small)",
-            "compute_units": 46096,
+            "case": "mint 1→0 exact-in 94824 (small)",
+            "compute_units": 45944,
             "error": null,
             "matched": true,
-            "net_sent": 98246,
-            "pipeline_fee": 246,
-            "quoted_net_sent": 98246,
-            "quoted_out": 10118671,
-            "quoted_pipeline_fee": 246,
-            "received": 10118671
+            "net_sent": 94824,
+            "pipeline_fee": 238,
+            "quoted_net_sent": 94824,
+            "quoted_out": 10544486,
+            "quoted_pipeline_fee": 238,
+            "received": 10544486
           },
           {
-            "case": "mint 1→0 exact-in 9824673 (medium)",
-            "compute_units": 47255,
+            "case": "mint 1→0 exact-in 9482491 (medium)",
+            "compute_units": 48210,
             "error": null,
             "matched": true,
-            "net_sent": 9824673,
-            "pipeline_fee": 24562,
-            "quoted_net_sent": 9824673,
-            "quoted_out": 1010868765,
-            "quoted_pipeline_fee": 24562,
-            "received": 1010868765
+            "net_sent": 9482491,
+            "pipeline_fee": 23707,
+            "quoted_net_sent": 9482491,
+            "quoted_out": 1053415358,
+            "quoted_pipeline_fee": 23707,
+            "received": 1053415358
           },
           {
-            "case": "mint 1→0 exact-in 491233695 (large)",
-            "compute_units": 53287,
+            "case": "mint 1→0 exact-in 474124582 (large)",
+            "compute_units": 53637,
             "error": null,
             "matched": true,
-            "net_sent": 491233695,
-            "pipeline_fee": 1228085,
-            "quoted_net_sent": 491233695,
-            "quoted_out": 48159700694,
-            "quoted_pipeline_fee": 1228085,
-            "received": 48159700694
+            "net_sent": 474124582,
+            "pipeline_fee": 1185312,
+            "quoted_net_sent": 474124582,
+            "quoted_out": 50115863221,
+            "quoted_pipeline_fee": 1185312,
+            "received": 50115863221
           }
         ]
       }
@@ -442,16 +442,16 @@
       "details": {
         "tested": [
           {
-            "case": "mint 0→1 exact-in 999959616 (medium)",
+            "case": "mint 0→1 exact-in 965500689 (medium)",
             "error": "InstructionError(1, Custom(6020)): Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x1784",
-            "min_amount_out": 9506133,
+            "min_amount_out": 8501725,
             "refused_by": "router",
             "rejected": true
           },
           {
-            "case": "mint 1→0 exact-in 9824673 (medium)",
+            "case": "mint 1→0 exact-in 9482491 (medium)",
             "error": "InstructionError(1, Custom(6020)): Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x1784",
-            "min_amount_out": 1010868766,
+            "min_amount_out": 1053415359,
             "refused_by": "router",
             "rejected": true
           }
@@ -474,12 +474,12 @@
       "id": "compute",
       "title": "Compute units of a router swap",
       "status": "pass",
-      "message": "Router swaps used 46096–58367 compute units, of which the strategy used up to 29581.",
+      "message": "Router swaps used 45944–58547 compute units, of which the strategy used up to 29931.",
       "details": {
         "limit": 1400000,
-        "max_strategy_units": 29581,
-        "max_swap_units": 58367,
-        "min_swap_units": 46096,
+        "max_strategy_units": 29931,
+        "max_swap_units": 58547,
+        "min_swap_units": 45944,
         "warn_above": 200000
       }
     },
@@ -499,18 +499,18 @@
         "trips": [
           {
             "error": null,
-            "got_back": 977636915,
-            "intermediate": 9506132,
-            "pipeline_fees": 2523607,
-            "put_in": 999959616,
+            "got_back": 943945976,
+            "intermediate": 8501724,
+            "pipeline_fees": 2434954,
+            "put_in": 965500689,
             "route": "0→1→0"
           },
           {
             "error": null,
-            "got_back": 9605172,
-            "intermediate": 1010868765,
-            "pipeline_fees": 2545432,
-            "put_in": 9824673,
+            "got_back": 9270635,
+            "intermediate": 1053415358,
+            "pipeline_fees": 2650678,
+            "put_in": 9482491,
             "route": "1→0→1"
           }
         ]

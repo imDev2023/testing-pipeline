@@ -13,5 +13,22 @@
     "pricing_change_declared": false,
     "shared_failures": [],
     "own_market": true
+  },
+  {
+    "program": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
+    "genesis_hash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+    "cluster": "devnet",
+    "url": "https://api.devnet.solana.com",
+    "slot": 524290533,
+    "unix_timestamp": 1795162920,
+    "recorded_at": 1795162921,
+    "candidate_sha256": "e4bd061ef3a7662ad92deed019368d8a89f46fe07b86dc1e8e277aa708aeb5da",
+    "deployed_sha256": "89093fa7feed9f6400cb8b405e0bfe094c1d04327a231b7d1fed449d3c14dac9",
+    "market_states": [
+      "GJaWKKtnFXs8CiVDz3WqFwK6hdAZ2VLwh4vpBbEAb9EU"
+    ],
+    "pricing_change_declared": false,
+    "shared_failures": [],
+    "own_market": true
   }
 ]
