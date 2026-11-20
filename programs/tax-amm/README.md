@@ -40,7 +40,7 @@ Deployed and registered with Pipeline's router on devnet on 2026-11-20.
 | Conformance | [`conformance/devnet.json`](conformance/devnet.json), `pipeline-check` 0.2.0 on the demo market: 13 pass, 0 warn, 0 fail, `exact_out_refund` skipped |
 
 It stays upgradeable on devnet under one project upgrade authority, and Aviary shows it as upgradeable by a single key, like anyone else's strategy.
-It was deployed while this repo was still private ([BAR-21](../../docs/decisions.md#bar-21-published-source-and-licence)), so its metadata's links resolve once the repo is public ([TAX-54](../../docs/decisions.md#tax-54-links-that-stay-at-commits-on-main)).
+It was deployed while this repo was still private ([BAR-21](../../docs/decisions.md#bar-21-published-source-and-licence)); since the repo went public on 2026-11-20, its metadata and every link in it resolve at commits on `main` ([TAX-54](../../docs/decisions.md#tax-54-links-that-stay-at-commits-on-main)).
 
 To check the deploy yourself, with `solana-verify` 0.5.2 or later and Docker, rebuild the commit as the deploy did, from an export of it and with the image it pinned, and compare the two hashes:
 

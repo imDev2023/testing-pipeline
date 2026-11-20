@@ -515,7 +515,8 @@ RPC simulation through the SDK fails the same way, so these are the markets' own
 ### Deploy to devnet
 
 Built by [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66) on 2026-11-16 for every program's devnet ticket (`BAR-42`, `TAX-53`, `TAX-54` in `docs/decisions.md`).
-A program may be deployed while the repo is still private (owner, 2026-11-19, `BAR-21`): the steps below run as they are, the first registration takes the metadata's address on `main` with `--metadata-not-yet-public`, and once the metadata is pinned the router is pointed at it at its commit, and `publish.ts verify`, which needs every link public, runs once the repo is public.
+The repo is public since 2026-11-20, so the steps below run as written: every metadata URI resolves, the demo checks it with Pipeline's validator before it registers it, and `publish.ts verify` runs at the end of the third step.
+A program may also be deployed while a repo is private (owner, 2026-11-19, `BAR-21`), as the tax AMM was: then `--metadata-not-yet-public` lets the demo register a URI that cannot resolve yet, and `verify` waits until the repo is public; on a URI that resolves the flag changes nothing.
 
 `scripts/deploy-devnet.sh <program>` deploys one program from a verified build, from a clean checkout of a commit on `main`:
 
@@ -555,7 +556,8 @@ A program's metadata cannot name the commit that holds it, and a squash merge le
      --record <scratchpad>/devnet-demo.json
    ```
 
-   On devnet the demo stops unless the metadata URI resolves and passes Pipeline's validator with zero warnings; while the repo is private, pass `--metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json --metadata-not-yet-public` instead for the first registration, before the metadata is pinned; the demo fetches `origin/main` and checks the copy that link serves.
+   On devnet the demo stops unless the metadata URI resolves and passes Pipeline's validator with zero warnings.
+   In a private repo, the first registration, before the metadata is pinned, takes `--metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json --metadata-not-yet-public` instead; the demo fetches `origin/main` and checks the copy that link serves.
    It registers the strategy, signed and paid by the upgrade authority, and creates only the demo market, `SOL_MARKET` (`TAX-53`): created with both fee accounts and its seed in one transaction, bought, sold, and paid out slot by slot.
 2. **The record.** Take the conformance report and check the router lists the market, with `pipeline-check` from Pipeline's clone (`cargo build --release -p pipeline-check` in `fixtures/pipeline`):
 
@@ -577,7 +579,8 @@ A program's metadata cannot name the commit that holds it, and a squash merge le
    node publish.ts verify --uri <that URI> --market <demo market>
    ```
 
-   While the repo is private, `--register-only` takes `--metadata-not-yet-public` as well, with the metadata commit's URI: once the metadata is pinned, the demo refuses `main`'s link on devnet, whose content moves with every later change, and checks that the commit is on `origin/main` and that its copy pins the deploy with its report. `verify` waits until the repo is public.
+   Once the metadata is pinned, the demo refuses `main`'s link on devnet, whose content moves with every later change.
+   In a private repo, `--register-only` takes `--metadata-not-yet-public` as well, with the metadata commit's URI, and checks that the commit is on `origin/main` and that its copy pins the deploy with its report; `verify` then waits until the repo is public.
 
    `verify` checks that the URI resolves with zero warnings, every link resolves, the report hashes to its SHA-256, every commit named is on `origin/main`, the router points at the URI, and Pipeline's hosted devnet API shows the strategy with valid metadata and the deployed code hash, and each of the market's mints with exactly the trust flags `tax-amm.md` ("Mint rules") predicts.
 
@@ -597,6 +600,7 @@ The tax AMM went to devnet this way on 2026-11-20, while the repo was private:
   Every signature and address is in `deployments/devnet-demo-tax-amm.json`, the run's `--record`.
 - **Conformance.** `pipeline-check` 0.2.0 `--fail-on-warn` reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped (`programs/tax-amm/conformance/devnet.json`), and `--list-markets` listed the market.
 - **Pipeline's hosted API.** It showed the strategy with the deployed code hash, upgradeable, its metadata unreachable until the repo is public, and the market with its own checks passed and the mint flags `tax-amm.md` predicts (`mint-authority` on the demo token, none on wrapped SOL).
+- **The metadata.** Pinned to the deployed commit and the report in `407179c`, and the router pointed at it; once the repo was public, `node publish.ts verify --uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/407179c8381c58edf2d6b8b89018665c350f6dbf/programs/tax-amm/metadata.json --market C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w` passed every check on 2026-11-20: the URI valid with zero warnings, every link resolving at a commit on `main`, the report's SHA-256, the router's URI, and the hosted API showing the strategy with valid metadata, the deployed code hash and the flags `upgradeable` and `conformance-report`.
 
 The buy wall AMM goes the same way, with `programs/buy-wall-amm/scripts/` for `programs/tax-amm/scripts/`, and the release gate in front of every deploy (`POOL4-54`): `deploy-devnet.sh` runs any program's `programs/<program>/scripts/pre-deploy.sh` on the bytes it built, before sending anything, and the buy wall AMM's refuses unless the gate has passed that build on that cluster.
 So between the build and the deploy, the gate runs on the same build, and its record, in `deployments/release-gate/buy-wall-amm/devnet.json`, goes into the record PR with `deployments/devnet.json`:
