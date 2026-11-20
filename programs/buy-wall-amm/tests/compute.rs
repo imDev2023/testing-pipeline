@@ -37,22 +37,14 @@ fn creation_and_the_seed_stay_under_their_ceilings() {
     for (label, program, hook) in [
         ("SPL Token", TOKEN, false),
         ("Token-2022", TOKEN_2022, false),
-        ("Token-2022 with a transfer hook", TOKEN_2022, true),
+        ("Token-2022 with a cleared transfer hook", TOKEN_2022, true),
     ] {
         let mut env = Env::new();
         let token = if hook {
-            env.create_mint_with(
-                &program,
-                6,
-                &[RealExtension::TransferHook {
-                    program: TEST_HOOK_PROGRAM,
-                }],
-                false,
-            )
+            env.seedable_hooked_token()
         } else {
-            env.create_mint(&program, 6)
+            env.seedable_token(&program)
         };
-        env.revoke_authorities(&token, &program);
         let admin = env.admin.pubkey();
         let market_state = Keypair::new();
         let (market, create) = env.create_market_ix(
@@ -71,11 +63,6 @@ fn creation_and_the_seed_stay_under_their_ceilings() {
         assert!(init <= INIT_MARKET, "pipeline_init_market used {init}");
         assert!(info_in_create <= MARKET_INFO);
 
-        if hook {
-            // Seeding a hooked token runs its hook, whose compute is its own; the seed
-            // through a hook is measured where the hook program is loaded.
-            continue;
-        }
         env.fund(&admin, &token, &program, TOKENS, LAMPORTS);
         let (_, logs) = env
             .send_logged(&[seed_ix(&market, &admin, TOKENS, LAMPORTS, vec![])], &[])
@@ -111,19 +98,6 @@ fn creation_and_the_seed_stay_under_their_ceilings() {
     }
 }
 
-/// The units the strategy's first invocation in `logs` used, less what any transfer-hook
-/// program it called used: a hook's own compute is outside the ceilings
-/// (docs/spec/pool4-for-solana.md, "Compute ceilings").
-fn strategy_units_without_hooks(logs: &[String]) -> u64 {
-    let hook = format!("Program {TEST_HOOK_PROGRAM} consumed ");
-    let hooks: u64 = logs
-        .iter()
-        .filter_map(|line| line.strip_prefix(&hook))
-        .filter_map(|rest| rest.split_whitespace().next()?.parse::<u64>().ok())
-        .sum();
-    strategy_units(logs, 0) - hooks
-}
-
 #[test]
 fn quotes_and_one_step_swaps_stay_under_their_ceilings() {
     // Markets across the opening range and the token programs, each traded both ways at
@@ -138,7 +112,7 @@ fn quotes_and_one_step_swaps_stay_under_their_ceilings() {
         ),
         ("Token-2022", TOKEN_2022, false, TOKENS, LAMPORTS),
         (
-            "Token-2022 with a transfer hook",
+            "Token-2022 with a cleared transfer hook",
             TOKEN_2022,
             true,
             TOKENS,
@@ -186,7 +160,7 @@ fn quotes_and_one_step_swaps_stay_under_their_ceilings() {
                     0,
                 )
                 .unwrap();
-            let swap = strategy_units_without_hooks(&logs);
+            let swap = strategy_units(&logs, 0);
             println!("{label}, {input}->{output} {amount}: pipeline_quote {quote} CU, pipeline_swap {swap} CU");
             assert!(quote <= QUOTE, "{label}: pipeline_quote used {quote}");
             assert!(swap <= SWAP_ONE_STEP, "{label}: pipeline_swap used {swap}");
@@ -229,7 +203,7 @@ fn swaps_that_lower_the_cap_or_trim_stay_under_their_ceilings() {
         ),
         ("Token-2022", TOKEN_2022, false, TOKENS, LAMPORTS),
         (
-            "Token-2022 with a transfer hook",
+            "Token-2022 with a cleared transfer hook",
             TOKEN_2022,
             true,
             TOKENS,
@@ -270,7 +244,7 @@ fn swaps_that_lower_the_cap_or_trim_stay_under_their_ceilings() {
             1,
             "{label}: the buy lowers the cap"
         );
-        let lowering = strategy_units_without_hooks(&logs);
+        let lowering = strategy_units(&logs, 0);
 
         let clock = env.svm.get_sysvar::<anchor_lang::prelude::Clock>();
         env.set_clock(clock.slot + 150, clock.unix_timestamp + 60);
@@ -279,7 +253,7 @@ fn swaps_that_lower_the_cap_or_trim_stay_under_their_ceilings() {
             .swap_logged(&market, &trader, (0, 1), TradeMode::ExactIn, sell, 0)
             .unwrap();
         assert_eq!(events::<Trimmed>(&logs).len(), 1, "{label}: the sell trims");
-        let trimming = strategy_units_without_hooks(&logs);
+        let trimming = strategy_units(&logs, 0);
         println!("{label}: a buy lowering the cap {lowering} CU, a sell trimming {trimming} CU");
         assert!(
             lowering <= SWAP_ONE_STEP,
@@ -300,12 +274,12 @@ fn swaps_that_lower_the_cap_or_trim_stay_under_their_ceilings() {
 #[test]
 fn pipeline_seed_liquidity_stays_under_its_ceiling() {
     // A launchpad's graduation creates the market, its two vaults and seeds it in one call,
-    // measured inside the stand-in launchpad's CPI, the token's hook left out.
+    // measured inside the stand-in launchpad's CPI.
     let mut worst = 0;
     for (label, program, hook) in [
         ("SPL Token", TOKEN, false),
         ("Token-2022", TOKEN_2022, false),
-        ("Token-2022 with a transfer hook", TOKEN_2022, true),
+        ("Token-2022 with a cleared transfer hook", TOKEN_2022, true),
     ] {
         let mut env = Env::new();
         let token = if hook {
@@ -322,7 +296,7 @@ fn pipeline_seed_liquidity_stays_under_its_ceiling() {
                 LAMPORTS,
             )
             .unwrap();
-        let units = strategy_units_without_hooks(&graduated.logs);
+        let units = strategy_units(&graduated.logs, 0);
         println!("{label}: pipeline_seed_liquidity {units} CU");
         assert!(
             units <= SEED_LIQUIDITY,
@@ -350,7 +324,7 @@ fn place_wall_and_swaps_that_cross_into_the_wall_and_trim_stay_under_their_ceili
         ),
         ("Token-2022", TOKEN_2022, false, TOKENS, LAMPORTS),
         (
-            "Token-2022 with a transfer hook",
+            "Token-2022 with a cleared transfer hook",
             TOKEN_2022,
             true,
             TOKENS,
@@ -388,6 +362,7 @@ fn place_wall_and_swaps_that_cross_into_the_wall_and_trim_stay_under_their_ceili
         later(&mut env, 60);
         swap(&mut env, (0, 1), bought.received + tokens / 100);
 
+        env.next_slot();
         let (_, logs) = env.place_wall(&market, &keeper).unwrap();
         assert_eq!(events::<WallPlaced>(&logs).len(), 1);
         let placing = strategy_units(&logs, 0);
@@ -406,8 +381,9 @@ fn place_wall_and_swaps_that_cross_into_the_wall_and_trim_stay_under_their_ceili
             "{label}: the sell crosses into the wall"
         );
         assert_eq!(events::<Trimmed>(&logs).len(), 1, "{label}: the sell trims");
-        let crossing = strategy_units_without_hooks(&logs);
+        let crossing = strategy_units(&logs, 0);
 
+        env.next_slot();
         let (_, logs) = env.place_wall(&market, &keeper).unwrap();
         let [placed] = events::<WallPlaced>(&logs).try_into().unwrap();
         assert!(
@@ -451,7 +427,7 @@ fn payouts_and_handovers_stay_under_their_ceilings() {
     for (label, program, hook) in [
         ("SPL Token", TOKEN, false),
         ("Token-2022", TOKEN_2022, false),
-        ("Token-2022 with a transfer hook", TOKEN_2022, true),
+        ("Token-2022 with a cleared transfer hook", TOKEN_2022, true),
     ] {
         let mut env = Env::new();
         let token = if hook {
@@ -492,6 +468,7 @@ fn payouts_and_handovers_stay_under_their_ceilings() {
                 0,
             )
             .unwrap();
+            env.next_slot();
             let _ = env.place_wall(&market, &keeper);
             let (_, logs) = env.send_logged(&[settle_ix(&market)], &[]).unwrap();
             let settling = strategy_units(&logs, 0);
@@ -506,7 +483,7 @@ fn payouts_and_handovers_stay_under_their_ceilings() {
             );
             let ix = pay_rewards_ix(&market, &env.admin.pubkey(), &recipient, hooks);
             let (_, logs) = env.send_logged(&[ix], &[]).unwrap();
-            let paying = strategy_units_without_hooks(&logs);
+            let paying = strategy_units(&logs, 0);
 
             let mut sweeping = 0;
             for (slot, wallet) in [

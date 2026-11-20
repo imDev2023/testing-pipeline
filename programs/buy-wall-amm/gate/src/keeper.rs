@@ -1,24 +1,64 @@
 //! The four keeper jobs, and when each is due (docs/spec/pool4-for-solana.md, "For the
-//! keeper runner"). Whether a job is due is the program's own rule, from this tree's pure
-//! functions, read off the market state: `place_wall` once idle SOL or the wall's converted
-//! SOL reaches `WALL_THRESHOLD`, `settle` with tokens retired, `pay_rewards` with rewards
-//! owed, and `sweep_fees` for each slot whose ledger is above 0 and whose wallet is set
-//! (slot 1 only once `DESIGNER_RECIPIENT` is).
+//! keeper runner"). [`due`] is the program's own rule, from this tree's pure functions, read
+//! off the market state: `place_wall` once idle SOL or the wall's converted SOL reaches
+//! `WALL_THRESHOLD`, in a slot no swap has run in, `settle` with tokens retired, `pay_rewards` with rewards owed, and
+//! `sweep_fees` for each slot whose ledger is above 0 and whose wallet is set (slot 1 only
+//! once `DESIGNER_RECIPIENT` is).
+//!
+//! This tree is the candidate's, so its rules alone would let a candidate that narrows a
+//! rule drop that job from its own test. The gate therefore also runs every job the deployed
+//! build ran on the snapshot ([`crate::check`]): it tries each of the four, every slot of
+//! `sweep_fees` on its own, with the deployed build and records which ran. Which wallet a
+//! sweep pays is asked of the build being run ([`swept_wallet`]), never of this tree, so a
+//! tree that refuses a slot's wallet cannot keep the deployed build from sweeping that slot
+//! in its record (`POOL4-46`).
 
 use buy_wall_amm::state::{MarketState, STATUS_OPEN};
-use pipeline_client::pda;
+use pipeline_client::{pda, Pubkey};
+use serde::{Deserialize, Serialize};
 use solana_signer::Signer;
 
 use crate::session::{
-    key, pay_rewards_ix, place_wall_ix, settle_ix, sweep_fees_ix, MarketView, Session, TOKEN, WSOL,
+    compared_keys, key, pay_rewards_ix, place_wall_ix, settle_ix, sweep_fees_ix, MarketView,
+    Session, TOKEN, WSOL,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub enum Job {
     PlaceWall,
     Settle,
     PayRewards,
     SweepFees(u8),
+}
+
+impl Job {
+    /// Every job, in the order the runner sends them.
+    pub const ALL: [Job; 6] = [
+        Job::PlaceWall,
+        Job::Settle,
+        Job::PayRewards,
+        Job::SweepFees(0),
+        Job::SweepFees(1),
+        Job::SweepFees(2),
+    ];
+}
+
+impl From<Job> for String {
+    fn from(job: Job) -> String {
+        job.to_string()
+    }
+}
+
+impl TryFrom<String> for Job {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Job, String> {
+        Job::ALL
+            .into_iter()
+            .find(|job| job.to_string() == text)
+            .ok_or_else(|| format!("{text:?} is not a keeper job"))
+    }
 }
 
 impl std::fmt::Display for Job {
@@ -32,14 +72,22 @@ impl std::fmt::Display for Job {
     }
 }
 
-/// Every job due on `state`, in the order the runner would send them.
-pub fn due(state: &MarketState) -> Vec<Job> {
+/// Every job due on `state` in the Clock's `slot` at time `now`, in the order the runner would
+/// send them; `place_wall` only in a slot no swap has run in (`POOL4-50`).
+pub fn due(state: &MarketState, slot: u64, now: i64) -> Vec<Job> {
     if state.status != STATUS_OPEN {
         return vec![];
     }
     let owed = state.owed();
     let mut jobs = vec![];
-    if buy_wall_amm::wall::place(state.wall_books(), state.wall_at()).is_ok() {
+    let placing = buy_wall_amm::wall::place_in_slot(
+        state.wall_books(),
+        state.wall_at(),
+        state.guard(),
+        slot,
+        now,
+    );
+    if placing.is_ok() {
         jobs.push(Job::PlaceWall);
     }
     if owed.settle(state.reward_share_bps()).is_ok() {
@@ -67,7 +115,7 @@ pub fn run(
     let payer = session.payer.pubkey();
     match job {
         Job::PlaceWall => {
-            let keeper = session.keeper()?;
+            let keeper = session.keeper(&view.market_state)?;
             let tips = pda::associated_token(&keeper.pubkey(), &WSOL, &TOKEN);
             let ix = place_wall_ix(&program, view, &keeper.pubkey(), &tips);
             session.send(&[ix], &[&keeper])?;
@@ -98,11 +146,27 @@ pub fn run(
             Ok(format!("paid {}", state.rewards_owed()))
         }
         Job::SweepFees(slot) => {
-            let wallet = buy_wall_amm::payouts::slot_wallet(slot, &state.fee_recipient)
-                .map_err(|refusal| format!("slot {slot} has no wallet: {refusal:?}"))?;
-            let ix = sweep_fees_ix(&program, view, &payer, &key(&wallet), slot);
+            let wallet = swept_wallet(session, view, slot)?;
+            let ix = sweep_fees_ix(&program, view, &payer, &wallet, slot);
             session.send(&[ix], &[])?;
             Ok("swept".into())
         }
+    }
+}
+
+/// The wallet the build loaded in `session` pays fee slot `slot` of this market to, asked of
+/// the build itself: a sweep simulated with the gate's payer as the recipient, which the
+/// build refuses naming the wallet it compared that recipient with. A build that refuses the
+/// sweep before that comparison (nothing owed, no wallet set) gives that refusal, which is
+/// its answer for the job.
+fn swept_wallet(session: &Session, view: &MarketView, slot: u8) -> Result<Pubkey, String> {
+    let asked = session.payer.pubkey();
+    let ix = sweep_fees_ix(&session.program, view, &asked, &asked, slot);
+    match session.simulate(ix) {
+        Ok(_) => Ok(asked),
+        Err(refusal) => match compared_keys(&refusal) {
+            Some((given, wallet)) if given == asked => Ok(wallet),
+            _ => Err(refusal),
+        },
     }
 }

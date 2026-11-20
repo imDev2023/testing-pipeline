@@ -5,12 +5,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use crate::record::{self, Record, Target};
+use crate::record::{self, Record, SharedFailure, Target};
 use crate::release::Release;
-use crate::session::Session;
 use crate::snapshot::{parse_key, Snapshot};
 use crate::source::{cluster_url, redacted, Rpc};
-use crate::{check, download, programs, quotes, stranding, synthetic, world};
+use crate::{check, download, programs, stranding, synthetic};
 use pipeline_check::AccountSource;
 use pipeline_client::{pda, Pubkey};
 
@@ -20,15 +19,18 @@ buy-wall-gate: the buy wall AMM's release gate (docs/spec/pool4-for-solana.md, \
   run --cluster <devnet|localnet|URL> --candidate <program.so>
       [--release <release.json>] [--records <dir>] [--snapshot-out <file>] [--program <id>]
         Downloads every market of the program from the cluster and replays it with the
-        candidate and the cluster's router. Exits 0 and records the pass if every step
-        passes on every market, else exits 1 naming each market and step that failed.
+        candidate and the cluster's router, then makes and trades a market of its own in
+        a world of its own (POOL4-53). Exits 0 and records the pass if every step passes on
+        every market, or fails only as it does under the deployed build, and every step on
+        its own market passes, else exits 1 naming each market and step that failed.
 
   verify-record --cluster <...> --candidate <program.so> [--records <dir>] [--program <id>]
         Exits 0 only if a passing run covers deploying the candidate to the cluster now:
         same build, against the build deployed now, covering every market there now.
 
   check --snapshot <file> --candidate <program.so> [--router <pipeline.so>] [--release <...>]
-        The same checks on a saved snapshot or fixture, recording nothing.
+        The same checks on a saved snapshot or fixture, its own market included, recording
+        nothing.
 
   snapshot --cluster <...> --out <file> [--program <id>]
         Saves the cluster's markets as a fixture (no programs, the deployed build's quotes).
@@ -37,7 +39,8 @@ buy-wall-gate: the buy wall AMM's release gate (docs/spec/pool4-for-solana.md, \
         Writes the synthetic layout fixture from a LiteSVM run (POOL4-20).
 
   rerecord --fixture <file> --build <program.so> [--router <pipeline.so>]
-        Re-records a fixture's baseline quotes with a build, after a pricing change deploys.
+        Re-records a fixture's baseline (the quotes and each step's outcome) with a build,
+        after a pricing change deploys.
 
   test-builds [--out <dir>]
         Builds the stranding test builds (programs/target/gate-test-builds).
@@ -191,25 +194,19 @@ fn run(args: &[String]) -> Result<bool, String> {
         "rerecord" => {
             let options = Options::parse(rest, &["fixture", "build", "router"])?;
             let path = PathBuf::from(options.required("fixture")?);
-            let mut snapshot = Snapshot::read(&path)?;
+            let mut snapshot = Snapshot::read_any(&path)?;
             let build = read(Path::new(options.required("build")?))?;
             let router = match options.get("router") {
                 Some(path) => read(Path::new(path))?,
                 None => programs::pinned_router(),
             };
-            let program = snapshot.program_id()?;
-            let session = Session::new(world::load(&snapshot, &build, Some(&router))?, program);
-            let markets = snapshot
-                .markets
-                .iter()
-                .map(|m| parse_key(&m.market_state))
-                .collect::<Result<Vec<_>, _>>()?;
-            snapshot.baseline.quotes = quotes::record(&session, &markets)?;
-            snapshot.baseline.executable_sha256 = Some(pipeline_check::executable_sha256(&build).0);
+            snapshot.baseline = check::record_baseline(&snapshot, &build, Some(&router))?;
+            snapshot.format = crate::snapshot::FORMAT.into();
             snapshot.write(&path)?;
             println!(
-                "re-recorded {} quote(s) in {}",
+                "re-recorded {} quote(s) and {} step outcome(s) in {}",
                 snapshot.baseline.quotes.len(),
+                snapshot.baseline.steps.len(),
                 path.display()
             );
             Ok(true)
@@ -301,6 +298,16 @@ fn gate_run(options: &Options) -> Result<bool, String> {
             .map(|m| m.market_state.clone())
             .collect(),
         pricing_change_declared: report.relied_on_pricing_change,
+        shared_failures: report
+            .shared_failures()
+            .into_iter()
+            .map(|failure| SharedFailure {
+                market_state: failure.market_state,
+                step: failure.step,
+                detail: failure.detail,
+            })
+            .collect(),
+        own_market: report.own_market.is_some(),
     };
     let path = record::append(&options.path_or("records", records_dir()), &record)?;
     println!("recorded the pass in {}", path.display());
@@ -355,7 +362,7 @@ fn verify_record(options: &Options) -> Result<bool, String> {
         Ok(record) => {
             println!(
                 "build {} passed the release gate on this cluster at slot {} against deployed build {}, \
-                 covering all {} market(s)",
+                 covering all {} market(s) and a market of its own",
                 record.candidate_sha256,
                 record.slot,
                 record.deployed_sha256.as_deref().unwrap_or("(none)"),

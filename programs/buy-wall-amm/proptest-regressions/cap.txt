@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc bd845ccfcdee836385971d9c20bce48f2cc81be536518f9f09be1c64fa9b92c0 # shrinks to market = Inventory { sqrt_price: 4294967296, liquidity: 529639534, pool_tokens: 2274784477198680064, pool_sol: 1, retired_tokens: 0, idle_sol: 0, cap: 2274784477198680065, decay_credit: 69761845221028201511434198334197681056, decay_time: 0, tokens_trimmed: 0, sol_trimmed: 0, cap_fall_unmatched: 10423760410575850400, retired_rewardable: 0 }, floor_share = 0, per_day = 0, elapsed = 0

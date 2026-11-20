@@ -13,17 +13,22 @@ use crate::config::{DESIGNER_RECIPIENT, SUITE_TREASURY};
 /// What one `settle` does with the retired tokens.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Settlement {
-    /// `floor(retired × reward_share_bps / 10,000)`, joining `rewards_owed`.
+    /// `floor(rewardable × reward_share_bps / 10,000)`, joining `rewards_owed`.
     pub to_rewards: u64,
-    /// The rest, burned from the token vault.
+    /// The rest of the retired tokens, burned from the token vault.
     pub burned: u64,
 }
 
-/// Splits `retired` token units: the reward share joins `rewards_owed` and the rest is
-/// burned, so the two always add up to `retired`. `None` for a reward share above 10,000
-/// basis points, which creation refuses.
-pub fn settle(retired: u64, reward_share_bps: u16) -> Option<Settlement> {
-    let to_rewards = share(retired, reward_share_bps)?;
+/// Splits `retired` token units, of which `rewardable` were matched by the cap's fall and
+/// earn the reward share (`POOL4-49`): the reward share of `rewardable` joins
+/// `rewards_owed` and the rest of `retired` is burned, so the two always add up to
+/// `retired`. `None` for a reward share above 10,000 basis points, which creation refuses,
+/// or a rewardable part above the retired tokens, which no market reaches.
+pub fn settle(retired: u64, rewardable: u64, reward_share_bps: u16) -> Option<Settlement> {
+    if rewardable > retired {
+        return None;
+    }
+    let to_rewards = share(rewardable, reward_share_bps)?;
     Some(Settlement {
         to_rewards,
         burned: retired.checked_sub(to_rewards)?,
@@ -35,6 +40,8 @@ pub fn settle(retired: u64, reward_share_bps: u16) -> Option<Settlement> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Owed {
     pub retired_tokens: u64,
+    /// The part of `retired_tokens` that earns the reward share (`POOL4-49`).
+    pub retired_rewardable: u64,
     pub rewards_owed: u64,
     pub fees_recipient: u64,
     pub fees_designer: u64,
@@ -75,15 +82,22 @@ impl From<Refusal> for crate::errors::StrategyError {
 }
 
 impl Owed {
-    /// `settle`: the whole of `retired_tokens` split, the reward share into `rewards_owed`
-    /// and the rest burned. Returns the ledgers after and the split.
+    /// `settle`: the whole of `retired_tokens` split, the reward share of its rewardable part
+    /// into `rewards_owed` and the rest burned, emptying both. Returns the ledgers after and
+    /// the split.
     pub fn settle(self, reward_share_bps: u16) -> Result<(Owed, Settlement), Refusal> {
         if self.retired_tokens == 0 {
             return Err(Refusal::NothingToSettle);
         }
-        let split = settle(self.retired_tokens, reward_share_bps).ok_or(Refusal::Overflow)?;
+        let split = settle(
+            self.retired_tokens,
+            self.retired_rewardable,
+            reward_share_bps,
+        )
+        .ok_or(Refusal::Overflow)?;
         let after = Owed {
             retired_tokens: 0,
+            retired_rewardable: 0,
             rewards_owed: self
                 .rewards_owed
                 .checked_add(split.to_rewards)
@@ -118,18 +132,13 @@ impl Owed {
         Ok((after, amount))
     }
 
-    /// `sweep_fees { slot }`: the slot's whole ledger, to the slot's wallet (`slot_wallet`).
+    /// `sweep_fees { slot }`: the slot's whole ledger, to the slot's wallet (`FeeSlot`).
     /// Returns the ledgers after, the wallet and the amount paid.
     pub fn sweep(self, slot: u8, fee_recipient: &Pubkey) -> Result<(Owed, Pubkey, u64), Refusal> {
-        let wallet = slot_wallet(slot, fee_recipient)?;
+        let slot = FeeSlot::try_from(slot)?;
+        let wallet = slot.wallet(fee_recipient)?;
         let mut after = self;
-        let ledger = match slot {
-            0 => &mut after.fees_recipient,
-            1 => &mut after.fees_designer,
-            2 => &mut after.fees_suite,
-            _ => return Err(Refusal::BadSlot),
-        };
-        let amount = core::mem::take(ledger);
+        let amount = core::mem::take(slot.ledger(&mut after));
         if amount == 0 {
             return Err(Refusal::NothingOwed);
         }
@@ -137,26 +146,77 @@ impl Owed {
     }
 }
 
+/// A fee slot of `sweep_fees { slot }`: which ledger it pays and to which wallet. The only
+/// place the numeric slot is decoded, and the only place a slot's ledger and wallet are
+/// paired, so the two can never fall out of step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeeSlot {
+    /// Slot 0: `fees_recipient`, to the market's fee recipient.
+    Recipient,
+    /// Slot 1: `fees_designer`, to `DESIGNER_RECIPIENT`.
+    Designer,
+    /// Slot 2: `fees_suite`, to `SUITE_TREASURY`.
+    Suite,
+}
+
+impl TryFrom<u8> for FeeSlot {
+    type Error = Refusal;
+
+    /// Slot 0, 1 or 2; any other is refused as `BadSlot`.
+    fn try_from(slot: u8) -> Result<Self, Refusal> {
+        match slot {
+            0 => Ok(FeeSlot::Recipient),
+            1 => Ok(FeeSlot::Designer),
+            2 => Ok(FeeSlot::Suite),
+            _ => Err(Refusal::BadSlot),
+        }
+    }
+}
+
+impl FeeSlot {
+    /// The wallet the slot is paid to, refused as `RecipientUnset` while it is the default
+    /// key (a market created with no fee recipient, or `DESIGNER_RECIPIENT` unset).
+    pub fn wallet(self, fee_recipient: &Pubkey) -> Result<Pubkey, Refusal> {
+        let wallet = match self {
+            FeeSlot::Recipient => *fee_recipient,
+            FeeSlot::Designer => DESIGNER_RECIPIENT,
+            FeeSlot::Suite => SUITE_TREASURY,
+        };
+        if wallet == Pubkey::default() {
+            return Err(Refusal::RecipientUnset);
+        }
+        Ok(wallet)
+    }
+
+    /// The slot's own fee ledger.
+    pub fn ledger(self, owed: &mut Owed) -> &mut u64 {
+        match self {
+            FeeSlot::Recipient => &mut owed.fees_recipient,
+            FeeSlot::Designer => &mut owed.fees_designer,
+            FeeSlot::Suite => &mut owed.fees_suite,
+        }
+    }
+}
+
 /// The wallet fee slot `slot` is paid to: 0 the market's fee recipient, 1
 /// `DESIGNER_RECIPIENT`, 2 `SUITE_TREASURY`; refused for any other slot and for a slot whose
 /// wallet is unset.
 pub fn slot_wallet(slot: u8, fee_recipient: &Pubkey) -> Result<Pubkey, Refusal> {
-    let wallet = match slot {
-        0 => *fee_recipient,
-        1 => DESIGNER_RECIPIENT,
-        2 => SUITE_TREASURY,
-        _ => return Err(Refusal::BadSlot),
-    };
-    if wallet == Pubkey::default() {
-        return Err(Refusal::RecipientUnset);
-    }
-    Ok(wallet)
+    FeeSlot::try_from(slot)?.wallet(fee_recipient)
 }
 
 /// Whether `signer` may hand a role held by `current` to `new`: only the current holder may,
 /// a role nobody holds (the default key) never gets one, and nobody may hand it to the
-/// default key.
-pub fn handover(current: &Pubkey, signer: &Pubkey, new: &Pubkey) -> Result<(), HandoverRefusal> {
+/// default key, to the wallet that already holds it, or to one of the market's own
+/// addresses (`own`: its market state, its vault authority, both vaults, the program, the
+/// router's Market account and both mints), where no key could ever spend what the role is
+/// paid (`POOL4-52`).
+pub fn handover(
+    current: &Pubkey,
+    signer: &Pubkey,
+    new: &Pubkey,
+    own: &[Pubkey],
+) -> Result<(), HandoverRefusal> {
     if *current == Pubkey::default() {
         return Err(HandoverRefusal::RecipientUnset);
     }
@@ -165,6 +225,12 @@ pub fn handover(current: &Pubkey, signer: &Pubkey, new: &Pubkey) -> Result<(), H
     }
     if *new == Pubkey::default() {
         return Err(HandoverRefusal::NewRecipientRequired);
+    }
+    if new == current {
+        return Err(HandoverRefusal::SameRecipient);
+    }
+    if own.contains(new) {
+        return Err(HandoverRefusal::NotAWallet);
     }
     Ok(())
 }
@@ -175,6 +241,8 @@ pub enum HandoverRefusal {
     RecipientUnset,
     NotRecipient,
     NewRecipientRequired,
+    SameRecipient,
+    NotAWallet,
 }
 
 impl From<HandoverRefusal> for crate::errors::StrategyError {
@@ -184,6 +252,8 @@ impl From<HandoverRefusal> for crate::errors::StrategyError {
             HandoverRefusal::RecipientUnset => StrategyError::RecipientUnset,
             HandoverRefusal::NotRecipient => StrategyError::NotRecipient,
             HandoverRefusal::NewRecipientRequired => StrategyError::NewRecipientRequired,
+            HandoverRefusal::SameRecipient => StrategyError::SameRecipient,
+            HandoverRefusal::NotAWallet => StrategyError::NotAWallet,
         }
     }
 }
@@ -198,42 +268,245 @@ mod proofs {
     use super::*;
     use crate::config::MAX_REWARD_SHARE_BPS;
 
-    /// Bound of the default tier, for the retired tokens, as Pipeline bounds its own
-    /// `ceil_bps`: below 2^12 CBMC ran over 13 minutes without finishing, and below 2^10 it
-    /// verified the harness in 764 seconds, beside a test run, on the owner's Mac
+    /// Bound of the bounded settlement harness, for the retired tokens, as Pipeline bounds
+    /// its own `ceil_bps`: below 2^12 CBMC ran over 13 minutes without finishing, and below
+    /// 2^10 it verified the harness in 764 seconds, beside a test run, on the owner's Mac
     /// (2026-11-16).
+    #[cfg(kani_full)]
     const SMALL: u64 = 1 << 10;
 
-    /// The split for every reward share a market may choose, below `SMALL` retired, where
-    /// every product fits in 64 bits: nothing is created or lost, the reward share is exactly
-    /// `floor(retired × bps / 10,000)` (stated without a division, which CBMC handles slowly:
-    /// `to_rewards × 10,000 <= retired × bps < (to_rewards + 1) × 10,000`), and anything
-    /// retired burns something, since a market's reward share never takes it all.
+    /// The split for every reward share a market may choose, below `SMALL` retired and any
+    /// rewardable part of them, where every product fits in 64 bits: nothing is created or
+    /// lost, the reward share is exactly `floor(rewardable × bps / 10,000)` (stated without
+    /// a division, which CBMC handles slowly: `to_rewards × 10,000 <= rewardable × bps <
+    /// (to_rewards + 1) × 10,000`), and anything retired burns something, since a market's
+    /// reward share never takes it all. In the
+    /// full tier (INV-FB-12): at 764 seconds it took most of CI's Kani budget to prove for
+    /// `retired < 2^10` what `proofs/payouts_z3.py` proves for every input; the unit test
+    /// `the_settlement_split_for_every_remainder` (below) keeps a fast check of the compiled
+    /// split in its place, over every remainder modulo 10,000, the only place it rounds.
+    #[cfg(kani_full)]
     #[kani::proof]
     fn the_settlement_split_adds_up_and_always_burns_bounded() {
-        let (retired, bps): (u64, u16) = (kani::any(), kani::any());
-        kani::assume(retired < SMALL && bps <= MAX_REWARD_SHARE_BPS);
-        let split = settle(retired, bps).unwrap();
+        let (retired, rewardable, bps): (u64, u64, u16) = (kani::any(), kani::any(), kani::any());
+        kani::assume(retired < SMALL && rewardable <= retired && bps <= MAX_REWARD_SHARE_BPS);
+        let split = settle(retired, rewardable, bps).unwrap();
         assert!(split.to_rewards + split.burned == retired);
-        let product = retired * bps as u64;
+        let product = rewardable * bps as u64;
         assert!(split.to_rewards * 10_000 <= product && product < (split.to_rewards + 1) * 10_000);
         assert!(retired == 0 || split.burned > 0);
     }
 
-    /// The same for every u64 retired.
+    /// The same for every u64 retired and rewardable part of it.
     #[cfg(kani_full)]
     #[kani::proof]
     fn the_settlement_split_adds_up_and_always_burns() {
-        let (retired, bps): (u64, u16) = (kani::any(), kani::any());
-        kani::assume(bps <= MAX_REWARD_SHARE_BPS);
-        let split = settle(retired, bps).unwrap();
+        let (retired, rewardable, bps): (u64, u64, u16) = (kani::any(), kani::any(), kani::any());
+        kani::assume(rewardable <= retired && bps <= MAX_REWARD_SHARE_BPS);
+        let split = settle(retired, rewardable, bps).unwrap();
         assert!(split.to_rewards as u128 + split.burned as u128 == retired as u128);
         let (product, floor) = (
-            retired as u128 * bps as u128,
+            rewardable as u128 * bps as u128,
             split.to_rewards as u128 * 10_000,
         );
         assert!(floor <= product && product < floor + 10_000);
         assert!(retired == 0 || split.burned > 0);
+    }
+
+    fn any_owed() -> Owed {
+        Owed {
+            retired_tokens: kani::any(),
+            retired_rewardable: kani::any(),
+            rewards_owed: kani::any(),
+            fees_recipient: kani::any(),
+            fees_designer: kani::any(),
+            fees_suite: kani::any(),
+            tokens_burned: kani::any(),
+            rewards_paid: kani::any(),
+        }
+    }
+
+    /// Any key, the default key among them.
+    fn any_key() -> Pubkey {
+        Pubkey::new_from_array(kani::any())
+    }
+
+    /// `pay_rewards` moves exactly one ledger and touches nothing else, for every ledger and
+    /// lifetime total (INV-FB-10): on success the ledgers after are the ledgers before with
+    /// `rewards_owed` emptied into `rewards_paid`, and the amount is everything owed; it
+    /// refuses in the spec's order, an unset recipient first, then nothing owed, and
+    /// overflows only past a u128 of lifetime rewards. No division: verified in 3 seconds on
+    /// the owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn paying_rewards_empties_its_own_ledger_and_nothing_else() {
+        let before = any_owed();
+        let recipient = any_key();
+        match before.pay_rewards(&recipient) {
+            Ok((after, amount)) => {
+                assert!(recipient != Pubkey::default());
+                assert!(amount == before.rewards_owed && amount > 0);
+                let expected = Owed {
+                    rewards_owed: 0,
+                    rewards_paid: before.rewards_paid + amount as u128,
+                    ..before
+                };
+                assert_eq!(after, expected);
+            }
+            Err(Refusal::RecipientUnset) => assert!(recipient == Pubkey::default()),
+            Err(Refusal::NothingOwed) => {
+                assert!(recipient != Pubkey::default() && before.rewards_owed == 0)
+            }
+            Err(Refusal::Overflow) => assert!(
+                recipient != Pubkey::default()
+                    && before.rewards_owed > 0
+                    && before
+                        .rewards_paid
+                        .checked_add(before.rewards_owed as u128)
+                        .is_none()
+            ),
+            Err(_) => panic!("pay_rewards refuses only as above"),
+        }
+    }
+
+    /// `sweep` moves exactly one ledger and touches nothing else, for every ledger, lifetime
+    /// total, slot and recipient (INV-FB-10): on success the ledgers after are the ledgers
+    /// before with the slot's own fee ledger emptied, the amount is all of it and the wallet
+    /// is the slot's; it refuses a slot past 2 or a slot with no wallet as `slot_wallet`
+    /// does, then an empty ledger, and never overflows, with the wallet stated independently of
+    /// `FeeSlot` too. No division: verified in 15 seconds on the owner's Mac (2026-11-17).
+    #[kani::proof]
+    fn a_sweep_empties_its_own_ledger_and_nothing_else() {
+        let before = any_owed();
+        let (slot, recipient): (u8, Pubkey) = (kani::any(), any_key());
+        // The slot's ledger, stated independently of `sweep`'s own match.
+        let own = match slot {
+            0 => Some(before.fees_recipient),
+            1 => Some(before.fees_designer),
+            2 => Some(before.fees_suite),
+            _ => None,
+        };
+        match before.sweep(slot, &recipient) {
+            Ok((after, wallet, amount)) => {
+                assert_eq!(Ok(wallet), slot_wallet(slot, &recipient));
+                // The slot's wallet, stated independently of `FeeSlot` too.
+                let own_wallet = match slot {
+                    0 => recipient,
+                    1 => DESIGNER_RECIPIENT,
+                    _ => SUITE_TREASURY,
+                };
+                assert_eq!(wallet, own_wallet);
+                assert!(wallet != Pubkey::default());
+                assert!(Some(amount) == own && amount > 0);
+                let expected = match slot {
+                    0 => Owed {
+                        fees_recipient: 0,
+                        ..before
+                    },
+                    1 => Owed {
+                        fees_designer: 0,
+                        ..before
+                    },
+                    _ => Owed {
+                        fees_suite: 0,
+                        ..before
+                    },
+                };
+                assert_eq!(after, expected);
+            }
+            Err(Refusal::NothingOwed) => {
+                assert!(slot_wallet(slot, &recipient).is_ok() && own == Some(0))
+            }
+            Err(refusal) => {
+                assert!(refusal == Refusal::BadSlot || refusal == Refusal::RecipientUnset);
+                assert_eq!(slot_wallet(slot, &recipient), Err(refusal));
+                assert_eq!(refusal == Refusal::BadSlot, own.is_none());
+            }
+        }
+    }
+
+    /// A handover is allowed exactly when the role's current holder signs it to a key that
+    /// is not the default key, not its own and not one of the market's own addresses, for
+    /// every holder, signer, new key and set of the market's addresses (`POOL4-52`), and
+    /// each refusal is the first rule broken, in the spec's order. No division: verified in
+    /// 12 seconds on the owner's Mac (2026-11-17).
+    #[kani::proof]
+    fn a_handover_is_allowed_exactly_to_a_new_wallet_by_its_holder() {
+        let (current, signer, new) = (any_key(), any_key(), any_key());
+        let own = [any_key(), any_key(), any_key(), any_key(), any_key()];
+        let is_own = own.iter().any(|key| *key == new);
+        let unset = current == Pubkey::default();
+        let expected = if unset {
+            Err(HandoverRefusal::RecipientUnset)
+        } else if signer != current {
+            Err(HandoverRefusal::NotRecipient)
+        } else if new == Pubkey::default() {
+            Err(HandoverRefusal::NewRecipientRequired)
+        } else if new == current {
+            Err(HandoverRefusal::SameRecipient)
+        } else if is_own {
+            Err(HandoverRefusal::NotAWallet)
+        } else {
+            Ok(())
+        };
+        assert_eq!(handover(&current, &signer, &new, &own), expected);
+    }
+
+    /// `settle` empties `retired_tokens` and `retired_rewardable` and leaves every other
+    /// ledger alone, for every ledger, lifetime total and reward share a market may choose
+    /// (INV-FB-11): on success the ledgers after are the ledgers before with both emptied,
+    /// the split's reward share added to `rewards_owed` and its burn to `tokens_burned`, and
+    /// the split adds up to what was retired, so the token ledgers fall by exactly the burn;
+    /// it refuses as `NothingToSettle` exactly when nothing is retired, and otherwise only
+    /// for a rewardable part above the retired tokens, which no market reaches, or an
+    /// overflow. That the split is the spec's is `the_settlement_split_for_every_remainder`'s
+    /// and `proofs/payouts_z3.py`'s to prove. Verified in 12 seconds on the owner's Mac
+    /// (2026-11-17), beside other sessions' builds.
+    #[kani::proof]
+    fn settling_empties_the_retired_ledger_and_nothing_else() {
+        let before = any_owed();
+        let bps: u16 = kani::any();
+        kani::assume(bps <= MAX_REWARD_SHARE_BPS);
+        match before.settle(bps) {
+            Ok((after, split)) => {
+                assert!(before.retired_tokens > 0);
+                assert_eq!(
+                    split.to_rewards as u128 + split.burned as u128,
+                    before.retired_tokens as u128
+                );
+                assert!(before.retired_rewardable <= before.retired_tokens);
+                let expected = Owed {
+                    retired_tokens: 0,
+                    retired_rewardable: 0,
+                    rewards_owed: before.rewards_owed + split.to_rewards,
+                    tokens_burned: before.tokens_burned + split.burned as u128,
+                    ..before
+                };
+                assert_eq!(after, expected);
+            }
+            Err(refusal) => {
+                assert_eq!(
+                    refusal == Refusal::NothingToSettle,
+                    before.retired_tokens == 0
+                );
+                assert!(refusal == Refusal::NothingToSettle || refusal == Refusal::Overflow);
+                // Stated without a division, which CBMC handles slowly: the reward share is at
+                // most the rewardable part and the burn at most the retired tokens, so an
+                // overflow needs one of these.
+                if refusal == Refusal::Overflow {
+                    assert!(
+                        before.retired_rewardable > before.retired_tokens
+                            || before
+                                .rewards_owed
+                                .checked_add(before.retired_rewardable)
+                                .is_none()
+                            || before
+                                .tokens_burned
+                                .checked_add(before.retired_tokens as u128)
+                                .is_none()
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -243,15 +516,75 @@ mod tests {
     use crate::config::MAX_REWARD_SHARE_BPS;
     use proptest::prelude::*;
 
+    /// The worked example's `settle`: 8,333,333,340 units retired, of which the trim's
+    /// 8,333,333,329 were matched by the cap's fall and the 11 of dust were not (POOL4-49).
     #[test]
     fn the_worked_examples_settlement() {
         assert_eq!(
-            settle(8_333_333_340, 1_500),
+            settle(8_333_333_340, 8_333_333_329, 1_500),
             Some(Settlement {
-                to_rewards: 1_250_000_001,
-                burned: 7_083_333_339
+                to_rewards: 1_249_999_999,
+                burned: 7_083_333_341
             })
         );
+    }
+
+    /// The settlement split for every remainder modulo 10,000, the only place `share`
+    /// rounds (INV-FB-12, in the default tier's place of the 764-second Kani harness, now in
+    /// the full tier): for a rewardable part `q × 10,000 + r` with every `r` from 0 to
+    /// 9,999, at the least, the next and the greatest quotient a u64 holds, of retired tokens
+    /// that are all rewardable or have 11 units more (or as many more as a u64 holds), and
+    /// at the reward shares at and around every edge, the reward share is exactly
+    /// `floor(rewardable × bps / 10,000)`, the split adds up, and anything retired burns
+    /// something at every share a market may choose. `proofs/payouts_z3.py` proves the same
+    /// for every input.
+    #[test]
+    fn the_settlement_split_for_every_remainder() {
+        let shares = [
+            0,
+            1,
+            1_000,
+            1_500,
+            2_999,
+            MAX_REWARD_SHARE_BPS,
+            5_000,
+            9_999,
+            10_000,
+        ];
+        for q in [0, 1, u64::MAX / 10_000] {
+            for r in 0..10_000u64 {
+                let Some(rewardable) = q.checked_mul(10_000).and_then(|v| v.checked_add(r)) else {
+                    continue;
+                };
+                for retired in [rewardable, rewardable.saturating_add(11)] {
+                    for bps in shares {
+                        let split = settle(retired, rewardable, bps).unwrap();
+                        let exact = rewardable as u128 * bps as u128 / 10_000;
+                        assert_eq!(split.to_rewards as u128, exact, "{rewardable} at {bps}");
+                        assert_eq!(
+                            split.to_rewards as u128 + split.burned as u128,
+                            retired as u128
+                        );
+                        if bps <= MAX_REWARD_SHARE_BPS {
+                            assert!(retired == 0 || split.burned > 0, "{retired} at {bps}");
+                        }
+                    }
+                }
+            }
+        }
+        // Nothing rewardable: everything burns.
+        assert_eq!(
+            settle(u64::MAX, 0, MAX_REWARD_SHARE_BPS),
+            Some(Settlement {
+                to_rewards: 0,
+                burned: u64::MAX
+            })
+        );
+        // Past 10,000 basis points, or with more rewardable than retired, the split is
+        // refused, never wrapped.
+        assert_eq!(settle(1, 1, 10_001), None);
+        assert_eq!(settle(u64::MAX, u64::MAX, u16::MAX), None);
+        assert_eq!(settle(1, 2, 1_500), None);
     }
 
     #[test]
@@ -274,34 +607,126 @@ mod tests {
         assert_eq!(slot_wallet(3, &recipient), Err(Refusal::BadSlot));
     }
 
+    /// Each fee slot pays exactly its own ledger to exactly its own wallet, stated here
+    /// independently of `FeeSlot` (docs/spec/pool4-for-solana.md, "`sweep_fees { slot }`"):
+    /// with a different amount in every ledger, slot 0 pays `fees_recipient` to the fee
+    /// recipient, slot 1 `fees_designer` to `DESIGNER_RECIPIENT`, slot 2 `fees_suite` to
+    /// `SUITE_TREASURY`, and leaves every other ledger as it was; any other slot is refused.
+    #[test]
+    fn sos_h065_each_fee_slot_pays_its_own_ledger_to_its_own_wallet() {
+        let recipient = Pubkey::new_unique();
+        let before = Owed {
+            retired_tokens: 1,
+            retired_rewardable: 1,
+            rewards_owed: 2,
+            fees_recipient: 10,
+            fees_designer: 20,
+            fees_suite: 30,
+            tokens_burned: 3,
+            rewards_paid: 4,
+        };
+        let spec = [
+            (
+                FeeSlot::Recipient,
+                recipient,
+                10,
+                Owed {
+                    fees_recipient: 0,
+                    ..before
+                },
+            ),
+            (
+                FeeSlot::Designer,
+                DESIGNER_RECIPIENT,
+                20,
+                Owed {
+                    fees_designer: 0,
+                    ..before
+                },
+            ),
+            (
+                FeeSlot::Suite,
+                SUITE_TREASURY,
+                30,
+                Owed {
+                    fees_suite: 0,
+                    ..before
+                },
+            ),
+        ];
+        for (number, (slot, wallet, amount, after)) in spec.into_iter().enumerate() {
+            assert_eq!(FeeSlot::try_from(number as u8), Ok(slot));
+            let mut ledgers = before;
+            assert_eq!(*slot.ledger(&mut ledgers), amount);
+            if wallet == Pubkey::default() {
+                // The designer's slot while `DESIGNER_RECIPIENT` is unset.
+                assert_eq!(slot.wallet(&recipient), Err(Refusal::RecipientUnset));
+                assert_eq!(
+                    before.sweep(number as u8, &recipient),
+                    Err(Refusal::RecipientUnset)
+                );
+                continue;
+            }
+            assert_eq!(slot.wallet(&recipient), Ok(wallet));
+            assert_eq!(
+                before.sweep(number as u8, &recipient),
+                Ok((after, wallet, amount))
+            );
+        }
+        for slot in [3, 4, 255] {
+            assert_eq!(FeeSlot::try_from(slot), Err(Refusal::BadSlot));
+            assert_eq!(before.sweep(slot, &recipient), Err(Refusal::BadSlot));
+        }
+    }
+
     #[test]
     fn handovers() {
         let (current, other) = (Pubkey::new_unique(), Pubkey::new_unique());
         let none = Pubkey::default();
-        assert_eq!(handover(&current, &current, &other), Ok(()));
+        let own = [Pubkey::new_unique(), Pubkey::new_unique(), crate::ID];
+        assert_eq!(handover(&current, &current, &other, &own), Ok(()));
         assert_eq!(
-            handover(&current, &other, &other),
+            handover(&current, &other, &other, &own),
             Err(HandoverRefusal::NotRecipient)
         );
         assert_eq!(
-            handover(&current, &current, &none),
+            handover(&current, &current, &none, &own),
             Err(HandoverRefusal::NewRecipientRequired)
         );
         assert_eq!(
-            handover(&none, &none, &other),
+            handover(&none, &none, &other, &own),
             Err(HandoverRefusal::RecipientUnset)
         );
+        assert_eq!(
+            handover(&current, &current, &current, &own),
+            Err(HandoverRefusal::SameRecipient)
+        );
+        for address in own {
+            assert_eq!(
+                handover(&current, &current, &address, &own),
+                Err(HandoverRefusal::NotAWallet)
+            );
+            // A stranger naming one is still told it is not the recipient.
+            assert_eq!(
+                handover(&current, &other, &address, &own),
+                Err(HandoverRefusal::NotRecipient)
+            );
+        }
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10_000))]
 
-        /// The split adds up, is exactly the reward share, and always burns something.
+        /// The split adds up, is exactly the reward share of the rewardable part, and always
+        /// burns something.
         #[test]
-        fn the_settlement_split(retired in any::<u64>(), bps in 0..=MAX_REWARD_SHARE_BPS) {
-            let split = settle(retired, bps).unwrap();
+        fn the_settlement_split(
+            retired in any::<u64>(), part in any::<u64>(), bps in 0..=MAX_REWARD_SHARE_BPS,
+        ) {
+            let rewardable = retired.checked_add(1).map_or(part, |bound| part % bound);
+            let split = settle(retired, rewardable, bps).unwrap();
             prop_assert_eq!(split.to_rewards as u128 + split.burned as u128, retired as u128);
-            prop_assert_eq!(split.to_rewards as u128, retired as u128 * bps as u128 / 10_000);
+            prop_assert_eq!(split.to_rewards as u128, rewardable as u128 * bps as u128 / 10_000);
             prop_assert!(retired == 0 || split.burned > 0);
         }
 
@@ -309,11 +734,12 @@ mod tests {
         /// exactly what they report, and keep the lifetime totals.
         #[test]
         fn payouts_move_exactly_what_they_report(
-            retired in any::<u32>(), owed in any::<u32>(), fees in any::<[u32; 3]>(),
-            bps in 0..=MAX_REWARD_SHARE_BPS, slot in 0..4u8,
+            retired in any::<u32>(), part in any::<u32>(), owed in any::<u32>(),
+            fees in any::<[u32; 3]>(), bps in 0..=MAX_REWARD_SHARE_BPS, slot in 0..4u8,
         ) {
             let before = Owed {
                 retired_tokens: retired as u64,
+                retired_rewardable: (part as u64) % (retired as u64 + 1),
                 rewards_owed: owed as u64,
                 fees_recipient: fees[0] as u64,
                 fees_designer: fees[1] as u64,
@@ -323,7 +749,11 @@ mod tests {
             };
             match before.settle(bps) {
                 Ok((after, split)) => {
-                    prop_assert_eq!(after.retired_tokens, 0);
+                    prop_assert_eq!((after.retired_tokens, after.retired_rewardable), (0, 0));
+                    prop_assert_eq!(
+                        split.to_rewards as u128,
+                        before.retired_rewardable as u128 * bps as u128 / 10_000
+                    );
                     prop_assert_eq!(after.rewards_owed, before.rewards_owed + split.to_rewards);
                     prop_assert_eq!(after.tokens_burned, 7 + split.burned as u128);
                     prop_assert_eq!(split.to_rewards + split.burned, before.retired_tokens);

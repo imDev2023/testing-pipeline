@@ -165,7 +165,16 @@ export type MarketState = {
   rewardsPaid: ReadonlyUint8Array;
   /** 703: lamports */
   tipsPaid: ReadonlyUint8Array;
-  /** 719 to the end: zeroed, for fields later layouts append. */
+  /** 719: u64, token units the ratchet has lowered the cap by that no trim has matched yet */
+  capFallUnmatched: ReadonlyUint8Array;
+  /** 727: u64, token units, the part of `retired_tokens` that earns the reward share */
+  retiredRewardable: ReadonlyUint8Array;
+  /**
+   * 735: u128, Q64.64, the lowest close since the last placement (the seed counts as one);
+   * 0 (a market written before this field) caps nothing
+   */
+  lowSincePlacement: ReadonlyUint8Array;
+  /** 751 to the end: zeroed, for fields later layouts append. */
   reserve: ReadonlyUint8Array;
 };
 
@@ -280,7 +289,16 @@ export type MarketStateArgs = {
   rewardsPaid: ReadonlyUint8Array;
   /** 703: lamports */
   tipsPaid: ReadonlyUint8Array;
-  /** 719 to the end: zeroed, for fields later layouts append. */
+  /** 719: u64, token units the ratchet has lowered the cap by that no trim has matched yet */
+  capFallUnmatched: ReadonlyUint8Array;
+  /** 727: u64, token units, the part of `retired_tokens` that earns the reward share */
+  retiredRewardable: ReadonlyUint8Array;
+  /**
+   * 735: u128, Q64.64, the lowest close since the last placement (the seed counts as one);
+   * 0 (a market written before this field) caps nothing
+   */
+  lowSincePlacement: ReadonlyUint8Array;
+  /** 751 to the end: zeroed, for fields later layouts append. */
   reserve: ReadonlyUint8Array;
 };
 
@@ -347,7 +365,10 @@ export function getMarketStateEncoder(): FixedSizeEncoder<MarketStateArgs> {
       ["tokensBurned", fixEncoderSize(getBytesEncoder(), 16)],
       ["rewardsPaid", fixEncoderSize(getBytesEncoder(), 16)],
       ["tipsPaid", fixEncoderSize(getBytesEncoder(), 16)],
-      ["reserve", fixEncoderSize(getBytesEncoder(), 305)],
+      ["capFallUnmatched", fixEncoderSize(getBytesEncoder(), 8)],
+      ["retiredRewardable", fixEncoderSize(getBytesEncoder(), 8)],
+      ["lowSincePlacement", fixEncoderSize(getBytesEncoder(), 16)],
+      ["reserve", fixEncoderSize(getBytesEncoder(), 273)],
     ]),
     (value) => ({ ...value, discriminator: MARKET_STATE_DISCRIMINATOR }),
   );
@@ -415,7 +436,10 @@ export function getMarketStateDecoder(): FixedSizeDecoder<MarketState> {
     ["tokensBurned", fixDecoderSize(getBytesDecoder(), 16)],
     ["rewardsPaid", fixDecoderSize(getBytesDecoder(), 16)],
     ["tipsPaid", fixDecoderSize(getBytesDecoder(), 16)],
-    ["reserve", fixDecoderSize(getBytesDecoder(), 305)],
+    ["capFallUnmatched", fixDecoderSize(getBytesDecoder(), 8)],
+    ["retiredRewardable", fixDecoderSize(getBytesDecoder(), 8)],
+    ["lowSincePlacement", fixDecoderSize(getBytesDecoder(), 16)],
+    ["reserve", fixDecoderSize(getBytesDecoder(), 273)],
   ]);
 }
 

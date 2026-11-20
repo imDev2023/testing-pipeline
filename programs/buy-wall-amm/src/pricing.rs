@@ -492,6 +492,144 @@ mod proofs {
             }
         }
     }
+
+    /// A sell step that returns any result meeting the step contract `proofs/pricing_z3.py`
+    /// proves of `sell_step`: the price falls no further than the target, the input used is
+    /// at most what is left, and the step stops short of its target only by using all of it.
+    fn any_sell_step(
+        _liq: u128,
+        s: u128,
+        target: u128,
+        remaining: u64,
+    ) -> core::result::Result<(u128, u64, u64), Refusal> {
+        let (next, used, out): (u128, u64, u64) = (kani::any(), kani::any(), kani::any());
+        kani::assume(target <= next && next <= s && used <= remaining);
+        kani::assume(next == target || used == remaining);
+        Ok((next, used, out))
+    }
+
+    /// The same for a buy step, whose price rises toward its target.
+    fn any_buy_step(
+        _liq: u128,
+        s: u128,
+        target: u128,
+        remaining: u64,
+    ) -> core::result::Result<(u128, u64, u64), Refusal> {
+        let (next, used, out): (u128, u64, u64) = (kani::any(), kani::any(), kani::any());
+        kani::assume(s <= next && next <= target && used <= remaining);
+        kani::assume(next == target || used == remaining);
+        Ok((next, used, out))
+    }
+
+    /// A curve, a wall and an input as trading can reach them (R1 and R3 of INV-PM-9): the
+    /// price within the bounds and a placed wall's top within them too.
+    fn any_market() -> (u128, u128, u128, u128, u64) {
+        let (l, w, top, s): (u128, u128, u128, u128) =
+            (kani::any(), kani::any(), kani::any(), kani::any());
+        kani::assume((MIN_SQRT_PRICE..=MAX_SQRT_PRICE).contains(&s));
+        kani::assume(w == 0 || (MIN_SQRT_PRICE..=MAX_SQRT_PRICE).contains(&top));
+        // `sell` and `buy` refuse `L + W` past 128 bits before they walk.
+        kani::assume(l.checked_add(w).is_some());
+        (l, w, top, s, kani::any())
+    }
+
+    /// Two steps always suffice for a sell, and it is refused at a price bound only at the
+    /// bound (INV-PM-9): `walk` with `sell`'s legs (restated here: along `L` toward the top
+    /// while a placed wall's top is below the price, otherwise along `L + W` toward
+    /// `MIN_SQRT_PRICE`) and any step meeting the step contract crosses at most the wall's
+    /// top, its second step starts where the first stopped and heads for `MIN_SQRT_PRICE`,
+    /// and `PriceBoundReached` comes only after a step toward `MIN_SQRT_PRICE` left input
+    /// over, which the contract makes a step that reached it. The step being abstract, no
+    /// division loop runs, so it holds for every curve, wall and input: verified in 5
+    /// seconds on the owner's Mac (2026-11-16). The Proptest
+    /// `a_reachable_trade_never_overflows` (below) replays the real steps.
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn two_steps_always_suffice_for_a_sell() {
+        let (l, w, top, s, a) = any_market();
+        let calls = core::cell::Cell::new([(0u128, 0u128, 0u128); 2]);
+        let count = core::cell::Cell::new(0usize);
+        let leg = |s: u128| {
+            let (liq, target) = if w > 0 && s > top {
+                (l, top)
+            } else {
+                (l + w, MIN_SQRT_PRICE)
+            };
+            let mut log = calls.get();
+            log[count.get()] = (s, liq, target);
+            calls.set(log);
+            count.set(count.get() + 1);
+            (liq, target)
+        };
+        let walked = walk(s, a, leg, any_sell_step);
+        let (n, log) = (count.get(), calls.get());
+        assert!(n == 1 || n == 2);
+        // The first step heads for the top only from above it.
+        assert_eq!(
+            log[0].2 == top && top != MIN_SQRT_PRICE,
+            w > 0 && s > top && top != MIN_SQRT_PRICE
+        );
+        if n == 2 {
+            // The second starts where the first stopped, at its target, and heads for the
+            // bound along the curve and the wall together.
+            assert_eq!(log[1].0, log[0].2);
+            assert_eq!((log[1].1, log[1].2), (l + w, MIN_SQRT_PRICE));
+        }
+        match walked {
+            Ok((next, _)) => assert!(MIN_SQRT_PRICE <= next && next <= s),
+            Err(Refusal::PriceBoundReached) => {
+                assert!(n == 2 && log[1].2 == MIN_SQRT_PRICE)
+            }
+            // Only the freed sum's overflow, INV-PM-4's to rule out.
+            Err(refusal) => assert!(refusal == Refusal::Overflow),
+        }
+        kani::cover!(walked == Err(Refusal::PriceBoundReached) && w > 0 && s > top);
+        kani::cover!(walked.is_ok() && n == 2 && w > 0);
+    }
+
+    /// The same for a buy (INV-PM-9): with `buy`'s legs (along `L + W` toward the top while
+    /// a placed wall's top is above the price, otherwise along `L` toward `MAX_SQRT_PRICE`),
+    /// it crosses at most the wall's top and is refused at a price bound only at
+    /// `MAX_SQRT_PRICE`. Verified in 5 seconds on the owner's Mac (2026-11-16).
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn two_steps_always_suffice_for_a_buy() {
+        let (l, w, top, s, a) = any_market();
+        let calls = core::cell::Cell::new([(0u128, 0u128, 0u128); 2]);
+        let count = core::cell::Cell::new(0usize);
+        let leg = |s: u128| {
+            let (liq, target) = if w > 0 && s < top {
+                (l + w, top)
+            } else {
+                (l, MAX_SQRT_PRICE)
+            };
+            let mut log = calls.get();
+            log[count.get()] = (s, liq, target);
+            calls.set(log);
+            count.set(count.get() + 1);
+            (liq, target)
+        };
+        let walked = walk(s, a, leg, any_buy_step);
+        let (n, log) = (count.get(), calls.get());
+        assert!(n == 1 || n == 2);
+        assert_eq!(
+            log[0].2 == top && top != MAX_SQRT_PRICE,
+            w > 0 && s < top && top != MAX_SQRT_PRICE
+        );
+        if n == 2 {
+            assert_eq!(log[1].0, log[0].2);
+            assert_eq!((log[1].1, log[1].2), (l, MAX_SQRT_PRICE));
+        }
+        match walked {
+            Ok((next, _)) => assert!(s <= next && next <= MAX_SQRT_PRICE),
+            Err(Refusal::PriceBoundReached) => {
+                assert!(n == 2 && log[1].2 == MAX_SQRT_PRICE)
+            }
+            Err(refusal) => assert!(refusal == Refusal::Overflow),
+        }
+        kani::cover!(walked == Err(Refusal::PriceBoundReached) && w > 0 && s < top);
+        kani::cover!(walked.is_ok() && n == 2 && w > 0);
+    }
 }
 
 #[cfg(test)]
@@ -528,25 +666,26 @@ mod tests {
     }
 
     /// The worked example's market after `place_wall`: the curve trimmed to 99,166,666,666 and
-    /// a wall of 903,804,009 placed at the price.
+    /// a wall of 903,804,010 placed at the opening price, the lowest close since the seed, a
+    /// hair below the price (`POOL4-50`).
     const AFTER_PLACE_WALL: Curve = Curve {
         sqrt_price: 1_844_674_407_372_029_099,
         liquidity: 99_166_666_666,
     };
     const WALL: Wall = Wall {
-        liquidity: 903_804_009,
-        top: 1_844_674_407_372_029_099,
+        liquidity: 903_804_010,
+        top: 1_844_674_407_370_955_161,
     };
 
     #[test]
     fn the_worked_examples_sell_into_the_wall_prices_at_the_spec_numbers() {
         // 60 seconds after `place_wall`, a sell of 20,000,000,000 units, through the curve and
-        // the wall together (the price is at the wall's top).
+        // the wall together (from a hair above the wall's top, so the curve alone to it first).
         let sold = sell(AFTER_PLACE_WALL, WALL, 20_000_000_000, FEE_BPS).unwrap();
         assert_eq!(sold.amount_out + sold.fee, 196_081_138);
         assert_eq!(sold.fee, 1_960_812);
         assert_eq!(sold.amount_out, 194_120_326);
-        assert_eq!(sold.sqrt_price, 1_808_529_293_213_661_729);
+        assert_eq!(sold.sqrt_price, 1_808_529_293_214_755_428);
         // The wall has spent 1,770,941 lamports on 180,633,508 units.
         let placed = 90_380_400;
         assert_eq!(placed - WALL.sol_at(sold.sqrt_price).unwrap(), 1_770_941);
@@ -919,6 +1058,153 @@ mod tests {
         covers(curve, Wall::NONE, tokens, lamports)
     }
 
+    /// Whether trading can reach this curve and wall (R1 to R5 of INV-PM-4): the price within
+    /// the bounds, the liquidity at least `MIN_LIQUIDITY`, a placed wall's top within the
+    /// bounds with what it held at its top fitting in a u64 (`place_wall` places `W =
+    /// floor(idle × Q / top)` from a u64 of idle SOL), and the least ledgers that cover the
+    /// curve and the wall fitting in a u64, as the vaults' balances do.
+    fn reachable(c: Curve, wall: Wall) -> bool {
+        let bounds = MIN_SQRT_PRICE..=MAX_SQRT_PRICE;
+        bounds.contains(&c.sqrt_price)
+            && c.liquidity >= MIN_LIQUIDITY
+            && (!wall.is_placed()
+                || (bounds.contains(&wall.top) && wall.sol_at(wall.top).is_some()))
+            && least_cover(c, wall).is_some()
+    }
+
+    /// The trade `priced` of `a` on `side` if accepted, and otherwise a check of its refusal's
+    /// kind (INV-PM-4), so no case skips a refusal unseen: zero input only for nothing in, a
+    /// buy's fee may leave nothing, either may pay nothing out or reach a price bound, and
+    /// `Overflow` only on a market trading cannot reach.
+    fn accepted(
+        c: Curve,
+        wall: Wall,
+        side: Side,
+        a: u64,
+        priced: core::result::Result<Priced, Refusal>,
+    ) -> core::result::Result<Option<Priced>, TestCaseError> {
+        let refusal = match priced {
+            Ok(p) => return Ok(Some(p)),
+            Err(refusal) => refusal,
+        };
+        let legitimate = match refusal {
+            Refusal::ZeroInput => a == 0,
+            Refusal::NothingAfterFee => side == Side::Buy && a > 0,
+            Refusal::ZeroOutput | Refusal::PriceBoundReached => a > 0,
+            Refusal::Overflow => !reachable(c, wall),
+        };
+        prop_assert!(
+            legitimate,
+            "{:?} of {} refused as {:?} on {:?} with {:?}",
+            side,
+            a,
+            refusal,
+            c,
+            wall
+        );
+        Ok(None)
+    }
+
+    /// `sell`'s legs, restated from the spec: along the curve toward a placed wall's top
+    /// while the price is above it, otherwise along the curve and the wall together toward
+    /// `MIN_SQRT_PRICE`.
+    fn sell_leg(c: Curve, wall: Wall, s: u128) -> (u128, u128) {
+        if wall.is_placed() && s > wall.top {
+            (c.liquidity, wall.top)
+        } else {
+            (c.liquidity + wall.liquidity, MIN_SQRT_PRICE)
+        }
+    }
+
+    /// `buy`'s legs: along the curve and the wall together toward a placed wall's top while
+    /// the price is below it, otherwise along the curve toward `MAX_SQRT_PRICE`.
+    fn buy_leg(c: Curve, wall: Wall, s: u128) -> (u128, u128) {
+        if wall.is_placed() && s < wall.top {
+            (c.liquidity + wall.liquidity, wall.top)
+        } else {
+            (c.liquidity, MAX_SQRT_PRICE)
+        }
+    }
+
+    /// A side's legs: the liquidity and target a step from a price takes.
+    type Leg = fn(Curve, Wall, u128) -> (u128, u128);
+
+    /// Replays a trade the real steps refused at a price bound, step by step along the
+    /// spec's legs (INV-PM-9's concrete layer): it took both steps, the second from where the
+    /// first stopped, and the second reached the bound it heads for with input left over.
+    fn refused_only_at_the_bound(
+        c: Curve,
+        wall: Wall,
+        side: Side,
+        amount: u64,
+    ) -> core::result::Result<(), TestCaseError> {
+        let (leg, step, bound): (Leg, Step, u128) = match side {
+            Side::Sell => (sell_leg, sell_step, MIN_SQRT_PRICE),
+            Side::Buy => (buy_leg, buy_step, MAX_SQRT_PRICE),
+        };
+        let (mut s, mut remaining) = (c.sqrt_price, amount);
+        for taken in 1..=MAX_STEPS {
+            let (liq, target) = leg(c, wall, s);
+            let (next, used, _) = step(liq, s, target, remaining).unwrap();
+            remaining -= used;
+            prop_assert!(remaining > 0, "refused after using all its input");
+            if taken == MAX_STEPS {
+                prop_assert_eq!((target, next), (bound, bound));
+            } else {
+                // Input left over: the step reached its target.
+                prop_assert_eq!(next, target);
+            }
+            s = next;
+        }
+        Ok(())
+    }
+
+    /// A curve at or near `MIN_LIQUIDITY`, where a u64 of input reaches either price bound,
+    /// and the deepest wall `place_wall` can place on it: `W = floor(idle × Q / top)` for any
+    /// u64 of idle SOL at a top from `MIN_SQRT_PRICE` up, so `W` reaches about 2^96 at a low
+    /// top (INV-PM-4's worst case, `(L + W) × Q × s` the largest product pricing forms). The
+    /// price is anywhere from just below the top, inside the wall, to above it. Only markets
+    /// trading can reach (`reachable`).
+    fn thin_curve_and_deep_wall() -> impl Strategy<Value = (Curve, Wall)> {
+        (
+            MIN_LIQUIDITY..MIN_LIQUIDITY * 1_000,
+            prop_oneof![
+                MIN_SQRT_PRICE..MIN_SQRT_PRICE << 8,
+                MIN_SQRT_PRICE..=MAX_SQRT_PRICE
+            ],
+            prop_oneof![any::<u64>(), u64::MAX - (1 << 20)..=u64::MAX, 1u64..1 << 40],
+            any::<bool>(),
+            prop_oneof![0u128..1 << 16, 0u128..=1 << 64, any::<u128>()],
+            any::<bool>(),
+        )
+            .prop_map(|(liquidity, top, idle, placed, offset, above)| {
+                let wall = Wall {
+                    liquidity: if placed {
+                        ((idle as u128) << 64) / top
+                    } else {
+                        0
+                    },
+                    top,
+                };
+                // Above the top, or below it by at most half of it.
+                let sqrt_price = if above {
+                    top.saturating_add(offset).min(MAX_SQRT_PRICE)
+                } else {
+                    top - offset % (top / 2)
+                };
+                (
+                    Curve {
+                        sqrt_price,
+                        liquidity,
+                    },
+                    wall,
+                )
+            })
+            .prop_filter("a market trading can reach", |(c, wall)| {
+                reachable(*c, *wall)
+            })
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10_000))]
 
@@ -930,7 +1216,7 @@ mod tests {
         fn outputs_round_down_and_fees_round_up(c in curve(), a in amount(), fee_bps in fee_bps()) {
             let (l, s) = (c.liquidity, c.sqrt_price);
             let lq = U256::times_q(l);
-            if let Ok(p) = sell(c, Wall::NONE, a, fee_bps) {
+            if let Some(p) = accepted(c, Wall::NONE, Side::Sell, a, sell(c, Wall::NONE, a, fee_bps))? {
                 let gross = p.amount_out + p.fee;
                 prop_assert_eq!(p.fee, fees::ceil_bps(gross, fee_bps as u64).unwrap());
                 let next = p.sqrt_price;
@@ -947,7 +1233,7 @@ mod tests {
                     prop_assert!(!reached(next - 1));
                 }
             }
-            if let Ok(p) = buy(c, Wall::NONE, a, fee_bps) {
+            if let Some(p) = accepted(c, Wall::NONE, Side::Buy, a, buy(c, Wall::NONE, a, fee_bps))? {
                 prop_assert_eq!(p.fee, fees::ceil_bps(a, fee_bps as u64).unwrap());
                 let rem = (a - p.fee) as u128;
                 let next = p.sqrt_price;
@@ -977,7 +1263,8 @@ mod tests {
             let lamports = u64::try_from(U256::mul(l, s).unwrap().checked_ceil_shr64().unwrap()).unwrap();
             prop_assert!(covered(c, tokens, lamports));
             let priced = if sell_side { sell(c, Wall::NONE, a, fee_bps) } else { buy(c, Wall::NONE, a, fee_bps) };
-            if let Ok(p) = priced {
+            let side = if sell_side { Side::Sell } else { Side::Buy };
+            if let Some(p) = accepted(c, Wall::NONE, side, a, priced)? {
                 let after = Curve { sqrt_price: p.sqrt_price, ..c };
                 let (tokens, lamports) = match p.side {
                     Side::Sell => (tokens.checked_add(p.amount_in), lamports.checked_sub(p.amount_out + p.fee)),
@@ -995,9 +1282,10 @@ mod tests {
         /// A buy sold straight back never returns more than it cost.
         #[test]
         fn a_buy_sold_straight_back_never_returns_more(c in curve(), a in amount(), fee_bps in fee_bps()) {
-            if let Ok(bought) = buy(c, Wall::NONE, a, fee_bps) {
+            if let Some(bought) = accepted(c, Wall::NONE, Side::Buy, a, buy(c, Wall::NONE, a, fee_bps))? {
                 let after = Curve { sqrt_price: bought.sqrt_price, ..c };
-                if let Ok(sold) = sell(after, Wall::NONE, bought.amount_out, fee_bps) {
+                let sold = sell(after, Wall::NONE, bought.amount_out, fee_bps);
+                if let Some(sold) = accepted(after, Wall::NONE, Side::Sell, bought.amount_out, sold)? {
                     prop_assert!(sold.amount_out < a);
                     // And the price returns no lower than it started.
                     prop_assert!(sold.sqrt_price >= c.sqrt_price);
@@ -1041,7 +1329,8 @@ mod tests {
             let (tokens, lamports) = least_cover(c, wall).expect("a pool's ledgers fit");
             prop_assert!(covers(c, wall, tokens, lamports));
             let priced = if sell_side { sell(c, wall, a, fee_bps) } else { buy(c, wall, a, fee_bps) };
-            if let Ok(p) = priced {
+            let side = if sell_side { Side::Sell } else { Side::Buy };
+            if let Some(p) = accepted(c, wall, side, a, priced)? {
                 let after = Curve { sqrt_price: p.sqrt_price, ..c };
                 let (tokens, lamports) = match p.side {
                     Side::Sell => (tokens.checked_add(p.amount_in), lamports.checked_sub(p.amount_out + p.fee)),
@@ -1060,9 +1349,10 @@ mod tests {
             (c, wall, _, a) in curve_and_wall(),
             fee_bps in fee_bps(),
         ) {
-            if let Ok(bought) = buy(c, wall, a, fee_bps) {
+            if let Some(bought) = accepted(c, wall, Side::Buy, a, buy(c, wall, a, fee_bps))? {
                 let after = Curve { sqrt_price: bought.sqrt_price, ..c };
-                if let Ok(sold) = sell(after, wall, bought.amount_out, fee_bps) {
+                let sold = sell(after, wall, bought.amount_out, fee_bps);
+                if let Some(sold) = accepted(after, wall, Side::Sell, bought.amount_out, sold)? {
                     prop_assert!(sold.amount_out < a);
                     prop_assert!(sold.sqrt_price >= c.sqrt_price);
                 }
@@ -1082,10 +1372,75 @@ mod tests {
                     Side::Sell => sell(c, wall, amount, fee_bps),
                     Side::Buy => buy(c, wall, amount, fee_bps),
                 };
-                if let (Ok(small), Ok(large)) = (price(a), price(a + extra)) {
+                let small = accepted(c, wall, side, a, price(a))?;
+                let large = accepted(c, wall, side, a + extra, price(a + extra))?;
+                if let (Some(small), Some(large)) = (small, large) {
                     prop_assert!(large.amount_out >= small.amount_out);
                 }
                 prop_assert_eq!(price(a), price(a));
+            }
+        }
+
+        /// A reachable trade never refuses with `Overflow` (INV-PM-4), even against the
+        /// deepest wall `place_wall` can place on the thinnest curve, and a trade refused at
+        /// a price bound took both its steps and reached the bound (INV-PM-9, replayed on
+        /// the real steps).
+        #[test]
+        fn a_reachable_trade_never_overflows(
+            (c, wall) in thin_curve_and_deep_wall(),
+            a in amount(),
+            fee_bps in fee_bps(),
+        ) {
+            for side in [Side::Sell, Side::Buy] {
+                let priced = match side {
+                    Side::Sell => sell(c, wall, a, fee_bps),
+                    Side::Buy => buy(c, wall, a, fee_bps),
+                };
+                if accepted(c, wall, side, a, priced)?.is_none()
+                    && priced == Err(Refusal::PriceBoundReached)
+                {
+                    let after_fee = match side {
+                        Side::Sell => a,
+                        Side::Buy => a - fees::ceil_bps(a, fee_bps as u64).unwrap(),
+                    };
+                    refused_only_at_the_bound(c, wall, side, after_fee)?;
+                }
+            }
+        }
+
+        /// A sell bought straight back never profits (INV-PM-6): spending all a sell paid
+        /// out on a buy at the price it left returns fewer token units than were sold, and
+        /// the price ends no higher than it started, with no wall.
+        #[test]
+        fn a_sell_bought_straight_back_never_returns_more(c in curve(), a in amount(), fee_bps in fee_bps()) {
+            if let Some(sold) = accepted(c, Wall::NONE, Side::Sell, a, sell(c, Wall::NONE, a, fee_bps))? {
+                let after = Curve { sqrt_price: sold.sqrt_price, ..c };
+                let back = buy(after, Wall::NONE, sold.amount_out, fee_bps);
+                if let Some(back) = accepted(after, Wall::NONE, Side::Buy, sold.amount_out, back)? {
+                    prop_assert!(back.amount_out < a);
+                    prop_assert!(back.sqrt_price <= c.sqrt_price);
+                }
+            }
+        }
+
+        /// The same through the wall, whichever side of its top each leg starts and ends on
+        /// (INV-PM-6), and on the thinnest curves against the deepest walls.
+        #[test]
+        fn a_sell_bought_straight_back_through_the_wall_never_returns_more(
+            (c, wall, a, _) in curve_and_wall(),
+            (thin, deep) in thin_curve_and_deep_wall(),
+            thin_amount in amount(),
+            fee_bps in fee_bps(),
+        ) {
+            for (c, wall, a) in [(c, wall, a), (thin, deep, thin_amount)] {
+                if let Some(sold) = accepted(c, wall, Side::Sell, a, sell(c, wall, a, fee_bps))? {
+                    let after = Curve { sqrt_price: sold.sqrt_price, ..c };
+                    let back = buy(after, wall, sold.amount_out, fee_bps);
+                    if let Some(back) = accepted(after, wall, Side::Buy, sold.amount_out, back)? {
+                        prop_assert!(back.amount_out < a);
+                        prop_assert!(back.sqrt_price <= c.sqrt_price);
+                    }
+                }
             }
         }
 
@@ -1098,7 +1453,9 @@ mod tests {
                     Side::Sell => sell(c, Wall::NONE, amount, fee_bps),
                     Side::Buy => buy(c, Wall::NONE, amount, fee_bps),
                 };
-                if let (Ok(small), Ok(large)) = (price(a), price(a + extra)) {
+                let small = accepted(c, Wall::NONE, side, a, price(a))?;
+                let large = accepted(c, Wall::NONE, side, a + extra, price(a + extra))?;
+                if let (Some(small), Some(large)) = (small, large) {
                     prop_assert!(large.amount_out >= small.amount_out);
                 }
                 prop_assert_eq!(price(a), price(a));

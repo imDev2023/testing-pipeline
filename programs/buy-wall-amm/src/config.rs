@@ -22,6 +22,13 @@ pub const DESIGNER_SHARE_BPS: u16 = 1_000;
 /// Published in the IDL (`#[constant]`), where the demo script reads it (`POOL4-25`).
 #[constant]
 pub const SUITE_SHARE_BPS: u16 = 1_000;
+// The two shares together never exceed the fee, whatever values a deploy chooses, so the
+// market's part of the fee split can never go below zero and refuse every swap (Book of
+// Knowledge invariant FB-3); a build with shares above 10,000 basis points does not compile.
+const _: () = assert!(
+    DESIGNER_SHARE_BPS as u32 + SUITE_SHARE_BPS as u32 <= 10_000,
+    "DESIGNER_SHARE_BPS + SUITE_SHARE_BPS must not exceed 10,000 basis points"
+);
 /// The wallet the designer share is paid to. Unset (the all-zero key) while IMD and Adam
 /// have no known Solana address; an upgrade sets it before the program is frozen.
 /// Published in the IDL (`#[constant]`), where the demo script reads it, as is the suite

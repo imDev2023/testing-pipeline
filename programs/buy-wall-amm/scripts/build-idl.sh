@@ -6,14 +6,16 @@
 #
 #   bash build-idl.sh        # from programs/buy-wall-amm/scripts, or `pnpm idl`
 #
-# Needs anchor-cli 1.2 (`avm install 1.2.1`), as $ANCHOR, `anchor-1.2.1` on PATH or avm's
-# copy, and the toolchain (source scripts/toolchain-env.sh).
+# Needs anchor-cli 1.2, as $ANCHOR, on PATH or avm's copy, and the toolchain (source
+# scripts/toolchain-env.sh). The crates pin Anchor 1.2.2 (programs/Cargo.toml), so anchor-cli
+# 1.2.2 (`avm install 1.2.2`) is preferred; since the IDL is compiled by the crates' own
+# anchor-lang, an anchor-cli 1.2.1 writes the same IDL and is taken when 1.2.2 is missing.
 set -euo pipefail
 PROGRAM="$(cd "$(dirname "$0")/.." && pwd)"
 
 anchor="${ANCHOR:-}"
 if [ -z "$anchor" ]; then
-  for candidate in anchor-1.2.1 "$HOME/.avm/bin/anchor-1.2.1" anchor; do
+  for candidate in anchor-1.2.2 "$HOME/.avm/bin/anchor-1.2.2" anchor-1.2.1 "$HOME/.avm/bin/anchor-1.2.1" anchor; do
     if command -v "$candidate" >/dev/null 2>&1 && "$candidate" --version | grep -q '^anchor-cli 1\.2\.'; then
       anchor="$candidate"
       break
@@ -21,7 +23,7 @@ if [ -z "$anchor" ]; then
   done
 fi
 if [ -z "$anchor" ]; then
-  echo "anchor-cli 1.2 not found: install it with \`avm install 1.2.1\` or set ANCHOR" >&2
+  echo "anchor-cli 1.2 not found: install it with \`avm install 1.2.2\` or set ANCHOR" >&2
   exit 1
 fi
 

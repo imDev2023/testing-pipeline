@@ -17,7 +17,7 @@ Terms are as in `GLOSSARY.md`: inventory cap, cap floor, cap decay, trim, retire
 - After every swap the market compares the curve's token holdings with its inventory cap.
   A buy that leaves it below the cap lowers the cap, within the cap decay and never below the cap floor.
   A sell that leaves it above the cap is trimmed: the excess tokens and the proportional SOL leave the curve without moving the price.
-- Trimmed tokens are retired: burned, except for the market's reward share.
+- Trimmed tokens are retired: burned, except for the market's reward share, which is paid only on as many trimmed tokens as the cap has fallen ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
   Trimmed SOL becomes the buy wall.
 - Every swap pays the market's fee, always in SOL, split between IMD and Adam (the designer share), us (the suite share) and the market, whose part goes to a fee recipient, the buy wall, or both.
 - Four keeper jobs place the wall, burn, pay rewards and pay out fees; anyone may call them.
@@ -116,9 +116,13 @@ So that slot 1's payout is tested before the constant is set, the program has a 
 - Its mint authority and its freeze authority must both be removed by the time the market is seeded.
   A live mint authority could mint and sell into the curve and the buy wall, and would make the burns meaningless; a live freeze authority could freeze the market's vault.
   The tax AMM allows both because USDC has them; a token on the buy wall AMM has no such need.
+- A Token-2022 token with a transfer hook must have its hook cleared by the time the market is seeded, like the mint and freeze authorities: both its hook program and its hook authority unset, the state a contained token reaches after its unlock ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)).
+  Whoever could still set the hook, or upgrade or configure the hook program it names, could make it refuse every sell but their own once holders have bought, and sell into the curve and the buy wall themselves, a freeze that spares one wallet.
+  Once both are unset Token-2022 can never set them again, so no hook ever runs on a seeded market's token; a token without the extension is unaffected.
+  Creation still accepts a live hook, and the seed refuses it with `TransferHookLive`, since the hook can be cleared between the two and could be changed until the seed.
 - A Token-2022 token may carry only the suite's allowlist of mint extensions, the tax AMM's ([`tax-amm.md`](tax-amm.md), "Mint rules"), which lives in the shared `programs/mint-rules` crate; the buy wall AMM calls that crate and keeps no copy of the list.
   Every other extension is refused at creation, including any the program does not recognise.
-- In Pipeline's trust flags a seeded market's token can therefore only ever show `token-2022`, `transfer-hook` and `transfer-hook-authority`.
+- In Pipeline's trust flags a seeded market's token can therefore only ever show `token-2022`: `transfer-hook` and `transfer-hook-authority` mark a hook program or a hook authority that is still set, which the seed refuses.
 
 ### Creating a market
 
@@ -218,27 +222,34 @@ For `a` credited lamports:
 `pipeline_swap` then updates the market in this order.
 None of it changes the trade just priced.
 `now` is the Clock's Unix time and every time difference saturates at 0.
+Every stored time (`ref_time`, `floor_time`, `decay_time`) becomes the later of itself and `now`, so a clock that goes back never counts the same seconds twice ([`POOL4-51`](../decisions.md#pool4-51-the-markets-clocks-never-run-backwards)).
 
 1. **Reference.**
-   If the Clock's slot is later than `last_slot`: `dt = min(now - ref_time, REF_STEP_WINDOW)`, `step = floor(ref × REF_STEP_BPS × dt / (2 × 10,000 × REF_STEP_WINDOW))`, and `ref` moves toward `last_close` by at most `step`; then `ref_time = now` and `last_slot` is the slot.
+   If the Clock's slot is later than `last_slot`: `dt = min(now - ref_time, REF_STEP_WINDOW)`, `step = floor(ref × REF_STEP_BPS × dt / (2 × 10,000 × REF_STEP_WINDOW))`, and `ref` moves toward `last_close` by at most `step`; then `ref_time = max(ref_time, now)` and `last_slot` is the slot.
    `last_close` is still the price the previous slot's trading ended at, so no trade in this slot can move the reference.
 2. **Books.**
    A sell adds `a` to `pool_tokens` and takes `gross` from `pool_sol`; a buy adds `a - fee` to `pool_sol` and takes `out` from `pool_tokens`.
    The fee is split (see "The fee").
 3. **Price.**
    `sqrt_price` and `last_close` become the new price.
+   `low_since_placement` drops to the new price if that is lower (or takes it while it is 0, a market written before the field); no swap ever raises it, so it is always the lowest close since the last placement, which only `place_wall` resets, and the seed counts as a placement ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
 4. **Floor.**
-   If `floor < ref`: `dt = min(now - floor_time, 86,400)` and `floor` rises by `floor(floor × FLOOR_CRAWL_BPS × dt / (2 × 10,000 × 86,400))`, but not above `ref`.
-   Then `floor_time = now`, on every swap whether or not the floor crawled ([`POOL4-32`](../decisions.md#pool4-32-when-the-floors-clock-moves)), and `floor` drops to the new price if that is lower.
+   The floor changes only at the slot's first update, when step 1 found the Clock's slot later than `last_slot`, with the `ref` step 1 left and the `last_close` step 1 read, the previous slot's close from before step 3 replaced it ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
+   If `floor < ref`, `dt = min(now - floor_time, 86,400)` and `floor` rises by `floor(floor × FLOOR_CRAWL_BPS × dt / (2 × 10,000 × 86,400))`, but not above `ref`.
+   Then `floor` drops to that `last_close` if it is lower, and `floor_time = max(floor_time, now)`, at every slot's first update whether or not the floor crawled ([`POOL4-32`](../decisions.md#pool4-32-when-the-floors-clock-moves)).
+   In a slot already brought up to date the floor and `floor_time` stay as they are, so no trade can move the floor in its own slot, and the floor is never above the price the slot opened at.
+   The floor reads only the previous slot's close, so a dip bought back within its slot leaves it up; the dip's low still caps the next placement, through `low_since_placement` ("`place_wall`" step 5), whatever trades between the dip and that placement.
 5. **Decay credit.**
-   `decay_credit = min(decay_credit + cap_decay_per_day × (now - decay_time), cap_decay_per_day × DECAY_CREDIT_WINDOW)` and `decay_time = now`.
+   `decay_credit = min(decay_credit + cap_decay_per_day × (now - decay_time), cap_decay_per_day × DECAY_CREDIT_WINDOW)` and `decay_time = max(decay_time, now)`, so the decay clock never runs backwards.
    The credit is in token-seconds, so nothing is lost to rounding, and at most one day's allowance ever builds up.
 6. **The cap.**
    With `held = floor(L × Q / s)`:
    - **Ratchet**, when `held < cap`: the cap falls to `max(held, cap - floor(decay_credit / 86,400), cap_floor)`, with the subtraction saturating at 0, and `decay_credit` drops by 86,400 for every token unit the cap fell.
      This runs after a sell as well as a buy, whenever the curve ends below the cap ([`POOL4-31`](../decisions.md#pool4-31-the-ratchet-after-a-sell)).
+     Every unit the cap fell joins `cap_fall_unmatched`, the cap's fall that no trim has matched yet, which never holds more than one day's allowance, `cap_decay_per_day`, as the decay credit never builds up more (review finding R2-01): what a fall would add beyond it is never rewarded, so no single trim draws on days of others' buying.
    - **Trim**, when `held > cap`: `new_L = max(floor(cap × s / Q), MIN_LIQUIDITY)`, and if that is below `L`, the curve gives up `held - ceil(new_L × Q / s)` token units and `floor(L × s / Q) - ceil(new_L × s / Q)` lamports (0 if negative).
      Both leave the pool ledgers: the tokens join `retired_tokens`, the SOL joins `idle_sol`, and `L` becomes `new_L`.
+     Of the tokens, `min(tokens, cap_fall_unmatched)` are matched by the cap's fall: they move from `cap_fall_unmatched` into `retired_rewardable`, the part of `retired_tokens` that earns the reward share ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
      `sqrt_price` is untouched, so a trim never moves the price.
 7. **Counters** (see "Counters").
 
@@ -248,8 +259,12 @@ The halving in steps 1 and 4 turns a rate on the price into a rate on its square
 
 - The ratchet is IMD's at its deployed setting: a buy lowers the cap by all the room it opens, limited by the cap decay and the cap floor.
 - IMD's hook lets decay allowance build up without limit while a market is idle; ours stops at one day's worth, so a long-idle market's cap can never drop many days at once.
-- The wall's floor follows IMD's guard: it drops at once to any price the market trades at, and rises about 4% a day toward a reference that lags the price.
-  The wall can never be placed above the floor, so pumping the price and placing the wall high earns nothing.
+- The reward share is paid only on trimmed tokens the cap's own fall matched, so over a market's life the rewards never exceed `reward_share_bps` of `seeded_tokens - cap_floor`, the budget its creator published; a trim from a cap that has not fallen (a dip sold into a tight cap), the tokens a closed wall bought and `place_wall`'s dust all burn whole, and a market with no cap decay pays no rewards ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
+- The wall's floor follows IMD's guard, slot by slot: at a slot's first update it drops to the price the slot opened at, the previous slot's close, and it rises about 4% a day toward a reference that lags the price, but never above that close.
+  The wall can never be placed above the floor, nor above the lowest close since the last placement, nor in a slot a swap has already run in, so pumping the price and placing the wall high earns nothing, a dip bought straight back inside one slot never drags the floor down, and no trade can lift the floor in its own slot, so a quiet spell's crawl never lifts it above the price a buy started from when that buy opens its slot ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
+  The placement cap closes a back-run of a fall across one slot boundary: a third party dumps in a slot, which trims the curve and leaves its SOL idle, the back-runner buys the price back to the floor in the same slot, so the floor stays up in the next, and then calls `place_wall` and sells into the wall; the wall now goes no higher than the dump's low, so the back-runner sells into the curve alone and the round trip never pays.
+  A swap between the dump and the placement cannot clear that cap, since only a placement resets the low (code review finding 1: when the cap was the last traded slot's low, a tiny swap first in the next slot reset it to about the floor).
+  What remains is griefing, which nobody profits from inside the market: a dip bought back in one slot has the next `place_wall` put the wall at the dip once, until idle SOL refills to `WALL_THRESHOLD` and a keeper places it again at the floor, and a dip held across a slot boundary lowers the floor itself (review finding R2-02).
 - IMD's rates are per Ethereum block; ours are per second, because Solana's slot times vary.
 
 ## The fee
@@ -270,7 +285,7 @@ The market state keeps one ledger per claim on a vault:
 
 | Vault | Ledgers |
 | --- | --- |
-| Token | `pool_tokens` (the curve's and the wall's), `retired_tokens` (waiting to be burned and split), `rewards_owed` |
+| Token | `pool_tokens` (the curve's and the wall's), `retired_tokens` (waiting to be burned and split; `retired_rewardable` of it earns the reward share), `rewards_owed` |
 | Wrapped SOL | `pool_sol` (the curve's and the wall's), `idle_sol` (waiting to be placed as the wall), `fees_recipient`, `fees_designer`, `fees_suite` |
 
 These always hold, and the tests check them after every instruction:
@@ -279,7 +294,9 @@ These always hold, and the tests check them after every instruction:
 - `pool_tokens` and `pool_sol` cover everything the curve and the wall could ever pay out at the current price.
 - The curve never holds more tokens than the inventory cap after a swap, except where `MIN_LIQUIDITY` stopped a trim.
 - The inventory cap never rises and never falls below the cap floor.
-- The wall's floor is never above the current price, and a placed wall's top is never above the floor it was placed under.
+- `retired_rewardable` never exceeds `retired_tokens`, `cap_fall_unmatched` never exceeds `cap_decay_per_day`, and every unit in `cap_fall_unmatched`, in `retired_rewardable` or settled as rewardable is a unit the cap has fallen since the seed, so the rewards owed and paid never exceed `reward_share_bps` of how far the cap has fallen.
+- The wall's floor is never above the reference, and never above the previous slot's close (`last_close` at the slot's first update); it changes only at a slot's first update.
+- A placed wall's top is never above the price at placement, the floor, nor the lowest close since the last placement (`low_since_placement`, when not 0).
 
 ## Keeper jobs
 
@@ -288,34 +305,41 @@ None moves the price.
 
 ### `place_wall`
 
+It runs only in a slot no swap has run in yet, and is refused with `SwapThisSlot` when `last_slot` is the Clock's slot, that is when a swap, or the seed, ran in it ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
+In a later slot it first brings the floor up to date with "After pricing" step 4's rule against the stored `ref` and `last_close`, without step 1's reference step first, and leaves `last_slot`, `ref` and `ref_time` alone, so a swap later in the same slot still runs steps 1 and 4, where the floor's update then changes nothing.
+Since only a swap moves the price, `last_close` is the price at placement, so the floor it places under is never above it.
+That update reads the stale `ref`, since the slot's reference step waits for a swap, so the floor's crawl is capped there and spends its time; it is not the same as a swap's first update, and can only leave the floor at or below where that update would, never above (review finding R2-04).
+Step 5 places no higher than `low_since_placement`, the lowest close since the last placement, and then resets it to the price at placement, so the next placement is capped by the closes after this one.
+Then:
+
 1. `converted` is the SOL the placed wall has spent buying tokens: `wall_sol_placed - floor(W × min(s, wall_top) / Q)`, or 0 with no wall.
    The call is refused unless `idle_sol` or `converted` is at least `WALL_THRESHOLD`.
-2. The old wall is closed at the current price: its SOL moves from `pool_sol` to `idle_sol` and the tokens it bought, `floor(W × Q × (wall_top - s) / (wall_top × s))` when `s < wall_top`, move from `pool_tokens` to `retired_tokens`.
-3. Rounding dust follows: whatever `pool_sol` and `pool_tokens` hold beyond the curve's own holdings, rounded up, joins `idle_sol` and `retired_tokens`.
+2. The old wall is closed at the current price: its SOL moves from `pool_sol` to `idle_sol` and the tokens it bought, `floor(W × Q × (wall_top - s) / (wall_top × s))` when `s < wall_top`, move from `pool_tokens` to `retired_tokens`, never to `retired_rewardable`, so they burn whole ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
+3. Rounding dust follows: whatever `pool_sol` and `pool_tokens` hold beyond the curve's own holdings, rounded up, joins `idle_sol` and `retired_tokens`, and burns whole too.
 4. The caller is tipped `min(KEEPER_TIP_CAP, floor(work × fee_bps / 10,000), idle_sol)` lamports from `idle_sol`, where `work` is the larger of `converted` and the idle SOL from step 1 if that reached the threshold.
    This is IMD's rule: the tip never exceeds the fee the market earned on the work, so faking work never pays.
    It is paid in wrapped SOL to a token account the caller names.
-5. The wall is placed with everything left: `wall_top = min(s, floor)`, `W = floor(idle_sol × Q / wall_top)`, `wall_sol_placed = floor(W × wall_top / Q)`, and `idle_sol` moves into `pool_sol`.
+5. The wall is placed with everything left: `wall_top = min(s, floor, low_since_placement)`, where a `low_since_placement` of 0 (a market written before the field) caps nothing ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)), `W = floor(idle_sol × Q / wall_top)`, `wall_sol_placed = floor(W × wall_top / Q)`, and `idle_sol` moves into `pool_sol`; then `low_since_placement` becomes `s`.
 
 The caller signs, and the tip account may be any wrapped SOL account but the market's own SOL vault; the metadata's form names the caller's own.
 It emits `WallPlaced` (the caller, the tip account, `converted`, what closing the old wall moved, the dust, the tip and the new wall), and the lifetime total of tokens the wall bought grows by what each closed wall bought ([`POOL4-34`](../decisions.md#pool4-34-what-place_wall-takes-and-reports)).
 
 ### `settle`
 
-- Splits `retired_tokens`: `floor(retired × reward_share_bps / 10,000)` joins `rewards_owed`, and the rest is burned from the token vault.
+- Splits `retired_tokens`: `floor(retired_rewardable × reward_share_bps / 10,000)` joins `rewards_owed`, the rest of `retired_tokens` is burned from the token vault, and both `retired_tokens` and `retired_rewardable` become 0 ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)).
 - Refused when there is nothing retired.
 - No tip.
 - A burn calls no transfer hook, so no hook can refuse it.
 - Nobody signs it but whoever pays the transaction fee, since it pays nobody ([`POOL4-38`](../decisions.md#pool4-38-who-signs-the-payouts-and-what-they-report)).
 - Like `pay_rewards` and `sweep_fees`, it is refused with `MarketNotOpen` until the market is seeded.
-- It emits `Settled` (what was retired, burned and added to the rewards owed, the rewards owed after and the lifetime total burned), and the lifetime total of tokens burned grows by what it burns.
+- It emits `Settled` (what was retired, the part of it that earned the reward share, what was burned and added to the rewards owed, the rewards owed after and the lifetime total burned), and the lifetime total of tokens burned grows by what it burns.
 
 ### `pay_rewards`
 
 - Sends all of `rewards_owed` to the rewards recipient's associated token account for the token, created if missing at the caller's expense, forwarding transfer-hook accounts.
 - Refused when nothing is owed.
 - No tip.
-- It is separate from `settle` so that burns never wait on a transfer a hook or a broken recipient account might refuse.
+- It is separate from `settle` so that burns never wait on a transfer a broken recipient account might refuse.
 - It emits `RewardsPaid` (the recipient, its token account, the amount and the lifetime total paid), and the lifetime total of rewards paid grows by what it pays.
 
 ### `sweep_fees { slot }`
@@ -342,20 +366,24 @@ The runner is not specified yet (the map's "Not yet specified"); what it needs f
 
 | Job | Run it when |
 | --- | --- |
-| `place_wall` | `idle_sol` or the wall's `converted` reaches `WALL_THRESHOLD`, checked after each swap event on the market |
+| `place_wall` | `idle_sol` or the wall's `converted` reaches `WALL_THRESHOLD`, checked after each swap event on the market, and sent at the start of a slot later than that swap's, since in a slot a swap already ran in it is refused with `SwapThisSlot`; that refusal means "try again in a later slot", so the runner retries it from the next slot and never counts it as a failure (`docs/spec/keeper-runner.md`, review finding R2-03) |
 | `settle` | `retired_tokens` is above 0, at most hourly for each market |
 | `pay_rewards` | `rewards_owed` is above 0, daily |
 | `sweep_fees` | A slot's ledger is above 0, daily; slot 1 only once `DESIGNER_RECIPIENT` is set |
+
+`pay_rewards` needs no transfer-hook accounts, since a seeded market's token never has a live hook ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)), so the metadata form pays every market; a payout refused for any other reason makes the job fail like any other, changing nothing.
 
 A payout into a recipient account that does not exist makes the caller pay its rent, and a recipient that closes its account after each payout gets that rent back each time, so the runner should skip a payout whose ledger is worth less than that rent while the account is missing.
 
 ## Recipients
 
 - `set_fee_recipient { new }` is signed by the current fee recipient, and `set_rewards_recipient { new }` by the current rewards recipient; `new` must not be the default key.
+- `new` must not be the role's current wallet (refused with `SameRecipient`), nor one of the market's own addresses: its market state, its vault authority, either vault, the program, the router's Market account (the market signer PDA, `["market", program, market_state]` under Pipeline) or either mint (refused with `NotAWallet`), since no key signs for a token account any of them owns and the role's income would be stranded there ([`POOL4-52`](../decisions.md#pool4-52-which-wallets-a-role-may-be-handed-to)).
+  Any other key is accepted in one step, so a mistyped wallet remains the holder's own risk.
 - What the role is owed follows it to the new wallet.
 - A market created with no fee recipient or no rewards recipient never gets one.
 - Nobody else can change a recipient, and nothing else about a market can change.
-- A handover may happen at any time, before the seed as well, and emits `RecipientChanged` (which role, the old wallet and the new) ([`POOL4-38`](../decisions.md#pool4-38-who-signs-the-payouts-and-what-they-report)).
+- A handover may happen at any time, before the seed as well, and emits `RecipientChanged` (which role, the old wallet and the new) ([`POOL4-38`](../decisions.md#pool4-38-who-signs-the-payouts-and-what-they-report)); since a handover to the current wallet is refused, the old and the new wallet always differ ([`POOL4-52`](../decisions.md#pool4-52-which-wallets-a-role-may-be-handed-to)).
 
 ## Counters
 
@@ -373,15 +401,16 @@ It also keeps the creation slot and time and lifetime totals for display: tokens
 
 - A buy wall market cannot be a contained token's home market in v1: the containment hook's first version binds only tax AMM markets and reads only the tax AMM's counter ([`containment-hook.md`](containment-hook.md), [ADR 0006](../adr/0006-unlock-goal-counted-by-the-home-market.md)).
   So a contained token reaches the buy wall AMM only after its unlock.
-- A token may carry any other transfer hook; the market forwards hook accounts on every transfer of the token.
-- The design keeps everything a later hook version would need to accept these markets, so that change would touch the hook alone:
+- A token may no longer carry a live third-party transfer hook: the seed refuses one whose hook program or hook authority is still set, so a hooked token reaches a market only with its hook cleared, as a contained token's is after its unlock ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)).
+  The market still forwards whatever hook accounts it is given on every transfer of the token, which a cleared hook does not need, so a later rule that admitted some hooks would need no change to the actions.
+- The design keeps everything a later hook version would need to accept these markets, so that change would touch only the hook and the seed's refusal of a live hook, which would have to admit a token bound to the market being seeded:
   - bypass is refused, and the counters count router swaps only;
   - `fees_collected` is in SOL and can't be gamed by changing the rate, since a market's fee never changes and is never below 0.25%;
   - the vault and the router's `["fees", market]` account are computable before creation;
   - the token moves only between traders and the market's vault (swaps and the seed), out of the vault to the rewards recipient (`pay_rewards`), or is burned;
   - fees and keeper tips are wrapped SOL, which no hook sees;
   - liquidity can never leave: trims only move it, inside the same vaults, to the burn and the buy wall.
-- Pipeline's hosted API refuses to build swaps whose input mint has a transfer hook, so sells of a hooked token are built with the SDK, as Aviary does.
+- Pipeline's hosted API refuses to build swaps whose input mint has a transfer hook, because the client must resolve the hook's accounts; a seeded market's token has no hook program and needs none, and should the API refuse it for carrying the cleared extension, its sells are built with the SDK, as Aviary does.
 
 ## Market state
 
@@ -408,8 +437,9 @@ Fields, in order:
 | Pricing | `sqrt_price`, `liquidity`, `wall_liquidity`, `wall_top`, `wall_sol_placed` |
 | Ledgers | `pool_tokens`, `pool_sol`, `retired_tokens`, `rewards_owed`, `idle_sol`, `fees_recipient`, `fees_designer`, `fees_suite` |
 | Cap | inventory cap, `decay_credit`, `decay_time` |
-| Wall guard | `ref`, `ref_time`, `floor`, `floor_time`, `last_slot`, `last_close` |
+| Wall guard | `ref`, `ref_time`, `floor`, `floor_time`, `last_slot`, `last_close`, `low_since_placement` ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)) |
 | Totals | tokens trimmed, SOL trimmed, tokens the wall bought, tokens burned, rewards paid, tips paid |
+| Reward share | `cap_fall_unmatched`, `retired_rewardable` ([`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)) |
 | Reserve | zeroed to the end of the account |
 
 The first build ticket ([Buy wall AMM: a market opens](https://github.com/imDev2023/testing-pipeline/issues/47)) fixed the byte offsets below; they are frozen from the first devnet deployment ([Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56)) and published in the IDL.
@@ -482,26 +512,45 @@ The program's `state.rs` holds the same layout, and `tests/layout.rs` reads this
 | `tokens_burned` | 671 | 16 | u128 |
 | `rewards_paid` | 687 | 16 | u128 |
 | `tips_paid` | 703 | 16 | u128 |
-| `reserve` | 719 | 305 | bytes |
+| `cap_fall_unmatched` | 719 | 8 | u64 |
+| `retired_rewardable` | 727 | 8 | u64 |
+| `low_since_placement` | 735 | 16 | u128 |
+| `reserve` | 751 | 273 | bytes |
 
-Square-root prices (`sqrt_price`, `wall_top`, `ref`, `floor`, `last_close`) are Q64.64; times are Unix seconds; `cap` is the inventory cap and `ref` is the wall's reference; `decay_credit` is in token-seconds.
+Square-root prices (`sqrt_price`, `wall_top`, `ref`, `floor`, `last_close`, `low_since_placement`) are Q64.64; times are Unix seconds; `cap` is the inventory cap and `ref` is the wall's reference; `decay_credit` is in token-seconds; `cap_fall_unmatched` and `retired_rewardable` are token units, appended before the first deployment, so still layout version 1 ([`POOL4-19`](../decisions.md#pool4-19-build-order-and-the-first-deploy), [`POOL4-49`](../decisions.md#pool4-49-which-retired-tokens-earn-the-reward-share)), and so is `low_since_placement` ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
 
 ### A release gate
 
 - Before any upgrade, a script downloads every live market state of the program from the cluster, with its mints and vaults, and loads them into LiteSVM with the new build and the real router.
-- On every market it runs account resolution, a quote, a buy and a sell through the router, and each keeper job whose condition holds.
-- The upgrade is refused if any of these fails on any market, or if a quote differs from the deployed build's quote on the same state without the release declaring a pricing change.
+- On every market it runs account resolution, a quote, a buy and a sell through the router, and each keeper job whose condition holds or that the deployed build runs.
+- The upgrade is refused if a step fails on any market that passes there under the deployed build, if a layout check fails, or if a quote differs from the deployed build's quote on the same state without the release declaring a pricing change.
+- Every run also makes and trades a market of its own with the new build, so a cluster with no market still tests it.
 - The deploy script accepts only a build whose hash the gate has passed.
 
-How it does each of these ([`POOL4-41`](../decisions.md#pool4-41-what-the-release-gate-runs-on-each-market) to [`POOL4-45`](../decisions.md#pool4-45-how-the-gate-reads-a-cluster)):
+How it does each of these ([`POOL4-41`](../decisions.md#pool4-41-what-the-release-gate-runs-on-each-market) to [`POOL4-45`](../decisions.md#pool4-45-how-the-gate-reads-a-cluster), [`POOL4-46`](../decisions.md#pool4-46-when-a-failed-step-counts-against-a-candidate), [`POOL4-47`](../decisions.md#pool4-47-markets-the-router-has-not-recorded) and [`POOL4-53`](../decisions.md#pool4-53-every-gate-run-trades-a-market-of-its-own)):
 
 - It finds the market states as the accounts the program owns that start with the discriminator, and refuses outright if one of them is not `MARKET_STATE_SIZE` bytes.
 - It copies each market as `pipeline-check` does (the router and its config, the Market, the strategy's registration, program and ProgramData, the mints, vaults, fee accounts, transfer hooks and every account `pipeline_resolve_accounts` lists), adds the token accounts the payouts pay into, reads them all again in as few calls as it can so they agree, and saves them in one snapshot file with the cluster's clock read last.
-- On every market, with the candidate and the router copied from the cluster, it resolves the accounts of a buy and a sell, quotes exact-in both ways at a tenth, a hundredth and a thousandth of the input vault and compares each quote with the deployed build's on the same state, runs each keeper job that is due, judged by the program's own rules on the state as downloaded, then buys with a hundredth of the SOL vault and sells what that bought, each swap with the candidate's quote as its minimum and delivering exactly it.
-- A market waiting for its seed is seeded first, as its seeder would seed it (the replay checks no signatures, and removes the mint's authorities as a seed requires), then traded like the rest, so a build that could not seed it is refused.
+- A market state the router has no Market for, which any wallet can make by calling `pipeline_seed_liquidity` itself, is copied the same way, as if the router had recorded what `pipeline_market_info` gives, and saved marked unregistered.
+- When it takes the snapshot it replays it with the deployed build and records what that build did: its quotes, and whether each other step passed, with the program a failure started in and its error, every keeper job tried whether due or not, each slot of `sweep_fees` on its own.
+- Each replay asks the build it runs for the wallet of every fee slot it sweeps, never the gate's own tree, which is the candidate's: a sweep simulated with the gate's payer as the recipient, which the build refuses naming the wallet it pays (Anchor's `require_keys_eq!` logs it), or refuses for its own reason (nothing owed, no wallet set), which is then that build's answer; so a tree that refuses a slot's wallet cannot drop that sweep from the deployed build's record and its own test alike (review finding R2G-03).
+- The gate's own market still takes its due jobs from this tree, so a tree that refuses a slot's wallet is caught on the cluster's markets the deployed build swept that slot on, and not on a cluster with no such market.
+- On every market, with the candidate and the router copied from the cluster, it registers a market the router never recorded, with the router's `register_existing_market` and `init_fee_account` for both mints, and creates any missing router fee account, as anyone may, so such a market is checked like the rest.
+- It then resolves the accounts of a buy and a sell, quotes exact-in both ways at a tenth, a hundredth and a thousandth of the input vault and compares each quote with the deployed build's on the same state, and checks that `pipeline_market_info` gives the mints and vaults the router records.
+- It runs each keeper job that this tree's rules say is due on the state as downloaded and each job the deployed build ran on the snapshot, so a candidate that narrows a rule cannot drop that job from its own test, then buys with a hundredth of the SOL vault and sells what that bought, each swap with the candidate's quote as its minimum and delivering exactly it.
+- A market waiting for its seed is seeded first, as its seeder would seed it (the replay checks no signatures, and removes the mint's authorities and clears its transfer hook as a seed requires), then traded like the rest, so a build that could not seed it is refused.
+- A failed step counts against the candidate unless the deployed build failed the same step, matched by kind and not by name, on the same snapshot, with the same error starting in the same program: a market whose token's hook refuses the gate's trader, or whose fee recipient handed its wrapped SOL account to another owner, fails those steps under every build and cannot veto a release, while a candidate that newly fails a step, fails it in its own code where the deployed build failed in the hook, or fails it with another error where the deployed build failed in the same program, is refused.
+- The error compared is the instruction error, which carries the failing program's own error code (`InstructionError(0, Custom(6033))`), or the whole message when no program raised it, so a third party who blocks one step of a market inside the buy wall AMM (a reassigned recipient's account, say) excuses only that refusal there, never a different regression of the step on that market (review finding R2G-01).
+- The layout checks (reading the market state, finding the market, account resolution, the quotes and `pipeline_market_info`) never count as failing under the deployed build too, and run on every market whatever else fails there, so a build that would strand a market is refused even on a market whose trades are blocked.
+- Both replays sign with the same keys, the payer derived from the program and each market's trader and keeper from the market, so a step whose compute depends on a PDA's bump cannot pass in one replay and fail in the other.
+- After the cluster's markets, every run (`run` and `check` alike) makes a market of its own with the candidate, so a cluster with no market, as before the first market or the first deploy, still exercises it, and a build that refuses every instruction, such as one declared for another address as the `test-designer-recipient` build is, is refused (review findings H097 and H098).
+- It makes that market in a world of its own, holding only the router the replay runs and the candidate at the program's address, at the snapshot's clock: the run makes the router's config as devnet's (a 0.01 SOL listing fee) and registers the program paying the listing fee, and takes nothing else from the cluster, so the market's payouts go to token accounts made fresh, and neither a pause of the router nor a fixed fee wallet's reassigned wrapped SOL account (`SUITE_TREASURY`'s, or `DESIGNER_RECIPIENT`'s once set) can refuse every candidate, an emergency fix included (review finding R2G-02).
+- It creates and seeds the market through the router at IMD's launch values and trades it past its first wall and settlement, as the synthetic fixture's market A is made, then ten minutes on runs the checks every market gets, with each quote required to serve and each keeper job that has become due.
+- Every step on that market counts against the candidate, none excused as one the deployed build fails too, since the deployed build never ran it.
 - A release declares a pricing change in `programs/buy-wall-amm/release.json`, committed with it, by naming the executable hash of each build whose quotes it changes, so a declaration left behind after its release stops covering anything once the build it named is no longer deployed.
 - A declaration lets amounts differ, never a quote the deployed build served turn into a refusal, and a pass that relied on one is recorded only from the committed `release.json` with no uncommitted change, and counts for a deploy only while the committed file still declares it.
-- A passing run against a cluster is recorded in `deployments/release-gate/buy-wall-amm/<cluster>.json` (a local validator's records are kept out of git); the deploy script accepts a build only with a record for that cluster and that executable hash, made against the build deployed there now and covering every market there now, so an upgrade or a new market since the run means running the gate again.
+- A passing run against a cluster is recorded in `deployments/release-gate/buy-wall-amm/<cluster>.json` (a local validator's records are kept out of git), with every failed step that did not count and why; the deploy script accepts a build only with a record for that cluster and that executable hash, made against the build deployed there now and covering every market there now, so an upgrade or a new market since the run means running the gate again.
+- A record says the run traded a market of its own, and a record without that, written by a gate before `POOL4-53`, never covers a deploy.
 - It reads a cluster only through read-only JSON-RPC calls, sent with `curl`, and can send nothing; it prints and saves an RPC URL without its path, query or user part, where a provider's key sits.
 
 #### How to run it
@@ -518,7 +567,7 @@ buy-wall-amm/scripts/deploy.sh --url devnet --so target/deploy/buy_wall_amm.so
 ```
 
 - `--cluster` takes `devnet`, `localnet` or an RPC URL; `--snapshot-out <file>` keeps what was downloaded, and `cargo run -p buy-wall-gate -- check --snapshot <file> --candidate <build>` replays it again offline.
-- For a release that changes pricing, set `pricing_change` in `release.json` to the builds it changes (`{ "from": ["<hash>"], "why": "..." }`, each hash from `cargo run -p buy-wall-gate -- hash <build>` or the gate's own output), and once it has deployed, set it back to `null` and re-record each fixture's quotes with the deployed build (`cargo run -p buy-wall-gate -- rerecord --fixture <file> --build <deployed build>`).
+- For a release that changes pricing, set `pricing_change` in `release.json` to the builds it changes (`{ "from": ["<hash>"], "why": "..." }`, each hash from `cargo run -p buy-wall-gate -- hash <build>` or the gate's own output), and once it has deployed, set it back to `null` and re-record each fixture's baseline (its quotes and step outcomes) with the deployed build (`cargo run -p buy-wall-gate -- rerecord --fixture <file> --build <deployed build>`).
 - `cargo run -p buy-wall-gate -- help` lists every command.
 
 ### Fixtures in CI
@@ -527,7 +576,8 @@ buy-wall-amm/scripts/deploy.sh --url devnet --so target/deploy/buy_wall_amm.so
 - CI runs the release gate's checks on each of them against every build.
 - Until the devnet deploy saves one from a real market (`cargo run -p buy-wall-gate -- snapshot --cluster devnet --out <file>`), layout version 1 is represented by three markets made by a LiteSVM run through devnet's router (one with every keeper job due, one with none, one waiting for its seed), marked synthetic, and CI keeps both once both exist ([`POOL4-20`](../decisions.md#pool4-20-the-first-layout-fixture)).
 - Fixtures are snapshots in `programs/buy-wall-amm/gate/fixtures/`, without the programs: CI replays each with the pinned router and the build under test, and compares its quotes with the ones the fixture records.
-- CI also builds four test builds from edited copies of the workspace, never from the program's own source ([`POOL4-44`](../decisions.md#pool4-44-how-the-gate-is-proved-to-catch-stranding)): one moving a field, one renaming the market state type with its discriminator left to Anchor, one growing the account, each of which the gate must refuse on every fixture, failing on every open market, and one appending a field into the reserve as layout version 2, which it must pass.
+- CI also builds seven test builds from edited copies of the workspace, never from the program's own source ([`POOL4-44`](../decisions.md#pool4-44-how-the-gate-is-proved-to-catch-stranding)): one moving a field, one renaming the market state type with its discriminator left to Anchor, one growing the account, each of which the gate must refuse on every fixture, failing on every open market, one whose payout rule can no longer sweep fee slot 2 and one whose fee slot 2 wallet is refused as unset, each of which it must refuse on every market the deployed build swept that slot on and on its own market, and one appending a field into the reserve as layout version 2 and one with the designer's wallet set, as the upgrade that sets `DESIGNER_RECIPIENT` will set it, each of which it must pass.
+- A fixture records the deployed build's outcome of every step as a cluster snapshot does; `rerecord` records them again, and reads a fixture saved before they were recorded.
 
 ## Upgrades and freezing
 
@@ -549,7 +599,7 @@ buy-wall-amm/scripts/deploy.sh --url devnet --so target/deploy/buy_wall_amm.so
 | `set_rewards_recipient` | `other` | The rewards recipient |
 
 - Every action that moves the token forwards transfer-hook accounts after its own, as the template's swap does.
-  Metadata actions cannot describe those extra accounts, so generic forms work for tokens without a hook and Aviary builds the hooked ones itself.
+  Since the seed refuses a live hook ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)), a seeded market's token never needs any, so the generic forms work for every market; the forwarding matters only to a seed attempted while a hook is live, which is refused before any transfer.
 - Each instruction emits an event (market created, seeded, wall placed, settled, rewards paid, fees swept, recipient changed), and a swap emits one when it trims or lowers the cap (`Trimmed` or `CapLowered`, [`POOL4-30`](../decisions.md#pool4-30-what-a-swap-that-moves-the-cap-reports)), so Aviary's indexer can show a market's history; Aviary reads current values from the market state, not from events.
 - `pipeline_seed_liquidity` is described in a top-level `seed_liquidity` form shaped as `init` is, which Pipeline's validator allows as an unknown key: the seeded market state as a `pda:` source keyed by `input:seeder`, `input:token_mint` and wrapped SOL, `data` as init's arguments under the same IDL type with the seeder marked ignored, and the vault authority and both vaults after Pipeline's fixed seed accounts, so the SDK's `resolveInit` resolves it ([`POOL4-28`](../decisions.md#pool4-28-how-metadata-describes-seeding-from-another-program)).
 - The metadata follows `pipeline-strategy-metadata/1` at `5ad130d`: name, a description that credits IMD's Pool4, category `amm`, tags including `pool4`, links including `source` and the IDL, `init` as above with `market_state: new_keypair`, every action above, `security.contact`, and `conformance` pointing at a published `pipeline-check` report and its SHA-256; where they are published is in `README.md`.
@@ -566,13 +616,13 @@ A market is seeded with 1,000,000 tokens of 6 decimals (1,000,000,000,000 units)
 | Step | Result |
 | --- | --- |
 | Seed | `sqrt_price` 1,844,674,407,370,955,161; `liquidity` 99,999,999,999; cap 1,000,000,000,000 |
-| One hour later, a buy of 1 SOL | Fee 10,000,000: designer 1,000,000, suite 1,000,000, fee recipient 4,000,000, wall 4,000,000. Out 90,081,892,629 units; `sqrt_price` 2,027,297,173,702,505,949. The cap falls by one hour's allowance to 991,666,666,667 |
-| 60 seconds later, a sell of those 90,081,892,629 units | Gross 989,999,999; fee 9,900,000 (3,960,000 of it to the wall); out 980,099,999. `sqrt_price` 1,844,674,407,372,029,099. The trim retires 8,333,333,329 units and moves 83,333,332 lamports to idle SOL, leaving `liquidity` 99,166,666,666, `pool_tokens` 991,666,666,671, `pool_sol` 9,916,666,669 and `idle_sol` 91,293,332 |
-| `place_wall` | Tip 912,933. `wall_top` 1,844,674,407,372,029,099; `wall_liquidity` 903,804,009; `wall_sol_placed` 90,380,400; `pool_sol` 10,007,047,068; 11 units of dust join the retired tokens (8,333,333,340), leaving `pool_tokens` 991,666,666,660 |
-| `settle` | Burns 7,083,333,339 units; `rewards_owed` 1,250,000,001 |
-| 60 seconds later, a sell of 20,000,000,000 units | Gross 196,081,138; fee 1,960,812; out 194,120,326, through the curve and the wall together. `sqrt_price` 1,808,529,293,213,661,729. The wall has spent 1,770,941 lamports on 180,633,508 units |
+| One hour later, a buy of 1 SOL | Fee 10,000,000: designer 1,000,000, suite 1,000,000, fee recipient 4,000,000, wall 4,000,000. Out 90,081,892,629 units; `sqrt_price` 2,027,297,173,702,505,949. The cap falls by one hour's allowance, 8,333,333,333 units, to 991,666,666,667 |
+| 60 seconds later, a sell of those 90,081,892,629 units | Gross 989,999,999; fee 9,900,000 (3,960,000 of it to the wall); out 980,099,999. `sqrt_price` 1,844,674,407,372,029,099. The trim retires 8,333,333,329 units, all matched by the cap's fall, and moves 83,333,332 lamports to idle SOL, leaving `liquidity` 99,166,666,666, `pool_tokens` 991,666,666,671, `pool_sol` 9,916,666,669 and `idle_sol` 91,293,332 |
+| `place_wall`, in a later slot | Tip 912,933. `wall_top` 1,844,674,407,370,955,161, the opening price: the floor drops to the sell's price, but the lowest close since the seed is the opening price, just below it; `wall_liquidity` 903,804,010; `wall_sol_placed` 90,380,400; `pool_sol` 10,007,047,068; 11 units of dust join the retired tokens (8,333,333,340), leaving `pool_tokens` 991,666,666,660 |
+| `settle` | The reward share of the 8,333,333,329 matched units, 1,249,999,999, joins `rewards_owed`; the other 7,083,333,341 units, the dust among them, are burned |
+| 60 seconds later, a sell of 20,000,000,000 units | Gross 196,081,138; fee 1,960,812; out 194,120,326, through the curve and the wall together. `sqrt_price` 1,808,529,293,214,755,428. The wall has spent 1,770,941 lamports on 180,633,508 units |
 
-In the same model, on a market seeded the same way with 5 SOL idle, buying with 30 SOL, placing the wall in the same slot and selling everything back loses 0.595 SOL, and the wall's top ends no higher than the price before the buy.
+In the same model, on a market seeded the same way with 5 SOL idle, buying with 30 SOL, placing the wall in the next slot (it is refused in the buy's own slot) and selling everything back loses 0.595 SOL, and the wall's top ends no higher than the price before the buy.
 
 ## Aviary's panel
 
@@ -586,7 +636,8 @@ Aviary's buy wall AMM panel shows, per market:
 - each keeper job that is due, as a button, and the recipients' handover forms;
 - the create form, pre-filled with IMD's launch values and showing the whole fee split, the designer and suite shares included.
 
-The explainer's fact table carries the same facts, and its risks for every buy wall market are: the curve thins as the cap falls, so the same trade moves the price more over time; after a fall in price the buy wall can sit well below the price, because its floor rises only about 4% a day; and a token with a transfer hook can be stopped from trading by that hook.
+The explainer's fact table carries the same facts, and its risks for every buy wall market are: the curve thins as the cap falls, so the same trade moves the price more over time; after a fall in price the buy wall can sit well below the price, because its floor rises only about 4% a day; and the rewards recipient can trade the cap down itself and take the reward share of that fall at once, though never more than the budget the reward share and the cap floor set.
+A hook that could stop trading is not among them, since the seed refuses a token whose transfer hook is still live ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)).
 
 ## For the shared engineering bar
 
@@ -596,8 +647,7 @@ What `README.md` asks each product's file to add; the mainnet upgrade policy is 
 
 Asserted per instruction in test layer 5; the build ticket measures each one and may lower it, and raising one needs a written reason here.
 They start from another Pool4 port's swaps on devnet, measured at 13,000 to 29,000 units, with room for 256-bit maths.
-A transfer hook's own compute is outside them.
-So is Token-2022's search for a hooked mint's validation account on each transfer the strategy makes, which costs 1,500 units for every bump it tries and depends only on the mint's address; the tests measure with hooked mints whose validation account has bump 255, so their numbers repeat.
+No transfer hook runs on a seeded market's token ([`POOL4-48`](../decisions.md#pool4-48-a-transfer-hook-at-the-seed)), so they cover every transfer the strategy makes, including those of a token whose hook was cleared, which the tests measure beside SPL Token and Token-2022.
 
 | Instruction | Ceiling (compute units) | Main cost |
 | --- | --- | --- |
@@ -619,7 +669,9 @@ Measured on 2026-11-12 by [Buy wall AMM: plain trading through the router](https
 The ceilings stay as they are for the wall's second step and the trim.
 Measured on 2026-11-12 by [Buy wall AMM: the inventory cap](https://github.com/imDev2023/testing-pipeline/issues/49), on the same five markets: a buy that lowers the cap 22,240 to 35,480 units and a sell that trims 26,649 to 33,223, within their ceilings of 45,000 and 60,000 (a hook's own compute left out); with the cap's steps on every swap, the costliest one-step swap of the earlier measurement is now 36,396.
 Measured on 2026-11-16 by [Buy wall AMM: the buy wall](https://github.com/imDev2023/testing-pipeline/issues/50), on the same five markets: `place_wall` 16,858 to 29,143 units (the most when it closes a wall that has bought tokens, on the market of 10^-7 lamports a unit), a sell that crosses into the wall and trims 41,013 to 48,388, and its quote 25,886 to 28,534; the ceilings stay as they are.
+Measured on 2026-11-17 by [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55), with the floor's slot rule ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)), on the same five markets: `place_wall` 17,611 to 29,889 units, about 750 more for reading the Clock and bringing the floor up to date; the ceilings stay as they are.
 Measured on 2026-11-16 by [Buy wall AMM: payouts and recipient handovers](https://github.com/imDev2023/testing-pipeline/issues/51), on SPL Token, Token-2022 and Token-2022 with a transfer hook, with recipients whose associated token accounts have bump 255 (a payout derives that address twice, once itself and once in the associated token program, at 1,500 units for each bump below 255, a cost of the recipient's address and not of the program): `settle` 6,894 to 8,605 units, `pay_rewards` 10,383 to 19,390 into an account that exists and 27,354 to 40,213 when it creates one (the most for the hooked Token-2022 token, the hook's own compute left out), `sweep_fees` 10,381 into an account that exists and 27,347 when it creates one, and a handover 1,590; the ceilings stay as they are.
+Measured on 2026-11-17 by [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55), with the payouts sharing one helper and a handover refusing the market's own addresses ([`POOL4-52`](../decisions.md#pool4-52-which-wallets-a-role-may-be-handed-to)), on the same three tokens: `pay_rewards` 10,242 to 19,249 units into an account that exists and 27,204 to 40,063 when it creates one, `sweep_fees` 10,230 and 27,187, and a handover 3,196 (deriving the vault authority from its stored bump costs most of the rise); the ceilings stay as they are.
 Measured on 2026-11-12 by [Buy wall AMM: seeding by another program](https://github.com/imDev2023/testing-pipeline/issues/53), inside the stand-in launchpad's call in LiteSVM: `pipeline_seed_liquidity` 48,850 units for an SPL Token token, 59,716 for a Token-2022 one and 65,802 for one with a transfer hook (the hook's own compute left out), and 60,847 for an SPL Token token on a local validator; its ceiling stays at 180,000, room for what later tickets add to creation and the seed.
 
 ### Invariants for test layer 3
@@ -631,8 +683,10 @@ Beyond the shared three (value conserved, every holder can exit, each quote equa
   A trim can leave a curve of `MIN_LIQUIDITY` close to the bound, which takes fewer tokens than some holdings; what such a holding cannot sell could only sell below the bound, for the `(L + W) × MIN_SQRT_PRICE / Q` lamports the curve and the wall keep there, which no sell reaches for anyone, with or without the cap.
   A trim lowers `L`, so it only shrinks that amount, which is less than one lamport whenever `L + W` is below 2^32.
 - A trim never changes `sqrt_price`.
-- A buy sold straight back never returns more than it cost, whatever keeper jobs run in between.
-- The reference never moves on a trade in the slot it was last updated in.
+- A buy sold straight back never returns more than it cost, whatever keeper jobs run in between: in its own slot `place_wall` is refused, and a buy sold back after `place_wall` in a later slot with no time passed in between never returns more either, whether it opened its slot or followed a fall earlier in that slot (the back-run the placement cap closes, [`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves)).
+- A placed wall's top is never above the lowest close since the last placement, which every swap's close lowers and only `place_wall` resets, to the price at placement.
+- For the rewards recipient, settling and paying itself inside the round trip, the rewards it takes never exceed the reward share of the cap's fall and of the cap's fall left unmatched before it.
+- The reference and the floor never move on a trade in the slot they were last updated in, and `place_wall` is refused in a slot a swap has run in.
 - No instruction other than `pipeline_swap` changes `sqrt_price` or the counters.
 
 ### Accepted `pipeline-check` warnings
@@ -693,7 +747,7 @@ Tickets 1 to 8 are verified end to end through the real router copied from devne
   - each keeper job, its refusals and its rounding, with a frozen or missing recipient account never blocking trading or the other payouts;
   - both recipient handovers and every refusal by anyone else;
   - refusal of exact-out, of bypass, of every refused mint extension and of live mint or freeze authorities;
-  - a token with a transfer hook (Pipeline's `test-hook`) through the seed, swaps and `pay_rewards`;
+  - a token with a live transfer hook (Pipeline's `test-hook`, its program or its authority still set) refused at the seed by both seeding paths, and one whose hook was cleared through the seed, swaps and `pay_rewards`;
   - donations never credited, and the counters;
   - seeding by another program at the seeder-scoped address.
 - The worked example's numbers are reproduced exactly.

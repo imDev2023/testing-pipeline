@@ -31,12 +31,14 @@ fn steps(report: &check::Report) -> Vec<Vec<String>> {
 }
 
 #[test]
-fn the_gate_resolves_quotes_runs_every_due_keeper_job_buys_and_sells_on_every_market() {
+fn the_gate_resolves_quotes_reads_market_info_runs_every_due_keeper_job_buys_and_sells_on_every_market(
+) {
     let build = programs::current_build();
     let router = programs::pinned_router();
     let snapshot = synthetic::build(&build, &router).unwrap();
     let report = check::run(&snapshot, &build, Some(&router), &Release::default());
     let quotes = || vec!["quote".to_string(); 6];
+    let info = || vec!["pipeline_market_info".to_string()];
     let resolve = || vec!["pipeline_resolve_accounts".to_string(); 2];
     let trades = || vec!["buy".to_string(), "sell".to_string()];
     // Market A has every keeper job due but slot 1, whose wallet is unset; market B none.
@@ -50,16 +52,18 @@ fn the_gate_resolves_quotes_runs_every_due_keeper_job_buys_and_sells_on_every_ma
     let a: Vec<String> = [
         resolve(),
         quotes(),
+        info(),
         jobs.map(String::from).to_vec(),
         trades(),
     ]
     .concat();
-    let b: Vec<String> = [resolve(), quotes(), trades()].concat();
+    let b: Vec<String> = [resolve(), quotes(), info(), trades()].concat();
     // Market C waits for its seed: its empty vaults are quoted at 1 each way (refused alike by
     // both builds), then the gate seeds it as its seeder would and trades it.
     let c: Vec<String> = [
         resolve(),
         vec!["quote".to_string(); 2],
+        info(),
         vec!["seed".to_string()],
         trades(),
     ]

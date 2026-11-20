@@ -1,11 +1,16 @@
 //! `place_wall`: the permissionless keeper job that turns idle SOL into the buy wall
 //! (docs/spec/pool4-for-solana.md, "`place_wall`"). Anyone may call it once `idle_sol`, or the
-//! SOL the placed wall has spent, reaches `WALL_THRESHOLD`; our keeper runner does.
+//! SOL the placed wall has spent, reaches `WALL_THRESHOLD`, in a slot no swap has run in yet
+//! (`SwapThisSlot` otherwise, `POOL4-50`); our keeper runner does.
 //!
-//! It closes the old wall at the current price, sweeps the pool's rounding dust, tips the
-//! caller at most `KEEPER_TIP_CAP` and never more than the fee the market earned on the work,
-//! in wrapped SOL to a token account the caller names, and places the new wall with
-//! everything left at `min(price, floor)` (`wall::place`). It never moves the price.
+//! It brings the floor up to date against the stored reference, without marking the slot (a
+//! swap's first update would step the reference first, so this can only leave the floor
+//! lower, round 2's R2-04), closes the old wall at the current price, sweeps the pool's rounding dust, tips
+//! the caller at most `KEEPER_TIP_CAP` and never more than the fee the market earned on the
+//! work, in wrapped SOL to a token account the caller names, and places the new wall with
+//! everything left at `min(price, floor, low_since_placement)`, the last of them the lowest
+//! close since the last placement, which it then resets to the price (`wall::place_in_slot`).
+//! It never moves the price.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::Token;
@@ -40,7 +45,7 @@ pub struct PlaceWall<'info> {
 pub fn handle_place_wall(ctx: Context<PlaceWall>) -> Result<()> {
     let accounts = &ctx.accounts;
     let market_state = accounts.market_state.key();
-    let (placed, placement, authority_bump) = {
+    let (placed, placement, guard, authority_bump) = {
         let state = accounts.market_state.load()?;
         require!(state.status == STATUS_OPEN, StrategyError::MarketNotOpen);
         require_keys_eq!(
@@ -66,9 +71,18 @@ pub fn handle_place_wall(ctx: Context<PlaceWall>) -> Result<()> {
             authority,
             StrategyError::WrongAccount
         );
-        let (placed, placement) = wall::place(state.wall_books(), state.wall_at())
-            .map_err(|refusal| error!(StrategyError::from(refusal)))?;
-        (placed, placement, state.authority_bump)
+        // Only in a slot no swap has run in, under the floor brought up to date for it and no
+        // higher than the lowest close since the last placement (`POOL4-50`).
+        let clock = Clock::get()?;
+        let (placed, placement, guard) = wall::place_in_slot(
+            state.wall_books(),
+            state.wall_at(),
+            state.guard(),
+            clock.slot,
+            clock.unix_timestamp,
+        )
+        .map_err(|refusal| error!(StrategyError::from(refusal)))?;
+        (placed, placement, guard, state.authority_bump)
     };
 
     if placement.tip > 0 {
@@ -89,7 +103,10 @@ pub fn handle_place_wall(ctx: Context<PlaceWall>) -> Result<()> {
         )?;
     }
 
-    accounts.market_state.load_mut()?.set_wall_books(&placed);
+    let mut state = accounts.market_state.load_mut()?;
+    state.set_wall_books(&placed);
+    state.set_guard(&guard);
+    drop(state);
     emit!(WallPlaced {
         market_state,
         caller: accounts.caller.key(),

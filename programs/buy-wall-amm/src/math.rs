@@ -305,6 +305,88 @@ mod proofs {
         assert!(n.div_rem(U256::ZERO).is_none());
     }
 
+    /// `highest_power_of_four` is the largest power of four at or below its input, for every
+    /// 256-bit value (INV-OS-1, the base case of `isqrt`'s loop invariant in
+    /// `proofs/opening_z3.py`): 0 for 0, otherwise a single bit at an even position, at or
+    /// below `n`, with `n` below four times it (or four times it past 256 bits). Bit counts,
+    /// shifts and comparisons only: verified in 19 seconds on the owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn highest_power_of_four_is_the_largest_at_or_below() {
+        let n = U256 {
+            hi: kani::any(),
+            lo: kani::any(),
+        };
+        let p = n.highest_power_of_four().unwrap();
+        if n.is_zero() {
+            assert!(p.is_zero());
+            return;
+        }
+        assert!(!p.is_zero());
+        // The position of p's highest bit, stated from its limbs rather than through
+        // `leading_zeros`, and no other bit set.
+        let e = if p.hi != 0 {
+            255 - p.hi.leading_zeros()
+        } else {
+            127 - p.lo.leading_zeros()
+        };
+        assert!(e % 2 == 0);
+        let single = if e >= 128 {
+            p.lo == 0 && p.hi == 1u128 << (e - 128)
+        } else {
+            p.hi == 0 && p.lo == 1u128 << e
+        };
+        assert!(single);
+        assert!(p <= n);
+        if let Some(four_p) = p.checked_shl(2) {
+            assert!(n < four_p);
+        } else {
+            // Four times p is 2^256: p is 2^254.
+            assert!(e == 254);
+        }
+    }
+
+    /// `checked_shr64` and `checked_ceil_shr64` are the exact floor and ceiling of `x / 2^64`
+    /// for every 256-bit value (INV-CAP-6), `None` exactly when the result passes 128 bits
+    /// (the ceiling also when the floor is `u128::MAX` with a remainder). Checked against
+    /// the definitions, `floor × 2^64 <= x < (floor + 1) × 2^64` and `ceil × 2^64 >= x >
+    /// (ceil - 1) × 2^64`, which `proofs/cap_z3.py` assumes of the trim's `at_cap`,
+    /// `curve_sol` and `kept_sol`. Shifts and masks only: verified in 2 seconds on the
+    /// owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn shr64_is_the_exact_floor_and_ceiling() {
+        let x = U256 {
+            hi: kani::any(),
+            lo: kani::any(),
+        };
+        // x × 2^-64 fits in 128 bits exactly when x < 2^192, that is when hi < 2^64.
+        let fits = x.hi < 1 << 64;
+        let exact = x.lo & LOW_64 == 0;
+        match x.checked_shr64() {
+            Some(floor) => {
+                assert!(fits);
+                assert!(U256::times_q(floor) <= x);
+                // (floor + 1) × 2^64 = floor × 2^64 + 2^64, above x.
+                let next = U256::times_q(floor).checked_add(U256::from(Q)).unwrap();
+                assert!(x < next);
+            }
+            None => assert!(!fits),
+        }
+        match x.checked_ceil_shr64() {
+            Some(ceil) => {
+                assert!(fits);
+                // ceil × 2^64 >= x, and ceil - 1 is not enough.
+                let scaled = U256 {
+                    hi: ceil >> 64,
+                    lo: ceil << 64,
+                };
+                assert!(scaled.hi < 1 << 64 && scaled >= x);
+                assert!(ceil == 0 || U256::times_q(ceil - 1) < x);
+                assert_eq!(exact, scaled == x);
+            }
+            None => assert!(!fits || (x.hi == (1 << 64) - 1 && x.lo >> 64 == LOW_64 && !exact)),
+        }
+    }
+
     /// Division is exact for every pair of 256-bit numbers.
     #[cfg(kani_full)]
     #[kani::proof]

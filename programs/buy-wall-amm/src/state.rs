@@ -50,7 +50,7 @@ pub fn vault_authority(market_state: &Pubkey, bump: u8) -> Option<Pubkey> {
 }
 
 /// Bytes left zeroed and reserved after the last field.
-pub const RESERVE_LEN: usize = 305;
+pub const RESERVE_LEN: usize = 273;
 
 /// A buy wall market. The 8-byte discriminator comes first in the account and is not part
 /// of the struct; offsets in the comments are from the start of the account.
@@ -182,7 +182,18 @@ pub struct MarketState {
     /// 703: lamports
     pub tips_paid: [u8; 16],
 
-    /// 719 to the end: zeroed, for fields later layouts append.
+    // The reward share (`POOL4-49`), appended into the reserve before the first deployment.
+    /// 719: u64, token units the ratchet has lowered the cap by that no trim has matched yet
+    pub cap_fall_unmatched: [u8; 8],
+    /// 727: u64, token units, the part of `retired_tokens` that earns the reward share
+    pub retired_rewardable: [u8; 8],
+
+    // The placement cap (`POOL4-50`), appended into the reserve before the first deployment.
+    /// 735: u128, Q64.64, the lowest close since the last placement (the seed counts as one);
+    /// 0 (a market written before this field) caps nothing
+    pub low_since_placement: [u8; 16],
+
+    /// 751 to the end: zeroed, for fields later layouts append.
     pub reserve: [u8; RESERVE_LEN],
 }
 
@@ -251,6 +262,9 @@ le_fields! {
     tokens_burned, set_tokens_burned: u128;
     rewards_paid, set_rewards_paid: u128;
     tips_paid, set_tips_paid: u128;
+    cap_fall_unmatched, set_cap_fall_unmatched: u64;
+    retired_rewardable, set_retired_rewardable: u64;
+    low_since_placement, set_low_since_placement: u128;
 }
 
 impl MarketState {
@@ -301,6 +315,8 @@ impl MarketState {
             decay_time: self.decay_time(),
             tokens_trimmed: self.tokens_trimmed(),
             sol_trimmed: self.sol_trimmed(),
+            cap_fall_unmatched: self.cap_fall_unmatched(),
+            retired_rewardable: self.retired_rewardable(),
         }
     }
 
@@ -316,6 +332,8 @@ impl MarketState {
         self.set_decay_time(inventory.decay_time);
         self.set_tokens_trimmed(inventory.tokens_trimmed);
         self.set_sol_trimmed(inventory.sol_trimmed);
+        self.set_cap_fall_unmatched(inventory.cap_fall_unmatched);
+        self.set_retired_rewardable(inventory.retired_rewardable);
     }
 
     /// The buy wall, as pricing trades through it.
@@ -356,6 +374,7 @@ impl MarketState {
     pub fn owed(&self) -> crate::payouts::Owed {
         crate::payouts::Owed {
             retired_tokens: self.retired_tokens(),
+            retired_rewardable: self.retired_rewardable(),
             rewards_owed: self.rewards_owed(),
             fees_recipient: self.fees_recipient(),
             fees_designer: self.fees_designer(),
@@ -367,6 +386,7 @@ impl MarketState {
 
     pub fn set_owed(&mut self, owed: &crate::payouts::Owed) {
         self.set_retired_tokens(owed.retired_tokens);
+        self.set_retired_rewardable(owed.retired_rewardable);
         self.set_rewards_owed(owed.rewards_owed);
         self.set_fees_recipient(owed.fees_recipient);
         self.set_fees_designer(owed.fees_designer);
@@ -375,12 +395,14 @@ impl MarketState {
         self.set_rewards_paid(owed.rewards_paid);
     }
 
-    /// What `place_wall` reads and never writes.
+    /// What `wall::place` reads and never writes; `place_wall` brings the floor up to date for
+    /// its slot first and writes it through `set_guard` (`wall::place_in_slot`, `POOL4-50`).
     pub fn wall_at(&self) -> crate::wall::At {
         crate::wall::At {
             sqrt_price: self.sqrt_price(),
             liquidity: self.liquidity(),
             floor: self.floor(),
+            low_since_placement: self.low_since_placement(),
             fee_bps: self.fee_bps(),
         }
     }
@@ -394,6 +416,7 @@ impl MarketState {
             floor_time: self.floor_time(),
             last_slot: self.last_slot(),
             last_close: self.last_close(),
+            low_since_placement: self.low_since_placement(),
         }
     }
 
@@ -404,6 +427,7 @@ impl MarketState {
         self.set_floor_time(guard.floor_time);
         self.set_last_slot(guard.last_slot);
         self.set_last_close(guard.last_close);
+        self.set_low_since_placement(guard.low_since_placement);
     }
 
     /// The market's cap rules, fixed at its seed.
@@ -464,23 +488,31 @@ impl MarketState {
     }
 }
 
+/// Which of a market's two vaults a keeper job moves value out of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VaultSide {
+    /// The token vault, holding the market's token.
+    Token,
+    /// The SOL vault, holding wrapped SOL.
+    Sol,
+}
+
 /// The accounts a keeper job names for one of a market's vaults, checked against the market
-/// state: the vault and its mint are the market's for `side` (0 the token, 1 wrapped SOL),
-/// the market is open, and the vault authority is the PDA from the stored bump. Returns the
-/// bump, for the vault authority's signer seeds.
+/// state: the vault and its mint are the market's for `side`, the market is open, and the
+/// vault authority is the PDA from the stored bump. Returns the bump, for the vault
+/// authority's signer seeds.
 pub fn check_vault_accounts(
     state: &MarketState,
     market_state: &Pubkey,
-    side: u8,
+    side: VaultSide,
     vault: &Pubkey,
     mint: &Pubkey,
     authority: &Pubkey,
 ) -> Result<u8> {
     require!(state.status == STATUS_OPEN, StrategyError::MarketNotOpen);
     let (expected_vault, expected_mint) = match side {
-        0 => (state.token_vault, state.token_mint),
-        1 => (state.sol_vault, state.wsol_mint),
-        _ => return err!(StrategyError::WrongAccount),
+        VaultSide::Token => (state.token_vault, state.token_mint),
+        VaultSide::Sol => (state.sol_vault, state.wsol_mint),
     };
     require_keys_eq!(*mint, expected_mint, StrategyError::WrongAccount);
     require_keys_eq!(*vault, expected_vault, StrategyError::WrongAccount);
@@ -505,4 +537,704 @@ pub fn is_market_state(account: &AccountInfo) -> bool {
         && data
             .get(8)
             .is_some_and(|version| DEPLOYED_LAYOUT_VERSIONS.contains(version))
+}
+
+// Kani proofs of the state's accessors (INV-OS-8): every getter reads its own field
+// little-endian, over a market state of arbitrary bytes; every setter writes exactly its own
+// field's bytes and every projection exactly the fields of its struct. The projections are
+// hand-written field lists, where a slip (`set_owed` writing the designer's fees into the
+// recipient's ledger, `set_inventory` writing the price) would move value between ledgers on
+// every keeper job or swap. Each expected state is built here field by field from the
+// struct's own field names, apart from the setters.
+//
+// The setters are checked writing arbitrary values into one patterned state, each field's
+// bytes set to a value of its own and none zero: a setter only stores, never reading the
+// state it writes into, so where it writes and what does not depend on that state, and a
+// write anywhere else (of the value, or a clearing zero) shows against the pattern. Every
+// state here is built and compared field by field: through `bytemuck` casts of the 1,016
+// bytes, and over arbitrary bytes, the same harnesses took CBMC 25 seconds to over 3
+// minutes each (2026-11-16).
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// A state of arbitrary bytes, for the getters.
+    fn any_state() -> MarketState {
+        MarketState {
+            layout_version: kani::any(),
+            status: kani::any(),
+            authority_bump: kani::any(),
+            token_vault_bump: kani::any(),
+            sol_vault_bump: kani::any(),
+            market_signer: Pubkey::new_from_array(kani::any()),
+            token_mint: Pubkey::new_from_array(kani::any()),
+            wsol_mint: Pubkey::new_from_array(kani::any()),
+            token_vault: Pubkey::new_from_array(kani::any()),
+            sol_vault: Pubkey::new_from_array(kani::any()),
+            seeder: Pubkey::new_from_array(kani::any()),
+            creation_slot: kani::any(),
+            creation_time: kani::any(),
+            seed_time: kani::any(),
+            volume: kani::any(),
+            fees_collected: kani::any(),
+            swap_count: kani::any(),
+            fee_bps: kani::any(),
+            wall_split_bps: kani::any(),
+            reward_share_bps: kani::any(),
+            fee_recipient: Pubkey::new_from_array(kani::any()),
+            rewards_recipient: Pubkey::new_from_array(kani::any()),
+            cap_floor_bps: kani::any(),
+            cap_decay_bps: kani::any(),
+            cap_floor: kani::any(),
+            cap_decay_per_day: kani::any(),
+            seeded_tokens: kani::any(),
+            sqrt_price: kani::any(),
+            liquidity: kani::any(),
+            wall_liquidity: kani::any(),
+            wall_top: kani::any(),
+            wall_sol_placed: kani::any(),
+            pool_tokens: kani::any(),
+            pool_sol: kani::any(),
+            retired_tokens: kani::any(),
+            rewards_owed: kani::any(),
+            idle_sol: kani::any(),
+            fees_recipient: kani::any(),
+            fees_designer: kani::any(),
+            fees_suite: kani::any(),
+            cap: kani::any(),
+            decay_credit: kani::any(),
+            decay_time: kani::any(),
+            reference: kani::any(),
+            ref_time: kani::any(),
+            floor: kani::any(),
+            floor_time: kani::any(),
+            last_slot: kani::any(),
+            last_close: kani::any(),
+            tokens_trimmed: kani::any(),
+            sol_trimmed: kani::any(),
+            wall_tokens_bought: kani::any(),
+            tokens_burned: kani::any(),
+            rewards_paid: kani::any(),
+            tips_paid: kani::any(),
+            cap_fall_unmatched: kani::any(),
+            retired_rewardable: kani::any(),
+            low_since_placement: kani::any(),
+            reserve: kani::any(),
+        }
+    }
+
+    /// `N` bytes of `value`.
+    fn filled<const N: usize>(value: u8) -> [u8; N] {
+        [value; N]
+    }
+
+    /// The patterned state the setters write into: field `k` (from 0, in layout order) is
+    /// all `k + 1`, the second volume `k + 101`.
+    fn patterned() -> MarketState {
+        MarketState {
+            layout_version: 1,
+            status: 2,
+            authority_bump: 3,
+            token_vault_bump: 4,
+            sol_vault_bump: 5,
+            market_signer: Pubkey::new_from_array([6; 32]),
+            token_mint: Pubkey::new_from_array([7; 32]),
+            wsol_mint: Pubkey::new_from_array([8; 32]),
+            token_vault: Pubkey::new_from_array([9; 32]),
+            sol_vault: Pubkey::new_from_array([10; 32]),
+            seeder: Pubkey::new_from_array([11; 32]),
+            creation_slot: filled(12),
+            creation_time: filled(13),
+            seed_time: filled(14),
+            volume: [[15; 16], [115; 16]],
+            fees_collected: filled(16),
+            swap_count: filled(17),
+            fee_bps: filled(18),
+            wall_split_bps: filled(19),
+            reward_share_bps: filled(20),
+            fee_recipient: Pubkey::new_from_array([21; 32]),
+            rewards_recipient: Pubkey::new_from_array([22; 32]),
+            cap_floor_bps: filled(23),
+            cap_decay_bps: filled(24),
+            cap_floor: filled(25),
+            cap_decay_per_day: filled(26),
+            seeded_tokens: filled(27),
+            sqrt_price: filled(28),
+            liquidity: filled(29),
+            wall_liquidity: filled(30),
+            wall_top: filled(31),
+            wall_sol_placed: filled(32),
+            pool_tokens: filled(33),
+            pool_sol: filled(34),
+            retired_tokens: filled(35),
+            rewards_owed: filled(36),
+            idle_sol: filled(37),
+            fees_recipient: filled(38),
+            fees_designer: filled(39),
+            fees_suite: filled(40),
+            cap: filled(41),
+            decay_credit: filled(42),
+            decay_time: filled(43),
+            reference: filled(44),
+            ref_time: filled(45),
+            floor: filled(46),
+            floor_time: filled(47),
+            last_slot: filled(48),
+            last_close: filled(49),
+            tokens_trimmed: filled(50),
+            sol_trimmed: filled(51),
+            wall_tokens_bought: filled(52),
+            tokens_burned: filled(53),
+            rewards_paid: filled(54),
+            tips_paid: filled(55),
+            cap_fall_unmatched: filled(56),
+            retired_rewardable: filled(57),
+            low_since_placement: filled(58),
+            reserve: filled(59),
+        }
+    }
+
+    /// Whether two states hold the same bytes, field by field. The pattern names every field
+    /// with no `..`, so a field a later layout appends fails to compile here until it is
+    /// compared too.
+    fn same(a: &MarketState, b: &MarketState) -> bool {
+        let MarketState {
+            layout_version,
+            status,
+            authority_bump,
+            token_vault_bump,
+            sol_vault_bump,
+            market_signer,
+            token_mint,
+            wsol_mint,
+            token_vault,
+            sol_vault,
+            seeder,
+            creation_slot,
+            creation_time,
+            seed_time,
+            volume,
+            fees_collected,
+            swap_count,
+            fee_bps,
+            wall_split_bps,
+            reward_share_bps,
+            fee_recipient,
+            rewards_recipient,
+            cap_floor_bps,
+            cap_decay_bps,
+            cap_floor,
+            cap_decay_per_day,
+            seeded_tokens,
+            sqrt_price,
+            liquidity,
+            wall_liquidity,
+            wall_top,
+            wall_sol_placed,
+            pool_tokens,
+            pool_sol,
+            retired_tokens,
+            rewards_owed,
+            idle_sol,
+            fees_recipient,
+            fees_designer,
+            fees_suite,
+            cap,
+            decay_credit,
+            decay_time,
+            reference,
+            ref_time,
+            floor,
+            floor_time,
+            last_slot,
+            last_close,
+            tokens_trimmed,
+            sol_trimmed,
+            wall_tokens_bought,
+            tokens_burned,
+            rewards_paid,
+            tips_paid,
+            cap_fall_unmatched,
+            retired_rewardable,
+            low_since_placement,
+            reserve,
+        } = a;
+        *layout_version == b.layout_version
+            && *status == b.status
+            && *authority_bump == b.authority_bump
+            && *token_vault_bump == b.token_vault_bump
+            && *sol_vault_bump == b.sol_vault_bump
+            && *market_signer == b.market_signer
+            && *token_mint == b.token_mint
+            && *wsol_mint == b.wsol_mint
+            && *token_vault == b.token_vault
+            && *sol_vault == b.sol_vault
+            && *seeder == b.seeder
+            && *creation_slot == b.creation_slot
+            && *creation_time == b.creation_time
+            && *seed_time == b.seed_time
+            && *volume == b.volume
+            && *fees_collected == b.fees_collected
+            && *swap_count == b.swap_count
+            && *fee_bps == b.fee_bps
+            && *wall_split_bps == b.wall_split_bps
+            && *reward_share_bps == b.reward_share_bps
+            && *fee_recipient == b.fee_recipient
+            && *rewards_recipient == b.rewards_recipient
+            && *cap_floor_bps == b.cap_floor_bps
+            && *cap_decay_bps == b.cap_decay_bps
+            && *cap_floor == b.cap_floor
+            && *cap_decay_per_day == b.cap_decay_per_day
+            && *seeded_tokens == b.seeded_tokens
+            && *sqrt_price == b.sqrt_price
+            && *liquidity == b.liquidity
+            && *wall_liquidity == b.wall_liquidity
+            && *wall_top == b.wall_top
+            && *wall_sol_placed == b.wall_sol_placed
+            && *pool_tokens == b.pool_tokens
+            && *pool_sol == b.pool_sol
+            && *retired_tokens == b.retired_tokens
+            && *rewards_owed == b.rewards_owed
+            && *idle_sol == b.idle_sol
+            && *fees_recipient == b.fees_recipient
+            && *fees_designer == b.fees_designer
+            && *fees_suite == b.fees_suite
+            && *cap == b.cap
+            && *decay_credit == b.decay_credit
+            && *decay_time == b.decay_time
+            && *reference == b.reference
+            && *ref_time == b.ref_time
+            && *floor == b.floor
+            && *floor_time == b.floor_time
+            && *last_slot == b.last_slot
+            && *last_close == b.last_close
+            && *tokens_trimmed == b.tokens_trimmed
+            && *sol_trimmed == b.sol_trimmed
+            && *wall_tokens_bought == b.wall_tokens_bought
+            && *tokens_burned == b.tokens_burned
+            && *rewards_paid == b.rewards_paid
+            && *tips_paid == b.tips_paid
+            && *cap_fall_unmatched == b.cap_fall_unmatched
+            && *retired_rewardable == b.retired_rewardable
+            && *low_since_placement == b.low_since_placement
+            && *reserve == b.reserve
+    }
+
+    /// `after` is `expected`, built from the patterned state with only `fields` changed.
+    macro_rules! written_exactly {
+        ($after:ident, $expected:ident; $($field:ident),*) => {{
+            $(assert!($after.$field == $expected.$field);)*
+            assert!(same(&$after, &$expected));
+        }};
+    }
+
+    /// Sets each field in turn, last field first: the sets nest, each expanding the rest of
+    /// the list before its own.
+    macro_rules! set_in_reverse {
+        ($after:ident, $expected:ident;) => {};
+        ($after:ident, $expected:ident; $field:ident, $set:ident: $ty:ty; $($rest:tt)*) => {{
+            set_in_reverse!($after, $expected; $($rest)*);
+            let value: $ty = kani::any();
+            $after.$set(value);
+            $expected.$field = value.to_le_bytes();
+        }};
+    }
+
+    /// For each little-endian field: the getter decodes the field's bytes in any state, and
+    /// the setter writes the value's little-endian bytes into that field and no other byte,
+    /// so reading back what was written gives the value and writing back what was read
+    /// changes nothing. The setters run one after another, in the list's order and then in
+    /// reverse, each pass compared once with the fields assigned directly: a stray write into
+    /// another field shows in the pass where that field's own setter has already run.
+    /// Comparing after every setter took CBMC some 20 seconds a comparison (2026-11-16).
+    macro_rules! each_field_round_trips {
+        ($($field:ident, $set:ident: $ty:ty;)*) => {{
+            let state = any_state();
+            $(assert!(state.$field() == <$ty>::from_le_bytes(state.$field));)*
+            let (mut after, mut expected) = (patterned(), patterned());
+            $(
+                let value: $ty = kani::any();
+                after.$set(value);
+                expected.$field = value.to_le_bytes();
+            )*
+            assert!(same(&after, &expected));
+            let (mut after, mut expected) = (patterned(), patterned());
+            set_in_reverse!(after, expected; $($field, $set: $ty;)*);
+            assert!(same(&after, &expected));
+        }};
+    }
+
+    /// Every `le_fields!` accessor pair, the identity and counter fields. Verified in 40
+    /// seconds on the owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn the_identity_and_parameter_accessors_round_trip_and_write_only_their_bytes() {
+        each_field_round_trips! {
+            creation_slot, set_creation_slot: u64;
+            creation_time, set_creation_time: i64;
+            seed_time, set_seed_time: i64;
+            fees_collected, set_fees_collected: u128;
+            swap_count, set_swap_count: u64;
+            fee_bps, set_fee_bps: u16;
+            wall_split_bps, set_wall_split_bps: u16;
+            reward_share_bps, set_reward_share_bps: u16;
+            cap_floor_bps, set_cap_floor_bps: u16;
+            cap_decay_bps, set_cap_decay_bps: u16;
+            cap_floor, set_cap_floor: u64;
+            cap_decay_per_day, set_cap_decay_per_day: u64;
+            seeded_tokens, set_seeded_tokens: u64;
+        }
+    }
+
+    /// The pricing and ledger accessors, the reward share's two among them. Verified in 42
+    /// seconds on the owner's Mac (2026-11-16), before the reward share's two were added.
+    #[kani::proof]
+    fn the_pricing_and_ledger_accessors_round_trip_and_write_only_their_bytes() {
+        each_field_round_trips! {
+            sqrt_price, set_sqrt_price: u128;
+            liquidity, set_liquidity: u128;
+            wall_liquidity, set_wall_liquidity: u128;
+            wall_top, set_wall_top: u128;
+            wall_sol_placed, set_wall_sol_placed: u64;
+            pool_tokens, set_pool_tokens: u64;
+            pool_sol, set_pool_sol: u64;
+            retired_tokens, set_retired_tokens: u64;
+            rewards_owed, set_rewards_owed: u64;
+            idle_sol, set_idle_sol: u64;
+            fees_recipient, set_fees_recipient: u64;
+            fees_designer, set_fees_designer: u64;
+            fees_suite, set_fees_suite: u64;
+            cap_fall_unmatched, set_cap_fall_unmatched: u64;
+            retired_rewardable, set_retired_rewardable: u64;
+        }
+    }
+
+    /// The cap, guard and lifetime total accessors. Verified in 47 seconds on the owner's
+    /// Mac (2026-11-16).
+    #[kani::proof]
+    fn the_cap_guard_and_total_accessors_round_trip_and_write_only_their_bytes() {
+        each_field_round_trips! {
+            cap, set_cap: u64;
+            decay_credit, set_decay_credit: u128;
+            decay_time, set_decay_time: i64;
+            reference, set_reference: u128;
+            ref_time, set_ref_time: i64;
+            floor, set_floor: u128;
+            floor_time, set_floor_time: i64;
+            last_slot, set_last_slot: u64;
+            last_close, set_last_close: u128;
+            tokens_trimmed, set_tokens_trimmed: u128;
+            sol_trimmed, set_sol_trimmed: u128;
+            wall_tokens_bought, set_wall_tokens_bought: u128;
+            tokens_burned, set_tokens_burned: u128;
+            rewards_paid, set_rewards_paid: u128;
+            tips_paid, set_tips_paid: u128;
+        }
+    }
+
+    /// The placement cap's `low_since_placement` accessor (`POOL4-50`), on its own: with it the
+    /// cap, guard and total harness above took 72 seconds (2026-11-19), past the default
+    /// tier's minute. Verified in 49 seconds on the owner's Mac (2026-11-19).
+    #[kani::proof]
+    fn the_placement_caps_accessor_round_trips_and_writes_only_its_bytes() {
+        each_field_round_trips! {
+            low_since_placement, set_low_since_placement: u128;
+        }
+    }
+
+    /// `volume(i)` and `set_volume(i)` work exactly for the two mints and refuse every index
+    /// past them, writing nothing: each mint by its own index (a symbolic index into the
+    /// volumes took CBMC over three minutes), the two set in both orders as the
+    /// little-endian fields are. Verified in 41 seconds on the owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn the_volumes_read_and_write_exactly_their_own_mint() {
+        let state = any_state();
+        for index in [0, 1] {
+            assert!(state.volume(index) == Some(u128::from_le_bytes(state.volume[index])));
+        }
+        let past: usize = kani::any();
+        kani::assume(past >= 2);
+        assert!(state.volume(past).is_none());
+        for order in [[0, 1], [1, 0]] {
+            let (mut after, mut expected) = (patterned(), patterned());
+            for index in order {
+                let value: u128 = kani::any();
+                assert!(after.set_volume(index, value).is_some());
+                expected.volume[index] = value.to_le_bytes();
+            }
+            assert!(after.set_volume(past, kani::any()).is_none());
+            assert!(same(&after, &expected));
+        }
+    }
+
+    /// The counters' projection reads and writes exactly the volume, fee and swap counters.
+    /// Verified in 25 seconds on the owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn the_counters_read_and_write_exactly_their_fields() {
+        let state = any_state();
+        let read = state.counters().unwrap();
+        assert!(read.volume[0] == u128::from_le_bytes(state.volume[0]));
+        assert!(read.volume[1] == u128::from_le_bytes(state.volume[1]));
+        assert!(read.fees_collected == u128::from_le_bytes(state.fees_collected));
+        assert!(read.swap_count == u64::from_le_bytes(state.swap_count));
+        let counters = crate::books::Counters {
+            volume: [kani::any(), kani::any()],
+            fees_collected: kani::any(),
+            swap_count: kani::any(),
+        };
+        let mut after = patterned();
+        assert!(after.set_counters(&counters).is_some());
+        let mut expected = patterned();
+        expected.volume = [
+            counters.volume[0].to_le_bytes(),
+            counters.volume[1].to_le_bytes(),
+        ];
+        expected.fees_collected = counters.fees_collected.to_le_bytes();
+        expected.swap_count = counters.swap_count.to_le_bytes();
+        written_exactly!(after, expected; volume, fees_collected, swap_count);
+    }
+
+    /// The swap's books read and write exactly the six ledgers a swap changes. Verified in
+    /// 21 seconds on the owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn the_books_read_and_write_exactly_their_ledgers() {
+        let state = any_state();
+        assert!(
+            state.books()
+                == crate::books::Books {
+                    pool_tokens: u64::from_le_bytes(state.pool_tokens),
+                    pool_sol: u64::from_le_bytes(state.pool_sol),
+                    idle_sol: u64::from_le_bytes(state.idle_sol),
+                    fees_recipient: u64::from_le_bytes(state.fees_recipient),
+                    fees_designer: u64::from_le_bytes(state.fees_designer),
+                    fees_suite: u64::from_le_bytes(state.fees_suite),
+                }
+        );
+        let books = crate::books::Books {
+            pool_tokens: kani::any(),
+            pool_sol: kani::any(),
+            idle_sol: kani::any(),
+            fees_recipient: kani::any(),
+            fees_designer: kani::any(),
+            fees_suite: kani::any(),
+        };
+        let mut after = patterned();
+        after.set_books(&books);
+        let mut expected = patterned();
+        expected.pool_tokens = books.pool_tokens.to_le_bytes();
+        expected.pool_sol = books.pool_sol.to_le_bytes();
+        expected.idle_sol = books.idle_sol.to_le_bytes();
+        expected.fees_recipient = books.fees_recipient.to_le_bytes();
+        expected.fees_designer = books.fees_designer.to_le_bytes();
+        expected.fees_suite = books.fees_suite.to_le_bytes();
+        written_exactly!(after, expected; pool_tokens, pool_sol, idle_sol, fees_recipient, fees_designer, fees_suite);
+    }
+
+    /// The cap's inventory reads its thirteen fields and writes back all of them but the
+    /// price, which a trim never moves; the cap rules are read only. Verified in 27 seconds on
+    /// the owner's Mac (2026-11-16), before the reward share's two fields were added.
+    #[kani::proof]
+    fn the_inventory_reads_and_writes_exactly_its_fields_and_never_the_price() {
+        let state = any_state();
+        assert!(
+            state.inventory()
+                == crate::cap::Inventory {
+                    sqrt_price: u128::from_le_bytes(state.sqrt_price),
+                    liquidity: u128::from_le_bytes(state.liquidity),
+                    pool_tokens: u64::from_le_bytes(state.pool_tokens),
+                    pool_sol: u64::from_le_bytes(state.pool_sol),
+                    retired_tokens: u64::from_le_bytes(state.retired_tokens),
+                    idle_sol: u64::from_le_bytes(state.idle_sol),
+                    cap: u64::from_le_bytes(state.cap),
+                    decay_credit: u128::from_le_bytes(state.decay_credit),
+                    decay_time: i64::from_le_bytes(state.decay_time),
+                    tokens_trimmed: u128::from_le_bytes(state.tokens_trimmed),
+                    sol_trimmed: u128::from_le_bytes(state.sol_trimmed),
+                    cap_fall_unmatched: u64::from_le_bytes(state.cap_fall_unmatched),
+                    retired_rewardable: u64::from_le_bytes(state.retired_rewardable),
+                }
+        );
+        assert!(
+            state.cap_rules()
+                == crate::cap::CapRules {
+                    cap_floor: u64::from_le_bytes(state.cap_floor),
+                    cap_decay_per_day: u64::from_le_bytes(state.cap_decay_per_day),
+                }
+        );
+        let inventory = crate::cap::Inventory {
+            sqrt_price: kani::any(),
+            liquidity: kani::any(),
+            pool_tokens: kani::any(),
+            pool_sol: kani::any(),
+            retired_tokens: kani::any(),
+            idle_sol: kani::any(),
+            cap: kani::any(),
+            decay_credit: kani::any(),
+            decay_time: kani::any(),
+            tokens_trimmed: kani::any(),
+            sol_trimmed: kani::any(),
+            cap_fall_unmatched: kani::any(),
+            retired_rewardable: kani::any(),
+        };
+        let mut after = patterned();
+        after.set_inventory(&inventory);
+        let mut expected = patterned();
+        expected.liquidity = inventory.liquidity.to_le_bytes();
+        expected.pool_tokens = inventory.pool_tokens.to_le_bytes();
+        expected.pool_sol = inventory.pool_sol.to_le_bytes();
+        expected.retired_tokens = inventory.retired_tokens.to_le_bytes();
+        expected.idle_sol = inventory.idle_sol.to_le_bytes();
+        expected.cap = inventory.cap.to_le_bytes();
+        expected.decay_credit = inventory.decay_credit.to_le_bytes();
+        expected.decay_time = inventory.decay_time.to_le_bytes();
+        expected.tokens_trimmed = inventory.tokens_trimmed.to_le_bytes();
+        expected.sol_trimmed = inventory.sol_trimmed.to_le_bytes();
+        expected.cap_fall_unmatched = inventory.cap_fall_unmatched.to_le_bytes();
+        expected.retired_rewardable = inventory.retired_rewardable.to_le_bytes();
+        written_exactly!(after, expected; liquidity, pool_tokens, pool_sol, retired_tokens, idle_sol, cap, decay_credit, decay_time, tokens_trimmed, sol_trimmed, cap_fall_unmatched, retired_rewardable);
+    }
+
+    /// `place_wall`'s books read and write exactly their nine fields, never the price, the
+    /// curve's liquidity, the floor, the low since the last placement or the fee, which it reads
+    /// through `wall_at` only.
+    /// Verified in 28 seconds on the owner's Mac (2026-11-16).
+    #[kani::proof]
+    fn the_wall_books_read_and_write_exactly_their_fields() {
+        let state = any_state();
+        let wall = crate::wall::Wall {
+            liquidity: u128::from_le_bytes(state.wall_liquidity),
+            top: u128::from_le_bytes(state.wall_top),
+        };
+        assert!(state.wall() == wall);
+        assert!(
+            state.wall_books()
+                == crate::wall::WallBooks {
+                    wall,
+                    wall_sol_placed: u64::from_le_bytes(state.wall_sol_placed),
+                    pool_tokens: u64::from_le_bytes(state.pool_tokens),
+                    pool_sol: u64::from_le_bytes(state.pool_sol),
+                    retired_tokens: u64::from_le_bytes(state.retired_tokens),
+                    idle_sol: u64::from_le_bytes(state.idle_sol),
+                    wall_tokens_bought: u128::from_le_bytes(state.wall_tokens_bought),
+                    tips_paid: u128::from_le_bytes(state.tips_paid),
+                }
+        );
+        assert!(
+            state.wall_at()
+                == crate::wall::At {
+                    sqrt_price: u128::from_le_bytes(state.sqrt_price),
+                    liquidity: u128::from_le_bytes(state.liquidity),
+                    floor: u128::from_le_bytes(state.floor),
+                    low_since_placement: u128::from_le_bytes(state.low_since_placement),
+                    fee_bps: u16::from_le_bytes(state.fee_bps),
+                }
+        );
+        let books = crate::wall::WallBooks {
+            wall: crate::wall::Wall {
+                liquidity: kani::any(),
+                top: kani::any(),
+            },
+            wall_sol_placed: kani::any(),
+            pool_tokens: kani::any(),
+            pool_sol: kani::any(),
+            retired_tokens: kani::any(),
+            idle_sol: kani::any(),
+            wall_tokens_bought: kani::any(),
+            tips_paid: kani::any(),
+        };
+        let mut after = patterned();
+        after.set_wall_books(&books);
+        let mut expected = patterned();
+        expected.wall_liquidity = books.wall.liquidity.to_le_bytes();
+        expected.wall_top = books.wall.top.to_le_bytes();
+        expected.wall_sol_placed = books.wall_sol_placed.to_le_bytes();
+        expected.pool_tokens = books.pool_tokens.to_le_bytes();
+        expected.pool_sol = books.pool_sol.to_le_bytes();
+        expected.retired_tokens = books.retired_tokens.to_le_bytes();
+        expected.idle_sol = books.idle_sol.to_le_bytes();
+        expected.wall_tokens_bought = books.wall_tokens_bought.to_le_bytes();
+        expected.tips_paid = books.tips_paid.to_le_bytes();
+        written_exactly!(after, expected; wall_liquidity, wall_top, wall_sol_placed, pool_tokens, pool_sol, retired_tokens, idle_sol, wall_tokens_bought, tips_paid);
+    }
+
+    /// The payouts' ledgers read and write exactly their eight fields, each into its own
+    /// ledger. Verified in 26 seconds on the owner's Mac (2026-11-16), before
+    /// `retired_rewardable` was added.
+    #[kani::proof]
+    fn the_owed_ledgers_read_and_write_exactly_their_fields() {
+        let state = any_state();
+        assert!(
+            state.owed()
+                == crate::payouts::Owed {
+                    retired_tokens: u64::from_le_bytes(state.retired_tokens),
+                    retired_rewardable: u64::from_le_bytes(state.retired_rewardable),
+                    rewards_owed: u64::from_le_bytes(state.rewards_owed),
+                    fees_recipient: u64::from_le_bytes(state.fees_recipient),
+                    fees_designer: u64::from_le_bytes(state.fees_designer),
+                    fees_suite: u64::from_le_bytes(state.fees_suite),
+                    tokens_burned: u128::from_le_bytes(state.tokens_burned),
+                    rewards_paid: u128::from_le_bytes(state.rewards_paid),
+                }
+        );
+        let owed = crate::payouts::Owed {
+            retired_tokens: kani::any(),
+            retired_rewardable: kani::any(),
+            rewards_owed: kani::any(),
+            fees_recipient: kani::any(),
+            fees_designer: kani::any(),
+            fees_suite: kani::any(),
+            tokens_burned: kani::any(),
+            rewards_paid: kani::any(),
+        };
+        let mut after = patterned();
+        after.set_owed(&owed);
+        let mut expected = patterned();
+        expected.retired_tokens = owed.retired_tokens.to_le_bytes();
+        expected.retired_rewardable = owed.retired_rewardable.to_le_bytes();
+        expected.rewards_owed = owed.rewards_owed.to_le_bytes();
+        expected.fees_recipient = owed.fees_recipient.to_le_bytes();
+        expected.fees_designer = owed.fees_designer.to_le_bytes();
+        expected.fees_suite = owed.fees_suite.to_le_bytes();
+        expected.tokens_burned = owed.tokens_burned.to_le_bytes();
+        expected.rewards_paid = owed.rewards_paid.to_le_bytes();
+        written_exactly!(after, expected; retired_tokens, retired_rewardable, rewards_owed, fees_recipient, fees_designer, fees_suite, tokens_burned, rewards_paid);
+    }
+
+    /// The guard reads and writes exactly its seven fields. Verified in 34 seconds on the
+    /// owner's Mac (2026-11-16), before `low_since_placement` was added.
+    #[kani::proof]
+    fn the_guard_reads_and_writes_exactly_its_fields() {
+        let state = any_state();
+        assert!(
+            state.guard()
+                == crate::guard::Guard {
+                    reference: u128::from_le_bytes(state.reference),
+                    ref_time: i64::from_le_bytes(state.ref_time),
+                    floor: u128::from_le_bytes(state.floor),
+                    floor_time: i64::from_le_bytes(state.floor_time),
+                    last_slot: u64::from_le_bytes(state.last_slot),
+                    last_close: u128::from_le_bytes(state.last_close),
+                    low_since_placement: u128::from_le_bytes(state.low_since_placement),
+                }
+        );
+        let guard = crate::guard::Guard {
+            reference: kani::any(),
+            ref_time: kani::any(),
+            floor: kani::any(),
+            floor_time: kani::any(),
+            last_slot: kani::any(),
+            last_close: kani::any(),
+            low_since_placement: kani::any(),
+        };
+        let mut after = patterned();
+        after.set_guard(&guard);
+        let mut expected = patterned();
+        expected.reference = guard.reference.to_le_bytes();
+        expected.ref_time = guard.ref_time.to_le_bytes();
+        expected.floor = guard.floor.to_le_bytes();
+        expected.floor_time = guard.floor_time.to_le_bytes();
+        expected.last_slot = guard.last_slot.to_le_bytes();
+        expected.last_close = guard.last_close.to_le_bytes();
+        expected.low_since_placement = guard.low_since_placement.to_le_bytes();
+        written_exactly!(after, expected; reference, ref_time, floor, floor_time, last_slot, last_close, low_since_placement);
+    }
 }

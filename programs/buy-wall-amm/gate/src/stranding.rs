@@ -1,11 +1,14 @@
 //! Test builds that prove the gate catches stranding: copies of the program with the
-//! layout mistakes that strand markets, made by editing a copy of the workspace exactly as a
+//! mistakes that strand markets, made by editing a copy of the workspace exactly as a
 //! careless change would edit the real one, so the program's own source never carries them.
 //!
-//! Three must be refused on every fixture, and one, a field appended into the reserve as
-//! `docs/spec/pool4-for-solana.md` ("One fixed-size layout") allows, must pass on every one.
-//! CI builds them with `buy-wall-gate test-builds` and `tests/stranding.rs` runs the gate on
-//! each.
+//! Three layout mistakes must be refused on every fixture, failing on every open market; a
+//! payout rule narrowed so one fee slot can no longer be swept, and that slot's wallet
+//! refused as unset, must each be refused on every market owed that slot; and a field
+//! appended into the reserve, as `docs/spec/pool4-for-solana.md` ("One fixed-size layout")
+//! allows, and the designer's wallet set, as the upgrade that sets it will, must each pass on
+//! every fixture. CI builds them with `buy-wall-gate test-builds` and `tests/stranding.rs` runs the
+//! gate on each.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -22,14 +25,30 @@ pub enum TestBuild {
     /// A field appended into the reserve, zero meaning the old behaviour, as layout version 2
     /// beside version 1.
     AppendedField,
+    /// `Owed::sweep` made to refuse slot 2, the suite's fees: the layout and the trades stay
+    /// sound, but that ledger is stranded on every market owed it, and the gate's own tree,
+    /// built with the same edit, would no longer call that job due.
+    NarrowedSweep,
+    /// `FeeSlot::wallet` made to refuse slot 2 as unset, as if `SUITE_TREASURY` were the
+    /// default key until a treasury is chosen: the ledger is stranded the same way, and a
+    /// gate built from the same tree would take no wallet for that slot from it (review
+    /// finding R2G-03), so the gate asks each build for its wallets instead.
+    RefusedWallet,
+    /// `DESIGNER_RECIPIENT` set to a key nobody holds, as the upgrade that sets it before the
+    /// program is frozen will: it must pass, and as the deployed build it pays a slot this
+    /// tree has no wallet for, so a candidate that unsets it again must be refused.
+    DesignerSet,
 }
 
 impl TestBuild {
-    pub const ALL: [TestBuild; 4] = [
+    pub const ALL: [TestBuild; 7] = [
         TestBuild::MovedField,
         TestBuild::RenamedType,
         TestBuild::Resized,
         TestBuild::AppendedField,
+        TestBuild::NarrowedSweep,
+        TestBuild::RefusedWallet,
+        TestBuild::DesignerSet,
     ];
 
     pub fn name(self) -> &'static str {
@@ -38,12 +57,23 @@ impl TestBuild {
             TestBuild::RenamedType => "renamed-type",
             TestBuild::Resized => "resized",
             TestBuild::AppendedField => "appended-field",
+            TestBuild::NarrowedSweep => "narrowed-sweep",
+            TestBuild::RefusedWallet => "refused-wallet",
+            TestBuild::DesignerSet => "designer-set",
         }
     }
 
     /// Whether the gate must pass it on every fixture.
     pub fn must_pass(self) -> bool {
-        self == TestBuild::AppendedField
+        matches!(self, TestBuild::AppendedField | TestBuild::DesignerSet)
+    }
+
+    /// Whether it breaks the market state's layout, which strands every open market.
+    pub fn breaks_the_layout(self) -> bool {
+        matches!(
+            self,
+            TestBuild::MovedField | TestBuild::RenamedType | TestBuild::Resized
+        )
     }
 
     /// Edits the program's source, given as `(path under src/, text)` pairs.
@@ -95,6 +125,32 @@ impl TestBuild {
                     "pub const DEPLOYED_LAYOUT_VERSIONS: &[u8] = &[1, 2];",
                 )?;
                 sources.set("state.rs", state);
+            }
+            TestBuild::NarrowedSweep => {
+                let payouts = replace_once(
+                    sources.get("payouts.rs")?,
+                    "        let slot = FeeSlot::try_from(slot)?;\n",
+                    "        let slot = FeeSlot::try_from(slot)?;\n        if slot == FeeSlot::Suite {\n            return Err(Refusal::BadSlot);\n        }\n",
+                )?;
+                sources.set("payouts.rs", payouts);
+            }
+            TestBuild::RefusedWallet => {
+                let payouts = replace_once(
+                    sources.get("payouts.rs")?,
+                    "            FeeSlot::Suite => SUITE_TREASURY,\n",
+                    // The treasury stays referenced, so the edited copy builds without an
+                    // unused-import warning.
+                    "            FeeSlot::Suite => {\n                let _ = SUITE_TREASURY;\n                Pubkey::default()\n            }\n",
+                )?;
+                sources.set("payouts.rs", payouts);
+            }
+            TestBuild::DesignerSet => {
+                let config = replace_once(
+                    sources.get("config.rs")?,
+                    "DESIGNER_RECIPIENT: Pubkey = Pubkey::new_from_array([0; 32]);",
+                    "DESIGNER_RECIPIENT: Pubkey = Pubkey::new_from_array([7; 32]);",
+                )?;
+                sources.set("config.rs", config);
             }
         }
         Ok(())

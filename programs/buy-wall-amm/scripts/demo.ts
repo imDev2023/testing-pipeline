@@ -24,8 +24,10 @@
 //      ran at;
 //   8. place the buy wall through the metadata's `place_wall` action, from the spec's
 //      formulas: refused with WallBelowThreshold while idle SOL is below WALL_THRESHOLD
-//      (shown by simulating it), then, after one more buy if its fee is needed, placed at
-//      the lower of the price and the guard's floor with everything idle, the dust swept
+//      (shown by simulating it), then, after one more buy if its fee is needed, placed in a
+//      later slot than the last swap (it is refused in a swap's own slot) at the lower of
+//      the price and the guard's floor, brought up to date for that slot, with everything
+//      idle, the dust swept
 //      and the caller tipped in wrapped SOL exactly as the spec's rule gives, emitting
 //      WallPlaced;
 //   9. sell into the wall: priced in two steps, the curve alone to the wall's top, then the
@@ -36,8 +38,9 @@
 //      counters equal the spec's formulas to the unit, and each vault holds exactly the sum
 //      of its ledgers;
 //  11. settle the retired tokens through the metadata's `settle` action: the reward share
-//      joins the rewards owed and the rest is burned, the token's supply falling by exactly
-//      that, as the spec's formula gives, emitting Settled;
+//      of the part the cap's fall matched joins the rewards owed and the rest is burned, the
+//      token's supply falling by exactly that, as the spec's formula gives, emitting
+//      Settled;
 //  12. hand both recipient roles to fresh wallets through the metadata's
 //      `set_fee_recipient` and `set_rewards_recipient` actions, signed by the payer, the
 //      demo market's recipient; then show a handover signed by the old recipient refused
@@ -566,13 +569,35 @@ const wallTokens = (wall: Wall, s: bigint) =>
     wall.liquidity > 0n && s < wall.top ? (wall.liquidity * Q * (wall.top - s)) / (wall.top * s) : 0n;
 
 /**
- * The wall's guard (docs/spec/pool4-for-solana.md, "After pricing" steps 1, 3 and 4),
- * written out from the spec: before the books, in a slot later than `lastSlot`, the
- * reference moves toward the last close by at most `REF_STEP_BPS / 2` of itself per
- * `REF_STEP_WINDOW`; once the price is set, the floor crawls toward the reference by at most
- * `FLOOR_CRAWL_BPS / 2` of itself a day and drops at once to a lower price.
+ * The wall's guard (docs/spec/pool4-for-solana.md, "After pricing" steps 1, 3 and 4, and
+ * "`place_wall`"), written out from the spec: at a slot's first update (before the books, in
+ * a slot later than `lastSlot`), the reference moves toward the last close by at most
+ * `REF_STEP_BPS / 2` of itself per `REF_STEP_WINDOW`, then the floor crawls toward the
+ * reference by at most `FLOOR_CRAWL_BPS / 2` of itself a day and drops to the last close, the
+ * price the slot opened at, if that is lower; in a slot already brought up to date neither
+ * moves, and a swap's own price only becomes the last close and lowers the lowest close since
+ * the last placement, which no swap raises (any swap takes its close while it is 0) and only
+ * `place_wall` resets (`POOL4-50`). `place_wall` brings the floor up to date against the
+ * stored reference without marking the slot. Each clock only moves forward.
  */
-type Guard = { reference: bigint; refTime: bigint; floor: bigint; floorTime: bigint; lastSlot: bigint; lastClose: bigint };
+type Guard = {
+    reference: bigint;
+    refTime: bigint;
+    floor: bigint;
+    floorTime: bigint;
+    lastSlot: bigint;
+    lastClose: bigint;
+    lowSincePlacement: bigint;
+};
+
+function specOpenFloor(g: Guard, now: bigint): Guard {
+    let floor = g.floor;
+    if (floor < g.reference) {
+        const dt = min(max(now - g.floorTime, 0n), SECONDS_PER_DAY);
+        floor = min(floor + (floor * FLOOR_CRAWL_BPS * dt) / (2n * 10_000n * SECONDS_PER_DAY), g.reference);
+    }
+    return { ...g, floor: min(floor, g.lastClose), floorTime: max(g.floorTime, now) };
+}
 
 function specFollow(g: Guard, slot: bigint, now: bigint): Guard {
     if (slot <= g.lastSlot) return g;
@@ -580,28 +605,31 @@ function specFollow(g: Guard, slot: bigint, now: bigint): Guard {
     const step = (g.reference * REF_STEP_BPS * dt) / (2n * 10_000n * REF_STEP_WINDOW);
     const reference =
         g.lastClose >= g.reference ? min(g.reference + step, g.lastClose) : max(g.reference - step, g.lastClose);
-    return { ...g, reference, refTime: now, lastSlot: slot };
+    return specOpenFloor({ ...g, reference, refTime: max(g.refTime, now), lastSlot: slot }, now);
 }
 
-function specCloseAt(g: Guard, price: bigint, now: bigint): Guard {
-    let floor = g.floor;
-    if (floor < g.reference) {
-        const dt = min(max(now - g.floorTime, 0n), SECONDS_PER_DAY);
-        floor = min(floor + (floor * FLOOR_CRAWL_BPS * dt) / (2n * 10_000n * SECONDS_PER_DAY), g.reference);
-    }
-    return { ...g, floor: min(floor, price), floorTime: now, lastClose: price };
+function specCloseAt(g: Guard, price: bigint): Guard {
+    const lowSincePlacement = g.lowSincePlacement === 0n ? price : min(g.lowSincePlacement, price);
+    return { ...g, lastClose: price, lowSincePlacement };
 }
 
 /**
  * `place_wall` (docs/spec/pool4-for-solana.md, "`place_wall`"), written out from the spec:
  * refused below `WALL_THRESHOLD`; the old wall closed at the price; the pool's dust beyond
  * the curve's holdings, rounded up, swept to idle SOL and the retired tokens; the tip; and
- * the new wall placed with everything left at `min(price, floor)`.
+ * the new wall placed with everything left at `min(price, floor, lowSincePlacement)`, the
+ * lowest close since the last placement capping nothing when it is 0, which is then reset to
+ * the price (`POOL4-50`).
  */
 type WallBooks = { wall: Wall; wallSolPlaced: bigint; poolTokens: bigint; poolSol: bigint; retiredTokens: bigint; idleSol: bigint };
 type Placement = { converted: bigint; closedSol: bigint; closedTokens: bigint; dustSol: bigint; dustTokens: bigint; tip: bigint };
 
-function specPlaceWall(b: WallBooks, curve: Curve, floor: bigint, feeBps: bigint): { books: WallBooks; placement: Placement } | null {
+function specPlaceWall(
+    b: WallBooks,
+    curve: Curve,
+    guard: Guard,
+    feeBps: bigint,
+): { books: WallBooks; placement: Placement; guard: Guard } | null {
     const s = curve.sqrtPrice;
     const converted = b.wall.liquidity > 0n ? max(b.wallSolPlaced - wallSol(b.wall, s), 0n) : 0n;
     if (b.idleSol < WALL_THRESHOLD && converted < WALL_THRESHOLD) return null;
@@ -613,7 +641,7 @@ function specPlaceWall(b: WallBooks, curve: Curve, floor: bigint, feeBps: bigint
     let idle = b.idleSol + closedSol + dustSol;
     const tip = min(min(KEEPER_TIP_CAP, (max(converted, b.idleSol) * feeBps) / 10_000n), idle);
     idle -= tip;
-    const top = min(s, floor);
+    const top = guard.lowSincePlacement === 0n ? min(s, guard.floor) : min(min(s, guard.floor), guard.lowSincePlacement);
     const wall = { liquidity: (idle * Q) / top, top };
     return {
         books: {
@@ -625,6 +653,7 @@ function specPlaceWall(b: WallBooks, curve: Curve, floor: bigint, feeBps: bigint
             idleSol: 0n,
         },
         placement: { converted, closedSol, closedTokens, dustSol, dustTokens, tip },
+        guard: { ...guard, lowSincePlacement: s },
     };
 }
 
@@ -633,7 +662,8 @@ function specPlaceWall(b: WallBooks, curve: Curve, floor: bigint, feeBps: bigint
  * steps 5 and 6), written out here from the spec rather than taken from the program: the
  * decay credit builds up to one day's allowance, then a curve holding less than the cap
  * lowers it (the ratchet) and one holding more gives up its excess (the trim). `now` is the
- * Clock's time the swap ran at, which the market state records as its `decay_time`.
+ * Clock's time the swap ran at, which the market state records as its `decay_time` (the
+ * later of the two, so the clock never runs backwards).
  */
 type Cap = { cap: bigint; decayCredit: bigint; decayTime: bigint; capFloor: bigint; capDecayPerDay: bigint };
 type CapMoved =
@@ -647,7 +677,7 @@ function specCap(cap: Cap, curve: Curve, now: bigint): { cap: Cap; moved: CapMov
     const limit = cap.capDecayPerDay * DECAY_CREDIT_WINDOW;
     let credit = cap.decayCredit + cap.capDecayPerDay * elapsed;
     if (credit > limit) credit = limit;
-    const next = { ...cap, decayCredit: credit, decayTime: now };
+    const next = { ...cap, decayCredit: credit, decayTime: now > cap.decayTime ? now : cap.decayTime };
     const { sqrtPrice: s, liquidity: l } = curve;
     const held = (l * Q) / s;
     if (held < cap.cap) {
@@ -744,6 +774,15 @@ async function waitForClock(time: bigint) {
     }
 }
 
+/** Waits until the cluster's confirmed slot is later than `slot`. */
+async function waitForSlotAfter(slot: bigint) {
+    for (let i = 0; ; i++) {
+        if ((await rpc.getSlot({ commitment: 'confirmed' }).send()) > slot) return;
+        if (i > 120) fail(`the cluster did not pass slot ${slot} within 60 s`);
+        await sleep(500);
+    }
+}
+
 /** The fee split: designer, suite, wall and recipient, as "The fee" writes it. */
 function specSplit(fee: bigint, wallSplitBps: bigint) {
     const designer = (fee * BigInt(DESIGNER_SHARE_BPS)) / 10_000n;
@@ -762,6 +801,7 @@ type OwedBooks = {
     poolSol: bigint;
     idleSol: bigint;
     retiredTokens: bigint;
+    retiredRewardable: bigint;
     feesRecipient: bigint;
     feesDesigner: bigint;
     feesSuite: bigint;
@@ -790,7 +830,9 @@ async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata,
     step('11. Settling the retired tokens');
     const retired = books.retiredTokens;
     if (retired === 0n) fail('nothing is retired to settle');
-    const toRewards = (retired * rewardShareBps) / 10_000n;
+    // POOL4-49: the reward share is paid only on the part the cap's fall matched.
+    const rewardable = books.retiredRewardable;
+    const toRewards = (rewardable * rewardShareBps) / 10_000n;
     const burned = retired - toRewards;
     const [supplyBefore, vaultBefore] = [await supply(), await tokenBalance(view.vaults[0]!)];
     const { signature: settledSignature } = await send('settle', payer, [await build('settle')]);
@@ -803,6 +845,7 @@ async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata,
     if (
         settled.length !== 1 ||
         event!.retired !== retired ||
+        event!.rewardable !== rewardable ||
         event!.burned !== burned ||
         event!.toRewards !== toRewards ||
         event!.rewardsOwed !== rewardsOwed ||
@@ -813,7 +856,8 @@ async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata,
         fail(`settle of ${retired}: expected ${burned} burned and ${toRewards} to the rewards; the supply fell ${supplyFell}, the vault ${vaultFell}, events ${json(settled)}`);
     }
     books.retiredTokens = 0n;
-    info(`${retired} retired units: ${toRewards} (the ${DEMO.rewardShareBps} basis point reward share) now owed as rewards, ${burned} burned; the token's supply fell by exactly ${burned}; Settled emitted`);
+    books.retiredRewardable = 0n;
+    info(`${retired} retired units, ${rewardable} of them matched by the cap's fall: ${toRewards} (the ${DEMO.rewardShareBps} basis point reward share of those) now owed as rewards, ${burned} burned; the token's supply fell by exactly ${burned}; Settled emitted`);
     record.push(['settle', `${burned} burned, ${toRewards} to the rewards`]);
 
     step('12. Handing both recipient roles to new wallets');
@@ -908,6 +952,7 @@ async function payOut(payer: KeyPairSigner, metadata: pipeline.StrategyMetadata,
     const after = await state();
     const read = {
         retiredTokens: [le(after.retiredTokens), 0n],
+        retiredRewardable: [le(after.retiredRewardable), 0n],
         rewardsOwed: [le(after.rewardsOwed), rewardsOwed],
         tokensBurned: [le(after.tokensBurned), tokensBurned],
         rewardsPaid: [le(after.rewardsPaid), rewardsPaid],
@@ -1426,6 +1471,10 @@ async function main() {
         feesDesigner: 0n,
         feesSuite: 0n,
         retiredTokens: 0n,
+        // The reward share's ledgers (POOL4-49): the cap's fall no trim has matched yet, and
+        // the part of the retired tokens that earns the reward share.
+        capFallUnmatched: 0n,
+        retiredRewardable: 0n,
         cap: {
             cap,
             decayCredit: le(state.decayCredit),
@@ -1441,6 +1490,7 @@ async function main() {
             floorTime: le(state.floorTime),
             lastSlot: le(state.lastSlot),
             lastClose: le(state.lastClose),
+            lowSincePlacement: le(state.lowSincePlacement),
         } as Guard,
         tokensTrimmed: 0n,
         solTrimmed: 0n,
@@ -1450,7 +1500,12 @@ async function main() {
         feesCollected: 0n,
         swapCount: 0n,
     };
-    if (books.guard.reference !== sqrtPrice || books.guard.floor !== sqrtPrice || books.guard.lastClose !== sqrtPrice) {
+    if (
+        books.guard.reference !== sqrtPrice ||
+        books.guard.floor !== sqrtPrice ||
+        books.guard.lastClose !== sqrtPrice ||
+        books.guard.lowSincePlacement !== sqrtPrice
+    ) {
         fail('the seed did not start the wall\'s guard at the opening price');
     }
     const payerAccounts = await Promise.all([token, WSOL].map((mint) => walletTokenAccount(payer.address, mint)));
@@ -1531,7 +1586,8 @@ async function main() {
         const { data: afterSwap } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
         const ranAt = le(afterSwap.decayTime);
         const events = await strategyEvents(signature);
-        // Step 1, the reference; steps 2 and 3, the books and the price; then the floor.
+        // Steps 1 and 4 at the slot's first update, the reference and the floor; steps 2 and
+        // 3, the books, the price, the last close and the lowest close since the placement.
         books.guard = specFollow(books.guard, events.slot, ranAt);
         const split = specSplit(spec.fee, BigInt(DEMO.wallSplitBps));
         if (input === 1) {
@@ -1542,7 +1598,7 @@ async function main() {
             books.poolSol -= spec.out + spec.fee;
         }
         books.curve = { sqrtPrice: spec.sqrtPrice, liquidity: books.curve.liquidity };
-        books.guard = specCloseAt(books.guard, spec.sqrtPrice, ranAt);
+        books.guard = specCloseAt(books.guard, spec.sqrtPrice);
         books.idleSol += split.wall;
         books.feesRecipient += split.recipient;
         books.feesDesigner += split.designer;
@@ -1559,12 +1615,19 @@ async function main() {
             books.curve = { sqrtPrice: spec.sqrtPrice, liquidity: moved.liquidity };
             books.poolTokens -= moved.tokens;
             books.retiredTokens += moved.tokens;
+            const matched = moved.tokens < books.capFallUnmatched ? moved.tokens : books.capFallUnmatched;
+            books.capFallUnmatched -= matched;
+            books.retiredRewardable += matched;
             books.poolSol -= moved.sol;
             books.idleSol += moved.sol;
             books.tokensTrimmed += moved.tokens;
             books.solTrimmed += moved.sol;
         }
         if (moved.kind === 'lowered') {
+            // Never more than one day's allowance, as the program keeps it (review finding
+            // R2-01): what a fall adds beyond that is never rewarded.
+            const unmatched = books.capFallUnmatched + moved.by;
+            books.capFallUnmatched = unmatched < books.cap.capDecayPerDay ? unmatched : books.cap.capDecayPerDay;
             const [event] = events.lowered;
             if (
                 events.lowered.length !== 1 ||
@@ -1623,19 +1686,31 @@ async function main() {
         idleSol: books.idleSol,
     });
     let topUp = 0n;
-    if (specPlaceWall(wallBooks(), books.curve, books.guard.floor, feeBps) === null) {
-        // Below WALL_THRESHOLD, `place_wall` is refused; anyone may simulate it to see so.
+    if (specPlaceWall(wallBooks(), books.curve, books.guard, feeBps) === null) {
+        // Below WALL_THRESHOLD, `place_wall` is refused; anyone may simulate it to see so, in
+        // a slot after the last swap, since in that slot it is refused first for the swap
+        // (`POOL4-50`).
+        await waitForSlotAfter(books.guard.lastSlot);
         await expectRefused('place_wall below the threshold', payer, [await placeWall()], BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD, 'WallBelowThreshold');
         info(`place_wall with ${books.idleSol} lamports idle, below WALL_THRESHOLD (${WALL_THRESHOLD}): refused with WallBelowThreshold, as the spec says`);
         // One more buy's fee takes idle SOL past the threshold.
         topUp = (await trade('buy for the wall', 1, DEMO.buy)).received;
     }
-    const expectedPlacement = specPlaceWall(wallBooks(), books.curve, books.guard.floor, feeBps) ?? fail(`idle SOL ${books.idleSol} is still below WALL_THRESHOLD`);
+    if (specPlaceWall(wallBooks(), books.curve, books.guard, feeBps) === null) fail(`idle SOL ${books.idleSol} is still below WALL_THRESHOLD`);
+    // `place_wall` is refused in a slot a swap already ran in (`POOL4-50`), so it goes in a
+    // later slot than the last swap, as the keeper runner sends it.
+    await waitForSlotAfter(books.guard.lastSlot);
     const tipsBefore = await tokenBalance(payerAccounts[1]!);
     const { signature: placedSignature } = await send('place_wall', payer, [await placeWall()]);
     const tip = (await tokenBalance(payerAccounts[1]!)) - tipsBefore;
     const placedEvents = await strategyEvents(placedSignature);
-    const { books: placedBooks, placement } = expectedPlacement;
+    if (placedEvents.slot <= books.guard.lastSlot) fail(`place_wall ran in slot ${placedEvents.slot}, not after the last swap's ${books.guard.lastSlot}`);
+    // It brings the floor up to date for its slot first, at the time it ran, which it records
+    // as the floor's clock (the clock never moves backwards, so that is its time or later).
+    const { data: afterPlacing } = await fetchMarketState(rpc, resolved.marketState, { commitment: 'confirmed' });
+    books.guard = specOpenFloor(books.guard, le(afterPlacing.floorTime));
+    const expectedPlacement = specPlaceWall(wallBooks(), books.curve, books.guard, feeBps) ?? fail(`idle SOL ${books.idleSol} is still below WALL_THRESHOLD`);
+    const { books: placedBooks, placement, guard: placedGuard } = expectedPlacement;
     const work = max(placement.converted, books.idleSol);
     const [placedEvent] = placedEvents.placed;
     if (
@@ -1659,8 +1734,14 @@ async function main() {
     books.tipsPaid += placement.tip;
     books.wallTokensBought += placement.closedTokens;
     if (books.wall.top > books.guard.floor || books.wall.top > books.curve.sqrtPrice) fail('the wall was placed above its floor or the price');
+    const lowAtPlacement = books.guard.lowSincePlacement;
+    if (lowAtPlacement !== 0n && books.wall.top > lowAtPlacement) {
+        fail(`the wall was placed at ${books.wall.top}, above the lowest close since the last placement ${lowAtPlacement}`);
+    }
+    // The low is reset to the price at placement.
+    books.guard = placedGuard;
     info(`tipped ${tip} lamports of wrapped SOL to the caller's account: the least of KEEPER_TIP_CAP (${KEEPER_TIP_CAP}) and the fee earned on ${work} lamports of work`);
-    info(`the wall: ${books.wallSolPlaced} lamports at sqrt_price ${books.wall.top} (liquidity ${books.wall.liquidity}), at the lower of the price and the floor; ${placement.dustTokens} units and ${placement.dustSol} lamports of dust swept; WallPlaced emitted`);
+    info(`the wall: ${books.wallSolPlaced} lamports at sqrt_price ${books.wall.top} (liquidity ${books.wall.liquidity}), at the lowest of the price, the floor and the lowest close since the last placement (${lowAtPlacement}); ${placement.dustTokens} units and ${placement.dustSol} lamports of dust swept; WallPlaced emitted`);
     record.push(['place_wall', `tip ${tip}, wall ${books.wallSolPlaced} lamports at ${books.wall.top}`]);
 
     step('9. Selling into the wall');
@@ -1683,6 +1764,8 @@ async function main() {
         poolTokens: [le(traded.poolTokens), books.poolTokens],
         poolSol: [le(traded.poolSol), books.poolSol],
         retiredTokens: [le(traded.retiredTokens), books.retiredTokens],
+        retiredRewardable: [le(traded.retiredRewardable), books.retiredRewardable],
+        capFallUnmatched: [le(traded.capFallUnmatched), books.capFallUnmatched],
         idleSol: [le(traded.idleSol), books.idleSol],
         cap: [le(traded.cap), books.cap.cap],
         decayCredit: [le(traded.decayCredit), books.cap.decayCredit],
@@ -1692,6 +1775,7 @@ async function main() {
         floorTime: [le(traded.floorTime), books.guard.floorTime],
         lastSlot: [le(traded.lastSlot), books.guard.lastSlot],
         lastClose: [le(traded.lastClose), books.guard.lastClose],
+        lowSincePlacement: [le(traded.lowSincePlacement), books.guard.lowSincePlacement],
         tokensTrimmed: [le(traded.tokensTrimmed), books.tokensTrimmed],
         solTrimmed: [le(traded.solTrimmed), books.solTrimmed],
         wallTokensBought: [le(traded.wallTokensBought), books.wallTokensBought],

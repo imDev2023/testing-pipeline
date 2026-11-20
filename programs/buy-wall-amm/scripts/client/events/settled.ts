@@ -45,6 +45,8 @@ export type SettledEvent = {
   marketState: Address;
   /** The retired tokens settled, all of them. */
   retired: bigint;
+  /** The part of them the cap's fall matched, which earned the reward share (`POOL4-49`). */
+  rewardable: bigint;
   /** Token units burned from the token vault. */
   burned: bigint;
   /** Token units that joined the rewards owed. */
@@ -59,6 +61,8 @@ export type SettledEventArgs = {
   marketState: Address | HasAddress;
   /** The retired tokens settled, all of them. */
   retired: number | bigint;
+  /** The part of them the cap's fall matched, which earned the reward share (`POOL4-49`). */
+  rewardable: number | bigint;
   /** Token units burned from the token vault. */
   burned: number | bigint;
   /** Token units that joined the rewards owed. */
@@ -75,6 +79,7 @@ export function getSettledEventEncoder(): FixedSizeEncoder<SettledEventArgs> {
     getStructEncoder([
       ["marketState", getAddressEncoder()],
       ["retired", getU64Encoder()],
+      ["rewardable", getU64Encoder()],
       ["burned", getU64Encoder()],
       ["toRewards", getU64Encoder()],
       ["rewardsOwed", getU64Encoder()],
@@ -90,6 +95,7 @@ export function getSettledEventDecoder(): FixedSizeDecoder<SettledEvent> {
     getStructDecoder([
       ["marketState", getAddressDecoder()],
       ["retired", getU64Decoder()],
+      ["rewardable", getU64Decoder()],
       ["burned", getU64Decoder()],
       ["toRewards", getU64Decoder()],
       ["rewardsOwed", getU64Decoder()],

@@ -1,6 +1,7 @@
 //! `settle`: the permissionless keeper job that splits the retired tokens
-//! (docs/spec/pool4-for-solana.md, "`settle`"). The reward share joins `rewards_owed` and the
-//! rest is burned from the token vault; refused when nothing is retired; no tip.
+//! (docs/spec/pool4-for-solana.md, "`settle`"). The reward share of their rewardable part, the
+//! trimmed tokens the cap's fall matched (`POOL4-49`), joins `rewards_owed` and the rest is
+//! burned from the token vault; refused when nothing is retired; no tip.
 //!
 //! A burn calls no transfer hook, so no hook can refuse it, and it pays nobody, so no
 //! recipient's account can block it. Nobody signs but whoever pays the transaction fee.
@@ -10,7 +11,7 @@ use anchor_spl::token_interface::{burn_checked, BurnChecked, Mint, TokenInterfac
 
 use crate::errors::StrategyError;
 use crate::events::Settled;
-use crate::state::{check_vault_accounts, is_market_state, MarketState, AUTHORITY_SEED};
+use crate::state::{check_vault_accounts, is_market_state, MarketState, VaultSide, AUTHORITY_SEED};
 
 /// The order is part of `metadata.json`'s `settle` action; keep them in step.
 #[derive(Accounts)]
@@ -31,12 +32,12 @@ pub struct Settle<'info> {
 pub fn handle_settle(ctx: Context<Settle>) -> Result<()> {
     let accounts = &ctx.accounts;
     let market_state = accounts.market_state.key();
-    let (owed, split, retired, authority_bump) = {
+    let (owed, split, retired, rewardable, authority_bump) = {
         let state = accounts.market_state.load()?;
         let authority_bump = check_vault_accounts(
             &state,
             &market_state,
-            0,
+            VaultSide::Token,
             &accounts.token_vault.key(),
             &accounts.token_mint.key(),
             &accounts.vault_authority.key(),
@@ -45,7 +46,13 @@ pub fn handle_settle(ctx: Context<Settle>) -> Result<()> {
             .owed()
             .settle(state.reward_share_bps())
             .map_err(|refusal| error!(StrategyError::from(refusal)))?;
-        (owed, split, state.retired_tokens(), authority_bump)
+        (
+            owed,
+            split,
+            state.retired_tokens(),
+            state.retired_rewardable(),
+            authority_bump,
+        )
     };
 
     if split.burned > 0 {
@@ -70,6 +77,7 @@ pub fn handle_settle(ctx: Context<Settle>) -> Result<()> {
     emit!(Settled {
         market_state,
         retired,
+        rewardable,
         burned: split.burned,
         to_rewards: split.to_rewards,
         rewards_owed: owed.rewards_owed,
