@@ -552,7 +552,7 @@ A program's metadata cannot name the commit that holds it, and a squash merge le
      --record <scratchpad>/devnet-demo.json
    ```
 
-   On devnet the demo stops unless the metadata URI resolves and passes Pipeline's validator with zero warnings; while the repo is private, pass `--metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json --metadata-not-yet-public` instead, which takes only this repo's `metadata.json` and checks the committed copy. It registers the strategy, signed and paid by the upgrade authority, and creates only the demo market, `SOL_MARKET` (`TAX-53`): created with both fee accounts and its seed in one transaction, bought, sold, and paid out slot by slot.
+   On devnet the demo stops unless the metadata URI resolves and passes Pipeline's validator with zero warnings; while the repo is private, pass `--metadata-uri https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json --metadata-not-yet-public` instead, which takes only this repo's `metadata.json` on `main` or at a full commit on `origin/main` (fetch it first) and checks the copy the link will serve; a commit's copy must also pin the deploy `deployments/devnet.json` records and carry its report. It registers the strategy, signed and paid by the upgrade authority, and creates only the demo market, `SOL_MARKET` (`TAX-53`): created with both fee accounts and its seed in one transaction, bought, sold, and paid out slot by slot.
 2. **The record.** Take the conformance report and check the router lists the market, with `pipeline-check` from Pipeline's clone (`cargo build --release -p pipeline-check` in `fixtures/pipeline`):
 
    ```sh
@@ -563,7 +563,7 @@ A program's metadata cannot name the commit that holds it, and a squash merge le
 
    Merge `deployments/devnet.json`, the report, and the README and docs saying where the program is.
 3. **The metadata.** Run `node publish.ts pin --report-commit <the record's merge commit>` in `programs/tax-amm/scripts` and merge `metadata.json`.
-   `pin` refuses a report commit that is not on `origin/main` or does not hold the report, and hashes the report as that commit holds it.
+   `pin` fetches `origin/main`, refuses a report or deployed commit not on it, a report commit without the report, a report that differs from the one committed here or that checks other code than the deploy's, and hashes the report as that commit holds it.
    `tests/published.rs` fails if the metadata names a commit other than the deployed one or a report other than the committed one, or if the committed report is of other code than the deploy record's or has a warning or a failure.
    Then point the router at it and check everything published, as anyone would see it:
 

@@ -6,8 +6,11 @@
 //     Pins metadata.json to the commit deployments/devnet.json records for the tax AMM: the
 //     source and IDL links at that commit, and `source.commit`; with --report-commit, the
 //     commit that records the deploy, also `conformance`, naming conformance/devnet.json at
-//     that commit with the SHA-256 of the copy committed here, and the README at that commit,
-//     which says where the program is. Then checks the result with Pipeline's validator.
+//     that commit with the SHA-256 of the copy that commit holds, and the README at that
+//     commit, which says where the program is. It fetches origin/main and refuses a report or
+//     deployed commit not on it, a report commit without the report, a report that differs
+//     from the one committed here, and a report of other code than the deploy's. Then it
+//     checks the result with Pipeline's validator.
 //
 //   node publish.ts verify --uri <metadata URI> [--market <router market>]
 //
@@ -86,6 +89,14 @@ function pin(reportCommit: string | undefined) {
         if (!onMain(reportCommit)) fail(`--report-commit ${reportCommit} is not a commit on origin/main`);
         const report = fileAt(reportCommit, `${DIR}/${REPORT}`) ?? fail(`${reportCommit} holds no ${DIR}/${REPORT}`);
         if (!onMain(commit)) fail(`the deployed commit ${commit} is not on origin/main`);
+        // tests/published.rs checks the hash against the report committed here, which must be
+        // that commit's, and of the deploy deployments/devnet.json records.
+        if (!report.equals(readFileSync(here(`../${REPORT}`)))) fail(`${DIR}/${REPORT} here differs from the report at ${reportCommit}`);
+        const strategy = JSON.parse(report.toString('utf8')).strategy ?? {};
+        const deployed = deployments.programs[PROGRAM];
+        if (strategy.program_id !== deployed.programId || strategy.executable_sha256 !== deployed.executableHash) {
+            fail(`the report at ${reportCommit} checks ${strategy.program_id} ${strategy.executable_sha256}, not the deployed ${deployed.programId} ${deployed.executableHash}`);
+        }
         metadata.conformance = { report: `${RAW}/${reportCommit}/${DIR}/${REPORT}`, sha256: sha256(report) };
     } else {
         // An earlier deploy's report does not describe this one.

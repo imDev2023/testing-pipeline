@@ -96,6 +96,11 @@ fn check_published(
         ));
     };
     check_links(metadata, at, report_commit)?;
+    // While a redeploy's record is merged and the metadata still pins the earlier deploy (a
+    // commit in the record's history), the committed report is already the new deploy's.
+    if commit != deployed.first().copied() {
+        return Ok(());
+    }
     let Some(report) = report else {
         return Err(format!(
             "conformance names a report, but {DIR}/{REPORT} is not committed"
@@ -148,27 +153,35 @@ fn deployed_commits() -> Vec<String> {
 /// hash are the deploy record's, as Pipeline's own staleness check compares them) and that it
 /// passed with no warning and no failure (the bar's "Test layers" 7).
 fn check_report(report: &Value, deployed: &Value) -> Result<(), String> {
-    let field = |value: &Value, key: &str| value[key].as_str().unwrap_or_default().to_owned();
-    let (program, hash) = (
-        field(&report["strategy"], "program_id"),
-        field(&report["strategy"], "executable_sha256"),
-    );
-    if program != field(deployed, "programId") {
+    let field = |value: &Value, key: &str, what: &str| match value[key].as_str() {
+        Some(text) if !text.is_empty() => Ok(text.to_owned()),
+        _ => Err(format!("{what} names no {key}")),
+    };
+    if report["source"]["cluster"] != "devnet" {
         return Err(format!(
-            "the report checks program {program}, not the deployed {}",
-            field(deployed, "programId")
+            "the report was taken on {}, not devnet",
+            report["source"]["cluster"]
         ));
     }
-    if hash != field(deployed, "executableHash") {
+    let program = field(&report["strategy"], "program_id", "the report")?;
+    let hash = field(&report["strategy"], "executable_sha256", "the report")?;
+    let deployed_program = field(deployed, "programId", "the deploy record")?;
+    let deployed_hash = field(deployed, "executableHash", "the deploy record")?;
+    if program != deployed_program {
         return Err(format!(
-            "the report checks executable {hash}, not the deployed {}",
-            field(deployed, "executableHash")
+            "the report checks program {program}, not the deployed {deployed_program}"
+        ));
+    }
+    if hash != deployed_hash {
+        return Err(format!(
+            "the report checks executable {hash}, not the deployed {deployed_hash}"
         ));
     }
     for outcome in ["warn", "fail"] {
-        let count = report["summary"][outcome].as_u64().unwrap_or(u64::MAX);
-        if count != 0 {
-            return Err(format!("the report has {count} {outcome} results"));
+        match report["summary"][outcome].as_u64() {
+            None => return Err(format!("the report has no {outcome} count")),
+            Some(0) => {}
+            Some(count) => return Err(format!("the report has {count} {outcome} results")),
         }
     }
     Ok(())
@@ -197,6 +210,7 @@ fn a_report_of_other_code_or_with_a_warning_is_refused() {
     let deployed = json!({ "programId": "Prog", "executableHash": "aa" });
     let report = |program: &str, hash: &str, warn: u64, fail: u64| {
         json!({
+            "source": { "cluster": "devnet" },
             "strategy": { "program_id": program, "executable_sha256": hash },
             "summary": { "pass": 13, "warn": warn, "fail": fail, "skip": 1 },
         })
@@ -210,6 +224,18 @@ fn a_report_of_other_code_or_with_a_warning_is_refused() {
     assert!(err.contains("warn"), "{err}");
     let err = check_report(&report("Prog", "aa", 0, 1), &deployed).unwrap_err();
     assert!(err.contains("fail"), "{err}");
+    // A report taken on a local validator of the same bytes is not the devnet market's.
+    let mut local = report("Prog", "aa", 0, 0);
+    local["source"]["cluster"] = json!(null);
+    let err = check_report(&local, &deployed).unwrap_err();
+    assert!(err.contains("devnet"), "{err}");
+    // Missing fields are refused as missing, never matched as empty.
+    let err = check_report(&json!({ "source": { "cluster": "devnet" } }), &json!({})).unwrap_err();
+    assert!(err.contains("names no"), "{err}");
+    let mut no_summary = report("Prog", "aa", 0, 0);
+    no_summary.as_object_mut().unwrap().remove("summary");
+    let err = check_report(&no_summary, &deployed).unwrap_err();
+    assert!(err.contains("no warn count"), "{err}");
 }
 
 #[test]
@@ -286,6 +312,18 @@ fn a_redeploy_recorded_before_the_metadata_is_pinned_again_passes() {
     check_published(&pinned(COMMIT), &[OTHER, COMMIT], None).unwrap();
     let err = check_published(&pinned(COMMIT), &[OTHER], None).unwrap_err();
     assert!(err.contains("records"), "{err}");
+}
+
+#[test]
+fn a_redeploys_record_merges_while_the_metadata_still_names_the_earlier_report() {
+    // The record PR of a redeploy commits the new report while metadata.json still pins the
+    // earlier deploy and its report; the hash check waits for the metadata to be pinned again.
+    let earlier_report = b"the earlier deploy's report";
+    let m = with_report(pinned(COMMIT), OTHER, earlier_report);
+    check_published(&m, &[OTHER, COMMIT], Some(b"the new deploy's report")).unwrap();
+    // Pinned to the current deploy, the report must be the committed one.
+    let err = check_published(&m, &[COMMIT], Some(b"the new deploy's report")).unwrap_err();
+    assert!(err.contains("hashes to"), "{err}");
 }
 
 #[test]

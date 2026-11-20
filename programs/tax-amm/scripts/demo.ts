@@ -1320,20 +1320,37 @@ async function main() {
         // checked as the link will serve it.
         const at = new RegExp(`^${RAW_REPO.replaceAll('.', '\\.')}/(main|[0-9a-f]{40})/programs/tax-amm/metadata\\.json$`).exec(metadataUri)?.[1];
         if (!at) fail(`--metadata-not-yet-public takes only this repo's metadata.json on main or at a full commit on ${RAW_REPO}, not ${metadataUri}`);
+        // The copy the link will serve: origin/main's, or the commit's (fetch origin main first
+        // if it is new), which must pin the deploy deployments/devnet.json records and carry
+        // its report.
+        const git = (args: string[]) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        const ref = at === 'main' ? 'origin/main' : at;
         if (at !== 'main') {
-            const git = (args: string[]) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
             try {
                 git(['merge-base', '--is-ancestor', at, 'origin/main']);
             } catch {
                 fail(`${at} is not a commit on origin/main (git fetch origin main first if it is new)`);
             }
-            const copy = pipeline.parseStrategyMetadata(JSON.parse(git(['show', `${at}:programs/tax-amm/metadata.json`])));
-            if (!copy.ok || copy.warnings.length > 0) {
-                fail(`the metadata.json at ${at} does not pass the validator with zero warnings: ${copy.ok ? copy.warnings.join('; ') : copy.errors.join('; ')}`);
+        }
+        let served: unknown;
+        try {
+            served = JSON.parse(git(['show', `${ref}:programs/tax-amm/metadata.json`]));
+        } catch (error) {
+            fail(`cannot read programs/tax-amm/metadata.json at ${ref}: ${String(error).split('\n')[0]}`);
+        }
+        const copy = pipeline.parseStrategyMetadata(served);
+        if (!copy.ok || copy.warnings.length > 0) {
+            fail(`the metadata.json at ${ref} does not pass the validator with zero warnings: ${copy.ok ? copy.warnings.join('; ') : copy.errors.join('; ')}`);
+        }
+        if (at !== 'main') {
+            const deployed = JSON.parse(readFileSync(new URL('../../../deployments/devnet.json', import.meta.url), 'utf8')).programs?.['tax-amm'];
+            const pinned = served as { source?: { commit?: string }; conformance?: unknown };
+            if (pinned.source?.commit !== deployed?.commit || !pinned.conformance) {
+                fail(`the metadata.json at ${at} pins ${pinned.source?.commit ?? 'no commit'}${pinned.conformance ? '' : ' and no report'}, not the deploy of ${deployed?.commit ?? 'nothing'} with its report`);
             }
         }
         info(`${metadataUri} does not resolve yet (${published.ok ? published.warnings.join('; ') : published.reason}); registering it anyway with --metadata-not-yet-public`);
-        info(`the metadata.json ${at === 'main' ? 'in this checkout' : `at ${at}`} was checked instead; desks show the strategy without metadata until the repo is public`);
+        info(`the metadata.json at ${ref} was checked instead; desks show the strategy without metadata until the repo is public`);
     } else if (onDevnet) {
         // Pipeline's registry and every terminal read the strategy through this URI.
         fail(
