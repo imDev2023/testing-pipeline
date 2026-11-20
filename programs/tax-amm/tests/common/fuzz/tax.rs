@@ -170,7 +170,7 @@ pub enum Flaw {
 
 // The variants by their bare names: the harness prints a minimal failing case with `{:#?}`,
 // which leaves enum paths out, so it pastes into a regression test under
-// `use common::fuzz::tax::*` as printed.
+// `use harness::fuzz::tax::*` as printed.
 #[allow(unused_imports)]
 pub use {Creation::*, Flaw::*, MintKind::*, Rate::*, Size::*, Step::*, Who::*};
 
@@ -410,6 +410,8 @@ pub struct TaxWorld {
     /// The most compute each instruction took, but for invocations that called a transfer
     /// hook ([`own_compute`]).
     pub max_costs: BTreeMap<&'static str, u64>,
+    /// How many quotes [`TaxWorld::quote`] has simulated.
+    pub quotes_simulated: std::cell::Cell<u64>,
     /// How many steps did what, by [`Outcome::label`].
     pub tally: BTreeMap<String, u32>,
 }
@@ -637,19 +639,8 @@ fn spec_price(state: &TaxMarket, input: usize, output: usize, amount: u64) -> Re
     }
 }
 
-/// `a × b` as a 256-bit number, high half first, so two products compare correctly.
-fn wide_mul(a: u128, b: u128) -> (u128, u128) {
-    let mask = u64::MAX as u128;
-    let (a1, a0) = (a >> 64, a & mask);
-    let (b1, b0) = (b >> 64, b & mask);
-    let (mid, mid_carry) = (a1 * b0).overflowing_add(a0 * b1);
-    let (lo, lo_carry) = (a0 * b0).overflowing_add(mid << 64);
-    let hi = a1 * b1 + (mid >> 64) + ((mid_carry as u128) << 64) + lo_carry as u128;
-    (hi, lo)
-}
-
 /// The product of a market's effective reserves, in 256 bits.
-fn curve_product(state: &TaxMarket) -> (u128, u128) {
+fn curve_product(state: &TaxMarket) -> [u64; 8] {
     let effective = |side: usize| {
         let virtual_part = if state.virtual_side as usize == side {
             state.virtual_reserve
@@ -658,7 +649,7 @@ fn curve_product(state: &TaxMarket) -> (u128, u128) {
         };
         state.reserves[side] as u128 + virtual_part as u128
     };
-    wide_mul(effective(0), effective(1))
+    super::super::wide::wide_mul(effective(0), effective(1))
 }
 
 fn total_owed(state: &TaxMarket) -> u128 {
@@ -822,6 +813,7 @@ impl TaxWorld {
             other_accounts: vec![],
             resolved,
             max_costs: BTreeMap::new(),
+            quotes_simulated: Default::default(),
             tally: BTreeMap::new(),
         };
         world.record(&costs);
@@ -886,6 +878,7 @@ impl TaxWorld {
 
     /// `pipeline_quote` of `amount` from `input`, in simulation, with its compute.
     pub fn quote(&self, input: usize, amount: u64) -> (Result<QuoteResult, String>, Option<u64>) {
+        self.quotes_simulated.set(self.quotes_simulated.get() + 1);
         let trade = exact_in(input, 1 - input, amount);
         let mut accounts = self.env.read_accounts(&self.market, &trade);
         accounts.extend(self.resolved[input].iter().cloned());
@@ -1353,28 +1346,6 @@ impl TaxWorld {
     }
 }
 
-/// The associated token program's `CreateIdempotent`: `owner`'s token account for `mint`,
-/// paid for by `payer`, created unless it exists.
-pub fn create_token_account_idempotent(
-    payer: &Pubkey,
-    owner: &Pubkey,
-    mint: &Pubkey,
-    token_program: &Pubkey,
-) -> pipeline_client::Instruction {
-    pipeline_client::Instruction::new_with_bytes(
-        pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
-        &[1],
-        vec![
-            AccountMeta::new(*payer, true),
-            AccountMeta::new(pda::associated_token(owner, mint, token_program), false),
-            AccountMeta::new_readonly(*owner, false),
-            AccountMeta::new_readonly(*mint, false),
-            AccountMeta::new_readonly(pipeline_client::SYSTEM_PROGRAM_ID, false),
-            AccountMeta::new_readonly(*token_program, false),
-        ],
-    )
-}
-
 /// The two strategy invocations of a market's creation: `first`, then
 /// `pipeline_market_info`, which the router calls when it records the market; each left out
 /// when it called a transfer hook ([`own_compute`]).
@@ -1669,6 +1640,16 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     if unchanged && c.outcome.action != Action::Start {
         return Ok(());
     }
+    // Every quote is of the same state, so wallets holding the same amounts share theirs
+    // (hardening finding T08, #67).
+    let quotes: RefCell<BTreeMap<(usize, u64), Result<(), String>>> = RefCell::default();
+    let quote = |input: usize, amount: u64| -> Result<(), String> {
+        quotes
+            .borrow_mut()
+            .entry((input, amount))
+            .or_insert_with(|| w.quote(input, amount).0.map(|_| ()))
+            .clone()
+    };
     for wallet in w.wallets() {
         for input in 0..2 {
             let output = 1 - input;
@@ -1676,7 +1657,7 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
             if amount == 0 {
                 continue;
             }
-            let Err(failure) = w.quote(input, amount).0 else {
+            let Err(failure) = quote(input, amount) else {
                 continue;
             };
             let name = refusal(&failure);
@@ -1706,14 +1687,14 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
                         covered = middle;
                     }
                 }
-                let at_edge = refusal(&w.quote(input, refused).0.err().unwrap_or_default());
+                let at_edge = refusal(&quote(input, refused).err().unwrap_or_default());
                 ensure!(
                     at_edge == "InsufficientLiquidity",
                     "the spec refuses a sale of {refused} beyond the real reserve, the program gives {at_edge:?}"
                 );
                 if spec_price(state, input, output, covered).is_ok() {
                     ensure!(
-                        w.quote(input, covered).0.is_ok(),
+                        quote(input, covered).is_ok(),
                         "{wallet} can't sell {covered} of mint {input}, the most the real reserve covers"
                     );
                 }

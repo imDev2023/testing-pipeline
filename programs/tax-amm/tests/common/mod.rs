@@ -16,9 +16,9 @@
 
 pub mod authority;
 pub mod ceilings;
-pub mod fuzz;
 pub mod launchpad;
 pub mod model;
+pub mod wide;
 
 use std::path::PathBuf;
 
@@ -402,14 +402,24 @@ impl Env {
         hook_authority: impl FnOnce(&Pubkey) -> Pubkey,
         options: MintOptions,
     ) -> Pubkey {
-        let mint = Keypair::new();
+        self.create_hooked_mint_at(&Keypair::new(), hook_program, hook_authority, options)
+    }
+
+    /// [`Env::create_hooked_mint`] at a given mint keypair's address.
+    pub fn create_hooked_mint_at(
+        &mut self,
+        mint: &Keypair,
+        hook_program: &Pubkey,
+        hook_authority: impl FnOnce(&Pubkey) -> Pubkey,
+        options: MintOptions,
+    ) -> Pubkey {
         let authority = hook_authority(&mint.pubkey());
         let options = MintOptions {
             transfer_hook: Some(*hook_program),
             transfer_hook_authority: Some(authority),
             ..options
         };
-        self.create_mint_at(&mint, &TOKEN_2022, options)
+        self.create_mint_at(mint, &TOKEN_2022, options)
     }
 
     /// A plain mint of `token_program` with 6 decimals and no freeze authority.
@@ -877,12 +887,8 @@ impl Env {
     /// [`Env::create_mint_with_test_hook`] at a given mint keypair's address.
     pub fn create_mint_with_test_hook_at(&mut self, mint: &Keypair) -> Pubkey {
         let hook = self.add_test_hook();
-        let options = MintOptions {
-            transfer_hook: Some(hook),
-            transfer_hook_authority: Some(self.admin.pubkey()),
-            ..MintOptions::default()
-        };
-        let mint = self.create_mint_at(mint, &TOKEN_2022, options);
+        let admin = self.admin.pubkey();
+        let mint = self.create_hooked_mint_at(mint, &hook, |_| admin, MintOptions::default());
         let validation = pipeline_check::hooks::validation_address(&hook, &mint);
         let whitelist = Pubkey::find_program_address(&[b"whitelist", mint.as_ref()], &hook).0;
         let initialize = Instruction::new_with_bytes(
@@ -1208,5 +1214,27 @@ fn create_account(
         client::SYSTEM_PROGRAM_ID,
         &data,
         vec![AccountMeta::new(*from, true), AccountMeta::new(*to, true)],
+    )
+}
+
+/// The associated token program's `CreateIdempotent`: `owner`'s token account for `mint`,
+/// paid for by `payer`, created unless it exists.
+pub fn create_token_account_idempotent(
+    payer: &Pubkey,
+    owner: &Pubkey,
+    mint: &Pubkey,
+    token_program: &Pubkey,
+) -> Instruction {
+    Instruction::new_with_bytes(
+        client::ASSOCIATED_TOKEN_PROGRAM_ID,
+        &[1],
+        vec![
+            AccountMeta::new(*payer, true),
+            AccountMeta::new(pda::associated_token(owner, mint, token_program), false),
+            AccountMeta::new_readonly(*owner, false),
+            AccountMeta::new_readonly(*mint, false),
+            AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
+            AccountMeta::new_readonly(*token_program, false),
+        ],
     )
 }

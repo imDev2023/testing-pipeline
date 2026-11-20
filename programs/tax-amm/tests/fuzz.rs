@@ -9,13 +9,15 @@
 //! `FUZZ_STEPS` change that, and `FUZZ_INVARIANTS` checks only the invariants it names.
 
 mod common;
+#[path = "common/fuzz/harness.rs"]
+mod harness;
 
 use std::collections::BTreeMap;
 
 use common::ceilings;
-use common::fuzz::tax::*;
-use common::fuzz::{fuzz, replay, sizes, Product};
 use common::*;
+use harness::fuzz::tax::*;
+use harness::fuzz::{fuzz, replay, sizes, Product};
 use pipeline_client::Pubkey;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
@@ -59,31 +61,195 @@ fn the_invariants_hold_after_every_step_of_every_sequence() {
             None => println!("{name}: not measured, never called without a transfer hook"),
         }
     }
+    if cases >= DEFAULT_CASES && steps >= DEFAULT_STEPS {
+        every_shape_and_outcome_was_reached(&shapes, &tally, &max_costs);
+    } else {
+        println!("smaller than the default run: not checking every shape and outcome was reached");
+    }
 }
 
+/// Every shape feature the fuzzer builds and every outcome of every step it takes, as the
+/// run's tally names them. A default run (1,000 sequences of up to 50 steps) reaches each
+/// at least 15 times (2026-11-20), so one missing means a shape or a refusal path became
+/// unreachable, which no invariant would notice.
+const SHAPES_REACHED: [&str; 22] = [
+    "1 tax recipients",
+    "2 tax recipients",
+    "3 tax recipients",
+    "4 tax recipients",
+    "Hooked at index 0",
+    "Hooked at index 1",
+    "NativeSol at index 0",
+    "NativeSol at index 1",
+    "SplToken at index 0",
+    "SplToken at index 1",
+    "Token2022 at index 0",
+    "Token2022 at index 1",
+    "a burn share",
+    "a tax authority",
+    "a virtual reserve on side 0",
+    "a virtual reserve on side 1",
+    "created by CreateAndSeed",
+    "created by CreateOnly",
+    "created by Launchpad",
+    "seeded single-sided",
+    "taxed on side 0",
+    "taxed on side 1",
+];
+const OUTCOMES_REACHED: [&str; 44] = [
+    "bypass: NotPipeline",
+    "clock jump: settled",
+    "distribute to the burn: NotSlotWallet",
+    "distribute to the burn: settled",
+    "distribute to the suite share: NotSlotWallet",
+    "distribute to the suite share: settled",
+    "distribute: NoSuchSlot",
+    "distribute: NotSlotWallet",
+    "distribute: UnusedSlot",
+    "distribute: settled",
+    "donation: settled",
+    "renounce_tax_authority: AlreadyRenounced",
+    "renounce_tax_authority: NoTaxAuthority",
+    "renounce_tax_authority: NotTaxAuthority",
+    "renounce_tax_authority: settled",
+    "seed: AlreadySeeded",
+    "seed: NotSeeder",
+    "seed: ZeroSeed",
+    "seed: settled",
+    "set_recipients: AlreadyRenounced",
+    "set_recipients: BurnOnNativeSol",
+    "set_recipients: NoRecipient",
+    "set_recipients: NoTaxAuthority",
+    "set_recipients: NotTaxAuthority",
+    "set_recipients: OwedSlotLeftEmpty",
+    "set_recipients: RecipientsOutOfOrder",
+    "set_recipients: ShareWithoutRecipient",
+    "set_recipients: SharesNotWhole",
+    "set_recipients: ZeroShare",
+    "set_recipients: settled",
+    "set_taxes: AlreadyRenounced",
+    "set_taxes: NoTaxAuthority",
+    "set_taxes: NotTaxAuthority",
+    "set_taxes: RateOutsideRange",
+    "set_taxes: settled",
+    "skipped: settled",
+    "swap of a whole holding: InsufficientLiquidity",
+    "swap of a whole holding: MarketNotOpen",
+    "swap of a whole holding: ZeroOutput",
+    "swap of a whole holding: settled",
+    "swap: InsufficientLiquidity",
+    "swap: MarketNotOpen",
+    "swap: ZeroOutput",
+    "swap: settled",
+];
+
+/// Fails unless the run reached every shape in [`SHAPES_REACHED`] and every outcome in
+/// [`OUTCOMES_REACHED`], and measured every instruction against its compute ceiling
+/// (hardening finding T04, #67: the tallies were printed and never checked).
+fn every_shape_and_outcome_was_reached(
+    shapes: &BTreeMap<String, u32>,
+    tally: &BTreeMap<String, u32>,
+    max_costs: &BTreeMap<&'static str, u64>,
+) {
+    let missing: Vec<&str> = SHAPES_REACHED
+        .iter()
+        .filter(|feature| !shapes.contains_key(**feature))
+        .chain(
+            OUTCOMES_REACHED
+                .iter()
+                .filter(|outcome| !tally.contains_key(**outcome)),
+        )
+        .copied()
+        .chain(
+            ceilings::ALL
+                .iter()
+                .map(|(name, _)| *name)
+                .filter(|name| !max_costs.contains_key(name)),
+        )
+        .collect();
+    assert!(missing.is_empty(), "the run never reached: {missing:?}");
+}
+
+/// The ten invariants, each with the words that state it: the bar's three in
+/// docs/spec/README.md ("Test layers" 3), then the spec's seven in docs/spec/tax-amm.md
+/// ("Invariants"), in their order.
+const STATED: [(&str, &str); 10] = [
+    ("value_is_conserved", "value is conserved"),
+    ("every_holder_can_exit", "every holder can still exit"),
+    ("each_quote_equals_its_swap", "each quote equals its swap"),
+    (
+        "vaults_cover_the_market",
+        "Each vault holds at least the market's real reserve of its mint",
+    ),
+    (
+        "swaps_keep_the_curve",
+        "A swap never lowers the product of the effective reserves",
+    ),
+    ("every_tax_is_split_exactly", "Every tax is split exactly"),
+    (
+        "rates_stay_in_range_and_creation_is_fixed",
+        "No rate ever leaves its range or passes `MAX_TAX_BPS`",
+    ),
+    (
+        "only_swaps_move_reserves_and_counters",
+        "After the seed, only router swaps change the real reserves",
+    ),
+    ("counters_never_fall", "The counters never fall"),
+    (
+        "a_renounced_market_never_changes",
+        "Once the tax authority has renounced",
+    ),
+];
+
+/// Hardening finding T06 (#67): this test compared `INVARIANTS` with the harness's list,
+/// which is built from `INVARIANTS`, and only counted the spec's numbered lines. Now each
+/// of the ten is tied to the words that state it, in the bar's and the spec's order, so a
+/// reworded, reordered, added or dropped invariant on either side fails.
 #[test]
-fn the_ten_invariants_are_the_specs() {
-    let names: Vec<&str> = TaxAmm::invariants().iter().map(|i| i.name).collect();
-    assert_eq!(
-        &names[..10],
-        &INVARIANTS[..],
-        "the ten come first, in order"
-    );
-    // The bar's three, then the spec's seven, by its "Invariants" list.
-    let spec = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/tax-amm.md"),
-    )
-    .unwrap();
-    let section = spec
-        .split("### Invariants")
-        .nth(1)
-        .and_then(|rest| rest.split("\n### ").next())
-        .unwrap();
-    let numbered = section
+fn sos_t06_each_of_the_ten_invariants_is_the_one_the_spec_states() {
+    let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec");
+    let read = |file: &str| std::fs::read_to_string(docs.join(file)).unwrap();
+    let section = |text: &str, heading: &str| -> String {
+        text.split(heading)
+            .nth(1)
+            .and_then(|rest| rest.split("\n### ").next())
+            .unwrap_or_else(|| panic!("no {heading}"))
+            .to_string()
+    };
+    // The bar's three, in the order its layer 3 names them.
+    let bar = section(&read("README.md"), "### Test layers");
+    let layer = bar
+        .lines()
+        .find(|line| line.starts_with("3. **Stateful invariant fuzzing**"))
+        .expect("the bar's layer 3");
+    let at: Vec<usize> = STATED[..3]
+        .iter()
+        .map(|(name, words)| {
+            layer
+                .find(words)
+                .unwrap_or_else(|| panic!("the bar's layer 3 no longer says {words:?} ({name})"))
+        })
+        .collect();
+    assert!(at.is_sorted(), "the bar names its three in this order");
+    // The spec's seven, one numbered line each, in order.
+    let spec = section(&read("tax-amm.md"), "### Invariants");
+    let numbered: Vec<&str> = spec
         .lines()
         .filter(|line| line.chars().next().is_some_and(|c| c.is_ascii_digit()))
-        .count();
-    assert_eq!(numbered, 7, "the spec lists seven of its own");
+        .collect();
+    assert_eq!(numbered.len(), 7, "the spec lists seven of its own");
+    for (i, (line, (name, words))) in numbered.iter().zip(&STATED[3..]).enumerate() {
+        assert!(
+            line.starts_with(&format!("{}. {words}", i + 1)),
+            "the spec's invariant {} is {line:?}, which {name} does not check",
+            i + 1
+        );
+    }
+    // The harness checks the ten first, in this order.
+    let names: Vec<&str> = TaxAmm::invariants().iter().map(|i| i.name).collect();
+    let stated: Vec<&str> = STATED.iter().map(|(name, _)| *name).collect();
+    assert_eq!(&names[..10], &stated[..], "the ten come first, in order");
+    assert_eq!(INVARIANTS, stated[..]);
 }
 
 /// What a market's shape covers, for the run's tally.
@@ -254,7 +420,10 @@ fn each_further_bump_costs_a_payout_the_same(token_program: Pubkey) {
     // Comparing keys stops at their first differing byte, so a few units also depend on
     // the addresses.
     let near = |measured: u64, expected: u64| measured.abs_diff(expected) <= 100;
-    assert!(near(creating[1].0 - creating[0].0, 5 * 3 * ceilings::BUMP_TRY));
+    assert!(near(
+        creating[1].0 - creating[0].0,
+        5 * 3 * ceilings::BUMP_TRY
+    ));
     assert!(near(existing[1].0 - existing[0].0, 5 * ceilings::BUMP_TRY));
     // The search the ceilings leave out is what the bumps cost, and within the ceiling
     // once it is left out.
@@ -293,7 +462,10 @@ fn sos_t05_a_token_account_address_holding_only_lamports_is_created_and_counted_
     let caller = Keypair::new();
     env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
     let meta = env.distribute(&market, &caller, 0).unwrap();
-    assert!(!env.svm.get_account(&account).unwrap().data.is_empty(), "created");
+    assert!(
+        !env.svm.get_account(&account).unwrap().data.is_empty(),
+        "created"
+    );
     assert_eq!(search, 5 * 3 * ceilings::BUMP_TRY);
     assert!(strategy_compute(&meta.logs)[0] - search <= ceilings::DISTRIBUTE);
 }
@@ -389,7 +561,11 @@ fn sos_t02_instructions_that_never_call_the_hook_are_measured_on_hooked_markets(
     };
     assert_eq!(
         measured(&mut world, buy),
-        ["pipeline_resolve_accounts", "pipeline_quote", "pipeline_swap"]
+        [
+            "pipeline_resolve_accounts",
+            "pipeline_quote",
+            "pipeline_swap"
+        ]
     );
     // Out of the hooked mint: the tax AMM's transfer calls the hook, so the swap goes
     // unmeasured, and its quote does not.
@@ -424,4 +600,77 @@ fn sos_t02_instructions_that_never_call_the_hook_are_measured_on_hooked_markets(
     ] {
         assert!(world.max_costs.contains_key(name), "{name} is recorded");
     }
+}
+
+/// Hardening finding T08 (#67): `every_holder_can_exit` quoted every wallet's holding again
+/// after every step, the same quote for each wallet holding the same amount. Every quote
+/// in one check is of the same state, so each `(mint, amount)` is now simulated once.
+#[test]
+fn sos_t08_wallets_holding_the_same_amounts_share_one_quote_in_the_exit_check() {
+    let shape = Shape {
+        mints: [SplToken, SplToken],
+        tax_side: 1,
+        ranges: [[0, 1_000], [0, 1_000]],
+        rates: [300, 300],
+        recipients: 1,
+        weights: [1, 1, 1, 1, 1],
+        burn: false,
+        tax_authority: false,
+        virtual_side: 0,
+        virtual_reserve: 0,
+        seed: [1_000_000_000, 1_000_000_000],
+        creation: CreateAndSeed,
+        keys: 0,
+    };
+    let world = TaxAmm::world(&shape).unwrap();
+    let mut held: Vec<(usize, u64)> = vec![];
+    for wallet in world.wallets() {
+        for input in 0..2 {
+            let amount = world.holding(&wallet, input);
+            if amount > 0 {
+                held.push((input, amount));
+            }
+        }
+    }
+    let distinct: std::collections::BTreeSet<_> = held.iter().copied().collect();
+    assert!(
+        distinct.len() < held.len(),
+        "the traders start with the same holdings"
+    );
+    let snapshot = TaxAmm::snapshot(&world);
+    let outcome = TaxAmm::start(&world);
+    let exit = TaxAmm::invariants()
+        .into_iter()
+        .find(|i| i.name == "every_holder_can_exit")
+        .unwrap();
+    let before = world.quotes_simulated.get();
+    (exit.check)(&harness::fuzz::Checked {
+        world: &world,
+        before: &snapshot,
+        after: &snapshot,
+        outcome: &outcome,
+    })
+    .unwrap();
+    // Every holding sells whole on this market, so nothing quotes at an edge.
+    assert_eq!(world.quotes_simulated.get() - before, distinct.len() as u64);
+}
+
+/// Hardening finding T04 (#67): a default run's tallies are checked, so a shape, a step's
+/// outcome or an instruction's measurement that a change made unreachable fails the run.
+#[test]
+#[should_panic(
+    expected = "the run never reached: [\"seed: ZeroSeed\", \"pipeline_seed_liquidity\"]"
+)]
+fn sos_t04_a_path_the_fuzzer_stopped_reaching_fails_the_run() {
+    let shapes = SHAPES_REACHED
+        .map(|feature| (feature.to_string(), 1))
+        .into();
+    let mut tally: BTreeMap<String, u32> = OUTCOMES_REACHED
+        .map(|outcome| (outcome.to_string(), 1))
+        .into();
+    tally.remove("seed: ZeroSeed");
+    let mut max_costs: BTreeMap<&'static str, u64> =
+        ceilings::ALL.iter().map(|(name, _)| (*name, 1)).collect();
+    max_costs.remove("pipeline_seed_liquidity");
+    every_shape_and_outcome_was_reached(&shapes, &tally, &max_costs);
 }

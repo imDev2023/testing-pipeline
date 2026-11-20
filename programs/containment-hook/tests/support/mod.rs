@@ -14,7 +14,6 @@
 pub mod common;
 
 pub mod ceilings;
-pub mod fuzz;
 
 use std::path::PathBuf;
 
@@ -326,22 +325,9 @@ pub fn edit_account(
 
 /// A wallet's associated token account for a Token-2022 mint, created by the admin.
 pub fn token_2022_account(env: &mut Env, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
-    let account = pda::associated_token(owner, mint, &TOKEN_2022);
-    let data = [1u8]; // CreateIdempotent
-    let create = Instruction::new_with_bytes(
-        client::ASSOCIATED_TOKEN_PROGRAM_ID,
-        &data,
-        vec![
-            AccountMeta::new(env.admin.pubkey(), true),
-            AccountMeta::new(account, false),
-            AccountMeta::new_readonly(*owner, false),
-            AccountMeta::new_readonly(*mint, false),
-            AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
-            AccountMeta::new_readonly(TOKEN_2022, false),
-        ],
-    );
+    let create = create_token_account_idempotent(&env.admin.pubkey(), owner, mint, &TOKEN_2022);
     env.send(&[create], &[]).unwrap();
-    account
+    pda::associated_token(owner, mint, &TOKEN_2022)
 }
 
 /// Mints `amount` of a Token-2022 `mint` into `account`, signed by the admin as mint

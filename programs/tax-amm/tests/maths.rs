@@ -11,6 +11,10 @@ use tax_amm::pricing::{curve_out, exact_in, tax_of, Fill, MarketView, Sides, Tax
 use tax_amm::split::split_tax;
 use tax_amm::StrategyError;
 
+#[path = "common/wide.rs"]
+mod wide;
+use wide::wide_mul;
+
 const CASES: u32 = 10_000;
 /// For properties of trades that must succeed for the property to say anything: about a
 /// quarter to a half of random cases price every trade they compare, so four times the
@@ -18,29 +22,10 @@ const CASES: u32 = 10_000;
 const PAIRED_CASES: u32 = 4 * CASES;
 const BPS: u128 = 10_000;
 
-/// `a × b` exactly, as eight 32-bit digits, most significant first, so products of
-/// effective reserves, which can pass 2^128, compare exactly. Schoolbook multiplication on
-/// small digits: deliberately not the program's own 256-bit product, so a mistake there
-/// can't hide behind the same mistake here.
-fn wide_mul(a: u128, b: u128) -> [u64; 8] {
-    let digits = |x: u128| -> [u64; 4] { std::array::from_fn(|i| ((x >> (32 * i)) as u32) as u64) };
-    let (a, b) = (digits(a), digits(b));
-    let mut product = [0u64; 8];
-    for i in 0..4 {
-        let mut carry = 0u64;
-        for j in 0..4 {
-            let column = product[i + j] + a[i] * b[j] + carry;
-            product[i + j] = column & 0xffff_ffff;
-            carry = column >> 32;
-        }
-        product[i + 4] += carry;
-    }
-    product.reverse();
-    product
-}
-
+/// The one reference product the tests compare reserves with (`common/wide.rs`), which the
+/// invariant fuzzer also uses since hardening finding T09 (#67) removed its untested copy.
 #[test]
-fn the_reference_product_is_exact() {
+fn sos_t09_the_one_reference_product_is_exact() {
     // (2^128 - 1)^2 = 2^256 - 2^129 + 1.
     let max = 0xffff_ffff;
     assert_eq!(

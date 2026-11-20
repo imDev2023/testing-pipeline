@@ -9,16 +9,18 @@
 //! `PROPTEST_CASES` and `FUZZ_STEPS` change that, `FUZZ_THREADS` the threads, and
 //! `FUZZ_INVARIANTS` checks only the invariants it names.
 
+#[path = "support/fuzzing.rs"]
+mod fuzzing;
 mod support;
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use support::common::fuzz::tax::*;
-use support::common::fuzz::{fuzz_in_parallel, replay, sizes, threads, Product};
-use support::fuzz::*;
+use fuzzing::fuzz::*;
+use fuzzing::harness::fuzz::tax::*;
+use fuzzing::harness::fuzz::{fuzz_in_parallel, replay, sizes, threads, Product};
 // Both products name these; the hook's are meant here.
-use support::fuzz::{self as hook};
+use fuzzing::fuzz::{self as hook};
 use support::mint_hook;
 
 #[test]
@@ -78,7 +80,7 @@ fn the_eight_invariants_are_the_specs() {
         .map(|i| i.name)
         .collect();
     // The bar's three come first, as the tax AMM checks them.
-    assert_eq!(&names[..3], &support::common::fuzz::tax::INVARIANTS[..3]);
+    assert_eq!(&names[..3], &fuzzing::harness::fuzz::tax::INVARIANTS[..3]);
     // Then the hook's five, after the rest of the tax AMM's, in the spec's order.
     let at = names
         .iter()
