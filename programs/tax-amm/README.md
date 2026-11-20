@@ -28,9 +28,18 @@ Each block in the register says what else was weighed, the one place the value l
 
 ## On devnet
 
-Not deployed yet.
-The program id is `J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t` ([TAX-29](../../docs/decisions.md#tax-29-program-id)); the first deploy, its registration with the router and the demo market are recorded in [`deployments/devnet.json`](../../deployments/devnet.json) once they happen.
+Deployed and registered with Pipeline's router on devnet on 2026-11-20.
+
+| | |
+| --- | --- |
+| Program | `J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t` ([TAX-29](../../docs/decisions.md#tax-29-program-id)) |
+| Verified build | executable hash `a48b5e5962290aafe35ced955d0a8a8d6cb5cb63bd0be435fc87935d6c05db59`, the `solana-verify` Docker build of `274038e` on `main`, recorded in [`deployments/devnet.json`](../../deployments/devnet.json) |
+| Upgrade authority | `Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe`, the project's one devnet upgrade authority |
+| Demo market | `C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w`: a demo token against wrapped SOL, taxed in wrapped SOL, 3% buy and 5% sell, two tax recipients, a tax authority ([TAX-53](../../docs/decisions.md#tax-53-the-devnet-demo-market)) |
+| Conformance | [`conformance/devnet.json`](conformance/devnet.json), `pipeline-check` 0.2.0 on the demo market: 13 pass, 0 warn, 0 fail, `exact_out_refund` skipped |
+
 It stays upgradeable on devnet under one project upgrade authority, and Aviary shows it as upgradeable by a single key, like anyone else's strategy.
+To check the deploy yourself, rebuild `274038e` with `solana-verify build --library-name tax_amm --arch v3` and compare its hash with `solana-verify get-program-hash -u devnet J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t`.
 
 ## Using it
 
