@@ -90,7 +90,7 @@
 //   node demo.ts --cluster <localnet|devnet|URL> \
 //     --payer <keypair.json> --upgrade-authority <keypair.json> \
 //     [--metadata-uri <URI>] [--program-id <address>] [--register-only]
-//     [--metadata-not-yet-public] [--market <market state>] [--record <file>]
+//     [--metadata-not-yet-public] [--market <market state> [--trade-only]] [--record <file>]
 //
 //   --cluster            localnet (http://127.0.0.1:8899), devnet, or an RPC URL of either;
 //                        the cluster's genesis hash must be devnet's, or the URL a local
@@ -110,6 +110,9 @@
 //                        (TAX-54)
 //   --market             the market state of a market an earlier run created: trade it and
 //                        run its keeper jobs again instead of creating one
+//   --trade-only         with --market, stop after step 7's buy and sell, so the market is
+//                        left with its keeper jobs due (fees owed, tokens retired), as the
+//                        release gate's fixture of a real market wants it
 //   --record             also write what the run did (addresses and signatures) to a file
 //
 // On devnet the metadata URI must resolve and pass Pipeline's validator with zero warnings
@@ -297,6 +300,7 @@ const { values: options } = parseArgs({
         'register-only': { type: 'boolean', default: false },
         'metadata-not-yet-public': { type: 'boolean', default: false },
         market: { type: 'string' },
+        'trade-only': { type: 'boolean', default: false },
         record: { type: 'string' },
     },
     strict: true,
@@ -305,7 +309,7 @@ const { values: options } = parseArgs({
 function usage(message: string): never {
     console.error(`${message}\n`);
     console.error(
-        'Usage: node demo.ts --cluster <localnet|devnet|URL> --payer <keypair.json> --upgrade-authority <keypair.json> [--metadata-uri <URI>] [--program-id <address>] [--register-only] [--metadata-not-yet-public] [--market <market state>] [--record <file>]',
+        'Usage: node demo.ts --cluster <localnet|devnet|URL> --payer <keypair.json> --upgrade-authority <keypair.json> [--metadata-uri <URI>] [--program-id <address>] [--register-only] [--metadata-not-yet-public] [--market <market state> [--trade-only]] [--record <file>]',
     );
     process.exit(2);
 }
@@ -335,6 +339,7 @@ const onDevnet = !cluster.local;
 // An earlier run's market, traded again (after an upgrade), or a new one.
 const revisit = options.market === undefined ? null : address(options.market);
 if (revisit && options['register-only']) usage('--market and --register-only do not go together');
+if (options['trade-only'] && !revisit) usage('--trade-only needs --market');
 
 // Public RPC endpoints rate-limit bursts (HTTP 429); retry those with back-off.
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
@@ -1857,6 +1862,13 @@ async function main() {
     if (!revisit && sold.spec.sqrtPrice !== WORKED.sellSqrtPrice) fail(`sell: the spec's formulas move the price to ${sold.spec.sqrtPrice}, not ${WORKED.sellSqrtPrice}`);
     if (sold.moved.kind !== 'trimmed') fail(`sell: the spec's formulas give "${sold.moved.kind}" for the cap, not "trimmed"`);
     info(`the guard: reference ${books.guard.reference}, floor ${books.guard.floor}, as the spec's steps give for these trades`);
+    if (options['trade-only']) {
+        info(`--trade-only: the keeper jobs are left due (${books.retiredTokens} units retired, ${books.feesRecipient} / ${books.feesDesigner} / ${books.feesSuite} lamports of fees owed, ${books.idleSol} idle)`);
+        await checkBooks('trading', view, books, true);
+        record.push(['market state after trading', "equal to the spec's formulas, its keeper jobs due"]);
+        finish();
+        return;
+    }
 
     step('8. Placing the buy wall');
     const placeWallAction = findAction(metadata, 'place_wall') ?? fail('metadata.json has no place_wall action');

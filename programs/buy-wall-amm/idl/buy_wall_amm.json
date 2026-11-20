@@ -2,7 +2,7 @@
   "address": "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6",
   "metadata": {
     "name": "buy_wall_amm",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "spec": "0.1.0",
     "description": "A Pipeline strategy whose markets own their liquidity: a token against wrapped SOL on a constant-product curve with an inventory cap and a buy wall below the price, a port of IMD's Pool4 design",
     "repository": "https://github.com/imDev2023/testing-pipeline"

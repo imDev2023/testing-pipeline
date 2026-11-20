@@ -609,8 +609,23 @@ pnpm demo --cluster devnet --payer ... --upgrade-authority ... \
 ```
 
 On devnet the demo creates one market, the worked example's (`POOL4-55`), and walks its whole life through the router: the two trades of the worked example, the wall placed and sold into, `settle`, both handovers, `pay_rewards` and `sweep_fees` for slots 0 and 2 with slot 1 refused; after every step it reads the whole market state back against the spec's formulas, and at the end it checks Pipeline's hosted API quotes the market both ways at the program's own quotes.
-After the deploy, `cargo run -p buy-wall-gate -- snapshot --cluster devnet --out programs/buy-wall-amm/gate/fixtures/layout-1-devnet.json` saves the demo market as layout version 1's fixture from a real market (`POOL4-20`).
+After the deploy, `pnpm demo --cluster devnet ... --market <the demo market's state> --trade-only` buys and sells once more and leaves every keeper job due, and `cargo run -p buy-wall-gate -- snapshot --cluster devnet --out programs/buy-wall-amm/gate/fixtures/layout-1-devnet.json` saves that market, with its jobs due, as layout version 1's fixture from a real market (`POOL4-20`); the gate's stranding test needs each fixture to hold a market whose fee slot 2 the deployed build sweeps.
 After an upgrade, `pnpm demo --cluster devnet ... --market <the demo market's state>` trades the market and runs its keeper jobs again from its state as read (`POOL4-56`), and `pipeline-check` runs against it again.
+
+Done on 2026-11-20 from `main` at `a941f9c`.
+- The verified build's executable hash was `89093fa7feed9f6400cb8b405e0bfe094c1d04327a231b7d1fed449d3c14dac9` (8 minutes in Docker), and all 226 buy wall AMM tests passed on those exact bytes.
+- The gate passed it on devnet, with no market there yet and one of its own.
+- `deploy-devnet.sh` ran the pre-deploy check, which found that pass, and deployed over TPU in slot 524,228,154; `solana-verify get-program-hash -u devnet` gave the same hash.
+- The devnet demo then passed in 86 seconds:
+  - the market was created and seeded in one 1,058-byte transaction;
+  - the worked example's buy of 1 SOL delivered 90,081,892,629 units, and its sell back 980,099,999 lamports, trimming 39,351,849 units;
+  - `place_wall` was refused below the threshold, then after a second buy tipped 123,535 lamports and placed 12,229,983 lamports;
+  - the sell into the wall delivered 1,174,222,146 lamports;
+  - `settle` burned 20,030,661,544 units and owed 9,722,222 to the rewards;
+  - both handovers went through, `pay_rewards` paid 9,722,222 units, and slots 0 and 2 swept 16,704,332 and 4,176,083 lamports, with slot 1 refused with `RecipientUnset`;
+  - Pipeline's hosted API quoted a buy of 96,235,009 lamports at 9,814,543,806 units and a sell of 9,999,596,162 units at 94,215,275 lamports, exactly the program's quotes on the same state.
+- `pipeline-check --fail-on-warn` on the demo market reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped.
+- A `pipeline-check` copied from another worktree failed with `getSlot: error sending request` until it was run from the path LuLu already allowed ("Known problems").
 
 ## Local validator
 
@@ -648,6 +663,8 @@ Two things to know:
 - **Helius devnet and the smoke script.**
   With `RPC_URL` and `WS_URL` on Helius devnet, the script sent its first transaction, which landed, and then waited for its confirmation for over ten minutes before it was stopped; not diagnosed, so use public devnet for the script.
 - **Platform tools v1.58 has no Intel macOS build**, so on this Mac `cargo build-sbf` must run on v1.57, which has the same Rust (1.95.0) and builds sBPF v3; the wrapper `toolchain-env.sh` puts first does this (see Install).
+- **LuLu, the Mac's outbound firewall, allows binaries by path.**
+  A binary copied or built at a new path, such as `fixtures/pipeline/target/release/pipeline-check` copied into a new worktree, fails its first RPC call (`getSlot: error sending request`) until the owner allows it; run the copy LuLu already allows, or ask the owner to allow the new one.
 - **Downloads from GitHub are flaky on this network**: `gh` calls hit TLS timeouts and connection resets; retry.
 - **`Invalid syscall code 131074`.**
   `cargo build-sbf` 4.6.0 on platform tools v1.57 prints `WARN cargo_build_sbf::post_processing] Invalid syscall code 131074` for every Anchor program built here, Pipeline's own `test-strategy-cp` included (its native `test-hook` does not print it).
