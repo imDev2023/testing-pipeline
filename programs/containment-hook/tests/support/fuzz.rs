@@ -771,7 +771,7 @@ impl HookWorld {
             |action, expected, sent: &Result<litesvm::types::TransactionMetadata, String>| {
                 let result = match sent {
                     Ok(_) => Ok(()),
-                    Err(failure) => Err(tax::refusal(failure)),
+                    Err(failure) => Err(tax::refusal_by(failure, &super::hook_id())),
                 };
                 let logs = sent.as_ref().map(|m| m.logs.clone()).unwrap_or_default();
                 (HookResult::of(action, expected, result), logs)

@@ -392,7 +392,6 @@ pub struct TaxWorld {
     /// The launchpad's seeder PDA, which owns its escrows.
     pub launch_seeder: Option<Pubkey>,
     pub pool: Vec<Keypair>,
-    pub hooked: bool,
     /// Every token the world wrote into accounts, by mint.
     pub created: [u128; 2],
     /// What the burn slot was owed each time it was paid out, by mint.
@@ -408,7 +407,8 @@ pub struct TaxWorld {
     pub other_accounts: Vec<(usize, Pubkey)>,
     /// The strategy accounts a swap in each direction needs, `[0 -> 1, 1 -> 0]`.
     resolved: [Vec<AccountMeta>; 2],
-    /// The most compute each instruction took, on markets without a hooked mint.
+    /// The most compute each instruction took, but for invocations that called a transfer
+    /// hook ([`own_compute`]).
     pub max_costs: BTreeMap<&'static str, u64>,
     /// How many steps did what, by [`Outcome::label`].
     pub tally: BTreeMap<String, u32>,
@@ -526,20 +526,49 @@ fn shares_of(used: usize, weights: &[u16; 5], burn: bool) -> ([u16; MAX_RECIPIEN
     (shares, burn_share)
 }
 
-/// The error's name from a refused transaction's logs, or the whole failure. A token
-/// program's refusal of a transfer bigger than its source holds is `InsufficientFunds`.
+/// The tax AMM's refusal in a refused transaction, by the name the spec gives it
+/// ([`refusal_by`]).
 pub fn refusal(failure: &str) -> String {
-    failure
-        .split("Error Code: ")
-        .nth(1)
-        .and_then(|rest| rest.split('.').next())
-        .map(str::to_string)
-        .or_else(|| {
-            failure
-                .contains("Program log: Error: insufficient funds")
-                .then(|| "InsufficientFunds".to_string())
-        })
-        .unwrap_or_else(|| failure.to_string())
+    refusal_by(failure, &strategy_id())
+}
+
+/// The name of the error that refused a transaction, when `program` raised it: the program
+/// whose failure comes first in the logs, the innermost, failed with that error's number.
+/// An Anchor error another program raised is `<name> from <program>`, so it can never pass
+/// for one of `program`'s under the same name (hardening finding T01, #67). A token
+/// program's refusal of a transfer bigger than its source holds is `InsufficientFunds`;
+/// anything else is the whole failure.
+pub fn refusal_by(failure: &str, program: &Pubkey) -> String {
+    let anchor = failure.split("Error Code: ").nth(1).and_then(|rest| {
+        let name = rest.split('.').next()?;
+        let number = rest
+            .split("Error Number: ")
+            .nth(1)?
+            .split('.')
+            .next()?
+            .parse::<u32>()
+            .ok()?;
+        Some((name, number))
+    });
+    // `Program <id> failed: custom program error: 0x<code>`, from the innermost failure.
+    let raised = failure.lines().find_map(|line| {
+        let rest = line.strip_prefix("Program ")?;
+        let (id, code) = rest.split_once(" failed: custom program error: 0x")?;
+        Some((id, u32::from_str_radix(code.trim(), 16).ok()?))
+    });
+    match (anchor, raised) {
+        (Some((name, number)), Some((id, code))) if number == code => {
+            if id == program.to_string() {
+                name.to_string()
+            } else {
+                format!("{name} from {id}")
+            }
+        }
+        _ if failure.contains("Program log: Error: insufficient funds") => {
+            "InsufficientFunds".to_string()
+        }
+        _ => failure.to_string(),
+    }
 }
 
 fn named<T>(result: &Result<T, String>) -> Result<(), String> {
@@ -700,10 +729,6 @@ impl TaxWorld {
             virtual_side: shape.virtual_side,
             virtual_reserve: shape.virtual_reserve,
         };
-        let hooked = shape
-            .mints
-            .iter()
-            .any(|kind| matches!(kind, MintKind::Hooked | MintKind::Outside));
         let mut created = shape.seed.map(|seed| seed as u128);
         let mut costs = vec![];
         let mut launch_seeder = None;
@@ -719,11 +744,7 @@ impl TaxWorld {
                 env.fund(&seeder.pubkey(), &market, shape.seed);
                 if shape.creation == Creation::CreateAndSeed {
                     let seeded = env.seed(&market, &seeder, shape.seed)?;
-                    costs.extend(
-                        strategy_compute(&seeded.logs)
-                            .into_iter()
-                            .map(|c| ("seed", c)),
-                    );
+                    costs.extend(costs_of(&seeded.logs, "seed"));
                 }
                 market
             }
@@ -793,7 +814,6 @@ impl TaxWorld {
             seeder,
             launch_seeder,
             pool,
-            hooked,
             created,
             burned: [0, 0],
             donated: [0, 0],
@@ -883,12 +903,9 @@ impl TaxWorld {
         }
     }
 
-    /// Records each instruction's compute in [`TaxWorld::max_costs`], on markets without a
-    /// hooked mint, whose hook's cost is the hook's own to bound.
+    /// Records each instruction's compute in [`TaxWorld::max_costs`]; an invocation that
+    /// called a transfer hook was never measured ([`own_compute`]).
     fn record(&mut self, costs: &[(&'static str, u64)]) {
-        if self.hooked {
-            return;
-        }
         for &(name, cost) in costs {
             let max = self.max_costs.entry(name).or_default();
             *max = (*max).max(cost);
@@ -1351,19 +1368,62 @@ pub fn create_token_account_idempotent(
 }
 
 /// The two strategy invocations of a market's creation: `first`, then
-/// `pipeline_market_info`, which the router calls when it records the market.
+/// `pipeline_market_info`, which the router calls when it records the market; each left out
+/// when it called a transfer hook ([`own_compute`]).
 fn creation_costs(logs: &[String], first: &'static str) -> Vec<(&'static str, u64)> {
-    let costs = strategy_compute(logs);
+    let costs = own_compute(logs);
     assert_eq!(costs.len(), 2, "{logs:?}");
-    vec![(first, costs[0]), ("pipeline_market_info", costs[1])]
+    [first, "pipeline_market_info"]
+        .into_iter()
+        .zip(costs)
+        .filter_map(|(name, cost)| Some((name, cost?)))
+        .collect()
 }
 
-/// The compute of the one tax AMM instruction in a transaction.
+/// The compute of the one tax AMM instruction in a transaction, unless it called a transfer
+/// hook ([`own_compute`]).
 fn costs_of(logs: &[String], name: &'static str) -> Vec<(&'static str, u64)> {
-    strategy_compute(logs)
+    own_compute(logs)
         .into_iter()
+        .flatten()
         .map(|cost| (name, cost))
         .collect()
+}
+
+/// The compute each tax AMM invocation in a transaction consumed, in order, or `None` for
+/// one that called a program other than the token programs, the associated token program
+/// and the system program: a mint's transfer hook, whose cost is the hook's own to bound
+/// (docs/spec/tax-amm.md, "Compute ceilings"). So a market with a hooked mint has every
+/// instruction that never calls the hook measured (hardening finding T02, #67).
+pub fn own_compute(logs: &[String]) -> Vec<Option<u64>> {
+    let strategy = strategy_id().to_string();
+    let own_calls = [
+        TOKEN.to_string(),
+        TOKEN_2022.to_string(),
+        pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID.to_string(),
+        pipeline_client::SYSTEM_PROGRAM_ID.to_string(),
+    ];
+    let invoke = format!("Program {strategy} invoke [");
+    let consumed = format!("Program {strategy} consumed ");
+    let mut costs = vec![];
+    let mut inside: Option<bool> = None;
+    for line in logs {
+        if line.starts_with(&invoke) {
+            inside = Some(false);
+        } else if let Some(rest) = line.strip_prefix(&consumed) {
+            let cost = rest.split(' ').next().unwrap().parse().unwrap();
+            let called_outside = inside.take().expect("an invocation before its cost");
+            costs.push((!called_outside).then_some(cost));
+        } else if let Some(called) = inside.as_mut() {
+            if let Some((program, _)) = line
+                .strip_prefix("Program ")
+                .and_then(|rest| rest.split_once(" invoke ["))
+            {
+                *called |= !own_calls.iter().any(|own| own == program);
+            }
+        }
+    }
+    costs
 }
 
 impl Product for TaxAmm {
@@ -1931,12 +1991,10 @@ fn each_step_is_the_specs(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     Ok(())
 }
 
-/// The limits layer: every instruction a step ran stayed under its compute ceiling, on
-/// markets without a hooked mint (a hook's cost is the hook's own to bound).
+/// The limits layer: every instruction a step ran stayed under its compute ceiling, but for
+/// an invocation that called a transfer hook, whose cost is the hook's own to bound
+/// ([`own_compute`]).
 fn compute_stays_under_its_ceilings(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
-    if c.world.hooked {
-        return Ok(());
-    }
     for &(name, cost) in &c.outcome.costs {
         let ceiling = super::super::ceilings::of(name);
         ensure!(

@@ -56,7 +56,7 @@ fn the_invariants_hold_after_every_step_of_every_sequence() {
     for (name, ceiling) in ceilings::ALL {
         match max_costs.get(name) {
             Some(cost) => println!("{name}: at most {cost} CU of its {ceiling}"),
-            None => println!("{name}: not called on a market without a hooked mint"),
+            None => println!("{name}: not measured, never called without a transfer hook"),
         }
     }
 }
@@ -241,4 +241,132 @@ fn each_further_bump_of_the_slot_wallets_address_costs_a_payout_the_same() {
     // Within the ceiling once the search beyond the first bump is left out.
     assert!(creating[1] - 5 * 3 * ceilings::BUMP_TRY <= ceilings::DISTRIBUTE);
     assert!(existing[1] - 5 * ceilings::BUMP_TRY <= ceilings::DISTRIBUTE);
+}
+
+/// Hardening finding T01 (#67, docs/security/tax-amm/round-1.md): the fuzzer took the first
+/// `Error Code:` name in a failure's logs as the spec's refusal, whichever program raised it,
+/// so a refusal by the router or a hook under one of the spec's names would have passed as the
+/// tax AMM's. A refusal is now the spec's only when the tax AMM raised it with that error's
+/// number.
+#[test]
+fn sos_t01_a_refusal_raised_by_another_program_is_never_taken_for_the_strategys() {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN), TOKEN),
+    ];
+    let params = valid_params(&Pubkey::new_unique());
+    let market = env.seeded_market(mints, &params, [1_000_000_000, 1_000_000_000]);
+    let trader = env.funded_wallet(&market, 1_000_000_000);
+
+    // The router refuses a swap that would pay less than its minimum.
+    let quote = env.quote(&market, &exact_in(0, 1, 1_000_000)).unwrap();
+    let options = SwapOptions {
+        min_amount_out: quote.amount_out + 1,
+        ..SwapOptions::default()
+    };
+    let failure = env
+        .swap_with(&market, &trader, (0, 1), 1_000_000, &options)
+        .unwrap_err();
+    let named = failure
+        .split("Error Code: ")
+        .nth(1)
+        .and_then(|rest| rest.split('.').next())
+        .expect("the router names its error")
+        .to_string();
+    let router = pipeline_client::PROGRAM_ID.to_string();
+    assert_eq!(
+        refusal(&failure),
+        format!("{named} from {router}"),
+        "a refusal by the router names the router"
+    );
+
+    // The tax AMM's own refusal, raised inside the router's swap, keeps its bare name.
+    let dust = env
+        .swap_with(&market, &trader, (0, 1), 1, &SwapOptions::default())
+        .unwrap_err();
+    assert_eq!(refusal(&dust), "ZeroOutput");
+}
+
+/// Hardening finding T02 (#67): the fuzzer checked no compute on a market with a hooked mint,
+/// although most instructions there never call the hook (the tax authority's actions,
+/// quotes, a swap paying out the unhooked mint, `distribute` on the unhooked side), about a
+/// third of all shapes. Now only an invocation that called a program of the mint's own
+/// (its hook) goes unmeasured, since a hook's cost is the hook's own to bound.
+#[test]
+fn sos_t02_instructions_that_never_call_the_hook_are_measured_on_hooked_markets() {
+    let shape = Shape {
+        mints: [Hooked, SplToken],
+        tax_side: 1,
+        ranges: [[0, 1_000], [0, 1_000]],
+        rates: [300, 300],
+        recipients: 1,
+        weights: [1, 1, 1, 1, 1],
+        burn: false,
+        tax_authority: true,
+        virtual_side: 0,
+        virtual_reserve: 0,
+        seed: [1_000_000_000, 1_000_000_000],
+        creation: CreateAndSeed,
+        keys: 0,
+    };
+    let mut world = TaxAmm::world(&shape).unwrap();
+    let measured = |world: &mut TaxWorld, step: Step| -> Vec<&'static str> {
+        let outcome = TaxAmm::apply(world, &step);
+        assert!(outcome.result.is_ok(), "{step:?}: {outcome:?}");
+        outcome.costs.iter().map(|&(name, _)| name).collect()
+    };
+    let set_taxes = SetTaxes {
+        who: TaxAuthority,
+        buy: Exactly(100),
+        sell: Exactly(200),
+    };
+    assert_eq!(measured(&mut world, set_taxes), ["set_taxes"]);
+    // Into the hooked mint, out of the unhooked one: the router moves the hooked input,
+    // the tax AMM's own transfer is of the unhooked mint.
+    let buy = Swap {
+        wallet: 0,
+        input: 0,
+        size: Part {
+            mantissa: 1,
+            exp: 4,
+        },
+    };
+    assert_eq!(
+        measured(&mut world, buy),
+        ["pipeline_resolve_accounts", "pipeline_quote", "pipeline_swap"]
+    );
+    // Out of the hooked mint: the tax AMM's transfer calls the hook, so the swap goes
+    // unmeasured, and its quote does not.
+    let sell = Swap {
+        wallet: 0,
+        input: 1,
+        size: Part {
+            mantissa: 1,
+            exp: 4,
+        },
+    };
+    assert_eq!(
+        measured(&mut world, sell),
+        ["pipeline_resolve_accounts", "pipeline_quote"]
+    );
+    let payout = Distribute {
+        slot: 0,
+        caller: 0,
+        wrong_wallet: false,
+    };
+    assert_eq!(measured(&mut world, payout), ["distribute"]);
+    // The creation reads the hooked mint but calls nothing of it; the seed moves it in.
+    assert!(!world.max_costs.contains_key("seed"));
+    for name in [
+        "pipeline_init_market",
+        "pipeline_market_info",
+        "set_taxes",
+        "pipeline_resolve_accounts",
+        "pipeline_quote",
+        "pipeline_swap",
+        "distribute",
+    ] {
+        assert!(world.max_costs.contains_key(name), "{name} is recorded");
+    }
 }
