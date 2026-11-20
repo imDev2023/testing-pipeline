@@ -177,7 +177,7 @@ if run toy; then
   price="$(sed -n 's/^DEVNET_COMPUTE_UNIT_PRICE=//p' "$DEPLOY")"
   # Its writes go to the validators over TPU: public devnet's RPC dropped most of them.
   if [ -n "$attempts" ] && [ -n "$price" ] && [[ "$deploy_call" == *"--max-sign-attempts $attempts "* && "$deploy_call" == *"--with-compute-unit-price $price "* && "$deploy_call" != *"--use-rpc"* ]]; then
-    pass "a devnet deploy resends dropped writes and pays a priority fee"
+    pass "a devnet deploy resends dropped writes, pays a priority fee and sends its writes over TPU, not through the RPC"
   else
     fail "deploy call without retries or a priority fee, or through the RPC: $deploy_call"
   fi
@@ -216,6 +216,16 @@ git -C "$repo" checkout -q -- deployments 2>/dev/null || rm -f "$repo/deployment
 ALREADY_DEPLOYED=1 FAKE_PROGRAM_HASH=3333 expect_refused "an on-chain hash other than the build's" "does not match" toy
 ALREADY_DEPLOYED=1 FAKE_AUTHORITY_AFTER=$WALLET expect_refused "an upgrade authority other than upgrade-authority.json" "not upgrade-authority.json's" toy
 [ ! -f "$repo/deployments/devnet.json" ] || fail "a failed check still wrote the record"
+
+# --send-via rpc sends the writes through the RPC instead, where a network blocks TPU.
+rm -f "$repo/deployments/devnet.json"
+if run toy --send-via rpc && [[ "$(grep "program deploy" "$work/calls")" == *"--use-rpc"* ]]; then
+  pass "--send-via rpc sends a devnet deploy's writes through the RPC"
+else
+  fail "--send-via rpc: $(cat "$work/out") / $(grep "program deploy" "$work/calls")"
+fi
+rm -f "$repo/deployments/devnet.json"
+expect_refused "a transport other than tpu or rpc" "--send-via" toy --send-via carrier-pigeon
 
 # A local validator: no main or genesis checks needed, and the record goes where --record says.
 echo "// local" >> "$repo/programs/toy/src/lib.rs"
