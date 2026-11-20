@@ -104,10 +104,11 @@
 //                        metadata URI, as each later deploy does
 //   --metadata-not-yet-public
 //                        on devnet, register or point the strategy at a metadata URI of this
-//                        repo that cannot resolve yet because the repo is still private; the
-//                        URI must be this repo's raw.githubusercontent.com address of this
-//                        program's metadata.json, and the committed copy is checked instead
-//                        (TAX-54)
+//                        repo that cannot be fetched yet because the repo is still private
+//                        (TAX-54): this program's metadata.json on raw.githubusercontent.com at
+//                        main or at a full commit on origin/main (fetched first); the copy that
+//                        URI will serve is checked instead, and a commit's copy must also pin
+//                        the deploy deployments/devnet.json on main records, with its report
 //   --market             the market state of a market an earlier run created: trade it and
 //                        run its keeper jobs again instead of creating one
 //   --trade-only         with --market, stop after step 7's buy and sell, so the market is
@@ -142,6 +143,8 @@ import {
     getBase64EncodedWireTransaction,
     AccountRole,
     getSignatureFromTransaction,
+    isSolanaError,
+    SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR,
     getTransactionEncoder,
     lamports,
     pipe,
@@ -343,16 +346,19 @@ if (options['trade-only'] && !revisit) usage('--trade-only needs --market');
 
 // Public RPC endpoints rate-limit bursts (HTTP 429) and drop connections now and then
 // (`fetch failed`, its cause ETIMEDOUT or ECONNRESET, seen on public devnet on 2026-11-20);
-// retry both with back-off. Every request is safe to repeat: reads, and a signed transaction
-// sent again, which the cluster takes once.
+// retry both with back-off. A transaction sent is never resent here: a dropped connection
+// can come after the node took it, so `send` looks for its signature instead.
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
-const retryable = (error: unknown) => String(error).includes('429') || String(error).includes('fetch failed');
+const rateLimited = (error: unknown) =>
+    isSolanaError(error, SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR) && error.context.statusCode === 429;
+const dropped = (error: unknown) => error instanceof TypeError && error.message === 'fetch failed';
 const retryingTransport = (async (...args: Parameters<typeof baseTransport>) => {
+    const sending = (args[0].payload as { method?: string } | undefined)?.method === 'sendTransaction';
     for (let attempt = 0; ; attempt++) {
         try {
             return await baseTransport(...args);
         } catch (error) {
-            if (attempt >= 8 || !retryable(error)) throw error;
+            if (attempt >= 8 || !(rateLimited(error) || (dropped(error) && !sending))) throw error;
             await sleep(500 * 2 ** attempt);
         }
     }
@@ -437,7 +443,13 @@ async function send(label: string, feePayer: KeyPairSigner, instructions: Instru
         fail(`${label} is ${size} bytes, over the ${TRANSACTION_SIZE_LIMIT}-byte limit; nothing was sent`);
     }
     const signature = getSignatureFromTransaction(signed);
-    await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64' }).send();
+    try {
+        await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64' }).send();
+    } catch (error) {
+        // The node may have taken it before the connection dropped: its signature says.
+        if (!dropped(error)) throw error;
+        info(`${label}: the connection dropped while sending; looking for ${signature}`);
+    }
     await waitFor(label, signature);
     info(`${label}: ${explorer('tx', signature)}`);
     record.push([label, signature]);
@@ -1592,13 +1604,21 @@ async function main() {
         // The copy the link will serve: origin/main's, or the commit's (fetch origin main first
         // if it is new), which must pin the deploy deployments/devnet.json records and carry
         // its report.
-        const git = (args: string[]) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        // From the repo's root wherever the script is run from, after fetching main so the
+        // copy checked is the one the link serves now.
+        const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim();
+        const git = (args: string[]) => execFileSync('git', ['-C', repoRoot, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        try {
+            execFileSync('perl', ['-e', 'alarm 120; exec @ARGV', 'git', '-C', repoRoot, 'fetch', '-q', 'origin', 'main'], { stdio: 'ignore' });
+        } catch {
+            fail('git fetch origin main failed; the copy the link serves could not be checked (try again)');
+        }
         const ref = at === 'main' ? 'origin/main' : at;
         if (at !== 'main') {
             try {
                 git(['merge-base', '--is-ancestor', at, 'origin/main']);
             } catch {
-                fail(`${at} is not a commit on origin/main (git fetch origin main first if it is new)`);
+                fail(`${at} is not a commit on origin/main`);
             }
         }
         let served: unknown;
@@ -1612,7 +1632,8 @@ async function main() {
             fail(`the metadata.json at ${ref} does not pass the validator with zero warnings: ${copy.ok ? copy.warnings.join('; ') : copy.errors.join('; ')}`);
         }
         if (at !== 'main') {
-            const deployed = JSON.parse(readFileSync(new URL('../../../deployments/devnet.json', import.meta.url), 'utf8')).programs?.['buy-wall-amm'];
+            // The deploy main records, not this checkout's copy.
+            const deployed = JSON.parse(git(['show', 'origin/main:deployments/devnet.json'])).programs?.['buy-wall-amm'];
             const pinned = served as { source?: { commit?: string }; conformance?: unknown };
             if (pinned.source?.commit !== deployed?.commit || !pinned.conformance) {
                 fail(`the metadata.json at ${at} pins ${pinned.source?.commit ?? 'no commit'}${pinned.conformance ? '' : ' and no report'}, not the deploy of ${deployed?.commit ?? 'nothing'} with its report`);
@@ -2083,16 +2104,17 @@ async function hostedQuote(view: pipeline.MarketView, input: 0 | 1, output: 0 | 
     const url = `${HOSTED_API}/v1/quote?market=${view.market}&input_mint=${view.mints[input]}&output_mint=${view.mints[output]}&amount=${amount}&mode=exact_in`;
     for (let attempt = 0; ; attempt++) {
         let response: Response;
+        let body: { amount_in: string; amount_out: string; slot: number; strategy_accounts: { address: string }[] } | undefined;
         try {
             response = await fetch(url, { headers: { 'user-agent': 'testing-pipeline-demo' } });
+            if (response.ok) body = (await response.json()) as typeof body;
         } catch (error) {
-            // A dropped connection, as the RPC transport retries.
+            // A dropped connection, before or during the body, as the RPC transport retries.
             if (attempt >= 5) throw error;
             await sleep(2_000 * (attempt + 1));
             continue;
         }
-        if (response.ok) {
-            const body = (await response.json()) as { amount_in: string; amount_out: string; slot: number; strategy_accounts: { address: string }[] };
+        if (body) {
             if (BigInt(body.amount_in) !== amount) fail(`the hosted API quoted ${body.amount_in} in, not ${amount}`);
             return { amountOut: BigInt(body.amount_out), slot: body.slot, strategyAccounts: body.strategy_accounts.map((account) => account.address) };
         }
