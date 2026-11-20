@@ -8,14 +8,15 @@
         "cpmm"
     ],
     "links": {
-        "source": "https://github.com/imDev2023/testing-pipeline/tree/main/programs/tax-amm",
-        "idl": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/idl/tax_amm.json",
-        "docs": "https://github.com/imDev2023/testing-pipeline/blob/main/programs/tax-amm/README.md",
+        "source": "https://github.com/imDev2023/testing-pipeline/tree/274038e11e3ac7226a51d4d5c7553f49d6190d4b/programs/tax-amm",
+        "idl": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/274038e11e3ac7226a51d4d5c7553f49d6190d4b/programs/tax-amm/idl/tax_amm.json",
+        "docs": "https://github.com/imDev2023/testing-pipeline/blob/2f7c1e476c2e6bfd093a867f7cbabd1bf542d4aa/programs/tax-amm/README.md",
         "github": "https://github.com/imDev2023/testing-pipeline"
     },
     "source": {
         "repository": "https://github.com/imDev2023/testing-pipeline",
-        "path": "programs/tax-amm"
+        "path": "programs/tax-amm",
+        "commit": "274038e11e3ac7226a51d4d5c7553f49d6190d4b"
     },
     "init": {
         "description": "Creates a tax market for two tokens. The market state is a new keypair, which signs. Add the router's init_fee_account for each mint and the seed action in the same transaction, so the market opens as it is created.",
@@ -642,5 +643,9 @@
         "contact": "https://github.com/imDev2023/testing-pipeline/security/advisories/new",
         "policy": "https://github.com/imDev2023/testing-pipeline/security/policy",
         "audits": []
+    },
+    "conformance": {
+        "report": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/2f7c1e476c2e6bfd093a867f7cbabd1bf542d4aa/programs/tax-amm/conformance/devnet.json",
+        "sha256": "3f3a7784f5a39fea89627deaf461631fbfcea2fbb6eebda46f3a2ba832a61d06"
     }
 }
