@@ -4,42 +4,153 @@ import { posix } from 'node:path';
 
 export const REPO_URL = 'https://github.com/imDev2023/testing-pipeline';
 
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+
+// One pass over prose finds, in this order: a Markdown link or image, an autolink, a bare address into the repo.
+const LINK = /(!?)\[((?:[^\[\]]|\[[^\]]*\])*)\]\((<[^>\n]*>|[^)\s]+)\)/.source;
+const AUTOLINK = /<(https?:\/\/[^>\s]+)>/.source;
+const BARE = `(${escaped(REPO_URL)}/[^\\s()<>\\[\\]\`*"']+)`;
+const ANY = new RegExp(`${LINK}|${AUTOLINK}|${BARE}`, 'g');
+
+const PRIVATE = /^https:\/\/claude\.ai\//; // a Claude Code session, which only the owner can open
+
 /**
  * Returns the Markdown with every link into the repository pointing at it on GitHub, and throws when one
- * names a file, a folder or a commit the repository does not hold, so no link the site shows is broken.
+ * names a file, a folder, a section, a commit or a ticket the repository does not hold, so no link the
+ * site shows is broken.
  *
- * `folder` is where the text sits in the repo, for the links written relative to it; `ref` is the branch
- * the text was read from; `repo.kind(ref, path)` says whether a path at a ref is a file ('blob'), a folder
- * ('tree') or not there (null), and the path '' asks whether the ref itself is there.
- * A code block is an example, shown as written.
+ * `folder` is where the text sits in the repo, for the links written relative to it, and `ref` is the
+ * branch they point at. `repo` answers for the repository:
+ *   kind(ref, path)  'blob' for a file, 'tree' for a folder, null when it is not there; the path '' asks
+ *                    whether the ref itself is there
+ *   text(ref, path)  a file's text, to find its sections
+ *   lastNumber()     the newest issue or pull request number; every number up to it exists
+ * Code is an example and is shown as written, except that a private claude.ai link is unwrapped.
  */
 export function withRepoLinks(markdown, { folder = '', ref = 'main', repo }) {
-  return markdown
-    .split(/^(```[\s\S]*?^```)/m)
-    .map((part) => (part.startsWith('```') ? part : linksIn(part, folder, ref, repo)))
+  return pieces(markdown)
+    .map(({ code, text }) => (code ? text.replace(new RegExp(LINK, 'g'), (link, bang, label, url) => (PRIVATE.test(url) ? label : link)) : linksIn(text, folder, ref, repo)))
     .join('');
 }
 
-function linksIn(markdown, folder, ref, repo) {
-  return markdown
-    .replace(/\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^)\s]+)\)/g, (link, text, url) => {
-      // A Claude Code session is private to the owner, so its link is shown as plain text.
-      if (/^https:\/\/claude\.ai\//.test(url)) return text;
-      if (url.startsWith(`${REPO_URL}/`)) return checked(url, repo) && link;
-      if (/^([a-z][a-z0-9+.-]*:|#)/i.test(url)) return link;
-      // A link relative to the file the text sits in, as GitHub reads it.
-      const [file, anchor] = url.split('#');
-      const path = posix.normalize(posix.join(folder, file)).replace(/\/$/, '');
-      const kind = path.startsWith('../') ? null : repo.kind(ref, path);
-      if (!kind) throw new Error(`[${text}](${url}) links to a file that is not there: ${path} is not on ${ref}.`);
-      return `[${text}](${REPO_URL}/${kind}/${ref}/${path}${anchor ? `#${anchor}` : ''})`;
-    })
-    .replace(new RegExp(`(?<!\\]\\()${REPO_URL}/[^\\s)>]+`, 'g'), (match) => {
+/** Splits Markdown into code (fenced blocks at any indent, and inline code spans) and the prose around it. */
+function pieces(markdown) {
+  const out = [];
+  let prose = [];
+  const flush = () => {
+    if (prose.length) out.push(...spans(prose.join('')));
+    prose = [];
+  };
+  const lines = markdown.split(/(?<=\n)/);
+  for (let i = 0; i < lines.length; i++) {
+    const fence = lines[i].match(/^\s*(`{3,}|~{3,})/);
+    if (!fence) {
+      prose.push(lines[i]);
+      continue;
+    }
+    flush();
+    const block = [lines[i]];
+    while (++i < lines.length) {
+      block.push(lines[i]);
+      if (lines[i].trim().startsWith(fence[1])) break;
+    }
+    out.push({ code: true, text: block.join('') });
+  }
+  flush();
+  return out;
+}
+
+function spans(text) {
+  return text
+    .split(/((?<!`)(`+)(?!`)(?:(?!\n\s*\n)[\s\S])*?(?<!`)\2(?!`))/)
+    .filter((part, i) => i % 3 !== 2) // the backtick run the split also captures
+    .map((part, i) => ({ code: i % 2 === 1, text: part }));
+}
+
+function linksIn(prose, folder, ref, repo) {
+  return prose.replace(ANY, (match, bang, label, destination, autolink, bare) => {
+    if (bare) {
       // A full address in running text reads badly on a phone, so it becomes a short link.
-      const url = match.replace(/[.,;:!?]+$/, '');
+      const url = bare.replace(/[.,;:!?]+$/, '');
       checked(url, repo);
       return `[${shortName(url)}](${url})${match.slice(url.length)}`;
-    });
+    }
+    if (autolink) {
+      if (autolink.startsWith(`${REPO_URL}/`)) checked(autolink, repo);
+      return match;
+    }
+    if (bang) return match; // an image: the site shows its text
+    const url = destination.replace(/^<(.*)>$/, '$1');
+    if (PRIVATE.test(url)) return label;
+    if (url.startsWith(`${REPO_URL}/`)) return checked(url, repo) && match;
+    if (/^([a-z][a-z0-9+.-]*:|#|\/\/)/i.test(url)) return match;
+
+    // A link relative to the file the text sits in, or to the root of the repo, as GitHub reads it.
+    const [file, anchor] = url.split('#');
+    const path = posix.normalize(file.startsWith('/') ? file.slice(1) : posix.join(folder, file)).replace(/\/$/, '');
+    const kind = path.startsWith('../') ? null : repo.kind(ref, path);
+    if (!kind) throw new Error(`[${label}](${url}) links to a file that is not there: ${path} is not on ${ref}.`);
+    if (anchor) checkSection(ref, path, kind, anchor, repo);
+    return `[${label}](${REPO_URL}/${kind}/${ref}/${path}${anchor ? `#${anchor}` : ''})`;
+  });
+}
+
+/** True when what a full address into the repository names is there; throws when it is not. */
+function checked(url, repo) {
+  const [path, anchor] = url.slice(REPO_URL.length + 1).replace(/\?[^#]*/, '').split('#');
+  const [route, ...rest] = path.split('/');
+  let there = true;
+  if (route === 'blob' || route === 'tree') {
+    // A branch can hold slashes ("research/quoter-hosting"), so try each split, as GitHub does.
+    const split = rest
+      .map((_, i) => ({ ref: rest.slice(0, i + 1).join('/'), file: rest.slice(i + 1).join('/') }))
+      .find(({ ref, file }) => repo.kind(ref, file) !== null);
+    there = !!split;
+    if (split && anchor) checkSection(split.ref, split.file, repo.kind(split.ref, split.file), anchor, repo);
+  } else if (route === 'commit') {
+    there = repo.kind(rest[0], '') !== null;
+  } else if ((route === 'issues' || route === 'pull') && rest[0]) {
+    there = /^\d+$/.test(rest[0]) && Number(rest[0]) >= 1 && Number(rest[0]) <= repo.lastNumber();
+  }
+  if (!there) throw new Error(`${url} names something the repository does not hold.`);
+  return true;
+}
+
+/** Throws unless a Markdown file has the section an anchor names (line anchors and other files are not checked). */
+function checkSection(ref, path, kind, anchor, repo) {
+  if (kind !== 'blob' || !/\.md$/i.test(path)) return;
+  let wanted = anchor;
+  try {
+    wanted = decodeURIComponent(anchor);
+  } catch {}
+  if (!sectionsOf(repo.text(ref, path)).has(wanted.toLowerCase())) {
+    throw new Error(`${path} has no section #${anchor} on ${ref}.`);
+  }
+}
+
+/** The anchors GitHub gives the headings of a Markdown file. */
+function sectionsOf(markdown) {
+  const ids = new Set();
+  let fence = null;
+  for (const line of markdown.split('\n')) {
+    const marker = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fence) {
+      if (line.trim().startsWith(fence)) fence = null;
+      continue;
+    }
+    if (marker) {
+      fence = marker[1];
+      continue;
+    }
+    const heading = line.match(/^ {0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$/);
+    if (!heading) continue;
+    const plain = heading[1].replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/<[^>]+>/g, '');
+    const base = plain.toLowerCase().trim().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
+    let id = base;
+    for (let n = 1; ids.has(id); n++) id = `${base}-${n}`;
+    ids.add(id);
+  }
+  return ids;
 }
 
 /** What a bare address is called in running text: a ticket or a pull request by its number, as GitHub writes it, else its last part. */
@@ -47,19 +158,4 @@ function shortName(url) {
   const parts = url.slice(REPO_URL.length + 1).replace(/[?#].*$/, '').split('/').filter(Boolean);
   if ((parts[0] === 'issues' || parts[0] === 'pull') && /^\d+$/.test(parts[1] ?? '')) return `#${parts[1]}`;
   return parts.at(-1);
-}
-
-/** True when what a full address into the repository names is there; throws when it is not. */
-function checked(url, repo) {
-  const path = url.slice(REPO_URL.length + 1).replace(/[?#].*$/, '');
-  const [route, ...rest] = path.split('/');
-  let there = true;
-  if (route === 'blob' || route === 'tree') {
-    // A branch can hold slashes ("research/pipeline-router"), so try each split, as GitHub does.
-    there = rest.some((_, i) => repo.kind(rest.slice(0, i + 1).join('/'), rest.slice(i + 1).join('/')) !== null);
-  } else if (route === 'commit') {
-    there = repo.kind(rest[0], '') !== null;
-  }
-  if (!there) throw new Error(`${url} names something the repository does not hold.`);
-  return true;
 }

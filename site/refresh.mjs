@@ -277,28 +277,55 @@ function publicPartOf(markdown, where, wholeSections = 0) {
 
 // ---- Links ----
 
-/** What the repository holds, read from the local clone: a file ('blob'), a folder ('tree') or nothing (null). */
-const kinds = new Map();
+/**
+ * What the repository holds, for the link checks in links.mjs: read from this clone, and from GitHub for
+ * what the clone lacks (tags, the commits of merged pull requests whose branch is gone).
+ * A link names `main`, so it is checked against origin/main even when --ref reads the docs from elsewhere.
+ */
+const answers = new Map();
+const remembered = (key, answer) => (answers.has(key) ? answers.get(key) : answers.set(key, answer()).get(key));
 const repo = {
-  kind(ref, path) {
-    const key = `${ref}:${path}`;
-    if (!kinds.has(key)) kinds.set(key, kindOf(ref, path));
-    return kinds.get(key);
-  },
+  kind: (ref, path) => remembered(`kind ${ref}:${path}`, () => kindHere(ref, path) ?? kindOnGitHub(ref, path)),
+  text: (ref, path) =>
+    remembered(`text ${ref}:${path}`, () => {
+      const at = localRef(ref);
+      const local = at && spawnSync('git', ['show', `${at}:${path}`], { cwd: here, encoding: 'utf8', maxBuffer: 64 << 20 });
+      return local?.status === 0 ? local.stdout : onGitHub(`contents/${encodeURI(path)}?ref=${encodeURIComponent(ref)}`, true);
+    }),
+  lastNumber: () => remembered('last number', () => github('issues?state=all&sort=created&direction=desc&per_page=1')[0].number),
 };
-function kindOf(ref, path) {
-  const quiet = (...args) => spawnSync('git', args, { cwd: here, encoding: 'utf8' });
-  let at = `origin/${ref}`;
-  if (ref === 'main') at = MAIN;
-  else if (/^[0-9a-f]{7,40}$/.test(ref)) {
-    // A commit counts only when GitHub has it: on a branch of origin, not just in this clone.
-    const on = quiet('for-each-ref', '--count=1', '--contains', ref, 'refs/remotes/origin');
-    if (on.status !== 0 || !on.stdout.trim()) return null;
-    at = ref;
+
+/** The ref of this clone that a GitHub ref names, or null when this clone cannot vouch for it. */
+function localRef(ref) {
+  if (ref === 'main') return 'origin/main';
+  if (!/^[0-9a-f]{7,40}$/.test(ref)) return `origin/${ref}`;
+  // A commit counts here only when a branch of origin holds it: this clone may keep commits GitHub does not.
+  const on = spawnSync('git', ['for-each-ref', '--count=1', '--contains', ref, 'refs/remotes/origin'], { cwd: here, encoding: 'utf8' });
+  return on.status === 0 && on.stdout.trim() ? ref : null;
+}
+
+function kindHere(ref, path) {
+  const at = localRef(ref);
+  const type = at && spawnSync('git', ['cat-file', '-t', path ? `${at}:${path}` : at], { cwd: here, encoding: 'utf8' });
+  return type?.status === 0 ? ({ blob: 'blob', tree: 'tree', commit: 'tree' }[type.stdout.trim()] ?? null) : null;
+}
+
+function kindOnGitHub(ref, path) {
+  if (!path) return onGitHub(`commits/${encodeURIComponent(ref)}`) ? 'tree' : null;
+  const found = onGitHub(`contents/${encodeURI(path)}?ref=${encodeURIComponent(ref)}`);
+  if (!found) return null;
+  return Array.isArray(found) ? 'tree' : found.type === 'file' ? 'blob' : null;
+}
+
+/** GitHub's answer for a path of the repo's API, or null when it is not there; `raw` asks for a file's text. */
+function onGitHub(path, raw = false) {
+  const args = ['api', `repos/${REPO}/${path}`, ...(raw ? ['-H', 'Accept: application/vnd.github.raw'] : [])];
+  for (let attempt = 1; ; attempt++) {
+    const answer = spawnSync('gh', args, { cwd: here, encoding: 'utf8', maxBuffer: 64 << 20, timeout: 90_000 });
+    if (answer.status === 0) return raw ? answer.stdout : JSON.parse(answer.stdout);
+    if (/HTTP (404|422)/.test(answer.stderr ?? '')) return null;
+    if (attempt === 4) fail(`gh ${args.join(' ')} failed four times:\n${answer.stderr || answer.error?.message}`);
   }
-  const type = quiet('cat-file', '-t', path ? `${at}:${path}` : at);
-  if (type.status !== 0) return null;
-  return { blob: 'blob', tree: 'tree', commit: 'tree' }[type.stdout.trim()] ?? null;
 }
 
 /** The text with links into the repository pointing at it, and with paths on the owner's machine cut down. */
@@ -442,8 +469,8 @@ const content = {
 // ---- Checks, then the swap ----
 
 const json = `${JSON.stringify(content, null, 2)}\n`;
-// The private archive of the repository is never linked: a visitor could not open it.
-const leak = json.match(/github\.com\/imDev2023\/testing-pipeline-archive|claude\.ai\/|\/Volumes\/|\/Users\//);
+// Of the owner's repositories only this one is shown: the others, the private archive among them, may be private.
+const leak = json.match(/github\.com\/imDev2023\/(?!testing-pipeline(?:\.git)?(?![\w.-]))\S*|claude\.ai\/|\/Volumes\/|\/Users\//i);
 if (leak) fail(`"${leak[0]}" is still in the content. Extend the link or path rules.`);
 
 // If the gate stops here, content.next.json stays (untracked) so the lines it names can be read.

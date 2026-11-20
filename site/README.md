@@ -13,7 +13,7 @@ Run them in `site/`, after `npm ci`.
 | Command | What it does |
 | --- | --- |
 | `npm test` | Runs the tests of the link rules in `links.mjs`. |
-| `npm run refresh` | Rebuilds `content.json` from the project's record and prints what it left out. `-- --dropped` lists every dropped block; `-- --ref HEAD` reads `README.md` and `docs/` from your branch instead of `origin/main`, to see its docs on the site before it merges. |
+| `npm run refresh` | Rebuilds `content.json` from the project's record and prints what it left out. `-- --dropped` lists every dropped block; `-- --ref HEAD` reads `README.md` and `docs/` from your branch instead of `origin/main`, to see its docs on the site before it merges; their links still have to resolve on `origin/main`, since they point at `main`. |
 | `npm run build` | Renders `content.json` into `dist/`. |
 | `npm run preview` | Builds, then serves `dist/` at http://127.0.0.1:4310. |
 | `npm run deploy` | Builds, runs the privacy gate, and deploys to production on Vercel. |
@@ -62,10 +62,12 @@ Everything runs on the machine's default Node 26; if a tool breaks there, use No
 - The six findings about Pipeline are picked by a phrase each, in `FOUND_IN_PIPELINE` at the top of `refresh.mjs`, and shown as their source wrote them.
   If a source is reworded, `refresh` stops and names the phrase to fix.
 - The repository moved on 2026-11-19 (#167) with every issue number kept, so the ticket pages keep their addresses; the numbers that were pull requests are placeholders, which the site never shows, since it reads only the map's sub-issues.
-  `refresh` reads only `imDev2023/testing-pipeline`, never the private archive, and stops if the content links to the archive.
+  `refresh` reads only `imDev2023/testing-pipeline`, never the private archive.
 - The repo is public since 2026-11-20 (#167), so every link into it points straight at it on GitHub (decision `SUITE-48`).
   A link written relative to a file points at that file on the branch it was read from, `main` or the research branch, and a full address is kept, except that one written out in running text becomes a short link, a file by its name and a ticket by its number (`#186`).
-  `refresh` stops on a link to a file, a folder or a commit the repository does not hold, naming the link, so the site never shows a broken one; links to Claude Code sessions, which only the owner can open, are shown as plain text.
+  `refresh` stops on a link to a file, a folder, a section, a commit or a ticket the repository does not hold, naming the link, so the site never shows a broken one.
+  It reads what the repository holds from the local clone, and asks GitHub for what the clone lacks, such as a tag or the commit of a merged pull request whose branch is gone.
+  Code is an example and is shown as written; images are shown by their text; links to Claude Code sessions, which only the owner can open, are shown as plain text; and the content may name no other repository of the owner's, since those may be private.
 - Headings get the anchors GitHub gives them, so a section has the same address here as in the file on GitHub.
 - To show another document, add one `addDocument` line in `refresh.mjs`.
 
