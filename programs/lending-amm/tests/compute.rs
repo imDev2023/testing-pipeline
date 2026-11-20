@@ -79,7 +79,7 @@ impl Row {
             // Kept at 60,000 rather than the rule's 55,000: on random keys the hooked first
             // deposit measured up to 55,635 (see `fixed_key`).
             Row::AddLiquidity => (40_662, 60_000),
-            Row::Rebalance => (71_764, 90_000),
+            Row::Rebalance => (71_773, 90_000),
             Row::RemoveLiquidityCash => (76_080, 100_000),
             Row::RemoveLiquidityInKind => (62_710, 80_000),
             Row::LockLp => (36_987, 50_000),
