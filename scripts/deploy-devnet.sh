@@ -157,7 +157,9 @@ authority="$(solana-keygen pubkey "$authority_key")"
 payer="$(solana-keygen pubkey "$wallet")"
 echo "== Deploying $program_id to $url, paid by $payer, upgrade authority $authority"
 deploy_flags=()
-$local_cluster || deploy_flags+=(--use-rpc --max-sign-attempts "$DEVNET_MAX_SIGN_ATTEMPTS" --with-compute-unit-price "$DEVNET_COMPUTE_UNIT_PRICE")
+# The writes go to the validators over TPU, the CLI's default: through public devnet's RPC
+# (--use-rpc) most of them were dropped (2026-11-20), and over TPU the whole tax AMM wrote in 14 s.
+$local_cluster || deploy_flags+=(--max-sign-attempts "$DEVNET_MAX_SIGN_ATTEMPTS" --with-compute-unit-price "$DEVNET_COMPUTE_UNIT_PRICE")
 solana program deploy -u "$url" -k "$wallet" --program-id "$program_key" \
   --upgrade-authority "$authority_key" ${deploy_flags[@]+"${deploy_flags[@]}"} "$so"
 

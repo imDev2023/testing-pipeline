@@ -175,10 +175,11 @@ if run toy; then
   # many times, and pays a small priority fee so they land.
   attempts="$(sed -n 's/^DEVNET_MAX_SIGN_ATTEMPTS=//p' "$DEPLOY")"
   price="$(sed -n 's/^DEVNET_COMPUTE_UNIT_PRICE=//p' "$DEPLOY")"
-  if [ -n "$attempts" ] && [ -n "$price" ] && [[ "$deploy_call" == *"--max-sign-attempts $attempts "* && "$deploy_call" == *"--with-compute-unit-price $price "* ]]; then
+  # Its writes go to the validators over TPU: public devnet's RPC dropped most of them.
+  if [ -n "$attempts" ] && [ -n "$price" ] && [[ "$deploy_call" == *"--max-sign-attempts $attempts "* && "$deploy_call" == *"--with-compute-unit-price $price "* && "$deploy_call" != *"--use-rpc"* ]]; then
     pass "a devnet deploy resends dropped writes and pays a priority fee"
   else
-    fail "deploy call without retries or a priority fee: $deploy_call"
+    fail "deploy call without retries or a priority fee, or through the RPC: $deploy_call"
   fi
   record="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["programs"]["toy"], sort_keys=True))' "$repo/deployments/devnet.json")"
   for want in "\"programId\": \"$PROGRAM_ID\"" "\"executableHash\": \"$HASH\"" "\"commit\": \"$commit\"" \
