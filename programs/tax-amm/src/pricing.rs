@@ -180,7 +180,7 @@ pub fn exact_in(
         Tax::Buy(bps) => {
             let tax = tax_of(amount_in, bps)?;
             // Never more than the input within the cap (T1), so this never underflows.
-            amount_in.checked_sub(tax).ok_or(StrategyError::Overflow)?
+            amount_in.checked_sub(tax).ok_or(StrategyError::Underflow)?
         }
         Tax::Sell(bps) => {
             capped(bps)?;
@@ -217,11 +217,11 @@ fn settle(
             curve,
             amount_in
                 .checked_sub(curve_input)
-                .ok_or(StrategyError::Overflow)?,
+                .ok_or(StrategyError::Underflow)?,
         ),
         Tax::Sell(rate) => {
             let tax = tax_of(curve, rate)?;
-            (curve.checked_sub(tax).ok_or(StrategyError::Overflow)?, tax)
+            (curve.checked_sub(tax).ok_or(StrategyError::Underflow)?, tax)
         }
     };
     if amount_out == 0 {

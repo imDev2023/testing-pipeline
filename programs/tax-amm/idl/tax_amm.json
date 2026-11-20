@@ -1105,6 +1105,11 @@
       "code": 6038,
       "name": "NewerStateVersion",
       "msg": "The market state was written by a newer version of this program than the one running"
+    },
+    {
+      "code": 6039,
+      "name": "Underflow",
+      "msg": "Arithmetic underflow"
     }
   ],
   "types": [

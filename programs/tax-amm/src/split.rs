@@ -45,7 +45,7 @@ pub fn split_tax(
     slots[SUITE_SLOT as usize] = suite as u64;
     // Each part rounds down, so what is left over is under one unit per part; with whole
     // shares this never fails (proofs/pricing_z3.py, P1).
-    let remainder = rest.checked_sub(booked).ok_or(StrategyError::Overflow)?;
+    let remainder = rest.checked_sub(booked).ok_or(StrategyError::Underflow)?;
     slots[0] = slots[0]
         .checked_add(remainder as u64)
         .ok_or(StrategyError::Overflow)?;

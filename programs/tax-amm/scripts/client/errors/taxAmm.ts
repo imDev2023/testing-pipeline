@@ -93,6 +93,8 @@ export const TAX_AMM_ERROR__BURN_NEEDS_WRITABLE_MINT = 0x1794; // 6036
 export const TAX_AMM_ERROR__NOT_A_WALLET = 0x1795; // 6037
 /** NewerStateVersion: The market state was written by a newer version of this program than the one running */
 export const TAX_AMM_ERROR__NEWER_STATE_VERSION = 0x1796; // 6038
+/** Underflow: Arithmetic underflow */
+export const TAX_AMM_ERROR__UNDERFLOW = 0x1797; // 6039
 
 export type TaxAmmError =
   | typeof TAX_AMM_ERROR__ALREADY_RENOUNCED
@@ -128,6 +130,7 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__SHARES_NOT_WHOLE
   | typeof TAX_AMM_ERROR__SHARE_WITHOUT_RECIPIENT
   | typeof TAX_AMM_ERROR__TAX_ABOVE_CAP
+  | typeof TAX_AMM_ERROR__UNDERFLOW
   | typeof TAX_AMM_ERROR__UNUSED_SLOT
   | typeof TAX_AMM_ERROR__WRONG_ACCOUNT
   | typeof TAX_AMM_ERROR__WRONG_TOKEN_PROGRAM
@@ -171,6 +174,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__SHARES_NOT_WHOLE]: `The recipients' shares and the burn share must sum to 10,000`,
     [TAX_AMM_ERROR__SHARE_WITHOUT_RECIPIENT]: `An unused recipient slot must have no share`,
     [TAX_AMM_ERROR__TAX_ABOVE_CAP]: `A tax range may not go above MAX_TAX_BPS`,
+    [TAX_AMM_ERROR__UNDERFLOW]: `Arithmetic underflow`,
     [TAX_AMM_ERROR__UNUSED_SLOT]: `The tax recipient slot is unused: it has no wallet to pay`,
     [TAX_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,
     [TAX_AMM_ERROR__WRONG_TOKEN_PROGRAM]: `The token program is not the mint's`,

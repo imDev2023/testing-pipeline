@@ -143,7 +143,7 @@ pub(crate) fn take_seed<'info>(
             )?;
             arrived[i] = token_balance(&side.vault)?
                 .checked_sub(vault_before)
-                .ok_or(StrategyError::Overflow)?;
+                .ok_or(StrategyError::Underflow)?;
         }
         require!(arrived[i] > 0 || may_be_empty(i), StrategyError::ZeroSeed);
     }

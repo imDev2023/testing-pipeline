@@ -89,4 +89,6 @@ pub enum StrategyError {
     NotAWallet,
     #[msg("The market state was written by a newer version of this program than the one running")]
     NewerStateVersion,
+    #[msg("Arithmetic underflow")]
+    Underflow,
 }
