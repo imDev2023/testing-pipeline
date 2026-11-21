@@ -10,12 +10,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # docs/toolchain.md, "Versions": Node 24.4.1 from nvm.
 NODE="$HOME/.nvm/versions/node/v24.4.1/bin/node"
 
-set -a
-# shellcheck disable=SC1091
-[ -f "$HOME/.config/env/global.env" ] && source "$HOME/.config/env/global.env"
-# shellcheck disable=SC1091
-[ -f "$ROOT/.env" ] && source "$ROOT/.env"
-set +a
+# Each file is sourced with export on: a file may switch it off itself (global.env ends with
+# `set +a`), which would leave every later setting unexported.
+for env_file in "$HOME/.config/env/global.env" "$ROOT/.env"; do
+  if [ -f "$env_file" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+done
 
 if [ ! -x "$NODE" ]; then
   echo "keeper-run.sh: no Node at $NODE; install the version docs/toolchain.md names" >&2
