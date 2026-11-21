@@ -452,19 +452,37 @@ fn klend_compute(logs: &[String]) -> u64 {
 
 #[test]
 fn rebalance_stays_under_its_ceiling_depositing_and_redeeming() {
-    use common::rebalance::{lent_spec, units, OTHER};
+    use common::rebalance::{lent_spec_at, units, OTHER};
+    use solana_keypair::Keypair;
+    // Each market's other mint, and so the market state and the vault authority klend sees, at
+    // a fixed address, and its LP of a fixed key: klend's deposit and redeem cost 9 units more
+    // or less with the vault authority's address, which with random keys moved this row from
+    // run to run (71,764, then 71,773, then 71,782 in CI on 2026-11-20).
     for lent in 0..lending_amm::config::LENT_MINTS.len() {
         let name = common::kamino::lent_name(lent);
         // Depositing: a market whose whole lent side is in its buffer.
         let mut env = Env::new();
-        let spec = lent_spec(&mut env, lent, 30);
+        let spec = lent_spec_at(
+            &mut env,
+            lent,
+            30,
+            fixed_key(&format!("the mint depositing on {name}")),
+        );
+        let lp = Keypair::new_from_array(fixed_key(&format!("the LP depositing on {name}")));
         let (market, _) = env
-            .create_funded_market(&spec, [OTHER, units(lent, 50)])
+            .create_funded_market_by(&spec, [OTHER, units(lent, 50)], lp)
             .unwrap();
         let logs = env.rebalance(&market, None).unwrap().logs;
         let (deposit, klend_deposit) = (strategy_compute(&logs)[0], klend_compute(&logs));
         // Redeeming: a market whose buffer a swap has drained below the band.
-        let market = env.market_below_the_band(lent);
+        let spec = lent_spec_at(
+            &mut env,
+            lent,
+            0,
+            fixed_key(&format!("the mint redeeming on {name}")),
+        );
+        let lp = Keypair::new_from_array(fixed_key(&format!("the LP redeeming on {name}")));
+        let market = env.market_below_the_band_of(&spec, lent, lp);
         let logs = env.rebalance(&market, None).unwrap().logs;
         let (redeem, klend_redeem) = (strategy_compute(&logs)[0], klend_compute(&logs));
         println!(
