@@ -121,7 +121,9 @@ pub fn seed_liquidity<'info>(
     let amounts = [amount_0, amount_1];
     let deposit = shares::first_deposit(amounts[other_index], amounts[lent_index])?;
     let mints = [accounts.mint_0.key(), accounts.mint_1.key()];
-    let reserve = kamino::reserve_of(&mints[lent_index], &accounts.reserve.to_account_info())?;
+    let lent =
+        crate::config::lent_mint(&mints[lent_index]).ok_or(StrategyError::LentMintNotListed)?;
+    let reserve = kamino::reserve_of(lent, &accounts.reserve.to_account_info())?;
     require!(!reserve.deprecated(), StrategyError::ReserveDeprecated);
 
     let seeder = accounts.seeder.key();

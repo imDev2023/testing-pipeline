@@ -12,7 +12,9 @@ use lending_amm::kamino::Reserve;
 use lending_amm::InitParams;
 
 use super::kamino::{instructions_sysvar, klend, lent_name};
-use super::{anchor_discriminator, ck, strategy_id, Env, Market, MarketSpec, SOL, TOKEN};
+use super::{
+    anchor_discriminator, ck, strategy_id, Env, Market, MarketSpec, MintOptions, SOL, TOKEN,
+};
 
 /// Other-side reserve the rebalance tests' markets start with: a million tokens of 6 decimals.
 pub const OTHER: u64 = 1_000_000_000_000;
@@ -21,6 +23,22 @@ pub const OTHER: u64 = 1_000_000_000_000;
 /// the lent mint second.
 pub fn lent_spec(env: &mut Env, lent: usize, lp_fee_bps: u16) -> MarketSpec {
     let other = env.create_mint(&TOKEN);
+    spec_of(other, lent, lp_fee_bps)
+}
+
+/// [`lent_spec`], with the other mint at the fixed address of the secret key `key`. The market
+/// state is seeded from both mints, so it, and the vault authority klend sees, are at fixed
+/// addresses too, and klend's cost is the same on every run.
+pub fn lent_spec_at(env: &mut Env, lent: usize, lp_fee_bps: u16, key: [u8; 32]) -> MarketSpec {
+    let options = MintOptions {
+        key: Some(key),
+        ..MintOptions::default()
+    };
+    let other = env.create_mint_with(&TOKEN, options);
+    spec_of(other, lent, lp_fee_bps)
+}
+
+fn spec_of(other: Pubkey, lent: usize, lp_fee_bps: u16) -> MarketSpec {
     MarketSpec {
         mints: [(other, TOKEN), (ck(&LENT_MINTS[lent].mint), TOKEN)],
         params: InitParams {
@@ -91,10 +109,22 @@ impl Env {
     /// then a trader's swap through the router pays out of the buffer until it is about 5% of the
     /// lent side, below the band.
     pub fn market_below_the_band(&mut self, lent: usize) -> Market {
+        let spec = lent_spec(self, lent, 0);
+        self.market_below_the_band_of(&spec, lent, Keypair::new())
+    }
+
+    /// [`Env::market_below_the_band`], for the market `spec` describes (lending
+    /// `LENT_MINTS[lent]` with no LP fee), opened by `lp`; with [`lent_spec_at`] and an LP of a
+    /// fixed key, every account `rebalance` touches is at the same address on every run.
+    pub fn market_below_the_band_of(
+        &mut self,
+        spec: &MarketSpec,
+        lent: usize,
+        lp: Keypair,
+    ) -> Market {
         let env = self;
-        let spec = lent_spec(env, lent, 0);
         let (market, _) = env
-            .create_funded_market(&spec, [OTHER, units(lent, 50)])
+            .create_funded_market_by(spec, [OTHER, units(lent, 50)], lp)
             .unwrap();
         env.rebalance(&market, None).unwrap();
         let state = env.market_state(&market.market_state);

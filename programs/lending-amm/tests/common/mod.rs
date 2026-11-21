@@ -1168,8 +1168,17 @@ impl Env {
     /// Gives a market `ctokens` cTokens the way a lending instruction would leave them: in its
     /// cToken account and recorded in its market state, written directly so a test can choose
     /// any amount. klend's cToken supply does not count them: a test that redeems should lend
-    /// through `rebalance` instead.
+    /// through `rebalance` instead. As klend's deposit would, it leaves the reserve marked as
+    /// brought up to date in this slot, so quotes, swaps and deposits may value them; unlike klend
+    /// it accrues no interest, so the stored rate stays the dumped one.
     pub fn give_ctokens(&mut self, market: &Market, ctokens: u64) {
+        let slot = self.clock().slot;
+        let reserve = self.reserve_of(market);
+        self.patch(
+            &reserve,
+            lending_amm::kamino::offsets::LAST_UPDATE_SLOT,
+            &slot.to_le_bytes(),
+        );
         let account = market.addresses.ctoken_account;
         let held = self.balance(&account);
         self.patch(&account, 64, &(held + ctokens).to_le_bytes());

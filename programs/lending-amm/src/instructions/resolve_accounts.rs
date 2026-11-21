@@ -19,7 +19,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program::set_return_data;
 use pipeline_strategy_interface as psi;
 
-use crate::config::{self, KLEND_PROGRAM};
+use crate::config::KLEND_PROGRAM;
 use crate::errors::StrategyError;
 use crate::instructions::ReadTrade;
 use crate::interface::ResolveRequest;
@@ -32,7 +32,7 @@ pub fn resolve_accounts(ctx: Context<ReadTrade>, request: ResolveRequest) -> Res
         .trade_sides(request.trade.input_index, request.trade.output_index)
         .ok_or(StrategyError::WrongAccount)?;
     // The reserve `LENT_MINTS` names for the lent mint, which the market also recorded.
-    let lent = config::lent_mint(&market.lent_mint()).ok_or(StrategyError::LentMintNotListed)?;
+    let lent = market.lent_entry()?;
     let mut accounts = vec![
         account(market.vaults[output], true),
         account(market.authority(&market.key())?, false),
@@ -54,7 +54,7 @@ pub fn resolve_accounts(ctx: Context<ReadTrade>, request: ResolveRequest) -> Res
         // this round does not have, so a trade only that refuses still gets the redeem accounts,
         // and its quote and swap, which read the lending market, refuse it.
         let now = Clock::get()?.unix_timestamp;
-        let shortfall = kamino::reserve_of(&market.lent_mint(), reserve_account)
+        let shortfall = kamino::reserve_of(lent, reserve_account)
             .and_then(|reserve| {
                 pricing::quote(market, &reserve, &request.trade, || {
                     Ok(reserve.can_pay_by_itself(market.ctokens, now))

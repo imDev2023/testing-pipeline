@@ -62,7 +62,10 @@
 //  20. it redeems those cTokens at klend itself, for at least what the market valued them at
 //      when it paid them out, and exactly what klend's own maths gives;
 //  21. it locks a tenth of its shares into the market's lock account with the metadata's
-//      `lock_lp` action, the lock event reporting them and the share count unchanged;
+//      `lock_lp` action, the lock event reporting them and the share count unchanged, then
+//      leaves with the lent side alone for a twentieth, from the metadata's `remove_lent_side`
+//      form, as an LP would whose other token can no longer move: the buffer's part in WSOL,
+//      the cTokens' part as cTokens, and nothing of the other token, whose part stays recorded;
 //  22. Kamino runs short: the test borrower of scripts/kamino-devnet borrows the WSOL reserve's
 //      free liquidity below WITHDRAW_MODE_ENTER times the market's exposure max(V, T);
 //  23. `rebalance` enters withdraw mode, its event carrying the free liquidity and the exposure
@@ -70,7 +73,10 @@
 //  24. a second `rebalance` is refused with `BelowMinRebalance`, in simulation: it neither
 //      deposits nor leaves, though V is now 0, since X is still the target lent value T;
 //  25. the borrower repays, the reserve is back above WITHDRAW_MODE_EXIT times X, and
-//      `rebalance` leaves withdraw mode and lends again by klend's own deposit;
+//      `rebalance` starts the market's wait to leave, recording the slot; once the free
+//      liquidity has stayed there WITHDRAW_MODE_EXIT_DELAY_SLOTS (on a local validator started
+//      with `--ticks-per-slot 8`, about 14 minutes), `rebalance` leaves withdraw mode and lends
+//      again by klend's own deposit;
 //  26. the lending market's owner turns the WSOL reserve's emergency mode on: a sale within
 //      the buffer trades, one beyond it is refused by the quote and by the swap with
 //      `BeyondBuffer`, `rebalance` is refused with `KaminoStopped` and a cash removal with
@@ -226,14 +232,16 @@ const DEMO = {
     firstDeposit: { token: 175_000_000_000n, wsol: 350_000_000n },
     buyWithLamports: 20_000_000n,
     sellTokens: 5_000_000_000n,
-    secondDeposit: { token: 100_000_000_000n, wsol: 150_000_000n },
+    // The WSOL each later deposit adds; the token it offers follows from the market's ratio.
+    secondDeposit: { wsol: 150_000_000n },
     // The second wallet, an LP who adds, removes in cash and in kind, and locks: what the payer
     // gives it, what it offers to add, and what it removes and locks of the shares it gets.
     secondLp: {
         lamports: 100_000_000n,
         wrapLamports: 100_000_000n,
-        tokens: 50_000_000_000n,
-        deposit: { token: 50_000_000_000n, wsol: 50_000_000n },
+        // Enough for its deposit at the market's ratio plus the slippage it allows.
+        tokens: 60_000_000_000n,
+        deposit: { wsol: 50_000_000n },
         removeEachThird: 3n,
         lockTenth: 10n,
     },
@@ -524,11 +532,29 @@ function laterDeposit(max: [bigint, bigint], reserves: [bigint, bigint], shareCo
     };
 }
 
+/** The slippage a depositor allows, in basis points, the demo's own choice. */
+const SLIPPAGE_BPS = 100n;
+
+/**
+ * The maximums a depositor offers to add `wsol` of the lent side at the market's ratio `R : L`
+ * with share count `N`: what the shares `wsol` buys ask of each side, rounded up, plus
+ * `SLIPPAGE_BPS`, never a whole balance, since the maximums are the deposit's price protection
+ * with `min_lp` (docs/spec/lending-pool.md, "Adding").
+ */
+function maximumsAtRatio(wsol: bigint, reserves: [bigint, bigint], shareCount: bigint) {
+    const shares = (wsol * shareCount) / reserves[1];
+    const withSlippage = (amount: bigint) => ceilDiv(amount * (10_000n + SLIPPAGE_BPS), 10_000n);
+    return {
+        token: withSlippage(ceilDiv(shares * reserves[0], shareCount)),
+        wsol: withSlippage(ceilDiv(shares * reserves[1], shareCount)),
+    };
+}
+
 /** Kamino's devnet lending market, which the devnet build lends to. */
 type KaminoDevnet = {
     klendProgram: string;
     lendingMarket: { address: string };
-    reserves: { wsol: { address: string; collateralMint: string; liquiditySupply: string } };
+    reserves: { wsol: { address: string; collateralMint: string; liquiditySupply: string; pythPrice: string } };
 };
 const KAMINO = JSON.parse(
     readFileSync(new URL('../../../deployments/kamino-devnet.json', import.meta.url), 'utf8'),
@@ -558,6 +584,29 @@ async function readReserve(): Promise<ReserveView> {
         fail(`the Kamino reserve ${RESERVE} names another lending market or mints`);
     }
     return view;
+}
+
+/**
+ * klend's `refresh_reserve` for the demo market's reserve, with the Pyth price account its config
+ * names and klend's own id in the other three oracle places, as klend 1.28.0 declares them. Once a
+ * market holds cTokens, `add_liquidity` needs the reserve refreshed in the same slot, and quotes
+ * and swaps one refreshed within `TRADE_MAX_RESERVE_AGE_SLOTS` (docs/spec/lending-pool.md, "The
+ * stored rate, everywhere"), so a depositor puts this first in the same transaction.
+ */
+function refreshReserve(): Instruction {
+    return {
+        programAddress: KLEND,
+        accounts: [
+            { address: RESERVE, role: AccountRole.WRITABLE },
+            { address: address(KAMINO.lendingMarket.address), role: AccountRole.READONLY },
+            { address: address(KAMINO.reserves.wsol.pythPrice), role: AccountRole.READONLY },
+            { address: KLEND, role: AccountRole.READONLY },
+            { address: KLEND, role: AccountRole.READONLY },
+            { address: KLEND, role: AccountRole.READONLY },
+        ],
+        // Anchor's discriminator of `refresh_reserve`, `sha256("global:refresh_reserve")[..8]`.
+        data: new Uint8Array([2, 218, 138, 235, 79, 201, 25, 102]),
+    };
 }
 
 /** The instructions sysvar, which klend's redeem introspects. */
@@ -1115,6 +1164,20 @@ async function main() {
     let shareCount = firstShares + minimumLiquidity;
     // What the market has lent, as the script calculates it: nothing until step 11.
     let lent = { ctokens: 0n, deposited: 0n, redeemed: 0n };
+    /**
+     * The market's cTokens and running totals after `paid` cTokens leave in kind: the cTokens take
+     * their part of the net amount lent, rounded towards zero, off whichever running total is the
+     * larger, so the yield V + redeemed - deposited stays right (`shares::totals_after_in_kind`).
+     */
+    const afterInKind = (paid: bigint) => {
+        const net = lent.deposited - lent.redeemed;
+        const take = ((net < 0n ? -net : net) * paid) / lent.ctokens;
+        return {
+            ctokens: lent.ctokens - paid,
+            deposited: net >= 0n ? lent.deposited - take : lent.deposited,
+            redeemed: net >= 0n ? lent.redeemed : lent.redeemed - take,
+        };
+    };
     async function checkMarket(label: string) {
         const { data: state } = await fetchLendingAmmMarket(rpc, marketState, { commitment: 'confirmed' });
         const supply = await mintSupply(lpMint);
@@ -1252,8 +1315,8 @@ async function main() {
     record.push(['swap without the reserve', 'refused: ReserveWrongAddress']);
 
     step('10. Adding liquidity again, at the ratio');
-    const second = DEMO.secondDeposit;
     const lentNow = await lentSide();
+    const second = maximumsAtRatio(DEMO.secondDeposit.wsol, [reserves[0], lentNow.total], shareCount);
     const later = laterDeposit([second.token, second.wsol], [reserves[0], lentNow.total], shareCount);
     const sharesBefore = await tokenBalance(lpShares);
     await send('add_liquidity', payer, [await deposit(second, later.shares)]);
@@ -1447,17 +1510,30 @@ async function main() {
     info(`second wallet ${lp2.address}: ${lp2Plan.tokens} token, ${lp2Plan.wrapLamports} WSOL`);
     const [lp2Shares] = await findLpSharesPda({ marketState, lp: lp2.address }, pdas);
     const beforeLp2 = await lentSide();
-    const lp2Deposit = laterDeposit([lp2Plan.deposit.token, lp2Plan.deposit.wsol], [reserves[0], beforeLp2.total], shareCount);
-    await send('add_liquidity by the second wallet', lp2, [
-        await buildActionInstruction({
-            action: addLiquidity,
-            market: view,
-            wallet: lp2.address,
-            args: { max_0: lp2Plan.deposit.token, max_1: lp2Plan.deposit.wsol, min_lp: lp2Deposit.shares },
-            inputs: { reserve: RESERVE },
-            tokenPrograms,
-        }),
-    ]);
+    const lp2Max = maximumsAtRatio(lp2Plan.deposit.wsol, [reserves[0], beforeLp2.total], shareCount);
+    const atStoredRate = laterDeposit([lp2Max.token, lp2Max.wsol], [reserves[0], beforeLp2.total], shareCount);
+    // The market holds cTokens, so the deposit needs the reserve refreshed in the same slot, which
+    // raises its rate by the interest since its last refresh: the shares are fewer than at the
+    // stored rate, so the wallet allows 1% less, then checks the spec's formula at the rate klend
+    // refreshed to, which nothing else in the transaction changes.
+    const lp2Add = await buildActionInstruction({
+        action: addLiquidity,
+        market: view,
+        wallet: lp2.address,
+        args: { max_0: lp2Max.token, max_1: lp2Max.wsol, min_lp: (atStoredRate.shares * 99n) / 100n },
+        inputs: { reserve: RESERVE },
+        tokenPrograms,
+    });
+    const unrefreshed = await simulate(lp2, [lp2Add]);
+    if (!unrefreshed.err || !unrefreshed.logs.some((line) => line.includes('Error Code: ReserveStale'))) {
+        fail(`a deposit without klend's refresh was not refused with ReserveStale: ${show(unrefreshed.err)}\n   ${unrefreshed.logs.join('\n   ')}`);
+    }
+    info(`without klend's refresh first, the deposit is refused with ReserveStale (the reserve was last refreshed ${(await rpc.getSlot({ commitment: 'confirmed' }).send()) - (await readReserve()).lastUpdateSlot} slots before), in simulation`);
+    record.push(['deposit without a refresh', 'refused: ReserveStale']);
+    await send('refresh_reserve + add_liquidity by the second wallet', lp2, [refreshReserve(), lp2Add]);
+    const refreshedTotal = beforeLp2.buffer + lentValue(beforeLp2.ctokens, await readReserve());
+    const lp2Deposit = laterDeposit([lp2Max.token, lp2Max.wsol], [reserves[0], refreshedTotal], shareCount);
+    info(`klend's refresh raised the lent side from ${beforeLp2.total} to ${refreshedTotal}: ${lp2Deposit.shares} shares, not the ${atStoredRate.shares} the stored rate gave`);
     reserves = [reserves[0] + lp2Deposit.taken[0], reserves[1] + lp2Deposit.taken[1]];
     shareCount += lp2Deposit.shares;
     if ((await tokenBalance(lp2Shares)) !== lp2Deposit.shares) fail('the second wallet received other shares than calculated');
@@ -1558,15 +1634,7 @@ async function main() {
     if (!kindEvent.inKind || kindEvent.ctokens !== kindParts.ctokens || kindEvent.redeemed !== 0n) fail(`the removal event carries ${show(kindEvent)}`);
     reserves = [reserves[0] - kindParts.token, reserves[1] - kindParts.buffer];
     shareCount -= third;
-    // The cTokens take their part of the net amount lent, rounded towards zero, off whichever
-    // running total is the larger, so the yield V + redeemed - deposited stays right.
-    const net = lent.deposited - lent.redeemed;
-    const take = ((net < 0n ? -net : net) * kindParts.ctokens) / lent.ctokens;
-    lent = {
-        ctokens: lent.ctokens - kindParts.ctokens,
-        deposited: net >= 0n ? lent.deposited - take : lent.deposited,
-        redeemed: net >= 0n ? lent.redeemed : lent.redeemed - take,
-    };
+    lent = afterInKind(kindParts.ctokens);
     await checkMarket('after the in-kind removal');
     info(`burned ${third} shares for ${kindParts.token} token, ${kindParts.buffer} WSOL and ${kindParts.ctokens} cTokens in ${lp2Ctoken}, as calculated`);
     record.push(['remove in kind', `${third} shares for ${kindParts.token} token, ${kindParts.buffer} WSOL and ${kindParts.ctokens} cTokens`]);
@@ -1608,7 +1676,7 @@ async function main() {
     info(`klend paid ${redeemedAtKlend} WSOL for ${kindParts.ctokens} cTokens the market valued at ${kindWorth} when it paid them out, as klend's maths gives`);
     record.push(['redeem at klend', `${kindParts.ctokens} cTokens for ${redeemedAtKlend} WSOL, valued by the market at ${kindWorth}`]);
 
-    step('21. The second wallet locks a tenth of its shares');
+    step('21. The second wallet locks a tenth of its shares, and leaves with the lent side alone for a twentieth');
     const lockAmount = lp2Deposit.shares / lp2Plan.lockTenth;
     const [lockAccount] = await findAssociatedTokenPda({ owner: authority, mint: lpMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
     const lp2SharesBefore = await tokenBalance(lp2Shares);
@@ -1634,6 +1702,33 @@ async function main() {
     await checkMarket('after the lock');
     info(`${lockAmount} shares moved into the lock account ${lockAccount} for good; the share count ${shareCount} is unchanged`);
     record.push(['lock', `${lockAmount} shares in ${lockAccount}`]);
+
+    // The way out when the other token cannot move (a frozen vault or a hook refusing it): here
+    // it can, so the wallet simply gives up its part of it.
+    const lentOnly = lp2Deposit.shares / 20n;
+    const lentParts = removalParts(lentOnly);
+    const lentOnlyInstruction = await buildActionInstruction({
+        action: removeAction('remove_lent_side'),
+        market: view,
+        wallet: lp2.address,
+        args: { lp: lentOnly, min_lent: lentParts.buffer, min_ctokens: lentParts.ctokens },
+        inputs: { collateral_mint: collateralMint },
+        tokenPrograms: removeTokenPrograms,
+    });
+    const heldBeforeLentOnly = await Promise.all(lp2Holdings.map(tokenBalance));
+    const ctokensBeforeLentOnly = await tokenBalance(lp2Ctoken);
+    await send('remove_lent_side', lp2, [lentOnlyInstruction]);
+    const lentOnlyReceived = await Promise.all(lp2Holdings.map(async (account, i) => (await tokenBalance(account)) - heldBeforeLentOnly[i]!));
+    const lentOnlyCtokens = (await tokenBalance(lp2Ctoken)) - ctokensBeforeLentOnly;
+    if (lentOnlyReceived[0] !== 0n || lentOnlyReceived[1] !== lentParts.buffer || lentOnlyCtokens !== lentParts.ctokens) {
+        fail(`remove_lent_side paid ${show(lentOnlyReceived)} and ${lentOnlyCtokens} cTokens; the formulas give 0 token, ${lentParts.buffer} WSOL and ${lentParts.ctokens} cTokens`);
+    }
+    reserves = [reserves[0], reserves[1] - lentParts.buffer];
+    shareCount -= lentOnly;
+    lent = afterInKind(lentParts.ctokens);
+    await checkMarket('after leaving with the lent side alone');
+    info(`burned ${lentOnly} shares for ${lentParts.buffer} WSOL and ${lentParts.ctokens} cTokens; the ${lentParts.token} token they were worth stay recorded for the LPs who stay`);
+    record.push(['remove the lent side alone', `${lentOnly} shares for ${lentParts.buffer} WSOL and ${lentParts.ctokens} cTokens, ${lentParts.token} token left`]);
 
     // Withdraw mode and Kamino's other states (docs/spec/lending-pool.md, "Withdraw mode" and
     // "When Kamino can't pay"), with the Kamino-side commands of scripts/kamino-devnet.
@@ -1754,11 +1849,33 @@ async function main() {
     if (!(await withdrawMode()) || (await tokenBalance(ctokenAccount)) !== 0n) fail('the market left withdraw mode or lent again');
     info(`everything is redeemed, V = 0, but X is still T = ${stillShort.x}: Kamino's ${stillShort.free} free is at or below ${exitMultiple} x ${stillShort.x}, so it stays`);
 
-    step('25. The borrower repays, and rebalance leaves withdraw mode and lends again');
+    step('25. The borrower repays, and rebalance leaves withdraw mode after its wait and lends again');
     kaminoCommand('repay');
     const repaid = await exposure();
     if (repaid.free <= exitMultiple * repaid.x) fail(`after the repay Kamino has ${repaid.free} free, not above ${exitMultiple} x ${repaid.x}`);
     info(`Kamino has ${repaid.free} WSOL free again, above ${exitMultiple} x ${repaid.x} = ${exitMultiple * repaid.x}`);
+    // One reading could be a bundle's deposit held for a moment, so the first call only starts
+    // the wait (docs/spec/lending-pool.md, "Withdraw mode").
+    const exitDelay = idlConstant('WITHDRAW_MODE_EXIT_DELAY_SLOTS');
+    const waitStart = await send('rebalance starts the wait to leave withdraw mode', payer, [await rebalanceInstruction()]);
+    const waiting = (await fetchLendingAmmMarket(rpc, marketState, { commitment: 'confirmed' })).data;
+    const startedAt = (await rpc.getTransaction(waitStart, { commitment: 'confirmed', maxSupportedTransactionVersion: 0, encoding: 'json' }).send())?.slot ?? fail('no slot for the wait');
+    if (!waiting.withdrawMode || waiting.exitSeenSlot !== startedAt || (await tokenBalance(ctokenAccount)) !== 0n) {
+        fail(`the first rebalance above the exit threshold left withdraw mode, lent, or recorded ${waiting.exitSeenSlot}, not slot ${startedAt}`);
+    }
+    info(`still in withdraw mode, waiting since slot ${startedAt} for ${exitDelay} slots of free liquidity above the exit threshold`);
+    record.push(['wait to leave withdraw mode', `from slot ${startedAt}`]);
+    await refusedWith('rebalance before the wait is over', payer, [await rebalanceInstruction()], 'BelowMinRebalance');
+    let lastShown = 0n;
+    for (;;) {
+        const now = await rpc.getSlot({ commitment: 'confirmed' }).send();
+        if (now >= startedAt + exitDelay) break;
+        if (now - lastShown >= exitDelay / 10n) {
+            info(`slot ${now}: ${startedAt + exitDelay - now} slots to go`);
+            lastShown = now;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
     const reserveBeforeReturn = await readReserve();
     const asked2 = repaid.buffer - (repaid.total * targetBps) / BPS;
     const leaving = await rebalanceMeasured('rebalance out of withdraw mode');
@@ -1821,13 +1938,7 @@ async function main() {
     }
     reserves = [reserves[0] - leftParts.token, reserves[1] - leftParts.buffer];
     shareCount -= lp2Left;
-    const netLent = lent.deposited - lent.redeemed;
-    const takeLeft = ((netLent < 0n ? -netLent : netLent) * leftParts.ctokens) / lent.ctokens;
-    lent = {
-        ctokens: lent.ctokens - leftParts.ctokens,
-        deposited: netLent >= 0n ? lent.deposited - takeLeft : lent.deposited,
-        redeemed: netLent >= 0n ? lent.redeemed : lent.redeemed - takeLeft,
-    };
+    lent = afterInKind(leftParts.ctokens);
     await checkMarket('after the in-kind removal in emergency mode');
     info(`the second wallet burned its last ${lp2Left} shares for ${leftParts.token} token, ${leftParts.buffer} WSOL and ${leftParts.ctokens} cTokens`);
 

@@ -277,6 +277,7 @@ impl<'info> NewMarket<'_, 'info> {
             redeemed: 0,
             created_slot: clock.slot,
             created_at: clock.unix_timestamp,
+            exit_seen_slot: 0,
             reserved: [0; RESERVED_LEN],
         })
     }
