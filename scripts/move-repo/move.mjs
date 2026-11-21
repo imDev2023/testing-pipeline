@@ -805,8 +805,12 @@ async function moveCheckouts(rw) {
 }
 
 // ---- The proof ----------------------------------------------------------------------------------
-async function check(snapOld, transform, needles, movedOn) {
-  step(`Prove every number of ${R} against the archive`);
+// strict: the move's own proof, run as it ends, before any session writes again: every field of every
+// issue as the archive has it. Otherwise (`check`, and make-repo-public.sh), sessions have worked on the
+// issues since, so it proves only what cannot drift: each number is still the issue it was (GitHub's
+// import kept its creation time), each placeholder is intact and each moved pull request exists.
+async function check(snapOld, transform, needles, movedOn, { strict = false } = {}) {
+  step(`Prove every number of ${R} against the archive${strict ? ", field by field" : ""}`);
   const [o, n] = R.split("/");
   const fresh = await trackerOf(R);
   const newBy = new Map([...fresh.issues.map((i) => [i.number, { kind: "issue", ...i }]), ...fresh.prs.map((x) => [x.number, { kind: "pr", ...x }])]);
@@ -815,7 +819,7 @@ async function check(snapOld, transform, needles, movedOn) {
   const prMap = {};
   const notes = new Map();
   for (const pr of snapOld.prs.filter((x) => x.state === "OPEN")) {
-    const m = fresh.prs.find((x) => x.headRefName === pr.headRefName && x.state === "OPEN");
+    const m = fresh.prs.find((x) => x.headRefName === pr.headRefName && (strict ? x.state === "OPEN" : true));
     if (!m) continue;
     prMap[pr.number] = m.number;
     if (ticketOf(pr)) notes.set(ticketOf(pr), [...(notes.get(ticketOf(pr)) || []), prNote(pr.number, m.number, pr.headRefName, movedOn)]);
@@ -837,6 +841,10 @@ async function check(snapOld, transform, needles, movedOn) {
       else if (!now.body.includes(ARCHIVE)) bad.push(`#${k}'s placeholder does not name the archive`);
       continue;
     }
+    if (!strict) {
+      if (now.createdAt !== was.createdAt) bad.push(`#${k} was created ${now.createdAt}, not ${was.createdAt} as in the archive`);
+      continue;
+    }
     const diffs = [];
     if (now.title !== transform(was.title)) diffs.push("title");
     if (now.body !== (k === 1 ? remapPrs(transform(was.body), prMap) : transform(was.body))) diffs.push("body");
@@ -855,7 +863,7 @@ async function check(snapOld, transform, needles, movedOn) {
     if (diffs.length) bad.push(`#${k}: ${diffs.join(", ")}`);
   }
   for (const pr of snapOld.prs.filter((x) => x.state === "OPEN")) {
-    const m = fresh.prs.find((x) => x.headRefName === pr.headRefName && x.state === "OPEN");
+    const m = fresh.prs.find((x) => x.headRefName === pr.headRefName && (strict ? x.state === "OPEN" : true));
     if (!m) bad.push(`open pull request #${pr.number} (${pr.headRefName}) was not recreated`);
     else say(`#${pr.number} -> #${m.number} (${pr.headRefName})`);
   }
@@ -901,7 +909,7 @@ async function main() {
     if (!state.run) stop("there is no record of the pushed rewrite on this Mac.");
     const commitMap = readMap(join(state.run, "rewrite.git"));
     const snap = await snapshot(A);
-    const ok = await check(snap, makeTransform(replacements, commitMap), needles, state.movedOn);
+    const ok = await check(snap, makeTransform(replacements, commitMap), needles, state.movedOn, { strict: process.argv.includes("--strict") });
     process.exit(ok ? 0 : 1);
   }
   if (!DRY) await installHooks();
@@ -944,7 +952,7 @@ async function main() {
     );
     return;
   }
-  const ok = await check(await snapshot(A), transform, needles, movedOn);
+  const ok = await check(await snapshot(A), transform, needles, movedOn, { strict: true });
   console.log(
     ok
       ? `The move is done. ${R} is new and private; ${A} is the old one, private for good. Tell Claude, who checks CI and asks you before it goes public.`

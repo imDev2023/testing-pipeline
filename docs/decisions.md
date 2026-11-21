@@ -527,6 +527,66 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-19 in [Move the project to a new repository without the old pull request refs, then make it public](https://github.com/imDev2023/testing-pipeline/issues/167)
 
+### SUITE-48: Progress site: links into the repository
+
+- Question: Where do the site's links into the repository point now that the repository is public?
+- Answer: Straight at it on GitHub, a file written relative to another at the branch it was read from, and a refresh stops on a link to a file, a folder or a commit the repository does not hold, so no link the site shows is broken.
+- Alternatives: The site's own page where it has one and GitHub otherwise; the site's own pages and plain text for the rest, as while the repository was private.
+- Specified in: [`site/README.md`, What is shown](../site/README.md#what-is-shown)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186)
+
+### SUITE-49: Keeper runner: the socket and discovery off Alchemy
+
+- Question: Alchemy's free devnet endpoint serves neither `logsSubscribe` on its socket nor `getProgramAccounts`, so where do the runner's socket and market discovery go?
+- Answer: To Aviary's own Helius key once the project's `.env` has it as `RPC_URL`, and until then to Solana's public devnet endpoint, which serves both free and without a key, each its own setting (`WS_URL`, `DISCOVERY_RPC_URL`); reads, simulations and sends stay on Alchemy.
+- Alternatives: The owner's shared Helius key, already rate-limited when several sessions run; everything on the public endpoint; a paid Alchemy tier, which the spec rules out.
+- Specified in: [`docs/spec/keeper-runner.md`, RPC](spec/keeper-runner.md#rpc)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
+### SUITE-50: Keeper runner: nothing to do when a program does not refuse
+
+- Question: The tax AMM's `distribute` on a slot owed nothing succeeds without effect rather than refusing, so how does the runner tell that a payout had nothing to do, as when another keeper paid it first?
+- Answer: The tax AMM's entry in `packages/keeper-jobs` has no "nothing to do" refusal code and counts a simulation that emits no `Distributed` event as nothing to do, which costs the runner only that simulation.
+- Alternatives: A `NothingOwed` refusal in the program, which would need an upgrade of the deployed program; reading the slot's owed amount again just before simulating, which still races another keeper.
+- Specified in: [`docs/spec/keeper-runner.md`, One definition of due](spec/keeper-runner.md#one-definition-of-due)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
+### SUITE-51: Keeper runner: what a job costs
+
+- Question: How does the runner estimate a job's cost before sending it, and count what it spent?
+- Answer: The estimate is what the simulation takes from the keeper wallet (its fee and any rent it pays); once landed, a transaction counts what left the wallet and never less than its fee, put to the first known market among its accounts, the same way whether just sent or rebuilt after a restart.
+- Alternatives: The fee plus the rent of the token accounts the runner expects a job to create, which every product would have to predict.
+- Specified in: [`docs/spec/keeper-runner.md`, Sending a job](spec/keeper-runner.md#sending-a-job)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
+### SUITE-52: Keeper runner: when the RPC fails
+
+- Question: Does a job count as failed, and so move towards parking, when the RPC cannot be asked?
+- Answer: No: only the job's own failure counts (a refusal, a transaction that landed failed, an instruction that cannot be built); after a transport error, a timeout or a send that never lands the job is due again in the next pass.
+- Alternatives: Counting every error as a failure, so an RPC outage of a few minutes would park jobs that would succeed.
+- Specified in: [`docs/spec/keeper-runner.md`, Failures](spec/keeper-runner.md#failures)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
+### SUITE-53: Keeper runner: a misspelt setting
+
+- Question: What does the runner do with a `KEEPER_` variable that names no setting?
+- Answer: It refuses to start and names the variable and the settings there are, so a misspelt override never leaves a default in force.
+- Alternatives: Ignoring it with a warning in the log.
+- Specified in: [`docs/spec/keeper-runner.md`, Spending caps](spec/keeper-runner.md#spending-caps)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
 ## Engineering and security bar (BAR)
 
 ### BAR-01: Framework
@@ -5088,3 +5148,5 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `BAR-40`, `TAX-51`, `TAX-52`: set by the session of [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-54` to `POOL4-56`: set by the session of [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `TAX-54`, `POOL4-54`: `programs/tax-amm/scripts/publish.ts` and `tests/published.rs` were copied for the buy wall AMM with only the program's names changed; the lending AMM's devnet ticket will need a third copy, so the shared part belongs in one helper the three programs call.
+- `SUITE-48`: set by the session of [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186), which read its ticket as every link going to GitHub, and not yet put to the owner, so it is that session's default until the owner has been asked.
+- `SUITE-49` to `SUITE-53`: set by the session of [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.

@@ -25,9 +25,10 @@ Each block in the register says what else was weighed, the one place the value l
 
 ## On devnet
 
-Not deployed yet.
-The program id is `BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6`; the first deploy, its registration with the router and the demo market are recorded in [`deployments/devnet.json`](../../deployments/devnet.json) once they happen.
-It stays upgradeable on devnet under one project upgrade authority, every upgrade there passing the [release gate](gate/) first, and Aviary shows it as upgradeable by a single key, like anyone else's strategy.
+Deployed on 2026-11-20 at `BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6`, then upgraded the same day to release 0.1.1, a solana-verify build of commit `d83e048` with executable hash `e4bd061ef3a7662ad92deed019368d8a89f46fe07b86dc1e8e277aa708aeb5da`, after the release gate passed it against the live demo market; the first deploy, of `a941f9c` (`89093fa7feed9f6400cb8b405e0bfe094c1d04327a231b7d1fed449d3c14dac9`), is in its record's history.
+[`deployments/devnet.json`](../../deployments/devnet.json) records each deploy, and [`deployments/release-gate/buy-wall-amm/devnet.json`](../../deployments/release-gate/buy-wall-amm/devnet.json) each pass of the gate that let one through.
+It is registered with Pipeline's router, and its demo market, the worked example's ([POOL4-55](../../docs/decisions.md#pool4-55-the-devnet-demo-market)), is router market `7BctWoaSumdxkMBCXxMum59NV5CZJBvC33SCrcGa5CAK` (market state `GJaWKKtnFXs8CiVDz3WqFwK6hdAZ2VLwh4vpBbEAb9EU`); its `pipeline-check` report is [`conformance/devnet.json`](conformance/devnet.json).
+It stays upgradeable on devnet under one project upgrade authority, `Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe`, every upgrade there passing the [release gate](gate/) first, and Aviary shows it as upgradeable by a single key, like anyone else's strategy.
 
 ## Using it
 

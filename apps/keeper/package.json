@@ -1,0 +1,33 @@
+{
+    "name": "keeper",
+    "private": true,
+    "type": "module",
+    "description": "The keeper runner: calls every keeper job of every market of our strategies when it is due, paid for by the keeper wallet (docs/spec/keeper-runner.md)",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "scripts": {
+        "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/keeper.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --log-level=warning",
+        "start": "node src/main.ts run",
+        "once": "node src/main.ts once",
+        "status": "node scripts/agent.ts state && node src/main.ts status",
+        "image": "pnpm build && docker build --tag testing-pipeline-keeper .",
+        "test": "node --test test/*.test.ts",
+        "test:local": "node --test --test-concurrency=1 test/local/*.test.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@solana/kit": "8.6.0",
+        "keeper-jobs": "workspace:*"
+    },
+    "devDependencies": {
+        "@pipeline-placeholder/sdk": "link:../../fixtures/pipeline/sdk/ts",
+        "@solana-program/system": "0.16.0",
+        "@solana-program/token": "0.18.0",
+        "@types/node": "24.19.2",
+        "esbuild": "0.28.2",
+        "strategy-actions": "workspace:*",
+        "tax-amm-scripts": "workspace:*",
+        "typescript": "7.0.2"
+    }
+}

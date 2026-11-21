@@ -1,12 +1,16 @@
 {
     "name": "testing-pipeline",
     "private": true,
-    "description": "The TypeScript workspace: each program's scripts now, Aviary's apps and packages later",
+    "description": "The TypeScript workspace: each program's scripts, the shared packages, and the apps (the keeper runner; Aviary's later)",
     "packageManager": "pnpm@11.0.8",
     "engines": {
         "node": ">=24 <25"
     },
     "scripts": {
-        "typecheck": "pnpm --recursive typecheck"
+        "typecheck": "pnpm --recursive typecheck",
+        "keeper:install": "node apps/keeper/scripts/agent.ts install",
+        "keeper:uninstall": "node apps/keeper/scripts/agent.ts uninstall",
+        "keeper:status": "pnpm --filter keeper status",
+        "keeper:once": "pnpm --filter keeper once"
     }
 }

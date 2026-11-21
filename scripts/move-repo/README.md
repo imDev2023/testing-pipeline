@@ -8,6 +8,7 @@ Only GitHub Support can delete those refs, so on 2026-11-19 the owner chose to m
 bash scripts/move-repo.sh --dry-run   # builds and checks everything, prints every change, changes nothing on GitHub or in the checkouts
 bash scripts/move-repo.sh             # the move: safe to re-run, stops at the first failed check
 bash scripts/move-repo.sh check       # proves every issue number against the archive and scans the new repository
+bash scripts/move-repo.sh check --strict   # also compares every field, which holds only until sessions write again
 ```
 
 It needs `gh` signed in as `imDev2023`, `git-filter-repo`, Docker Desktop running (for the CI runners) and the owner's private files under `~/.config/testing-pipeline/`: the profile and the X archive in `research/`, `private-lines.txt`, and in `purge/` the outreach marks, the replacement list and the two hooks.
@@ -36,8 +37,9 @@ It keeps its state, its rewrites and its logs in `~/.config/testing-pipeline/mov
 
 ## The check
 
-- Every number from #1 to the highest is on the new repository: an issue with the same title, body, state and reason, labels, assignees, comments, parent, sub-issues in order and blocked-by links, or the closed placeholder of the pull request it was.
-- Every open pull request was recreated on its branch.
+- Every number from #1 to the highest is on the new repository: the issue it was in the archive, with the creation time GitHub's import kept, or the closed placeholder of the pull request it was.
+- Every pull request open at the move was recreated on its branch (it may have merged since).
+- With `--strict`, as the move runs it at its end before any session writes again, each issue must also match the archive field by field: title, body, state and reason, labels, assignees, comments, parent, sub-issues in order and blocked-by links. Once sessions work on the issues again that no longer holds, so `check` without it is what `scripts/make-repo-public.sh` runs; the strict check passed on 2026-11-19.
 - The scan finds nothing in a mirror clone of the new repository (every branch and pull request ref, every object) or in any issue, pull request, comment, review or edit revision.
 - It reports CI on `main` and the recreated pull requests' checks, and whether CodeRabbit has reviewed them; if it never does, add the repository to CodeRabbit at https://github.com/settings/installations.
 

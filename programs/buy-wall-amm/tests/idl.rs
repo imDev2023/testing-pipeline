@@ -87,6 +87,13 @@ fn spec_offsets() -> Vec<(String, usize)> {
 }
 
 #[test]
+fn the_idl_names_the_release_it_was_built_from() {
+    // The crate's version, as the security.txt's `source_release` is (tests/security_txt.rs),
+    // so a release that forgets to rebuild the IDL fails here.
+    assert_eq!(idl()["metadata"]["version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[test]
 fn the_idl_is_this_programs() {
     assert_eq!(idl()["address"], strategy_id().to_string());
 }

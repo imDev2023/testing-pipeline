@@ -447,7 +447,9 @@ The creation parameters `cap_floor_bps` and `cap_decay_bps` are kept as well, be
 
 ### Byte offsets
 
-Layout version 1.
+Layout version 1, frozen since the program's first deployment, on devnet on 2026-11-20 (build `89093fa7feed9f6400cb8b405e0bfe094c1d04327a231b7d1fed449d3c14dac9` in slot 524,228,154, recorded in `deployments/devnet.json`).
+From then on no row below moves, changes size or goes, and a later version only appends fields into `reserve`, as "One fixed-size layout" says.
+The IDL publishes the same layout, which `tests/idl.rs` checks against this table.
 Offsets are from the start of the account, every integer is little-endian, and nothing is padded.
 The discriminator is the ASCII bytes `BWMARKET` (`42 57 4d 41 52 4b 45 54`), written in the code as fixed bytes ([`POOL4-21`, `POOL4-22`](../decisions.md#pool4-22-the-market-states-discriminator-and-layout-version)).
 `status` is 1 once created and 2 once seeded.
@@ -576,7 +578,7 @@ scripts/deploy-devnet.sh buy-wall-amm
 
 - The repo keeps a saved market state for every layout version ever deployed, taken from a real market.
 - CI runs the release gate's checks on each of them against every build.
-- Until the devnet deploy saves one from a real market (`cargo run -p buy-wall-gate -- snapshot --cluster devnet --out <file>`), layout version 1 is represented by three markets made by a LiteSVM run through devnet's router (one with every keeper job due, one with none, one waiting for its seed), marked synthetic, and CI keeps both once both exist ([`POOL4-20`](../decisions.md#pool4-20-the-first-layout-fixture)).
+- Layout version 1 has two: `layout-1-devnet.json`, the devnet demo market saved on 2026-11-20 with every keeper job due, after its first walk through all of them and one more buy and sell (`demo.ts --market <its state> --trade-only`, then `cargo run -p buy-wall-gate -- snapshot --cluster devnet --out <file>`), and `layout-1-synthetic.json`, three markets made by a LiteSVM run through devnet's router before the first deploy (one with every keeper job due, one with none, one waiting for its seed), marked synthetic; CI keeps both ([`POOL4-20`](../decisions.md#pool4-20-the-first-layout-fixture)).
 - Fixtures are snapshots in `programs/buy-wall-amm/gate/fixtures/`, without the programs: CI replays each with the pinned router and the build under test, and compares its quotes with the ones the fixture records.
 - CI also builds seven test builds from edited copies of the workspace, never from the program's own source ([`POOL4-44`](../decisions.md#pool4-44-how-the-gate-is-proved-to-catch-stranding)): one moving a field, one renaming the market state type with its discriminator left to Anchor, one growing the account, each of which the gate must refuse on every fixture, failing on every open market, one whose payout rule can no longer sweep fee slot 2 and one whose fee slot 2 wallet is refused as unset, each of which it must refuse on every market the deployed build swept that slot on and on its own market, and one appending a field into the reserve as layout version 2 and one with the designer's wallet set, as the upgrade that sets `DESIGNER_RECIPIENT` will set it, each of which it must pass.
 - A fixture records the deployed build's outcome of every step as a cluster snapshot does; `rerecord` records them again, and reads a fixture saved before they were recorded.

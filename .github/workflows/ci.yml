@@ -38,9 +38,10 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
-          # The programs, everything that builds, tests or runs them, and this workflow.
+          # The programs, everything that builds, tests or runs them (the TypeScript packages and
+          # apps too), and this workflow.
           ONCHAIN_PATHS: >-
-            ^programs/|^packages/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator|deploy-devnet|test-deploy-devnet)\.sh$|^scripts/workspace-programs\.py$
+            ^programs/|^packages/|^apps/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator|deploy-devnet|test-deploy-devnet)\.sh$|^scripts/workspace-programs\.py$
           # Canary's crates, the fixtures its tests load (the router's pin, and Pipeline's test
           # programs at the rev programs/Cargo.toml pins), the scripts that fetch them, and this
           # workflow.
@@ -185,7 +186,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Type-check
         run: pnpm typecheck
-      - name: The shared packages' tests (strategy-actions)
+      - name: The packages' and apps' tests (strategy-actions, keeper-jobs, the keeper's settings)
         run: pnpm --recursive --if-present test
 
   kani:

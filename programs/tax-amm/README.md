@@ -25,12 +25,32 @@ Each block in the register says what else was weighed, the one place the value l
 | Metadata, IDL and errors | [TAX-20](../../docs/decisions.md#tax-20-custom-actions-and-metadata) custom actions and metadata, [TAX-34](../../docs/decisions.md#tax-34-idl-and-typescript-client) IDL and client, [TAX-37](../../docs/decisions.md#tax-37-the-tax-cap-and-the-suite-share-in-the-idl) constants in the IDL, [TAX-31](../../docs/decisions.md#tax-31-how-a-refused-market-is-reported), [TAX-36](../../docs/decisions.md#tax-36-how-a-refused-seed-or-trade-is-reported) and [TAX-40](../../docs/decisions.md#tax-40-how-a-refused-tax-authority-action-is-reported) how refusals are reported |
 | Safety and testing | [TAX-21](../../docs/decisions.md#tax-21-mainnet-upgrade-policy) mainnet upgrade policy, [TAX-22](../../docs/decisions.md#tax-22-security-contact) security contact, [TAX-23](../../docs/decisions.md#tax-23-compute-ceilings) compute ceilings, [TAX-24](../../docs/decisions.md#tax-24-invariants) invariants, [TAX-28](../../docs/decisions.md#tax-28-expected-canary-warns) expected Canary warns, [TAX-49](../../docs/decisions.md#tax-49-the-maths-re-checks-the-creation-rules) to [TAX-52](../../docs/decisions.md#tax-52-what-every-holder-can-exit-means-on-a-tax-market) proofs and fuzzing |
 | Shared bar for every program | [BAR-20](../../docs/decisions.md#bar-20-verified-builds-of-our-programs) verified builds, [BAR-21](../../docs/decisions.md#bar-21-published-source-and-licence) published source, [BAR-22](../../docs/decisions.md#bar-22-strategy-metadata) metadata, [BAR-23](../../docs/decisions.md#bar-23-upgrade-authority-on-devnet) upgrade authority, [BAR-26](../../docs/decisions.md#bar-26-external-audits) no external audit, [SUITE-20](../../docs/decisions.md#suite-20-names-of-the-on-chain-products) the name |
+| Going to devnet | [BAR-42](../../docs/decisions.md#bar-42-how-a-program-is-deployed-to-devnet) how a program is deployed to devnet, [TAX-53](../../docs/decisions.md#tax-53-the-devnet-demo-market) the devnet demo market, [TAX-54](../../docs/decisions.md#tax-54-links-that-stay-at-commits-on-main) links that stay at commits on main, [BAR-14](../../docs/decisions.md#bar-14-devnet-demo) the devnet demo |
 
 ## On devnet
 
-Not deployed yet.
-The program id is `J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t` ([TAX-29](../../docs/decisions.md#tax-29-program-id)); the first deploy, its registration with the router and the demo market are recorded in [`deployments/devnet.json`](../../deployments/devnet.json) once they happen.
+Deployed and registered with Pipeline's router on devnet on 2026-11-20.
+
+| | |
+| --- | --- |
+| Program | `J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t` ([TAX-29](../../docs/decisions.md#tax-29-program-id)) |
+| Verified build | executable hash `a48b5e5962290aafe35ced955d0a8a8d6cb5cb63bd0be435fc87935d6c05db59`, the `solana-verify` Docker build of `274038e` on `main`, recorded in [`deployments/devnet.json`](../../deployments/devnet.json) ([BAR-20](../../docs/decisions.md#bar-20-verified-builds-of-our-programs), [BAR-42](../../docs/decisions.md#bar-42-how-a-program-is-deployed-to-devnet)) |
+| Upgrade authority | `Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe`, the project's one devnet upgrade authority ([BAR-23](../../docs/decisions.md#bar-23-upgrade-authority-on-devnet)) |
+| Demo market | `C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w`: a demo token against wrapped SOL, taxed in wrapped SOL, 3% buy and 5% sell, two tax recipients, a tax authority ([TAX-53](../../docs/decisions.md#tax-53-the-devnet-demo-market)); its registration, creation, trades and payouts, with every signature, are in [`deployments/devnet-demo-tax-amm.json`](../../deployments/devnet-demo-tax-amm.json) |
+| Conformance | [`conformance/devnet.json`](conformance/devnet.json), `pipeline-check` 0.2.0 on the demo market: 13 pass, 0 warn, 0 fail, `exact_out_refund` skipped |
+
 It stays upgradeable on devnet under one project upgrade authority, and Aviary shows it as upgradeable by a single key, like anyone else's strategy.
+It was deployed while this repo was still private ([BAR-21](../../docs/decisions.md#bar-21-published-source-and-licence)); since the repo went public on 2026-11-20, its metadata and every link in it resolve at commits on `main` ([TAX-54](../../docs/decisions.md#tax-54-links-that-stay-at-commits-on-main)).
+
+To check the deploy yourself, with `solana-verify` 0.5.2 or later and Docker, rebuild the commit as the deploy did, from an export of it and with the image it pinned, and compare the two hashes:
+
+```sh
+git archive 274038e programs | tar -x -C /tmp/tax-amm-274038e
+solana-verify build /tmp/tax-amm-274038e/programs --library-name tax_amm --arch v3 \
+  --base-image solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd
+solana-verify get-executable-hash /tmp/tax-amm-274038e/programs/target/deploy/tax_amm.so
+solana-verify get-program-hash -u devnet J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t
+```
 
 ## Using it
 
