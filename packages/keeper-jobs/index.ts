@@ -7,8 +7,9 @@
 // when the runner would act. A product adds its entry to `products`; the runner does not
 // change.
 
-import type { Address, GetAccountInfoApi, Instruction, Rpc, TransactionSigner } from '@solana/kit';
+import type { Address, GetAccountInfoApi, Instruction, ReadonlyUint8Array, Rpc, TransactionSigner } from '@solana/kit';
 
+import { buyWallAmm } from './buy-wall-amm.ts';
 import { taxAmm } from './tax-amm.ts';
 
 /** When the runner checks a job: after each transaction and in every sweep, hourly, or daily. */
@@ -39,10 +40,21 @@ export type BuildInput<State> = {
 export type KeeperJob<State> = {
     name: string;
     pass: Pass;
+    /**
+     * The first bytes of the job's own instruction's data, so the runner can tell, from the
+     * keeper wallet's past transactions, when the job last ran on each market.
+     */
+    discriminator: ReadonlyUint8Array;
     /** What is due on a market in this state, in the order it should be sent. */
     due(state: State): JobUnit[];
     /** The instructions of one unit's transaction. */
     build(input: BuildInput<State>): Promise<Instruction[]>;
+    /**
+     * Why sending a due unit now would not be worth it, or null to send it: the runner skips it
+     * at no cost and checks again in its next pass. A payout into an account it would create
+     * waits until what it pays is worth that account's rent.
+     */
+    skipReason?(input: BuildInput<State>): Promise<string | null>;
     /** The program's custom error codes that mean nothing to do, and try again in a later slot. */
     refusals: { nothingToDo: readonly number[]; laterSlot: readonly number[] };
     /**
@@ -64,7 +76,7 @@ export type KeeperProduct<State> = {
 // Each entry keeps its own state type; the runner only passes a product's state back to it.
 export type AnyKeeperProduct = KeeperProduct<any>;
 
-export const products: readonly AnyKeeperProduct[] = [taxAmm];
+export const products: readonly AnyKeeperProduct[] = [taxAmm, buyWallAmm];
 
 /** What a simulation of a job's transaction means for the runner. */
 export type SimulationOutcome = 'send' | 'nothing-to-do' | 'later-slot' | 'failure';
@@ -86,4 +98,5 @@ export function outcomeOf(
     return 'send';
 }
 
+export { buyWallAmm, buyWallAmmWith, converted, type BuyWallMarket } from './buy-wall-amm.ts';
 export { taxAmm };

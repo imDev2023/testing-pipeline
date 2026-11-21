@@ -49,7 +49,7 @@ Like every decision in this spec, each one here is a default MetalLegBob may cha
 - **Its own socket**: one `logsSubscribe` subscription per strategy program of ours, held open while the runner runs; a notification makes the runner fetch that transaction, find which of our markets it touched, re-read their market states and check `place_wall` and `rebalance`.
   The socket reconnects on its own, and every reconnect runs a sweep so nothing between is missed.
 - **The 10-minute sweep**: re-reads every known market's state in batches of 100 with `getMultipleAccounts` and checks `place_wall` and `rebalance`; this also catches withdraw mode, which depends on Kamino's state rather than our market's.
-- **The hourly pass**: `settle`.
+- **The hourly pass**: `settle`, at most once every `SETTLE_INTERVAL` on each market, a restart included: the runner learns when each job of the hourly pass last ran on each market from the keeper wallet's own successful transactions of the last `SETTLE_INTERVAL`, each job known by its instruction's discriminator in `packages/keeper-jobs`, and holds it back in every pass until the interval is up ([`SUITE-56`](../decisions.md#suite-56-keeper-runner-settle-at-most-hourly-across-a-restart)).
 - **The daily pass** at `DAILY_PASS_UTC`: `pay_rewards`, `sweep_fees` and `distribute`.
 - **On start**: one full pass of every job, since the Mac may have slept through any of the above; paying out again after a restart costs only transaction fees, because each payout pays the whole amount owed and the next one finds nothing.
 - The runner reads only the chain; it never polls Aviary's database (see "What it records").
@@ -74,6 +74,7 @@ Like every decision in this spec, each one here is a default MetalLegBob may cha
 3. Estimate its cost (the fee plus the rent of any account it creates) and check it against every cap; a job over a cap is held, not sent.
    The estimate is what the simulation takes from the keeper wallet: its balance before, less its balance in the simulation's result, which has the fee taken ([`SUITE-51`](../decisions.md#suite-51-keeper-runner-what-a-job-costs)).
 4. Send it at `PRIORITY_FEE_MICROLAMPORTS` (0 on devnet) and wait for confirmation.
+- A payout that would create its recipient's token account waits until what it pays is worth that account's rent: the job's entry in `packages/keeper-jobs` gives the reason, the runner skips it at no cost and checks again in its next pass, and a payout into an account that exists goes whatever it pays; a buy wall market's rewards are valued at the market's price ([`SUITE-54`](../decisions.md#suite-54-keeper-runner-a-payout-into-an-account-it-would-create)).
 - One job is sent at a time, so two jobs never race each other or count the same cap headroom twice.
 - Another keeper running the same job first is harmless: the second simulation finds nothing to do.
 
@@ -88,7 +89,8 @@ Like every decision in this spec, each one here is a default MetalLegBob may cha
 ### When the wallet runs low or a cap is reached
 
 - Below `LOW_BALANCE` the runner keeps working and records a low-balance warning in every pass.
-- Below `MIN_BALANCE`, or once a cap is reached, it sends nothing more (for the day, or for that market) and records why; Aviary's keeper page shows it.
+- Below `MIN_BALANCE`, or once a cap is reached, it sends no job (for the day, or for that market) and records why; Aviary's keeper page shows it.
+  It still unwraps its tips, which lifts the balance (see "Keeper tips").
 - The runner never funds itself.
   The keeper wallet is topped up only with `devnet-airdrop ~/.config/testing-pipeline/devnet/keeper.json --target 2`, run by the owner or an agent session in the background, as the owner's global rules say for every devnet wallet.
 
@@ -104,7 +106,8 @@ Like every decision in this spec, each one here is a default MetalLegBob may cha
 ### Keeper tips
 
 - The buy wall AMM's `place_wall` is the only job that pays a keeper tip, into the keeper wallet's wrapped-SOL account.
-- The runner keeps its tips: once that account holds more than `TIP_UNWRAP_AT`, it closes the account to unwrap them into the float (the account's rent comes back too), and the next `place_wall` recreates it.
+- The runner keeps its tips: once that account holds more than `TIP_UNWRAP_AT`, the end of the pass closes the account to unwrap them into the float (the account's rent comes back too), and the next `place_wall` recreates it.
+- No cap and not `MIN_BALANCE` hold the unwrap, since it returns far more than its fee; the fee still counts in today's spend ([`SUITE-55`](../decisions.md#suite-55-keeper-runner-unwrapping-tips-under-the-caps)).
 - `place_wall` pays for itself: at the lowest fee (0.25%) on the smallest work (`WALL_THRESHOLD`, 0.01 SOL) the tip is at least 25,000 lamports, five times the 5,000-lamport transaction fee.
 - The other jobs pay no tip, so their fees and any recipient token accounts they create come out of the float.
 - Caps count what the runner spends, never net of tips.

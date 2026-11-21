@@ -587,6 +587,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
 
+### SUITE-54: Keeper runner: a payout into an account it would create
+
+- Question: When does the runner send a payout whose recipient's token account does not exist yet, so that the payout would create it at the keeper wallet's expense?
+- Answer: Only once what it pays is worth at least that account's rent (2,039,280 lamports for a plain token account, 2,074,080 for a Token-2022 one); until then the job is skipped at no cost and checked again in its next pass, and a payout into an account that exists is sent whatever it pays. A buy wall market's rewards are valued in SOL at the market's current price; its fees are SOL already.
+- Alternatives: Always paying, so a recipient that closes its account after each payout gets the runner's rent back each time; valuing rewards at the wall's price rather than the market's.
+- Specified in: [`docs/spec/keeper-runner.md`, Sending a job](spec/keeper-runner.md#sending-a-job)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-21 in [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95)
+
+### SUITE-55: Keeper runner: unwrapping tips under the caps
+
+- Question: Do the spending caps and `MIN_BALANCE` hold the transaction that unwraps the keeper wallet's tips?
+- Answer: No: it brings the tips and the account's rent back into the float, far more than its fee, so it is sent whenever the wrapped-SOL account holds more than `TIP_UNWRAP_AT`, even below `MIN_BALANCE` or past a cap; its fee still counts in today's spend, which caps every later job.
+- Alternatives: Holding it like a job, so a wallet below `MIN_BALANCE` could not recover the tips that would lift it back above.
+- Specified in: [`docs/spec/keeper-runner.md`, Keeper tips](spec/keeper-runner.md#keeper-tips)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-21 in [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95)
+
+### SUITE-56: Keeper runner: `settle` at most hourly across a restart
+
+- Question: How does the runner keep a job of the hourly pass, such as the buy wall AMM's `settle`, to once every `SETTLE_INTERVAL` on a market when it restarts, since its start runs a full pass?
+- Answer: It learns when each hourly job last ran on each market from the keeper wallet's own successful transactions of the last `SETTLE_INTERVAL`, read whenever it rebuilds today's spend, each job recognised by its instruction's discriminator from `packages/keeper-jobs`; a job that ran less than `SETTLE_INTERVAL` ago on a market waits, in every pass the start's included.
+- Alternatives: Remembering only what this run sent, so a restart within the hour settles again; a state file, which the runner otherwise does without.
+- Specified in: [`docs/spec/keeper-runner.md`, Triggers](spec/keeper-runner.md#triggers)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-21 in [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95)
+
 ## Engineering and security bar (BAR)
 
 ### BAR-01: Framework
@@ -5090,3 +5120,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `TAX-54`, `POOL4-54`: `programs/tax-amm/scripts/publish.ts` and `tests/published.rs` were copied for the buy wall AMM with only the program's names changed; the lending AMM's devnet ticket will need a third copy, so the shared part belongs in one helper the three programs call.
 - `SUITE-48`: set by the session of [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186), which read its ticket as every link going to GitHub, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `SUITE-49` to `SUITE-53`: set by the session of [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
+- `SUITE-54` to `SUITE-56`: set by the session of [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
