@@ -301,12 +301,12 @@ export type TestRunner = { runner: Runner; log: MemoryLogger; clock: FakeClock; 
 
 /**
  * A runner on a fake clock (starting at the real time), the keeper wallet given, seeing only
- * `mints`' markets; its daily pass `dailyInMinutes` after the start unless `env` says otherwise.
+ * `mints`' tax markets, or only the products given; its daily pass `dailyInMinutes` after the start unless `env` says otherwise.
  */
 export function testRunner(
     keeper: KeyPairSigner,
     mints: readonly Address[],
-    options: { env?: Record<string, string>; chain?: Chain; dailyInMinutes?: number } = {},
+    options: { env?: Record<string, string>; chain?: Chain; dailyInMinutes?: number; products?: readonly AnyKeeperProduct[] } = {},
 ): TestRunner {
     const clock = new FakeClock(Date.now());
     const settings = loadSettings({
@@ -319,7 +319,7 @@ export function testRunner(
     });
     const log = new MemoryLogger();
     const real = options.chain ?? rpcChain(settings);
-    const runner = new Runner({ settings, chain: real, clock, wallet: keeper, log, products: [scoped(mints)] });
+    const runner = new Runner({ settings, chain: real, clock, wallet: keeper, log, products: options.products ?? [scoped(mints)] });
     return { runner, log, clock, chain: real, keeper };
 }
 

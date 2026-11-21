@@ -39,7 +39,7 @@ async function main(command: string | undefined) {
         for (const product of products) {
             for (const { address, data } of await chain.programAccounts(product.programAddress)) if (product.isMarket(data)) markets.add(address);
         }
-        const spend = await rebuildSpend(chain, signer.address, systemClock.now(), (account) => markets.has(account));
+        const { spend } = await rebuildSpend(chain, signer.address, systemClock.now(), (account) => markets.has(account));
         const lastPass = lastPassRow();
         console.log(
             toJson(

@@ -26,6 +26,7 @@ import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from '@solana-program/t
 import { decodeMint, resolveExtraAccountMetasForExecute, TOKEN_2022_PROGRAM_ADDRESS } from '@solana-program/token-2022';
 import {
     BURN_SLOT,
+    DISTRIBUTE_DISCRIMINATOR,
     DISTRIBUTED_EVENT_DISCRIMINATOR,
     findAuthorityPda,
     getDistributeInstruction,
@@ -75,6 +76,7 @@ function isDistributedEvent(line: string): boolean {
 const distribute: KeeperJob<TaxMarket> = {
     name: DISTRIBUTE,
     pass: 'daily',
+    discriminator: DISTRIBUTE_DISCRIMINATOR,
 
     due(state) {
         const units: JobUnit[] = [];

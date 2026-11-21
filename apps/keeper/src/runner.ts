@@ -5,12 +5,18 @@
 // RETRY_DELAYS and then parked until its market's state changes.
 //
 // What is due, how to build it and which refusals mean "nothing to do" come from
-// packages/keeper-jobs; a product added there needs no change here.
+// packages/keeper-jobs; a product added there needs no change here. A job of the hourly pass
+// runs at most once every SETTLE_INTERVAL on each market, a restart included: when each last
+// ran is learned from the keeper wallet's own transactions, as today's spend is.
+//
+// Keeper tips land in the keeper wallet's wrapped-SOL account (each job that tips names it);
+// once it holds more than TIP_UNWRAP_AT, the end of a pass closes it into the float.
 
 import { address, getBase64Decoder, type Address, type Instruction, type Signature, type TransactionSigner } from '@solana/kit';
+import { findAssociatedTokenPda, getCloseAccountInstruction, getTokenDecoder, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token';
 import { outcomeOf, products as allProducts, type AnyKeeperProduct, type JobUnit, type KeeperJob, type Pass } from 'keeper-jobs';
 
-import { ChainError, type Chain, type Result, type SignedTransaction } from './chain.ts';
+import { ChainError, type Chain, type LandedTransaction, type Result, type SignedTransaction } from './chain.ts';
 import type { Clock, Timer } from './clock.ts';
 import type { Logger } from './log.ts';
 import { describeSettings, type Settings } from './settings.ts';
@@ -25,6 +31,8 @@ type Market = { address: Address; product: AnyKeeperProduct; data: Uint8Array };
 type AnyJob = KeeperJob<unknown>;
 
 const COMPUTE_BUDGET_PROGRAM = address('ComputeBudget111111111111111111111111111111');
+/** Wrapped SOL, the mint of the account keeper tips are paid into. */
+const NATIVE_MINT = address('So11111111111111111111111111111111111111112');
 const DAY_MS = 86_400_000;
 
 /** The jobs each pass checks (docs/spec/keeper-runner.md, "Triggers"). */
@@ -73,6 +81,10 @@ export class Runner {
     private readonly retries = new Map<string, Timer>();
     /** Parked job units, with their market's state when parked. */
     private readonly parked = new Map<string, { state: string; error: string }>();
+    /** When hourly jobs ran (ms), each with the accounts of its instruction, its market among them. */
+    private runs: { job: AnyJob; accounts: readonly Address[]; at: number }[] = [];
+    /** The wrapped-SOL account's data when its close last failed, so it is not tried again until that changes. */
+    private unwrapParked: string | null = null;
     private tail: Promise<unknown> = Promise.resolve();
     private readonly timers = new Set<Timer>();
     private readonly unsubscribes: (() => void)[] = [];
@@ -249,8 +261,11 @@ export class Runner {
             const addresses = only ?? [...this.markets.keys()];
             await this.refresh(addresses);
             if (this.spend === null || this.spend.day !== utcDay(this.clock.now())) {
-                // Rebuilt after the markets are known, so each transaction is put to its market.
-                this.spend = await rebuildSpend(this.chain, this.wallet.address, this.clock.now(), (key) => this.markets.has(key));
+                // Rebuilt after the markets are known, so each transaction is put to its market;
+                // looking back SETTLE_INTERVAL too, for when each hourly job last ran.
+                const { spend, transactions } = await rebuildSpend(this.chain, this.wallet.address, this.clock.now(), (key) => this.markets.has(key), this.settings.settleIntervalMs);
+                this.spend = spend;
+                this.learnRuns(transactions);
                 this.log.write({ row: 'spend', event: 'rebuilt', spend: this.spend });
             }
             const passes = PASS_JOBS[kind];
@@ -263,6 +278,7 @@ export class Runner {
                     for (const unit of job.due(market.product.decode(market.data))) await this.runUnit(market, job, unit, summary);
                 }
             }
+            await this.unwrapTips(warnings);
         } catch (error) {
             if (!(error instanceof ChainError)) throw error;
             // Nothing is sent without knowing today's spend; the next pass tries again.
@@ -301,6 +317,14 @@ export class Runner {
             summary.skipped++;
             return;
         }
+        if (job.pass === 'hourly') {
+            const last = this.lastRun(market.address, job);
+            if (last !== null && this.clock.now() - last < this.settings.settleIntervalMs) {
+                this.jobRow(market, unit, 'not-yet', { lastRan: new Date(last).toISOString(), reason: 'it ran on this market less than SETTLE_INTERVAL ago' });
+                summary.skipped++;
+                return;
+            }
+        }
         const park = this.parked.get(key);
         if (park) {
             if (park.state === fingerprint(market.data)) {
@@ -334,12 +358,18 @@ export class Runner {
             summary.skipped++;
             return;
         }
+        const input = { rpc: this.chain.rpc, marketState: market.address, state: market.product.decode(market.data), unit: current, payer: this.wallet };
+        const skip = (await job.skipReason?.(input)) ?? null;
+        if (skip !== null) {
+            this.failures.delete(key);
+            this.jobRow(market, current, 'nothing-to-do', { reason: skip });
+            summary.skipped++;
+            return;
+        }
         const balance = await this.chain.balance(this.wallet.address);
         if (balance < this.settings.minBalance) return this.hold(market, current, 'MIN_BALANCE', { balance, limit: this.settings.minBalance }, summary);
 
-        const instructions = await job.build({ rpc: this.chain.rpc, marketState: market.address, state: market.product.decode(market.data), unit: current, payer: this.wallet });
-        const priority = this.settings.priorityFeeMicrolamports;
-        const transaction = await this.chain.prepare(this.wallet, priority > 0n ? [computeUnitPrice(priority), ...instructions] : instructions);
+        const transaction = await this.chain.prepare(this.wallet, this.withPriority(await job.build(input)));
         const simulation = await this.chain.simulate(transaction, this.wallet.address);
         if (this.settled(market, job, current, key, simulation, summary, null)) return;
 
@@ -370,6 +400,7 @@ export class Runner {
         const cost = spendOf(result, this.wallet.address);
         this.spend!.add(result.accountKeys, cost);
         if (this.settled(market, job, unit, key, result, summary, { signature: transaction.signature, cost })) return;
+        if (job.pass === 'hourly') this.runs.push({ job, accounts: [market.address], at: this.clock.now() });
         this.failures.delete(key);
         this.jobRow(market, unit, 'sent', { signature: transaction.signature, cost, estimate });
         summary.sent++;
@@ -404,6 +435,81 @@ export class Runner {
         await new Promise((resolve) => setTimeout(resolve, 400));
         const summary: PassSummary = { pass: 'transaction', markets: 1, sent: 0, held: 0, parked: 0, skipped: 0, failed: 0 };
         await this.runUnit(market, job, unit, summary, true);
+    }
+
+    private withPriority(instructions: Instruction[]): Instruction[] {
+        const priority = this.settings.priorityFeeMicrolamports;
+        return priority > 0n ? [computeUnitPrice(priority), ...instructions] : instructions;
+    }
+
+    /** When `job` last ran on `market`, as this runner sent it or the keeper wallet's transactions show, or null. */
+    private lastRun(market: Address, job: AnyJob): number | null {
+        let last: number | null = null;
+        for (const run of this.runs) if (run.job === job && run.accounts.includes(market) && (last === null || run.at > last)) last = run.at;
+        return last;
+    }
+
+    /** Learns when each hourly job ran from the keeper wallet's successful transactions. */
+    private learnRuns(transactions: readonly LandedTransaction[]) {
+        const since = this.clock.now() - this.settings.settleIntervalMs;
+        this.runs = this.runs.filter((run) => run.at >= since);
+        for (const transaction of transactions) {
+            if (transaction.failed || transaction.blockTime === null) continue;
+            for (const instruction of transaction.instructions) {
+                const product = this.products.find((candidate) => candidate.programAddress === instruction.programAddress);
+                const job = (product?.jobs as readonly AnyJob[] | undefined)?.find(
+                    (candidate) => candidate.pass === 'hourly' && candidate.discriminator.every((byte, i) => instruction.data[i] === byte),
+                );
+                if (job) this.runs.push({ job, accounts: instruction.accounts, at: transaction.blockTime * 1000 });
+            }
+        }
+    }
+
+    /**
+     * Closes the keeper wallet's wrapped-SOL account into the float once it holds more than
+     * TIP_UNWRAP_AT; the next job that tips makes it again. It returns far more than its fee,
+     * so no cap or MIN_BALANCE holds it, but its fee counts in today's spend (SUITE-55), so it
+     * waits while today's spend is unknown. A close that fails is parked until the account
+     * changes, as a job is parked until its market does; a chain that cannot be asked is
+     * warned about and tried again in the next pass.
+     */
+    private async unwrapTips(warnings: string[]) {
+        if (this.spend === null) return;
+        const [account] = await findAssociatedTokenPda({ owner: this.wallet.address, mint: NATIVE_MINT, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+        try {
+            const found = (await this.chain.accounts([account])).get(account);
+            if (!found || found.owner !== TOKEN_PROGRAM_ADDRESS) return;
+            const tips = getTokenDecoder().decode(found.data).amount;
+            if (tips <= this.settings.tipUnwrapAt) return;
+            if (this.unwrapParked === fingerprint(found.data)) return;
+            const transaction = await this.chain.prepare(this.wallet, this.withPriority([getCloseAccountInstruction({ account, destination: this.wallet.address, owner: this.wallet })]));
+            const simulation = await this.chain.simulate(transaction, this.wallet.address);
+            if (simulation.failed) return this.unwrapFailed(warnings, found.data, { account, tips, error: simulation.error });
+            let result;
+            try {
+                await this.chain.sendAndConfirm(transaction);
+                result = await landed(this.chain, transaction.signature);
+            } catch (error) {
+                // Whether it landed is unknown: today's spend is rebuilt before anything else is sent.
+                this.spend = null;
+                throw error;
+            }
+            const cost = spendOf(result, this.wallet.address);
+            this.spend?.add(result.accountKeys, cost);
+            if (result.failed) return this.unwrapFailed(warnings, found.data, { account, tips, signature: transaction.signature, cost, error: result.error });
+            this.unwrapParked = null;
+            this.log.write({ row: 'unwrap', outcome: 'sent', account, tips, signature: transaction.signature, cost });
+        } catch (error) {
+            if (!(error instanceof ChainError)) throw error;
+            warnings.push(`the tips could not be unwrapped, the chain could not be asked: ${error.message}`);
+            this.log.write({ row: 'unwrap', outcome: 'chain-error', account, error: error.message });
+        }
+    }
+
+    private unwrapFailed(warnings: string[], data: Uint8Array, fields: { account: Address; tips: bigint; error: string | null; signature?: Signature; cost?: bigint }) {
+        this.unwrapParked = fingerprint(data);
+        warnings.push(`the tips could not be unwrapped, so the unwrap waits until the account changes: ${fields.error}`);
+        this.log.write({ row: 'unwrap', outcome: 'parked', ...fields });
     }
 
     private hold(market: Market, unit: JobUnit, cap: string, fields: Record<string, unknown>, summary: PassSummary) {

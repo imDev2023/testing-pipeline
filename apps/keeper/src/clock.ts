@@ -69,9 +69,9 @@ export class FakeClock implements Clock {
 
     /**
      * Moves the time forward by `ms`, firing every timer that falls due on the way at its own
-     * time, and waiting for `settle` after each, so work a timer starts finishes before the next.
+     * time, and waiting for `drain` after each, so work a timer starts finishes before the next.
      */
-    async advance(ms: number, settle: () => Promise<void> = async () => {}) {
+    async advance(ms: number, drain: () => Promise<void> = async () => {}) {
         const end = this.time + ms;
         for (;;) {
             let due: [number, { at: number; fn: () => void }] | undefined;
@@ -80,9 +80,9 @@ export class FakeClock implements Clock {
             this.timers.delete(due[0]);
             this.time = Math.max(this.time, due[1].at);
             due[1].fn();
-            await settle();
+            await drain();
         }
         this.time = end;
-        await settle();
+        await drain();
     }
 }
