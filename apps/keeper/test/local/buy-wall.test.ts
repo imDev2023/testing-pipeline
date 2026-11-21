@@ -9,7 +9,7 @@ import { after, before, test } from 'node:test';
 
 import { getCreateAssociatedTokenIdempotentInstructionAsync } from '@solana-program/token';
 import { generateKeyPairSigner, type KeyPairSigner } from '@solana/kit';
-import { SUITE_TREASURY } from 'buy-wall-amm-scripts/client/index.ts';
+import { fetchMarketState, SUITE_TREASURY } from 'buy-wall-amm-scripts/client/index.ts';
 
 import { checkBuyWallRegistered, createWallMarket, makeWallDue, scopedWall, swap, wallState, WSOL, type WallMarket } from './buy-wall.ts';
 import { balance, checkLocalValidator, jobRows as taxJobRows, LOCAL_URL, rpc, send, testRunner, tokenAccount, tokenBalance, until, wallet, type TestRunner } from './harness.ts';
@@ -55,8 +55,8 @@ test("place_wall is sent from the runner's own socket after the swap that makes 
     // The tip account was created by the placement itself, and holds exactly the tips the market paid.
     const tips = await tokenBalance(keeper.address, WSOL);
     assert.ok(tips > 0n);
-    const raw = await rpc.getAccountInfo(market.marketState, { encoding: 'base64', commitment: 'confirmed' }).send();
-    const tipsPaid = Buffer.from(raw.value!.data[0], 'base64').readBigUInt64LE(703);
+    const { data } = await fetchMarketState(rpc, market.marketState, { commitment: 'confirmed' });
+    const tipsPaid = [...data.tipsPaid].reduceRight((value, byte) => (value << 8n) | BigInt(byte), 0n);
     assert.equal(tips, tipsPaid);
     const transaction = await rpc.getTransaction(placed!.signature as never, { commitment: 'confirmed', maxSupportedTransactionVersion: 0, encoding: 'json' }).send();
     assert.ok(transaction!.transaction.message.accountKeys.includes(tipAccount));

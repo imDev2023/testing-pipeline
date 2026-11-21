@@ -83,6 +83,8 @@ export class Runner {
     private readonly parked = new Map<string, { state: string; error: string }>();
     /** When hourly jobs ran (ms), each with the accounts of its instruction, its market among them. */
     private runs: { job: AnyJob; accounts: readonly Address[]; at: number }[] = [];
+    /** The wrapped-SOL account's data when its close last failed, so it is not tried again until that changes. */
+    private unwrapParked: string | null = null;
     private tail: Promise<unknown> = Promise.resolve();
     private readonly timers = new Set<Timer>();
     private readonly unsubscribes: (() => void)[] = [];
@@ -466,38 +468,48 @@ export class Runner {
     /**
      * Closes the keeper wallet's wrapped-SOL account into the float once it holds more than
      * TIP_UNWRAP_AT; the next job that tips makes it again. It returns far more than its fee,
-     * so no cap or MIN_BALANCE holds it, but its fee counts in today's spend (SUITE-55).
+     * so no cap or MIN_BALANCE holds it, but its fee counts in today's spend (SUITE-55), so it
+     * waits while today's spend is unknown. A close that fails is parked until the account
+     * changes, as a job is parked until its market does; a chain that cannot be asked is
+     * warned about and tried again in the next pass.
      */
     private async unwrapTips(warnings: string[]) {
+        if (this.spend === null) return;
         const [account] = await findAssociatedTokenPda({ owner: this.wallet.address, mint: NATIVE_MINT, tokenProgram: TOKEN_PROGRAM_ADDRESS });
-        const found = (await this.chain.accounts([account])).get(account);
-        if (!found || found.owner !== TOKEN_PROGRAM_ADDRESS) return;
-        const tips = getTokenDecoder().decode(found.data).amount;
-        if (tips <= this.settings.tipUnwrapAt) return;
-        const transaction = await this.chain.prepare(this.wallet, this.withPriority([getCloseAccountInstruction({ account, destination: this.wallet.address, owner: this.wallet })]));
-        const simulation = await this.chain.simulate(transaction, this.wallet.address);
-        if (simulation.failed) {
-            warnings.push(`the tips could not be unwrapped: ${simulation.error}`);
-            this.log.write({ row: 'unwrap', outcome: 'failed', account, tips, error: simulation.error });
-            return;
-        }
-        let result;
         try {
-            await this.chain.sendAndConfirm(transaction);
-            result = await landed(this.chain, transaction.signature);
+            const found = (await this.chain.accounts([account])).get(account);
+            if (!found || found.owner !== TOKEN_PROGRAM_ADDRESS) return;
+            const tips = getTokenDecoder().decode(found.data).amount;
+            if (tips <= this.settings.tipUnwrapAt) return;
+            if (this.unwrapParked === fingerprint(found.data)) return;
+            const transaction = await this.chain.prepare(this.wallet, this.withPriority([getCloseAccountInstruction({ account, destination: this.wallet.address, owner: this.wallet })]));
+            const simulation = await this.chain.simulate(transaction, this.wallet.address);
+            if (simulation.failed) return this.unwrapFailed(warnings, found.data, { account, tips, error: simulation.error });
+            let result;
+            try {
+                await this.chain.sendAndConfirm(transaction);
+                result = await landed(this.chain, transaction.signature);
+            } catch (error) {
+                // Whether it landed is unknown: today's spend is rebuilt before anything else is sent.
+                this.spend = null;
+                throw error;
+            }
+            const cost = spendOf(result, this.wallet.address);
+            this.spend?.add(result.accountKeys, cost);
+            if (result.failed) return this.unwrapFailed(warnings, found.data, { account, tips, signature: transaction.signature, cost, error: result.error });
+            this.unwrapParked = null;
+            this.log.write({ row: 'unwrap', outcome: 'sent', account, tips, signature: transaction.signature, cost });
         } catch (error) {
-            // Whether it landed is unknown: today's spend is rebuilt before anything else is sent.
-            this.spend = null;
-            throw error;
+            if (!(error instanceof ChainError)) throw error;
+            warnings.push(`the tips could not be unwrapped, the chain could not be asked: ${error.message}`);
+            this.log.write({ row: 'unwrap', outcome: 'chain-error', account, error: error.message });
         }
-        const cost = spendOf(result, this.wallet.address);
-        this.spend?.add(result.accountKeys, cost);
-        if (result.failed) {
-            warnings.push(`the tips could not be unwrapped: ${result.error}`);
-            this.log.write({ row: 'unwrap', outcome: 'failed', account, tips, signature: transaction.signature, cost, error: result.error });
-            return;
-        }
-        this.log.write({ row: 'unwrap', outcome: 'sent', account, tips, signature: transaction.signature, cost });
+    }
+
+    private unwrapFailed(warnings: string[], data: Uint8Array, fields: { account: Address; tips: bigint; error: string | null; signature?: Signature; cost?: bigint }) {
+        this.unwrapParked = fingerprint(data);
+        warnings.push(`the tips could not be unwrapped, so the unwrap waits until the account changes: ${fields.error}`);
+        this.log.write({ row: 'unwrap', outcome: 'parked', ...fields });
     }
 
     private hold(market: Market, unit: JobUnit, cap: string, fields: Record<string, unknown>, summary: PassSummary) {

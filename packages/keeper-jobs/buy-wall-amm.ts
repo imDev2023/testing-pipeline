@@ -14,7 +14,8 @@
 // - `sweep_fees { slot }`, in the daily pass, one transaction per slot owed anything: slot 0 to
 //   the fee recipient, slot 1 to DESIGNER_RECIPIENT and slot 2 to SUITE_TREASURY, each into the
 //   wallet's wrapped-SOL account, created at the caller's expense if missing. Slot 1 waits
-//   while DESIGNER_RECIPIENT is unset, which the program refuses with `RecipientUnset`.
+//   while DESIGNER_RECIPIENT is unset, which the program refuses with `RecipientUnset`, taken
+//   for nothing to do.
 //
 // A payout into an account that does not exist yet creates it at the caller's expense, so the
 // runner skips one whose ledger is worth less than that account's rent while it is missing
@@ -23,11 +24,13 @@
 //
 // Every job waits for the seed: before it, the program refuses each with `MarketNotOpen`.
 
-import { fetchEncodedAccount, type Address, type GetAccountInfoApi, type ReadonlyUint8Array, type Rpc } from '@solana/kit';
+import { fetchEncodedAccount, type Address, type EncodedAccount, type GetAccountInfoApi, type ReadonlyUint8Array, type Rpc } from '@solana/kit';
 import { findAssociatedTokenPda, getCreateAssociatedTokenIdempotentInstruction, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token';
+import { decodeMint, extension, getTokenSize } from '@solana-program/token-2022';
 import {
     BUY_WALL_AMM_ERROR__NOTHING_OWED,
     BUY_WALL_AMM_ERROR__NOTHING_TO_SETTLE,
+    BUY_WALL_AMM_ERROR__RECIPIENT_UNSET,
     BUY_WALL_AMM_ERROR__SWAP_THIS_SLOT,
     BUY_WALL_AMM_ERROR__WALL_BELOW_THRESHOLD,
     BUY_WALL_AMM_PROGRAM_ADDRESS,
@@ -97,29 +100,44 @@ export function converted(market: BuyWallMarket): bigint {
     return market.wallSolPlaced > held ? market.wallSolPlaced - held : 0n;
 }
 
-/** The token's program, SPL Token or Token-2022, as the mint's owner says. */
-async function tokenProgramOf(rpc: Rpc<GetAccountInfoApi>, mint: Address): Promise<Address> {
-    const account = await fetchEncodedAccount(rpc, mint, { commitment: 'confirmed' });
-    if (!account.exists) throw new Error(`the token mint ${mint} does not exist`);
-    return account.programAddress;
-}
 
 /**
  * The rent-exempt balance of an account of `size` bytes: (128 + size) bytes at 3,480 lamports
  * a byte-year, for two years, the cluster's rent since genesis.
  */
 const rentExempt = (size: bigint) => (128n + size) * 3_480n * 2n;
-/** A plain token account, and a Token-2022 associated token account with its ImmutableOwner extension. */
-const TOKEN_ACCOUNT_SIZE = 165n;
-const TOKEN_2022_ACCOUNT_SIZE = 170n;
+
+/**
+ * The size of a wallet's associated token account for `mint`, as the program's
+ * `vaults.rs::token_account_len` reckons a token account: 165 bytes under SPL Token; under
+ * Token-2022 the associated token program adds ImmutableOwner, and a mint with a TransferHook
+ * extension, cleared or not, gives its accounts TransferHookAccount (the only account
+ * extension a mint the seed allows can require, programs/mint-rules).
+ */
+function associatedAccountSize(mint: EncodedAccount): bigint {
+    if (mint.programAddress === TOKEN_PROGRAM_ADDRESS) return 165n;
+    const { extensions } = decodeMint(mint).data;
+    const hooked = extensions.__option === 'Some' && extensions.value.some((found) => found.__kind === 'TransferHook');
+    return BigInt(getTokenSize([extension('ImmutableOwner', {}), ...(hooked ? [extension('TransferHookAccount', { transferring: false })] : [])]));
+}
+
+/** The token's mint account, which says its program (SPL Token or Token-2022) and extensions. */
+async function mintOf(rpc: Rpc<GetAccountInfoApi>, mint: Address): Promise<EncodedAccount> {
+    const account = await fetchEncodedAccount(rpc, mint, { commitment: 'confirmed' });
+    if (!account.exists) throw new Error(`the token mint ${mint} does not exist`);
+    return account;
+}
+
+/** The token's program, SPL Token or Token-2022, as the mint's owner says. */
+const tokenProgramOf = async (rpc: Rpc<GetAccountInfoApi>, mint: Address): Promise<Address> => (await mintOf(rpc, mint)).programAddress;
 
 /**
  * Why a payout of `worth` lamports into `account` should wait, or null: it waits only while the
  * account is missing, so the payout would create it, and `worth` is less than its rent.
  */
-async function worthTheRent(rpc: Rpc<GetAccountInfoApi>, account: Address, tokenProgram: Address, worth: bigint): Promise<string | null> {
+async function worthTheRent(rpc: Rpc<GetAccountInfoApi>, account: Address, size: bigint, worth: bigint): Promise<string | null> {
     if ((await fetchEncodedAccount(rpc, account, { commitment: 'confirmed' })).exists) return null;
-    const rent = rentExempt(tokenProgram === TOKEN_PROGRAM_ADDRESS ? TOKEN_ACCOUNT_SIZE : TOKEN_2022_ACCOUNT_SIZE);
+    const rent = rentExempt(size);
     return worth < rent ? `it would create ${account}, whose rent of ${rent} lamports is more than the ${worth} lamports it would pay` : null;
 }
 
@@ -198,10 +216,10 @@ const payRewards: KeeperJob<BuyWallMarket> = {
     },
 
     async skipReason({ rpc, state }) {
-        const tokenProgram = await tokenProgramOf(rpc, state.tokenMint);
-        const [account] = await findAssociatedTokenPda({ owner: state.rewardsRecipient, mint: state.tokenMint, tokenProgram });
+        const mint = await mintOf(rpc, state.tokenMint);
+        const [account] = await findAssociatedTokenPda({ owner: state.rewardsRecipient, mint: state.tokenMint, tokenProgram: mint.programAddress });
         // A token unit is worth (s / Q)^2 lamports at the market's price.
-        return worthTheRent(rpc, account, tokenProgram, (state.rewardsOwed * state.sqrtPrice * state.sqrtPrice) / (Q * Q));
+        return worthTheRent(rpc, account, associatedAccountSize(mint), (state.rewardsOwed * state.sqrtPrice * state.sqrtPrice) / (Q * Q));
     },
 
     refusals: { nothingToDo: [BUY_WALL_AMM_ERROR__NOTHING_OWED], laterSlot: [] },
@@ -245,10 +263,13 @@ function sweepFees({ designerRecipient }: BuyWallConstants): KeeperJob<BuyWallMa
             const recipient = slotWallet(state, unit.slot!);
             if (recipient === null) return null;
             const [account] = await findAssociatedTokenPda({ owner: recipient, mint: state.wsolMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
-            return worthTheRent(rpc, account, TOKEN_PROGRAM_ADDRESS, state.fees[unit.slot!]!);
+            // Wrapped SOL is an SPL Token mint, so its accounts are plain ones.
+            return worthTheRent(rpc, account, 165n, state.fees[unit.slot!]!);
         },
 
-        refusals: { nothingToDo: [BUY_WALL_AMM_ERROR__NOTHING_OWED], laterSlot: [] },
+        // RecipientUnset: slot 1 of a build whose DESIGNER_RECIPIENT is unset, when this client
+        // was generated from a later build that sets it; the slot waits, as on that build.
+        refusals: { nothingToDo: [BUY_WALL_AMM_ERROR__NOTHING_OWED, BUY_WALL_AMM_ERROR__RECIPIENT_UNSET], laterSlot: [] },
     };
 }
 

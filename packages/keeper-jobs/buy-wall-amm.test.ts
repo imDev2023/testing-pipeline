@@ -5,13 +5,15 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { AccountRole, address, generateKeyPairSigner, getBase64Decoder, type Address, type GetAccountInfoApi, type Rpc } from '@solana/kit';
-import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token';
-import { TOKEN_2022_PROGRAM_ADDRESS } from '@solana-program/token-2022';
+import { AccountRole, address, generateKeyPairSigner, getBase64Decoder, none, some, type Address, type GetAccountInfoApi, type Rpc } from '@solana/kit';
+import { findAssociatedTokenPda, getMintEncoder as getSplMintEncoder, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token';
+import { extension, getMintEncoder as getToken2022MintEncoder, TOKEN_2022_PROGRAM_ADDRESS } from '@solana-program/token-2022';
 import {
     getMarketStateDecoder,
     getMarketStateEncoder,
     getMarketStateSize,
+    BUY_WALL_AMM_ERROR__NOTHING_OWED,
+    BUY_WALL_AMM_ERROR__RECIPIENT_UNSET,
     BUY_WALL_AMM_PROGRAM_ADDRESS,
     DESIGNER_RECIPIENT,
     findVaultAuthorityPda,
@@ -31,9 +33,11 @@ const TOKEN_VAULT = address('ACrn3UD4DLgyCKbNMiqx6Vcs2d49RSbHdbLJ82uw61s8');
 const SOL_VAULT = address('C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w');
 const FEE_RECIPIENT = address('FJ1PJovxT4Njfn3fkufxcKeCF8XtsPRAFLKadZZYXgDB');
 const REWARDS_RECIPIENT = address('J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t');
-/** The rent of a plain token account (165 bytes), and of a Token-2022 associated token account (170). */
+/** The rent of a plain token account (165 bytes), and of a Token-2022 associated token account (170, with ImmutableOwner). */
 const TOKEN_ACCOUNT_RENT = 2_039_280n;
 const TOKEN_2022_ACCOUNT_RENT = 2_074_080n;
+/** A Token-2022 associated token account of a mint with a transfer hook, cleared or not, carries TransferHookAccount too (175 bytes). */
+const HOOKED_ACCOUNT_RENT = 2_108_880n;
 
 /** A little-endian unsigned integer of `bytes` bytes. */
 function le(value: bigint, bytes: number): Uint8Array {
@@ -176,6 +180,11 @@ describe('sweep_fees', () => {
     test('runs in the daily pass', () => {
         assert.equal(job('sweep_fees').pass, 'daily');
     });
+
+    test("takes the program's RecipientUnset for nothing to do, so a client ahead of the deployed build waits rather than fails", () => {
+        assert.ok(job('sweep_fees').refusals.nothingToDo.includes(BUY_WALL_AMM_ERROR__RECIPIENT_UNSET));
+        assert.ok(job('sweep_fees').refusals.nothingToDo.includes(BUY_WALL_AMM_ERROR__NOTHING_OWED));
+    });
 });
 
 describe('a market waiting for its seed', () => {
@@ -185,24 +194,51 @@ describe('a market waiting for its seed', () => {
     });
 });
 
-/** An RPC that serves only the accounts given, each owned by `owner`, as `getAccountInfo` answers. */
-function rpcWith(accounts: Map<Address, Address>): Rpc<GetAccountInfoApi> {
+/** An RPC that serves only the accounts given, as `getAccountInfo` answers them. */
+function rpcWith(accounts: Map<Address, { owner: Address; data: Uint8Array }>): Rpc<GetAccountInfoApi> {
     return {
         getAccountInfo: (account: Address) => ({
             send: async () => {
-                const owner = accounts.get(account);
+                const found = accounts.get(account);
                 return {
                     context: { slot: 1n },
-                    value: owner && { owner, data: [getBase64Decoder().decode(new Uint8Array(82)), 'base64'], executable: false, lamports: 1_000_000n, space: 82n },
+                    value: found && {
+                        owner: found.owner,
+                        data: [getBase64Decoder().decode(found.data), 'base64'],
+                        executable: false,
+                        lamports: 1_000_000n,
+                        space: BigInt(found.data.length),
+                    },
                 };
             },
         }),
     } as unknown as Rpc<GetAccountInfoApi>;
 }
 
-/** The token as a mint of `tokenProgram`, and whichever other accounts exist. */
-const chainWith = (tokenProgram: Address, existing: Address[] = []) =>
-    rpcWith(new Map([[TOKEN, tokenProgram], ...existing.map((account): [Address, Address] => [account, TOKEN_PROGRAM_ADDRESS])]));
+const mintArgs = { mintAuthority: null, supply: 1_000_000n, decimals: 6, isInitialized: true, freezeAuthority: null };
+/** The token as a mint of each kind: SPL Token, Token-2022, and Token-2022 with a cleared transfer hook (a contained token after unlock). */
+const MINTS = {
+    spl: { owner: TOKEN_PROGRAM_ADDRESS, data: new Uint8Array(getSplMintEncoder().encode(mintArgs)) },
+    token2022: { owner: TOKEN_2022_PROGRAM_ADDRESS, data: new Uint8Array(getToken2022MintEncoder().encode({ ...mintArgs, extensions: none() })) },
+    clearedHook: {
+        owner: TOKEN_2022_PROGRAM_ADDRESS,
+        data: new Uint8Array(
+            getToken2022MintEncoder().encode({
+                ...mintArgs,
+                extensions: some([extension('TransferHook', { authority: address('11111111111111111111111111111111'), programId: address('11111111111111111111111111111111') })]),
+            }),
+        ),
+    },
+};
+type MintKind = keyof typeof MINTS;
+
+/** The token as a mint of `kind`, and whichever other accounts exist (as plain token accounts). */
+const chainWith = (kind: MintKind | Address, existing: Address[] = []) => {
+    const mint = kind === TOKEN_PROGRAM_ADDRESS ? MINTS.spl : kind === TOKEN_2022_PROGRAM_ADDRESS ? MINTS.token2022 : MINTS[kind as MintKind];
+    return rpcWith(
+        new Map([[TOKEN, mint], ...existing.map((account): [Address, { owner: Address; data: Uint8Array }] => [account, { owner: TOKEN_PROGRAM_ADDRESS, data: new Uint8Array(165) }])]),
+    );
+};
 
 async function built(name: string, fields: Fields, rpc = chainWith(TOKEN_PROGRAM_ADDRESS), product = buyWallAmm) {
     const payer = await generateKeyPairSigner();
@@ -300,6 +336,9 @@ describe('a payout into an account that does not exist yet', () => {
         const missing2022 = chainWith(TOKEN_2022_PROGRAM_ADDRESS);
         assert.match((await skip('pay_rewards', { rewardsOwed: TOKEN_2022_ACCOUNT_RENT - 1n }, missing2022)) ?? '', /rent/);
         assert.equal(await skip('pay_rewards', { rewardsOwed: TOKEN_2022_ACCOUNT_RENT }, missing2022), null);
+        const missingHooked = chainWith('clearedHook');
+        assert.match((await skip('pay_rewards', { rewardsOwed: HOOKED_ACCOUNT_RENT - 1n }, missingHooked)) ?? '', /rent of 2108880/);
+        assert.equal(await skip('pay_rewards', { rewardsOwed: HOOKED_ACCOUNT_RENT }, missingHooked), null);
     });
 
     test('pay_rewards pays any amount into an account that exists', async () => {

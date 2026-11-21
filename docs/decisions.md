@@ -590,7 +590,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-54: Keeper runner: a payout into an account it would create
 
 - Question: When does the runner send a payout whose recipient's token account does not exist yet, so that the payout would create it at the keeper wallet's expense?
-- Answer: Only once what it pays is worth at least that account's rent (2,039,280 lamports for a plain token account, 2,074,080 for a Token-2022 one); until then the job is skipped at no cost and checked again in its next pass, and a payout into an account that exists is sent whatever it pays. A buy wall market's rewards are valued in SOL at the market's current price; its fees are SOL already.
+- Answer: Only once what it pays is worth at least that account's rent (2,039,280 lamports for a plain token account, 2,074,080 for a Token-2022 one and 2,108,880 when its mint has a transfer hook, cleared or not), a buy wall market's rewards valued in SOL at the market's current price and its fees being SOL already; until then the job is skipped at no cost and checked again in its next pass, and a payout into an account that exists is sent whatever it pays.
 - Alternatives: Always paying, so a recipient that closes its account after each payout gets the runner's rent back each time; valuing rewards at the wall's price rather than the market's.
 - Specified in: [`docs/spec/keeper-runner.md`, Sending a job](spec/keeper-runner.md#sending-a-job)
 - Changes by: spec only
