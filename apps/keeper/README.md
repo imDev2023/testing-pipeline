@@ -1,0 +1,110 @@
+# Keeper runner
+
+The keeper runner calls every keeper job of every market of our strategies when it is due, and pays for it from the keeper wallet.
+Its design is [`docs/spec/keeper-runner.md`](../../docs/spec/keeper-runner.md); this file says how to run it.
+Every keeper job is permissionless, so anyone can run their own copy with their own key.
+
+Today it runs one job, the tax AMM's `distribute`, one transaction per owed slot, the burn slot included, in the daily pass.
+The buy wall AMM's four jobs and the lending AMM's `rebalance` join it by adding their entries to [`packages/keeper-jobs`](../../packages/keeper-jobs), with no change here.
+
+## The decisions it rests on
+
+Each is a default MetalLegBob may change: name its ID in an issue, in a comment on a pull request, or in a message to the owner.
+They are all in the decision register, [`docs/decisions.md`](../../docs/decisions.md).
+
+- `SUITE-26`: a keeper wallet made only for the runner, with tight caps a transaction, a market a day and a day.
+- `SUITE-27`: a failed job is retried and then parked until its market changes; at a cap or below the minimum balance nothing is sent.
+- `SUITE-28`: the runner keeps the buy wall's keeper tips and covers every market of our strategies, other people's too.
+- `SUITE-32`: on devnet it runs on the owner's Mac under launchd, never on the owner's Cloudflare account, and as a Docker image anywhere else.
+- `SUITE-33`, `SUITE-34`: which jobs it calls, and when: its own socket, a sweep, an hourly and a daily pass, and a full pass whenever it starts.
+- `SUITE-35`: each job's due rule is written once, in `packages/keeper-jobs`, which Aviary's panels use too.
+- `SUITE-36`: Alchemy's free devnet endpoint for reads, simulations and sends.
+- `SUITE-37`: what it records; until Aviary's database exists it writes its rows to its log.
+- `SUITE-49`: the socket and market discovery on Aviary's Helius key once it exists, on Solana's public devnet endpoint until then, since Alchemy's free tier serves neither.
+- `SUITE-50`: a payout simulated without a `Distributed` event had nothing to do, as when another keeper paid it first.
+- `SUITE-51`: a job's cost is what its simulation takes from the wallet, and what it spent is what left the wallet once it landed, never less than its fee.
+- `SUITE-52`: an RPC that cannot be asked never counts as the job failing.
+- `SUITE-53`: a misspelt `KEEPER_` variable stops the runner at start.
+- `TAX-43`, `TAX-45`, `TAX-48`: how the tax AMM's `distribute` names its slots and their wallets, and why only the burn takes the mint writable.
+
+## Settings
+
+Every policy value is in [`src/settings.ts`](src/settings.ts) and nowhere else, each overridable by an environment variable of its name prefixed `KEEPER_`.
+The runner logs every value it started with in its first line, so the log always says what a run used.
+
+| Variable | What it sets |
+| --- | --- |
+| `KEEPER_FLOAT_TARGET` | The balance `devnet-airdrop` tops the wallet up to, in SOL |
+| `KEEPER_LOW_BALANCE` | Below it every pass warns, in SOL |
+| `KEEPER_MIN_BALANCE` | Below it nothing is sent, in SOL |
+| `KEEPER_MAX_TX_COST` | The most one transaction may cost, in SOL |
+| `KEEPER_MARKET_DAILY_CAP` | The most spent on one market in a UTC day, in SOL |
+| `KEEPER_DAILY_CAP` | The most spent in a UTC day, in SOL |
+| `KEEPER_PRIORITY_FEE_MICROLAMPORTS` | The priority fee |
+| `KEEPER_TIP_UNWRAP_AT` | The wrapped-SOL balance at which keeper tips are unwrapped, in SOL |
+| `KEEPER_RETRY_DELAYS` | The waits before each retry of a failed job, such as `30s,2m,10m` |
+| `KEEPER_SWEEP_INTERVAL` | How often every market is re-read, such as `10m` |
+| `KEEPER_SETTLE_INTERVAL` | How often the hourly pass runs, such as `1h` |
+| `KEEPER_DAILY_PASS_UTC` | When the daily pass runs, `HH:MM` in UTC |
+| `KEEPER_KEYPAIR` | The key file, from `solana-keygen` |
+| `KEEPER_RPC_URL` | Reads, simulations and sends; defaults to Alchemy's devnet endpoint from `ALCHEMY_API_KEY` |
+| `KEEPER_WS_URL` | The socket, which must serve `logsSubscribe` |
+| `KEEPER_DISCOVERY_RPC_URL` | Where markets are found, which must serve `getProgramAccounts` |
+| `KEEPER_DATABASE_URL` | Aviary's database; unset, the runner only logs |
+
+A `KEEPER_` variable not in this table stops the runner at start.
+No log line carries an API key or a password from a URL, and none carries the keeper wallet's key.
+
+## On the owner's Mac
+
+The keeper wallet is `~/.config/testing-pipeline/devnet/keeper.json`, address `8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2`.
+It is topped up only with `devnet-airdrop ~/.config/testing-pipeline/devnet/keeper.json --target 2`; the runner never funds itself.
+
+```sh
+pnpm keeper:install     # builds the runner and loads the launchd agent testing-pipeline.keeper
+pnpm keeper:status      # the agent's state, the wallet's balance, today's spend and the last pass
+pnpm keeper:once        # one full pass of every job, then exit
+pnpm keeper:uninstall   # unloads and removes the agent
+```
+
+The agent starts [`scripts/keeper-run.sh`](../../scripts/keeper-run.sh) at login and whenever it stops, from the checkout `pnpm keeper:install` ran in.
+launchd has no direnv, so the script loads `~/.config/env/global.env` and the project's `.env` itself, then runs the built runner, `dist/keeper.mjs`, on the Node version `docs/toolchain.md` names.
+A setting for the agent goes into the project's `.env`, followed by `pnpm keeper:install` again.
+The log is `~/Library/Logs/testing-pipeline-keeper.log`, one JSON row a line: `start` with the settings, a `pass` row per pass, and a `job` row for each job sent, held, parked or skipped, with its signature, cost or reason.
+When the Mac sleeps the jobs wait, and the full pass at the next start catches up.
+
+## Docker
+
+The image holds only the bundled runner on Node 24; the key is mounted read-only when it runs.
+
+```sh
+pnpm install
+pnpm --filter keeper image      # builds dist/keeper.mjs, then the image testing-pipeline-keeper
+docker run --rm \
+  -v ~/.config/testing-pipeline/devnet/keeper.json:/keys/keeper.json:ro \
+  -e ALCHEMY_API_KEY \
+  testing-pipeline-keeper         # or: testing-pipeline-keeper once
+```
+
+`KEEPER_KEYPAIR` is `/keys/keeper.json` in the image; any other setting is passed with `-e`.
+In Docker the rows go to standard output.
+
+## Testing
+
+```sh
+pnpm --filter keeper test           # settings, no chain needed (CI runs these, and packages/keeper-jobs's tests)
+```
+
+The runner's own tests run against a local validator running devnet's router and the tax AMM, after the tax AMM's local demo has registered the strategy (`docs/toolchain.md`, "Local demo run"), with a fake clock for the passes:
+
+```sh
+source scripts/toolchain-env.sh
+scripts/local-validator.sh          # in another shell
+(cd programs/tax-amm/scripts && pnpm demo --cluster localnet \
+  --payer ~/.config/testing-pipeline/devnet/wallet.json \
+  --upgrade-authority ~/.config/testing-pipeline/devnet/upgrade-authority.json)
+pnpm --filter keeper test:local     # LOCAL_VALIDATOR_URL names another validator
+```
+
+They show a job sent when due and only then, a market owing nothing sending nothing, another keeper paying first costing only a simulation, each cap and the minimum balance holding a job, today's spend rebuilt after a restart equal to the spend before it, a failing job retried at `RETRY_DELAYS` and then parked until its market changes, an RPC hiccup while building a job not counted as its failure, and `keeper once` running one pass and exiting without ever printing the key.
+Each test makes its own markets and sees only those, so the tests can share one validator.
