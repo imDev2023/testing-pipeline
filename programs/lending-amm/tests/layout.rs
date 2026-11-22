@@ -36,6 +36,7 @@ fn distinct_market() -> LendingAmmMarket {
         redeemed: u128::from_le_bytes([0xD2; 16]),
         created_slot: u64::from_le_bytes([0xE1; 8]),
         created_at: i64::from_le_bytes([0xE2; 8]),
+        exit_seen_slot: u64::from_le_bytes([0xF1; 8]),
         reserved: [0; RESERVED_LEN],
     }
 }
@@ -52,8 +53,11 @@ fn the_published_offsets_and_size_are_pinned() {
     assert_eq!(layout::CTOKENS, 351);
     assert_eq!(layout::DEPOSITED, 359);
     assert_eq!(layout::REDEEMED, 375);
-    assert_eq!(layout::RESERVED, 407);
-    assert_eq!(RESERVED_LEN, 256);
+    // The first field taken from the 256 reserved bytes at 407 (hardening, finding H004), which
+    // left the rest of them in place and the account its size.
+    assert_eq!(layout::EXIT_SEEN_SLOT, 407);
+    assert_eq!(layout::RESERVED, 415);
+    assert_eq!(RESERVED_LEN, 248);
     assert_eq!(layout::LEN, 663);
     assert_eq!(LendingAmmMarket::SPACE, layout::LEN);
 }
@@ -94,6 +98,7 @@ fn every_field_sits_at_its_pinned_offset() {
         ("redeemed", layout::REDEEMED, vec![0xD2; 16]),
         ("created_slot", 391, vec![0xE1; 8]),
         ("created_at", 399, vec![0xE2; 8]),
+        ("exit_seen_slot", layout::EXIT_SEEN_SLOT, vec![0xF1; 8]),
         ("reserved", layout::RESERVED, vec![0; RESERVED_LEN]),
     ];
     let mut next = 0;
@@ -134,5 +139,5 @@ fn a_created_market_state_has_the_pinned_size_a_zeroed_reserve_and_its_fields_in
         u64::from_le_bytes(data[at..at + 8].try_into().unwrap())
     };
     assert_eq!([reserve(0), reserve(1)], [3 * SOL, 5 * SOL]);
-    assert!(data[layout::RESERVED..].iter().all(|&b| b == 0));
+    assert!(data[layout::EXIT_SEEN_SLOT..].iter().all(|&b| b == 0));
 }

@@ -66,7 +66,10 @@
 use super::remove::Payout;
 use super::states::Loss;
 use super::*;
-use lending_amm::config::{BUFFER_TARGET_BPS, MINIMUM_LIQUIDITY};
+use lending_amm::config::{
+    ADD_MAX_RESERVE_AGE_SLOTS, BUFFER_TARGET_BPS, MINIMUM_LIQUIDITY, TRADE_MAX_RESERVE_AGE_SLOTS,
+    WITHDRAW_MODE_EXIT_DELAY_SLOTS,
+};
 use lending_amm::kamino::offsets;
 use lending_amm::StrategyError;
 use pipeline_client::{pda, Pubkey};
@@ -122,6 +125,10 @@ pub enum Step {
         fraction: u32,
         in_kind: bool,
     },
+    /// An LP leaves with the lent side alone for `fraction` (in millionths) of the shares they
+    /// hold, as one would whose other mint can no longer move, giving up its part of the other
+    /// side to the LPs who stay.
+    RemoveLentSide { lp: usize, fraction: u32 },
     /// An LP locks `fraction` (in millionths) of the shares they hold.
     Lock { lp: usize, fraction: u32 },
     /// An LP burns `fraction` (in millionths) of the shares they hold with SPL Token.
@@ -160,6 +167,8 @@ pub fn step() -> impl Strategy<Value = Step> {
             .prop_map(|(trader, fraction)| Step::DrainBuffer { trader, fraction }),
         3 => (0..2usize, 1..=1_000_000u32, any::<bool>())
             .prop_map(|(lp, fraction, in_kind)| Step::Remove { lp, fraction, in_kind }),
+        1 => (0..2usize, 1..=1_000_000u32)
+            .prop_map(|(lp, fraction)| Step::RemoveLentSide { lp, fraction }),
         1 => (0..2usize, 1..=1_000_000u32).prop_map(|(lp, fraction)| Step::Lock { lp, fraction }),
         1 => (0..2usize, 1..=1_000_000u32).prop_map(|(lp, fraction)| Step::Burn { lp, fraction }),
         2 => (0..=150u64).prop_map(|tenths| Step::Liquidity { tenths }),
@@ -266,6 +275,8 @@ struct World {
     taken_in_kind: i128,
     /// How many removals went through in cash and in kind, and how many locks and burns.
     removals: [usize; 2],
+    /// How many removals of the lent side alone went through.
+    lent_side_removals: usize,
     locks_and_burns: [usize; 2],
     /// How Kamino moved, printed with `--nocapture`.
     kamino_moves: KaminoMoves,
@@ -281,6 +292,9 @@ struct KaminoMoves {
     total_write_offs: usize,
     /// Steps run while the reserve failed its layout check.
     steps_failing_layout: usize,
+    /// Swaps and deposits refused as too stale to value the market's cTokens, then sent again
+    /// with klend's refresh first, as a trader or an LP would.
+    stale_retries: usize,
 }
 
 const SEED: [u64; 2] = [2_000_000_000_000, 40 * SOL];
@@ -350,6 +364,7 @@ impl World {
             locked,
             taken_in_kind: 0,
             removals: [0; 2],
+            lent_side_removals: 0,
             locks_and_burns: [0; 2],
             kamino_moves: KaminoMoves::default(),
         }
@@ -397,6 +412,35 @@ impl World {
         self.env.market_state(&self.market.market_state).reserves
     }
 
+    /// Whether the program counts the reserve too stale to value the market's cTokens: they are
+    /// held, the reserve is not deprecated (its rate never moves again), and it was last refreshed
+    /// more than `max_age` slots ago (docs/spec/lending-pool.md, "The stored rate, everywhere").
+    fn stale(&self, max_age: u64) -> bool {
+        // The reserve's `last_update.slot`, read here from its bytes rather than through the
+        // program's own comparison, so a wrong comparison in the program is caught (R2-05).
+        let reserve = self.env.reserve_of(&self.market);
+        let at = super::kamino::klend_layout::RESERVE_LAST_UPDATE_SLOT;
+        let refreshed = u64::from_le_bytes(self.env.data(&reserve)[at..at + 8].try_into().unwrap());
+        self.env.market_state(&self.market.market_state).ctokens > 0
+            && !self.deprecated()
+            && self.env.clock().slot > refreshed + max_age
+    }
+
+    /// klend's `refresh_reserve`, if klend will refresh the reserve: not while it fails the
+    /// layout check, is deprecated or its lending market is in emergency mode. Returns whether
+    /// it refreshed.
+    fn refresh_if_klend_will(&mut self) -> Result<bool, TestCaseError> {
+        if self.layout_failed || self.deprecated() || self.lending_market().emergency_mode {
+            return Ok(false);
+        }
+        let refresh = self.env.refresh_reserve_instruction(&self.market);
+        self.env
+            .send(&[refresh], &[])
+            .map_err(|e| TestCaseError::fail(format!("{STATES} klend refused a refresh: {e}")))?;
+        self.kamino_moves.stale_retries += 1;
+        Ok(true)
+    }
+
     /// Whether the reserve is deprecated: a write-off reached its whole supply.
     fn deprecated(&self) -> bool {
         self.reserve().version != lending_amm::kamino::RESERVE_VERSION
@@ -407,7 +451,11 @@ impl World {
     /// after any other step.
     fn run(&mut self, step: &Step) -> Result<u64, TestCaseError> {
         // An LP who has never deposited has no shares account to remove, lock or burn from.
-        if let Step::Remove { lp, .. } | Step::Lock { lp, .. } | Step::Burn { lp, .. } = *step {
+        if let Step::Remove { lp, .. }
+        | Step::RemoveLentSide { lp, .. }
+        | Step::Lock { lp, .. }
+        | Step::Burn { lp, .. } = *step
+        {
             let shares_account =
                 lp_shares_account(&self.lps[lp].pubkey(), &self.market.market_state);
             if self.env.svm.get_account(&shares_account).is_none() {
@@ -444,6 +492,26 @@ impl World {
                     Some(StrategyError::ReserveWrongDiscriminator)
                 } else if self.deprecated() {
                     Some(StrategyError::ReserveDeprecated)
+                } else if self.stale(ADD_MAX_RESERVE_AGE_SLOTS) {
+                    // Once it holds cTokens, adding needs a reserve refreshed this slot, so the LP
+                    // puts klend's refresh first, unless klend will not refresh it.
+                    let refused = self.env.add_liquidity(&self.market, &lp, max, 0);
+                    prop_assert!(
+                        refused.is_err_and(|e| e.contains("Error Code: ReserveStale.")),
+                        "{} added on a stale reserve",
+                        STATES
+                    );
+                    prop_assert_eq!(
+                        &self.env.market_state(&self.market.market_state),
+                        &before,
+                        "{}",
+                        CONSERVED
+                    );
+                    if self.refresh_if_klend_will()? {
+                        None
+                    } else {
+                        Some(StrategyError::ReserveStale)
+                    }
                 } else {
                     None
                 };
@@ -589,6 +657,11 @@ impl World {
                 let shares = (held as u128 * fraction as u128 / 1_000_000) as u64;
                 return self.remove(lp, shares, in_kind);
             }
+            Step::RemoveLentSide { lp, fraction } => {
+                let held = self.env.lp_shares_of(&self.market, &self.lps[lp].pubkey());
+                let shares = (held as u128 * fraction as u128 / 1_000_000) as u64;
+                return self.remove_lent_side(lp, shares);
+            }
             Step::Lock { lp, fraction } => {
                 let wallet = self.lps[lp].insecure_clone();
                 let held = self.env.lp_shares_of(&self.market, &wallet.pubkey());
@@ -682,6 +755,9 @@ impl World {
         if self.layout_failed {
             return refusal.contains("Error Code: ReserveWrongDiscriminator.");
         }
+        if self.stale(TRADE_MAX_RESERVE_AGE_SLOTS) {
+            return refusal.contains("Error Code: ReserveStale.");
+        }
         let lent = self.market.lent_index;
         let effective = self.effective();
         let state = self.env.market_state(&self.market.market_state);
@@ -712,6 +788,34 @@ impl World {
     fn swap(&mut self, trader: usize, input: usize, amount: u64) -> Result<u64, TestCaseError> {
         use lending_amm::events::ShortfallRedeemed;
         let output = 1 - input;
+        // On a reserve too stale to value the market's cTokens the quote and the swap refuse, and
+        // the trader puts klend's refresh first, when klend will refresh it.
+        if !self.layout_failed && self.stale(TRADE_MAX_RESERVE_AGE_SLOTS) {
+            let before = self.env.market_state(&self.market.market_state);
+            let quote = self
+                .env
+                .quote(&self.market, &exact_in(input, output, amount));
+            let wallet = self.traders[trader].insecure_clone();
+            let swapped = self
+                .env
+                .swap_meta(&self.market, &wallet, (input, output), amount);
+            for refusal in [quote.map(|_| ()), swapped.map(|_| ())] {
+                prop_assert!(
+                    refusal.is_err_and(|e| e.contains("Error Code: ReserveStale.")),
+                    "{} traded on a stale reserve",
+                    STATES
+                );
+            }
+            prop_assert_eq!(
+                self.env.market_state(&self.market.market_state),
+                before,
+                "{}",
+                CONSERVED
+            );
+            if !self.refresh_if_klend_will()? {
+                return Ok(0);
+            }
+        }
         let lent = self.market.lent_index;
         let before = self.env.market_state(&self.market.market_state);
         let effective_before = self.effective();
@@ -862,6 +966,113 @@ impl World {
     /// share none of the three sides fell; or that it was refused for a reason the spec gives,
     /// changing nothing. Returns how far it may have lowered the lent side's total by rounding
     /// down the remaining cTokens' value: one unit.
+    /// An LP leaves with the lent side alone: checks it paid the buffer's and the cTokens' parts,
+    /// `B x lp / N` and `c x lp / N` rounded down, took nothing of the other side, which stays
+    /// recorded, and that it works in every Kamino state, a failed layout check included, since it
+    /// reads no Kamino account; refused only when both parts round to nothing.
+    fn remove_lent_side(&mut self, lp: usize, shares: u64) -> Result<u64, TestCaseError> {
+        use lending_amm::events::LentSideRemoved;
+        let (o, l) = (self.market.other_index(), self.market.lent_index);
+        let before = self.env.market_state(&self.market.market_state);
+        let n = self.env.share_count(&self.market);
+        let part = |whole: u64| (whole as u128 * shares as u128 / n as u128) as u64;
+        let (other, buffer, ctokens) = (
+            part(before.reserves[o]),
+            part(before.reserves[l]),
+            part(before.ctokens),
+        );
+        let wallet = self.lps[lp].insecure_clone();
+        let lp_ctoken = self.env.lp_ctoken_account(&self.market, &wallet.pubkey());
+        let ctokens_before = self.env.balance_or_zero(&lp_ctoken);
+        let other_account = self
+            .env
+            .wallet_token_account(&self.market, &wallet.pubkey(), o);
+        let other_before = self.env.balance_or_zero(&other_account);
+        let result = self
+            .env
+            .remove_lent_side(&self.market, &wallet, shares, [buffer, ctokens]);
+        if shares == 0 || (buffer == 0 && ctokens == 0) {
+            prop_assert!(
+                result
+                    .as_ref()
+                    .is_err_and(|e| e.contains("Error Code: ZeroRemoval.")),
+                "{} left with nothing of the lent side",
+                IN_KIND
+            );
+            prop_assert_eq!(
+                self.env.market_state(&self.market.market_state),
+                before,
+                "{}",
+                CONSERVED
+            );
+            return Ok(0);
+        }
+        let meta = match result {
+            Ok(meta) => meta,
+            Err(refusal) => {
+                prop_assert!(
+                    false,
+                    "{} the lent side alone was refused: {}",
+                    IN_KIND,
+                    refusal
+                );
+                unreachable!()
+            }
+        };
+        let event = &events::<LentSideRemoved>(&meta.logs)[0];
+        prop_assert_eq!(
+            (event.shares, event.lent, event.ctokens, event.other_left),
+            (shares, buffer, ctokens, other),
+            "{}",
+            VALUE
+        );
+        let after = self.env.market_state(&self.market.market_state);
+        prop_assert_eq!(after.reserves[o], before.reserves[o], "{}", CONSERVED);
+        prop_assert_eq!(
+            after.reserves[l],
+            before.reserves[l] - buffer,
+            "{}",
+            CONSERVED
+        );
+        prop_assert_eq!(after.ctokens, before.ctokens - ctokens, "{}", CONSERVED);
+        prop_assert_eq!(
+            self.env.balance_or_zero(&other_account),
+            other_before,
+            "{}",
+            CONSERVED
+        );
+        prop_assert_eq!(
+            self.env.balance_or_zero(&lp_ctoken),
+            ctokens_before + ctokens,
+            "{}",
+            CONSERVED
+        );
+        let net = before.deposited as i128 - before.redeemed as i128;
+        let take = if ctokens == 0 {
+            0
+        } else {
+            net * ctokens as i128 / before.ctokens as i128
+        };
+        let (deposited, redeemed) = if net >= 0 {
+            (before.deposited as i128 - take, before.redeemed as i128)
+        } else {
+            (before.deposited as i128, before.redeemed as i128 + take)
+        };
+        prop_assert_eq!(
+            (after.deposited as i128, after.redeemed as i128),
+            (deposited, redeemed),
+            "{}",
+            CONSERVED
+        );
+        self.taken_in_kind += take;
+        self.shares = n - shares;
+        self.deposited = after.deposited;
+        self.ctokens = after.ctokens;
+        self.redeemed = after.redeemed;
+        self.lent_side_removals += 1;
+        Ok(1)
+    }
+
     fn remove(&mut self, lp: usize, shares: u64, in_kind: bool) -> Result<u64, TestCaseError> {
         use lending_amm::events::LiquidityRemoved;
         let (o, l) = (self.market.other_index(), self.market.lent_index);
@@ -1134,16 +1345,41 @@ impl World {
         let exposure = self.exposure() as u128;
         let stopped = self.redeems_stopped();
         let blocked = reserve.block_ctoken_usage;
-        let mode = if free < WITHDRAW_MODE_ENTER as u128 * exposure {
+        let by_thresholds = if free < WITHDRAW_MODE_ENTER as u128 * exposure {
             true
         } else if free > WITHDRAW_MODE_EXIT as u128 * exposure {
             false
         } else {
             before.withdraw_mode
         };
+        // A market in withdraw mode leaves only once it has seen the free liquidity above the
+        // exit threshold for `WITHDRAW_MODE_EXIT_DELAY_SLOTS`; meanwhile it stays, recording when
+        // it first saw it so, and a reading at or below the threshold starts the wait again.
+        let slot = self.env.clock().slot;
+        let wants_out = before.withdraw_mode && !by_thresholds;
+        // Stated apart from the program's own comparison: the slots since the sighting.
+        let waited = before.exit_seen_slot > 0
+            && slot.saturating_sub(before.exit_seen_slot) >= WITHDRAW_MODE_EXIT_DELAY_SLOTS;
+        let (mode, seen) = if stopped {
+            // While Kamino redeems nothing it only forgets a wait.
+            (before.withdraw_mode, 0)
+        } else if wants_out && !waited {
+            let first = if before.exit_seen_slot == 0 {
+                slot.max(1)
+            } else {
+                before.exit_seen_slot
+            };
+            (true, first)
+        } else {
+            (by_thresholds, 0)
+        };
         // What the spec's rules give: a move, or no move with the mode changed, or a refusal.
         let planned: Result<Option<Move>, StrategyError> = if stopped {
-            Err(StrategyError::KaminoStopped)
+            if before.exit_seen_slot != 0 {
+                Ok(None)
+            } else {
+                Err(StrategyError::KaminoStopped)
+            }
         } else {
             let moved = if mode {
                 let asked = value.min(can_pay);
@@ -1160,7 +1396,7 @@ impl World {
             };
             match moved {
                 Ok(moved) => Ok(Some(moved)),
-                Err(_) if mode != before.withdraw_mode => Ok(None),
+                Err(_) if mode != before.withdraw_mode || seen != before.exit_seen_slot => Ok(None),
                 Err(rule) => Err(rule),
             }
         };
@@ -1168,6 +1404,8 @@ impl World {
         let after = self.env.market_state(&self.market.market_state);
         // A market in withdraw mode stays in it while Kamino's free liquidity is at or below the
         // exit threshold, however much it has redeemed.
+        // Nor does it wait to leave: a reading at or below the threshold forgets any wait, unless
+        // Kamino has stopped redeems, when `rebalance` refuses before reading anything else.
         if before.withdraw_mode && free <= WITHDRAW_MODE_EXIT as u128 * exposure {
             prop_assert!(
                 after.withdraw_mode,
@@ -1176,10 +1414,27 @@ impl World {
                 free,
                 exposure
             );
+            prop_assert!(
+                after.exit_seen_slot == 0,
+                "{} waits to leave withdraw mode at {} free, X {}",
+                WITHDRAW_MODE,
+                free,
+                exposure
+            );
+        }
+        // ...and leaves only after the wait: one reading, which a bundle could inflate, never
+        // takes it out.
+        if before.withdraw_mode && !after.withdraw_mode {
+            prop_assert!(
+                waited,
+                "{} left withdraw mode without waiting",
+                WITHDRAW_MODE
+            );
         }
         match (planned, result) {
             (Ok(planned), Ok(_)) => {
                 prop_assert_eq!(after.withdraw_mode, mode, "{}", WITHDRAW_MODE);
+                prop_assert_eq!(after.exit_seen_slot, seen, "{}", WITHDRAW_MODE);
                 let total_after = self.effective()[lent];
                 let buffer_after = after.reserves[lent];
                 // Within Kamino's rounding: one cToken's worth, rounded up, and a unit.
@@ -1191,8 +1446,12 @@ impl World {
                     + 1;
                 match planned {
                     None => {
-                        // Only the mode changed.
-                        prop_assert_ne!(mode, before.withdraw_mode, "{}", WITHDRAW_MODE);
+                        // Only the mode, or the wait to leave it, changed.
+                        prop_assert!(
+                            mode != before.withdraw_mode || seen != before.exit_seen_slot,
+                            "{} changed nothing",
+                            WITHDRAW_MODE
+                        );
                         prop_assert_eq!(
                             (
                                 after.reserves,
@@ -1428,6 +1687,14 @@ impl World {
         let n = env.share_count(market);
         prop_assert_eq!(n, self.shares, "{}", SHARES);
         prop_assert!(n >= MINIMUM_LIQUIDITY, "{}", SHARES);
+        // Once open, a market never goes back to the first-deposit path, which would mint shares
+        // at a price of the depositor's choosing: the other side's reserve never returns to 0
+        // (Book of Knowledge's SH-10, docs/security/lending-amm/maths-properties.md).
+        prop_assert!(
+            state.reserves[market.other_index()] > 0,
+            "{} the other side's reserve fell to 0",
+            SHARES
+        );
         prop_assert_eq!(
             env.balance_or_zero(&env.lock_account(market)),
             self.locked,
@@ -1511,17 +1778,20 @@ impl World {
             write_offs,
             total_write_offs,
             steps_failing_layout: layout_failed,
+            stale_retries,
         } = self.kamino_moves;
         format!(
             "{}: rebalance: {deposits} deposits, {redeems} redeems, refused {within} inside the band, \
              {below} below the floor, {stopped} while Kamino redeemed nothing and {blocked} for \
              another state, {mode_changes} withdraw mode changes, {stale} stale redeems retried with \
              klend's refresh first; {} swaps redeemed their shortfall; removals: {cash} in cash, \
-             {in_kind} in kind; {locks} locks and {burns} burns; Kamino: {rate_rises} rate rises, \
+             {in_kind} in kind, {} of the lent side alone; {locks} locks and {burns} burns; Kamino: {rate_rises} rate rises, \
              {write_offs} write-offs, {total_write_offs} total, {layout_failed} steps failing the \
-             layout check",
+             layout check; {stale_retries} swaps and deposits refused on a stale reserve and sent \
+             again with klend's refresh first",
             if seeded { "seeded" } else { "created" },
-            self.redeeming_swaps
+            self.redeeming_swaps,
+            self.lent_side_removals
         )
     }
 }

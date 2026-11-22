@@ -265,6 +265,31 @@ mod tests {
                 }
             }
         }
+
+        /// A round trip at fixed reserves returns at most what went in (Book of Knowledge
+        /// PR-3): selling `a` of side i for `out`, then selling `out` back against the reserves
+        /// the first trade left (the whole input joined side i, the output left side o), returns
+        /// at most `a`, at each of the spec's edge fees. Reserves and amount below 2^63, so the
+        /// input side after the first trade fits a u64.
+        #[test]
+        fn a_round_trip_never_returns_more_than_went_in(
+            reserve_in in 1u64..(1 << 63),
+            reserve_out in 1u64..(1 << 63),
+            amount_in in 0u64..(1 << 63),
+            fee_bps in prop::sample::select(vec![0u16, 30, crate::config::MAX_LP_FEE_BPS]),
+        ) {
+            if let Ok(there) = exact_in(reserve_in, reserve_out, amount_in, fee_bps) {
+                let back = exact_in(
+                    reserve_out - there.out,
+                    reserve_in + amount_in,
+                    there.out,
+                    fee_bps,
+                );
+                if let Ok(back) = back {
+                    prop_assert!(back.out <= amount_in, "{} back for {}", back.out, amount_in);
+                }
+            }
+        }
     }
 }
 
@@ -348,6 +373,37 @@ mod proofs {
         with_edge_fee!(fee => assert_product_never_falls(reserve_in, reserve_out, amount_in, fee));
     }
 
+    fn assert_round_trip_returns_at_most_what_went_in(
+        reserve_in: u64,
+        reserve_out: u64,
+        amount_in: u64,
+        fee: u16,
+    ) {
+        let Some(joined) = reserve_in.checked_add(amount_in) else {
+            return;
+        };
+        if let Ok(there) = exact_in(reserve_in, reserve_out, amount_in, fee) {
+            // The output left side o, and the whole input joined side i.
+            if let Ok(back) = exact_in(reserve_out - there.out, joined, there.out, fee) {
+                assert!(back.out <= amount_in);
+            }
+        }
+    }
+
+    /// A round trip at fixed reserves returns at most what went in (Book of Knowledge PR-3):
+    /// bounded, the reserves and the amount below `SMALL`; `proofs/lending_amm_z3.py` for every
+    /// u64.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn a_round_trip_never_returns_more_than_went_in_bounded() {
+        let reserve_in: u64 = kani::any_where(|&r| r < SMALL);
+        let reserve_out: u64 = kani::any_where(|&r| r < SMALL);
+        let amount_in: u64 = kani::any_where(|&a| a < SMALL);
+        with_edge_fee!(fee => assert_round_trip_returns_at_most_what_went_in(
+            reserve_in, reserve_out, amount_in, fee
+        ));
+    }
+
     /// For every output, buffer and payable amount: the shortfall is what the output needs
     /// beyond the buffer, 0 whenever the buffer covers it, and refused exactly when it is more
     /// than Kamino can pay right now.
@@ -401,6 +457,7 @@ mod proofs {
             redeemed: 0,
             created_slot: 0,
             created_at: 0,
+            exit_seen_slot: 0,
             reserved: [0; crate::state::RESERVED_LEN],
         };
         let reserve = Reserve {
@@ -459,6 +516,7 @@ mod proofs {
             redeemed: 0,
             created_slot: 0,
             created_at: 0,
+            exit_seen_slot: 0,
             reserved: [0; crate::state::RESERVED_LEN],
         };
         let reserve = Reserve {
@@ -517,5 +575,14 @@ mod proofs {
     #[kani::solver(cadical)]
     fn a_swap_never_lowers_the_product_of_the_reserves() {
         with_edge_fee!(fee => assert_product_never_falls(kani::any(), kani::any(), kani::any(), fee));
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn a_round_trip_never_returns_more_than_went_in() {
+        with_edge_fee!(fee => assert_round_trip_returns_at_most_what_went_in(
+            kani::any(), kani::any(), kani::any(), fee
+        ));
     }
 }

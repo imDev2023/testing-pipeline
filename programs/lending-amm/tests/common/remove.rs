@@ -149,6 +149,37 @@ impl Env {
         Instruction::new_with_bytes(strategy_id(), &data, accounts)
     }
 
+    /// `remove_lent_side { lp, min_lent, min_ctokens }` by `lp`, with `min` as `[min_lent,
+    /// min_ctokens]`: `remove_liquidity`'s first nineteen accounts.
+    pub fn remove_lent_side_instruction(
+        &self,
+        market: &Market,
+        lp: &Pubkey,
+        shares: u64,
+        min: [u64; 2],
+    ) -> Instruction {
+        let mut instruction =
+            self.remove_liquidity_instruction(market, lp, shares, [0, 0], Payout::InKind);
+        instruction.accounts.truncate(19);
+        let mut data = anchor_discriminator("remove_lent_side").to_vec();
+        data.extend(borsh::to_vec(&(shares, min[0], min[1])).unwrap());
+        instruction.data = data;
+        instruction
+    }
+
+    /// `remove_lent_side` sent by `lp`.
+    pub fn remove_lent_side(
+        &mut self,
+        market: &Market,
+        lp: &Keypair,
+        shares: u64,
+        min: [u64; 2],
+    ) -> Result<TransactionMetadata, String> {
+        use solana_signer::Signer;
+        let remove = self.remove_lent_side_instruction(market, &lp.pubkey(), shares, min);
+        self.send_meta(&[remove], &[lp])
+    }
+
     /// `remove_liquidity` sent by `lp`.
     pub fn remove_liquidity(
         &mut self,

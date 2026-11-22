@@ -15,4 +15,5 @@ export * from "./pipelineResolveAccounts.ts";
 export * from "./pipelineSeedLiquidity.ts";
 export * from "./pipelineSwap.ts";
 export * from "./rebalance.ts";
+export * from "./removeLentSide.ts";
 export * from "./removeLiquidity.ts";
