@@ -35,11 +35,11 @@
     },
     {
       "name": "swap-loses-a-unit-from-its-books",
-      "why": "A swap takes one unit more off its recorded output side than it paid out, so a unit leaves the books while staying in the vault.",
+      "why": "A swap records one unit less of its input than it took in, so a unit leaves the books while staying in the vault.",
       "invariant": "[value conserved]",
       "file": "src/instructions/swap.rs",
-      "find": "        .checked_sub(quote.amount_out)\n        .ok_or(StrategyError::Overflow)?;\n    Ok(())\n",
-      "replace": "        .checked_sub(quote.amount_out + 1)\n        .ok_or(StrategyError::Overflow)?;\n    Ok(())\n"
+      "find": "        .checked_add(quote.amount_in)\n        .ok_or(StrategyError::Overflow)?;\n    market.reserves[output]",
+      "replace": "        .checked_add(quote.amount_in - 1)\n        .ok_or(StrategyError::Overflow)?;\n    market.reserves[output]"
     },
     {
       "name": "no-sale-beyond-the-buffer",

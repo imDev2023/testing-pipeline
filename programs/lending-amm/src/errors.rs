@@ -106,8 +106,14 @@ pub enum StrategyError {
     KaminoDepositsBlocked,
     #[msg("The Kamino reserve is deprecated after a total write-off: adding liquidity is refused, and removal is in kind only")]
     ReserveDeprecated,
-    #[msg("rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls")]
+    #[msg("rebalance must be called directly, once per transaction, beside nothing but compute budget instructions and klend's refresh_reserve or refresh_reserves_batch")]
     RebalanceNotAlone,
     #[msg("SeedRequest.amounts must hold exactly one amount for each of the market's two mints")]
     BadSeedAmounts,
+    #[msg("The Kamino reserve's stored rate is too old to value the market's cTokens: put klend's refresh_reserve first in the same transaction")]
+    ReserveStale,
+    #[msg("The Kamino reserve's version is one this program was not written for: quotes, swaps, adding and rebalance are refused, and removal is in kind only")]
+    ReserveWrongVersion,
+    #[msg("The removal would pay out fewer cTokens than min_ctokens")]
+    BelowMinCtokens,
 }

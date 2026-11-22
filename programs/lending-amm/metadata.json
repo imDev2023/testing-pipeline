@@ -157,25 +157,27 @@
             "name": "add_liquidity",
             "label": "Add liquidity",
             "kind": "add_liquidity",
-            "description": "Adds both tokens for LP shares. The first deposit takes both amounts in full and sets the price; later deposits take both tokens at the market's ratio, with the lent side valued at its buffer plus its Kamino cTokens, only as much as the shares minted are worth. Shares go to your LP shares account for this market, a token account you own, created if missing. The reserve is the Kamino reserve of the market's lent mint, which the program checks.",
+            "description": "Adds both tokens for LP shares. The first deposit takes both amounts in full and sets the price; later deposits take both tokens at the market's ratio, with the lent side valued at its buffer plus its Kamino cTokens, only as much as the shares minted are worth. Shares go to your LP shares account for this market, a token account you own, created if missing. The reserve is the Kamino reserve of the market's lent mint, which the program checks. Once the market holds Kamino cTokens, the deposit values them at the reserve's rate refreshed in the same slot: put Kamino Lend's refresh_reserve for that reserve first in the same transaction, or it is refused with ReserveStale.",
             "args": [
                 {
                     "name": "max_0",
                     "type": "u64",
                     "label": "Most of token 1 to add",
+                    "description": "Your price protection with Fewest LP shares to accept: set it to the amount the market's current ratio asks for, plus your slippage tolerance, never to a whole balance. The deposit takes only what the shares minted are worth, at most this.",
                     "decimals_of": "mint:0"
                 },
                 {
                     "name": "max_1",
                     "type": "u64",
                     "label": "Most of token 2 to add",
+                    "description": "Your price protection with Fewest LP shares to accept: set it to the amount the market's current ratio asks for, plus your slippage tolerance, never to a whole balance. The deposit takes only what the shares minted are worth, at most this.",
                     "decimals_of": "mint:1"
                 },
                 {
                     "name": "min_lp",
                     "type": "u64",
                     "label": "Fewest LP shares to accept",
-                    "description": "The deposit fails if it would mint fewer, which protects against the price moving first."
+                    "description": "The deposit fails if it would mint fewer. With both maximums at the quoted amounts plus your slippage tolerance, this bounds what a price move before the deposit can cost you; a maximum set far above its quoted amount leaves that side unprotected."
                 }
             ],
             "accounts": [
@@ -258,7 +260,7 @@
             "name": "rebalance",
             "label": "Rebalance",
             "kind": "other",
-            "description": "Anyone moves the market's buffer back to its target share of the lent side when its share has left its band (the program's BUFFER_TARGET_BPS, BUFFER_MIN_BPS and BUFFER_MAX_BPS, in its IDL): above the band it deposits the surplus into the market's Kamino reserve, below it redeems the shortfall, capped at what Kamino can pay right now. Below WITHDRAW_MODE_ENTER times the larger of what the market lends and what its target would lend, of the reserve's freely available liquidity, it enters withdraw mode and redeems everything Kamino can pay; above WITHDRAW_MODE_EXIT times it leaves and the band applies again. It skips deposits while Kamino blocks cToken deposits, and refuses while either emergency mode is on or the reserve is deprecated. Inside the band, for a move smaller than the lent mint's floor, or with nothing to do in withdraw mode, it fails and changes nothing, so simulate first. It must be called directly, beside nothing but compute budget instructions, Kamino Lend's refresh_reserve and other rebalance calls. It creates no account, and the caller pays only the transaction fee. Inputs are the lent mint and its Kamino reserve, lending market, reserve liquidity supply and collateral mint, which the program checks.",
+            "description": "Anyone moves the market's buffer back to its target share of the lent side when its share has left its band (the program's BUFFER_TARGET_BPS, BUFFER_MIN_BPS and BUFFER_MAX_BPS, in its IDL): above the band it deposits the surplus into the market's Kamino reserve, below it redeems the shortfall, capped at what Kamino can pay right now. Below WITHDRAW_MODE_ENTER times the larger of what the market lends and what its target would lend, of the reserve's freely available liquidity, it enters withdraw mode and redeems everything Kamino can pay; above WITHDRAW_MODE_EXIT times it leaves and the band applies again. It skips deposits while Kamino blocks cToken deposits, and refuses while either emergency mode is on or the reserve is deprecated, except that it then forgets a wait to leave withdraw mode, so send it then too. Inside the band, for a move smaller than the lent mint's floor, or with nothing to do in withdraw mode, it fails and changes nothing, unless it starts or forgets withdraw mode's wait to leave, so simulate first. It must be called directly, once per transaction, beside nothing but compute budget instructions and Kamino Lend's refresh_reserve or refresh_reserves_batch; put refresh_reserve first so it decides on Kamino's state as of this slot, except while the lending market's emergency mode is on, when Kamino Lend refuses the refresh. Leaving withdraw mode takes two calls an hour apart, the first only starting the wait. It creates no account, and the caller pays only the transaction fee. Inputs are the lent mint and its Kamino reserve, lending market, reserve liquidity supply and collateral mint, which the program checks.",
             "args": [],
             "accounts": [
                 {
@@ -625,6 +627,121 @@
                 {
                     "name": "reserve_collateral_mint",
                     "source": "strategy_program"
+                }
+            ]
+        },
+        {
+            "name": "remove_lent_side",
+            "label": "Leave with the lent side only",
+            "kind": "remove_liquidity",
+            "description": "Only for when the other token cannot move, because its freeze authority froze the market's vault or its transfer hook refuses the transfer, which stops every other removal. Burns LP shares from your LP shares account for your part of the buffer, paid in WSOL or USDC, and of the market's Kamino cTokens, paid as cTokens into your associated token account for the cToken mint, created at your expense if missing, each part rounded down. You give up your part of the other token: it stays in the market for the LPs who stay. It moves nothing of the other token and reads no Kamino account, so neither can stop it. The input is the lent mint's Kamino collateral mint, which the program checks.",
+            "args": [
+                {
+                    "name": "lp",
+                    "type": "u64",
+                    "label": "LP shares to remove",
+                    "decimals_of": "pda:strategy:str:lp_mint,key:market_state"
+                },
+                {
+                    "name": "min_lent",
+                    "type": "u64",
+                    "label": "Fewest of the lent token to accept",
+                    "description": "The buffer's part, in WSOL or USDC. The removal fails if it would pay out less."
+                },
+                {
+                    "name": "min_ctokens",
+                    "type": "u64",
+                    "label": "Fewest cTokens to accept",
+                    "description": "The cTokens' part, in the Kamino cToken. The removal fails if it would pay out fewer. Set it with Fewest of the lent token to accept, so a trade before the removal cannot move the lent side between the buffer and the cTokens towards the token you give up."
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "lp",
+                    "source": "wallet",
+                    "signer": true,
+                    "writable": true
+                },
+                {
+                    "name": "market_state",
+                    "source": "market_state",
+                    "writable": true
+                },
+                {
+                    "name": "lp_mint",
+                    "source": "pda:strategy:str:lp_mint,key:market_state",
+                    "writable": true
+                },
+                {
+                    "name": "lp_shares",
+                    "source": "pda:strategy:str:lp_shares,key:market_state,key:wallet",
+                    "writable": true
+                },
+                {
+                    "name": "lp_token_0",
+                    "source": "wallet_token_account:0",
+                    "writable": true
+                },
+                {
+                    "name": "lp_token_1",
+                    "source": "wallet_token_account:1",
+                    "writable": true
+                },
+                {
+                    "name": "vault_0",
+                    "source": "vault:0",
+                    "writable": true
+                },
+                {
+                    "name": "vault_1",
+                    "source": "vault:1",
+                    "writable": true
+                },
+                {
+                    "name": "mint_0",
+                    "source": "mint:0"
+                },
+                {
+                    "name": "mint_1",
+                    "source": "mint:1"
+                },
+                {
+                    "name": "authority",
+                    "source": "pda:strategy:str:authority,key:market_state"
+                },
+                {
+                    "name": "ctoken_account",
+                    "source": "pda:strategy:str:ctoken,key:market_state",
+                    "writable": true
+                },
+                {
+                    "name": "collateral_mint",
+                    "source": "input:collateral_mint"
+                },
+                {
+                    "name": "lp_ctoken",
+                    "source": "ata:wallet,input:collateral_mint",
+                    "writable": true
+                },
+                {
+                    "name": "token_program_0",
+                    "source": "token_program:0"
+                },
+                {
+                    "name": "token_program_1",
+                    "source": "token_program:1"
+                },
+                {
+                    "name": "token_program",
+                    "source": "fixed:TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "associated_token_program",
+                    "source": "associated_token_program"
+                },
+                {
+                    "name": "system_program",
+                    "source": "system_program"
                 }
             ]
         },

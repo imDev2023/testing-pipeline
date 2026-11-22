@@ -1,0 +1,491 @@
+{
+  "cluster": "devnet",
+  "at": "2026-11-22T22:08:27.348Z",
+  "outcome": "done",
+  "record": [
+    [
+      "containment hook program",
+      "aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv"
+    ],
+    [
+      "tax AMM program",
+      "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"
+    ],
+    [
+      "create the quote mint and mint the launcher its supply",
+      "4CxHk4XtwA2xVMZJB6PvNU5n3CzVXuoCbPjMRxJkBLRgcDtxh2AqkuQNv7qHdSrrLN7EMh5D8AhSo2itsvSe8Kra"
+    ],
+    [
+      "quote mint (--quote-mint new)",
+      "HDxAEyb2JNPYEC7uZfUhr8oyfWK9cqLdCUSGKNAcCYFa"
+    ],
+    [
+      "token 1",
+      "quoted in So11111111111111111111111111111111111111112, goal 5000000000, deadline 1795385153, unlocked by the deadline"
+    ],
+    [
+      "create the mint and mint the supply",
+      "3HVYjkN38Wkgfecd7Lysi85TKd5qMJ3Sady7FuAWFNZHPifRfrSmHY4jrcBnjwrdEG1yjpD4erjuJRUbXcQ5whaX"
+    ],
+    [
+      "bind in the creation transaction",
+      "no: 1274 of 1232 bytes (688 with a lookup table), so bind went in the next one"
+    ],
+    [
+      "create_market + init_fee_account x2",
+      "3HXooT2thL3476P8t7KVwYQWGMe25wcjcShzwT8ePeW6P29jD2vxjeiha9EjzuYXPmJ1jP9AyLXsGSkfQEQto8ed"
+    ],
+    [
+      "bind",
+      "cdnHiWy8LXkmm3S9LWzfBk8M42Wch68LSrnKRy3jHAhMfMGRVqQBVm2N14wkccSCxDSLP7dyHXjE1YFUvSwfAh3"
+    ],
+    [
+      "mint",
+      "AQSAyaGKsgrGqDDhA6ijW6cfuPwQkkcToSBWQBMFuk9v"
+    ],
+    [
+      "market",
+      "7jJmWiGVu4eqXXrGBxfvc6AVCJbQ9ZmqfSCScMFaV1Fw"
+    ],
+    [
+      "market state",
+      "BLWmdMTzYqAZqjtEFFtMrP75DdLRmsXsFYCvLCxVRkX"
+    ],
+    [
+      "the token's vault",
+      "6zJkJUj9D5EfyGL34HAm9abFScuxx1AFJXiKtYx6FkVX"
+    ],
+    [
+      "the token's fee account",
+      "5f4nxggjFjQ2biKqN7kS1U6TCDpDEz4WyuUnHyq5VJzR"
+    ],
+    [
+      "the quote mint's fee account",
+      "DWDurck8hAcMKZ3Agpit7H7GK5bcm7TTaq37HhVcCsMg"
+    ],
+    [
+      "config",
+      "8bvkSTnMrkU9bkHkDuXLTqVuhfECrQK8SeFjwAzxAPoY"
+    ],
+    [
+      "validation account",
+      "HhQG5dGsEy6hmZsooyQcqM3c8xe2WZPABVwZpyJdijxc"
+    ],
+    [
+      "unlock PDA (hook authority)",
+      "2DYU6gXgKQjq8tjtLoTALmZsqyi3xTzR6RKB2HRaX4Vx"
+    ],
+    [
+      "config read back",
+      "market, market state, vault, fee account, quote mint, goal and deadline as expected"
+    ],
+    [
+      "seed",
+      "31eCVoP3w36g7PNXzoGdDKEBQFmAo3oLPkHmGJGJF3X7Gvpa2TT4u1ZpkXi1KmuhwWrQU8Ho4wWSrQmXzRmgFjsi"
+    ],
+    [
+      "seeded",
+      "800000000000000 of the token into its vault, through the hook"
+    ],
+    [
+      "unlock before either",
+      "refused by the hook with UnlockNotDue"
+    ],
+    [
+      "wrap 1.0025 SOL",
+      "3VdTri6NtyfeXqBowNScqGJsUDrADrJKCs51cVLKMzuENpx9dDitUYXvAtbBSaexwYLPnTTYfNjLKmzw8JbHjpJ4"
+    ],
+    [
+      "swap 1000000000 of the quote mint for the token",
+      "2LmBF6FCjb1YeoUDTYn6BYzGGPYEDx7rwweGDLF296Y43S3y7anXtuaR9YrHmbiJb49UM5fLx4qPj4ewqLQ7o4br"
+    ],
+    [
+      "buy",
+      "1000000000 of the quote mint bought 25056506296415 of the token, its quote; Execute 5578 CU"
+    ],
+    [
+      "swap 12528253148207 of the token for the quote mint",
+      "5WH4hhETVZfLYLWhujgdFQjMznMATC6mGKoxkxwa6m3L9uSZTBYKGwErmY6cUZygFH5BZyFLkiTuaBP4LBPfNeBn"
+    ],
+    [
+      "sell",
+      "12528253148207 of the token sold, 466910083 kept; fee 1170201 in the quote mint into its fee account; Execute 5602 CU"
+    ],
+    [
+      "create the treasury's token account",
+      "39u3GRomdyxFqp5Fntvsuekiw7jvxmfULemxewRRa1d8jS7o88CeoaGxraRcbFu2qm1zUwwqZB86Wh42rdjaaxs3"
+    ],
+    [
+      "sweep_fees",
+      "5iFbZb4TVXwCK2jJ5A3cncPEaqSv1Gc2ZrFtivpL2cafaEJCzqdbKXBgekQBQn4HfPAYa2rcZzpTPeN5JP8GdPcD"
+    ],
+    [
+      "swept",
+      "3670201 of the quote mint from the fee account to Pipeline's treasury"
+    ],
+    [
+      "create another wallet's token account",
+      "4gf118qxRqbi4juLjNkxz6KKN6ju1AB6mD2ovabstQa8HhCkinX95raC9DVk6nmZwKVyaJbwoczNfg1FjRHpPNb1"
+    ],
+    [
+      "a wallet-to-wallet transfer_checked (refused by the hook with TransferRefused)",
+      "5RpsHxcdP8xd5xSVhtw5pttg6iXUKukv4EW2r841Z4y4AdqT5CaY579iFX4UnJ6pqYVh4hbY55rXGasSWwdW38VK"
+    ],
+    [
+      "create an integrator's token account",
+      "5M7PVdoTimXFqvBHcVpjs9eQNxbK6dukYbRjySeUEN6tpEmkhBkSX1G5QB2KrHSLxmJRRdAmjUXdVMjec2paZvFw"
+    ],
+    [
+      "refused by the hook",
+      "a wallet-to-wallet transfer_checked, on chain, and a sell with an integrator fee above zero, in simulation"
+    ],
+    [
+      "pipeline-check, contained",
+      "13 pass, 0 warn, 0 fail, exact_out_refund skipped"
+    ],
+    [
+      "fund a fresh wallet for its transaction fee",
+      "4rEK4thrWTHu8CLJbZEuQh4Aacx6b5ZDuijKsZVNxCJqw5eFR6pwr2L5LixtBmkLnhTQE7Xq8pgbaWVyZZVSdJ9e"
+    ],
+    [
+      "unlock",
+      "4nEkgh9uDEHTyCgpnoDdCsRjnQorbJS2bziDaDdRB6PnKT417UVHwT5fwaYi9kZSpV4NVc88h9GMyWsEA8CcrQ4k"
+    ],
+    [
+      "unlocked",
+      "by the deadline, by 4cueiaaef9A9Ej1J44rCa7on7ECVtKgpFPcYVGc2aW6c, with 54635805 of the goal 5000000000 collected; 13819 CU"
+    ],
+    [
+      "mint after the unlock",
+      "transfer hook program and hook authority both unset"
+    ],
+    [
+      "a second unlock",
+      "refused by the hook with AlreadyUnlocked"
+    ],
+    [
+      "a wallet-to-wallet transfer_checked without hook accounts",
+      "2Wwe1StPh6aZ2C5qfs9WD4vdNHVMDKV34C3U6LoRvArWaqz47bdWCHpWRSBwFnZUAoAGK4TdtyDfwqMqRvCfmbNc"
+    ],
+    [
+      "swap 100000000 of the quote mint for the token",
+      "4MPzMEdoxhDipJxNPt2uGjk4mdHkYgunwz3aM13owWzAoMMsJE2GyNMMcb6ANj21kvWxjid1K1pMqM4nKNjW4NUu"
+    ],
+    [
+      "swap 2498333555970 of the token for the quote mint",
+      "3PJRvK9JKxbMDcvES6x33tR1dgbmH4WPve49MsG5in9UcwGYHHffDPTXcY1US8Mgb4CkDmWkaoY4oVQ7TfhSc2VC"
+    ],
+    [
+      "transfer after the unlock",
+      "1,000,000 of the token from the launcher to another wallet, without hook accounts"
+    ],
+    [
+      "swaps after the unlock",
+      "a buy of 100000000 and a sell of 2498333555970 (for 91919624), without hook accounts; the hook never ran"
+    ],
+    [
+      "pipeline-check, unlocked",
+      "13 pass, 0 warn, 0 fail, exact_out_refund skipped"
+    ],
+    [
+      "token 2",
+      "quoted in So11111111111111111111111111111111111111112, goal 100000000, deadline 1795471313, unlocked by the goal"
+    ],
+    [
+      "create the mint and mint the supply",
+      "5YwwtUpkgyLcV41PitS1bAmtHL1AGEPJ2a1WU2KnQsBoxB6xJN5EwvGsmT6mSfjG7ht2nzJFi5Ec58xDfwzPWTFi"
+    ],
+    [
+      "bind in the creation transaction",
+      "no: 1274 of 1232 bytes (688 with a lookup table), so bind went in the next one"
+    ],
+    [
+      "create_market + init_fee_account x2",
+      "5K8dhrrX2ZVzt28Jst5BUb1ENqbok922Vd3MukcFpHwoPmXN2J95YvD97JbKijYMuWkUfdrW6GMxyUxMvnSHRn7s"
+    ],
+    [
+      "bind",
+      "4WK3MxCzu8V7dAXZe2xWMvanHvPufdCAV9SQgA4Mj99sRpZFqKQfZnHzwRCS3WVNw5XbYq2Z1fCsAasxrhg8B2qi"
+    ],
+    [
+      "mint",
+      "64qicrEzu17dTHgikB9HtaJznqTwz7w2jCGi4V2FUwgW"
+    ],
+    [
+      "market",
+      "9xwRRiTk5Ti3ia7XhiAfRmHaq3QJnia19vDT5Fz6Cmgt"
+    ],
+    [
+      "market state",
+      "AmucMjc56zPB6tFgQeAhTExqZVY2KFQDeZwmrYQZGtnn"
+    ],
+    [
+      "the token's vault",
+      "7TXD1dFYNWbKtAsgip8WMpLFom5Arx2esVMsdxwUfowx"
+    ],
+    [
+      "the token's fee account",
+      "8YHHyemerU57QBHNhjqmyRKmU2p1NE12yWjMp9odTycE"
+    ],
+    [
+      "the quote mint's fee account",
+      "4a3Y878vTATssSMzPmg14ymaFjT1tGoC6xGbvuFc5qBn"
+    ],
+    [
+      "config",
+      "Dc5tYj5UkXxwDFLR91vPYkpaYpc6FjHFwWyMPgaKek6k"
+    ],
+    [
+      "validation account",
+      "FC6Wi18SydrFE6dufAZ16xghAKSk1VUnYGSnhCby4Zfm"
+    ],
+    [
+      "unlock PDA (hook authority)",
+      "GsmRS4wrSqLjqZ8QUuaC44eSX7pnVnwMFPc6U5FDV6G"
+    ],
+    [
+      "config read back",
+      "market, market state, vault, fee account, quote mint, goal and deadline as expected"
+    ],
+    [
+      "seed",
+      "3WC7nQgzsStbPc4TCp36e7q9umprS85jVUrU1V8H2qK8CBQXTwwm4EpLNFWFju2RSNRuuNZPKAhpUHVTh6QaJ9CG"
+    ],
+    [
+      "seeded",
+      "800000000000000 of the token into its vault, through the hook"
+    ],
+    [
+      "unlock before either",
+      "refused by the hook with UnlockNotDue"
+    ],
+    [
+      "wrap 1.0025 SOL",
+      "3PXLXVeoWGYMZvaHSdm1q4xs5Tfb83wzC52hB5ddnEfbrsTWnQVLshY8YqrWibCGDUd4aZCwv4AjvtvgSqfAA1DS"
+    ],
+    [
+      "swap 1000000000 of the quote mint for the token",
+      "2gTDWQSB1sZteCU5LcLDsJqmySDYaVHcN5wDuBqTKfwaRBpXJGm727rTuooJkg3QPN1ELLm9C1byA5tWbu9Yp989"
+    ],
+    [
+      "buy",
+      "1000000000 of the quote mint bought 25056506296415 of the token, its quote; Execute 5578 CU"
+    ],
+    [
+      "swap 12528253148207 of the token for the quote mint",
+      "3Ynesjrmn7MLzeVgP6pvYwr493d1xGHw7TGQEZy1nFqZv8aksVDk5aGqZg6XsE2wCtGaMPPXNsdLzP3CR6THgfr1"
+    ],
+    [
+      "sell",
+      "12528253148207 of the token sold, 466910083 kept; fee 1170201 in the quote mint into its fee account; Execute 5602 CU"
+    ],
+    [
+      "create the treasury's token account",
+      "3NxaytN91izL9HXPDYtS4tpjTS7Pshn4ieJ4yATD3SaU3ARS1brd3kEsyTZrQBo9HeHhqXgew3VSEk8X3N39NcSg"
+    ],
+    [
+      "sweep_fees",
+      "KF9AkGUHE65Yh8DQzDsmFU81dSWidgrNRKkDFb1xhvy1PyRMbY3ucWEiaRNTWYEuiBQgaVsR4R9Mkr3ZaYS1v2r"
+    ],
+    [
+      "swept",
+      "3670201 of the quote mint from the fee account to Pipeline's treasury"
+    ],
+    [
+      "create another wallet's token account",
+      "3xG4UKnraWFf1qkRpYgPHFymWxsZPE7WnrnmbjGxAMUfYLyHuvx9RqLXBXGQcmj74qDurU1TriLcT5uPgiYmXi43"
+    ],
+    [
+      "a wallet-to-wallet transfer_checked (refused by the hook with TransferRefused)",
+      "5GDLGfJZYffo6RRBGyzVzL44vaHo9XnDNZpWpQ7Ag2nNKEmDVfsSX7zYeRpSWF7oDPWVQvgtFB4QjBkfup2iPibo"
+    ],
+    [
+      "create an integrator's token account",
+      "5m25gwqciorhxe8QuAQMR89scYjaM6RY3QJjhUN346DqGoM4RDmie9DHqSgQkagCbUt9doRGRKszxAprthvQeP5j"
+    ],
+    [
+      "refused by the hook",
+      "a wallet-to-wallet transfer_checked, on chain, and a sell with an integrator fee above zero, in simulation"
+    ],
+    [
+      "pipeline-check, contained",
+      "13 pass, 0 warn, 0 fail, exact_out_refund skipped"
+    ],
+    [
+      "unlock with 54635805 of the goal 100000000 collected (refused by the hook with UnlockNotDue)",
+      "2X9Fks1J6ZBWS67NAmMXUxWuTEuSY1JCyDEUtNKYhkJSW2Zh8eaSq8zxXz4FcvKza6VNcQs38b9M3tzMnDRiYSME"
+    ],
+    [
+      "swap 1000000000 of the quote mint for the token",
+      "456X7mybgHBwGiCcMYGQWfVtUo4YwbkHf9YGrWMeDGncSV9w8rXg7gkK2nzeDQeBtkm3d1fKdcLLfphc6fgoLMXz"
+    ],
+    [
+      "swap 24289779575496 of the token for the quote mint",
+      "356mC5JvxE498s6q3KUoQSh9rnzFPzb2gLFcqccvY4eW7DiUR1ZKtTCoRBgxmdBc9dosrsxExpqdavCfpa1zBcre"
+    ],
+    [
+      "fund a fresh wallet for its transaction fee",
+      "4KB6VB4EukWBti5LrHE3RKKxeB8fF7N6gpJz1nN8opiiAHCeX7TYcwopCFXunJpj3JA7We71tBtHm23YsgoMM1mh"
+    ],
+    [
+      "unlock",
+      "56oKSKjZaiRqmQ9WVKdrt49k3WhzKesxu9WsEG1gFiWKVxuXN8ciu3CgBB1j7WqhBewBahmcv7Y2KipdUjcccGiT"
+    ],
+    [
+      "unlocked",
+      "by the goal, by FixCi5iqPQ2v53ARyABgHytaZQW7weSH1mPkv1Hp2dh7, with 133135805 of the goal 100000000 collected; 14171 CU"
+    ],
+    [
+      "mint after the unlock",
+      "transfer hook program and hook authority both unset"
+    ],
+    [
+      "a second unlock",
+      "refused by the hook with AlreadyUnlocked"
+    ],
+    [
+      "a wallet-to-wallet transfer_checked without hook accounts",
+      "z7AxMJj86cPYMjiB9aZWb6qaK812tfSE5BJqnorpnGXY4WgrztvMP2Vj3CJJ1hZ6QPNrfhkKRvaSp2QmHRCBG41"
+    ],
+    [
+      "swap 100000000 of the quote mint for the token",
+      "36jgCUcnN6E5KqhdS6yoK7o8kJbFwx8siTAJxfSdX16aBMwGP2qrZfmcCNR3PJPdsngjGsjHA7dQeWnGdGfkiVGZ"
+    ],
+    [
+      "swap 2498333555888 of the token for the quote mint",
+      "298mdkFVBTNVSDyMHWKRpgHpXay8ZdzB2ikdyB9NggkPTrBye8BkVFnxVznGvjwo3T8AWVyGf1PWcmYGbL8PYohZ"
+    ],
+    [
+      "transfer after the unlock",
+      "1,000,000 of the token from the launcher to another wallet, without hook accounts"
+    ],
+    [
+      "swaps after the unlock",
+      "a buy of 100000000 and a sell of 2498333555888 (for 91919624), without hook accounts; the hook never ran"
+    ],
+    [
+      "pipeline-check, unlocked",
+      "13 pass, 0 warn, 0 fail, exact_out_refund skipped"
+    ],
+    [
+      "token 3",
+      "quoted in HDxAEyb2JNPYEC7uZfUhr8oyfWK9cqLdCUSGKNAcCYFa, goal 1000000000, deadline 1797976913, left contained"
+    ],
+    [
+      "create the mint and mint the supply",
+      "3xUeRzmN6TvgPViLgPpm8EqirdoNVxHcDhfD1VT4gnVvGk3m927xaPdapUQnGJ29TSgdt1vMhPyFAa9iEDfqnET1"
+    ],
+    [
+      "bind in the creation transaction",
+      "no: 1274 of 1232 bytes (688 with a lookup table), so bind went in the next one"
+    ],
+    [
+      "create_market + init_fee_account x2",
+      "4axs1ZVr63CGSrs8zs2EeRycQCwLJCNmkd9e6sYAzHmmUPduCiCTjeYTfVnqbNSCZnTeqE3yDHepMVLedxxwBoRH"
+    ],
+    [
+      "bind",
+      "52dgQqoyTWdQqq1zi8EhLC343rHq1zUccmPVbCpX5H13s6qmscMZSUeiuKjwxjzWRtHUUEL8bX1RfZgNDBw25nN9"
+    ],
+    [
+      "mint",
+      "2e1iecsWF5aHFsuKCgUi5j5DW7wXyWRnsBMTkDHBmcXR"
+    ],
+    [
+      "market",
+      "6eqVrhnojqZpW9bZCpYYYRUnxuNUeStTXinNuA6f4yQ3"
+    ],
+    [
+      "market state",
+      "4zByVFMRfJZZQr9VATMsfiYatyKaXsvxQ9SSWfSHbXBz"
+    ],
+    [
+      "the token's vault",
+      "6GqYBLRJqgpqBUYpw9AMagmk4y64VPsxwZ1BGi69bJdW"
+    ],
+    [
+      "the token's fee account",
+      "9VtAXKXkE1k4gePcjwVcD5H9pcnJk11Zf5EbSdxA2QAC"
+    ],
+    [
+      "the quote mint's fee account",
+      "C5k3Zzetn3SGAf7DBgKKCC7zB1kRRyJcBa1w8rnoXv4D"
+    ],
+    [
+      "config",
+      "7xZ61DwYQ54n6wX6sSCV6gm3X7tyWBmTwKLo7DbBejaJ"
+    ],
+    [
+      "validation account",
+      "B5pmCG8Fv1ydqw7p1hr5JvJfQrtMaJiGSiXYhRfpvBWr"
+    ],
+    [
+      "unlock PDA (hook authority)",
+      "46uXZZpSzsvNkvgFAjfHdgy3fyNmX8sq2rzgYAkUN2MH"
+    ],
+    [
+      "config read back",
+      "market, market state, vault, fee account, quote mint, goal and deadline as expected"
+    ],
+    [
+      "seed",
+      "4KNj735rrJCEufh9zU7rw5ZriXS47898k6Rwdwf1hCi2NKE9PTEQDHqBy3NzmRrbvb1BgnQrkKFiPJdF43neWMKr"
+    ],
+    [
+      "seeded",
+      "800000000000000 of the token into its vault, through the hook"
+    ],
+    [
+      "unlock before either",
+      "refused by the hook with UnlockNotDue"
+    ],
+    [
+      "swap 1000000 of the quote mint for the token",
+      "4nTYMQVHE4Zu22Rnz5XsHw75Az86onQMxnMfykpFHYqSu5pEeM1KQFeeQzXm3gm6TbDU2EvoDiRXsucPR4oX4Ggx"
+    ],
+    [
+      "buy",
+      "1000000 of the quote mint bought 25865830338 of the token, its quote; Execute 5578 CU"
+    ],
+    [
+      "swap 12932915169 of the token for the quote mint",
+      "3MwhV98YgS3ngd2vWVZXo3bLjTTaqVjGSek9PVFzKgspRBbbPfrNmqpjWwkuXVUUPTyhFuaGSWZKZTbs22v4v2em"
+    ],
+    [
+      "sell",
+      "12932915169 of the token sold, 460756 kept; fee 32332288 in the token into its fee account; Execute 5602 and 5603 CU"
+    ],
+    [
+      "create the treasury's token account",
+      "31CM6KLLJMGnhruM8Bnaxg7wcSWdcpQiFAXuvGcvK6d5w9odc2ruiffUpWGrgujFTy1qDJCkmiq88rdqgTutUZGt"
+    ],
+    [
+      "sweep_fees",
+      "3LqZcY1Px3qT6nhoew3pAL81N4qdhaxoUgT8NqRdKhitw7pxNhv34T5afLbrmCZ8WUihqihwgm3hgeSfTRQBPC1D"
+    ],
+    [
+      "swept",
+      "32332288 of the token from the fee account to Pipeline's treasury, through the hook"
+    ],
+    [
+      "create another wallet's token account",
+      "WnEq3XAL5qjaQPjGEtrfZwBAdbGw4n5MbvDt184JaQ4mxEt6Vr8PQqDUG5kWV4viaHu2RE8dCA43Y59JFn4ceJx"
+    ],
+    [
+      "a wallet-to-wallet transfer_checked (refused by the hook with TransferRefused)",
+      "4b286ENwDnpyxXSxoDsZcRV5XDw1aSbaTFetd2xNqshC7nezEQgpXoekZAPRjMJ7kGxjXQh4sB9et94JFaXDqjpx"
+    ],
+    [
+      "create an integrator's token account",
+      "2mZCzYKyNXGJKuNSYif35qzr7LeFNUqUsQ1pu4Sx2gd7b4qDxw31EeWw3rvxtA8JCUacbDy3BQ1Fx6cJZrS3kHTi"
+    ],
+    [
+      "refused by the hook",
+      "a wallet-to-wallet transfer_checked, on chain, and a sell with an integrator fee above zero, in simulation"
+    ],
+    [
+      "pipeline-check, contained",
+      "13 pass, 0 warn, 0 fail, exact_out_refund skipped"
+    ]
+  ]
+}

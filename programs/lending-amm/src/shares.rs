@@ -135,6 +135,10 @@ pub fn removal(
 /// `deposited - redeemed`, rounded towards zero, off `deposited` while it is positive and off
 /// `redeemed` while it is negative. So the market's lending yield, `V + redeemed - deposited`,
 /// falls by the same fraction as `V`, the part that left with the cTokens, without valuing them.
+///
+/// It never fails on arithmetic, however large the totals: they only track the yield, and must
+/// never stand between an LP and their exit in kind. Only `paid` of 0, `held` of 0 or `paid` above
+/// `held`, which no removal passes, are refused.
 pub fn totals_after_in_kind(
     deposited: u128,
     redeemed: u128,
@@ -144,16 +148,15 @@ pub fn totals_after_in_kind(
     if paid == 0 || held == 0 || paid > held {
         return Err(StrategyError::Overflow);
     }
-    let take = |net: u128| -> Result<u128, StrategyError> {
-        Ok(net
-            .checked_mul(paid as u128)
-            .ok_or(StrategyError::Overflow)?
-            / held as u128)
-    };
+    let (paid, held) = (paid as u128, held as u128);
+    // `floor(net x paid / held)`, exactly, without the product: with `net = q x held + r` it is
+    // `q x paid + floor(r x paid / held)`, where `q x paid <= net` since `paid <= held`, and
+    // `r x paid < 2^128` since both are below 2^64; the sum is at most `net`.
+    let take = |net: u128| (net / held) * paid + (net % held) * paid / held;
     if deposited >= redeemed {
-        Ok((deposited - take(deposited - redeemed)?, redeemed))
+        Ok((deposited - take(deposited - redeemed), redeemed))
     } else {
-        Ok((deposited, redeemed - take(redeemed - deposited)?))
+        Ok((deposited, redeemed - take(redeemed - deposited)))
     }
 }
 
@@ -323,6 +326,25 @@ mod tests {
         assert!(totals_after_in_kind(10, 0, 4, 3).is_err());
     }
 
+    /// An in-kind exit never fails on the running totals' arithmetic, however large the net
+    /// amount lent: they only track the lending yield, and must never stand between an LP and
+    /// their exit (finding H005, docs/security/lending-amm/).
+    #[test]
+    fn sos_h005_in_kind_totals_never_overflow() {
+        let paid = u64::MAX - 1;
+        let held = u64::MAX;
+        assert_eq!(
+            totals_after_in_kind(u128::MAX, 0, paid, held).map_err(|e| e as u32),
+            // floor((2^128 - 1) x (2^64 - 2) / (2^64 - 1)) = 2^128 - 2^64 - 2, with
+            // 2^128 - 1 = (2^64 + 1) x (2^64 - 1).
+            Ok((u128::MAX - (u128::MAX - (1u128 << 64) - 1), 0))
+        );
+        assert_eq!(
+            totals_after_in_kind(0, u128::MAX, held, held).map_err(|e| e as u32),
+            Ok((0, 0))
+        );
+    }
+
     #[test]
     fn the_last_lp_out_leaves_the_locked_minimums_part_of_every_side() {
         let all = removal(2_000, 2_000, 9_000, 3_000, 300).unwrap();
@@ -432,6 +454,49 @@ mod tests {
                 prop_assert!(d.other <= max_other && d.lent <= max_lent);
             }
         }
+
+        /// A later depositor overpays by less than one unit of each side (Book of Knowledge
+        /// SH-3): each take is the ceiling of what the shares are worth,
+        /// taken x N < shares x reserve + N, and never more than offered.
+        #[test]
+        fn a_later_deposit_overpays_by_less_than_one_unit_of_each_side(
+            max_other: u64,
+            max_lent: u64,
+            reserve_other in 1u64..,
+            reserve_lent in 1u64..,
+            share_count in 1u64..,
+        ) {
+            if let Ok(d) = later_deposit(max_other, max_lent, reserve_other, reserve_lent, share_count) {
+                let n = share_count as u128;
+                let shares = d.shares as u128;
+                prop_assert!((d.other as u128) * n < shares * reserve_other as u128 + n);
+                prop_assert!((d.lent as u128) * n < shares * reserve_lent as u128 + n);
+                prop_assert!(d.other <= max_other && d.lent <= max_lent);
+            }
+        }
+
+        /// The share count always fits a u64 after a later deposit (Book of Knowledge SH-9):
+        /// from any LP supply whose share count fits, the supply after the deposit's shares are
+        /// minted has a share count too, so a later removal never meets `share_count` refusing.
+        /// Half the supplies are within 2^20 of the largest a share count allows, where the
+        /// deposit's own check is what refuses.
+        #[test]
+        fn the_share_count_fits_a_u64_after_a_later_deposit(
+            max_other: u64,
+            max_lent: u64,
+            reserve_other in 1u64..,
+            reserve_lent in 1u64..,
+            lp_supply in prop_oneof![
+                0u64..=(u64::MAX - MINIMUM_LIQUIDITY),
+                (u64::MAX - MINIMUM_LIQUIDITY - (1 << 20))..=(u64::MAX - MINIMUM_LIQUIDITY),
+            ],
+        ) {
+            let n = share_count(lp_supply).unwrap();
+            if let Ok(d) = later_deposit(max_other, max_lent, reserve_other, reserve_lent, n) {
+                let after = lp_supply.checked_add(d.shares).map(share_count);
+                prop_assert!(matches!(after, Some(Ok(count)) if count == n + d.shares));
+            }
+        }
     }
 }
 
@@ -494,6 +559,75 @@ mod proofs {
             assert!(d.shares as u128 * reserve_other as u128 <= d.other as u128 * n);
             assert!(d.shares as u128 * reserve_lent as u128 <= d.lent as u128 * n);
             assert!(d.other <= max_other && d.lent <= max_lent);
+        }
+    }
+
+    fn assert_later_deposit_overpays_by_less_than_one_unit(
+        max_other: u64,
+        max_lent: u64,
+        reserve_other: u64,
+        reserve_lent: u64,
+        share_count: u64,
+    ) {
+        if let Ok(d) = later_deposit(
+            max_other,
+            max_lent,
+            reserve_other,
+            reserve_lent,
+            share_count,
+        ) {
+            let (n, shares) = (share_count as u128, d.shares as u128);
+            assert!((d.other as u128) * n < shares * reserve_other as u128 + n);
+            assert!((d.lent as u128) * n < shares * reserve_lent as u128 + n);
+            assert!(d.other <= max_other && d.lent <= max_lent);
+        }
+    }
+
+    /// A later depositor overpays by less than one unit of each side, each take the ceiling
+    /// of what the shares are worth (Book of Knowledge SH-3): bounded below `SMALL`;
+    /// `proofs/lending_amm_z3.py` for every u64.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn a_later_deposit_overpays_by_less_than_one_unit_of_each_side_bounded() {
+        let small = |x: &u64| *x < SMALL;
+        assert_later_deposit_overpays_by_less_than_one_unit(
+            kani::any_where(small),
+            kani::any_where(small),
+            kani::any_where(small),
+            kani::any_where(small),
+            kani::any_where(small),
+        );
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn a_later_deposit_overpays_by_less_than_one_unit_of_each_side() {
+        assert_later_deposit_overpays_by_less_than_one_unit(
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
+    }
+
+    /// For any LP supply whose share count fits, and any amounts and reserves, the supply after
+    /// a successful later deposit still has a share count, `N + shares`, so `removal` never
+    /// refuses an exit for it (Book of Knowledge SH-9). The first deposit mints
+    /// `isqrt(other x lent) - MINIMUM_LIQUIDITY`, whose share count is the root, a u64.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn the_share_count_fits_a_u64_after_a_later_deposit() {
+        let lp_supply: u64 = kani::any();
+        let Ok(n) = share_count(lp_supply) else {
+            return;
+        };
+        if let Ok(d) = later_deposit(kani::any(), kani::any(), kani::any(), kani::any(), n) {
+            let after = lp_supply.checked_add(d.shares).map(share_count);
+            assert!(
+                matches!(after, Some(Ok(count)) if count as u128 == n as u128 + d.shares as u128)
+            );
         }
     }
 
@@ -640,21 +774,18 @@ mod proofs {
                 };
                 // The cTokens left take `floor(net x paid / held)` off it: what is left is at
                 // least the remaining cTokens' part of the net, and less than a unit above it.
+                // Stated with products only where they fit; `proofs/shares_z3.py` states it for
+                // every input.
                 let take = net - net_after;
-                assert!(take * held as u128 <= net * paid as u128);
-                let above = take
-                    .checked_add(1)
-                    .and_then(|t| t.checked_mul(held as u128));
-                assert!(above.is_none_or(|above| net * (paid as u128) < above));
+                if let Some(product) = net.checked_mul(paid as u128) {
+                    assert!(take * held as u128 <= product);
+                    let above = take
+                        .checked_add(1)
+                        .and_then(|t| t.checked_mul(held as u128));
+                    assert!(above.is_none_or(|above| product < above));
+                }
             }
-            Err(_) => assert!(
-                paid == 0
-                    || held == 0
-                    || paid > held
-                    || (deposited.abs_diff(redeemed))
-                        .checked_mul(paid as u128)
-                        .is_none()
-            ),
+            Err(_) => assert!(paid == 0 || held == 0 || paid > held),
         }
     }
 

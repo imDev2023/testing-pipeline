@@ -3708,6 +3708,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
 
+### HOOK-38: How the launch script checks a home market's conformance
+
+- Question: How does the launch script show that a contained token's home market passes Pipeline's conformance checker, while the token is contained and after its unlock?
+- Answer: Given `--pipeline-check`, it runs `pipeline-check --fail-on-warn` on the home market after the launch's refusals and again after the unlock, with the explicit trade sizes `CONFORMANCE_AMOUNTS` (1,000,000, 100,000,000 and 1,000,000,000 base units) that a market launched single-sided on a virtual quote reserve needs, and stops unless every check passed but `exact_out_refund`, skipped.
+- Alternatives: The checker's own sizes, which it takes from vault balances and which ask a large sell of the token that the little real quote reserve cannot pay (`InsufficientLiquidity`, a warn); running the checker by hand between two runs of the script, which would split one token's life over two runs.
+- Specified in: [`docs/toolchain.md`, Containment hook](toolchain.md#containment-hook)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-39: Which refusals the launch script lands on chain
+
+- Question: Which of the hook's refusals does the launch script send past the preflight, so that each lands on chain with a signature, rather than showing it in simulation?
+- Answer: The wallet-to-wallet `transfer_checked` of every token, and, for a token unlocked by its goal, the `unlock` sent while the home market's `tax_collected` is above zero but below the goal; the sell with an integrator fee, the `unlock` right after the seed and the second `unlock` stay in simulation.
+- Alternatives: Every refusal in simulation, which leaves the devnet demo without a signature for what containment refuses; every refusal on chain, which adds failed transactions that show nothing the simulated ones do not.
+- Specified in: [`docs/toolchain.md`, Containment hook](toolchain.md#containment-hook)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-40: The devnet demo's contained tokens and their record
+
+- Question: What terms do the devnet demo's contained tokens get, and where is the run recorded?
+- Answer: One run of the launch script: the first token against wrapped SOL with a goal of 5,000,000,000 lamports and a deadline 240 seconds after the run starts, unlocked by the deadline, the second against wrapped SOL with a goal of 100,000,000 lamports and a deadline a day away, unlocked by the goal, and the third against the devnet SPL Token mint of `HOOK-41`, left contained; every signature and address of the run is in `deployments/devnet-demo-containment-hook.json`, and each `pipeline-check` report in `programs/containment-hook/conformance/devnet/`.
+- Alternatives: A deadline of days for the first token, which would leave the ticket open until it passed; a goal of whole SOL for the second, which would cost the launcher a round of trades for every 0.03 SOL of tax.
+- Specified in: [`docs/toolchain.md`, Containment hook](toolchain.md#containment-hook)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-41: Pipeline's fee in the token on devnet
+
+- Question: Since Pipeline 0.3.0 takes its fee in a market's fee mint, which is wrapped SOL on any market that trades it, how does the devnet demo still show Pipeline's fee in a contained token swept through the hook?
+- Answer: The two contained tokens against wrapped SOL sweep Pipeline's fee in SOL from the market's wrapped-SOL fee account, and a third contained token, quoted in a devnet SPL Token mint of ours, pays the fee on its sells in the token into its fee account through the hook, which `sweep_fees` then moves to Pipeline's treasury with the hook accounts.
+- Alternatives: Sweeping only the wrapped-SOL fee accounts, which never shows the hook passing the fee account; quoting both tokens in an SPL Token mint of ours instead of wrapped SOL, which leaves a home market quoted in wrapped SOL, the launch script's default quote, untried on devnet.
+- Specified in: [`docs/spec/containment-hook.md`, Done means](spec/containment-hook.md#done-means)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
 ## Buy wall AMM (POOL4)
 
 `POOL4-01` to `POOL4-21` keep the numbers their tickets proposed, which the buy wall AMM's build tickets already cite.
@@ -4337,11 +4377,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-07: Withdraw mode
 
 - Question: What does a market do when Kamino runs short of free liquidity?
-- Answer: It enters withdraw mode when Kamino's free liquidity is below 5 times (`WITHDRAW_MODE_ENTER`) what the market lends or would lend, redeeming all it can and depositing nothing, and leaves it above 10 times (`WITHDRAW_MODE_EXIT`).
-- Alternatives: Doing nothing beyond the buffer and in-swap redeems; a fixed utilisation threshold such as 95%.
+- Answer: It enters withdraw mode when Kamino's free liquidity is below 5 times (`WITHDRAW_MODE_ENTER`) what the market lends or would lend, redeeming all it can and depositing nothing, and leaves it once the free liquidity has stayed above 10 times (`WITHDRAW_MODE_EXIT`) for `WITHDRAW_MODE_EXIT_DELAY_SLOTS` (LENDING-93).
+- Alternatives: The earlier default, it enters withdraw mode when Kamino's free liquidity is below 5 times (`WITHDRAW_MODE_ENTER`) what the market lends or would lend, redeeming all it can and depositing nothing, and leaves it above 10 times (`WITHDRAW_MODE_EXIT`); doing nothing beyond the buffer and in-swap redeems; a fixed utilisation threshold such as 95%.
 - Specified in: [`docs/spec/lending-pool.md`, Constants](spec/lending-pool.md#constants)
 - Changes by: build-time constant
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-08: Highest LP fee
@@ -4387,11 +4427,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-12: Valuing cTokens
 
 - Question: At what rate are the market's cTokens valued?
-- Answer: At the rate stored in Kamino's reserve account, everywhere, with no projection to the current slot.
-- Alternatives: Projecting the rate to the current slot, which would copy Kamino's interest maths into our program.
+- Answer: At the rate stored in Kamino's reserve account, with no projection to the current slot, read only from a reserve refreshed recently enough once the market holds cTokens: in the same slot for adding (LENDING-91), within about an hour for quotes and swaps (LENDING-92), and at any age once the reserve is deprecated, since its rate never moves again.
+- Alternatives: The earlier default, at the rate stored in Kamino's reserve account, everywhere, with no projection to the current slot; projecting the rate to the current slot, which would copy Kamino's interest maths into our program.
 - Specified in: [`docs/spec/lending-pool.md`, The stored rate, everywhere](spec/lending-pool.md#the-stored-rate-everywhere)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-13: Who bears Kamino's losses
@@ -4407,11 +4447,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-14: Checking Kamino's reserve
 
 - Question: What happens if Kamino's reserve account stops matching what the program expects?
-- Answer: Every instruction that reads the reserve checks its address, owner, size, discriminator, lending market and mints first, and refuses rather than misprices; removing liquidity in kind never reads it, so a Kamino change can stop trading but never trap LPs.
-- Alternatives: None recorded.
+- Answer: Every instruction that reads the reserve checks its address, owner, size, discriminator, lending market, mints and version (1, or `u64::MAX` once deprecated) first, and that the lent mint's `LENT_MINTS` entry still names the reserve and collateral mint the market recorded, and refuses rather than misprices; removing liquidity in kind never reads it, so a Kamino change, or an upgrade that edits a row, can stop trading but never trap LPs.
+- Alternatives: The earlier default, every instruction that reads the reserve checks its address, owner, size, discriminator, lending market and mints first, and refuses rather than misprices; removing liquidity in kind never reads it, so a Kamino change can stop trading but never trap LPs.
 - Specified in: [`docs/spec/lending-pool.md`, Checking the reserve before reading it](spec/lending-pool.md#checking-the-reserve-before-reading-it)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-15: Rebalancing
@@ -4437,11 +4477,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-17: When Kamino cannot pay
 
 - Question: Does the program have switches of its own for when Kamino cannot pay?
-- Answer: No: it reads Kamino's state at each call, trading from the buffer alone under emergency mode or a deprecated reserve, skipping deposits when cToken use is blocked, and always letting LPs leave in kind.
-- Alternatives: None recorded.
+- Answer: No: it reads Kamino's state at each call, trading from the buffer alone under the reserve's emergency mode or a deprecated reserve, and under the lending market's emergency mode until the reserve is an hour stale, since klend then refreshes none of its reserves, skipping deposits when cToken use is blocked, and always letting LPs leave in kind.
+- Alternatives: The earlier default, no: it reads Kamino's state at each call, trading from the buffer alone under emergency mode or a deprecated reserve, skipping deposits when cToken use is blocked, and always letting LPs leave in kind.
 - Specified in: [`docs/spec/lending-pool.md`, When Kamino can't pay](spec/lending-pool.md#when-kamino-cant-pay)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-18: Removing liquidity
@@ -5097,11 +5137,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-83: Rebalance runs alone in its transaction
 
 - Question: How is `rebalance` kept from being sandwiched, with Kamino's free liquidity moved before it and back after it in the same transaction to force a market into or out of withdraw mode?
-- Answer: It refuses with `RebalanceNotAlone` unless called directly, at the transaction's level, beside nothing but compute budget instructions, klend's `refresh_reserve` and other `rebalance` calls, as the instructions sysvar shows.
-- Alternatives: Refusing only klend's own instructions, which another program calling klend would get around; measuring free liquidity over time, which needs state the market does not keep; accepting the sandwich.
+- Answer: It refuses with `RebalanceNotAlone` unless called directly, at the transaction's level, beside nothing but compute budget instructions and klend's `refresh_reserve` or `refresh_reserves_batch`, and once per transaction, as the instructions sysvar shows, since another market's `rebalance` deposits into or redeems from Kamino as klend's own instructions would.
+- Alternatives: The earlier default, it refuses with `RebalanceNotAlone` unless called directly, at the transaction's level, beside nothing but compute budget instructions, klend's `refresh_reserve` and other `rebalance` calls, as the instructions sysvar shows; refusing only klend's own instructions, which another program calling klend would get around; measuring free liquidity over time, which needs state the market does not keep; accepting the sandwich.
 - Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
 
 ### LENDING-84: Seeding checks the Kamino reserve
@@ -5173,6 +5213,66 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-16 in [Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85)
+
+### LENDING-91: How fresh the reserve must be for adding
+
+- Question: How recently must Kamino's reserve have been refreshed when `add_liquidity` values a market's cTokens at its stored rate?
+- Answer: In the same slot (`ADD_MAX_RESERVE_AGE_SLOTS`, 0), as klend itself asks before stating its exchange rate, once the market holds cTokens; otherwise it refuses with `ReserveStale`, and a depositor puts klend's `refresh_reserve` first in the same transaction.
+- Alternatives: Accepting the stored rate at any age, which let a deposit added before a refresh and removed after it take the LPs' unrefreshed interest, since adding and removing charge no fee; projecting the interest, which would copy Kamino's interest maths; refreshing the reserve by CPI inside `add_liquidity`, which would write-lock the shared reserve and add four oracle accounts to every deposit.
+- Specified in: [`docs/spec/lending-pool.md`, The stored rate, everywhere](spec/lending-pool.md#the-stored-rate-everywhere)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-92: How fresh the reserve must be for quotes and swaps
+
+- Question: How recently must Kamino's reserve have been refreshed when a quote or a swap values a market's cTokens at its stored rate?
+- Answer: Within `TRADE_MAX_RESERVE_AGE_SLOTS` (9,000 slots, about an hour), once the market holds cTokens and the reserve is not deprecated, so no round trip across a refresh pays Pipeline's fee twice; beyond it quotes and swaps refuse with `ReserveStale` until someone puts klend's `refresh_reserve` first.
+- Alternatives: Accepting the stored rate at any age, under which a round trip paid on our devnet reserves left days without a refresh; the same slot, as for adding, which would ask every swap of every integrator to refresh the reserve first and write-lock it.
+- Specified in: [`docs/spec/lending-pool.md`, The stored rate, everywhere](spec/lending-pool.md#the-stored-rate-everywhere)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-93: Withdraw mode waits before it leaves
+
+- Question: How is a market kept from being taken out of withdraw mode by one reading of Kamino's free liquidity, inflated by a deposit and a redeem around `rebalance` in one Jito bundle?
+- Answer: The first `rebalance` that sees the free liquidity above the exit threshold records its slot in `exit_seen_slot`, the first field taken from the market state's reserved space, and stays; the market leaves only at a `rebalance` at least `WITHDRAW_MODE_EXIT_DELAY_SLOTS` (9,000 slots, about an hour) later that sees it so too, and any reading at or below the threshold in between, or any `rebalance` while Kamino redeems nothing, starts the wait again.
+- Alternatives: Leaving at the first reading above the threshold, which a bundle could force at no risk; a deposit-weighted measure over time, which Kamino's reserve does not keep.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-94: Leaving with the lent side alone
+
+- Question: How does an LP leave when the other mint's freeze authority or transfer hook stops its transfers, which every `remove_liquidity` makes?
+- Answer: With `remove_lent_side`, which burns shares for the buffer's part in the lent mint and the cTokens' part as cTokens, each with its own minimum (`min_lent`, `min_ctokens`), moves nothing of the other mint and reads no Kamino account, and leaves the other side's part in the market for the LPs who stay.
+- Alternatives: A flag on `remove_liquidity`, which would change both of its metadata forms; keeping the other side's part owed to the LP, which would need a record per LP; accepting that such a mint traps the lent side.
+- Specified in: [`docs/spec/lending-pool.md`, Leaving with the lent side alone](spec/lending-pool.md#leaving-with-the-lent-side-alone)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-95: The keeper refreshes reserves and sweeps withdraw mode
+
+- Question: Who keeps the reserves fresh enough to quote, and the readings of a market waiting to leave withdraw mode honest?
+- Answer: Our keeper runner, which refreshes each reserve a lending AMM market lends to whenever its last refresh is more than half of `TRADE_MAX_RESERVE_AGE_SLOTS` old, and whose sweeps every 10 minutes send `rebalance` to a market in withdraw mode whenever its simulation succeeds.
+- Alternatives: Leaving refreshes to traders and Aviary alone, which would leave devnet markets unquotable for days at a time.
+- Specified in: [`docs/spec/lending-pool.md`, When it runs](spec/lending-pool.md#when-it-runs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-96: The local demo run waits out withdraw mode's exit on fast slots
+
+- Question: How does the local demo run show a market leaving withdraw mode, now that leaving takes `WITHDRAW_MODE_EXIT_DELAY_SLOTS`?
+- Answer: Its validator is started with `--ticks-per-slot 8`, about 11 slots a second on the owner's Mac, and the demo waits for the slot the market may leave at, about 14 minutes; on devnet it waits the hour.
+- Alternatives: A shorter delay in the `devnet` build, which would weaken the deployed bytes; skipping the exit in the demo.
+- Specified in: [`docs/toolchain.md`, Local demo run](toolchain.md#local-demo-run)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
 
 ## Not decided yet
 

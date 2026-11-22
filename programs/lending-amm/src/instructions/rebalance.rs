@@ -18,13 +18,13 @@
 //! and records exactly that, with the running totals deposited into and redeemed from Kamino,
 //! and the mode it is in. It creates no account and pays nothing, so the caller pays only the
 //! transaction fee. A call Kamino refuses fails whole. It must be called directly, beside nothing
-//! but compute budget instructions, klend's `refresh_reserve` and other `rebalance` calls
-//! ([`require_alone`]), so nothing in its transaction can move Kamino's free liquidity around it.
+//! but compute budget instructions and klend's `refresh_reserve` or `refresh_reserves_batch`, and
+//! once per transaction ([`require_alone`]), so nothing in its transaction can move Kamino's free
+//! liquidity around it.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{get_stack_height, TRANSACTION_LEVEL_STACK_HEIGHT};
-use anchor_lang::Discriminator;
-use solana_instructions_sysvar::load_instruction_at_checked;
+use solana_instructions_sysvar::{load_current_index_checked, load_instruction_at_checked};
 
 /// The compute budget program, whose instructions may share a transaction with `rebalance`.
 const COMPUTE_BUDGET: Pubkey = pubkey!("ComputeBudget111111111111111111111111111111");
@@ -33,7 +33,7 @@ use crate::buffer::Move;
 use crate::config::KLEND_PROGRAM;
 use crate::errors::StrategyError;
 use crate::events::{RebalanceDirection, Rebalanced, WithdrawModeEntered, WithdrawModeLeft};
-use crate::kamino::{KaminoAccounts, INSTRUCTIONS_SYSVAR, REFRESH_RESERVE};
+use crate::kamino::{KaminoAccounts, INSTRUCTIONS_SYSVAR, REFRESH_RESERVE, REFRESH_RESERVES_BATCH};
 use crate::state::{LendingAmmMarket, AUTHORITY_SEED};
 use crate::token;
 use crate::withdraw_mode::{self, Kamino};
@@ -83,13 +83,16 @@ pub struct Rebalance<'info> {
 }
 
 /// Whether an instruction of `program` with `data` may share a transaction with `rebalance`:
-/// compute budget instructions, klend's `refresh_reserve`, which a keeper puts first when the
-/// reserve's stored rate is stale, and `rebalance` itself, on this market or another.
+/// compute budget instructions, and klend's `refresh_reserve` or `refresh_reserves_batch`, which a
+/// keeper puts first when the reserve's stored rate is stale. Never another `rebalance`, on this market or another: one
+/// market's deposit before a second market's call and a third's redeem after it would move
+/// Kamino's free liquidity around the second as klend's own instructions would (finding H003,
+/// docs/security/lending-amm/).
 pub fn allowed_beside_rebalance(program: &Pubkey, data: &[u8]) -> bool {
     let tag = data.get(..8);
     *program == COMPUTE_BUDGET
-        || (*program == KLEND_PROGRAM && tag == Some(&REFRESH_RESERVE[..]))
-        || (*program == crate::ID && tag == Some(crate::instruction::Rebalance::DISCRIMINATOR))
+        || (*program == KLEND_PROGRAM
+            && (tag == Some(&REFRESH_RESERVE[..]) || tag == Some(&REFRESH_RESERVES_BATCH[..])))
 }
 
 /// Refuses with `RebalanceNotAlone` unless `rebalance` is called directly, at the transaction's
@@ -115,7 +118,8 @@ fn require_alone(instructions: &AccountInfo) -> Result<()> {
         let bytes = data.get(..2).ok_or(StrategyError::KaminoAccountWrong)?;
         u16::from_le_bytes([bytes[0], bytes[1]])
     };
-    for index in 0..count {
+    let current = load_current_index_checked(instructions)?;
+    for index in (0..count).filter(|index| *index != current) {
         let instruction = load_instruction_at_checked(index as usize, instructions)?;
         require!(
             allowed_beside_rebalance(&instruction.program_id, &instruction.data),
@@ -131,8 +135,7 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
     let market = &accounts.market_state;
     require!(market.is_open(), StrategyError::MarketNotOpen);
     let lent_side = market.lent_side();
-    let lent =
-        crate::config::lent_mint(&market.lent_mint()).ok_or(StrategyError::LentMintNotListed)?;
+    let lent = market.lent_entry()?;
     let kamino = KaminoAccounts {
         klend_program: &accounts.klend_program,
         reserve: &accounts.reserve,
@@ -146,17 +149,27 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
     };
     let (reserve, lending_market) = kamino.check(lent)?;
 
+    // While Kamino redeems nothing, `rebalance` refuses before valuing anything, except to forget a
+    // wait to leave withdraw mode, which no fault in the reserve's numbers may stop (finding R2-04).
+    if reserve.redeems_stopped(&lending_market) {
+        require!(market.exit_seen_slot != 0, StrategyError::KaminoStopped);
+        ctx.accounts.market_state.exit_seen_slot = 0;
+        return Ok(());
+    }
+    let clock = Clock::get()?;
     let held = market.ctokens;
     let buffer = market.reserves[lent_side];
     let lent_value = reserve.lent_value(held)?;
     let kamino_state = Kamino {
         free: reserve.freely_available(),
-        can_pay: reserve.can_pay_planned(&lending_market, held, Clock::get()?.unix_timestamp),
-        stopped: reserve.redeems_stopped(&lending_market),
+        can_pay: reserve.can_pay_planned(&lending_market, held, clock.unix_timestamp),
+        stopped: false,
         deposits_blocked: reserve.block_ctoken_usage,
     };
-    let decision = withdraw_mode::decide(
+    let (decision, exit_seen_slot) = withdraw_mode::decide_with_exit_delay(
         market.withdraw_mode,
+        market.exit_seen_slot,
+        clock.slot,
         buffer,
         lent_value,
         kamino_state,
@@ -179,7 +192,9 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
         }
     }
     let Some(planned) = decision.planned else {
-        ctx.accounts.market_state.withdraw_mode = decision.withdraw_mode;
+        let market = &mut ctx.accounts.market_state;
+        market.withdraw_mode = decision.withdraw_mode;
+        market.exit_seen_slot = exit_seen_slot;
         return Ok(());
     };
 
@@ -212,6 +227,7 @@ pub fn rebalance_handler<'info>(ctx: Context<'info, Rebalance<'info>>) -> Result
     // Record exactly what moved, as measured, never what was asked for.
     let market = &mut ctx.accounts.market_state;
     market.withdraw_mode = decision.withdraw_mode;
+    market.exit_seen_slot = exit_seen_slot;
     let (direction, liquidity, ctokens) = match planned {
         Move::Deposit(_) => {
             let liquidity = vault_before

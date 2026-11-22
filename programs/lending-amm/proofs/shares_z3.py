@@ -12,9 +12,13 @@ input (docs/spec/lending-pool.md, "Shares", "Adding" and "Removing"; docs/spec/R
 2. `totals_after_in_kind`: cTokens paid in kind take `floor(net x paid / held)` off the larger
    running total, so the net amount lent keeps its sign, and what is left is at least the
    remaining cTokens' part of it and less than one unit above it; the larger total never
-   falls below the smaller.
+   falls below the smaller. The Rust computes it without the product, as
+   `floor(net / held) x paid + floor((net mod held) x paid / held)`, which equals it for every
+   input, with every intermediate inside a u128, so it never fails on arithmetic.
 3. `share_count` is the LP supply plus the locked minimum, refused exactly when that passes a
    u64.
+4. After a later deposit, which checks that `N + shares` fits a u64, the new supply's share
+   count fits a u64 too, so `share_count` never refuses an exit (Book of Knowledge SH-9).
 
 Each division is modelled by its quotient and remainder, as in `lending_amm_z3.py`. Kani
 proves the same statements of the Rust for small values, and Proptest checks them on 10,000
@@ -92,14 +96,37 @@ def main():
         last * last <= n,
     )
 
-    # 2. totals_after_in_kind, with net = |deposited - redeemed| >= 0, 1 <= paid <= held,
-    # net x paid inside a u128 (else it refuses), and take = floor(net x paid / held).
+    # 2. totals_after_in_kind, with net = |deposited - redeemed| >= 0 and 1 <= paid <= held:
+    # take = floor(net x paid / held), computed as q x paid + floor(r x paid / held) with
+    # q = floor(net / held) and r = net mod held.
     deposited, deposited_ok = bounded("deposited", U128_MAX)
     redeemed, redeemed_ok = bounded("redeemed", U128_MAX)
     paid, paid_ok = bounded("paid", U64_MAX)
     held, held_ok = bounded("held", U64_MAX)
     net = If(deposited >= redeemed, deposited - redeemed, redeemed - deposited)
     take, take_facts = floor_div("take", net * paid, held)
+    q, q_facts = floor_div("q", net, held)
+    r = net - q * held
+    tail, tail_facts = floor_div("tail", r * paid, held)
+    ok &= prove(
+        "the in-kind take, computed without the product, is floor(net x paid / held), every "
+        "intermediate inside a u128",
+        And(
+            q * paid + tail == take,
+            q * paid <= U128_MAX,
+            r * paid <= U128_MAX,
+            q * paid + tail <= U128_MAX,
+        ),
+        deposited_ok,
+        redeemed_ok,
+        paid_ok,
+        held_ok,
+        paid >= 1,
+        paid <= held,
+        take_facts,
+        q_facts,
+        tail_facts,
+    )
     d_after = If(deposited >= redeemed, deposited - take, deposited)
     r_after = If(deposited >= redeemed, redeemed, redeemed - take)
     net_after = If(deposited >= redeemed, d_after - r_after, r_after - d_after)
@@ -120,7 +147,6 @@ def main():
         held_ok,
         paid >= 1,
         paid <= held,
-        net * paid <= U128_MAX,
         take_facts,
     )
 
@@ -131,6 +157,21 @@ def main():
         "the share count is the supply plus the locked minimum, above the supply",
         Or(And(count <= U64_MAX, count > supply), supply > U64_MAX - MINIMUM_LIQUIDITY),
         supply_ok,
+    )
+
+    # 4. The share count always fits a u64 after a later deposit (Book of Knowledge SH-9): with
+    # N = supply + MINIMUM_LIQUIDITY a u64 (`share_count` accepted it) and the deposit's check
+    # that N + shares fits a u64, the new supply's share count, supply + shares +
+    # MINIMUM_LIQUIDITY, fits a u64 too, so `share_count` never refuses an exit after it.
+    shares, shares_ok = bounded("shares", U64_MAX)
+    ok &= prove(
+        "after a later deposit the share count still fits a u64",
+        And(supply + shares <= U64_MAX, supply + shares + MINIMUM_LIQUIDITY <= U64_MAX),
+        supply_ok,
+        count <= U64_MAX,
+        shares_ok,
+        shares >= 1,
+        count + shares <= U64_MAX,
     )
 
     if not ok:
