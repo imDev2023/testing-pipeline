@@ -496,6 +496,7 @@ A `rebalance` that only starts or forgets withdraw mode's wait to leave costs le
 CI's Linux build, on platform tools v1.58, measured the hooked first deposit's `add_liquidity` at 40,886, 64 units above the owner's Mac on v1.57, so the Measured column takes the higher of the two.
 On Pipeline 0.2's crates (2026-11-20), CI's build measured `rebalance` leaving withdraw mode at 70,844, 6 units above the Mac, and `lock_lp`'s first lock on a SOL-lent market 6 units above the Mac too; every other row it measured below the Mac.
 `lock_lp`'s highest, the first lock on a USDC-lent market, measured 36,978 on the Mac, so the column records 36,984, those same 6 units above it.
+On Pipeline 0.3 (2026-11-22) the Mac measured `rebalance` leaving withdraw mode at 70,848 and `lock_lp`'s first lock on a USDC-lent market at 36,987, and every other row at or below the column; the column records 70,854 and 36,993, the 6 units CI's build measured above the Mac on those lines on 0.2.
 
 | Instruction | Measured (compute units) | Ceiling (compute units) | Main cost |
 | --- | --- | --- | --- |
@@ -508,9 +509,9 @@ On Pipeline 0.2's crates (2026-11-20), CI's build measured `rebalance` leaving w
 | `add_liquidity` | 40,886 | 60,000 | Two transfers in, an LP mint |
 | `remove_liquidity`, cash | 76,114 | 100,000 | Kamino's redeem, transfers out, an LP burn |
 | `remove_liquidity`, in kind | 62,831 | 80,000 | Transfers out, possibly creating the LP's cToken account |
-| `rebalance` | 70,844 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
+| `rebalance` | 70,854 | 90,000 | Kamino's deposit (mainnet median 43,704) or redeem |
 | `remove_lent_side` | 57,912 | 75,000 | Transfers out, possibly creating the LP's cToken account |
-| `lock_lp` | 36,984 | 50,000 | One transfer, and the market's first lock creates the lock account |
+| `lock_lp` | 36,993 | 50,000 | One transfer, and the market's first lock creates the lock account |
 
 ### Invariants for test layer 3
 
