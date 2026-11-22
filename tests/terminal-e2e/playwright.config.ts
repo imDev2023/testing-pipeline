@@ -66,7 +66,8 @@ export default defineConfig({
       cwd: "../../apps/terminal-api",
       env: { RPC_URL: rpcUrl, DATABASE_URL },
       url: `${API}/health`,
-      reuseExistingServer: !process.env.CI,
+      // A running local API reads whatever RPC it was started with, so only a devnet run may reuse one.
+      reuseExistingServer: !process.env.CI && RPC_MODE === "devnet",
       timeout: 120_000,
       stdout: "ignore",
     },

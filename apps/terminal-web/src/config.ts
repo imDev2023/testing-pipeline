@@ -9,10 +9,10 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8811
 /** The cluster Aviary reads: devnet only until Pipeline's router is on mainnet. */
 export const CLUSTER = "devnet";
 
-/** The block explorer an address or a transaction links to, on the cluster above. */
+/** The block explorer an address or a transaction links to, on the cluster above, whatever the address holds. */
 export const EXPLORER = {
-  address: (address: string) => `https://explorer.solana.com/address/${address}?cluster=${CLUSTER}`,
-  transaction: (signature: string) => `https://explorer.solana.com/tx/${signature}?cluster=${CLUSTER}`,
+  address: (address: string) => `https://explorer.solana.com/address/${encodeURIComponent(address)}?cluster=${CLUSTER}`,
+  transaction: (signature: string) => `https://explorer.solana.com/tx/${encodeURIComponent(signature)}?cluster=${CLUSTER}`,
 };
 
 /** Trading (docs/spec/pipescope.md, Trading). */

@@ -32,11 +32,18 @@ export function serveRpc(options: { upstream?: string } = {}): Promise<Server> {
       const key = keyOf(method, params);
       let answer = recording[key];
       if (!answer && options.upstream) {
-        const upstream = await fetch(options.upstream, { method: "POST", headers: { "content-type": "application/json" }, body });
-        const { result, error } = (await upstream.json()) as { result?: unknown; error?: unknown };
-        answer = error === undefined ? { result } : { error };
-        recording[key] = answer;
-        writeFileSync(FIXTURES, `${JSON.stringify(recording, null, 2)}\n`);
+        // Only a result is recorded: a refusal (a rate limit, a node behind) is passed on and asked again next time.
+        try {
+          const upstream = await fetch(options.upstream, { method: "POST", headers: { "content-type": "application/json" }, body, signal: AbortSignal.timeout(20_000) });
+          const { result, error } = (await upstream.json()) as { result?: unknown; error?: unknown };
+          answer = error === undefined ? { result } : { error };
+          if (error === undefined) {
+            recording[key] = answer;
+            writeFileSync(FIXTURES, `${JSON.stringify(recording, null, 2)}\n`);
+          }
+        } catch (e) {
+          answer = { error: { code: -32000, message: `devnet did not answer ${key}: ${e instanceof Error ? e.name : typeof e}` } };
+        }
       }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(answer ? { jsonrpc: "2.0", id, ...answer } : { jsonrpc: "2.0", id, error: { code: -32000, message: `no recorded answer for ${key}` } }));

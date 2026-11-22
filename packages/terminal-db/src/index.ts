@@ -2,6 +2,7 @@
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import journal from "../migrations/meta/_journal.json" with { type: "json" };
 import * as schema from "./schema";
 
 export * from "./schema";
@@ -14,6 +15,9 @@ export function createDb(connectionString: string) {
 }
 
 export type Db = ReturnType<typeof createDb>["db"];
+
+/** How many migrations this code was built with: a database that has applied fewer is not ready for it. */
+export const MIGRATION_COUNT: number = journal.entries.length;
 
 /** The database's clock and how many migrations it has applied, read in one round trip for the health route. */
 export async function probe(db: Db): Promise<{ serverTime: Date; migrations: number }> {

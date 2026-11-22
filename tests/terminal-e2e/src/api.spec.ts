@@ -15,8 +15,13 @@ test("/health reports the database reachable, devnet's slot through RPC_URL and 
 });
 
 test("the 301st read in a minute from one IP gets a 429 that names the wait", async ({ request }) => {
+  test.setTimeout(120_000);
   // A client address of its own, so earlier reads from this machine never count against it.
   const ip = `198.18.${randomInt(256)}.${randomInt(1, 255)}`;
+  // `wrangler dev`'s limiter counts in windows that start on each wall-clock minute, so the 301 reads
+  // must fall inside one: start at the top of a minute unless enough of this one is left.
+  const intoMinute = Date.now() % 60_000;
+  if (intoMinute > 30_000) await new Promise((done) => setTimeout(done, 60_000 - intoMinute + 250));
   for (let i = 1; i <= 300; i++) {
     const response = await request.get(`${API}/no-such-read`, { headers: { "cf-connecting-ip": ip } });
     expect(response.status(), `read ${i}`).toBe(404);

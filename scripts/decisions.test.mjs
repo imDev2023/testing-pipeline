@@ -134,6 +134,9 @@ test('IDs are unique, run in order with no gaps, and sit in their own section', 
   const hundred = Array.from({ length: 100 }, (_, i) => block({}, `TAX-${String(i + 1).padStart(2, '0')}`));
   assert.deepEqual(messages(register(...hundred)), []);
   assert.ok(messages(register(...hundred.slice(0, 99), block({}, 'TAX-101'))).some((message) => /expected TAX-100/.test(message)));
+  // An ID is written in one way only: two digits below 100, and no leading zero above it.
+  assert.ok(messages(register(...hundred.slice(0, 6), block({}, 'TAX-007'))).some((message) => /must be a decision/.test(message)));
+  assert.ok(messages(register(...hundred.slice(0, 99), block({}, 'TAX-0100'))).some((message) => /must be a decision/.test(message)));
   const outside = ['# Decision register', '', block()].join('\n');
   assert.ok(messages(outside).some((message) => /outside a product section/.test(message)));
 });
