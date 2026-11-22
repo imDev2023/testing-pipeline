@@ -136,6 +136,7 @@ import { resolveExtraAccountMetasForExecute } from '@solana-program/token-2022';
 import * as pipeline from '@pipeline-placeholder/sdk';
 import { buildActionInstruction, findAction } from 'strategy-actions';
 
+import { parseTokens, UsageError, type TokenTerms } from './args.ts';
 import { judgeConformance, type ConformanceReport } from './conformance.ts';
 
 import {
@@ -156,7 +157,6 @@ import { fetchTaxMarket, findAuthorityPda, findVault0Pda, findVault1Pda, MarketS
 const TOKEN_2022_PROGRAM_ADDRESS = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
 const WRAPPED_SOL = address('So11111111111111111111111111111111111111112');
 const DEFAULT_ADDRESS = address('11111111111111111111111111111111');
-const U64_MAX = 2n ** 64n - 1n;
 
 // The launch's own choices, in one place: the token and its home market. None of them is a
 // policy value of the hook, whose limits live in its config module and are enforced on
@@ -235,7 +235,7 @@ const { values: options } = parseArgs({
         launcher: { type: 'string' },
         goal: { type: 'string', multiple: true },
         deadline: { type: 'string', multiple: true },
-        'quote-mint': { type: 'string', default: WRAPPED_SOL },
+        'quote-mint': { type: 'string', multiple: true },
         unlock: { type: 'string', multiple: true },
         'pipeline-check': { type: 'string' },
         'conformance-out': { type: 'string' },
@@ -265,43 +265,20 @@ function clusterUrl(cluster: string | undefined): { url: string; local: boolean 
     return { url: cluster, local: LOCAL_HOSTS.includes(host) };
 }
 
-/** `--goal`: a whole number of quote-mint base units. */
-function parseGoal(goal: string | undefined): bigint {
-    if (goal === undefined) usage('--goal is required: the tax the home market must collect for the unlock, in quote-mint base units');
-    if (!/^\d+$/.test(goal)) usage(`--goal must be a whole number of quote-mint base units, not "${goal}"`);
-    if (BigInt(goal) > U64_MAX) usage(`--goal must fit in a u64 (at most ${U64_MAX}), not ${goal}`);
-    return BigInt(goal);
-}
-
-/** `--deadline`: Unix seconds, or an ISO 8601 time with its time zone. */
-function parseDeadline(deadline: string | undefined): bigint {
-    if (deadline === undefined) usage('--deadline is required: when the unlock is due whatever the tax collected');
-    if (/^\d+$/.test(deadline)) return BigInt(deadline);
-    if (!/(Z|[+-]\d\d:\d\d)$/.test(deadline)) usage(`--deadline must be Unix seconds or an ISO 8601 time with a time zone, not "${deadline}"`);
-    const ms = Date.parse(deadline);
-    if (Number.isNaN(ms)) usage(`--deadline is not a time: "${deadline}"`);
-    return BigInt(Math.floor(ms / 1000));
-}
-
 const cluster = clusterUrl(options.cluster);
 const launcherPath = options.launcher ?? usage('--launcher is required');
-/** One token's terms: its `--goal`, its `--deadline` and its `--unlock`, if any. */
-type Terms = { unlockGoal: bigint; unlockDeadline: bigint; unlockBy: 'goal' | 'deadline' | undefined };
-const goals = options.goal ?? [];
-const deadlines = options.deadline ?? [];
-const unlocks = options.unlock ?? [];
-if (goals.length === 0) parseGoal(undefined);
-if (deadlines.length > goals.length) usage('give one --goal for each --deadline: each pair launches one token');
-if (unlocks.length > 0 && unlocks.length !== goals.length) usage('give --unlock for every token or for none');
-for (const unlock of unlocks) {
-    if (unlock !== 'goal' && unlock !== 'deadline') usage(`--unlock must be goal or deadline, not "${unlock}"`);
+type Terms = TokenTerms;
+let tokens: Terms[];
+try {
+    tokens = parseTokens({ goal: options.goal, deadline: options.deadline, unlock: options.unlock, quoteMint: options['quote-mint'] });
+} catch (error) {
+    if (error instanceof UsageError) usage(error.message);
+    throw error;
 }
-const tokens: Terms[] = goals.map((goal, i) => ({
-    unlockGoal: parseGoal(goal),
-    unlockDeadline: parseDeadline(deadlines[i]),
-    unlockBy: unlocks[i] as Terms['unlockBy'],
-}));
-const quoteMint = address(options['quote-mint']);
+if (tokens.some(({ quoteMint }) => quoteMint === 'new' || quoteMint !== tokens[0]!.quoteMint)) {
+    usage('every token must share one --quote-mint address in this version of the script');
+}
+const quoteMint = address(tokens[0]!.quoteMint);
 const onDevnet = !cluster.local;
 const pipelineCheck = options['pipeline-check'];
 const conformanceOut = options['conformance-out'];

@@ -296,6 +296,8 @@ Tickets 1 to 4 are verified by LiteSVM tests through the real router copied from
 - The invariants above under the fuzzing layer, and the compute ceilings and a call-depth test on buys under the limits layer.
 - On devnet: the hook deployed; a contained token launched by the script, bought and sold through the router with the SDK, a wallet-to-wallet transfer refused, then unlocked by a short deadline, with the mint showing both hook fields unset.
   A second contained token is unlocked by reaching a small goal, so the unlock's read of the deployed tax AMM's counter is shown on devnet too (added when the build tickets were cut).
+  Both trade against wrapped SOL, and since Pipeline 0.3.0 a market that trades wrapped SOL pays Pipeline's fee in it, so their sweeps move SOL and never pass the hook.
+  A third contained token, quoted in a devnet SPL Token mint of ours, pays Pipeline's fee on its sells in the token, into its fee account through the hook, and `sweep_fees` moves it to Pipeline's treasury with the hook accounts (added on 2026-11-22 by [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73), `HOOK-41`).
 - Whatever else `docs/spec/README.md` requires of our on-chain programs.
 
 ## Measured

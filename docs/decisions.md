@@ -3538,12 +3538,22 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
 
-### HOOK-40: The devnet demo's two contained tokens and their record
+### HOOK-40: The devnet demo's contained tokens and their record
 
-- Question: What terms do the devnet demo's two contained tokens get, and where is the run recorded?
-- Answer: One run of the launch script against wrapped SOL: the first token with a goal of 5,000,000,000 lamports and a deadline 240 seconds after the run starts, unlocked by the deadline, then the second with a goal of 100,000,000 lamports and a deadline a day away, unlocked by the goal; every signature and address of the run is in `deployments/devnet-demo-containment-hook.json`, and each `pipeline-check` report in `programs/containment-hook/conformance/devnet/`.
+- Question: What terms do the devnet demo's contained tokens get, and where is the run recorded?
+- Answer: One run of the launch script: the first token against wrapped SOL with a goal of 5,000,000,000 lamports and a deadline 240 seconds after the run starts, unlocked by the deadline, the second against wrapped SOL with a goal of 100,000,000 lamports and a deadline a day away, unlocked by the goal, and the third against the devnet SPL Token mint of `HOOK-41`, left contained; every signature and address of the run is in `deployments/devnet-demo-containment-hook.json`, and each `pipeline-check` report in `programs/containment-hook/conformance/devnet/`.
 - Alternatives: A deadline of days for the first token, which would leave the ticket open until it passed; a goal of whole SOL for the second, which would cost the launcher a round of trades for every 0.03 SOL of tax.
 - Specified in: [`docs/toolchain.md`, Containment hook](toolchain.md#containment-hook)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-41: Pipeline's fee in the token on devnet
+
+- Question: Since Pipeline 0.3.0 takes its fee in a market's fee mint, which is wrapped SOL on any market that trades it, how does the devnet demo still show Pipeline's fee in a contained token swept through the hook?
+- Answer: The two contained tokens against wrapped SOL sweep Pipeline's fee in SOL from the market's wrapped-SOL fee account, and a third contained token, quoted in a devnet SPL Token mint of ours, pays the fee on its sells in the token into its fee account through the hook, which `sweep_fees` then moves to Pipeline's treasury with the hook accounts.
+- Alternatives: Sweeping only the wrapped-SOL fee accounts, which never shows the hook passing the fee account; quoting both tokens in an SPL Token mint of ours instead of wrapped SOL, which leaves a home market quoted in wrapped SOL, the launch script's default quote, untried on devnet.
+- Specified in: [`docs/spec/containment-hook.md`, Done means](spec/containment-hook.md#done-means)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
