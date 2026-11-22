@@ -19,12 +19,13 @@
 import { address, getBase64Decoder, type Address, type Instruction, type Signature, type TransactionSigner } from '@solana/kit';
 import { findAssociatedTokenPda, getCloseAccountInstruction, getTokenDecoder, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token';
 import { outcomeOf, products as allProducts, type AnyKeeperProduct, type JobUnit, type KeeperJob, type Pass } from 'keeper-jobs';
+import { KEEPER_WARNING_MAX_LENGTH, KEEPER_WARNINGS_MAX } from 'terminal-api/contract';
 
 import { ChainError, type Chain, type LandedTransaction, type Result, type SignedTransaction } from './chain.ts';
 import type { Clock, Timer } from './clock.ts';
 import type { Heartbeat } from './heartbeat.ts';
 import type { Logger } from './log.ts';
-import { logRecorder, PassRecords, type Recorder } from './record.ts';
+import { logRecorder, PassRecords, publicText, type KeeperPassRecord, type Recorder } from './record.ts';
 import { describeSettings, type Settings } from './settings.ts';
 import { dayStart, landed, rebuildSpend, spendOf, utcDay, type Spend } from './spend.ts';
 
@@ -90,6 +91,10 @@ export class Runner {
     private readonly recorder: Recorder;
     private readonly heartbeat: Heartbeat | null;
     private readonly records: PassRecords;
+    /** When this run started, which every heartbeat carries: the page shows only parks recorded since. */
+    private readonly startedAt: number;
+    /** Records being written, one at a time and behind the passes, so a slow database never holds up a job. */
+    private recording: Promise<void> = Promise.resolve();
 
     private readonly markets = new Map<Address, Market>();
     private spend: Spend | null = null;
@@ -117,6 +122,7 @@ export class Runner {
         this.recorder = options.recorder ?? logRecorder(options.log);
         this.heartbeat = options.heartbeat ?? null;
         this.records = new PassRecords(options.clock);
+        this.startedAt = options.clock.now();
     }
 
     /** One full pass of every job, then done: `pnpm keeper:once`. */
@@ -161,6 +167,7 @@ export class Runner {
         for (;;) {
             const tail = this.tail;
             await tail;
+            await this.recording;
             await this.heartbeat?.flush();
             if (tail === this.tail) return;
         }
@@ -289,7 +296,9 @@ export class Runner {
                 summary.markets++;
                 for (const job of market.product.jobs as readonly AnyJob[]) {
                     if (!passes.includes(job.pass)) continue;
-                    for (const unit of job.due(market.product.decode(market.data))) await this.runUnit(market, job, unit, summary);
+                    const units = job.due(market.product.decode(market.data));
+                    this.records.stillDue(market.address, job.name, units.map((unit) => unit.key));
+                    for (const unit of units) await this.runUnit(market, job, unit, summary);
                 }
             }
             await this.unwrapTips(warnings);
@@ -335,6 +344,8 @@ export class Runner {
             warnings,
         });
 
+        // The page is public: no URL path or query in a warning, and no more than a heartbeat carries.
+        const shown = warnings.slice(0, KEEPER_WARNINGS_MAX).map((warning) => publicText(warning, KEEPER_WARNING_MAX_LENGTH));
         const jobs = this.records.take();
         if (jobs.length > 0) {
             try {
@@ -344,29 +355,32 @@ export class Runner {
                 if (!(error instanceof ChainError)) throw error;
                 warnings.push(`today's spend could not be rebuilt for this record: ${error.message}`);
             }
+            // Unknown when the chain could not be asked, and recorded as unknown, never as nothing spent.
             const spend = this.spend;
-            await this.recorder.record({
+            const record: KeeperPassRecord = {
                 wallet: this.wallet.address,
                 pass: summary.pass,
                 at: new Date(this.clock.now()),
                 balance,
                 day: spend?.day ?? utcDay(this.clock.now()),
-                spentTotal: spend?.total ?? 0n,
-                spentByMarket: spend ? Object.fromEntries(spend.byMarket()) : {},
+                spentTotal: spend?.total ?? null,
+                spentByMarket: spend ? Object.fromEntries(spend.byMarket()) : null,
                 caps: this.caps(),
                 settings: describeSettings(this.settings),
-                warnings,
+                warnings: shown,
                 counts: { markets: summary.markets, sent: summary.sent, held: summary.held, parked: summary.parked, skipped: summary.skipped, failed: summary.failed },
                 jobs,
-            });
+            };
+            this.recording = this.recording.then(() => this.recorder.record(record));
         }
         this.heartbeat?.beat({
             wallet: this.wallet.address,
             pass: summary.pass,
             at: new Date(this.clock.now()).toISOString(),
+            startedAt: new Date(this.startedAt).toISOString(),
             sweepIntervalMs: this.settings.sweepIntervalMs,
             caps: Object.fromEntries(Object.entries(this.caps()).map(([name, value]) => [name, Number(value)])) as Record<keyof ReturnType<Runner['caps']>, number>,
-            warnings,
+            warnings: shown,
         });
     }
 

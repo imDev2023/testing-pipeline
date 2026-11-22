@@ -19,11 +19,8 @@ import { streamLogger, toJson, type Logger } from './log.ts';
 import { logRecorder } from './record.ts';
 import { databaseRecorder } from './record-db.ts';
 import { Runner } from './runner.ts';
-import { describeSettings, loadSettings } from './settings.ts';
+import { describeSettings, LIMITS, loadSettings } from './settings.ts';
 import { rebuildSpend } from './spend.ts';
-
-/** How long a stopping runner waits for a record or a heartbeat on its way. */
-const STOP_WAIT_MS = 5_000;
 
 async function main(command: string | undefined) {
     if (command !== 'run' && command !== 'once' && command !== 'status') {
@@ -64,7 +61,7 @@ async function main(command: string | undefined) {
     const runner = new Runner({ settings, chain, clock: systemClock, wallet: signer, log, recorder, heartbeat });
     /** Lets queued work, a record being written and a heartbeat on its way finish, for at most a few seconds. */
     const finish = async () => {
-        await Promise.race([runner.idle(), new Promise((done) => setTimeout(done, STOP_WAIT_MS))]);
+        await Promise.race([runner.idle(), new Promise((done) => setTimeout(done, LIMITS.stopWaitMs))]);
         await recorder.close();
     };
     if (command === 'once') {

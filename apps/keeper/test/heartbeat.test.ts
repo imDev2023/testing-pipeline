@@ -36,7 +36,15 @@ before(async () => {
 });
 after(() => new Promise<void>((done) => server.close(() => done())));
 
-const beat = (pass: 'sweep' | 'daily' | 'transaction', at = '2026-11-22T12:00:00.000Z') => ({ wallet: signer.address, pass, at, sweepIntervalMs: 600_000, caps: CAPS, warnings: [] });
+const beat = (pass: 'sweep' | 'daily' | 'transaction', at = '2026-11-22T12:00:00.000Z') => ({
+    wallet: signer.address,
+    pass,
+    at,
+    startedAt: '2026-11-22T11:00:00.000Z',
+    sweepIntervalMs: 600_000,
+    caps: CAPS,
+    warnings: [],
+});
 
 test("each heartbeat carries the pass and is signed with the keeper wallet's key", async () => {
     received = [];
@@ -87,4 +95,18 @@ test('a refused or failed heartbeat is logged, never thrown, and the next one is
     heartbeat.beat(beat('daily'));
     await heartbeat.flush();
     assert.equal(received.length, 2);
+});
+
+test('a heartbeat that cannot be signed is logged, and later heartbeats are still tried', async () => {
+    received = [];
+    const log = new MemoryLogger();
+    // A key that cannot sign: the public half where the private one belongs.
+    const broken = { ...signer, keyPair: { ...signer.keyPair, privateKey: signer.keyPair.publicKey } } as KeyPairSigner;
+    const heartbeat = heartbeatSender({ url, signer: broken, log });
+    heartbeat.beat(beat('sweep'));
+    await heartbeat.flush();
+    heartbeat.beat(beat('daily'));
+    await heartbeat.flush();
+    assert.deepEqual(log.of('heartbeat').map((row) => row.outcome), ['failed', 'failed']);
+    assert.equal(received.length, 0);
 });

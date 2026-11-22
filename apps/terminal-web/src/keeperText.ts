@@ -31,11 +31,20 @@ export function livenessSentence(liveness: Keeper["liveness"], now: Date = new D
   }
   const last = `Its last pass, ${PASS_LABELS[lastPass.pass].inSentence}, ended ${formatAge(new Date(lastPass.at), now)}`;
   if (state === "running") return { headline: "Running", detail: `${last}.` };
-  const minutes = Math.round((stoppedAfterMs ?? 0) / 60_000);
-  return {
-    headline: "Looks stopped",
-    detail: `${last}, and a running runner passes at least every ${minutes} minutes. Due jobs wait meanwhile, and anyone may send them.`,
-  };
+  const pace = liveness.sweepIntervalMs ? `, and it sweeps every ${every(liveness.sweepIntervalMs)}` : stoppedAfterMs ? `, over ${every(stoppedAfterMs)} ago` : "";
+  return { headline: "Looks stopped", detail: `${last}${pace}. Due jobs wait meanwhile, and anyone may send them.` };
+}
+
+/** An interval as a sentence says it: "minute", "10 minutes", "90 seconds", "hour". */
+function every(ms: number): string {
+  for (const [unit, size] of [
+    ["hour", 3_600_000],
+    ["minute", 60_000],
+    ["second", 1_000],
+  ] as const) {
+    if (ms % size === 0) return ms === size ? unit : `${ms / size} ${unit}s`;
+  }
+  return `${ms} milliseconds`;
 }
 
 /** A job and its slot, if it has one: "distribute, slot 2". */
@@ -57,17 +66,39 @@ export function productName(product: string): string {
   return PRODUCTS[product] ?? product;
 }
 
-const OUTCOMES: Record<string, string> = {
+/** What a job whose transaction landed did. */
+const LANDED: Record<string, string> = {
   sent: "Sent",
   failed: "Landed refused",
   "later-slot": "Landed too early, sent again",
   "nothing-to-do": "Landed with nothing to do",
+};
+
+/** What happened to a job that sent nothing. */
+const UNSENT: Record<string, string> = {
+  failed: "Failed in simulation",
+  "later-slot": "Refused until a later slot",
+  "nothing-to-do": "Nothing to do",
+  "chain-error": "The RPC could not be asked",
+  "not-yet": "Ran too recently",
   held: "Held",
   parked: "Parked",
   unparked: "Unparked, its market changed",
+  "no-longer-due": "No longer due",
 };
 
 /** What a recorded job did. */
-export function outcomeText(job: Pick<KeeperJob, "outcome">): string {
-  return OUTCOMES[job.outcome] ?? job.outcome;
+export function outcomeText(job: Pick<KeeperJob, "outcome" | "signature">): string {
+  return (job.signature ? LANDED[job.outcome] : UNSENT[job.outcome]) ?? job.outcome;
+}
+
+/** What a recorded pass did: "sent 4", "sent 1, held 2", or how many jobs it recorded. */
+export function passSummary(counts: { sent: number; held: number; parked: number; failed: number; jobs: number }): string {
+  const parts = [
+    counts.sent && `sent ${counts.sent}`,
+    counts.held && `held ${counts.held}`,
+    counts.parked && `parked ${counts.parked}`,
+    counts.failed && `failed ${counts.failed}`,
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : `recorded ${counts.jobs} ${counts.jobs === 1 ? "job" : "jobs"}`;
 }

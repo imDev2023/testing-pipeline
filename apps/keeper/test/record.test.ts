@@ -7,7 +7,7 @@ import { test } from 'node:test';
 
 import { FakeClock } from '../src/clock.ts';
 import { MemoryLogger } from '../src/log.ts';
-import { logRecorder, PassRecords, type JobRow } from '../src/record.ts';
+import { logRecorder, PassRecords, publicText, type JobRow } from '../src/record.ts';
 
 const MARKET = 'FJ1PJovxT4Njfn3fkufxcKeCF8XtsPRAFLKadZZYXgDB';
 const START = Date.parse('2026-11-22T12:00:00Z');
@@ -97,7 +97,14 @@ test('a job held by one cap is recorded once a day, again for another cap, after
 
     r.job(row('nothing-to-do', { reason: 'no longer due' }));
     r.job(held('DAILY_CAP'));
-    assert.deepEqual(r.take().map((job) => job.cap), ['DAILY_CAP'], 'so is a hold after the job stopped being held');
+    assert.deepEqual(
+        r.take().map((job) => [job.outcome, job.cap]),
+        [
+            ['nothing-to-do', null],
+            ['held', 'DAILY_CAP'],
+        ],
+        'so are the end of the hold and a hold after it',
+    );
 
     clock.advance(12 * 3_600_000);
     r.job(held('DAILY_CAP'));
@@ -136,4 +143,43 @@ test('without a database a pass is logged as one record row, as the database wou
     };
     await logRecorder(log).record(record);
     assert.deepEqual(log.of('record'), [{ row: 'record', ...record }]);
+});
+
+test('a held or parked job that is next skipped, refused or fails is recorded, so the page stops showing it waiting', () => {
+    const { records: r } = records();
+    r.job(row('held', { cap: 'DAILY_CAP' }));
+    r.job(row('parked', { key: 'distribute:3', slot: 3, attempt: 4, error: 'custom program error: 0x1771' }));
+    r.take();
+    r.job(row('nothing-to-do', { reason: 'no longer due' }));
+    r.job(row('chain-error', { key: 'distribute:3', slot: 3, error: 'timed out' }));
+    assert.deepEqual(r.take().map((job) => [job.slot, job.outcome]), [
+        [2, 'nothing-to-do'],
+        [3, 'chain-error'],
+    ]);
+    r.job(row('nothing-to-do', { reason: 'no longer due' }));
+    assert.deepEqual(r.take(), [], 'once the wait has ended, a skip is not recorded again');
+});
+
+test('a held or parked job that is no longer due at all, as when another keeper sent it, is recorded as no longer due', () => {
+    const { records: r } = records();
+    r.job(row('held', { cap: 'DAILY_CAP' }));
+    r.job(row('held', { cap: 'DAILY_CAP', key: 'distribute:3', slot: 3 }));
+    r.job(row('parked', { key: 'place_wall', job: 'place_wall', product: 'buy-wall-amm', market: 'WALL', slot: null }));
+    r.take();
+    // The market's distribute is due only on slot 3 now; another market's jobs are not looked at.
+    r.stillDue(MARKET, 'distribute', ['distribute:3']);
+    assert.deepEqual(r.take().map((job) => [job.market, job.job, job.slot, job.outcome]), [[MARKET, 'distribute', 2, 'no-longer-due']]);
+    r.stillDue(MARKET, 'distribute', ['distribute:3']);
+    assert.deepEqual(r.take(), [], 'recorded once');
+});
+
+test('errors in records never carry a URL\'s path or query, which can hold an API key', () => {
+    const { records: r } = records();
+    r.job(row('failed', { signature: 's', error: 'fetch https://solana-devnet.g.alchemy.com/v2/secret-key failed; wss://x.example/?api-key=abc closed' }));
+    assert.equal(r.take()[0]?.error, 'fetch https://solana-devnet.g.alchemy.com failed; wss://x.example closed');
+});
+
+test('publicText keeps a text short enough for the page and strips URLs to their host', () => {
+    assert.equal(publicText('see https://devnet.helius-rpc.com/?api-key=k now', 100), 'see https://devnet.helius-rpc.com now');
+    assert.equal(publicText('x'.repeat(50), 10), 'xxxxxxx...');
 });

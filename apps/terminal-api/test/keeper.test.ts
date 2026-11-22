@@ -81,7 +81,7 @@ function env(overrides: Partial<ReturnType<typeof bindings>> = {}) {
 }
 
 function payload(overrides: Partial<KeeperHeartbeatPayload> = {}): KeeperHeartbeatPayload {
-  return { wallet: keeper.address, pass: "sweep", at: new Date().toISOString(), sweepIntervalMs: 600_000, caps: CAPS, warnings: [], ...overrides };
+  return { wallet: keeper.address, pass: "sweep", at: new Date().toISOString(), startedAt: minutesAgo(45).toISOString(), sweepIntervalMs: 600_000, caps: CAPS, warnings: [], ...overrides };
 }
 
 async function signed(body: KeeperHeartbeatPayload, signer = keeper) {
@@ -112,7 +112,7 @@ describe("POST /keeper/heartbeat", () => {
     vi.setSystemTime(new Date(NOW.getTime() + 5 * 60_000));
     expect((await post(e, await signed(payload({ pass: "sweep", warnings: ["low balance: top it up"] })))).status).toBe(202);
     const keeperPage = await page(e);
-    expect(keeperPage.liveness).toEqual({ state: "running", lastPass: { pass: "sweep", at: "2026-11-22T12:05:00.000Z" }, stoppedAfterMs: 600_000 + KEEPER_STOPPED_GRACE_MS });
+    expect(keeperPage.liveness).toEqual({ state: "running", lastPass: { pass: "sweep", at: "2026-11-22T12:05:00.000Z" }, stoppedAfterMs: 600_000 + KEEPER_STOPPED_GRACE_MS, sweepIntervalMs: 600_000 });
     expect(keeperPage.passes.find((p) => p.pass === "start")?.lastRanAt).toBe("2026-11-22T12:00:00.000Z");
     expect(keeperPage.warnings).toEqual({ at: "2026-11-22T12:05:00.000Z", list: ["low balance: top it up"] });
     expect(keeperPage.caps).toEqual(CAPS);
@@ -192,9 +192,32 @@ describe("GET /keeper", () => {
     await post(e, await signed(payload({ pass: "sweep", sweepIntervalMs: 60_000 })));
     vi.setSystemTime(new Date(NOW.getTime() + 60_000));
     await post(e, await signed(payload({ pass: "once", sweepIntervalMs: 600_000 })));
-    expect((await page(e)).liveness).toEqual({ state: "running", lastPass: { pass: "sweep", at: NOW.toISOString() }, stoppedAfterMs: 60_000 + KEEPER_STOPPED_GRACE_MS });
+    expect((await page(e)).liveness).toEqual({ state: "running", lastPass: { pass: "sweep", at: NOW.toISOString() }, stoppedAfterMs: 60_000 + KEEPER_STOPPED_GRACE_MS, sweepIntervalMs: 60_000 });
     vi.setSystemTime(new Date(NOW.getTime() + 60_000 + KEEPER_STOPPED_GRACE_MS + 1_000));
     expect((await page(e)).liveness.state).toBe("looks-stopped");
+  });
+
+  it("shows only parks recorded since the runner's current run started, which its heartbeats carry", async () => {
+    const { db, close } = createDb(database.url);
+    const parked = { at: minutesAgo(50), market: MARKET, product: "tax-amm", job: "distribute", slot: 4, outcome: "parked", signature: null, cost: null, estimate: null, cap: null, error: "custom program error: 0x1771", attempt: 4 };
+    try {
+      await recordKeeperPass(db, {
+        wallet: keeper.address, pass: "retry", at: minutesAgo(50), balance: 1n, day: "2026-11-22", spentTotal: 10_000n, spentByMarket: { [MARKET]: 10_000n },
+        caps: { maxTxCost: 1n, marketDailyCap: 1n, dailyCap: 1n, minBalance: 1n, lowBalance: 1n }, settings: {}, warnings: [],
+        counts: { markets: 1, sent: 0, held: 0, parked: 1, skipped: 0, failed: 0 }, jobs: [parked],
+      });
+    } finally {
+      await close();
+    }
+    const e = env();
+    await post(e, await signed(payload({ startedAt: minutesAgo(55).toISOString() })));
+    expect((await page(e)).waiting.map((j) => [j.slot, j.outcome])).toEqual([
+      [3, "held"],
+      [4, "parked"],
+    ]);
+    vi.setSystemTime(new Date(NOW.getTime() + 31_000));
+    await post(e, await signed(payload({ startedAt: minutesAgo(45).toISOString() })));
+    expect((await page(e)).waiting.map((j) => [j.slot, j.outcome])).toEqual([[3, "held"]]);
   });
 
   it("counts a one-off `once` pass as no sign that the runner itself is running", async () => {

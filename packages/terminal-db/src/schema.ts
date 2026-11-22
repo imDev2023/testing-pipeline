@@ -29,9 +29,10 @@ export const keeperRuns = pgTable(
     balance: bigint("balance", { mode: "bigint" }),
     /** The UTC day today's spend is counted for. */
     day: date("day", { mode: "string" }).notNull(),
-    spentTotal: bigint("spent_total", { mode: "bigint" }).notNull(),
-    /** Today's spend by market, lamports as decimal strings. */
-    spentByMarket: jsonb("spent_by_market").$type<Record<string, string>>().notNull(),
+    /** Today's spend, or null when the chain could not be asked for it after a send whose landing was unknown. */
+    spentTotal: bigint("spent_total", { mode: "bigint" }),
+    /** Today's spend by market, lamports as decimal strings, or null with `spent_total`. */
+    spentByMarket: jsonb("spent_by_market").$type<Record<string, string>>(),
     /** MAX_TX_COST, MARKET_DAILY_CAP, DAILY_CAP, MIN_BALANCE and LOW_BALANCE, lamports as decimal strings. */
     caps: jsonb("caps").$type<Record<KeeperCap, string>>().notNull(),
     /** Every setting the runner ran with, as it logs them (no key or password). */

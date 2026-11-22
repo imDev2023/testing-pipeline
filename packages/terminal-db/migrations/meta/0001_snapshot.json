@@ -1,5 +1,5 @@
 {
-  "id": "8cfd834b-ffb7-4441-9f77-32cabd03e6f1",
+  "id": "48147a86-8f99-4ced-9970-bdcd086bbb52",
   "prevId": "0b317c22-4b39-4b83-b5bb-c8047b061352",
   "version": "7",
   "dialect": "postgresql",
@@ -268,13 +268,13 @@
           "name": "spent_total",
           "type": "bigint",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "spent_by_market": {
           "name": "spent_by_market",
           "type": "jsonb",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "caps": {
           "name": "caps",

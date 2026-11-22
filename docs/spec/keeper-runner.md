@@ -155,12 +155,15 @@ A `KEEPER_` variable that names no setting stops the runner at start, so a missp
 - What counts ([`SUITE-58`](../decisions.md#suite-58-keeper-runner-which-passes-and-jobs-are-recorded)):
   - a job whose transaction landed, whatever it did (sent, refused, too early for its slot, or without effect), with its signature and what it cost, so every lamport the runner spends is on the page;
   - a job held by a cap, recorded once a UTC day for each cap that holds it, and again once it has been anything but held, so a cap reached at noon does not wake the database every sweep until midnight;
-  - a parked job, and a job unparked because its market changed, so the page stops showing the park;
+  - a parked job;
+  - whatever ends a recorded hold or park, so the page stops showing the job waiting: being unparked because its market changed, any other outcome, or no longer being due at all, as when another keeper sent it (`no-longer-due`);
   - the keeper wallet unwrapping its tips, as a job with no market.
   A job retried after a failure, or sent again from a later slot, runs in a pass of its own, `retry`, recorded the same way.
+  When today's spend cannot be rebuilt from the chain for a pass (a send whose landing was unknown, then an RPC that cannot be asked), the pass records it as unknown, never as nothing spent, and the page keeps showing the last spend that was known.
+  Errors and warnings are recorded with every URL cut to its scheme and host, since a path or query can carry an API key and the page is public.
 - Without `DATABASE_URL` (someone else's copy, or before Aviary's database exists) the runner logs each recorded pass as one `record` row, exactly as the database would hold it, and works the same.
   A database that cannot be reached, or that refuses the write, never stops the runner: the pass is logged the same way with the reason.
-  The runner's connection closes after 20 idle seconds, so it never keeps Neon awake between passes.
+  Records are written one at a time behind the passes, so a slow database never holds up a job, and the runner's connection closes after 20 idle seconds, so it never keeps Neon awake between passes.
 - Logs go to `~/Library/Logs/testing-pipeline-keeper.log` on the Mac, and to standard output in Docker.
 
 ## How Aviary shows it
@@ -173,8 +176,9 @@ The tables and the runner's writer were built by [Aviary: the keeper page and th
 - **Is it running?** Since a quiet pass writes nothing, Postgres cannot tell a quiet runner from a stopped one, so after every pass the runner posts a heartbeat to `terminal-api`'s `POST /keeper/heartbeat` (`HEARTBEAT_URL`): which pass ran, when, its `SWEEP_INTERVAL`, its caps and its warnings, signed with the keeper wallet's key ([`SUITE-57`](../decisions.md#suite-57-keeper-runner-how-aviary-knows-it-is-running), owner, 2026-11-22).
   - `terminal-api` keeps only heartbeats signed by `KEEPER_WALLET`, the keeper wallet's published address, so no secret is shared and nobody else can make a stopped runner look alive; one whose time is more than two minutes from the Worker's clock is refused, so an old one cannot be replayed.
   - It keeps the newest heartbeat of each kind of pass in its `TERMINAL_CACHE` KV namespace, at most one of each kind every 30 seconds, so a heartbeat never wakes the database; each counts against the sender's IP like a read.
-  - If the last heartbeat (one-off `once` runs aside) is older than the runner's own `SWEEP_INTERVAL` plus five minutes, the page says the runner looks stopped; with no heartbeat at all it says it cannot tell.
-  - Parks live only in the runner's memory, so the page shows only parks recorded since the runner's last start, which its heartbeats give.
+  - If the last heartbeat (one-off `once` runs aside) is older than the `SWEEP_INTERVAL` that heartbeat carries plus five minutes, the page says the runner looks stopped; with no heartbeat at all it says it cannot tell.
+  - Parks live only in the runner's memory, so the page shows only parks recorded since the runner's current run started, a time every heartbeat carries.
+  - Its warnings are cut to fit a heartbeat (at most 20, each at most 1,000 characters), so a long RPC error never gets the heartbeat refused.
   - A heartbeat goes in the background, one at a time, and never holds up or stops the runner.
 - A database or an RPC that does not answer leaves the rest of the page standing, each panel saying what it could not read.
 

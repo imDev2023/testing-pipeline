@@ -178,12 +178,12 @@ test.describe("the keeper page", () => {
     await page.route(`${API}/keeper`, async (route) => {
       const response = await route.fetch();
       const body = await response.json();
-      body.liveness = { state: "looks-stopped", lastPass: { pass: "sweep", at: new Date(Date.now() - 42 * 60_000).toISOString() }, stoppedAfterMs: 900_000 };
+      body.liveness = { state: "looks-stopped", lastPass: { pass: "sweep", at: new Date(Date.now() - 42 * 60_000).toISOString() }, stoppedAfterMs: 900_000, sweepIntervalMs: 600_000 };
       await route.fulfill({ response, json: body });
     });
     await page.goto("/keeper");
     await expect(page.getByRole("status")).toHaveText(
-      "Looks stopped. Its last pass, a sweep, ended 42m ago, and a running runner passes at least every 15 minutes. Due jobs wait meanwhile, and anyone may send them.",
+      "Looks stopped. Its last pass, a sweep, ended 42m ago, and it sweeps every 10 minutes. Due jobs wait meanwhile, and anyone may send them.",
     );
   });
 

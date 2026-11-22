@@ -232,3 +232,19 @@ export function describeSettings(settings: Settings): Record<SettingName, string
         }),
     ) as Record<SettingName, string>;
 }
+
+/**
+ * The runner's fixed limits: how it treats Aviary's database and API and how it stops, not policy
+ * a deployment tunes, so no KEEPER_ variable overrides them; kept here so no other file writes one.
+ */
+export const LIMITS = {
+    /** An idle database connection closes after this, so it never keeps Neon awake between passes. */
+    databaseIdleSeconds: 20,
+    /** How long connecting to the database, and writing one pass, may take before the pass is logged instead. */
+    databaseConnectSeconds: 15,
+    databaseWriteMs: 30_000,
+    /** How long one heartbeat may take before it counts as failed. */
+    heartbeatTimeoutMs: 10_000,
+    /** How long a stopping runner waits for a record or a heartbeat on its way. */
+    stopWaitMs: 5_000,
+} as const;

@@ -11,9 +11,7 @@ import { getBase58Decoder, signBytes, type KeyPairSigner } from '@solana/kit';
 import { keeperHeartbeatMessage, type KeeperHeartbeatPayload } from 'terminal-api/contract';
 
 import type { Logger } from './log.ts';
-
-/** How long one heartbeat may take before it counts as failed. */
-const HEARTBEAT_TIMEOUT_MS = 10_000;
+import { LIMITS } from './settings.ts';
 
 export interface Heartbeat {
     /** Queues a heartbeat; returns at once. */
@@ -29,14 +27,14 @@ export function heartbeatSender(options: { url: string; signer: KeyPairSigner; l
     let running: Promise<void> | null = null;
 
     async function post(payload: KeeperHeartbeatPayload) {
-        const text = JSON.stringify(payload);
-        const signature = getBase58Decoder().decode(await signBytes(signer.keyPair.privateKey, keeperHeartbeatMessage(text)));
         try {
+            const text = JSON.stringify(payload);
+            const signature = getBase58Decoder().decode(await signBytes(signer.keyPair.privateKey, keeperHeartbeatMessage(text)));
             const response = await send(url, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ payload: text, signature }),
-                signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
+                signal: AbortSignal.timeout(LIMITS.heartbeatTimeoutMs),
             });
             if (!response.ok) {
                 const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
@@ -48,12 +46,15 @@ export function heartbeatSender(options: { url: string; signer: KeyPairSigner; l
     }
 
     async function drain() {
-        while (pending) {
-            const next = pending;
-            pending = null;
-            await post(next);
+        try {
+            while (pending) {
+                const next = pending;
+                pending = null;
+                await post(next);
+            }
+        } finally {
+            running = null;
         }
-        running = null;
     }
 
     return {

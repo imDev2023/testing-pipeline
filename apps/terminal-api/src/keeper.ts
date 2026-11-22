@@ -74,7 +74,8 @@ export function keeperRoutes(app: Hono<AppEnv>) {
     const wallet = c.env.KEEPER_WALLET;
     const now = new Date();
     const [stored, balance] = await Promise.all([c.env.TERMINAL_CACHE.get<StoredHeartbeats>(heartbeatKey(wallet), "json"), readBalance(c.env.RPC_URL, wallet)]);
-    const since = stored?.passes.start ? new Date(stored.passes.start) : null;
+    // Parks live only in the runner's memory: those recorded before this run started are over.
+    const since = stored?.runner ? new Date(stored.runner.startedAt) : null;
     const records = await readRecords(c.env.HYPERDRIVE.connectionString, { wallet, now, since }, (p) => c.executionCtx.waitUntil(p));
 
     // The runner's own passes: a `once` is a one-off run beside it, not a sign that it is running.
@@ -92,13 +93,15 @@ export function keeperRoutes(app: Hono<AppEnv>) {
     const body: Keeper = {
       wallet,
       balance,
-      liveness: { state, lastPass: running ? { pass: running[0], at: running[1] } : null, stoppedAfterMs },
+      liveness: { state, lastPass: running ? { pass: running[0], at: running[1] } : null, stoppedAfterMs, sweepIntervalMs: stored?.runner?.sweepIntervalMs ?? null },
       passes: KeeperPassKind.options.map((pass) => {
         const record = recorded.get(pass);
         return {
           pass,
           lastRanAt: stored?.passes[pass] ?? null,
-          lastRecorded: record ? { at: record.at.toISOString(), sent: record.counts.sent, held: record.counts.held, parked: record.counts.parked, failed: record.counts.failed } : null,
+          lastRecorded: record
+            ? { at: record.at.toISOString(), sent: record.counts.sent, held: record.counts.held, parked: record.counts.parked, failed: record.counts.failed, jobs: record.recordedJobs }
+            : null,
         };
       }),
       caps: stored ? stored.latest.caps : latestRecord ? numbers(latestRecord.caps) : null,

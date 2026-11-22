@@ -96,6 +96,7 @@ export async function postKeeperHeartbeat(pass: KeeperHeartbeatPayload["pass"] =
     wallet: signer.address,
     pass,
     at: new Date().toISOString(),
+    startedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
     sweepIntervalMs: 600_000,
     caps: { maxTxCost: 3_000_000, marketDailyCap: 10_000_000, dailyCap: 100_000_000, minBalance: 100_000_000, lowBalance: 500_000_000 },
     warnings: [],

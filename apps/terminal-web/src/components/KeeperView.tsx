@@ -4,7 +4,7 @@ import { Keeper, type KeeperJob } from "terminal-api/contract";
 import { getFromApi } from "@/api";
 import { BRAND } from "@/brand";
 import { formatAge, formatDate, formatDay } from "@/format";
-import { formatSol, jobName, livenessSentence, outcomeText, PASS_LABELS, productName, waitingReason } from "@/keeperText";
+import { formatSol, jobName, livenessSentence, outcomeText, PASS_LABELS, passSummary, productName, waitingReason } from "@/keeperText";
 import { ShortAddress, ShortSignature, SubjectAddress } from "./Address";
 import { PanelFrame, useLoad, type Loaded } from "./Panel";
 import { Table } from "./Table";
@@ -234,7 +234,7 @@ export function KeeperView() {
                         <span className={styles.note}>Not read</span>
                       ) : pass.lastRecorded ? (
                         <span>
-                          <Age at={pass.lastRecorded.at} />, {passCounts(pass.lastRecorded)}
+                          <Age at={pass.lastRecorded.at} />, {passSummary(pass.lastRecorded)}
                         </span>
                       ) : (
                         <span className={styles.note}>Nothing recorded</span>
@@ -284,15 +284,4 @@ export function KeeperView() {
       </PanelFrame>
     </div>
   );
-}
-
-/** What a recorded pass did: "sent 4", "sent 1, held 2". */
-function passCounts(counts: { sent: number; held: number; parked: number; failed: number }): string {
-  const parts = [
-    counts.sent && `sent ${counts.sent}`,
-    counts.held && `held ${counts.held}`,
-    counts.parked && `parked ${counts.parked}`,
-    counts.failed && `failed ${counts.failed}`,
-  ].filter(Boolean);
-  return parts.length ? parts.join(", ") : "unparked a job";
 }

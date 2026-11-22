@@ -2,7 +2,7 @@
 // it"; SUITE-37): the runner writes each pass that sent, held or parked something with
 // `recordKeeperPass`, straight from the owner's Mac, and `terminal-api`'s keeper endpoint reads
 // them back with `readKeeperRecords`. Amounts are in lamports.
-import { and, desc, eq, gte, max, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, max, sql } from "drizzle-orm";
 import type { Db } from "./index.ts";
 import { keeperRunJobs, keeperRuns, type KeeperCap } from "./schema.ts";
 
@@ -30,8 +30,9 @@ export type KeeperPassRecord = {
   balance: bigint | null;
   /** The UTC day today's spend is counted for, "2026-11-22". */
   day: string;
-  spentTotal: bigint;
-  spentByMarket: Record<string, bigint>;
+  /** Today's spend, or null when it could not be rebuilt from the chain for this pass. */
+  spentTotal: bigint | null;
+  spentByMarket: Record<string, bigint> | null;
   caps: Record<KeeperCap, bigint>;
   settings: Record<string, string>;
   warnings: string[];
@@ -51,7 +52,7 @@ export async function recordKeeperPass(db: Db, record: KeeperPassRecord): Promis
         balance: record.balance,
         day: record.day,
         spentTotal: record.spentTotal,
-        spentByMarket: strings(record.spentByMarket),
+        spentByMarket: record.spentByMarket && strings(record.spentByMarket),
         caps: strings(record.caps),
         settings: record.settings,
         warnings: record.warnings,
@@ -63,13 +64,13 @@ export async function recordKeeperPass(db: Db, record: KeeperPassRecord): Promis
   });
 }
 
-export type KeeperPassRead = Omit<KeeperPassRecord, "jobs" | "wallet">;
+export type KeeperPassRead = Omit<KeeperPassRecord, "jobs" | "wallet"> & { /** How many jobs the pass recorded. */ recordedJobs: number };
 export type KeeperJobRead = KeeperJobRecord & { pass: string };
 
 export type KeeperRecords = {
   /** The latest recorded pass, with the caps and settings it ran with and its warnings. */
   latest: KeeperPassRead | null;
-  /** Today's spend, from today's latest recorded pass; null when nothing was recorded today (so nothing was spent). */
+  /** Today's spend, from today's latest recorded pass that knew it; null when none did (when nothing was recorded today, nothing was spent). */
   today: { day: string; spentTotal: bigint; spentByMarket: Record<string, bigint>; highestCost: bigint | null } | null;
   /** The latest recorded pass of each kind, newest first. */
   lastOfEachKind: KeeperPassRead[];
@@ -102,6 +103,8 @@ export async function readKeeperRecords(db: Db, options: { wallet: string; now: 
     parked: keeperRuns.parked,
     skipped: keeperRuns.skipped,
     failed: keeperRuns.failed,
+    // Written out in full: inside a subquery Drizzle would leave the column names unqualified.
+    recordedJobs: sql<number>`(select count(*)::int from "keeper_run_jobs" where "keeper_run_jobs"."run_id" = "keeper_runs"."id")`,
   };
   const jobColumns = {
     pass: keeperRuns.pass,
@@ -120,8 +123,14 @@ export async function readKeeperRecords(db: Db, options: { wallet: string; now: 
   };
 
   const dayStart = new Date(`${today}T00:00:00Z`);
-  const [latestRows, kindRows, recent, unitRows, highest] = await Promise.all([
+  const [latestRows, spendRows, kindRows, recent, unitRows, highest] = await Promise.all([
     db.select(passColumns).from(keeperRuns).where(eq(keeperRuns.wallet, wallet)).orderBy(desc(keeperRuns.at), desc(keeperRuns.id)).limit(1),
+    db
+      .select({ day: keeperRuns.day, spentTotal: keeperRuns.spentTotal, spentByMarket: keeperRuns.spentByMarket })
+      .from(keeperRuns)
+      .where(and(eq(keeperRuns.wallet, wallet), eq(keeperRuns.day, today), isNotNull(keeperRuns.spentTotal)))
+      .orderBy(desc(keeperRuns.at), desc(keeperRuns.id))
+      .limit(1),
     db
       .selectDistinctOn([keeperRuns.pass], passColumns)
       .from(keeperRuns)
@@ -154,22 +163,25 @@ export async function readKeeperRecords(db: Db, options: { wallet: string; now: 
     balance: row.balance,
     day: row.day,
     spentTotal: row.spentTotal,
-    spentByMarket: bigints(row.spentByMarket),
+    spentByMarket: row.spentByMarket && bigints(row.spentByMarket),
     caps: bigints(row.caps) as Record<KeeperCap, bigint>,
     settings: row.settings,
     warnings: row.warnings,
     counts: { markets: row.markets, sent: row.sent, held: row.held, parked: row.parked, skipped: row.skipped, failed: row.failed },
+    recordedJobs: Number(row.recordedJobs),
   });
 
   const latest = latestRows[0] ? passOf(latestRows[0]) : null;
-  const todays = latest?.day === today ? latest : null;
+  const todays = spendRows[0];
   const waiting = unitRows
     .filter((row) => (row.outcome === "held" && row.at >= dayStart) || (row.outcome === "parked" && (since === null || row.at >= since)))
     .sort((a, b) => b.at.getTime() - a.at.getTime());
 
   return {
     latest,
-    today: todays && { day: todays.day, spentTotal: todays.spentTotal, spentByMarket: todays.spentByMarket, highestCost: highest[0]?.cost ?? null },
+    today: todays?.spentTotal != null && todays.spentByMarket
+      ? { day: todays.day, spentTotal: todays.spentTotal, spentByMarket: bigints(todays.spentByMarket), highestCost: highest[0]?.cost ?? null }
+      : null,
     lastOfEachKind: kindRows.map(passOf).sort((a, b) => b.at.getTime() - a.at.getTime()),
     recent,
     waiting,

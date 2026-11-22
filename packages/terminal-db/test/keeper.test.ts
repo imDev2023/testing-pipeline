@@ -133,6 +133,24 @@ describe("the keeper runner's records", () => {
     expect(records.waiting.map((job) => job.job)).toEqual(["distribute"]);
   });
 
+  it("count the jobs each pass recorded", async () => {
+    const records = await readKeeperRecords(db, { wallet: WALLET, now: NOW, recentJobs: 10, since: null });
+    expect(records.lastOfEachKind.map(({ pass, recordedJobs }) => [pass, recordedJobs])).toEqual([
+      ["sweep", 2],
+      ["transaction", 1],
+      ["daily", 2],
+    ]);
+  });
+
+  it("never take today's spend from a pass that could not rebuild it, which records it as unknown", async () => {
+    const unknownSpend = "4unknownSpendWallet1111111111111111111111";
+    await recordKeeperPass(db, pass({ wallet: unknownSpend, pass: "sweep", at: minutesAgo(40), spentTotal: 7_000n, spentByMarket: { [MARKET]: 7_000n } }));
+    await recordKeeperPass(db, pass({ wallet: unknownSpend, pass: "transaction", at: minutesAgo(10), spentTotal: null, spentByMarket: null, warnings: ["today's spend could not be rebuilt"] }));
+    const records = await readKeeperRecords(db, { wallet: unknownSpend, now: NOW, recentJobs: 10, since: null });
+    expect(records.latest).toMatchObject({ pass: "transaction", spentTotal: null, spentByMarket: null });
+    expect(records.today).toEqual({ day: "2026-11-22", spentTotal: 7_000n, spentByMarket: { [MARKET]: 7_000n }, highestCost: null });
+  });
+
   it("are empty for a wallet that recorded nothing", async () => {
     const records = await readKeeperRecords(db, { wallet: "So11111111111111111111111111111111111111112", now: NOW, recentJobs: 10, since: null });
     expect(records).toEqual({ latest: null, today: null, lastOfEachKind: [], recent: [], waiting: [] });
