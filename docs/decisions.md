@@ -25,7 +25,7 @@ Every decision is one block in exactly this shape:
 - Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19)
 ```
 
-- **The ID** is a product prefix and a two-digit number.
+- **The ID** is a product prefix and a number of at least two digits.
   The prefixes are `SUITE`, `BAR` (the engineering and security bar), `PIPESCOPE` (Aviary, the terminal), `CANARY`, `EXPLAINER`, `TAX`, `HOOK`, `POOL4` (the buy wall AMM) and `LENDING` (the lending AMM).
   They are identifiers, taken from the spec file names, and like those file names they stay as they are when a public name changes.
   An ID is never renumbered or reused, and a block is never deleted.
@@ -2014,11 +2014,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-96: How a terminal ticket is verified
 
 - Question: What does a terminal build ticket have to show before it counts as done?
-- Answer: Its criteria run on Aviary's devnet deployment against devnet data, every page it touches is checked at 1440, 390 and 360 px wide in the light and the dark theme with Playwright screenshots in the PR, and CI runs the same tests on recorded devnet fixtures with no network.
-- Alternatives: Local runs only; CI against live devnet, which would spend Aviary's RPC credits and fail when devnet does.
+- Answer: Its criteria run on Aviary's local run against devnet data (both Workers in `wrangler dev` on the Docker Postgres, `PIPESCOPE-98`) until the hosted deploy of [#192](https://github.com/imDev2023/testing-pipeline/issues/192) lands and on Aviary's devnet deployment after it, every page it touches is checked at 1440, 390 and 360 px wide in the light and the dark theme with Playwright screenshots in the PR, and CI runs the same tests on recorded devnet fixtures with no network.
+- Alternatives: The earlier default, its criteria run on Aviary's devnet deployment from the first ticket; local runs only, for good; CI against live devnet, which would spend Aviary's RPC credits and fail when devnet does.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Build tickets](spec/pipescope-architecture.md#build-tickets)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
 
 ### PIPESCOPE-97: Where the keeper page lives
@@ -2030,6 +2030,66 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-98: Where Aviary runs for now
+
+- Question: Where does Aviary run and get verified before its hosted deploy?
+- Answer: Locally: `wrangler dev` runs both Workers against the Docker Postgres and devnet from the project's `.env`, with `RPC_URL` on the owner's shared Helius devnet key until Aviary has its own, and the hosted deploy (both Workers on `workers.dev`, Neon through Hyperdrive, Aviary's own Helius key, the secrets check and the root deploy script) moves to [#192](https://github.com/imDev2023/testing-pipeline/issues/192), after the owner's setup in [#110](https://github.com/imDev2023/testing-pipeline/issues/110).
+- Alternatives: Deploying both Workers to `workers.dev` from the scaffold on; Convex as the data layer, not taken because the spec's data layer is Postgres throughout.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Environments](spec/pipescope-architecture.md#environments)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-99: How the cron decides what is due
+
+- Question: How does the every-minute cron's dispatcher know which jobs are due?
+- Answer: From the minute alone: a job runs on each minute whose count since the Unix epoch its interval in whole minutes divides, so deciding what to run never wakes the database, and a job that fails is logged without stopping the others.
+- Alternatives: Recording each job's last run in Postgres, as Top-pad's `job_runs` does, which would wake the database every minute.
+- Specified in: [`docs/spec/pipescope-architecture.md`, `terminal-api`](spec/pipescope-architecture.md#terminal-api)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-100: What a refused read is told
+
+- Question: What counts against the read limit, and what does a reader over it get back?
+- Answer: Every `GET` counts as a read against the `READS` binding, `/health` and unknown paths included, keyed by the reader's IP, and a refused one gets a 429 with `Retry-After` and the sentence "Too many requests from your address. Try again in 60 seconds.", whose wait is `RATE_LIMIT_PERIOD_SECONDS` in `apps/terminal-api/src/config.ts`, which a test keeps equal to every binding's period.
+- Alternatives: Naming the exact time left in the window, which the rate-limiting binding does not report.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-101: Page addresses
+
+- Question: At which addresses do Aviary's pages live?
+- Answer: The feed at `/`, Devnet help at `/devnet`, a market at `/markets/<address>` and a strategy at `/strategies/<address>`, written once in `apps/terminal-web/src/routes.ts`, and an address that is neither gets the "nothing there" page with a 404.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-architecture.md`, `terminal-web`](spec/pipescope-architecture.md#terminal-web)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-102: How CI's tests read devnet
+
+- Question: Where do the terminal's CI tests get devnet's answers, with no network and no RPC key?
+- Answer: The local API reads recorded devnet RPC answers from `tests/terminal-e2e/fixtures/devnet-rpc.json` through a fixture server the Playwright run starts, recorded by `pnpm --filter terminal-e2e record` against live devnet, and a request with no recording fails its test.
+- Alternatives: Playwright intercepting the browser's calls to the API, which would leave the API itself untested.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Build tickets](spec/pipescope-architecture.md#build-tickets)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-103: Where the typefaces come from
+
+- Question: Which font files does Aviary serve from its own origin?
+- Answer: Archivo, upright and italic with its width and weight axes, and Literata, cut from Google Fonts' repository to Latin, general punctuation and the subscript digits that prices count their zeros with, as WOFF2 files in `apps/terminal-web/src/fonts` declared only in `theme.css`.
+- Alternatives: Fontsource's Latin subsets, which leave out the subscript digits; `next/font`, which writes the typeface's name in a component.
+- Specified in: [`docs/spec/pipescope-architecture.md`, `terminal-web`](spec/pipescope-architecture.md#terminal-web)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
 
 ## Canary checks (CANARY)
 
@@ -5202,3 +5262,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-48`: set by the session of [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186), which read its ticket as every link going to GitHub, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `SUITE-49` to `SUITE-53`: set by the session of [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `SUITE-54` to `SUITE-56`: set by the session of [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
+- `PIPESCOPE-99` to `PIPESCOPE-103`: set by the session of [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted; Devnet help's wallet steps (`apps/terminal-web/src/content/devnet-help.ts`) follow each wallet's help pages of 2026-11-22 and were not tried in the wallets.

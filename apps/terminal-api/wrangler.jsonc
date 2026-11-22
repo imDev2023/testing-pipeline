@@ -1,0 +1,37 @@
+// Adapted from Top-pad b833a7b, apps/api/wrangler.jsonc; owned here since.
+// `terminal-api` (docs/spec/pipescope-architecture.md, "The two Workers"). This file is the local
+// run: `pnpm --filter terminal-api dev` runs it in `wrangler dev` against devnet and the Docker
+// Postgres, from the project's .env. The devnet deployment (an `env.devnet` with Hyperdrive in
+// front of Neon, the KV namespace's id and the secrets) is added by #192.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "terminal-api",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-20",
+  // global_fetch_strictly_public: the API's fetches (the RPC, strategy metadata, token images) go out
+  // as from the public internet, never to another Worker on the same zone by a shortcut.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": { "enabled": true },
+  // One cron, every minute: its dispatcher runs whatever the intervals in src/config.ts make due
+  // (PIPESCOPE-89), so no interval is written here.
+  "triggers": { "crons": ["* * * * *"] },
+  // The version this code is, which the indexer later checks against the Worker's after a deploy.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  "vars": { "CLUSTER": "devnet" },
+  // RPC_URL is the one secret here (PIPESCOPE-37): the Helius devnet URL, which carries the key.
+  // `wrangler dev` reads it from the environment, which direnv fills from the project's .env.
+  "secrets": { "required": ["RPC_URL"] },
+  // Postgres. Deployed, Hyperdrive in front of Neon with its query cache off (#192). Locally,
+  // `wrangler dev` connects straight to the database that DATABASE_URL names, passed in by
+  // scripts/dev.ts as CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE.
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "00000000000000000000000000000000" }],
+  // Public caches up to 60 s stale and the copies of token images (PIPESCOPE-88); simulated locally.
+  "kv_namespaces": [{ "binding": "TERMINAL_CACHE" }],
+  // The public API's per-IP limits (PIPESCOPE-90), their one place. A refused request is told to
+  // wait the period, RATE_LIMIT_PERIOD_SECONDS in src/config.ts, which a test keeps equal to it.
+  "ratelimits": [
+    { "name": "READS", "namespace_id": "1001", "simple": { "limit": 300, "period": 60 } },
+    { "name": "TRADES", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
+    { "name": "REPORTS", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } }
+  ]
+}

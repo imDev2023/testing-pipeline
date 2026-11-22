@@ -1,0 +1,23 @@
+.subject {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.whole {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-min-height);
+}

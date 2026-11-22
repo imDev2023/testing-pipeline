@@ -1,0 +1,20 @@
+{
+    "name": "terminal-e2e",
+    "private": true,
+    "type": "module",
+    "description": "Aviary's end-to-end tests: Playwright on the local run at 1440, 390 and 360 px in both themes (docs/spec/pipescope-architecture.md, Build tickets)",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "scripts": {
+        "typecheck": "tsc -p .",
+        "e2e": "playwright test",
+        "record": "E2E_RPC=record playwright test"
+    },
+    "devDependencies": {
+        "@playwright/test": "1.65.1",
+        "@types/node": "24.19.2",
+        "terminal-api": "workspace:*",
+        "typescript": "6.0.3"
+    }
+}
