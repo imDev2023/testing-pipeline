@@ -624,7 +624,7 @@ fn a_swap_quoted_before_a_rate_change_is_protected_by_its_minimum_output() {
             )
             .unwrap();
             let options = SwapOptions {
-                min_amount_out: quote.amount_out,
+                min_amount_out: env.kept(&market, o, quote.amount_out),
                 ..SwapOptions::default()
             };
             let result = env.swap_with(&market, &trader, (i, o), 1_000_000_000, &options);

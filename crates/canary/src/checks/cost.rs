@@ -8,7 +8,10 @@
 //! - Pass: every size's return is in the pass band.
 //!
 //! Pipeline's fee is what the router charged in the copy (its swap's return data), never a
-//! constant: the sale's fee is charged in the token and valued at the sale's own price.
+//! constant. Since Pipeline 0.3 the sale's fee is taken from what it brought back when the
+//! money side is the market's fee mint (wrapped SOL, on every market that trades it and
+//! declares no other); otherwise it is charged in the token and valued at the sale's own
+//! price.
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -30,10 +33,16 @@ pub struct Split {
     pub got_back: i128,
     pub return_ppm: u64,
     pub pipeline_fee: i128,
-    /// Pipeline's fee on the buy, in money-side units, as the router charged it.
+    /// Pipeline's fee on the buy, as the router charged it, in the mint it was taken in.
     pub pipeline_fee_buy: u64,
-    /// Pipeline's fee on the sale, in tokens, as the router charged it.
-    pub pipeline_fee_sale_tokens: u64,
+    /// That mint, by index: the money side, unless the market declares the token its fee
+    /// mint, when the fee comes out of the tokens bought.
+    pub pipeline_fee_buy_mint: usize,
+    /// Pipeline's fee on the sale, as the router charged it, in the mint it was taken in.
+    pub pipeline_fee_sale: u64,
+    /// That mint, by index: the money side when it is the market's fee mint, the token
+    /// otherwise.
+    pub pipeline_fee_sale_mint: usize,
     pub transfer_fees: i128,
     pub rest: i128,
 }
@@ -44,25 +53,39 @@ pub fn split(row: &RoundTrip, money: &MintFacts, token: &MintFacts) -> Option<Sp
     let sale_leg = row.sell.as_ref()?;
     let sale = sale_leg.swap.as_ref().ok()?;
     let return_ppm = row.return_ppm()?;
-    // Tokens valued at the sale's own price: what the sale paid per token it was charged for.
+    // Tokens valued at the sale's own price: what arrived per token it was charged for,
+    // before any Pipeline fee taken from what arrived.
     let in_money = |tokens: u64| -> i128 {
         if sale.net_sent == 0 {
             return 0;
         }
-        (tokens as u128 * sale.trader_received as u128 / sale.net_sent as u128) as i128
+        (tokens as u128 * sale.received as u128 / sale.net_sent as u128) as i128
     };
     // Token-2022 transfer fees the trader bore: on the money sent in and the tokens sent out
     // on the buy, and on the tokens sent in and the money sent out on the sale.
     let output_fee = |leg: &crate::trade::Leg| {
-        leg.quote
-            .as_ref()
-            .map_or(0, |q| q.strategy_amount_out.saturating_sub(q.amount_out))
+        leg.quote.as_ref().map_or(0, |q| {
+            q.strategy_amount_out
+                .saturating_sub(q.arrives_out(leg.output))
+        })
     };
     let transfer_fees = money.transfer_fee_on(row.buy.clock.epoch, row.buy.amount_in) as i128
         + in_money(output_fee(&row.buy))
         + in_money(token.transfer_fee_on(sale_leg.clock.epoch, sale_leg.amount_in))
         + output_fee(sale_leg) as i128;
-    let pipeline_fee = buy.pipeline_fee as i128 + in_money(sale.pipeline_fee);
+    // Each leg's fee in money-side units: as charged when it was taken in the money side,
+    // and valued at the sale's price when it was taken in the token.
+    let buy_fee = if buy.fee_mint == row.buy.input {
+        buy.pipeline_fee as i128
+    } else {
+        in_money(buy.pipeline_fee)
+    };
+    let sale_fee = if sale.fee_mint == sale_leg.output {
+        sale.pipeline_fee as i128
+    } else {
+        in_money(sale.pipeline_fee)
+    };
+    let pipeline_fee = buy_fee + sale_fee;
     let put_in = buy.trader_spent as i128;
     let got_back = sale.trader_received as i128;
     Some(Split {
@@ -72,7 +95,9 @@ pub fn split(row: &RoundTrip, money: &MintFacts, token: &MintFacts) -> Option<Sp
         return_ppm,
         pipeline_fee,
         pipeline_fee_buy: buy.pipeline_fee,
-        pipeline_fee_sale_tokens: sale.pipeline_fee,
+        pipeline_fee_buy_mint: buy.fee_mint,
+        pipeline_fee_sale: sale.pipeline_fee,
+        pipeline_fee_sale_mint: sale.fee_mint,
         transfer_fees,
         rest: put_in - got_back - pipeline_fee - transfer_fees,
     })

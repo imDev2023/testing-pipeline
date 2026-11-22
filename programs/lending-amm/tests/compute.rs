@@ -82,7 +82,7 @@ impl Row {
             Row::Rebalance => (71_773, 90_000),
             Row::RemoveLiquidityCash => (76_080, 100_000),
             Row::RemoveLiquidityInKind => (62_710, 80_000),
-            Row::LockLp => (36_987, 50_000),
+            Row::LockLp => (36_990, 50_000),
         }
     }
 }

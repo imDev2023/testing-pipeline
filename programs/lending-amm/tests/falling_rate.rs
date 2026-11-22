@@ -169,7 +169,10 @@ fn a_write_off_of_the_reserves_whole_supply_deprecates_it_and_the_market_trades_
             let meta = env
                 .swap_meta(&market, &trader, (other, lent_side), amount)
                 .unwrap();
-            assert_eq!(env.balance(&paid_into) - before, quote.amount_out);
+            assert_eq!(
+                env.balance(&paid_into) - before,
+                env.kept(&market, lent_side, quote.amount_out)
+            );
             assert!(!meta.logs.iter().any(
                 |line| line.starts_with(&format!("Program {} invoke", common::kamino::klend()))
             ));

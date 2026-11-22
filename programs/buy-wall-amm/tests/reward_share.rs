@@ -69,6 +69,12 @@ fn seeded(env: &mut Env, reward_share_bps: u16, tokens: u64, lamports: u64) -> (
     (market, recipient)
 }
 
+/// What a sale's trader keeps of the `out` it was quoted: since Pipeline 0.3 a sale into
+/// wrapped SOL, the market's fee mint, pays Pipeline's 0.25% out of what arrived.
+fn kept_of_sale(out: u64) -> u64 {
+    out - pipeline_strategy_interface::fees::pipeline_fee(out)
+}
+
 /// What an exact-in trade of `amount` pays, quoted (a quote equals its swap).
 fn quoted(env: &Env, market: &Market, (input, output): (usize, usize), amount: u64) -> u64 {
     env.quote(market, &exact_in(input, output, amount))
@@ -201,7 +207,7 @@ fn sos_h005_a_dip_trimmed_from_a_tight_cap_pays_no_reward_share() {
         .send_logged(
             &[
                 swap_ix(&env, &market, &recipient, SELL, sold),
-                swap_ix(&env, &market, &recipient, BUY, spendable(out)),
+                swap_ix(&env, &market, &recipient, BUY, spendable(kept_of_sale(out))),
                 settle_ix(&market),
             ],
             &[&recipient],
@@ -328,7 +334,7 @@ fn sos_h007_a_wall_closure_pays_no_reward_share() {
 
     // Buying back with the sale's SOL and the tip returns fewer tokens than were sold.
     let (_, sol) = balances(&env, &market, &recipient.pubkey());
-    assert!(sol > out, "the recipient took the tip");
+    assert!(sol > kept_of_sale(out), "the recipient took the tip");
     env.swap(&market, &recipient, BUY, TradeMode::ExactIn, spendable(sol))
         .unwrap();
     let (tokens_after, _) = balances(&env, &market, &recipient.pubkey());

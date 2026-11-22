@@ -1039,6 +1039,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: changed 2026-11-20
 - Decided: 2026-11-16 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
 
+### BAR-43: The daily router pin check
+
+- Question: How is an upgrade of Pipeline's devnet router noticed when no PR happens to run the on-chain jobs?
+- Answer: A scheduled workflow, `.github/workflows/router-pin.yml`, runs `scripts/fetch-router.sh` once a day at 06:17 UTC (and on demand); when devnet's router no longer matches `ROUTER_SHA256` the script exits 3, the run fails and it opens an issue titled "Devnet's Pipeline router no longer matches the pin", or comments on the one already open; a failed download fails the run but opens no issue.
+- Alternatives: Waiting for the next PR's on-chain jobs, which let 0.3.0 go unnoticed until a PR failed; a failed scheduled run alone, whose e-mail reaches only whoever last edited the schedule; checking more often, which a router upgraded without notice a few times a month does not need.
+- Specified in: [`docs/toolchain.md`, Fixtures](toolchain.md#fixtures)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Pipeline 0.3: re-pin the router, SDK and pipeline-check, adapt every program and Canary, and check the pin daily](https://github.com/imDev2023/testing-pipeline/issues/194)
+
+### BAR-44: Which mint our strategies take Pipeline's fee in
+
+- Question: Since Pipeline 0.3 lets a strategy declare its market's fee mint in `pipeline_market_info`, which do ours declare?
+- Answer: None: the tax AMM, the buy wall AMM and the lending AMM return a bare `MarketInfo`, so the router's own rule applies, wrapped SOL on every market that trades it (a sell pays Pipeline's 0.25% out of the SOL it brings back) and the input on any other market; each market keeps the fee mint recorded when the router recorded it, and our two devnet demo markets were migrated with wrapped SOL as their fee mint.
+- Alternatives: Declaring the quote mint, so a tax AMM market quoted in USDC also takes the fee in USDC and a contained token never moves into its fee account; declaring the token, which would pay Pipeline in tokens that are hard to sell.
+- Specified in: [`docs/spec/README.md`, Strategy rules](spec/README.md#strategy-rules)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-22 in [Pipeline 0.3: re-pin the router, SDK and pipeline-check, adapt every program and Canary, and check the pin daily](https://github.com/imDev2023/testing-pipeline/issues/194)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -2346,11 +2366,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-34: Where `cost` reads Pipeline's fee
 
 - Question: Where does `cost` take Pipeline's fee from, given that the router's config account holds no fee?
-- Answer: From what the router charged in the copy, the `pipeline_fee` of each swap's return data, with the sale's fee (charged in the token) valued at the sale's own price; no fee rate is written in Canary.
-- Alternatives: The fee rate of `pipeline-strategy-interface` (`PIPELINE_FEE_BPS`), which would hide a router that charged differently.
-- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Answer: From what the router charged in the copy, the `pipeline_fee` of each swap's return data, in the mint the router reports it took it in (`fee_mint`, Pipeline 0.3): as charged when that is the money side, as on a sale into wrapped SOL, and valued at the sale's own price (what arrived per token, before any fee taken from it) when it is the token; no fee rate is written in Canary.
+- Alternatives: The earlier default, the sale's fee always charged in the token and valued at the sale's price, which Pipeline 0.3 made wrong on every market that trades wrapped SOL; The fee rate of `pipeline-strategy-interface` (`PIPELINE_FEE_BPS`), which would hide a router that charged differently.
+- Specified in: [`docs/spec/pipescope-canary.md`, Fee honesty](spec/pipescope-canary.md#fee-honesty)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
 
 ### CANARY-35: Compute limit of the read-only calls
@@ -3571,8 +3591,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-35: The launch script's rehearsal of the devnet launch
 
 - Question: How does one run of the launch script rehearse the devnet launch, with its two contained tokens and the sweep of Pipeline's fee?
-- Answer: Each `--goal` and `--deadline` pair launches one token, one after another in the same run, with `--unlock` given for every token or for none, and every launch sweeps Pipeline's fee in the token from its fee account to Pipeline's treasury with the router's `sweep_fees` and the hook accounts.
-- Alternatives: Two runs of the script, one per token; a separate rehearsal script, which would repeat the launch's setup.
+- Answer: Each `--goal` and `--deadline` pair launches one token, one after another in the same run, with `--unlock` given for every token or for none, and every launch sweeps Pipeline's fee from the fee account its sell paid into to Pipeline's treasury with the router's `sweep_fees`: the token's, with the hook accounts, on a home market quoted in a mint other than wrapped SOL, and the quote mint's on one quoted in wrapped SOL, whose token fee account Pipeline 0.3 leaves empty (`BAR-44`).
+- Alternatives: The earlier default, always sweeping the fee in the token through the hook, which on a market quoted in wrapped SOL has nothing to sweep since Pipeline 0.3; Two runs of the script, one per token; a separate rehearsal script, which would repeat the launch's setup.
 - Specified in: [the ticket, Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
 - Changes by: spec only
 - Status: default
@@ -4105,11 +4125,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-47: Markets the router has not recorded
 
 - Question: What does the gate do with a market state the router has no Market for, or a market missing a router fee account?
-- Answer: The snapshot copies such a market as if the router had recorded what `pipeline_market_info` gives and saves it marked unregistered, and the replay registers it with the router's `register_existing_market` and `init_fee_account` for both mints, and creates any missing fee account of a recorded market, as anyone may, then checks it like the rest.
-- Alternatives: The earlier behaviour, aborting the whole run, which let anyone block every upgrade with one direct `pipeline_seed_liquidity` call; leaving such markets out of the check, which would not check them at all.
+- Answer: The snapshot copies such a market as if the router had recorded what `pipeline_market_info` gives and saves it marked unregistered, and the replay registers it with the router's `register_existing_market` and `init_fee_account` for both mints, migrates a market the router recorded before Pipeline 0.3's fee mints with `migrate_market`, and creates any missing fee account of a recorded market, as anyone may, then checks it like the rest.
+- Alternatives: The earlier default, without the migration, under which the 0.3 router refuses every trade of a market recorded before fee mints and the gate took it for unrecorded; The earlier behaviour, aborting the whole run, which let anyone block every upgrade with one direct `pipeline_seed_liquidity` call; leaving such markets out of the check, which would not check them at all.
 - Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ### POOL4-48: A transfer hook at the seed
@@ -5145,6 +5165,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-73` to `LENDING-83`: set by the session of [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83) while building, where the spec left the choice open, and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `BAR-43`, `BAR-44`, and the 2026-11-22 changes to `CANARY-34`, `HOOK-35` and `POOL4-47`: set by the session of [Pipeline 0.3: re-pin the router, SDK and pipeline-check, adapt every program and Canary, and check the pin daily](https://github.com/imDev2023/testing-pipeline/issues/194) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-46`, `POOL4-47`, and the changes to `POOL4-41` and `POOL4-44`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix review findings H013, H020 and H033 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-51` to `POOL4-53`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to harden the market's clocks (review finding H009), fix review findings H022 and H063 in the handovers and fix review findings H097 and H098 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - The 2026-11-18 changes to `POOL4-44`, `POOL4-46` and `POOL4-53`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix findings R2G-01 to R2G-03 of the second internal review of the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
