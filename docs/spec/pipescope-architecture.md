@@ -71,6 +71,7 @@ Pipeline published its TypeScript SDK and its Rust crates on 2026-11-10 (commit 
 - A rate-limiting binding for the public API (see API).
 - One cron, every minute, which runs whatever is due by the intervals in the config module ([One place for every value](#one-place-for-every-value)): the indexer's reconciliation, ProgramData watch and registry snapshot, polling running verified builds, the hourly metadata re-fetch and Canary's scheduled sweep ([`pipescope-canary.md`](pipescope-canary.md), When Canary runs).
   So no interval is written in `wrangler.jsonc`, and changing one is a change to one constant.
+  A job is due on each minute whose count since the Unix epoch its interval in whole minutes divides, so deciding what to run never wakes the database, and a job that fails is logged without stopping the others (`PIPESCOPE-99`).
 - Secrets: `RPC_URL`, and `GH_ACTIONS_TOKEN`, a fine-grained GitHub token limited to this repo with Actions read and write and nothing else, for verified builds.
 - A KV namespace, `TERMINAL_CACHE`, for public caches and for the copies of token images ([Data](#data)).
 - No LLM key, no wallet key and no Secrets Store binding.
@@ -80,6 +81,8 @@ Pipeline published its TypeScript SDK and its Rust crates on 2026-11-10 (commit 
 - Next.js 16 on Workers through OpenNext, a pure client of the API, built per environment because `NEXT_PUBLIC_API_URL` is baked in at build time.
 - The public name (Aviary), the address (`aviary.trade`) and the fee label ("Aviary fee") live in one module, `apps/terminal-web/src/brand.ts`, the only place in code that carries them ([`README.md`](README.md), Names).
 - Wallets through Wallet Standard on `@solana/kit` (Top-pad's `WalletProvider`), charts with TradingView Lightweight Charts v5, live updates over the live rooms' WebSockets.
+- The pages live at `/` (the feed), `/devnet` (Devnet help), `/markets/<address>` and `/strategies/<address>`, written once in `apps/terminal-web/src/routes.ts`; an address that is neither gets the "nothing there" page with a 404 (`PIPESCOPE-101`).
+- Archivo (upright and italic, with its width and weight axes) and Literata are served from Aviary's own origin as WOFF2 files in `apps/terminal-web/src/fonts`, cut by `scripts/subset-fonts.py` from Google Fonts' repository to Latin, general punctuation and the subscript digits prices count their zeros with, and declared only in `theme.css` (`PIPESCOPE-103`).
 - What the pages are is settled by [Pipescope v1 scope](https://github.com/imDev2023/testing-pipeline/issues/3) and [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16).
 
 ## Data
@@ -147,6 +150,7 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - **Public** (owner, 2026-11-10): the read endpoints and the prepare endpoints are open to anyone, with no key and any origin, behind a per-IP limit from the Workers rate-limiting binding, and labelled unstable until v1 ships, so other builders can use Aviary's data.
 - **Rate limits** (`PIPESCOPE-90`), per IP, in the rate-limiting bindings of `terminal-api`'s `wrangler.jsonc`, their one place: 300 reads a minute; 60 a minute for quotes, prepares and trade signatures together; 10 "This is wrong" reports a minute.
   A page view of the feed or a market makes about ten reads, and a quote is asked at most once per pause in typing, so a reader never meets them; an answer over the limit is a 429 that names the wait, and the page says so in the panel that asked.
+  Every `GET` counts as a read, `/health` and unknown paths included, keyed by the reader's IP; the 429 carries `Retry-After` and "Too many requests from your address. Try again in 60 seconds.", whose wait is `RATE_LIMIT_PERIOD_SECONDS` in the config module, kept equal to every binding's period by a test (`PIPESCOPE-100`).
   This is also where Canary results get their "page and API" in the map's Canary attestations fog.
 - Endpoints, as a sketch for the build to settle in the zod contract:
   - strategies, a strategy's versions, and per version its facts, Canary results, verified-build status and explanation;
@@ -291,8 +295,10 @@ Each copied file starts with a header naming Top-pad commit `b833a7b` and its pa
 
 ## Environments
 
-- **Local**: `wrangler dev` for both Workers against devnet, with the Docker Postgres and `RPC_URL` from the project's `.env`.
+- **Local**: `wrangler dev` for both Workers against devnet, with the Docker Postgres and `RPC_URL` from the project's `.env`; [`docs/toolchain.md`, "Aviary's local run"](../toolchain.md#aviarys-local-run) has the commands.
+  Aviary runs only here for now (owner, 2026-11-22; `PIPESCOPE-98`): `RPC_URL` is the owner's shared Helius devnet key until Aviary has its own, and `DATABASE_URL` names the Docker Postgres of `packages/terminal-db/docker-compose.yml`.
 - **Devnet**: `terminal-api-devnet` and `terminal-web-devnet` on `workers.dev`, deployed together by one root script; secrets set with `wrangler secret put --env devnet`.
+  This hosted deploy, with Neon through Hyperdrive, Aviary's own Helius key and the secrets check, is [Aviary: the hosted devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/192), after the owner's setup in [#110](https://github.com/imDev2023/testing-pipeline/issues/110).
 - The custom domain is `aviary.trade`, from [Product and suite names](https://github.com/imDev2023/testing-pipeline/issues/17); it is attached to `terminal-web` once the owner has registered it, and the Workers' own names do not change with the public name.
 
 ## Owner tasks before the build
@@ -310,7 +316,8 @@ Cut by [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipe
 They replace the slices this section first suggested: each ticket is a vertical slice, from the database to the page it shows on, so each is demonstrable on devnet on its own.
 Every ticket works as [`docs/agents/build-tickets.md`](../agents/build-tickets.md) says, and in addition:
 
-- **Verified on devnet data** (`PIPESCOPE-96`): its criteria run on Aviary's devnet deployment; every page it adds or changes is checked at 1440, 390 and 360 px wide in the light and the dark theme, with Playwright screenshots in its PR; CI runs the same tests on recorded devnet fixtures with no network.
+- **Verified on devnet data** (`PIPESCOPE-96`): its criteria run on Aviary's local run against devnet ([Environments](#environments), `PIPESCOPE-98`), and on Aviary's devnet deployment once [#192](https://github.com/imDev2023/testing-pipeline/issues/192) has deployed it; every page it adds or changes is checked at 1440, 390 and 360 px wide in the light and the dark theme, with Playwright screenshots in its PR (`pnpm terminal:e2e`, which saves them); CI runs the same tests on recorded devnet fixtures with no network.
+- **Recorded fixtures** (`PIPESCOPE-102`): in CI the local API reads devnet's RPC answers from `tests/terminal-e2e/fixtures/devnet-rpc.json` through a fixture server the Playwright run starts; a ticket whose API asks devnet something new records it with `pnpm --filter terminal-e2e record` against live devnet, and a request with no recording fails its test.
 - **Signing in tests** (`PIPESCOPE-94`): Playwright registers a Wallet Standard test wallet, only in test builds, that signs with a devnet test key from `~/.config/testing-pipeline/devnet/`; each ticket that adds a signing flow also runs it once in a real wallet extension set to devnet, driven in the owner's Chrome.
 - **The keeper page** lives at `/keeper`, linked from every page's footer and from each product panel's due keeper jobs (`PIPESCOPE-97`).
 
@@ -321,7 +328,7 @@ Owner tasks first, each a HITL task ticket on the map:
 
 The terminal, in run order:
 
-1. [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+1. [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113), built and verified on the local run; its hosted deploy is [#192](https://github.com/imDev2023/testing-pipeline/issues/192), after the owner's setup in #110
 2. [Aviary: index the router's history into Postgres, with the feed's two tables](https://github.com/imDev2023/testing-pipeline/issues/116)
 3. [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117) and [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118), side by side
 4. [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119) (after strategy versions) and [Aviary: trade plain mints: quotes, the trade box, review and sign, the fast path and the Fees page](https://github.com/imDev2023/testing-pipeline/issues/121) (after the market page), side by side

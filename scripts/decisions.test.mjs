@@ -130,6 +130,10 @@ test('IDs are unique, run in order with no gaps, and sit in their own section', 
   assert.ok(
     messages(register(block({}, 'HOOK-01'))).some((message) => /belongs in the HOOK section, not TAX/.test(message)),
   );
+  // Past 99 a product's numbers run on with three digits.
+  const hundred = Array.from({ length: 100 }, (_, i) => block({}, `TAX-${String(i + 1).padStart(2, '0')}`));
+  assert.deepEqual(messages(register(...hundred)), []);
+  assert.ok(messages(register(...hundred.slice(0, 99), block({}, 'TAX-101'))).some((message) => /expected TAX-100/.test(message)));
   const outside = ['# Decision register', '', block()].join('\n');
   assert.ok(messages(outside).some((message) => /outside a product section/.test(message)));
 });

@@ -30,7 +30,7 @@ export const CHANGES_BY = [
 
 export const MAP_URL = 'https://github.com/imDev2023/testing-pipeline/issues/1';
 
-const BLOCK_HEADING = /^### ([A-Z][A-Z0-9]*)-(\d{2}): (\S.*)$/;
+const BLOCK_HEADING = /^### ([A-Z][A-Z0-9]*)-(\d{2,}): (\S.*)$/;
 const SECTION_HEADING = /^## (.+) \(([A-Z][A-Z0-9]*)\)$/;
 const FIELD_LINE = /^- ([A-Z][A-Za-z ]*): (\S.*)$/;
 const SPECIFIED_IN_FILE = /^\[`([^`]+)`, (.+)\]\(([^()\s]+)\)$/;

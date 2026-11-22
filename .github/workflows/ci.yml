@@ -1,7 +1,7 @@
 # The one CI workflow (docs/spec/README.md, "CI"). Every pull request gets a result from the
 # `gate` job, the check `main` requires; the heavy jobs run only when on-chain code changed,
-# the `canary` job only when Canary's binary or what it builds on changed, and the gate
-# fails unless each job that ran passed.
+# the `canary` job only when Canary's binary or what it builds on changed, the `terminal` job
+# only when Aviary's TypeScript changed, and the gate fails unless each job that ran passed.
 name: ci
 
 on:
@@ -27,11 +27,12 @@ jobs:
     outputs:
       onchain: ${{ steps.paths.outputs.onchain }}
       canary: ${{ steps.paths.outputs.canary }}
+      terminal: ${{ steps.paths.outputs.terminal }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Did on-chain code or Canary change?
+      - name: Did on-chain code, Canary or Aviary change?
         id: paths
         env:
           EVENT: ${{ github.event_name }}
@@ -47,6 +48,10 @@ jobs:
           # workflow.
           CANARY_PATHS: >-
             ^crates/|^fixtures/pins\.env$|^programs/Cargo\.toml$|^\.github/workflows/ci\.yml$|^scripts/(fetch-router|fetch-pipeline|install-toolchain|toolchain-env)\.sh$
+          # Aviary's packages, the workspace files they install from, the lint config, and this
+          # workflow. Aviary's own packages alone never wake the on-chain jobs.
+          TERMINAL_PATHS: >-
+            ^(apps|packages|tests)/terminal-|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|eslint\.config\.mjs)$|^\.github/workflows/ci\.yml$
         run: |
           case "$EVENT" in
             pull_request) range="$PR_BASE...$PR_HEAD" ;;
@@ -57,10 +62,11 @@ jobs:
             echo "No diff to compare against; running everything."
             echo "onchain=true" >> "$GITHUB_OUTPUT"
             echo "canary=true" >> "$GITHUB_OUTPUT"
+            echo "terminal=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Changed files:"; echo "$changed" | sed 's/^/  /'
-          if echo "$changed" | grep -Eq "$ONCHAIN_PATHS"; then
+          if echo "$changed" | grep -Ev '^(apps|packages|tests)/terminal-' | grep -Eq "$ONCHAIN_PATHS"; then
             echo "onchain=true" >> "$GITHUB_OUTPUT"
           else
             echo "No on-chain code changed; the heavy jobs are skipped."
@@ -71,6 +77,12 @@ jobs:
           else
             echo "Canary did not change; its job is skipped."
             echo "canary=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$changed" | grep -Eq "$TERMINAL_PATHS"; then
+            echo "terminal=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Aviary did not change; its job is skipped."
+            echo "terminal=false" >> "$GITHUB_OUTPUT"
           fi
 
   no-keypairs:
@@ -184,10 +196,11 @@ jobs:
         run: scripts/fetch-pipeline.sh sdk
       - name: Install
         run: pnpm install --frozen-lockfile
+      # Aviary's packages (terminal-*) are checked by the `terminal` job, which has their database.
       - name: Type-check
-        run: pnpm typecheck
+        run: pnpm --recursive --filter '!terminal-*' typecheck
       - name: The packages' and apps' tests (strategy-actions, keeper-jobs, the keeper's settings)
-        run: pnpm --recursive --if-present test
+        run: pnpm --recursive --filter '!terminal-*' --if-present test
 
   kani:
     name: kani
@@ -276,16 +289,74 @@ jobs:
       - name: Tests (LiteSVM through devnet's router)
         run: cd crates && cargo test
 
+  # Aviary (docs/spec/pipescope-architecture.md, Build tickets): type-check, lint, the unit tests on
+  # a Postgres service, and Playwright on a local build of both Workers, whose API reads recorded
+  # devnet answers (tests/terminal-e2e/fixtures), so the job needs no network and no key.
+  terminal:
+    name: terminal (typecheck, lint, unit tests, Playwright)
+    needs: changes
+    if: needs.changes.outputs.terminal == 'true'
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: terminal
+          POSTGRES_PASSWORD: terminal
+          POSTGRES_DB: terminal
+        ports:
+          - 5462:5432
+        options: >-
+          --health-cmd "pg_isready -U terminal" --health-interval 2s --health-timeout 3s --health-retries 15
+    env:
+      DATABASE_URL: postgres://terminal:terminal@127.0.0.1:5462/terminal
+      TEST_DATABASE_URL: postgres://terminal:terminal@127.0.0.1:5462/postgres
+      E2E_RPC: fixtures
+      WRANGLER_SEND_METRICS: "false"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Type-check
+        run: pnpm --recursive --filter 'terminal-*' typecheck
+      - name: Lint
+        run: pnpm terminal:lint
+      - name: Migrate the database
+        run: pnpm terminal:db:migrate
+      - name: Unit tests (the database, the API, the web app's formatters and theme guard)
+        run: pnpm --recursive --filter 'terminal-*' --if-present test
+      - name: Playwright's browser
+        run: pnpm --filter terminal-e2e exec playwright install --with-deps chromium
+      - name: Playwright on the local run, at 1440, 390 and 360 px in both themes
+        run: pnpm terminal:e2e
+      - name: Keep the screenshots and any failure's trace
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: terminal-e2e
+          path: |
+            tests/terminal-e2e/screenshots
+            tests/terminal-e2e/test-results
+          if-no-files-found: ignore
+
   gate:
     name: gate
     if: always()
-    needs: [changes, no-keypairs, rust, typescript, kani, canary]
+    needs: [changes, no-keypairs, rust, typescript, kani, canary, terminal]
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
     steps:
       - name: Every job that had to run passed
         env:
           ONCHAIN: ${{ needs.changes.outputs.onchain }}
           CANARY: ${{ needs.changes.outputs.canary }}
+          TERMINAL: ${{ needs.changes.outputs.terminal }}
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"' | {
@@ -294,6 +365,7 @@ jobs:
               case "$job" in
                 changes | no-keypairs) expected=success ;;
                 canary) if [ "$CANARY" = true ]; then expected=success; else expected=skipped; fi ;;
+                terminal) if [ "$TERMINAL" = true ]; then expected=success; else expected=skipped; fi ;;
                 *) if [ "$ONCHAIN" = true ]; then expected=success; else expected=skipped; fi ;;
               esac
               echo "$job: $result (expected $expected)"

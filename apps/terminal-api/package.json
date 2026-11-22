@@ -1,0 +1,32 @@
+{
+    "name": "terminal-api",
+    "private": true,
+    "type": "module",
+    "description": "Aviary's API Worker: Hono with a zod contract, the every-minute dispatcher and /health (docs/spec/pipescope-architecture.md, \"The two Workers\")",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "exports": {
+        "./contract": "./src/contract.ts"
+    },
+    "scripts": {
+        "dev": "node scripts/dev.ts",
+        "typecheck": "tsc -p .",
+        "test": "vitest run",
+        "types": "wrangler types --env-interface CloudflareBindings"
+    },
+    "dependencies": {
+        "@solana/kit": "8.6.0",
+        "hono": "4.13.20",
+        "terminal-db": "workspace:*",
+        "zod": "4.6.7"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "5.20261121.1",
+        "@types/node": "24.19.2",
+        "jsonc-parser": "3.3.1",
+        "typescript": "6.0.3",
+        "vitest": "5.1.1",
+        "wrangler": "4.166.0"
+    }
+}
