@@ -108,7 +108,11 @@ pub fn wallet_or_owner(svm: &LiteSVM, key: &Pubkey) -> Result<(), Option<Pubkey>
 pub struct Sale {
     pub output: usize,
     pub vault_before: u64,
+    /// What the sale took out of the market and into the seller's account, before any
+    /// Pipeline fee taken from it (the router's `received`; since Pipeline 0.3 a sale into
+    /// the market's fee mint pays that fee out of it).
     pub received: Option<u64>,
+    /// `received` as a share of `vault_before`.
     pub share_of_vault_ppm: Option<u64>,
     pub leg: Leg,
 }
@@ -318,7 +322,7 @@ fn mint_and_sell(
         let mut sale_svm = svm.clone();
         let vault_before = token_amount(&sale_svm, &session.market.vault(j)).unwrap_or(0);
         let leg = session.leg(&mut sale_svm, path, authority, i, j, amount);
-        let received = leg.swap.as_ref().ok().map(|r| r.trader_received);
+        let received = leg.swap.as_ref().ok().map(|r| r.received);
         let share = received.and_then(|r| share_ppm(r, vault_before));
         action.effect |= share.unwrap_or(0) > 0;
         action.sales.push(Sale {
