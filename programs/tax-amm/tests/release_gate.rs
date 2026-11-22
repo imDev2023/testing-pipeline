@@ -279,6 +279,57 @@ fn the_gate_refuses_a_build_that_strands_a_market() {
     gate(&dir, &strategy_so(), None);
 }
 
+/// A copy of the fixture whose first market state has `edit` applied to its bytes, in a
+/// folder of its own named by `tag`.
+fn edited_fixture(tag: &str, edit: impl FnOnce(&mut Vec<u8>)) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("tax-amm-gate-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for entry in std::fs::read_dir(fixture()).unwrap() {
+        let path = entry.unwrap().path();
+        std::fs::copy(&path, dir.join(path.file_name().unwrap())).unwrap();
+    }
+    let accounts = snapshot(&dir);
+    let state = market_states(&accounts)[0];
+    let path = dir.join(format!("{state}.json"));
+    let mut record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let engine = base64::engine::general_purpose::STANDARD;
+    let mut data = engine
+        .decode(record["account"]["data"][0].as_str().unwrap())
+        .unwrap();
+    edit(&mut data);
+    record["account"]["data"][0] = engine.encode(&data).into();
+    std::fs::write(&path, record.to_string()).unwrap();
+    dir
+}
+
+/// A market with a pending rate change (docs/spec/tax-amm.md, "Rates") is quoted at the rates
+/// in force at the snapshot's slot: the pending ones once their slot is reached, the market's
+/// before then, each at the spec's price, which `read` checks.
+#[test]
+fn the_gate_quotes_a_market_with_a_pending_rate_change_at_the_rates_in_force() {
+    let slot = snapshot_slot(&fixture());
+    let mut quotes = vec![];
+    for (tag, from_slot) in [("due", slot), ("waiting", slot + 1)] {
+        let dir = edited_fixture(tag, |data| {
+            // The pending buy and sell tax, each its range's minimum (offsets 178 and 182),
+            // then the slot they apply from, at the offsets `tests/layout.rs` pins.
+            let (buy_min, sell_min) = (data[178..180].to_vec(), data[182..184].to_vec());
+            assert_ne!(
+                (&data[174..176], &data[176..178]),
+                (&buy_min[..], &sell_min[..]),
+                "a change from the rates in force"
+            );
+            data[532..534].copy_from_slice(&buy_min);
+            data[534..536].copy_from_slice(&sell_min);
+            data[536..544].copy_from_slice(&from_slot.to_le_bytes());
+        });
+        let readings = gate(&dir, &strategy_so(), None);
+        quotes.push(readings[0].quotes.clone());
+    }
+    assert_ne!(quotes[0], quotes[1], "a due change is in force, a waiting one is not");
+}
+
 /// The live gate, which `scripts/pre-deploy.sh` runs on a fresh copy of the cluster's
 /// markets (see the module's docs for its environment variables). It writes what it read
 /// to `TAX_AMM_GATE_REPORT` when that is set.
