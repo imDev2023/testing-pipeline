@@ -29,6 +29,30 @@ pub const SUITE_SHARE_BPS: u16 = 1_000;
 #[constant]
 pub const SUITE_TREASURY: Pubkey = pubkey!("CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF");
 
+/// The containment hook, `programs/containment-hook`: the one transfer hook program a
+/// market's mint may name, and only with that mint's unlock PDA (`["unlock", mint]` under
+/// it, [`CONTAINMENT_UNLOCK_SEED`]) as its hook authority, which only ever clears the hook
+/// (docs/spec/tax-amm.md, "Mint rules"; hardening finding H007, #67). Every other hook
+/// program could refuse sells while buys still land. The containment hook depends on this
+/// crate, so its id is written here, and its tests pin it to its `declare_id!`.
+pub const CONTAINMENT_HOOK_ID: Pubkey = pubkey!("aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv");
+
+/// The seed of a mint's unlock PDA under [`CONTAINMENT_HOOK_ID`], the containment hook's
+/// `UNLOCK_SEED`.
+pub const CONTAINMENT_UNLOCK_SEED: &[u8] = b"unlock";
+
+/// The quote mints, which may keep a mint or a freeze authority when a market is seeded:
+/// both native SOL mints, whose authorities are none anyway, and the cluster's USDC, Circle's
+/// devnet mint (a mainnet build names mainnet's, `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`).
+/// Every other mint must have neither when its market is seeded, so nobody can mint into the
+/// curve or freeze a vault (docs/spec/tax-amm.md, "Mint rules"; hardening findings H008 and
+/// H016, #67).
+pub const QUOTE_MINTS: [Pubkey; 3] = [
+    crate::params::NATIVE_MINTS[0],
+    crate::params::NATIVE_MINTS[1],
+    pubkey!("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"),
+];
+
 /// Tax recipients per market.
 pub const MAX_RECIPIENTS: usize = 4;
 

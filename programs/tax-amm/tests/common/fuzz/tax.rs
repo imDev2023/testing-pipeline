@@ -75,8 +75,11 @@ pub struct TaxAmm;
 pub enum MintKind {
     SplToken,
     Token2022,
-    /// Token-2022 with Pipeline's `test-hook`, which approves every transfer, as its hook.
-    Hooked,
+    /// Token-2022 with a transfer hook extension that is cleared, as a contained mint's is
+    /// after its unlock: the one kind of hooked mint a market accepts besides a contained
+    /// mint (docs/spec/tax-amm.md, "Mint rules"), which runs no hook. Live contained mints
+    /// are the containment hook's fuzzer's, through [`MintKind::Outside`].
+    ClearedHook,
     /// SPL Token's native SOL mint, which can't be burned.
     NativeSol,
     /// A Token-2022 mint a product built on this one creates through its [`Surroundings`],
@@ -417,7 +420,7 @@ pub struct TaxWorld {
 }
 
 thread_local! {
-    /// The router configured and the tax AMM, `test-hook` and the stand-in launchpad loaded
+    /// The router configured and the tax AMM, the containment hook and the stand-in launchpad loaded
     /// and registered, once per thread; every world starts from a copy.
     static BASE: RefCell<Option<Env>> = const { RefCell::new(None) };
 }
@@ -428,7 +431,7 @@ pub fn fresh_env() -> Env {
         let mut base = base.borrow_mut();
         let base = base.get_or_insert_with(|| {
             let mut env = Env::new();
-            env.add_test_hook();
+            env.add_containment_hook();
             env.add_launchpad();
             env
         });
@@ -684,7 +687,7 @@ impl TaxWorld {
                     env.create_mint_at(&at, &TOKEN_2022, MintOptions::default()),
                     TOKEN_2022,
                 ),
-                MintKind::Hooked => (env.create_mint_with_test_hook_at(&at), TOKEN_2022),
+                MintKind::ClearedHook => (env.create_mint_with_cleared_hook_at(&at), TOKEN_2022),
                 MintKind::NativeSol => (env.write_native_mint(&NATIVE_MINTS[0], &TOKEN), TOKEN),
                 MintKind::Outside => (surroundings.create_mint(&mut env, &at), TOKEN_2022),
             }
@@ -1416,7 +1419,7 @@ impl Product for TaxAmm {
         let mint = prop_oneof![
             3 => Just(MintKind::SplToken),
             3 => Just(MintKind::Token2022),
-            2 => Just(MintKind::Hooked),
+            2 => Just(MintKind::ClearedHook),
             2 => Just(MintKind::NativeSol),
         ];
         let split = (

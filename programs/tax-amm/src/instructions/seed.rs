@@ -110,7 +110,8 @@ pub(crate) struct SeedSide<'info> {
 /// Moves each side's amount from a token account the seeder owns into the market's vault, as
 /// the `seed` action and `pipeline_seed_liquidity` both do, and returns what arrived in each
 /// vault, in mint order, which the market records as its real reserves. Each side's real
-/// amount must be above 0, except the virtual side's when the market has a virtual reserve.
+/// amount must be above 0, except the virtual side's when the market has a virtual reserve,
+/// and neither mint may keep a lever the seed refuses ([`crate::mint_levers::check_authorities`]).
 pub(crate) fn take_seed<'info>(
     market: &TaxMarket,
     seeder: &AccountInfo<'info>,
@@ -122,6 +123,15 @@ pub(crate) fn take_seed<'info>(
     let may_be_empty = |i: usize| market.virtual_side as usize == i && market.virtual_reserve > 0;
     let mut arrived = [0u64; 2];
     for (i, side) in sides.into_iter().enumerate() {
+        // No lever over either mint survives the opening (`crate::mint_levers`).
+        crate::mint_levers::check_authorities(side.mint.key, &side.mint.try_borrow_data()?)
+            .map_err(|refusal| {
+                msg!(
+                    "Mint {} keeps an authority a market refuses at its seed",
+                    side.mint.key
+                );
+                error!(refusal)
+            })?;
         if amounts[i] > 0 {
             // From token accounts the seeder owns, never one it is only a delegate of.
             require_keys_eq!(

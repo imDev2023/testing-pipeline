@@ -179,13 +179,15 @@ fn the_creation_transaction_seeds_the_market_it_creates() {
         ("two SPL Token mints", [0, 0]),
         ("two Token-2022 mints", [1, 1]),
         ("an SPL Token and a Token-2022 mint", [0, 1]),
-        ("an SPL Token mint and a hooked mint", [0, 2]),
+        // A contained mint is bound between its market's creation and its seed, so only a
+        // cleared hook can be seeded in the creation transaction.
+        ("an SPL Token mint and a mint whose hook is cleared", [0, 2]),
     ] {
         let mut env = Env::new();
         let mints = kinds.map(|kind| match kind {
             0 => (env.create_mint(&TOKEN), TOKEN),
             1 => (env.create_mint(&TOKEN_2022), TOKEN_2022),
-            _ => (env.create_mint_with_test_hook(), TOKEN_2022),
+            _ => (env.create_mint_with_cleared_hook(), TOKEN_2022),
         });
         let state = Keypair::new();
         let mint_keys = mints.map(|(mint, _)| mint);

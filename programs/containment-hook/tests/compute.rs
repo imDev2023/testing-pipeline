@@ -47,6 +47,7 @@ fn each_further_bump_costs_bind_the_same() {
         let mut env = hook_env();
         let at = Keypair::new_from_array([k; 32]);
         let options = MintOptions {
+            mint_authority: true,
             transfer_hook: Some(hook_id()),
             transfer_hook_authority: Some(unlock_pda(&at.pubkey())),
             ..MintOptions::default()

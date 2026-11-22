@@ -34,6 +34,8 @@ Terms are as in `GLOSSARY.md`: tax market, tax side, buy tax, sell tax, tax auth
 | `SUITE_SHARE_BPS` | 1000 (10% of the tax) | The suite share, taken from every tax before the creator's split |
 | `SUITE_TREASURY` | set at build time | The wallet the suite share is paid to; on devnet a wallet whose key is in `~/.config/testing-pipeline/devnet/` |
 | `MAX_RECIPIENTS` | 4 | Tax recipients per market |
+| `CONTAINMENT_HOOK_ID` | the containment hook's program id, with its unlock seed `CONTAINMENT_UNLOCK_SEED` | The one transfer hook program a market's mint may name, only with the mint's unlock PDA as hook authority ("Mint rules") |
+| `QUOTE_MINTS` | both native SOL mints and the cluster's USDC | The mints that may keep a mint or freeze authority when a market is seeded ("Mint rules"); a mainnet build names mainnet's USDC |
 
 The constants are compiled into the program; changing one is a program upgrade, which ends when the program is frozen.
 
@@ -89,10 +91,15 @@ The constants are compiled into the program; changing one is a program upgrade, 
 
 ### Mint rules
 
-- A Token-2022 mint may carry only these mint extensions: transfer hook (any hook program), metadata pointer, token metadata, group pointer, group member pointer, token group and token group member.
+- A Token-2022 mint may carry only these mint extensions: transfer hook, metadata pointer, token metadata, group pointer, group member pointer, token group and token group member.
 - Every other mint extension is refused at creation, including transfer fee, permanent delegate (it could take tokens out of the vaults), confidential transfers, pausable, default account state, non-transferable, mint close authority, interest-bearing, scaled UI amount and permissioned burn, as well as any extension the program doesn't recognise.
-- Mint and freeze authorities are allowed, since USDC has both; Aviary shows them.
-- In Pipeline's trust flags this means a tax market's mints can only ever show `token-2022`, `mint-authority`, `freeze-authority`, `transfer-hook` and `transfer-hook-authority`; a contained token shows the last two until its unlock clears both.
+- A transfer hook is refused at creation unless it is cleared (no hook program and no hook authority, all 64 bytes zero, as a contained token's is after its unlock) or is the containment hook with the mint's unlock PDA (`["unlock", mint]` under the containment hook) as its hook authority.
+  So no hook program but the containment hook ever runs inside a market's transfers, and no hook authority but the containment hook's unlock PDA, which only ever clears the hook, can change one: a hook that refused every sell while buys still landed would lock buyers in (hardening finding H007, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+- When a market is seeded, through the `seed` action or `pipeline_seed_liquidity`, each of its mints must have no mint authority and no freeze authority, unless it is a quote mint: SPL Token's and Token-2022's native SOL mints and the cluster's USDC (Circle's devnet mint, `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`).
+  A mint authority could mint and sell into the curve, taking the real reserve the seed locked; a freeze authority could freeze a vault or any holder (hardening findings H008 and H016, #67).
+  Creation still accepts both, so a contained token can be bound to its home market, which needs its mint authority's signature, and have it revoked before the seed.
+  Token-2022 never sets an authority that is none again, so what the seed checked holds for the market's life.
+- In Pipeline's trust flags this means a tax market's mints can only ever show `token-2022`, `transfer-hook` and `transfer-hook-authority`, and the quote mints' `mint-authority` and `freeze-authority`; a contained token shows `transfer-hook` and `transfer-hook-authority` until its unlock clears both.
 - The trust flags describe strategy programs and mints, not markets, so no flag ever says a market is taxed: the strategy metadata declares it (category `amm`, tag `tax`) and Aviary reads each market's rates, bounds, authority and recipients from its market state.
 
 ### Creating a market
@@ -105,14 +112,17 @@ One transaction, as Pipeline's guide recommends:
 
 A launchpad graduating a token instead calls `pipeline_seed_liquidity`, then the router's `register_existing_market` and `init_fee_account` for each mint, in one transaction.
 
-How big that transaction is, against a transaction's 1,232 bytes without an address lookup table, with the creator as the seeder, measured on 2026-11-12 by [Tax AMM: seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60) (`programs/tax-amm/tests/seed.rs`, as a legacy transaction):
+A contained token's home market is created, then bound with the containment hook's `bind`, signed by the token's mint authority, which is then revoked, and only then seeded: the seed refuses a mint that keeps its mint authority ("Mint rules").
+A contained token can't graduate from a launchpad, since `pipeline_seed_liquidity` creates and seeds in one call, leaving no moment to bind it (`HOOK-14`).
 
-- 1,210 bytes for two SPL Token mints or two Token-2022 mints; the demo script's version 0 transaction is 2 bytes longer, 1,212.
-- 1,242 bytes for one of each, and 1,308 with a hooked mint (Pipeline's `test-hook`, which adds the fewest accounts a hook can); a seeder other than the creator adds 96 bytes.
-- So a market pairing a Token-2022 token with SOL or USDC, and every contained token's home market, needs an address lookup table for its creation transaction, or sends the seed as a second transaction (the market refuses every swap until then); that choice belongs to [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75).
+How big the creation transaction is, against a transaction's 1,232 bytes without an address lookup table, with the creator as the seeder, measured on 2026-11-22 by [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67) (`programs/tax-amm/tests/seed.rs`, as a legacy transaction; on 2026-11-12, before Pipeline 0.2 took the router's config account out of `create_market`, each was 33 bytes longer):
 
-A launchpad's graduation transaction is about as big, measured on 2026-11-12 by [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63) with the stand-in launchpad, paid for by the creator (`programs/tax-amm/tests/seed_liquidity.rs`, as a legacy transaction): 1,212 bytes for two SPL Token mints or two Token-2022 mints, 1,244 for one of each and 1,310 with a hooked mint.
-A real launchpad's own accounts change these numbers, and a pair across token programs or with a hook needs an address lookup table there too.
+- 1,177 bytes for two SPL Token mints or two Token-2022 mints.
+- 1,209 bytes for one of each, the same with a mint whose transfer hook is cleared; a seeder other than the creator adds 96 bytes.
+- So a market pairing a Token-2022 token with SOL or USDC fits, with 23 bytes to spare, only while the creator seeds it; with another seeder it needs an address lookup table, or sends the seed as a second transaction (the market refuses every swap until then); that choice belongs to [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75).
+
+A launchpad's graduation transaction is about as big, measured the same day with the stand-in launchpad, paid for by the creator (`programs/tax-amm/tests/seed_liquidity.rs`, as a legacy transaction): 1,179 bytes for two SPL Token mints or two Token-2022 mints, 1,211 for one of each or with a cleared hook.
+A real launchpad's own accounts change these numbers, and a pair across token programs may need an address lookup table there.
 
 ## Liquidity
 
@@ -133,7 +143,7 @@ A real launchpad's own accounts change these numbers, and a pair across token pr
 - There is no instruction that takes liquidity out of a market, and no LP shares, so nobody, the creator and us included, can pull liquidity.
 - Tokens sent to a vault outside a swap or the seed are donations: they are never credited as input, never paid out, and stay in the vault.
 - Locked means that no instruction removes liquidity; it does not mean the seed's value is safe from sellers.
-  Tokens held outside the market, whether kept back at launch or minted later by a mint authority, sell into the curve like any others, and on a market with a virtual reserve they can take everything buyers paid in, since the virtual side is priced but never paid out (hardening findings H036, H086, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  Tokens held outside the market when it is seeded (no mint authority survives the seed, "Mint rules") sell into the curve like any others, and on a market with a virtual reserve they can take everything buyers paid in, since the virtual side is priced but never paid out (hardening findings H036, H086, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
 
 ### Virtual reserve
 
@@ -323,10 +333,11 @@ Decided with the owner on 2026-11-10 in [Cut the containment hook and tax AMM bu
 
 The owner's standing rule of 2026-11-10 keeps every decision cheap to change, since each is a default MetalLegBob may change.
 
-- The four values of "Constants" are build-time constants in one config module of the program, and no other file repeats them.
+- The values of "Constants" are build-time constants in one config module of the program, and no other file repeats them.
   `MAX_TAX_BPS`, `SUITE_SHARE_BPS` and `SUITE_TREASURY` are also published in the program's IDL (Anchor's `#[constant]`), so the TypeScript client generated from it carries them for Aviary's launch form and tax panel and the demo script, rather than any of them restating one.
 - The mint extension allowlist of "Mint rules", and the check that applies it, live in one small library crate of the on-chain workspace.
   The tax AMM, the containment hook, the buy wall AMM and the lending AMM all depend on that crate, so there is one list and never a second copy; a product with a stricter rule adds it on top.
+  The tax AMM's own rules on top of it, on the transfer hook at creation and the authorities at the seed, are one module of the program (`src/mint_levers.rs`), reading the values of "Constants".
   The crate is `programs/mint-rules`; it depends on nothing and reads a mint's extension entries itself, the way Token-2022 lays them out, so an extension Token-2022 adds after the crate was written is refused by its number rather than misread.
 - Both are fixed on-chain because traders rely on them, so they can change until a program is frozen and not after.
 - Every other policy value is a creation parameter, chosen per market and held in its market state: the rates, their ranges, the tax authority, the tax recipients and their shares, the burn share and the virtual reserve.

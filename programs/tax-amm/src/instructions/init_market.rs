@@ -199,7 +199,8 @@ pub fn pipeline_market_signer(market_state: &Pubkey) -> Pubkey {
     .0
 }
 
-/// Refuses a mint its token program doesn't own, or one the mint rules refuse.
+/// Refuses a mint its token program doesn't own, one the shared mint rules refuse, or one
+/// whose transfer hook the tax AMM's own rules refuse ([`crate::mint_levers`]).
 fn check_mint(mint: &UncheckedAccount, token_program: &Interface<TokenInterface>) -> Result<()> {
     require_keys_eq!(
         *mint.owner,
@@ -215,6 +216,10 @@ fn check_mint(mint: &UncheckedAccount, token_program: &Interface<TokenInterface>
         mint_rules::MintRefusal::NotATokenProgram | mint_rules::MintRefusal::NotAMint => {
             error!(StrategyError::NotAMint)
         }
+    })?;
+    crate::mint_levers::check_transfer_hook(mint.key, &data).map_err(|refusal| {
+        msg!("Mint {} has a transfer hook a market refuses", mint.key);
+        error!(refusal)
     })
 }
 

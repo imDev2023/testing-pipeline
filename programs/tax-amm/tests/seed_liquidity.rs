@@ -406,7 +406,7 @@ fn a_seed_larger_than_the_escrow_takes_nothing() {
 }
 
 #[test]
-fn token_2022_and_hooked_mints_graduate_and_trade() {
+fn token_2022_mints_and_mints_whose_hook_is_cleared_graduate_and_trade() {
     let cases: Vec<(&str, MintsOf)> = vec![
         (
             "two Token-2022 mints",
@@ -418,9 +418,9 @@ fn token_2022_and_hooked_mints_graduate_and_trade() {
             }),
         ),
         (
-            "SPL Token and a mint with Pipeline's test-hook",
+            "SPL Token and a mint whose transfer hook is cleared",
             Box::new(|env| {
-                let hooked = env.create_mint_with_test_hook();
+                let hooked = env.create_mint_with_cleared_hook();
                 [(env.create_mint(&TOKEN), TOKEN), (hooked, TOKEN_2022)]
             }),
         ),
@@ -501,10 +501,10 @@ fn the_graduation_transaction_fits_for_mints_of_one_token_program() {
             }),
         ),
         (
-            "an SPL Token mint and a hooked mint",
+            "an SPL Token mint and a mint whose transfer hook is cleared",
             false,
             Box::new(|env| {
-                let hooked = env.create_mint_with_test_hook();
+                let hooked = env.create_mint_with_cleared_hook();
                 [(env.create_mint(&TOKEN), TOKEN), (hooked, TOKEN_2022)]
             }),
         ),

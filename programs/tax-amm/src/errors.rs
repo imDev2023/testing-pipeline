@@ -91,4 +91,14 @@ pub enum StrategyError {
     NewerStateVersion,
     #[msg("Arithmetic underflow")]
     Underflow,
+    #[msg(
+        "A mint's transfer hook must be cleared, or be the containment hook with the mint's unlock PDA as its authority"
+    )]
+    TransferHookNotAllowed,
+    #[msg("A mint other than a quote mint must have no mint authority when its market is seeded")]
+    MintAuthoritySet,
+    #[msg(
+        "A mint other than a quote mint must have no freeze authority when its market is seeded"
+    )]
+    FreezeAuthoritySet,
 }

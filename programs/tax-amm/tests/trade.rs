@@ -122,28 +122,20 @@ fn the_tax_maths_both_ways_at_every_rate_on_both_token_programs_and_tax_sides() 
 }
 
 #[test]
-fn the_tax_maths_both_ways_with_a_transfer_hook_on_the_tax_side_and_on_the_other() {
-    // Pipeline's test-hook runs on every transfer of the hooked mint: the seed's, the
-    // router's input transfer and fee, and the tax AMM's output transfer.
-    for hooked_side in [0usize, 1] {
-        for tax_side in [0u8, 1] {
-            let mut env = Env::new();
-            let hooked = env.create_mint_with_test_hook();
-            let plain = env.create_mint(&TOKEN);
-            let mut mints = [(plain, TOKEN), (plain, TOKEN)];
-            mints[hooked_side] = (hooked, TOKEN_2022);
-            let market = env.seeded_market(
-                mints,
-                &params(tax_side, (300, 500)),
-                [100_000_000_000, 200_000_000_000],
-            );
-            let model = trade_and_check(
-                &mut env,
-                &market,
-                &[(0, 1, 1_000_000_000), (1, 0, 3_333_333_333), (0, 1, 999)],
-            );
-            assert!(model.tax_collected > 0);
-        }
+fn the_tax_maths_both_ways_with_a_contained_mint_on_either_side() {
+    // The containment hook, the one transfer hook a market's mint may run, runs on every
+    // transfer of the contained mint in its home market: the seed's, the router's input
+    // transfer and fee, and the tax AMM's output transfer. Its home market takes its tax in
+    // the other mint.
+    for contained_side in [0usize, 1] {
+        let mut env = Env::new();
+        let market = env.contained_market(contained_side, [100_000_000_000, 200_000_000_000]);
+        let model = trade_and_check(
+            &mut env,
+            &market,
+            &[(0, 1, 1_000_000_000), (1, 0, 3_333_333_333), (0, 1, 999)],
+        );
+        assert!(model.tax_collected > 0);
     }
 }
 

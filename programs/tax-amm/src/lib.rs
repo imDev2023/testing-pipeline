@@ -41,6 +41,7 @@ pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod interface;
+pub mod mint_levers;
 pub mod params;
 pub mod pricing;
 pub mod split;

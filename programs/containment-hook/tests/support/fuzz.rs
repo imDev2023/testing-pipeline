@@ -388,6 +388,7 @@ struct Containment<'a> {
 impl Surroundings for Containment<'_> {
     fn create_mint(&self, env: &mut Env, at: &Keypair) -> Pubkey {
         let options = MintOptions {
+            mint_authority: true,
             transfer_hook: Some(hook_id()),
             transfer_hook_authority: Some(unlock_pda(&at.pubkey())),
             ..MintOptions::default()
@@ -407,6 +408,7 @@ impl Surroundings for Containment<'_> {
                 .first()
                 .map(|cost| cost.saturating_sub(search)),
         );
+        revoke_mint_authority(env, &mint);
         Ok(())
     }
 }

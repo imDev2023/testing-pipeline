@@ -16,6 +16,7 @@ use mint_rules::{TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID};
 use pipeline_client::Pubkey;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
+use solana_signer::Signer;
 use spl_token_2022_interface::extension::group_member_pointer::GroupMemberPointer;
 use spl_token_2022_interface::extension::group_pointer::GroupPointer;
 use spl_token_2022_interface::extension::metadata_pointer::MetadataPointer;
@@ -133,18 +134,23 @@ fn a_token_2022_market_is_created() {
     }
 }
 
+/// A Token-2022 mint whose transfer hook extension names `program` and `authority`, the
+/// default key standing for none, as Token-2022 itself sets it up.
+fn hooked_mint(
+    env: &mut Env,
+    program: Pubkey,
+    authority: impl FnOnce(&Pubkey) -> Pubkey,
+) -> Pubkey {
+    env.create_hooked_mint(&program, authority, MintOptions::default())
+}
+
+/// A contained mint, the one kind of live hook a market accepts: the containment hook, with
+/// the mint's unlock PDA as its hook authority (docs/spec/tax-amm.md, "Mint rules").
 #[test]
-fn a_mint_with_a_transfer_hook_is_accepted() {
+fn a_contained_mint_is_accepted() {
     let mut env = Env::new();
-    let hook_program = Pubkey::new_unique();
-    let hooked = env.create_mint_with(
-        &TOKEN_2022,
-        MintOptions {
-            transfer_hook: Some(hook_program),
-            ..MintOptions::default()
-        },
-    );
-    let market = try_market(&mut env, hooked).unwrap();
+    let contained = hooked_mint(&mut env, containment_hook_id(), unlock_pda);
+    let market = try_market(&mut env, contained).unwrap();
     // Token-2022 sized the hooked mint's vault for its transfer-hook account extension.
     let vault = env.svm.get_account(&market.vaults[0]).unwrap();
     assert_eq!(vault.owner, TOKEN_2022);
@@ -152,13 +158,89 @@ fn a_mint_with_a_transfer_hook_is_accepted() {
     assert_eq!(&vault.data[32..64], market.authority.as_ref());
 }
 
+/// A transfer hook extension with no program and no authority, as a contained mint's is
+/// after its unlock, runs no hook and never can again.
 #[test]
-fn a_mint_with_a_mint_and_a_freeze_authority_is_accepted() {
+fn a_mint_whose_transfer_hook_is_cleared_is_accepted() {
+    let mut env = Env::new();
+    let cleared = env.create_mint_with_cleared_hook();
+    let data = env.svm.get_account(&cleared).unwrap().data;
+    let hook = find_extension(&data, ExtensionType::TransferHook as u16).unwrap();
+    assert_eq!(hook, &[0u8; 64][..], "all 64 bytes zero");
+    try_market(&mut env, cleared).unwrap();
+}
+
+/// How a test derives a hook authority from the mint's address.
+type HookAuthority = Box<dyn Fn(&Pubkey) -> Pubkey>;
+
+/// Hardening finding H007 (#67): a live transfer hook of any other program, or one whose
+/// authority could repoint it, could refuse every sell while buys still land, so creation
+/// refuses it, through the router and through a launchpad alike.
+#[test]
+fn sos_h007_a_mint_whose_transfer_hook_could_refuse_sells_is_refused() {
+    let foreign = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let cases: [(&str, Pubkey, HookAuthority); 5] = [
+        (
+            "another program, a wallet its authority",
+            foreign,
+            Box::new(move |_| wallet),
+        ),
+        (
+            "another program, the unlock PDA its authority",
+            foreign,
+            Box::new(unlock_pda),
+        ),
+        (
+            "the containment hook, a wallet its authority",
+            containment_hook_id(),
+            Box::new(move |_| wallet),
+        ),
+        (
+            "the containment hook, another mint's unlock PDA its authority",
+            containment_hook_id(),
+            Box::new(|_| unlock_pda(&Pubkey::new_unique())),
+        ),
+        (
+            "no program, but an authority that could set one",
+            Pubkey::default(),
+            Box::new(move |_| wallet),
+        ),
+    ];
+    for (what, program, authority) in cases {
+        println!("{what}");
+        let mut env = Env::new();
+        let mint = hooked_mint(&mut env, program, &authority);
+        assert_refused(
+            try_market(&mut env, mint),
+            StrategyError::TransferHookNotAllowed,
+        );
+
+        let mut env = Env::new();
+        let mint = hooked_mint(&mut env, program, &authority);
+        let other = env.create_mint(&TOKEN);
+        let launch = env.launch([(mint, TOKEN_2022), (other, TOKEN)], [1_000, 1_000]);
+        let graduate = env.graduate_instruction(
+            &launch,
+            [1_000, 1_000],
+            init_data(&valid_params(&Pubkey::new_unique())),
+            launchpad::seed_liquidity_own_accounts(&launch),
+        );
+        assert_refused(
+            env.send_as_creator(&launch, &[graduate]),
+            StrategyError::TransferHookNotAllowed,
+        );
+    }
+}
+
+#[test]
+fn a_mint_with_a_mint_and_a_freeze_authority_is_accepted_at_creation() {
     for token_program in [TOKEN, TOKEN_2022] {
         let mut env = Env::new();
         let mint = env.create_mint_with(
             &token_program,
             MintOptions {
+                mint_authority: true,
                 freeze_authority: true,
                 ..MintOptions::default()
             },
@@ -207,6 +289,104 @@ fn an_account_that_is_not_a_mint_is_refused() {
         env.create_tax_market([(wallet, TOKEN), (other, TOKEN)], &params),
         StrategyError::WrongTokenProgram,
     );
+}
+
+// At the seed, through both seed paths: a mint outside the quote list may keep neither a
+// mint authority nor a freeze authority (hardening findings H008 and H016, #67).
+
+const SEEDED: [u64; 2] = [1_000_000_000, 2_000_000_000];
+
+/// Seeds a new market of `mints` through the `seed` action, then through a launchpad's
+/// `pipeline_seed_liquidity`, each in a fresh VM whose mints `mints_of` makes.
+fn seed_both_ways(mints_of: &dyn Fn(&mut Env) -> [(Pubkey, Pubkey); 2]) -> [Result<(), String>; 2] {
+    let mut env = Env::new();
+    let mints = mints_of(&mut env);
+    let seeder = solana_keypair::Keypair::new();
+    let params = valid_params(&seeder.pubkey());
+    let market = env.create_tax_market(mints, &params).unwrap();
+    env.fund(&seeder.pubkey(), &market, SEEDED);
+    let by_action = env.seed(&market, &seeder, SEEDED).map(|_| ());
+
+    let mut env = Env::new();
+    let mints = mints_of(&mut env);
+    let launch = env.launch(mints, SEEDED);
+    let by_launchpad = env
+        .graduate(&launch, &valid_params(&Pubkey::new_unique()), SEEDED)
+        .map(|_| ());
+    [by_action, by_launchpad]
+}
+
+/// A mint of `token_program` with `options`, against a plain SPL Token mint on the other
+/// side, at index `side`.
+fn pair_with(
+    side: usize,
+    token_program: Pubkey,
+    options: MintOptions,
+) -> impl Fn(&mut Env) -> [(Pubkey, Pubkey); 2] {
+    move |env| {
+        let mut mints = [(env.create_mint(&TOKEN), TOKEN); 2];
+        mints[1 - side] = (env.create_mint(&TOKEN), TOKEN);
+        mints[side] = (env.create_mint_with(&token_program, options), token_program);
+        mints
+    }
+}
+
+/// Hardening finding H008 (#67): whoever keeps a mint authority could mint and sell into
+/// the curve, taking the real reserve the seed locked for good, so the seed refuses it.
+#[test]
+fn sos_h008_a_mint_with_a_mint_authority_is_refused_at_the_seed() {
+    for token_program in [TOKEN, TOKEN_2022] {
+        for side in [0, 1] {
+            let options = MintOptions {
+                mint_authority: true,
+                ..MintOptions::default()
+            };
+            for result in seed_both_ways(&pair_with(side, token_program, options)) {
+                assert_refused(result, StrategyError::MintAuthoritySet);
+            }
+        }
+    }
+}
+
+/// Hardening finding H016 (#67): a freeze authority could freeze a vault, stopping every
+/// trade, or any holder, so the seed refuses it.
+#[test]
+fn sos_h016_a_mint_with_a_freeze_authority_is_refused_at_the_seed() {
+    for token_program in [TOKEN, TOKEN_2022] {
+        for side in [0, 1] {
+            let options = MintOptions {
+                freeze_authority: true,
+                ..MintOptions::default()
+            };
+            for result in seed_both_ways(&pair_with(side, token_program, options)) {
+                assert_refused(result, StrategyError::FreezeAuthoritySet);
+            }
+        }
+    }
+}
+
+/// The quote mints may keep their authorities: the cluster's USDC has both, and the native
+/// SOL mints have none to begin with.
+#[test]
+fn a_market_against_a_quote_mint_is_seeded_whatever_its_authorities() {
+    let usdc = |env: &mut Env| {
+        [
+            (env.create_mint(&TOKEN), TOKEN),
+            (env.write_usdc_mint(), TOKEN),
+        ]
+    };
+    for result in seed_both_ways(&usdc) {
+        result.unwrap();
+    }
+    for (native, token_program) in [(0, TOKEN), (1, TOKEN_2022)] {
+        let sol = move |env: &mut Env| {
+            let sol = env.write_native_mint(&tax_amm::params::NATIVE_MINTS[native], &token_program);
+            [(sol, token_program), (env.create_mint(&TOKEN), TOKEN)]
+        };
+        for result in seed_both_ways(&sol) {
+            result.unwrap();
+        }
+    }
 }
 
 /// A Token-2022 mint with an account type and no extension entries is 166 bytes long, and

@@ -77,8 +77,8 @@ const SHAPES_REACHED: [&str; 22] = [
     "2 tax recipients",
     "3 tax recipients",
     "4 tax recipients",
-    "Hooked at index 0",
-    "Hooked at index 1",
+    "ClearedHook at index 0",
+    "ClearedHook at index 1",
     "NativeSol at index 0",
     "NativeSol at index 1",
     "SplToken at index 0",
@@ -515,6 +515,22 @@ fn sos_t01_a_refusal_raised_by_another_program_is_never_taken_for_the_strategys(
     assert_eq!(refusal(&dust), "ZeroOutput");
 }
 
+/// A contained mint as the world's mint of kind `Outside`, bound to the world's market and
+/// its mint authority revoked before the seed, as a launch does: the one live transfer hook a
+/// market's mint may run (docs/spec/tax-amm.md, "Mint rules").
+struct Contained;
+
+impl Surroundings for Contained {
+    fn create_mint(&self, env: &mut Env, at: &Keypair) -> Pubkey {
+        env.create_contained_mint_at(at)
+    }
+
+    fn before_seed(&self, env: &mut Env, market: &Market) -> Result<(), String> {
+        env.contain(&market.mints[0], market);
+        Ok(())
+    }
+}
+
 /// Hardening finding T02 (#67): the fuzzer checked no compute on a market with a hooked mint,
 /// although most instructions there never call the hook (the tax authority's actions,
 /// quotes, a swap paying out the unhooked mint, `distribute` on the unhooked side), about a
@@ -523,7 +539,7 @@ fn sos_t01_a_refusal_raised_by_another_program_is_never_taken_for_the_strategys(
 #[test]
 fn sos_t02_instructions_that_never_call_the_hook_are_measured_on_hooked_markets() {
     let shape = Shape {
-        mints: [Hooked, SplToken],
+        mints: [Outside, SplToken],
         tax_side: 1,
         ranges: [[0, 1_000], [0, 1_000]],
         rates: [300, 300],
@@ -537,7 +553,7 @@ fn sos_t02_instructions_that_never_call_the_hook_are_measured_on_hooked_markets(
         creation: CreateAndSeed,
         keys: 0,
     };
-    let mut world = TaxAmm::world(&shape).unwrap();
+    let mut world = TaxWorld::new_in(fresh_env(), &shape, &Contained).unwrap();
     let measured = |world: &mut TaxWorld, step: Step| -> Vec<&'static str> {
         let outcome = TaxAmm::apply(world, &step);
         assert!(outcome.result.is_ok(), "{step:?}: {outcome:?}");

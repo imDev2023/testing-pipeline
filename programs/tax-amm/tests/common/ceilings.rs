@@ -26,6 +26,20 @@ pub const RENOUNCE_TAX_AUTHORITY: u64 = 20_000;
 /// `create_program_address`.
 pub const BUMP_TRY: u64 = 1_500;
 
+/// The compute creating a market spends searching for a contained mint's unlock PDA beyond
+/// its first bump, to check the mint's hook authority (docs/spec/tax-amm.md, "Mint rules"),
+/// which the ceilings leave out; 0 for a mint whose hook is not the containment hook.
+pub fn unlock_bump_search(env: &super::Env, mint: &pipeline_client::Pubkey) -> u64 {
+    if env.hook_program(mint) != Some(super::containment_hook_id()) {
+        return 0;
+    }
+    let (_, bump) = pipeline_client::Pubkey::find_program_address(
+        &[tax_amm::config::CONTAINMENT_UNLOCK_SEED, mint.as_ref()],
+        &super::containment_hook_id(),
+    );
+    (255 - bump as u64) * BUMP_TRY
+}
+
 /// The compute `distribute` for `slot` will spend searching for the slot wallet's associated
 /// token account beyond its first bump, which the ceilings leave out (docs/spec/tax-amm.md,
 /// "Compute ceilings"), read from the market as it is before the payout. How many bumps

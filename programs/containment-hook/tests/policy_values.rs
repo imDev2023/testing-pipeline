@@ -111,3 +111,19 @@ fn the_launch_script_has_no_default_for_the_goal_or_the_deadline() {
         );
     }
 }
+
+/// The tax AMM admits a live transfer hook only when it is this hook with the mint's unlock
+/// PDA as its authority (its "Mint rules", hardening finding H007 of #67). This program
+/// depends on the tax AMM, so the tax AMM writes this program's id and unlock seed itself;
+/// they must be this program's, or no contained token could ever have a home market.
+#[test]
+fn the_tax_amm_admits_this_hook_by_its_own_id_and_unlock_seed() {
+    assert_eq!(
+        tax_amm::config::CONTAINMENT_HOOK_ID.to_bytes(),
+        containment_hook::ID.to_bytes()
+    );
+    assert_eq!(
+        tax_amm::config::CONTAINMENT_UNLOCK_SEED,
+        containment_hook::state::UNLOCK_SEED
+    );
+}
