@@ -1,9 +1,11 @@
 //! `set_recipients`: the tax authority replaces the market's tax recipients, their shares
 //! and the burn share, under the rules of creation (docs/spec/tax-amm.md, "Tax authority").
-//! Owed amounts belong to slots ("Payout"), so what a slot is already owed stays with it and
-//! goes to whoever the slot names when it is paid out. A recipient slot still owed tax
-//! can't be emptied, since nobody could then be paid what it holds; the burn slot needs no
-//! wallet, so the burn share may drop to 0 whatever the burn is owed.
+//! Owed amounts belong to slots ("Payout"), and a recipient slot still owed tax keeps its
+//! wallet until it is paid out: it can't be emptied, since nobody could then be paid what it
+//! holds, nor handed to another wallet, which would take what its recipient earned
+//! (hardening finding H023, #67). The authority pays it out first with `distribute`, in the
+//! same transaction if it likes. Shares may move whatever is owed, and the burn slot needs
+//! no wallet, so the burn share may drop to 0 whatever the burn is owed.
 
 use anchor_lang::prelude::*;
 
@@ -39,6 +41,11 @@ pub fn change_recipients(
             .iter()
             .all(|&owed| owed == 0),
         StrategyError::OwedSlotLeftEmpty
+    );
+    require!(
+        (0..MAX_RECIPIENTS)
+            .all(|slot| market.owed[slot] == 0 || recipients[slot] == market.recipients[slot]),
+        StrategyError::OwedSlotRedirected
     );
     market.recipients = recipients;
     market.shares = shares;

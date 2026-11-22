@@ -101,6 +101,8 @@ export const TAX_AMM_ERROR__TRANSFER_HOOK_NOT_ALLOWED = 0x1798; // 6040
 export const TAX_AMM_ERROR__MINT_AUTHORITY_SET = 0x1799; // 6041
 /** FreezeAuthoritySet: A mint other than a quote mint must have no freeze authority when its market is seeded */
 export const TAX_AMM_ERROR__FREEZE_AUTHORITY_SET = 0x179a; // 6042
+/** OwedSlotRedirected: A recipient slot still owed tax keeps its wallet until it is paid out */
+export const TAX_AMM_ERROR__OWED_SLOT_REDIRECTED = 0x179b; // 6043
 
 export type TaxAmmError =
   | typeof TAX_AMM_ERROR__ALREADY_RENOUNCED
@@ -132,6 +134,7 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__NOT_TAX_AUTHORITY
   | typeof TAX_AMM_ERROR__OVERFLOW
   | typeof TAX_AMM_ERROR__OWED_SLOT_LEFT_EMPTY
+  | typeof TAX_AMM_ERROR__OWED_SLOT_REDIRECTED
   | typeof TAX_AMM_ERROR__RANGE_INVERTED
   | typeof TAX_AMM_ERROR__RATE_OUTSIDE_RANGE
   | typeof TAX_AMM_ERROR__RECIPIENTS_OUT_OF_ORDER
@@ -179,6 +182,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__NOT_TAX_AUTHORITY]: `Only the market's tax authority can change its taxes and recipients`,
     [TAX_AMM_ERROR__OVERFLOW]: `Arithmetic overflow`,
     [TAX_AMM_ERROR__OWED_SLOT_LEFT_EMPTY]: `A recipient slot still owed tax can't be emptied; pay it out or name another wallet`,
+    [TAX_AMM_ERROR__OWED_SLOT_REDIRECTED]: `A recipient slot still owed tax keeps its wallet until it is paid out`,
     [TAX_AMM_ERROR__RANGE_INVERTED]: `A tax range's minimum is above its maximum`,
     [TAX_AMM_ERROR__RATE_OUTSIDE_RANGE]: `A tax rate is outside its range`,
     [TAX_AMM_ERROR__RECIPIENTS_OUT_OF_ORDER]: `Used recipient slots come first, unused slots after them`,

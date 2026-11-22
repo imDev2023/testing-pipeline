@@ -22,8 +22,10 @@
 //      check they wait as the market's pending rates, trade once more at the old rates,
 //      wait until the slot they apply from (RATE_CHANGE_DELAY_SLOTS later), then trade both
 //      ways again and check each swap was taxed at the new rates;
-//  11. change a tax recipient through the metadata's `set_recipients` action, and check the
-//      slot names the new wallet with what it is owed unchanged;
+//  11. check a slot still owed tax can't be handed to another wallet (simulated), then pay it
+//      out and hand it over in one transaction, through the metadata's `distribute` and
+//      `set_recipients` actions, and check the old wallet got what the slot was owed and the
+//      slot names the new wallet;
 //  12. renounce through the metadata's `renounce_tax_authority` action, and check that both
 //      changes are refused afterwards, leaving the market as it was;
 //  13. on a local validator only, graduate a token from the stand-in launchpad
@@ -146,6 +148,7 @@ import {
     SUITE_SLOT,
     SUITE_TREASURY,
     TAX_AMM_ERROR__ALREADY_RENOUNCED,
+    TAX_AMM_ERROR__OWED_SLOT_REDIRECTED,
     type TaxAmmError,
 } from './client/index.ts';
 import { findSeederPda, graduateInstruction, graduationFromLogs, LAUNCHPAD_PROGRAM_ADDRESS } from './launchpad.ts';
@@ -1288,31 +1291,54 @@ async function tokenMarket(payer: KeyPairSigner, programId: Address, metadata: p
     }
     record.push(['set_taxes', `a trade before slot ${fromSlot} paid the old rates; the swaps after it were taxed at ${newBuy} and ${newSell} bps`]);
 
-    step("11. Changing a tax recipient through the metadata's set_recipients action");
+    step("11. Paying out a tax recipient and handing its slot to a new wallet, through the metadata's distribute and set_recipients actions");
     const { data: beforeHandover } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
     const newRecipient = (await generateKeyPairSigner()).address;
     const handedOver = [...beforeHandover.recipients];
     const slot = 1;
+    const oldRecipient = beforeHandover.recipients[slot]!;
+    const owedBefore = beforeHandover.owed[slot]!;
+    if (owedBefore === 0n) fail(`slot ${slot} is owed nothing, so the handover would show nothing`);
     handedOver[slot] = newRecipient;
-    await send('set_recipients', payer, [
-        await authorityAction(
-            'set_recipients',
-            recipientArgs(handedOver, beforeHandover.shares, beforeHandover.burnShareBps),
-        ),
-    ]);
+    const handover = await authorityAction(
+        'set_recipients',
+        recipientArgs(handedOver, beforeHandover.shares, beforeHandover.burnShareBps),
+    );
+    // A slot still owed tax keeps its wallet until it is paid out (TAX-39).
+    const redirected = await simulatedErrorCode(payer, [handover]);
+    if (redirected !== TAX_AMM_ERROR__OWED_SLOT_REDIRECTED) {
+        fail(`handing over slot ${slot}, owed ${owedBefore}: expected error ${TAX_AMM_ERROR__OWED_SLOT_REDIRECTED} (OwedSlotRedirected), got ${redirected ?? 'success'}`);
+    }
+    info(`handing over slot ${slot} while it is owed ${owedBefore}: refused with ${redirected}, "${getTaxAmmErrorMessage(redirected as TaxAmmError)}"`);
+    const taxSide = beforeHandover.taxSide;
+    const [taxMint, taxTokenProgram] = [view.mints[taxSide]!, view.tokenPrograms[taxSide]!];
+    const oldAccount = await walletTokenAccount(oldRecipient, taxMint, taxTokenProgram);
+    const oldBalance = (await accountData(oldAccount)) !== null ? await tokenBalance(oldAccount) : 0n;
+    const payout = await buildActionInstruction({
+        action: actionNamed('distribute'),
+        market: view,
+        wallet: payer.address,
+        args: { slot },
+        inputs: { tax_mint: taxMint, recipient: oldRecipient },
+    });
+    await send(`distribute slot ${slot} + set_recipients`, payer, [payout, handover]);
     const { data: afterHandover } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
     if (afterHandover.recipients.join() !== handedOver.join()) {
         fail(`the market state names recipients ${afterHandover.recipients.join(', ')}`);
     }
-    if (beforeHandover.owed[slot] === 0n || show(afterHandover.owed) !== show(beforeHandover.owed)) {
-        fail(`slot ${slot} was owed ${beforeHandover.owed[slot]} and is now owed ${afterHandover.owed[slot]}`);
+    const owedAfter = [...beforeHandover.owed];
+    owedAfter[slot] = 0n;
+    if (show(afterHandover.owed) !== show(owedAfter)) {
+        fail(`the market owes ${show(afterHandover.owed)}, where paying out slot ${slot} alone gives ${show(owedAfter)}`);
     }
+    const received = (await tokenBalance(oldAccount)) - oldBalance;
+    if (received !== owedBefore) fail(`${oldRecipient} received ${received}, but slot ${slot} was owed ${owedBefore}`);
     if (show(afterHandover.shares) !== show(beforeHandover.shares) || afterHandover.burnShareBps !== beforeHandover.burnShareBps) {
         fail('the shares or the burn share changed');
     }
-    info(`slot ${slot}: ${beforeHandover.recipients[slot]} -> ${afterHandover.recipients[slot]}`);
-    info(`slot ${slot} is still owed ${afterHandover.owed[slot]}, now the new wallet's; every owed amount unchanged ${show(afterHandover.owed)}`);
-    record.push(['set_recipients', `slot ${slot} names ${newRecipient}, still owed ${afterHandover.owed[slot]}`]);
+    spec.owed[slot] = 0n;
+    info(`slot ${slot}: ${oldRecipient} was paid the ${owedBefore} it was owed, then the slot was handed to ${newRecipient}`);
+    record.push(['set_recipients', `slot ${slot} paid out (${owedBefore}) and handed to ${newRecipient} in one transaction; a handover while owed was refused`]);
 
     step("12. Renouncing through the metadata's renounce_tax_authority action");
     await send('renounce_tax_authority', payer, [await authorityAction('renounce_tax_authority', {})]);

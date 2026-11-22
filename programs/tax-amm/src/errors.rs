@@ -101,4 +101,6 @@ pub enum StrategyError {
         "A mint other than a quote mint must have no freeze authority when its market is seeded"
     )]
     FreezeAuthoritySet,
+    #[msg("A recipient slot still owed tax keeps its wallet until it is paid out")]
+    OwedSlotRedirected,
 }

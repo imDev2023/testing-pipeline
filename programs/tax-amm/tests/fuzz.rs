@@ -96,7 +96,7 @@ const SHAPES_REACHED: [&str; 22] = [
     "taxed on side 0",
     "taxed on side 1",
 ];
-const OUTCOMES_REACHED: [&str; 44] = [
+const OUTCOMES_REACHED: [&str; 45] = [
     "bypass: NotPipeline",
     "clock jump: settled",
     "distribute to the burn: NotSlotWallet",
@@ -122,6 +122,7 @@ const OUTCOMES_REACHED: [&str; 44] = [
     "set_recipients: NoTaxAuthority",
     "set_recipients: NotTaxAuthority",
     "set_recipients: OwedSlotLeftEmpty",
+    "set_recipients: OwedSlotRedirected",
     "set_recipients: RecipientsOutOfOrder",
     "set_recipients: ShareWithoutRecipient",
     "set_recipients: SharesNotWhole",

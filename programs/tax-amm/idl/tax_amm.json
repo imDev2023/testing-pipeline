@@ -1125,6 +1125,11 @@
       "code": 6042,
       "name": "FreezeAuthoritySet",
       "msg": "A mint other than a quote mint must have no freeze authority when its market is seeded"
+    },
+    {
+      "code": 6043,
+      "name": "OwedSlotRedirected",
+      "msg": "A recipient slot still owed tax keeps its wallet until it is paid out"
     }
   ],
   "types": [

@@ -478,7 +478,7 @@ fn set_recipients_refuses_a_burn_share_on_a_native_sol_tax_side() {
 }
 
 #[test]
-fn set_recipients_names_the_new_wallet_and_the_slot_keeps_what_it_is_owed() {
+fn set_recipients_names_a_new_wallet_once_its_slot_is_paid_out_and_moves_shares_of_owed_slots() {
     let mut env = Env::new();
     let authority = Keypair::new();
     let market = market_with_authority(&mut env, &authority);
@@ -491,24 +491,45 @@ fn set_recipients_names_the_new_wallet_and_the_slot_keeps_what_it_is_owed() {
         before.owed
     );
 
-    // Recipient 1 hands over to a new wallet, and the shares move.
+    // Recipient 1 is paid what it is owed, then hands over to a new wallet in the same
+    // transaction (hardening finding H023, #67), and the shares move, slot 0's although it
+    // is still owed.
     let new_wallet = Pubkey::new_unique();
     let mut split = Split::of_market(&before);
     split.recipients[1] = new_wallet;
     split.shares = [5_000, 4_000, 0, 0];
-    let meta = env
-        .send_signed(
-            set_recipients_instruction(&market.market_state, &authority.pubkey(), &split),
-            &authority,
-        )
-        .unwrap();
+    let tax_side = before.tax_side as usize;
+    let old_wallet = ck(&before.recipients[1]);
+    env.svm.airdrop(&authority.pubkey(), SOL).unwrap();
+    let payout = distribute_instruction(
+        &market,
+        tax_side,
+        &authority.pubkey(),
+        1,
+        &old_wallet,
+        vec![],
+    );
+    let handover = set_recipients_instruction(&market.market_state, &authority.pubkey(), &split);
+    let meta = env.send_meta(&[payout, handover], &[&authority]).unwrap();
 
     let after = env.tax_market(&market.market_state);
     assert_eq!(ck(&after.recipients[1]), new_wallet);
     assert_eq!(after.shares, [5_000, 4_000, 0, 0]);
+    let mut owed = before.owed;
+    owed[1] = 0;
     assert_eq!(
-        after.owed, before.owed,
-        "what each slot is owed stays with it"
+        after.owed, owed,
+        "what each other slot is owed stays with it"
+    );
+    let paid = pipeline_client::pda::associated_token(
+        &old_wallet,
+        &market.mints[tax_side],
+        &market.token_programs[tax_side],
+    );
+    assert_eq!(
+        env.balance(&paid),
+        before.owed[1],
+        "the old wallet was paid"
     );
     let events: Vec<tax_amm::events::RecipientsChanged> = strategy_events(&meta.logs);
     assert_eq!(
@@ -731,13 +752,13 @@ fn set_recipients_refuses_to_empty_a_slot_that_is_still_owed() {
         tax_amm::StrategyError::OwedSlotLeftEmpty,
     );
 
-    // Handing the slot to another wallet is fine, and so is dropping the burn share, since
-    // the burn slot needs no wallet to be paid out.
-    let mut handed_over = only_first;
-    handed_over.recipients[1] = Pubkey::new_unique();
-    handed_over.shares = [9_999, 1, 0, 0];
+    // Keeping the slot, its share cut to one basis point, is fine, and so is dropping the burn
+    // share, since the burn slot needs no wallet to be paid out.
+    let mut kept = only_first;
+    kept.recipients[1] = ck(&state.recipients[1]);
+    kept.shares = [9_999, 1, 0, 0];
     env.send_signed(
-        set_recipients_instruction(&market.market_state, &authority.pubkey(), &handed_over),
+        set_recipients_instruction(&market.market_state, &authority.pubkey(), &kept),
         &authority,
     )
     .unwrap();
@@ -808,4 +829,70 @@ fn sos_h024_set_recipients_refuses_one_of_the_markets_own_addresses() {
             tax_amm::StrategyError::NotAWallet,
         );
     }
+}
+
+/// Hardening finding H023 (#67): the tax authority could send `[set_recipients(every slot to
+/// itself), distribute, distribute]` and take every recipient's unpaid tax. A slot still owed
+/// tax now keeps its wallet until it is paid out, whatever wallet the change names.
+#[test]
+fn sos_h023_set_recipients_refuses_to_hand_an_owed_slot_to_another_wallet() {
+    let mut env = Env::new();
+    let authority = Keypair::new();
+    let market = market_with_authority(&mut env, &authority);
+    trade_both_ways(&mut env, &market);
+    let before = env.tax_market(&market.market_state);
+    assert!(
+        before.owed[0] > 0 && before.owed[1] > 0,
+        "{:?}",
+        before.owed
+    );
+    let tax_side = before.tax_side as usize;
+    let own = Split::of_market(&before);
+    let thief = authority.pubkey();
+    // Enough SOL to create its own token account in the payouts.
+    env.svm.airdrop(&thief, SOL).unwrap();
+    let mut to_itself = own;
+    to_itself.recipients[0] = thief;
+    to_itself.recipients[1] = thief;
+    let mut swapped = own;
+    swapped.recipients.swap(0, 1);
+    for (what, split) in [
+        ("every slot to the authority", to_itself),
+        ("two slots swapped", swapped),
+    ] {
+        let mut sent = vec![set_recipients_instruction(
+            &market.market_state,
+            &thief,
+            &split,
+        )];
+        for slot in [0u8, 1] {
+            let wallet = split.recipients[slot as usize];
+            sent.push(distribute_instruction(
+                &market,
+                tax_side,
+                &thief,
+                slot,
+                &wallet,
+                vec![],
+            ));
+        }
+        assert_refused(
+            env.send_meta(&sent, &[&authority]),
+            tax_amm::StrategyError::OwedSlotRedirected,
+        );
+        assert_eq!(
+            env.tax_market(&market.market_state).owed,
+            before.owed,
+            "{what}"
+        );
+    }
+    // A slot that is owed nothing may change hands.
+    let mut third = own;
+    third.recipients[2] = Pubkey::new_unique();
+    third.shares = [own.shares[0], own.shares[1] - 1, 1, 0];
+    env.send_signed(
+        set_recipients_instruction(&market.market_state, &thief, &third),
+        &authority,
+    )
+    .unwrap();
 }

@@ -599,13 +599,15 @@ fn authorization(state: &TaxMarket, signer: &Pubkey) -> Result<(), String> {
 }
 
 /// The creation rules on a split, in the order "Creation parameters" and "Tax authority"
-/// give them, then `set_recipients`' own rule on emptied slots still owed tax.
+/// give them, then `set_recipients`' own rules on slots still owed tax: none emptied, and
+/// none handed from its `current` wallet to another (hardening finding H023, #67).
 fn split_refusal(
     recipients: &[Pubkey; MAX_RECIPIENTS],
     shares: &[u16; MAX_RECIPIENTS],
     burn_share_bps: u16,
     native_tax_mint: bool,
     owed: &[u64; OWED_SLOTS],
+    current: &[Pubkey; MAX_RECIPIENTS],
 ) -> Result<(), String> {
     let used = recipients
         .iter()
@@ -626,6 +628,8 @@ fn split_refusal(
         "BurnOnNativeSol"
     } else if owed[used..MAX_RECIPIENTS].iter().any(|&o| o > 0) {
         "OwedSlotLeftEmpty"
+    } else if (0..MAX_RECIPIENTS).any(|slot| owed[slot] > 0 && recipients[slot] != current[slot]) {
+        "OwedSlotRedirected"
     } else {
         return Ok(());
     };
@@ -1131,7 +1135,15 @@ impl TaxWorld {
                 let native = NATIVE_MINTS.iter().any(|native| ck(native) == tax_mint);
                 let burn_share_bps = if used == 0 { 10_000 } else { burn_share_bps };
                 let expected = authorization(&state, &signer.pubkey()).and_then(|()| {
-                    split_refusal(&recipients, &shares, burn_share_bps, native, &state.owed)
+                    let current = state.recipients.map(|recipient| ck(&recipient));
+                    split_refusal(
+                        &recipients,
+                        &shares,
+                        burn_share_bps,
+                        native,
+                        &state.owed,
+                        &current,
+                    )
                 });
                 let split = Split {
                     recipients,

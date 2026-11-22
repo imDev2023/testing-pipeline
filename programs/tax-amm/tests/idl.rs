@@ -343,6 +343,7 @@ fn its_events_and_errors_are_the_programs() {
         E::TransferHookNotAllowed,
         E::MintAuthoritySet,
         E::FreezeAuthoritySet,
+        E::OwedSlotRedirected,
     ];
     let named = &errors[errors.len() - tail.len()..];
     for (error, expected) in named.iter().zip(tail) {
