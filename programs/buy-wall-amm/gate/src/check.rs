@@ -826,7 +826,8 @@ fn create_fee_accounts(
 }
 
 /// A swap through the router of `amount` of mint `input`, by the market's trader, with the
-/// candidate's quote as the minimum; passes only if the trader got exactly the quote.
+/// candidate's quote as the minimum to arrive; passes only if exactly the quote arrived (the
+/// router's `received`, before any Pipeline fee taken from the output since Pipeline 0.3).
 fn trade(
     session: &mut Session,
     view: &MarketView,
