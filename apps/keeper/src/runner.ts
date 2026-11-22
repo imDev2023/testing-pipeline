@@ -11,6 +11,10 @@
 //
 // Keeper tips land in the keeper wallet's wrapped-SOL account (each job that tips names it);
 // once it holds more than TIP_UNWRAP_AT, the end of a pass closes it into the float.
+//
+// Every pass that sent, held or parked something is recorded (src/record.ts): in Aviary's Postgres
+// with DATABASE_URL, else as a `record` row in the log. Every pass ends with a signed heartbeat
+// when HEARTBEAT_URL is set (src/heartbeat.ts), so the keeper page knows the runner is alive.
 
 import { address, getBase64Decoder, type Address, type Instruction, type Signature, type TransactionSigner } from '@solana/kit';
 import { findAssociatedTokenPda, getCloseAccountInstruction, getTokenDecoder, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token';
@@ -18,12 +22,17 @@ import { outcomeOf, products as allProducts, type AnyKeeperProduct, type JobUnit
 
 import { ChainError, type Chain, type LandedTransaction, type Result, type SignedTransaction } from './chain.ts';
 import type { Clock, Timer } from './clock.ts';
+import type { Heartbeat } from './heartbeat.ts';
 import type { Logger } from './log.ts';
+import { logRecorder, PassRecords, type Recorder } from './record.ts';
 import { describeSettings, type Settings } from './settings.ts';
 import { dayStart, landed, rebuildSpend, spendOf, utcDay, type Spend } from './spend.ts';
 
-/** Which pass is running: `start` and `once` run every job; the others their own jobs. */
-export type PassKind = 'start' | 'once' | 'sweep' | 'hourly' | 'daily' | 'transaction';
+/**
+ * Which pass is running: `start` and `once` run every job; the others their own jobs; `retry`
+ * sends one job again, after a failure or a refusal for a later slot.
+ */
+export type PassKind = 'start' | 'once' | 'sweep' | 'hourly' | 'daily' | 'transaction' | 'retry';
 
 export type PassSummary = { pass: PassKind; markets: number; sent: number; held: number; parked: number; skipped: number; failed: number };
 
@@ -43,6 +52,7 @@ const PASS_JOBS: Record<PassKind, readonly Pass[]> = {
     transaction: ['sweep'],
     hourly: ['hourly'],
     daily: ['daily'],
+    retry: [],
 };
 
 /** ComputeBudget's SetComputeUnitPrice, for a priority fee above 0. */
@@ -64,6 +74,10 @@ export type RunnerOptions = {
     wallet: TransactionSigner;
     log: Logger;
     products?: readonly AnyKeeperProduct[];
+    /** Where recorded passes go: Aviary's database, or by default the log. */
+    recorder?: Recorder;
+    /** The signed heartbeat each pass ends with, if HEARTBEAT_URL is set. */
+    heartbeat?: Heartbeat | null;
 };
 
 export class Runner {
@@ -73,6 +87,9 @@ export class Runner {
     private readonly wallet: TransactionSigner;
     private readonly log: Logger;
     private readonly products: readonly AnyKeeperProduct[];
+    private readonly recorder: Recorder;
+    private readonly heartbeat: Heartbeat | null;
+    private readonly records: PassRecords;
 
     private readonly markets = new Map<Address, Market>();
     private spend: Spend | null = null;
@@ -97,6 +114,9 @@ export class Runner {
         this.wallet = options.wallet;
         this.log = options.log;
         this.products = options.products ?? allProducts;
+        this.recorder = options.recorder ?? logRecorder(options.log);
+        this.heartbeat = options.heartbeat ?? null;
+        this.records = new PassRecords(options.clock);
     }
 
     /** One full pass of every job, then done: `pnpm keeper:once`. */
@@ -136,11 +156,12 @@ export class Runner {
         for (const unsubscribe of this.unsubscribes.splice(0)) unsubscribe();
     }
 
-    /** Resolves once no work is queued or running. */
+    /** Resolves once no work is queued or running, heartbeats included. */
     async idle() {
         for (;;) {
             const tail = this.tail;
             await tail;
+            await this.heartbeat?.flush();
             if (tail === this.tail) return;
         }
     }
@@ -260,14 +281,7 @@ export class Runner {
             if (kind === 'start' || kind === 'once' || kind === 'sweep') warnings.push(...(await this.discover()));
             const addresses = only ?? [...this.markets.keys()];
             await this.refresh(addresses);
-            if (this.spend === null || this.spend.day !== utcDay(this.clock.now())) {
-                // Rebuilt after the markets are known, so each transaction is put to its market;
-                // looking back SETTLE_INTERVAL too, for when each hourly job last ran.
-                const { spend, transactions } = await rebuildSpend(this.chain, this.wallet.address, this.clock.now(), (key) => this.markets.has(key), this.settings.settleIntervalMs);
-                this.spend = spend;
-                this.learnRuns(transactions);
-                this.log.write({ row: 'spend', event: 'rebuilt', spend: this.spend });
-            }
+            await this.ensureSpend();
             const passes = PASS_JOBS[kind];
             for (const account of addresses) {
                 const market = this.markets.get(account);
@@ -284,6 +298,25 @@ export class Runner {
             // Nothing is sent without knowing today's spend; the next pass tries again.
             warnings.push(`the pass stopped early, the chain could not be asked: ${error.message}`);
         }
+        await this.closePass(summary, warnings);
+        return summary;
+    }
+
+    /**
+     * Today's spend, rebuilt from the chain when unknown or when a UTC day has begun: after the
+     * markets are known, so each transaction is put to its market, and looking back
+     * SETTLE_INTERVAL too, for when each hourly job last ran.
+     */
+    private async ensureSpend() {
+        if (this.spend !== null && this.spend.day === utcDay(this.clock.now())) return;
+        const { spend, transactions } = await rebuildSpend(this.chain, this.wallet.address, this.clock.now(), (key) => this.markets.has(key), this.settings.settleIntervalMs);
+        this.spend = spend;
+        this.learnRuns(transactions);
+        this.log.write({ row: 'spend', event: 'rebuilt', spend: this.spend });
+    }
+
+    /** Ends a pass: its row in the log, its record if it sent, held or parked something, and its heartbeat. */
+    private async closePass(summary: PassSummary, warnings: string[]) {
         let balance: bigint | null = null;
         try {
             balance = await this.chain.balance(this.wallet.address);
@@ -301,13 +334,54 @@ export class Runner {
             settings: describeSettings(this.settings),
             warnings,
         });
-        return summary;
+
+        const jobs = this.records.take();
+        if (jobs.length > 0) {
+            try {
+                // A send whose landing is unknown left today's spend unknown: rebuild it for the record.
+                await this.ensureSpend();
+            } catch (error) {
+                if (!(error instanceof ChainError)) throw error;
+                warnings.push(`today's spend could not be rebuilt for this record: ${error.message}`);
+            }
+            const spend = this.spend;
+            await this.recorder.record({
+                wallet: this.wallet.address,
+                pass: summary.pass,
+                at: new Date(this.clock.now()),
+                balance,
+                day: spend?.day ?? utcDay(this.clock.now()),
+                spentTotal: spend?.total ?? 0n,
+                spentByMarket: spend ? Object.fromEntries(spend.byMarket()) : {},
+                caps: this.caps(),
+                settings: describeSettings(this.settings),
+                warnings,
+                counts: { markets: summary.markets, sent: summary.sent, held: summary.held, parked: summary.parked, skipped: summary.skipped, failed: summary.failed },
+                jobs,
+            });
+        }
+        this.heartbeat?.beat({
+            wallet: this.wallet.address,
+            pass: summary.pass,
+            at: new Date(this.clock.now()).toISOString(),
+            sweepIntervalMs: this.settings.sweepIntervalMs,
+            caps: Object.fromEntries(Object.entries(this.caps()).map(([name, value]) => [name, Number(value)])) as Record<keyof ReturnType<Runner['caps']>, number>,
+            warnings,
+        });
+    }
+
+    /** The caps and balance thresholds the runner runs with, in lamports. */
+    private caps() {
+        const { maxTxCost, marketDailyCap, dailyCap, minBalance, lowBalance } = this.settings;
+        return { maxTxCost, marketDailyCap, dailyCap, minBalance, lowBalance };
     }
 
     // Jobs -------------------------------------------------------------------------------
 
     private jobRow(market: Market, unit: JobUnit, outcome: string, fields: Record<string, unknown> = {}) {
-        this.log.write({ row: 'job', market: market.address, product: market.product.name, job: unit.job, slot: unit.slot ?? null, owed: unit.owed ?? null, outcome, ...fields });
+        const row = { market: market.address, product: market.product.name, job: unit.job, slot: unit.slot ?? null, owed: unit.owed ?? null, outcome, ...fields };
+        this.log.write({ row: 'job', ...row });
+        this.records.job({ key: unit.key, ...row });
     }
 
     /** Checks one due unit and, if every check passes, sends it. */
@@ -433,8 +507,14 @@ export class Runner {
         if (!market) return;
         // About one slot of real time: the chain's own pace, not the runner's clock.
         await new Promise((resolve) => setTimeout(resolve, 400));
-        const summary: PassSummary = { pass: 'transaction', markets: 1, sent: 0, held: 0, parked: 0, skipped: 0, failed: 0 };
+        await this.retryPass(market, job, unit);
+    }
+
+    /** A pass of one job sent again, recorded and heartbeaten as any pass. */
+    private async retryPass(market: Market, job: AnyJob, unit: JobUnit) {
+        const summary: PassSummary = { pass: 'retry', markets: 1, sent: 0, held: 0, parked: 0, skipped: 0, failed: 0 };
         await this.runUnit(market, job, unit, summary, true);
+        await this.closePass(summary, []);
     }
 
     private withPriority(instructions: Instruction[]): Instruction[] {
@@ -499,6 +579,7 @@ export class Runner {
             if (result.failed) return this.unwrapFailed(warnings, found.data, { account, tips, signature: transaction.signature, cost, error: result.error });
             this.unwrapParked = null;
             this.log.write({ row: 'unwrap', outcome: 'sent', account, tips, signature: transaction.signature, cost });
+            this.records.job({ key: 'unwrap', market: null, product: null, job: 'unwrap', slot: null, outcome: 'sent', signature: transaction.signature, cost });
         } catch (error) {
             if (!(error instanceof ChainError)) throw error;
             warnings.push(`the tips could not be unwrapped, the chain could not be asked: ${error.message}`);
@@ -510,6 +591,7 @@ export class Runner {
         this.unwrapParked = fingerprint(data);
         warnings.push(`the tips could not be unwrapped, so the unwrap waits until the account changes: ${fields.error}`);
         this.log.write({ row: 'unwrap', outcome: 'parked', ...fields });
+        this.records.job({ key: 'unwrap', market: null, product: null, job: 'unwrap', slot: null, outcome: 'parked', signature: fields.signature ?? null, cost: fields.cost ?? null, error: fields.error });
     }
 
     private hold(market: Market, unit: JobUnit, cap: string, fields: Record<string, unknown>, summary: PassSummary) {
@@ -530,8 +612,7 @@ export class Runner {
                 this.background(async () => {
                     const current = this.markets.get(market.address);
                     if (!current) return;
-                    const retry: PassSummary = { pass: 'transaction', markets: 1, sent: 0, held: 0, parked: 0, skipped: 0, failed: 0 };
-                    await this.runUnit(current, job, unit, retry, true);
+                    await this.retryPass(current, job, unit);
                 });
             });
             this.retries.set(key, timer);

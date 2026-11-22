@@ -13,11 +13,17 @@ import { products } from 'keeper-jobs';
 import { LOG_FILE } from './agent.ts';
 import { ChainError, rpcChain } from './chain.ts';
 import { systemClock } from './clock.ts';
+import { heartbeatSender } from './heartbeat.ts';
 import { loadKeypair } from './keypair.ts';
 import { streamLogger, toJson, type Logger } from './log.ts';
+import { logRecorder } from './record.ts';
+import { databaseRecorder } from './record-db.ts';
 import { Runner } from './runner.ts';
 import { describeSettings, loadSettings } from './settings.ts';
 import { rebuildSpend } from './spend.ts';
+
+/** How long a stopping runner waits for a record or a heartbeat on its way. */
+const STOP_WAIT_MS = 5_000;
 
 async function main(command: string | undefined) {
     if (command !== 'run' && command !== 'once' && command !== 'status') {
@@ -28,10 +34,6 @@ async function main(command: string | undefined) {
     const log: Logger = streamLogger(process.stdout, systemClock.now);
     const { signer, warnings } = await loadKeypair(settings.keypair);
     for (const warning of warnings) log.write({ row: 'warning', warning });
-    if (settings.databaseUrl !== null && command !== 'status') {
-        // The keeper_runs table and its writer come with Aviary's keeper page.
-        log.write({ row: 'warning', warning: 'DATABASE_URL is set, but this build has no database writer yet: rows go to the log only' });
-    }
     const chain = rpcChain(settings);
 
     if (command === 'status') {
@@ -56,16 +58,25 @@ async function main(command: string | undefined) {
         return;
     }
 
-    const runner = new Runner({ settings, chain, clock: systemClock, wallet: signer, log });
+    // Recorded passes go to Aviary's database when DATABASE_URL is set, else to the log (SUITE-37).
+    const recorder = settings.databaseUrl !== null ? databaseRecorder(settings.databaseUrl, log) : logRecorder(log);
+    const heartbeat = settings.heartbeatUrl !== null ? heartbeatSender({ url: settings.heartbeatUrl, signer, log }) : null;
+    const runner = new Runner({ settings, chain, clock: systemClock, wallet: signer, log, recorder, heartbeat });
+    /** Lets queued work, a record being written and a heartbeat on its way finish, for at most a few seconds. */
+    const finish = async () => {
+        await Promise.race([runner.idle(), new Promise((done) => setTimeout(done, STOP_WAIT_MS))]);
+        await recorder.close();
+    };
     if (command === 'once') {
         await runner.once();
+        await finish();
         process.exit(0);
     }
     for (const signal of ['SIGINT', 'SIGTERM'] as const) {
         process.on(signal, () => {
             log.write({ row: 'stop', signal });
             runner.stop();
-            process.exit(0);
+            void finish().finally(() => process.exit(0));
         });
     }
     await runner.start();

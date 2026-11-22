@@ -135,7 +135,8 @@ A `KEEPER_` variable that names no setting stops the runner at start, so a missp
 | `KEEPER_KEYPAIR` | `~/.config/testing-pipeline/devnet/keeper.json` | Where the key is read from |
 | `RPC_URL` | Alchemy devnet, from `ALCHEMY_API_KEY` | The RPC the runner reads, simulates and sends through |
 | `WS_URL`, `DISCOVERY_RPC_URL` | Aviary's Helius key (`RPC_URL` in the project's `.env`), else Solana's public devnet endpoint | The socket, and the `getProgramAccounts` that finds the markets, which Alchemy's free tier does not serve (see "RPC") |
-| `DATABASE_URL` | unset | Aviary's database, where runs are recorded; unset, the runner only logs |
+| `DATABASE_URL` | the project's `DATABASE_URL`, else unset | Aviary's database, where runs are recorded; unset, the runner only logs |
+| `HEARTBEAT_URL` | unset | Where each pass's signed heartbeat goes, `terminal-api`'s `/keeper/heartbeat`; unset, none is sent (see "How Aviary shows it") |
 
 - A new market's first payouts may create up to five recipient token accounts (a tax market with four recipients and the suite share), about 0.0102 SOL, so on its first day the last one can wait for the next day's cap; that is accepted.
 - What the runner has spent today is rebuilt from the chain whenever it starts: the keeper wallet's own transactions since 00:00 UTC (`getSignaturesForAddress`, then each one's fee and balance changes), per market from the accounts each one touched.
@@ -147,20 +148,35 @@ A `KEEPER_` variable that names no setting stops the runner at start, so a missp
 ## What it records
 
 - The runner writes to Aviary's Postgres (`DATABASE_URL`, the Neon project `terminal-devnet`) directly, as the explainer's approve command does from the Mac, never through Aviary's public API.
-- One table, `keeper_runs`, in Aviary's database package (`packages/terminal-db`): a row per pass (when, which pass, the keeper wallet's balance, today's spend against each cap, the settings it ran with, any warning) and a row per job it sent, held or parked (market, job, slot, signature, cost, outcome, error).
+  Its default is the project's own `DATABASE_URL`, the one Aviary's local run uses, so the runner on the owner's Mac records into the database the keeper page reads; `KEEPER_DATABASE_URL` names another ([`SUITE-58`](../decisions.md#suite-58-keeper-runner-which-passes-and-jobs-are-recorded)).
+- Two tables, in Aviary's database package (`packages/terminal-db`): `keeper_runs`, a row per pass (when, which pass, the keeper wallet that ran it, its balance, today's spend in all and by market, the caps and the settings it ran with, any warning, and what the pass counted), and `keeper_run_jobs`, a row per job it sent, held or parked (market, product, job, slot, outcome, signature, cost, the estimate, the cap that held it, the error and the attempt).
 - It writes only in passes that sent, held or parked something, in one database transaction per pass.
   Neon's free plan gives 100 compute-hours a month, and the database must sleep while devnet is quiet; `place_wall`, `rebalance` and `settle` follow swaps, when Aviary's indexer has just woken the database anyway, and the daily pass wakes it once a day.
-- Without `DATABASE_URL` (someone else's copy, or before Aviary's database exists) the runner logs the same rows to its log file and works the same.
+- What counts ([`SUITE-58`](../decisions.md#suite-58-keeper-runner-which-passes-and-jobs-are-recorded)):
+  - a job whose transaction landed, whatever it did (sent, refused, too early for its slot, or without effect), with its signature and what it cost, so every lamport the runner spends is on the page;
+  - a job held by a cap, recorded once a UTC day for each cap that holds it, and again once it has been anything but held, so a cap reached at noon does not wake the database every sweep until midnight;
+  - a parked job, and a job unparked because its market changed, so the page stops showing the park;
+  - the keeper wallet unwrapping its tips, as a job with no market.
+  A job retried after a failure, or sent again from a later slot, runs in a pass of its own, `retry`, recorded the same way.
+- Without `DATABASE_URL` (someone else's copy, or before Aviary's database exists) the runner logs each recorded pass as one `record` row, exactly as the database would hold it, and works the same.
+  A database that cannot be reached, or that refuses the write, never stops the runner: the pass is logged the same way with the reason.
+  The runner's connection closes after 20 idle seconds, so it never keeps Neon awake between passes.
 - Logs go to `~/Library/Logs/testing-pipeline-keeper.log` on the Mac, and to standard output in Docker.
 
 ## How Aviary shows it
 
 These are for Aviary's build tickets ([Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)) and each product's Aviary panel ticket.
-The `keeper_runs` table and the runner's writer for it belong to the Aviary ticket that builds the keeper page, since neither can be tested before Aviary's database exists; until then the runner only logs.
+The tables and the runner's writer were built by [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129).
 
-- Each market's panel shows every keeper job that is due, from `packages/keeper-jobs`, with how long it has been due, the runner's last attempt from `keeper_runs` (sent, held by a cap, or parked with its error) and a button that prepares and simulates the job for the viewer's own wallet, as any custom action.
-- A keeper page shows the keeper wallet's address and balance (read through RPC), today's spend against each cap, the last pass of each kind, every held or parked job, and any warning; it is read-only and public, like the rest of Aviary.
-- If the last pass is more than `SWEEP_INTERVAL` plus a few minutes old, the page says the runner looks stopped.
+- Each market's panel shows every keeper job that is due, from `packages/keeper-jobs`, with how long it has been due, the runner's last attempt from `keeper_run_jobs` (sent, held by a cap, or parked with its error) and a button that prepares and simulates the job for the viewer's own wallet, as any custom action.
+- The keeper page, `/keeper` (`PIPESCOPE-97`), shows whether the runner is running, the keeper wallet's address and balance (read through RPC), today's spend against each cap (all markets against `DAILY_CAP`, the costliest transaction against `MAX_TX_COST`, each market against `MARKET_DAILY_CAP`), the last pass of each kind, every held or parked job, the latest jobs with their transactions, and any warning; it is read-only and public, like the rest of Aviary, and `GET /keeper` serves it ([`PIPESCOPE-104`](../decisions.md#pipescope-104-what-the-keeper-page-shows)).
+- **Is it running?** Since a quiet pass writes nothing, Postgres cannot tell a quiet runner from a stopped one, so after every pass the runner posts a heartbeat to `terminal-api`'s `POST /keeper/heartbeat` (`HEARTBEAT_URL`): which pass ran, when, its `SWEEP_INTERVAL`, its caps and its warnings, signed with the keeper wallet's key ([`SUITE-57`](../decisions.md#suite-57-keeper-runner-how-aviary-knows-it-is-running), owner, 2026-11-22).
+  - `terminal-api` keeps only heartbeats signed by `KEEPER_WALLET`, the keeper wallet's published address, so no secret is shared and nobody else can make a stopped runner look alive; one whose time is more than two minutes from the Worker's clock is refused, so an old one cannot be replayed.
+  - It keeps the newest heartbeat of each kind of pass in its `TERMINAL_CACHE` KV namespace, at most one of each kind every 30 seconds, so a heartbeat never wakes the database; each counts against the sender's IP like a read.
+  - If the last heartbeat (one-off `once` runs aside) is older than the runner's own `SWEEP_INTERVAL` plus five minutes, the page says the runner looks stopped; with no heartbeat at all it says it cannot tell.
+  - Parks live only in the runner's memory, so the page shows only parks recorded since the runner's last start, which its heartbeats give.
+  - A heartbeat goes in the background, one at a time, and never holds up or stops the runner.
+- A database or an RPC that does not answer leaves the rest of the page standing, each panel saying what it could not read.
 
 ## Running it
 

@@ -420,11 +420,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-37: Keeper runner: what it records
 
 - Question: Where does the runner record what it did?
-- Answer: In one table, `keeper_runs`, of Aviary's Postgres, written directly from the runner, or in its log when it has no database; a public keeper page in Aviary shows the wallet, today's spend against each cap and every held or parked job.
-- Alternatives: None recorded.
+- Answer: In two tables of Aviary's Postgres, `keeper_runs` (a row per pass) and `keeper_run_jobs` (a row per job it sent, held or parked), written directly from the runner, or in its log when it has no database; a public keeper page in Aviary shows the wallet, today's spend against each cap and every held or parked job.
+- Alternatives: The earlier default, one table `keeper_runs` holding both, which a row per pass and a row per job would have had to share.
 - Specified in: [`docs/spec/keeper-runner.md`, What it records](spec/keeper-runner.md#what-it-records)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
 
 ### SUITE-38: Progress site: where its content comes from
@@ -616,6 +616,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-21 in [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95)
+
+### SUITE-57: Keeper runner: how Aviary knows it is running
+
+- Question: How does the keeper page tell a quiet runner from a stopped one, when the runner records in Postgres only the passes that did something so the database can sleep?
+- Answer: After every pass the runner posts a heartbeat (the pass, its time, its `SWEEP_INTERVAL`, its caps and warnings) to `terminal-api`'s `POST /keeper/heartbeat`, signed with the keeper wallet's key; `terminal-api` keeps only heartbeats `KEEPER_WALLET` signed, within two minutes of its clock, at most one of each kind of pass every 30 seconds, in its KV namespace, which never wakes the database; the runner's setting `HEARTBEAT_URL` names where they go, and unset sends none.
+- Alternatives: Judging the runner by due work alone, which cannot flag a stopped runner on a quiet devnet; a heartbeat row in Postgres at most once an hour, with an hour's threshold and about 15 of Neon's 100 free compute-hours a month; the spec as first written, whose page would say the runner looks stopped whenever devnet is quiet; a heartbeat row every sweep, which would keep Neon awake about 90 compute-hours a month.
+- Specified in: [`docs/spec/keeper-runner.md`, How Aviary shows it](spec/keeper-runner.md#how-aviary-shows-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
+
+### SUITE-58: Keeper runner: which passes and jobs are recorded
+
+- Question: Which jobs make a pass worth recording, and where does the runner find Aviary's database?
+- Answer: A job whose transaction landed, whatever it did, with its signature and cost; a job held by a cap, once a UTC day for each cap that holds it and again after it was anything but held; a parked job and an unparked one; and the keeper wallet unwrapping its tips; retries run as passes of their own, `retry`. The database is the project's `DATABASE_URL` unless `KEEPER_DATABASE_URL` names another, and a database that cannot be reached logs the pass as the log would hold it, never stopping the runner.
+- Alternatives: Recording only sent jobs, which would leave the fees of refused transactions off the page; recording every hold in every pass, which would keep Neon awake every sweep while a cap is reached; `DATABASE_URL` unset unless `KEEPER_DATABASE_URL` is set, which would leave the owner's runner unrecorded until someone remembered to set it.
+- Specified in: [`docs/spec/keeper-runner.md`, What it records](spec/keeper-runner.md#what-it-records)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
 
 ## Engineering and security bar (BAR)
 
@@ -2090,6 +2110,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: build-time constant
 - Status: default
 - Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-104: What the keeper page shows
+
+- Question: What does the keeper page show, and when does it say the runner looks stopped?
+- Answer: Whether the runner is running, the keeper wallet (`KEEPER_WALLET`, a var of `terminal-api`) with its balance through RPC, today's spend against `DAILY_CAP`, `MAX_TX_COST` and each market's `MARKET_DAILY_CAP`, the last time each kind of pass ran and the last time it did something, the held and parked jobs, the latest 20 jobs with their transactions, and the latest warnings; the runner looks stopped once its last heartbeat is older than its own `SWEEP_INTERVAL` plus 5 minutes (`KEEPER_STOPPED_GRACE_MS`); a database or RPC that does not answer leaves the rest of the page standing.
+- Alternatives: A fixed threshold, which would go wrong as soon as someone set a different `SWEEP_INTERVAL`; a page per product, beside each panel's due jobs.
+- Specified in: [`docs/spec/keeper-runner.md`, How Aviary shows it](spec/keeper-runner.md#how-aviary-shows-it)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
 
 ## Canary checks (CANARY)
 

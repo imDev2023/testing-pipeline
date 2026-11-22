@@ -8,8 +8,8 @@ import { AiText, AuthorText } from "./Voice";
 
 /**
  * The footer of every page (docs/spec/pipescope-screens.md, "On every page"): the three styles of
- * "Who is speaking", the devnet line, the links and the theme control. Fees and the keeper page join
- * the links as they land, and the official Telegram bot and channel once the API names them.
+ * "Who is speaking", the devnet line, the links (Devnet help and the keeper page, PIPESCOPE-97) and
+ * the theme control. Fees joins the links as it lands, and the official Telegram bot and channel once the API names them.
  */
 export function SiteFooter({ theme }: { theme: ThemeChoice }) {
   return (
@@ -35,6 +35,7 @@ export function SiteFooter({ theme }: { theme: ThemeChoice }) {
           </p>
           <nav className={styles.links} aria-label="About">
             <Link href={ROUTES.devnetHelp}>Devnet help</Link>
+            <Link href={ROUTES.keeper}>Keeper</Link>
           </nav>
           <ThemeControl initial={theme} />
         </div>

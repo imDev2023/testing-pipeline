@@ -16,6 +16,7 @@ describe('settings', () => {
         assert.equal(settings.rpcUrl, 'https://solana-devnet.g.alchemy.com/v2/alchemy-secret');
         assert.equal(settings.keypair, join(homedir(), '.config/testing-pipeline/devnet/keeper.json'));
         assert.equal(settings.databaseUrl, null);
+        assert.equal(settings.heartbeatUrl, null);
         assert.ok(settings.retryDelaysMs.length > 0);
         assert.ok(settings.minBalance < settings.lowBalance && settings.lowBalance < settings.floatTarget);
         assert.ok(settings.maxTxCost <= settings.marketDailyCap && settings.marketDailyCap <= settings.dailyCap);
@@ -32,6 +33,11 @@ describe('settings', () => {
         assert.equal(settings.wsUrl, 'wss://devnet.helius-rpc.com/?api-key=aviary-secret');
         assert.equal(settings.discoveryRpcUrl, 'https://devnet.helius-rpc.com/?api-key=aviary-secret');
         assert.equal(settings.rpcUrl, 'https://solana-devnet.g.alchemy.com/v2/alchemy-secret');
+    });
+
+    test("Aviary's database is the project's DATABASE_URL unless KEEPER_DATABASE_URL names another", () => {
+        assert.equal(loadSettings({ ...ALCHEMY, DATABASE_URL: 'postgres://terminal:terminal@127.0.0.1:5462/terminal' }).databaseUrl, 'postgres://terminal:terminal@127.0.0.1:5462/terminal');
+        assert.equal(loadSettings({ ...ALCHEMY, DATABASE_URL: 'postgres://a/b', KEEPER_DATABASE_URL: 'postgres://c/d' }).databaseUrl, 'postgres://c/d');
     });
 
     test('each setting is overridden by its KEEPER_ variable', () => {
@@ -54,6 +60,7 @@ describe('settings', () => {
             KEEPER_WS_URL: 'ws://127.0.0.1:9000',
             KEEPER_DISCOVERY_RPC_URL: 'http://127.0.0.1:8999',
             KEEPER_DATABASE_URL: 'postgres://example',
+            KEEPER_HEARTBEAT_URL: 'http://localhost:8811/keeper/heartbeat',
         });
         assert.equal(settings.floatTarget, 3_000_000_000n);
         assert.equal(settings.lowBalance, 750_000_000n);
@@ -72,6 +79,7 @@ describe('settings', () => {
         assert.equal(settings.wsUrl, 'ws://127.0.0.1:9000');
         assert.equal(settings.discoveryRpcUrl, 'http://127.0.0.1:8999');
         assert.equal(settings.databaseUrl, 'postgres://example');
+        assert.equal(settings.heartbeatUrl, 'http://localhost:8811/keeper/heartbeat');
     });
 
     test('a KEEPER_ variable that names no setting is refused, so a typo never leaves a default in force', () => {

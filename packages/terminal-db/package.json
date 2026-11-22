@@ -8,6 +8,7 @@
     },
     "exports": {
         ".": "./src/index.ts",
+        "./keeper": "./src/keeper.ts",
         "./migrate": "./src/migrate.ts",
         "./testing": "./src/testing.ts"
     },

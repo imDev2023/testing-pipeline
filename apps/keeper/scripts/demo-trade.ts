@@ -66,6 +66,9 @@ if (!values.balances) {
     const simulation = { commitment: 'confirmed' } as const;
     const strategyAccounts = await pipeline.resolveAccounts(rpc, view, trade, payer.address, simulation);
     const { quote } = await pipeline.quoteStrategy(rpc, view, trade, strategyAccounts, payer.address, simulation);
+    // Since Pipeline 0.3 a sale into wrapped SOL pays the router's fee out of what arrived, and the
+    // minimum is checked against what the trader keeps (docs/toolchain.md, "Pipeline 0.3").
+    const kept = pipeline.marketViewFeeSide(view, view.mints[1]!) === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
     const account = async (mint: Address) => (await findAssociatedTokenPda({ owner: payer.address, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS }))[0];
     const swap = await pipeline.swap(
         {
@@ -81,7 +84,7 @@ if (!values.balances) {
             outputTokenProgram: TOKEN_PROGRAM_ADDRESS,
             strategyAccounts,
         },
-        { mode: pipeline.TradeMode.ExactIn, amountIn: amount, amountOut: 0n, minAmountOut: quote.amountOut, integratorFeeBps: 0, extra: new Uint8Array() },
+        { mode: pipeline.TradeMode.ExactIn, amountIn: amount, amountOut: 0n, minAmountOut: kept, integratorFeeBps: 0, extra: new Uint8Array() },
     );
     const { value: blockhash } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
     const signed = await signTransactionMessageWithSigners(

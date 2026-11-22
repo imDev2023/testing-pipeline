@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { EXPLORER } from "@/config";
+import { shortAddress } from "@/format";
 import styles from "./Address.module.css";
 
 /** An address that is the subject of its page: whole, with Copy and a link to the block explorer. */
@@ -37,5 +38,23 @@ export function SubjectAddress({ address }: { address: string }) {
         </a>
       </span>
     </span>
+  );
+}
+
+/** An address in a list: short, with the whole address on hover, linking to the block explorer. */
+export function ShortAddress({ address }: { address: string }) {
+  return (
+    <a className={styles.short} href={EXPLORER.address(address)} title={address} rel="noreferrer" target="_blank">
+      <code>{shortAddress(address)}</code>
+    </a>
+  );
+}
+
+/** A transaction in a list: its signature short, with the whole on hover, linking to the block explorer. */
+export function ShortSignature({ signature }: { signature: string }) {
+  return (
+    <a className={styles.short} href={EXPLORER.transaction(signature)} title={signature} rel="noreferrer" target="_blank">
+      <code>{shortAddress(signature)}</code>
+    </a>
   );
 }

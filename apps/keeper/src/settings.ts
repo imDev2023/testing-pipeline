@@ -121,7 +121,10 @@ const DEFINITIONS = {
     RPC_URL: { fallback: (env: Env) => (env.ALCHEMY_API_KEY?.trim() ? alchemyDevnet(env.ALCHEMY_API_KEY.trim()) : null), ...url },
     WS_URL: { fallback: (env: Env) => (aviaryRpc(env) ?? PUBLIC_DEVNET).replace(/^http/, 'ws'), ...url },
     DISCOVERY_RPC_URL: { fallback: (env: Env) => aviaryRpc(env) ?? PUBLIC_DEVNET, ...url },
-    DATABASE_URL: { fallback: () => null, ...url },
+    /** Aviary's database, where passes are recorded: the project's DATABASE_URL, as for Aviary's local run (SUITE-37). */
+    DATABASE_URL: { fallback: (env: Env) => (env.DATABASE_URL?.trim() ? env.DATABASE_URL.trim() : null), ...url },
+    /** Where each pass's signed heartbeat goes, `terminal-api`'s /keeper/heartbeat; unset, none is sent (SUITE-57). */
+    HEARTBEAT_URL: { fallback: () => null, ...url },
 } as const satisfies Record<string, Definition<any>>;
 
 export type SettingName = keyof typeof DEFINITIONS;
@@ -147,6 +150,7 @@ export type Settings = {
     wsUrl: string;
     discoveryRpcUrl: string;
     databaseUrl: string | null;
+    heartbeatUrl: string | null;
 };
 
 /** The variable that overrides a setting: KEEPER_ and its name, KEEPER_KEYPAIR for the key. */
@@ -193,6 +197,7 @@ export function loadSettings(env: Env = process.env): Settings {
         wsUrl: required('WS_URL'),
         discoveryRpcUrl: required('DISCOVERY_RPC_URL'),
         databaseUrl: read('DATABASE_URL'),
+        heartbeatUrl: read('HEARTBEAT_URL'),
     };
 }
 
@@ -214,6 +219,7 @@ const FIELDS: Record<SettingName, keyof Settings> = {
     WS_URL: 'wsUrl',
     DISCOVERY_RPC_URL: 'discoveryRpcUrl',
     DATABASE_URL: 'databaseUrl',
+    HEARTBEAT_URL: 'heartbeatUrl',
 };
 
 /** Every setting by its name, as the runner logs them when it starts: no key or password shown. */

@@ -41,6 +41,12 @@ importers:
       keeper-jobs:
         specifier: workspace:*
         version: link:../../packages/keeper-jobs
+      terminal-api:
+        specifier: workspace:*
+        version: link:../terminal-api
+      terminal-db:
+        specifier: workspace:*
+        version: link:../../packages/terminal-db
     devDependencies:
       '@pipeline-placeholder/sdk':
         specifier: link:../../fixtures/pipeline/sdk/ts
@@ -354,12 +360,21 @@ importers:
       '@playwright/test':
         specifier: 1.65.1
         version: 1.65.1
+      '@solana/kit':
+        specifier: 8.6.0
+        version: 8.6.0(typescript@6.0.3)
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
+      postgres:
+        specifier: 3.4.9
+        version: 3.4.9
       terminal-api:
         specifier: workspace:*
         version: link:../../apps/terminal-api
+      terminal-db:
+        specifier: workspace:*
+        version: link:../../packages/terminal-db
       typescript:
         specifier: 6.0.3
         version: 6.0.3
