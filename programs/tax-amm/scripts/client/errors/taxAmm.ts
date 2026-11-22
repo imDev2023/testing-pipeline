@@ -103,6 +103,8 @@ export const TAX_AMM_ERROR__MINT_AUTHORITY_SET = 0x1799; // 6041
 export const TAX_AMM_ERROR__FREEZE_AUTHORITY_SET = 0x179a; // 6042
 /** OwedSlotRedirected: A recipient slot still owed tax keeps its wallet until it is paid out */
 export const TAX_AMM_ERROR__OWED_SLOT_REDIRECTED = 0x179b; // 6043
+/** TermsChanged: The market's terms are not the ones the seeder agreed to */
+export const TAX_AMM_ERROR__TERMS_CHANGED = 0x179c; // 6044
 
 export type TaxAmmError =
   | typeof TAX_AMM_ERROR__ALREADY_RENOUNCED
@@ -141,6 +143,7 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__SHARES_NOT_WHOLE
   | typeof TAX_AMM_ERROR__SHARE_WITHOUT_RECIPIENT
   | typeof TAX_AMM_ERROR__TAX_ABOVE_CAP
+  | typeof TAX_AMM_ERROR__TERMS_CHANGED
   | typeof TAX_AMM_ERROR__TRANSFER_HOOK_NOT_ALLOWED
   | typeof TAX_AMM_ERROR__UNDERFLOW
   | typeof TAX_AMM_ERROR__UNUSED_SLOT
@@ -189,6 +192,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__SHARES_NOT_WHOLE]: `The recipients' shares and the burn share must sum to 10,000`,
     [TAX_AMM_ERROR__SHARE_WITHOUT_RECIPIENT]: `An unused recipient slot must have no share`,
     [TAX_AMM_ERROR__TAX_ABOVE_CAP]: `A tax range may not go above MAX_TAX_BPS`,
+    [TAX_AMM_ERROR__TERMS_CHANGED]: `The market's terms are not the ones the seeder agreed to`,
     [TAX_AMM_ERROR__TRANSFER_HOOK_NOT_ALLOWED]: `A mint's transfer hook must be cleared, or be the containment hook with the mint's unlock PDA as its authority`,
     [TAX_AMM_ERROR__UNDERFLOW]: `Arithmetic underflow`,
     [TAX_AMM_ERROR__UNUSED_SLOT]: `The tax recipient slot is unused: it has no wallet to pay`,

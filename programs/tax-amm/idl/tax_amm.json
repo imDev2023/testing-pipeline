@@ -650,7 +650,8 @@
     {
       "name": "seed",
       "docs": [
-        "Custom action: the seeder funds the market once, before any swap, and opens it.",
+        "Custom action: the seeder funds the market once, before any swap, and opens it, if",
+        "`expected_terms` is the hash of the market's terms as stored ([`terms::terms_hash`]).",
         "Remaining accounts are transfer-hook accounts, for either mint."
       ],
       "discriminator": [
@@ -715,6 +716,15 @@
         {
           "name": "amount_1",
           "type": "u64"
+        },
+        {
+          "name": "expected_terms",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
         }
       ]
     },
@@ -1130,6 +1140,11 @@
       "code": 6043,
       "name": "OwedSlotRedirected",
       "msg": "A recipient slot still owed tax keeps its wallet until it is paid out"
+    },
+    {
+      "code": 6044,
+      "name": "TermsChanged",
+      "msg": "The market's terms are not the ones the seeder agreed to"
     }
   ],
   "types": [

@@ -127,6 +127,8 @@ import {
     getInitializeMint2Instruction,
     getMintSize,
     getMintToInstruction,
+    getSetAuthorityInstruction,
+    AuthorityType,
     getSyncNativeInstruction,
     getTransferCheckedInstruction,
     TOKEN_PROGRAM_ADDRESS,
@@ -153,6 +155,7 @@ import {
 } from './client/index.ts';
 import { findSeederPda, graduateInstruction, graduationFromLogs, LAUNCHPAD_PROGRAM_ADDRESS } from './launchpad.ts';
 import { price, swap as specSwap, type SpecMarket } from './spec-model.ts';
+import { termsArg, termsHash } from './terms.ts';
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
 const DEFAULT_PROGRAM_ID = 'J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t';
@@ -501,7 +504,11 @@ async function walletTokenAccount(owner: Address, mint: Address, tokenProgram: A
     return account;
 }
 
-/** A new SPL Token mint, with `amount` minted to the wallet. */
+/**
+ * A new SPL Token mint, with `amount` minted to the wallet and then no mint authority: a
+ * market's seed refuses a mint that keeps one, or a freeze authority, unless it is a quote
+ * mint (TAX-16).
+ */
 async function createTestToken(wallet: KeyPairSigner, label: string, decimals: number, amount: bigint) {
     const mint = await generateKeyPairSigner();
     const space = BigInt(getMintSize());
@@ -525,6 +532,12 @@ async function createTestToken(wallet: KeyPairSigner, label: string, decimals: n
                 mint: mint.address,
             }),
             getMintToInstruction({ mint: mint.address, token: holder, mintAuthority: wallet, amount }),
+            getSetAuthorityInstruction({
+                owned: mint.address,
+                owner: wallet,
+                authorityType: AuthorityType.MintTokens,
+                newAuthority: null,
+            }),
         ],
         [mint],
     );
@@ -1050,7 +1063,12 @@ async function solTaxedMarket(payer: KeyPairSigner, programId: Address, metadata
                 action: seedAction,
                 market: view,
                 wallet: payer.address,
-                args: { amount_0: SOL_MARKET.seed[0], amount_1: SOL_MARKET.seed[1] },
+                // The hash of the terms this script is creating the market with (TAX-59).
+                args: {
+                    amount_0: SOL_MARKET.seed[0],
+                    amount_1: SOL_MARKET.seed[1],
+                    expected_terms: termsArg(termsHash([mints[0]!, mints[1]!], sent)),
+                },
             }),
         ],
         [marketStateKey],
@@ -1165,7 +1183,12 @@ async function tokenMarket(payer: KeyPairSigner, programId: Address, metadata: p
         action: seedAction,
         market: view,
         wallet: payer.address,
-        args: { amount_0: TOKEN_MARKET.seed[0], amount_1: TOKEN_MARKET.seed[1] },
+        // The hash of the terms this script is creating the market with (TAX-59).
+        args: {
+            amount_0: TOKEN_MARKET.seed[0],
+            amount_1: TOKEN_MARKET.seed[1],
+            expected_terms: termsArg(termsHash([mintA, mintB], sent)),
+        },
     });
     await send(
         'create_market + init_fee_account x2 + seed',

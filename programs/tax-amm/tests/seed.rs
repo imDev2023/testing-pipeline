@@ -4,7 +4,7 @@
 mod common;
 
 use common::*;
-use pipeline_client::pda;
+use pipeline_client::{pda, Pubkey};
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 use tax_amm::events::Seeded;
@@ -96,7 +96,8 @@ fn the_seed_is_refused_from_anyone_but_the_seeder() {
         StrategyError::NotSeeder,
     );
     // Nor can anyone sign for the seeder: without the seeder's signature it is no seed.
-    let mut unsigned = seed_instruction(&market, &stranger.pubkey(), [1, 1], vec![]);
+    let terms = terms_of(&env.tax_market(&market.market_state));
+    let mut unsigned = seed_instruction(&market, &stranger.pubkey(), [1, 1], terms, vec![]);
     let seeder = ck(&env.tax_market(&market.market_state).seeder);
     unsigned.accounts[0] = pipeline_client::AccountMeta::new_readonly(seeder, false);
     let failure = env.send(&[unsigned], &[]).unwrap_err();
@@ -203,12 +204,13 @@ fn the_creation_transaction_seeds_the_market_it_creates() {
             created: Default::default(),
         };
         let creator = env.admin.pubkey();
+        let params = valid_params(&creator);
         env.fund(&creator, &market, [1_000_000, 2_000_000]);
         let mut instructions = vec![create_market_instruction(
             &creator,
             &state.pubkey(),
             true,
-            init_data(&valid_params(&creator)),
+            init_data(&params),
             init_accounts(&state.pubkey(), mint_keys, token_programs),
         )];
         for i in 0..2 {
@@ -225,10 +227,13 @@ fn the_creation_transaction_seeds_the_market_it_creates() {
                 env.hook_accounts(&mint_keys[i], source, vaults[i], creator)
             })
             .collect();
+        // The creator hashes the terms it is creating the market with.
+        let terms = terms_hash(mint_keys, &params, ([0, 0], 0));
         instructions.push(seed_instruction(
             &market,
             &creator,
             [600_000, 1_500_000],
+            terms,
             hooks,
         ));
         let transaction = solana_transaction::Transaction::new_signed_with_payer(
@@ -276,7 +281,14 @@ fn the_seed_is_refused_from_a_token_account_the_seeder_only_holds_a_delegation_o
         );
         env.send(&[approve], &[&other]).unwrap();
     }
-    let mut seed = seed_instruction(&market, &seeder.pubkey(), [600_000, 1_500_000], vec![]);
+    let terms = terms_of(&env.tax_market(&market.market_state));
+    let mut seed = seed_instruction(
+        &market,
+        &seeder.pubkey(),
+        [600_000, 1_500_000],
+        terms,
+        vec![],
+    );
     seed.accounts[2].pubkey = theirs(0);
     seed.accounts[3].pubkey = theirs(1);
     assert_refused(env.send(&[seed], &[&seeder]), StrategyError::WrongAccount);
@@ -285,4 +297,147 @@ fn the_seed_is_refused_from_a_token_account_the_seeder_only_holds_a_delegation_o
         MarketStatus::Created
     );
     assert_eq!(env.balance(&theirs(0)), 1_000_000);
+}
+
+/// A change to a market's creation parameters.
+type Alter = fn(&mut tax_amm::InitParams);
+
+/// Hardening finding H019 (#67): `seed` bound no terms, so anyone could create a decoy market
+/// naming a victim as its seeder, with terms of its own (here a huge virtual reserve on the
+/// other side, which would let one tiny swap take the victim's whole deposit), and a victim
+/// signing `seed` on a market it was handed funded it. The seed now carries the hash of the
+/// terms its seeder agreed to, and every difference is refused before anything moves.
+#[test]
+fn sos_h019_a_seed_whose_terms_are_not_the_markets_is_refused() {
+    let victim = Keypair::new();
+    let intended = valid_params(&victim.pubkey());
+    let altered: [(&str, Alter); 6] = [
+        ("a virtual reserve on the other side", |p| {
+            p.virtual_side = 1;
+            p.virtual_reserve = u64::MAX / 2;
+        }),
+        ("another tax authority", |p| {
+            p.tax_authority = ak(&Pubkey::new_unique())
+        }),
+        ("another tax recipient", |p| {
+            p.recipients[0] = ak(&Pubkey::new_unique())
+        }),
+        ("a wider buy tax range", |p| p.buy_tax_max_bps = 1_000),
+        ("the other tax side", |p| p.tax_side = 0),
+        ("a higher sell tax", |p| p.sell_tax_bps = 600),
+    ];
+    for (what, alter) in altered {
+        let mut env = Env::new();
+        let mints = [
+            (env.create_mint(&TOKEN), TOKEN),
+            (env.create_mint(&TOKEN), TOKEN),
+        ];
+        let mut decoy = intended;
+        alter(&mut decoy);
+        let market = env.create_tax_market(mints, &decoy).unwrap();
+        env.fund(&victim.pubkey(), &market, [1_000_000, 2_000_000]);
+        let expected = terms_hash(market.mints, &intended, ([0, 0], 0));
+        let seed = seed_instruction(&market, &victim.pubkey(), [1_000_000, 0], expected, vec![]);
+        assert_refused(env.send(&[seed], &[&victim]), StrategyError::TermsChanged);
+        let state = env.tax_market(&market.market_state);
+        assert_eq!(state.status, MarketStatus::Created, "{what}");
+        assert_eq!(env.balance(&market.vaults[0]), 0, "{what}: nothing moved");
+    }
+    // The market's own terms, hashed by the seeder that created it, open it.
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN), TOKEN),
+    ];
+    let market = env.create_tax_market(mints, &intended).unwrap();
+    env.fund(&victim.pubkey(), &market, [1_000_000, 2_000_000]);
+    let expected = terms_hash(market.mints, &intended, ([0, 0], 0));
+    let seed = seed_instruction(
+        &market,
+        &victim.pubkey(),
+        [1_000_000, 2_000_000],
+        expected,
+        vec![],
+    );
+    env.send(&[seed], &[&victim]).unwrap();
+    assert_eq!(
+        env.tax_market(&market.market_state).status,
+        MarketStatus::Open
+    );
+}
+
+/// A rate change pending before the seed is part of the terms: a seed hashed without it is
+/// refused, and one that names it opens the market.
+#[test]
+fn a_rate_change_pending_before_the_seed_is_part_of_its_terms() {
+    use common::authority::set_taxes_instruction;
+    let authority = Keypair::new();
+    let (mut env, market, seeder) = unseeded(|p| p.tax_authority = ak(&authority.pubkey()));
+    let before = env.tax_market(&market.market_state);
+    env.send(
+        &[set_taxes_instruction(
+            &market.market_state,
+            &authority.pubkey(),
+            800,
+            900,
+        )],
+        &[&authority],
+    )
+    .unwrap();
+    let after = env.tax_market(&market.market_state);
+    assert_ne!(after.pending_from_slot, 0);
+    for (terms, refused) in [(terms_of(&before), true), (terms_of(&after), false)] {
+        let seed = seed_instruction(
+            &market,
+            &seeder.pubkey(),
+            [600_000, 1_500_000],
+            terms,
+            vec![],
+        );
+        let result = env.send(&[seed], &[&seeder]);
+        if refused {
+            assert_refused(result, StrategyError::TermsChanged);
+        } else {
+            result.unwrap();
+        }
+    }
+}
+
+/// The hash of fixed terms, which `scripts/terms.test.ts` pins too, so the TypeScript client
+/// that demo scripts and Aviary seed with computes exactly what the program checks.
+#[test]
+fn the_terms_hash_of_fixed_terms_is_the_clients() {
+    let key = |s: &str| s.parse::<Pubkey>().unwrap();
+    let default = Pubkey::default();
+    let params = tax_amm::InitParams {
+        tax_side: 1,
+        buy_tax_bps: 300,
+        sell_tax_bps: 500,
+        buy_tax_min_bps: 100,
+        buy_tax_max_bps: 800,
+        sell_tax_min_bps: 0,
+        sell_tax_max_bps: 1_000,
+        tax_authority: ak(&key("9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt")),
+        seeder: ak(&key("ACrn3UD4DLgyCKbNMiqx6Vcs2d49RSbHdbLJ82uw61s8")),
+        recipients: [
+            ak(&key("8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2")),
+            ak(&default),
+            ak(&default),
+            ak(&default),
+        ],
+        shares: [9_000, 0, 0, 0],
+        burn_share_bps: 1_000,
+        virtual_side: 0,
+        virtual_reserve: 50_000_000_000,
+    };
+    let mints = [
+        key("So11111111111111111111111111111111111111112"),
+        key("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"),
+    ];
+    let none = Pubkey::new_from_array(terms_hash(mints, &params, ([0, 0], 0))).to_string();
+    let pending =
+        Pubkey::new_from_array(terms_hash(mints, &params, ([800, 900], 12_345))).to_string();
+    println!("no pending change: {none}\npending: {pending}");
+    assert_eq!(none, "FBQRE7k7qyqiavt2rD3WFVRj2wrjESjBLU36g3TZSKbs");
+    assert_eq!(pending, "FXQuHEirGu2qVb8yD38kFxBLyoEenoVvSjctJWwD1DG2");
 }

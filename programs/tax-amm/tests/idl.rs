@@ -344,6 +344,7 @@ fn its_events_and_errors_are_the_programs() {
         E::MintAuthoritySet,
         E::FreezeAuthoritySet,
         E::OwedSlotRedirected,
+        E::TermsChanged,
     ];
     let named = &errors[errors.len() - tail.len()..];
     for (error, expected) in named.iter().zip(tail) {

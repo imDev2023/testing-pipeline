@@ -870,7 +870,8 @@ impl Env {
         amounts: [u64; 2],
         hook_accounts: Vec<AccountMeta>,
     ) -> Result<TransactionMetadata, String> {
-        let instruction = seed_instruction(market, &seeder.pubkey(), amounts, hook_accounts);
+        let terms = terms_of(&self.tax_market(&market.market_state));
+        let instruction = seed_instruction(market, &seeder.pubkey(), amounts, terms, hook_accounts);
         self.send_meta(&[instruction], &[seeder])
     }
 
@@ -1241,12 +1242,14 @@ pub fn seed_instruction(
     market: &Market,
     seeder: &Pubkey,
     amounts: [u64; 2],
+    expected_terms: [u8; 32],
     hook_accounts: Vec<AccountMeta>,
 ) -> Instruction {
     use anchor_lang::InstructionData;
     let data = tax_amm::instruction::Seed {
         amount_0: amounts[0],
         amount_1: amounts[1],
+        expected_terms,
     }
     .data();
     let source =
@@ -1265,6 +1268,36 @@ pub fn seed_instruction(
     ];
     accounts.extend(hook_accounts);
     Instruction::new_with_bytes(strategy_id(), &data, accounts)
+}
+
+/// The hash of a market's terms the seed checks (docs/spec/tax-amm.md, "The seed"), written
+/// out from the spec rather than taken from the program: the SHA-256 of the Borsh encoding of
+/// the two mints, the creation parameters (`init_data`'s fields, in their order), the
+/// pending buy and sell tax and the slot they apply from (all 0 when nothing is pending).
+pub fn terms_hash(mints: [Pubkey; 2], params: &InitParams, pending: ([u16; 2], u64)) -> [u8; 32] {
+    use sha2::Digest;
+    let mut bytes = vec![];
+    for mint in mints {
+        bytes.extend_from_slice(mint.as_ref());
+    }
+    bytes.extend(init_data(params));
+    bytes.extend_from_slice(&pending.0[0].to_le_bytes());
+    bytes.extend_from_slice(&pending.0[1].to_le_bytes());
+    bytes.extend_from_slice(&pending.1.to_le_bytes());
+    sha2::Sha256::digest(&bytes).into()
+}
+
+/// [`terms_hash`] of a market state as it stands, as a client that shows the market to its
+/// seeder computes it.
+pub fn terms_of(state: &TaxMarket) -> [u8; 32] {
+    terms_hash(
+        state.mints.map(|mint| ck(&mint)),
+        &state.params(),
+        (
+            [state.pending_buy_tax_bps, state.pending_sell_tax_bps],
+            state.pending_from_slot,
+        ),
+    )
 }
 
 /// The wallet a tax slot is paid to, as the program's `TaxMarket::slot_wallet` says

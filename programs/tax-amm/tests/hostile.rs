@@ -376,8 +376,14 @@ fn sos_h004_a_seed_naming_another_token_program_is_refused() {
         [TOKEN_2022, TOKEN],
     ] {
         let swapped = with_token_programs(&market, programs);
-        let instruction =
-            seed_instruction(&swapped, &seeder.pubkey(), [1_000_000, 1_000_000], vec![]);
+        let terms = terms_of(&env.tax_market(&market.market_state));
+        let instruction = seed_instruction(
+            &swapped,
+            &seeder.pubkey(),
+            [1_000_000, 1_000_000],
+            terms,
+            vec![],
+        );
         assert!(env.send_meta(&[instruction], &[&seeder]).is_err());
     }
     assert_eq!(holdings(&env, &market, &[seeder.pubkey()]), before);

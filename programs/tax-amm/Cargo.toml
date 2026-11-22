@@ -27,6 +27,7 @@ anchor-spl.workspace = true
 mint-rules.workspace = true
 pipeline-strategy-interface.workspace = true
 solana-security-txt.workspace = true
+solana-sha256-hasher.workspace = true
 
 # Anchor's macros check `target_os = "solana"`, which host builds don't know about, and
 # Kani sets `kani`; `kani_full` turns on the full-domain proofs, as in Pipeline.

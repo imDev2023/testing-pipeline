@@ -103,4 +103,6 @@ pub enum StrategyError {
     FreezeAuthoritySet,
     #[msg("A recipient slot still owed tax keeps its wallet until it is paid out")]
     OwedSlotRedirected,
+    #[msg("The market's terms are not the ones the seeder agreed to")]
+    TermsChanged,
 }

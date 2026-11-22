@@ -129,7 +129,12 @@ A real launchpad's own accounts change these numbers, and a pair across token pr
 
 ### The seed
 
-- `seed { amount_0: u64, amount_1: u64 }` is a custom action signed by the market's `seeder`, from token accounts the seeder owns, allowed once and only before any swap.
+- `seed { amount_0: u64, amount_1: u64, expected_terms: [u8; 32] }` is a custom action signed by the market's `seeder`, from token accounts the seeder owns, allowed once and only before any swap.
+- `expected_terms` is the hash of the terms the seeder agreed to, and a market whose terms as stored hash otherwise is refused before anything moves (`TermsChanged`), so nobody can lure a seeder into funding a look-alike market whose terms it did not choose, such as one created naming it as seeder with a huge virtual reserve on the other side, which would let one tiny swap take its whole deposit (hardening finding H019, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  - The hash is the SHA-256 of the Borsh encoding of the two mints, the creation parameters as stored (`init_data`'s fields, in their order), the pending buy and sell tax and the slot they apply from (all 0 when nothing is pending, "Rates").
+  - A seeder computes it from the terms it created the market with, or from the market state it was shown; Aviary's launch form, the demo script and the containment hook's launch script compute it with `programs/tax-amm/scripts/terms.ts`, whose test pins the same hashes as the program's tests.
+  - The metadata's `seed` action takes it as a `pubkey` argument, 32 bytes written in base58, since metadata arguments have no fixed-size byte type.
+  - `pipeline_seed_liquidity` needs no hash: its caller passes the creation parameters themselves, in the same call that creates the market.
 - Each side's real amount must be above 0, except the virtual side when `virtual_reserve` is above 0, where it may be 0; that is how a token launches single-sided, with only the token deposited.
 - The market records each side's real reserve from what actually arrived in its vault, and opens for swaps.
 - Until the seed, quotes and swaps are refused (`pipeline-check` reports this as a warning, as it does for any market not yet open).

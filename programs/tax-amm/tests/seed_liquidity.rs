@@ -150,7 +150,8 @@ fn the_seed_action_is_refused_on_a_seeded_market() {
     let market = &graduated.market;
 
     // Even signed by the seeder itself, from its escrows, the market is already seeded.
-    let seed = seed_instruction(market, &launch.seeder, [1_000, 1_000], vec![]);
+    let terms = terms_of(&env.tax_market(&market.market_state));
+    let seed = seed_instruction(market, &launch.seeder, [1_000, 1_000], terms, vec![]);
     assert_refused(
         env.call_as_seeder(&launch, seed),
         tax_amm::StrategyError::AlreadySeeded,

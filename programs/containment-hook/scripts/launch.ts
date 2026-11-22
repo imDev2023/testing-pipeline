@@ -12,8 +12,9 @@
 //   4. create the tax market with its tax on the quote mint and a fee account for each mint,
 //      and `bind` with the goal and the deadline, in the same transaction when it fits
 //      (measured each run), otherwise in the next one;
-//   5. check the mint, and read back from the config exactly the market, market state,
-//      vault, fee account, quote mint, goal and deadline expected;
+//   5. check the mint, revoke its mint authority, which `bind` needed and which the tax AMM's
+//      seed refuses (TAX-16, HOOK-12), and read back from the config exactly the market,
+//      market state, vault, fee account, quote mint, goal and deadline expected;
 //   6. seed the market through the metadata's `seed` action, single-sided on its virtual
 //      quote reserve, with the hook accounts after the action's own, and show in simulation
 //      `unlock` refused while neither the goal nor the deadline is reached;
@@ -42,7 +43,7 @@
 //
 // The hook accounts (the config, the hook program and the validation account) are resolved
 // from the validation account with Token-2022's own client, `resolveExtraAccountMetasForExecute`
-// from @solana-program/token-2022, because neither Pipeline client resolves them. Revoking the mint authority, an optional last step, must come after `bind`. Deploy
+// from @solana-program/token-2022, because neither Pipeline client resolves them. Revoking the mint authority must come after `bind` and before the seed. Deploy
 // both programs and register the tax AMM first; docs/toolchain.md says how, on a local
 // validator and on devnet.
 //
@@ -117,7 +118,7 @@ import {
     getTransferCheckedInstruction,
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
-import { resolveExtraAccountMetasForExecute } from '@solana-program/token-2022';
+import { AuthorityType, getSetAuthorityInstruction, resolveExtraAccountMetasForExecute } from '@solana-program/token-2022';
 import * as pipeline from '@pipeline-placeholder/sdk';
 import { buildActionInstruction, findAction } from 'strategy-actions';
 
@@ -135,6 +136,7 @@ import {
     MAX_UNLOCK_DEADLINE_SECS,
 } from './client/index.ts';
 import { fetchTaxMarket, findAuthorityPda, findVault0Pda, findVault1Pda, MarketStatus, TAX_AMM_PROGRAM_ADDRESS } from '../../tax-amm/scripts/client/index.ts';
+import { termsArg, termsHash } from '../../tax-amm/scripts/terms.ts';
 
 const TOKEN_2022_PROGRAM_ADDRESS = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
 const WRAPPED_SOL = address('So11111111111111111111111111111111111111112');
@@ -866,7 +868,18 @@ async function launchToken(
     }
     if (decoded.supply !== TOKEN.supply) fail(`the supply is ${decoded.supply}, not ${TOKEN.supply}`);
     info(`mint: Token-2022, only the transfer hook extension (program ${hookProgram}, authority the unlock PDA), no freeze authority, supply ${decoded.supply}`);
-    info(`trust flags: ${decoded.flags.join(', ')}`);
+    // The tax AMM's seed refuses a mint that keeps a mint authority (TAX-16), and `bind`,
+    // which needed it, is done.
+    await send('revoke the mint authority', launcher, [
+        getSetAuthorityInstruction(
+            { owned: mint, owner: launcher, authorityType: AuthorityType.MintTokens, newAuthority: null },
+            { programAddress: TOKEN_2022_PROGRAM_ADDRESS },
+        ),
+    ]);
+    const revoked = pipeline.decodeMint(mint, TOKEN_2022_PROGRAM_ADDRESS, (await account(mint))!.data);
+    if (revoked?.mintAuthority !== null) fail(`the mint authority is still ${revoked?.mintAuthority}`);
+    info('mint authority revoked: nobody can mint more of the token');
+    info(`trust flags: ${revoked.flags.join(', ')}`);
 
     const validationAccount = await account(validation);
     if (validationAccount?.owner !== hookProgram) fail(`the validation account ${validation} is not the hook's`);
@@ -919,7 +932,29 @@ async function launchToken(
         action: seedAction,
         market: view,
         wallet: launcher.address,
-        args: { amount_0: HOME_MARKET.seed[0], amount_1: HOME_MARKET.seed[1] },
+        args: {
+            amount_0: HOME_MARKET.seed[0],
+            amount_1: HOME_MARKET.seed[1],
+            // The hash of the terms step 4 created the market with (TAX-59).
+            expected_terms: termsArg(
+                termsHash([mints[0]!.mint, mints[1]!.mint], {
+                    taxSide: QUOTE_INDEX,
+                    buyTaxBps: HOME_MARKET.buyTaxBps,
+                    sellTaxBps: HOME_MARKET.sellTaxBps,
+                    buyTaxMinBps: HOME_MARKET.buyTaxRangeBps[0],
+                    buyTaxMaxBps: HOME_MARKET.buyTaxRangeBps[1],
+                    sellTaxMinBps: HOME_MARKET.sellTaxRangeBps[0],
+                    sellTaxMaxBps: HOME_MARKET.sellTaxRangeBps[1],
+                    taxAuthority: launcher.address,
+                    seeder: launcher.address,
+                    recipients,
+                    shares: [...HOME_MARKET.shares],
+                    burnShareBps: HOME_MARKET.burnShareBps,
+                    virtualSide: QUOTE_INDEX,
+                    virtualReserve: HOME_MARKET.virtualReserve,
+                }),
+            ),
+        },
     });
     const seedTail = await hookAccounts(holder, vaults[CONTAINED_INDEX]!, launcher.address);
     await send('seed', launcher, [{ ...seed, accounts: [...(seed.accounts ?? []), ...seedTail] }]);

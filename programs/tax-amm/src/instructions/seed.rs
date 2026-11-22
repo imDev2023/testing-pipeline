@@ -4,6 +4,10 @@
 //!
 //! The market records each side's real reserve from what actually arrived in its vault,
 //! so tokens anyone sent to a vault beforehand stay out of the price as donations.
+//!
+//! The seeder names the terms it agreed to by their hash, and a market whose terms as stored
+//! hash otherwise is refused before anything moves (`crate::terms`; hardening finding H019,
+//! #67), so a seeder handed a look-alike market can't be made to fund it.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenInterface};
@@ -55,11 +59,16 @@ pub fn seed_market<'info>(
     ctx: Context<'info, Seed<'info>>,
     amount_0: u64,
     amount_1: u64,
+    expected_terms: [u8; 32],
 ) -> Result<()> {
     let market = &ctx.accounts.market_state;
     require!(
         market.status == MarketStatus::Created,
         StrategyError::AlreadySeeded
+    );
+    require!(
+        crate::terms::terms_hash(market)? == expected_terms,
+        StrategyError::TermsChanged
     );
     let accounts = &ctx.accounts;
     let sides = [
