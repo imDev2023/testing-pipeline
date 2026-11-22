@@ -45,6 +45,7 @@ It was deployed while this repo was still private ([BAR-21](../../docs/decisions
 To check the deploy yourself, with `solana-verify` 0.5.2 or later and Docker, rebuild the commit as the deploy did, from an export of it and with the image it pinned, and compare the two hashes:
 
 ```sh
+mkdir -p /tmp/tax-amm-274038e
 git archive 274038e programs | tar -x -C /tmp/tax-amm-274038e
 solana-verify build /tmp/tax-amm-274038e/programs --library-name tax_amm --arch v3 \
   --base-image solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd
