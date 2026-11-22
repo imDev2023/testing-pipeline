@@ -1,0 +1,24 @@
+# Adapted from Top-pad b833a7b, docker-compose.yml; owned here since.
+# Aviary's local database (`pnpm --filter terminal-db db:up`), the Postgres the local run's
+# DATABASE_URL names (docs/toolchain.md, "Aviary's local run"). One project name, so every
+# worktree of this repo shares the one container and its volume.
+name: testing-pipeline-terminal
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: terminal-postgres
+    environment:
+      POSTGRES_USER: terminal
+      POSTGRES_PASSWORD: terminal
+      POSTGRES_DB: terminal
+    ports:
+      - "127.0.0.1:5462:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "terminal"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - terminal-postgres:/var/lib/postgresql/data
+volumes:
+  terminal-postgres:
