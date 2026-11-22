@@ -55,8 +55,9 @@
 //
 //   node launch.ts --cluster <localnet|devnet|URL> --launcher <keypair.json> \
 //     --goal <quote-mint base units> --deadline <ISO 8601 time or Unix seconds> \
-//     [--unlock <goal|deadline>] [--goal ... --deadline ... [--unlock ...]] \
-//     [--quote-mint <address>] [--pipeline-check <binary> [--conformance-out <dir>]] \
+//     [--unlock <goal|deadline|none>] [--quote-mint <address|new>] \
+//     [--goal ... --deadline ... [--unlock ...] [--quote-mint ...]] \
+//     [--pipeline-check <binary> [--conformance-out <dir>]] \
 //     [--record <file.json>]
 //
 //   --cluster     localnet (http://127.0.0.1:8899), devnet, or an RPC URL of either; the
@@ -68,10 +69,11 @@
 //   --deadline    the unlock deadline; required, no default; the hook refuses one that is
 //                 not in the future or too far away
 //   --quote-mint  the SPL Token mint the token trades against and its tax is taken in
-//                 (default: wrapped SOL)
+//                 (default: wrapped SOL), or `new` for a fresh SPL Token mint the script
+//                 creates once per run and mints the launcher; given once, it is every token's
 //   --unlock      unlock the token after the launch, by the goal (the script trades until
 //                 it is reached) or by the deadline (the script waits for it); without it,
-//                 the script stops after step 10a and the token stays contained
+//                 or with `none`, the script stops after step 10a and the token stays contained
 //   --pipeline-check  Pipeline's `pipeline-check` binary (built in fixtures/pipeline), run with
 //                 `--fail-on-warn` on each home market while contained and after the unlock
 //                 (bar, "Test layers" 7); without it, steps 10a and 14 say so and check nothing
@@ -81,11 +83,13 @@
 //                 it stops part way
 //
 // Giving `--goal` and `--deadline` again launches another token after the first, the nth of
-// each flag being the nth token's; `--unlock` is then given for every token or for none. Each
-// token's terms are checked again when its launch starts, so one whose deadline the tokens
-// before it outlasted stops before it sends anything. The rehearsal of the devnet launch
-// gives two: first one unlocked by a short deadline, then one by a small goal
-// (docs/toolchain.md, "Containment hook").
+// each flag being the nth token's; `--unlock` is then given for every token or for none, and
+// `--quote-mint` once for all or once for each. Each token's terms are checked again when its
+// launch starts, so one whose deadline the tokens before it outlasted stops before it sends
+// anything. The devnet launch gives three: first one unlocked by a short deadline, then one by
+// a small goal, both against wrapped SOL, then one quoted in a fresh mint and left contained,
+// whose sells pay Pipeline's fee in the token (HOOK-40, HOOK-41; docs/toolchain.md,
+// "Containment hook").
 //
 // On a local cluster the script airdrops the SOL the launcher needs; on devnet it never does
 // (fund it with devnet-airdrop, docs/toolchain.md).
@@ -204,6 +208,11 @@ const UNLOCKING = {
     maxDeadlineWaitSecs: 600n,
     unlockerLamports: 2_000_000n,
 } as const;
+// `--quote-mint new`: one fresh SPL Token mint per run, with no freeze authority, whose mint
+// authority is the launcher, who is minted `supply` of it to trade with; every token given
+// `new` is quoted in it (HOOK-41: Pipeline 0.3 takes its fee in the token on such a market).
+const NEW_QUOTE_MINT = { decimals: 6, supply: 1_000_000_000_000n } as const;
+const SPL_MINT_SIZE = 82;
 // What the launch's rents and fees may cost beyond the market's setup and the buy, which the
 // launcher must hold before anything is sent, so a launch never stops halfway for want of SOL.
 const RENT_AND_FEES = 200_000_000n;
@@ -247,7 +256,7 @@ const { values: options } = parseArgs({
 function usage(message: string): never {
     console.error(`${message}\n`);
     console.error(
-        'Usage: node launch.ts --cluster <localnet|devnet|URL> --launcher <keypair.json> --goal <quote-mint base units> --deadline <ISO 8601 time or Unix seconds> [--unlock <goal|deadline>] [--goal ... --deadline ... [--unlock ...]] [--quote-mint <address>] [--pipeline-check <binary> [--conformance-out <dir>]] [--record <file.json>]',
+        'Usage: node launch.ts --cluster <localnet|devnet|URL> --launcher <keypair.json> --goal <quote-mint base units> --deadline <ISO 8601 time or Unix seconds> [--unlock <goal|deadline|none>] [--quote-mint <address|new>] [--goal ... --deadline ... [--unlock ...] [--quote-mint ...]] [--pipeline-check <binary> [--conformance-out <dir>]] [--record <file.json>]',
     );
     process.exit(2);
 }
@@ -275,10 +284,6 @@ try {
     if (error instanceof UsageError) usage(error.message);
     throw error;
 }
-if (tokens.some(({ quoteMint }) => quoteMint === 'new' || quoteMint !== tokens[0]!.quoteMint)) {
-    usage('every token must share one --quote-mint address in this version of the script');
-}
-const quoteMint = address(tokens[0]!.quoteMint);
 const onDevnet = !cluster.local;
 const pipelineCheck = options['pipeline-check'];
 const conformanceOut = options['conformance-out'];
@@ -648,9 +653,9 @@ async function main() {
     console.log(`Containment hook ${hookProgram}, tax AMM ${taxAmm}`);
     record.push(['containment hook program', hookProgram], ['tax AMM program', taxAmm]);
     console.log(`Launcher ${launcher.address}`);
-    for (const [i, { unlockGoal, unlockDeadline, unlockBy }] of tokens.entries()) {
+    for (const [i, { unlockGoal, unlockDeadline, unlockBy, quoteMint }] of tokens.entries()) {
         console.log(
-            `Token ${i + 1}: unlock goal ${unlockGoal} quote-mint base units, unlock deadline ${new Date(Number(unlockDeadline) * 1000).toISOString()} (${unlockDeadline})${unlockBy ? `, unlocked by the ${unlockBy}` : ''}`,
+            `Token ${i + 1}: quoted in ${quoteMint === 'new' ? 'a fresh SPL Token mint' : quoteMint}, unlock goal ${unlockGoal} quote-mint base units, unlock deadline ${new Date(Number(unlockDeadline) * 1000).toISOString()} (${unlockDeadline})${unlockBy ? `, unlocked by the ${unlockBy}` : ', left contained'}`,
         );
     }
     await checkCluster();
@@ -669,16 +674,29 @@ async function main() {
         fail('the tax AMM is not registered with the router on this cluster; register it first (the tax AMM\'s demo does, docs/toolchain.md)');
     }
     info('the tax AMM is registered with the router');
-    const quote = await account(quoteMint);
-    if (quote?.owner !== TOKEN_PROGRAM_ADDRESS) fail(`the quote mint ${quoteMint} is not an SPL Token mint on this cluster`);
-    // The buy is sized in whole units of the quote mint; a mint's decimals are its byte 44.
-    const buy = TRADES.buyUnits * 10n ** BigInt(quote.data[44]!);
-    const buySpend = pipeline.maxTotalSpend(buy, 0) ?? fail('the buy overflows');
-    const [quoteHolder] = await findAssociatedTokenPda({ owner: launcher.address, mint: quoteMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+    // Each token's quote mint: the address it was given, or the fresh mint of `--quote-mint new`.
+    const newQuoteMint = tokens.some(({ quoteMint }) => quoteMint === 'new') ? await generateKeyPairSigner() : undefined;
+    const quoteOf = tokens.map(({ quoteMint }) => (quoteMint === 'new' ? newQuoteMint!.address : address(quoteMint)));
+    if (newQuoteMint) info(`--quote-mint new: a fresh SPL Token mint ${newQuoteMint.address} with ${NEW_QUOTE_MINT.decimals} decimals, created before the first launch`);
+    // The buy is sized in whole units of each token's quote mint; a mint's decimals are its byte 44.
+    const quotes = new Map<Address, { buy: bigint; buySpend: bigint; quoteHolder: Address }>();
+    for (const quoteMint of new Set(quoteOf)) {
+        let decimals: number = NEW_QUOTE_MINT.decimals;
+        if (quoteMint !== newQuoteMint?.address) {
+            const quote = await account(quoteMint);
+            if (quote?.owner !== TOKEN_PROGRAM_ADDRESS) fail(`the quote mint ${quoteMint} is not an SPL Token mint on this cluster`);
+            decimals = quote.data[44]!;
+        }
+        const buy = TRADES.buyUnits * 10n ** BigInt(decimals);
+        const [quoteHolder] = await findAssociatedTokenPda({ owner: launcher.address, mint: quoteMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+        quotes.set(quoteMint, { buy, buySpend: pipeline.maxTotalSpend(buy, 0) ?? fail('the buy overflows'), quoteHolder });
+    }
+    const quoteFor = (i: number) => ({ quoteMint: quoteOf[i]!, ...quotes.get(quoteOf[i]!)! });
     // By the goal, the rounds of trades each token takes, counting only each round's buy tax,
     // and what they may cost: both taxes and Pipeline's fees on each round's buy.
-    const buyTax = (buy * BigInt(HOME_MARKET.buyTaxBps)) / 10_000n;
     const goalRounds = tokens.map(({ unlockGoal, unlockBy }, i) => {
+        const { buy } = quoteFor(i);
+        const buyTax = (buy * BigInt(HOME_MARKET.buyTaxBps)) / 10_000n;
         if (unlockBy === 'goal') {
             if (buyTax === 0n) fail(`a buy of ${buy} base units of the quote mint pays no tax, so --unlock goal could never reach the goal; use --unlock deadline`);
             const rounds = Number((unlockGoal + buyTax - 1n) / buyTax);
@@ -696,23 +714,32 @@ async function main() {
         return 0;
     });
     const roundsCost = goalRounds.map(
-        (rounds) => (BigInt(rounds) * buySpend * (BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps) + UNLOCKING.roundMarginBps)) / 10_000n,
+        (rounds, i) => (BigInt(rounds) * quoteFor(i).buySpend * (BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps) + UNLOCKING.roundMarginBps)) / 10_000n,
     );
     for (const [i, rounds] of goalRounds.entries()) {
-        if (rounds > 0) info(`token ${i + 1}, --unlock goal: at most ${rounds} rounds of a buy of ${buy} and a sell back, costing about ${roundsCost[i]} of the quote mint`);
+        if (rounds > 0) info(`token ${i + 1}, --unlock goal: at most ${rounds} rounds of a buy of ${quoteFor(i).buy} and a sell back, costing about ${roundsCost[i]} of the quote mint`);
     }
     // Everything the launches spend is checked before anything is sent: a binding and a seed
     // cannot be undone, so a launch that ran out halfway would leave a market untraded.
-    const quoteNeeded = tokens.reduce((sum, _, i) => sum + buySpend + roundsCost[i]!, 0n);
+    const quoteNeeded = new Map<Address, bigint>();
+    for (const [i] of tokens.entries()) {
+        const { quoteMint, buySpend } = quoteFor(i);
+        quoteNeeded.set(quoteMint, (quoteNeeded.get(quoteMint) ?? 0n) + buySpend + roundsCost[i]!);
+    }
     let solNeeded = tokens.reduce(
         (sum, { unlockBy }) => sum + MAX_CREATOR_LAMPORTS + RENT_AND_FEES + (unlockBy ? UNLOCKING.unlockerLamports : 0n),
-        0n,
+        newQuoteMint ? RENT_AND_FEES : 0n,
     );
-    if (quoteMint === WRAPPED_SOL) {
-        solNeeded += quoteNeeded;
-    } else {
-        const held = (await account(quoteHolder)) ? await tokenBalance(quoteHolder) : 0n;
-        if (held < quoteNeeded) fail(`the launcher's ${quoteMint} account ${quoteHolder} holds ${held}, but the trades need ${quoteNeeded} with Pipeline's fee`);
+    for (const [quoteMint, needed] of quoteNeeded) {
+        if (quoteMint === WRAPPED_SOL) {
+            solNeeded += needed;
+        } else if (quoteMint === newQuoteMint?.address) {
+            if (needed > NEW_QUOTE_MINT.supply) fail(`the trades need ${needed} of the fresh quote mint, more than the ${NEW_QUOTE_MINT.supply} the launcher is minted`);
+        } else {
+            const { quoteHolder } = quotes.get(quoteMint)!;
+            const held = (await account(quoteHolder)) ? await tokenBalance(quoteHolder) : 0n;
+            if (held < needed) fail(`the launcher's ${quoteMint} account ${quoteHolder} holds ${held}, but the trades need ${needed} with Pipeline's fee`);
+        }
     }
     const { value: solHeld } = await rpc.getBalance(launcher.address, { commitment: 'confirmed' }).send();
     if (solHeld < solNeeded) fail(`the launcher holds ${Number(solHeld) / 1e9} SOL, but the launch needs ${Number(solNeeded) / 1e9}`);
@@ -728,13 +755,37 @@ async function main() {
     const startTime = await clusterTime();
     for (const [i, terms] of tokens.entries()) checkTerms(i, terms, startTime);
 
+    if (newQuoteMint) {
+        step('Creating the fresh quote mint of --quote-mint new');
+        const { quoteHolder } = quotes.get(newQuoteMint.address)!;
+        await send(
+            'create the quote mint and mint the launcher its supply',
+            launcher,
+            [
+                getCreateAccountInstruction({
+                    payer: launcher,
+                    newAccount: newQuoteMint,
+                    lamports: await rpc.getMinimumBalanceForRentExemption(BigInt(SPL_MINT_SIZE)).send(),
+                    space: SPL_MINT_SIZE,
+                    programAddress: TOKEN_PROGRAM_ADDRESS,
+                }),
+                getInitializeMint2Instruction({ mint: newQuoteMint.address, decimals: NEW_QUOTE_MINT.decimals, mintAuthority: launcher.address, freezeAuthority: null }),
+                await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: launcher.address, mint: newQuoteMint.address }),
+                getMintToInstruction({ mint: newQuoteMint.address, token: quoteHolder, mintAuthority: launcher, amount: NEW_QUOTE_MINT.supply }),
+            ],
+            [newQuoteMint],
+        );
+        record.push(['quote mint (--quote-mint new)', newQuoteMint.address]);
+        info(`the launcher holds ${NEW_QUOTE_MINT.supply} of it in ${quoteHolder}`);
+    }
+
     for (const [i, terms] of tokens.entries()) {
         if (i > 0) checkTerms(i, terms, await clusterTime());
         stepPrefix = tokens.length > 1 ? `Token ${i + 1}, ` : '';
         if (tokens.length > 1) {
-            record.push([`token ${i + 1}`, `goal ${terms.unlockGoal}, deadline ${terms.unlockDeadline}${terms.unlockBy ? `, unlocked by the ${terms.unlockBy}` : ''}`]);
+            record.push([`token ${i + 1}`, `quoted in ${quoteOf[i]}, goal ${terms.unlockGoal}, deadline ${terms.unlockDeadline}${terms.unlockBy ? `, unlocked by the ${terms.unlockBy}` : ', left contained'}`]);
         }
-        await launchToken(launcher, terms, { buy, buySpend, quoteHolder, init, metadata: metadata.value, goalRounds: goalRounds[i]! });
+        await launchToken(launcher, terms, { ...quoteFor(i), init, metadata: metadata.value, goalRounds: goalRounds[i]! });
     }
 
     stepPrefix = '';
@@ -767,8 +818,9 @@ function checkTerms(i: number, { unlockGoal, unlockDeadline, unlockBy }: Terms, 
     }
 }
 
-/** What every token's launch shares, worked out once before anything is sent. */
+/** What a token's launch is given, worked out once before anything is sent: its quote mint and its buy, and what every launch shares. */
 type Shared = {
+    quoteMint: Address;
     buy: bigint;
     buySpend: bigint;
     quoteHolder: Address;
@@ -781,7 +833,7 @@ type Shared = {
 async function launchToken(
     launcher: KeyPairSigner,
     { unlockGoal, unlockDeadline, unlockBy }: Terms,
-    { buy, buySpend, quoteHolder, init, metadata, goalRounds }: Shared,
+    { quoteMint, buy, buySpend, quoteHolder, init, metadata, goalRounds }: Shared,
 ) {
     const hookProgram = CONTAINMENT_HOOK_PROGRAM_ADDRESS;
     const taxAmm = TAX_AMM_PROGRAM_ADDRESS;
