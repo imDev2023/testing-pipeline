@@ -2729,12 +2729,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-05: Tax authority
 
 - Question: Who may change a market's taxes after creation?
-- Answer: Only its optional tax authority, which may move the rates inside their fixed ranges, change the recipients and renounce, each taking effect at once; nobody else can change anything about a market, us included, and the program has no admin.
-- Alternatives: Moving the tax authority to another address.
-- Specified in: [`docs/spec/tax-amm.md`, Tax authority](spec/tax-amm.md#tax-authority)
+- Answer: Only its optional tax authority, which may move the rates inside their fixed ranges, change the recipients and renounce; a change of rates waits `RATE_CHANGE_DELAY_SLOTS` (300 slots, longer than any transaction's lifetime) as the market's pending rates, decreases included, so no change can reach a swap already signed, renouncing cancels a change still pending, and the other actions take effect at once; nobody else can change anything about a market, us included, and the program has no admin.
+- Alternatives: The earlier default, every change taking effect at once, which let the authority put a rate change on either side of a victim's swap and take its slippage allowance as tax (hardening finding H010); capping how far one change may move a rate, one change per slot, which shrinks that take but never removes it; accepting it, the trader's minimum output being the protection; moving the tax authority to another address.
+- Specified in: [`docs/spec/tax-amm.md`, Rates](spec/tax-amm.md#rates)
 - Changes by: fixed on-chain once deployed
-- Status: default
-- Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19)
+- Status: changed 2026-11-22
+- Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19); changed by the owner on 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
 
 ### TAX-06: Suite share
 
@@ -2839,12 +2839,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-16: Mint rules
 
 - Question: Which mints may a tax market hold?
-- Answer: SPL Token mints, and Token-2022 mints carrying only extensions on an allowlist (transfer hook, metadata pointer, token metadata, group pointer, group member pointer, token group and token group member); every other extension is refused at creation, while mint and freeze authorities are allowed.
-- Alternatives: Allowing more extensions, which would admit quote mints such as PYUSD.
+- Answer: SPL Token mints, and Token-2022 mints carrying only extensions on an allowlist (transfer hook, metadata pointer, token metadata, group pointer, group member pointer, token group and token group member), every other extension refused at creation; a transfer hook only when it is cleared or is the containment hook with the mint's unlock PDA as its authority, checked at creation; and at the seed, through either seed path, no mint authority and no freeze authority on any mint but a quote mint (`TAX-58`).
+- Alternatives: The earlier default, any hook program and mint and freeze authorities allowed and disclosed, which let a token's issuer refuse sells, mint into the curve or freeze a vault once buyers were in (hardening findings H007, H008, H009, H016); refusing only foreign hooks, leaving the authorities disclosed; allowing more extensions, which would admit quote mints such as PYUSD.
 - Specified in: [`docs/spec/tax-amm.md`, Mint rules](spec/tax-amm.md#mint-rules)
 - Changes by: fixed on-chain once deployed
-- Status: default
-- Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19)
+- Status: changed 2026-11-22
+- Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19); changed by the owner on 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
 
 ### TAX-17: Market addresses
 
@@ -3068,13 +3068,13 @@ Each field is one line, and each value is one sentence of inline Markdown.
 
 ### TAX-39: Emptying a recipient slot that is still owed
 
-- Question: May `set_recipients` empty a recipient slot that is still owed tax?
-- Answer: No: it refuses with `OwedSlotLeftEmpty`, so every owed amount always has a wallet or the burn to go to; the slot can be handed to another wallet instead, or paid out first, and the burn share may still drop to 0 since the burn needs no wallet.
-- Alternatives: Allowing it, which would strand the owed amount in the vault for good once the authority renounced; moving the owed amount to another slot, which would make `set_recipients` change owed amounts, which none of the tax authority's actions does.
-- Specified in: [`docs/spec/tax-amm.md`, Tax authority](spec/tax-amm.md#tax-authority)
+- Question: May `set_recipients` empty a recipient slot that is still owed tax, or hand it to another wallet?
+- Answer: Neither: a slot still owed tax keeps its wallet until it is paid out, refused with `OwedSlotLeftEmpty` when emptied and `OwedSlotRedirected` when handed to another wallet, so what a slot is owed always goes to the wallet that earned it; the authority pays it out first with `distribute`, in the same transaction if it likes, shares may move whatever is owed, and the burn share may still drop to 0 since the burn needs no wallet.
+- Alternatives: The earlier default, the slot handed to another wallet with what it was owed, which let the authority hand every slot to itself and pay them out in one transaction (hardening finding H023); allowing an owed slot to be emptied, which would strand the owed amount for good once the authority renounced; moving the owed amount to another slot, which would make `set_recipients` change owed amounts.
+- Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
 - Changes by: fixed on-chain once deployed
-- Status: default
-- Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
+- Status: changed 2026-11-22
+- Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62); changed by the owner on 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
 
 ### TAX-40: How a refused tax authority action is reported
 
@@ -3226,6 +3226,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: changed 2026-11-19
 - Decided: 2026-11-16 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
 
+### TAX-55: Tax recipients that are the market's own addresses
+
+- Question: May a tax recipient be one of the market's own addresses or the programs it runs on?
+- Answer: No: creation and `set_recipients` refuse a recipient that is the market state, its vault authority, its vaults or mints, the tax AMM, the router or the market's signer under it, or a token or associated token program (`NotAWallet`), since none could ever move what it is paid while its payout event reads as paid.
+- Alternatives: Allowing them and leaving such tax stuck in an account nobody controls (hardening finding H024).
+- Specified in: [`docs/spec/tax-amm.md`, Creation parameters](spec/tax-amm.md#creation-parameters)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-20 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
+
+### TAX-56: A market state a newer build wrote
+
+- Question: What does the program do with a market state whose version byte is newer than the one it writes?
+- Answer: Every instruction refuses it (`NewerStateVersion`), so a build rolled back under markets a newer build wrote never reads them with an older layout's meaning; fields added into the reserved bytes keep the version byte, as the pending rates did, since markets created before read zeros there.
+- Alternatives: Reading any version, which would misread fields a newer layout gave other meanings (hardening finding H069).
+- Specified in: [`docs/spec/tax-amm.md`, Counters for the containment hook](spec/tax-amm.md#counters-for-the-containment-hook)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-20 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
+
+### TAX-57: The release gate before an upgrade
+
+- Question: How is an upgrade kept from stranding a market that already exists?
+- Answer: Before a new build replaces the deployed one, its release gate copies every tax market on the cluster with the cluster's slot, and reads and quotes each both ways with the new bytes at that slot, at the spec's price and exactly as the deployed build does; `scripts/deploy-devnet.sh` runs it on the very bytes it deploys and records what it read, and every `cargo test` runs it on a committed copy of devnet's markets.
+- Alternatives: Trusting the layout tests alone, which can't tell whether real markets still quote (hardening finding H038).
+- Specified in: [`docs/spec/tax-amm.md`, Upgrades and freezing](spec/tax-amm.md#upgrades-and-freezing)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
+
+### TAX-58: The quote mints
+
+- Question: Which mints may keep a mint or freeze authority when a tax market is seeded?
+- Answer: Only the quote mints, the build-time list `QUOTE_MINTS`: SPL Token's and Token-2022's native SOL mints and the cluster's USDC (Circle's devnet mint on devnet; a mainnet build names mainnet's before it is frozen).
+- Alternatives: No exception, which would refuse every market quoted in USDC; a creation parameter naming the quote side, which a decoy creator would set to its own token.
+- Specified in: [`docs/spec/tax-amm.md`, Mint rules](spec/tax-amm.md#mint-rules)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
+
+### TAX-59: The seed names the market's terms
+
+- Question: How does a seeder make sure the market it funds has the terms it agreed to?
+- Answer: `seed` takes `expected_terms`, the SHA-256 of the Borsh encoding of the mints, the creation parameters as stored and any pending rate change, and refuses a mismatch before anything moves (`TermsChanged`); the metadata's `seed` action takes it as a `pubkey`-typed argument, since metadata arguments have no fixed-size byte type, and `pipeline_seed_liquidity` needs none, since its caller passes the parameters themselves.
+- Alternatives: Binding no terms, which let anyone lure a seeder into funding a look-alike market with a huge virtual reserve on the other side (hardening finding H019); a `bytes` argument, which the metadata encodes with a length prefix; accepting it because Aviary creates and seeds in one transaction for one signer.
+- Specified in: [`docs/spec/tax-amm.md`, The seed](spec/tax-amm.md#the-seed)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained
@@ -3341,12 +3391,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-12: Mint rules at binding
 
 - Question: Which mints can be contained?
-- Answer: Token-2022 mints whose only extensions are on the tax AMM's allowlist and whose freeze authority is unset; the mint authority may stay set.
-- Alternatives: Allowing a freeze authority, as the tax AMM does.
+- Answer: Token-2022 mints whose only extensions are on the tax AMM's allowlist and whose freeze authority is unset; `bind` needs the mint authority's signature, and a launch revokes it after `bind` and before the seed, since the tax AMM's seed refuses a mint that keeps one (`TAX-16`).
+- Alternatives: The earlier default, the mint authority allowed to stay set for good, which let a launcher mint and sell into its home market (hardening finding H008 of the tax AMM); allowing a freeze authority, as the tax AMM once did.
 - Specified in: [`docs/spec/containment-hook.md`, Checks on the mint](spec/containment-hook.md#checks-on-the-mint)
 - Changes by: fixed on-chain once deployed
-- Status: default
-- Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
+- Status: changed 2026-11-22
+- Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18); changed by the owner on 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
 
 ### HOOK-13: How the hook decides
 
