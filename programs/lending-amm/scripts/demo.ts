@@ -863,6 +863,10 @@ async function seedFromLaunchpad(input: {
         // Nothing is lent yet, so L is the buffer alone.
         const calculated = exactIn(reserves[side]!, reserves[output]!, amount, feeBps);
         if (quote.amountOut !== calculated) fail(`${label}: the quote is ${quote.amountOut}; the formula gives ${calculated}`);
+        // Since Pipeline 0.3 a sale pays Pipeline's fee in WSOL, the market's fee mint, out
+        // of what arrived; the market pays out the quote either way.
+        const feeSide = pipeline.marketViewFeeSide(view, mints[output]!);
+        const kept = feeSide === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
         const before = await tokenBalance(holdings[output]!);
         await send(label, payer, [
             await pipeline.swap(
@@ -883,19 +887,21 @@ async function seedFromLaunchpad(input: {
                     mode: pipeline.TradeMode.ExactIn,
                     amountIn: amount,
                     amountOut: 0n,
-                    minAmountOut: quote.amountOut,
+                    minAmountOut: kept,
                     integratorFeeBps: 0,
                     extra: new Uint8Array(),
                 },
+                feeSide,
             ),
         ]);
         const received = (await tokenBalance(holdings[output]!)) - before;
-        if (received !== quote.amountOut) fail(`${label}: received ${received}, quoted ${quote.amountOut}`);
-        reserves = side === 1 ? [reserves[0] - received, reserves[1] + amount] : [reserves[0] + amount, reserves[1] - received];
+        if (received !== kept) fail(`${label}: kept ${received}, quoted ${quote.amountOut} to keep ${kept}`);
+        const paid = quote.amountOut;
+        reserves = side === 1 ? [reserves[0] - paid, reserves[1] + amount] : [reserves[0] + amount, reserves[1] - paid];
         const { data: after } = await fetchLendingAmmMarket(rpc, marketState, { commitment: 'confirmed' });
         if (show(after.reserves) !== show(reserves)) fail(`${label}: the market state holds ${show(after.reserves)}, the formulas give ${show(reserves)}`);
-        info(`${label}: ${amount} in, ${received} out, equal to its quote and the formula`);
-        record.push([`seeded market: ${label}`, `${amount} in, ${received} out`]);
+        info(`${label}: ${amount} in, ${paid} out, equal to its quote and the formula; ${received} kept after Pipeline's fee in the ${feeSide}`);
+        record.push([`seeded market: ${label}`, `${amount} in, ${paid} out, ${received} kept`]);
     }
 
     step('30. Rebalancing the seeded market: lending its surplus to Kamino, the locked shares untouched');
@@ -1233,7 +1239,17 @@ async function main() {
         const { quote } = await pipeline.quoteStrategy(rpc, routerView, trade, strategyAccounts, payer.address, simulation);
         return quote.amountOut;
     }
-    /** The router's `swap` for `amount` of mint `input`, with the strategy accounts given. */
+    /**
+     * The side a trade from mint `input` pays Pipeline's fee on, from the router's record:
+     * since Pipeline 0.3 a sale pays it in WSOL, the market's fee mint, out of what arrived.
+     */
+    const feeSideFrom = (input: 0 | 1) => pipeline.marketViewFeeSide(routerView, mints[1 - input]!);
+    /** What the trader keeps of `out` arriving from a trade from mint `input`. */
+    const keptOf = (input: 0 | 1, out: bigint) => (feeSideFrom(input) === 'output' ? pipeline.keptAfterOutputFee(out) : out);
+    /**
+     * The router's `swap` for `amount` of mint `input`, with the strategy accounts given;
+     * `minAmountOut` is what the trader must keep.
+     */
     const swapInstruction = (input: 0 | 1, amount: bigint, strategyAccounts: AccountMeta[], minAmountOut: bigint) =>
         pipeline.swap(
             {
@@ -1257,6 +1273,7 @@ async function main() {
                 integratorFeeBps: 0,
                 extra: new Uint8Array(),
             },
+            feeSideFrom(input),
         );
     let lastSwap: { input: 0 | 1; amount: bigint; strategyAccounts: AccountMeta[] } | undefined;
     /** Buys the token with WSOL and sells it back through the router, checking each swap. */
@@ -1290,15 +1307,17 @@ async function main() {
             info(`${label}: lent side L = B + V = ${lent.buffer} + ${lent.value} (${lent.ctokens} cTokens at the stored rate) = ${lent.total}`);
             info(`${label}: ${amount} in quotes ${quote.amountOut} out (${unitsConsumed} compute units), as calculated`);
             const before = await tokenBalance(holdings[output]!);
-            await send(label, payer, [await swapInstruction(input, amount, strategyAccounts, quote.amountOut)]);
+            const kept = keptOf(input, quote.amountOut);
+            await send(label, payer, [await swapInstruction(input, amount, strategyAccounts, kept)]);
             const received = (await tokenBalance(holdings[output]!)) - before;
-            if (received !== quote.amountOut) fail(`${label}: received ${received}, quoted ${quote.amountOut}`);
+            if (received !== kept) fail(`${label}: kept ${received}, quoted ${quote.amountOut} to keep ${kept}`);
+            const paid = quote.amountOut;
             reserves = input === 1
-                ? [reserves[0] - received, reserves[1] + amount]
-                : [reserves[0] + amount, reserves[1] - received];
-            info(`${label}: received exactly the quote, ${received}`);
+                ? [reserves[0] - paid, reserves[1] + amount]
+                : [reserves[0] + amount, reserves[1] - paid];
+            info(`${label}: the quote, ${paid}, arrived; ${received} kept after Pipeline's fee in the ${feeSideFrom(input)}`);
             await checkMarket(`after "${label}"`);
-            record.push([label, `${amount} in, ${received} out, equal to its quote`]);
+            record.push([label, `${amount} in, ${paid} out, equal to its quote, ${received} kept`]);
             lastSwap = { input, amount, strategyAccounts };
         }
     }
@@ -1452,9 +1471,10 @@ async function main() {
     info(`${saleAmount} in quotes ${saleQuote.amountOut} WSOL out (${saleUnits} compute units), as calculated: ${shortfall} beyond the buffer ${beforeSale.buffer}, for ${burn} cTokens`);
     const wsolBefore = await tokenBalance(holdings[1]!);
     const ctokensBefore = await tokenBalance(ctokenAccount);
-    const saleSignature = await send('sell beyond the buffer', payer, [await swapInstruction(0, saleAmount, saleAccounts, saleQuote.amountOut)]);
+    const saleKept = keptOf(0, saleQuote.amountOut);
+    const saleSignature = await send('sell beyond the buffer', payer, [await swapInstruction(0, saleAmount, saleAccounts, saleKept)]);
     const saleReceived = (await tokenBalance(holdings[1]!)) - wsolBefore;
-    if (saleReceived !== saleQuote.amountOut) fail(`the sale received ${saleReceived}, quoted ${saleQuote.amountOut}`);
+    if (saleReceived !== saleKept) fail(`the sale kept ${saleReceived}, quoted ${saleQuote.amountOut} to keep ${saleKept}`);
     const redeemed = (await strategyEvents(saleSignature, SHORTFALL_REDEEMED_EVENT_DISCRIMINATOR)).map((data) =>
         getShortfallRedeemedEventDecoder().decode(data),
     );
@@ -1468,8 +1488,8 @@ async function main() {
     reserves = [reserves[0] + saleAmount, reserves[1] + event.liquidity - saleQuote.amountOut];
     lent = { ctokens: lent.ctokens - burn, deposited: lent.deposited, redeemed: lent.redeemed + event.liquidity };
     await checkMarket('after the sale');
-    info(`the trader received exactly the quote; klend's redeem paid ${event.liquidity} for ${burn} cTokens, ${event.liquidity - shortfall} above the shortfall, which stays in the buffer`);
-    record.push(['sell beyond the buffer', `${saleAmount} in, ${saleReceived} out, ${shortfall} redeemed for ${burn} cTokens`]);
+    info(`the quote arrived and the trader kept ${saleReceived} after Pipeline's fee; klend's redeem paid ${event.liquidity} for ${burn} cTokens, ${event.liquidity - shortfall} above the shortfall, which stays in the buffer`);
+    record.push(['sell beyond the buffer', `${saleAmount} in, ${saleQuote.amountOut} out, ${saleReceived} kept, ${shortfall} redeemed for ${burn} cTokens`]);
 
     step('16. Rebalancing: the buffer back to its target');
     const drained = await lentSide();
@@ -1777,9 +1797,10 @@ async function main() {
         const calculated = exactIn(reserves[0], side.total, amount, feeBps);
         if (quote.amountOut !== calculated) fail(`${label}: the quote is ${quote.amountOut}; the formula gives ${calculated}`);
         const before = await tokenBalance(holdings[1]!);
-        const signature = await send(label, payer, [await swapInstruction(0, amount, accounts, quote.amountOut)]);
+        const kept = keptOf(0, quote.amountOut);
+        const signature = await send(label, payer, [await swapInstruction(0, amount, accounts, kept)]);
         const received = (await tokenBalance(holdings[1]!)) - before;
-        if (received !== quote.amountOut) fail(`${label}: received ${received}, quoted ${quote.amountOut}`);
+        if (received !== kept) fail(`${label}: kept ${received}, quoted ${quote.amountOut} to keep ${kept}`);
         const events = (await strategyEvents(signature, SHORTFALL_REDEEMED_EVENT_DISCRIMINATOR)).map((data) =>
             getShortfallRedeemedEventDecoder().decode(data),
         );
@@ -1794,8 +1815,8 @@ async function main() {
             reserves = [reserves[0] + amount, reserves[1] - quote.amountOut];
         }
         await checkMarket(`after "${label}"`);
-        info(`${label}: ${amount} in, ${received} WSOL out, equal to its quote and the formula${redeem ? `; klend redeemed ${redeem.liquidity} for ${redeem.ctokens} cTokens inside the swap` : ', from the buffer alone'}`);
-        record.push([label, `${amount} in, ${received} out${redeem ? `, ${redeem.shortfall} redeemed` : ''}`]);
+        info(`${label}: ${amount} in, ${quote.amountOut} WSOL out, equal to its quote and the formula, ${received} kept${redeem ? `; klend redeemed ${redeem.liquidity} for ${redeem.ctokens} cTokens inside the swap` : ', from the buffer alone'}`);
+        record.push([label, `${amount} in, ${quote.amountOut} out, ${received} kept${redeem ? `, ${redeem.shortfall} redeemed` : ''}`]);
         return { amount, received, redeem };
     }
 

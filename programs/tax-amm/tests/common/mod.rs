@@ -755,7 +755,26 @@ impl Env {
         self.send_meta(&[instruction], &[trader])
     }
 
-    /// The router's `swap` for [`Env::swap_with`].
+    /// The side a trade into mint `output` pays Pipeline's fee on, from the router's record of
+    /// the market: since Pipeline 0.3 the output when it is the market's fee mint (wrapped
+    /// SOL, on a market that trades it, as the tax AMM declares none), the input otherwise.
+    pub fn fee_side(&self, market: &Market, output: usize) -> client::FeeSide {
+        client::FeeSide::of(&self.router_market(&market.market), &market.mints[output])
+    }
+
+    /// What a trader keeps of `arriving` in mint `output`: all of it, or less Pipeline's fee
+    /// when the trade pays it out of what arrived. The router's minimum applies to this.
+    pub fn kept(&self, market: &Market, output: usize, arriving: u64) -> u64 {
+        match self.fee_side(market, output) {
+            client::FeeSide::Output => {
+                arriving - pipeline_client::interface::fees::pipeline_fee(arriving)
+            }
+            client::FeeSide::Input => arriving,
+        }
+    }
+
+    /// The router's `swap` for [`Env::swap_with`], paying Pipeline's fee on the side the
+    /// router's record of the market names; `options.min_amount_out` is what the trader keeps.
     pub fn swap_instruction(
         &self,
         market: &Market,
@@ -815,7 +834,11 @@ impl Env {
             input_hook_accounts: input_hook_accounts.len() as u8,
             extra: vec![],
         };
-        Ok(client::swap(&accounts, &args))
+        Ok(client::swap_with_fee_side(
+            &accounts,
+            &args,
+            self.fee_side(market, output),
+        ))
     }
 
     /// The transfer-hook accounts a transfer of `mint` needs, or none when it has no hook.

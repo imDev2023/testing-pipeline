@@ -76,7 +76,8 @@ The allowed sets are the same for sources and destinations, and neither allowed 
 ### What this allows
 
 - Buys and sells through the router (sells pass on the destination, buys on the source).
-- The Pipeline fee on sells, paid in the token into the fee account.
+- The Pipeline fee on sells, paid in the token into the fee account when the home market is quoted in a mint other than wrapped SOL.
+  Since Pipeline 0.3 a market quoted in wrapped SOL has wrapped SOL as its fee mint (`BAR-44`), so a sell pays Pipeline's fee in SOL out of what it brought back, the token never moves into its fee account, and the hook runs once on a sell instead of twice.
 - `sweep_fees`, which moves the fee account to Pipeline's treasury (it passes on the source, so the treasury needs no entry).
 - The tax AMM's one-time `seed` into the vault.
 - The tax AMM's `distribute`, which pays tax out of the vault; with the tax side on the quote mint it never moves the contained token anyway.
@@ -314,7 +315,7 @@ By [Containment hook: a contained token moves only through its home market](http
 | --- | --- | --- |
 | Out of the vault, on a buy | 5,578 | 5,578 |
 | Into the vault, on a sell | 5,602 | 5,602 |
-| Into the fee account, on a sell | 5,603 | 5,603 |
+| Into the fee account, on a sell (a quote mint other than wrapped SOL, since Pipeline 0.3) | 5,603 | 5,603 |
 
 - Every one is under the 10,000 ceiling, so `Execute` stays in Anchor (see "Starting point"); `tests/compute.rs` asserts the ceiling on each, and the launch script prints the cost of each from its transactions' logs.
 - On a buy the hook runs at the fourth call level (router, tax AMM, Token-2022, hook), the deepest a swap reaches, under devnet's limit, which does not have SIMD-0268's deeper calls; the whole buy costs 64,438 units.

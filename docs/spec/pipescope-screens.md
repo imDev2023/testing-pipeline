@@ -229,7 +229,7 @@ From top to bottom:
 4. **"Slippage you accept"**: 0.5%, 1% and 3%, and a box for another value up to 50%.
 5. **"What this swap costs"**, always open:
    - Goes into the market;
-   - Pipeline fee, 0.25%;
+   - Pipeline fee, 0.25%: of what goes into the market, or, on a trade into the market's fee mint (since Pipeline 0.3, wrapped SOL on a market that trades it, `BAR-44`), of what arrives, shown in that mint;
    - Aviary fee, 0.5%, or "Aviary fee, none on this swap: only charged when you pay in SOL or USDC";
    - The strategy's own fees and taxes: included in the quote;
    - Leaves your wallet;
@@ -257,6 +257,7 @@ From top to bottom:
   So the page works the market amount back: the amount typed, divided by one plus the two fee rates, rounded down to a whole base unit.
   With both fees that is the amount divided by 1.0075, and with Pipeline's alone by 1.0025.
 - The breakdown shows both ends: "Goes into the market" and "Leaves your wallet", and the second equals what was typed.
+- On a trade into the market's fee mint (since Pipeline 0.3, wrapped SOL on a market that trades it, `BAR-44`) Pipeline takes its fee out of what arrives instead, so the page divides by one plus the integrator rate alone, and the expected output and the minimum received are what the trader keeps after Pipeline's fee (the SDK's `keptAfterOutputFee`); the swap's minimum is the kept amount, as the router checks it.
 - Checked on devnet on 2026-11-12: for 0.1 SOL typed, 0.099255583 SOL goes into the market, Pipeline's fee is 0.000248139 SOL and the integrator fee is 0.000496278 SOL, which add up to exactly 0.1 SOL.
 - The amount in a trade link and in the bot's `/buy` and `/sell` means the same, since a filled-in trade box behaves as if the trader had typed it ([`pipescope-telegram.md`](pipescope-telegram.md), The trade link).
 - The alternative, Pipeline's own meaning with the fees added on top, was not chosen: a trader who types 1 SOL would see 1.0075 SOL leave.

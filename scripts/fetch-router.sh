@@ -12,6 +12,9 @@
 # When MetalLegBob upgrades the devnet router this fails, and keeps the pinned copy
 # already in place. Re-pin deliberately: run the tests against the new bytes, then change
 # ROUTER_SHA256 in fixtures/pins.env in a PR of its own (docs/spec/README.md, "Test layers").
+#
+# Exits 3 when the dump does not match the pin, and 1 when it could not be downloaded, so
+# the daily pin check (.github/workflows/router-pin.yml) tells the two apart.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIXTURES_DIR="${FIXTURES_DIR:-$ROOT/fixtures}"
@@ -60,7 +63,7 @@ but fixtures/pins.env pins
 The devnet router has probably been upgraded. Run the tests against the new bytes, then
 re-pin ROUTER_SHA256 in a PR of its own.
 EOF
-  exit 1
+  exit 3
 fi
 retry solana account --url "$CLUSTER" "$ROUTER_CONFIG" --output json --output-file "$work/config.json" >/dev/null
 

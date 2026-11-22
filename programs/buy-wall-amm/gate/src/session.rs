@@ -5,8 +5,8 @@
 use borsh::BorshDeserialize;
 use buy_wall_amm::state::MarketState;
 use litesvm::LiteSVM;
-use pipeline_client::{self as client, pda, AccountMeta, Instruction, Pubkey, TradeMode};
-use pipeline_strategy_interface::{self as psi, discriminator};
+use pipeline_client::{self as client, pda, AccountMeta, FeeSide, Instruction, Pubkey, TradeMode};
+use pipeline_strategy_interface::{self as psi, discriminator, fees};
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
@@ -436,7 +436,11 @@ impl Session {
 
     /// An exact-in swap through the router of `amount` of mint `input` by `trader`, from and
     /// to their associated token accounts, with the resolved strategy accounts and each
-    /// side's transfer-hook accounts, refused below `min_amount_out`.
+    /// side's transfer-hook accounts, refused unless at least `min_arriving` arrives in the
+    /// trader's output account. Pipeline's fee is paid on the side the router's record of the
+    /// market names: since Pipeline 0.3 a sell into wrapped SOL, the market's fee mint, pays
+    /// it out of what arrived, so the router's minimum is what the trader keeps of
+    /// `min_arriving`.
     #[allow(clippy::too_many_arguments)]
     pub fn swap(
         &mut self,
@@ -445,7 +449,7 @@ impl Session {
         input: usize,
         output: usize,
         amount: u64,
-        min_amount_out: u64,
+        min_arriving: u64,
         resolved: &[AccountMeta],
     ) -> Result<client::SwapResult, String> {
         let owner = trader.pubkey();
@@ -477,6 +481,17 @@ impl Session {
             strategy_accounts,
             input_hook_accounts,
         };
+        let market = pda::market(&self.program, &view.market_state);
+        let record = self
+            .svm
+            .get_account(&market)
+            .and_then(|account| client::decode_market(&account.data))
+            .ok_or_else(|| format!("the router has no Market at {market}"))?;
+        let fee_side = FeeSide::of(&record, &view.mints[output]);
+        let min_amount_out = match fee_side {
+            FeeSide::Output => min_arriving - fees::pipeline_fee(min_arriving),
+            FeeSide::Input => min_arriving,
+        };
         let args = client::SwapArgs {
             mode: TradeMode::ExactIn,
             amount_in: amount,
@@ -486,7 +501,10 @@ impl Session {
             input_hook_accounts: 0,
             extra: vec![],
         };
-        let (data, _) = self.send(&[client::swap(&accounts, &args)], &[trader])?;
+        let (data, _) = self.send(
+            &[client::swap_with_fee_side(&accounts, &args, fee_side)],
+            &[trader],
+        )?;
         client::SwapResult::try_from_slice(&data).map_err(|e| e.to_string())
     }
 

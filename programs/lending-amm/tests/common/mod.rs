@@ -785,6 +785,24 @@ impl Env {
         client::decode_market(&data).expect("a router market")
     }
 
+    /// The side a trade into mint `output` pays Pipeline's fee on, from the router's record:
+    /// since Pipeline 0.3 the output when it is the market's fee mint (wrapped SOL, on a market
+    /// that trades it, as the lending AMM declares none), the input otherwise.
+    pub fn fee_side(&self, market: &Market, output: usize) -> client::FeeSide {
+        client::FeeSide::of(&self.router_market(&market.market), &market.mints[output])
+    }
+
+    /// What the trader keeps of `arriving` in mint `output`: all of it, or less Pipeline's fee
+    /// when the trade pays it out of what arrived.
+    pub fn kept(&self, market: &Market, output: usize, arriving: u64) -> u64 {
+        match self.fee_side(market, output) {
+            client::FeeSide::Output => {
+                arriving - pipeline_strategy_interface::fees::pipeline_fee(arriving)
+            }
+            client::FeeSide::Input => arriving,
+        }
+    }
+
     /// The router's ten fixed trade accounts for a read-only call, with placeholders for
     /// the trader, as an integrator's quoter passes them.
     pub fn read_accounts(&self, market: &Market, trade: &TradeRequest) -> Vec<AccountMeta> {
@@ -1027,7 +1045,7 @@ impl Env {
             input_hook_accounts: market.hook_accounts[input].len() as u8,
             extra: vec![],
         };
-        client::swap(&accounts, &args)
+        client::swap_with_fee_side(&accounts, &args, self.fee_side(market, output))
     }
 
     /// An exact-in swap through the router of `amount_in` of mint `input` for mint
