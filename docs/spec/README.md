@@ -76,12 +76,15 @@ External audits belong to the mainnet launch effort, which is out of scope.
 
 - Our strategies refuse bypass: `pipeline_swap` accepts only the router's market signer for that market, so every swap of ours goes through the router, pays the Pipeline fee and emits a swap event ([ADR 0001](../adr/0001-our-strategies-refuse-bypass.md)).
 - `pipeline_quote` and `pipeline_swap` call one shared pricing function (the template's `pricing.rs`), so a quote is exactly what the swap does.
+- Our strategies declare no fee mint in `pipeline_market_info` (`BAR-44`), so Pipeline's router, since 0.3, takes its fee by its own rule: in wrapped SOL, out of what arrived, on a trade into wrapped SOL in a market that trades it, and in the input on every other trade.
+  A market keeps the fee mint the router recorded when the market was recorded.
 
 ### Test layers
 
 Tests run against the real router.
 A fixture script, from the template's `scripts/fetch-router.sh`, copies the router deployed on devnet into a gitignored fixtures folder and checks its hash against the hash pinned in the repo.
 When MetalLegBob upgrades the devnet router the check fails, and a PR re-pins it deliberately after the tests pass against the new bytes.
+A scheduled job runs the same check once a day and opens an issue when devnet's router no longer matches the pin (`BAR-43`), so an upgrade is caught within a day.
 
 1. **LiteSVM integration tests** of every instruction, through the router wherever the router is involved, with hostile cases modelled on Pipeline's `adversarial.rs` and `test-strategy-evil`: a wrong or missing market signer, bypass attempts, aliased and substituted accounts, and Token-2022 mints with a transfer fee and with a transfer hook.
 2. **Maths proofs.** The maths lives in pure functions that take no accounts.
@@ -105,6 +108,7 @@ A `pipeline-check` Warn, in layer 4 or 7, is accepted only with a written reason
 - One GitHub Actions workflow, required to pass before any merge that touches on-chain code.
 - It runs: a check that no keypair is in the repo (as Pipeline's `scripts/check-no-keypairs.sh`), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, each program's SBF build, test layers 1 to 5 (and 6 once its fixtures exist), and the Kani proofs and any Z3 proofs.
 - The first on-chain build ticket adds it; that is the tax AMM's, the first product to build.
+- Beside it, `.github/workflows/router-pin.yml` dumps devnet's router every day and fails, opening or updating an issue, when it no longer matches the pin (`BAR-43`).
 - Standard GitHub-hosted runners cost nothing on a public repository.
 
 ### Internal adversarial review

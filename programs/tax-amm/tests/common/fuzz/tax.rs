@@ -1241,8 +1241,11 @@ impl TaxWorld {
         let (quote, quote_cost) = self.quote(input, amount);
         costs.extend(quote_cost.map(|cost| ("pipeline_quote", cost)));
         let quote = quote.map(|q| q.amount_out);
+        // The quote is what arrives; the router's minimum is what the trader keeps of it.
         let options = SwapOptions {
-            min_amount_out: *quote.as_ref().unwrap_or(&0),
+            min_amount_out: quote
+                .as_ref()
+                .map_or(0, |&q| self.env.kept(&self.market, output, q)),
             ..SwapOptions::default()
         };
         // As a terminal sends it: the trader's token account for the output created in the

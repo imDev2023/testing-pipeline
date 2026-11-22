@@ -1244,6 +1244,9 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
         if (quote.amountOut !== spec.out || spec.out !== worked) {
             fail(`seeded market, ${label} of ${amount}: quoted ${quote.amountOut}; the spec's formulas give ${spec.out}, the worked example ${worked}`);
         }
+        // Since Pipeline 0.3 a sale pays Pipeline's fee in SOL, out of what arrived.
+        const feeSide = pipeline.marketViewFeeSide(view, view.mints[output]!);
+        const kept = feeSide === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
         const before = await tokenBalance(payerAccounts[output]!);
         await send(`seeded market: ${label} through the router`, payer, [
             await pipeline.swap(
@@ -1264,15 +1267,16 @@ async function graduateFromLaunchpad(payer: KeyPairSigner, programId: Address, m
                     mode: pipeline.TradeMode.ExactIn,
                     amountIn: amount,
                     amountOut: 0n,
-                    minAmountOut: quote.amountOut,
+                    minAmountOut: kept,
                     integratorFeeBps: 0,
                     extra: new Uint8Array(),
                 },
+                feeSide,
             ),
         ]);
         const received = (await tokenBalance(payerAccounts[output]!)) - before;
-        if (received !== quote.amountOut) fail(`seeded market, ${label}: received ${received}, quoted ${quote.amountOut}`);
-        info(`${label} of ${amount}: received ${received}, exactly the quote, the spec's price and the worked example's`);
+        if (received !== kept) fail(`seeded market, ${label}: kept ${received}, quoted ${quote.amountOut} to keep ${kept}`);
+        info(`${label} of ${amount}: the quote arrived, the spec's price and the worked example's, and ${received} was kept after Pipeline's fee in the ${feeSide}`);
         if (input === 1) bought = received;
         curve = { sqrtPrice: spec.sqrtPrice, liquidity: curve.liquidity };
     }
@@ -1815,6 +1819,9 @@ async function main() {
         }
         const crossing = books.wall.liquidity > 0n && (books.curve.sqrtPrice > books.wall.top) !== (spec.sqrtPrice > books.wall.top);
         info(`${label} of ${amount}: quoted ${quote.amountOut}, the spec's price${worked === undefined ? '' : " and the worked example's"}${crossing ? ', in two steps across the wall\'s top' : ''}, fee ${spec.fee} lamports (${unitsConsumed} CU)`);
+        // Since Pipeline 0.3 a sale pays Pipeline's fee in SOL, out of what arrived.
+        const feeSide = pipeline.marketViewFeeSide(recorded, recorded.mints[output]!);
+        const kept = feeSide === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
         const before = await tokenBalance(payerAccounts[output]!);
         const { signature } = await send(`${label} through the router`, payer, [
             await pipeline.swap(
@@ -1835,16 +1842,17 @@ async function main() {
                     mode: pipeline.TradeMode.ExactIn,
                     amountIn: amount,
                     amountOut: 0n,
-                    minAmountOut: quote.amountOut,
+                    minAmountOut: kept,
                     integratorFeeBps: 0,
                     extra: new Uint8Array(),
                 },
+                feeSide,
             ),
         ]);
         const received = (await tokenBalance(payerAccounts[output]!)) - before;
-        if (received !== quote.amountOut) fail(`${label}: received ${received}, quoted ${quote.amountOut}`);
-        info(`${label}: received exactly the quote`);
-        record.push([label, `${amount} in, ${received} out`]);
+        if (received !== kept) fail(`${label}: kept ${received}, quoted ${quote.amountOut} to keep ${kept}`);
+        info(`${label}: the quote arrived, and ${received} was kept after Pipeline's fee in the ${feeSide}`);
+        record.push([label, `${amount} in, ${quote.amountOut} out, ${received} kept`]);
 
         // "After pricing", in its order. The market state records the time the swap ran as
         // its decay_time, and the transaction its slot: the only values the demo takes from

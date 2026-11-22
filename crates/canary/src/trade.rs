@@ -6,7 +6,7 @@
 use borsh::BorshDeserialize;
 use litesvm::LiteSVM;
 use pipeline_check::write_token_account;
-use pipeline_client::{AccountMeta, Instruction, Pubkey};
+use pipeline_client::{AccountMeta, FeeSide, Instruction, Pubkey};
 use pipeline_quoter::{QuoteRequest, Quoter};
 use pipeline_strategy_interface::{self as psi, discriminator, fees, TradeMode};
 use serde::Serialize;
@@ -24,11 +24,30 @@ pub struct Quote {
     pub amount_in: u64,
     pub net_sent: u64,
     pub pipeline_fee: u64,
+    /// The market's mint (by index) Pipeline's fee is taken in: the output when it is the
+    /// market's fee mint, the input otherwise (Pipeline 0.3).
+    pub fee_mint: usize,
+    /// What leaves the trader's input account: `net_sent`, and Pipeline's fee when it is
+    /// taken in the input.
     pub total_spend: u64,
+    /// What the trader keeps in their output account, after Pipeline's fee when it is
+    /// taken in the output.
     pub amount_out: u64,
     /// What the strategy sends before any Token-2022 transfer fee on the output.
     pub strategy_amount_out: u64,
     pub compute_units: u64,
+}
+
+impl Quote {
+    /// What the quote says arrives in the trader's output account, before Pipeline's fee
+    /// is taken from it (the router's `received`).
+    pub fn arrives_out(&self, output: usize) -> u64 {
+        if self.fee_mint == output {
+            self.amount_out + self.pipeline_fee
+        } else {
+            self.amount_out
+        }
+    }
 }
 
 /// Where the clock stood for a trade.
@@ -74,13 +93,13 @@ impl Leg {
         match (&self.quote, &self.swap) {
             (Ok(q), Ok(r)) => {
                 let mut fields = vec![];
-                if q.amount_out != r.received || q.amount_out != r.trader_received {
+                if q.arrives_out(self.output) != r.received || q.amount_out != r.trader_received {
                     fields.push("output received");
                 }
                 if q.net_sent != r.net_sent {
                     fields.push("input sent");
                 }
-                if q.pipeline_fee != r.pipeline_fee {
+                if q.pipeline_fee != r.pipeline_fee || q.fee_mint != r.fee_mint {
                     fields.push("Pipeline fee");
                 }
                 if q.total_spend != r.trader_spent {
@@ -337,6 +356,10 @@ impl Session<'_> {
                 amount_in: q.amount_in,
                 net_sent: q.net_sent,
                 pipeline_fee: q.pipeline_fee,
+                fee_mint: match q.fee_side {
+                    FeeSide::Output => request.output_index as usize,
+                    FeeSide::Input => request.input_index as usize,
+                },
                 total_spend: q.total_spend,
                 amount_out: q.amount_out,
                 strategy_amount_out: q.strategy_amount_out,
