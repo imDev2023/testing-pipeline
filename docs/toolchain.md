@@ -737,6 +737,39 @@ Two things to know:
 - The first airdrop, sent seconds after the validator came up, failed with "airdrop request failed"; the same request a few seconds later, and every one after it, went through.
 - With a ledger path longer than macOS's 104-character socket limit (any scratchpad path), the validator logs `Unable to start admin rpc service: path must be shorter than SUN_LEN` and its terminal dashboard repeats `admin.rpc does not exist`; RPC, the faucet and the programs work regardless, so it is noise.
 
+## Aviary's local run
+
+Aviary runs locally for now (`PIPESCOPE-98`): both Workers in `wrangler dev` against the Docker Postgres and devnet, from the project's `.env`.
+Every terminal ticket verifies on this run until the hosted deploy of [#192](https://github.com/imDev2023/testing-pipeline/issues/192) lands (`docs/spec/pipescope-architecture.md`, Build tickets).
+
+Node 24 (`source scripts/toolchain-env.sh`), Docker, and the project's `.env` in the main checkout, which direnv loads after `~/.config/env/global.env` (`.env.example` names its two values):
+
+- `RPC_URL=https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`: the owner's shared Helius key until Aviary has its own; direnv expands it, and nothing prints it.
+- `DATABASE_URL=postgres://terminal:terminal@127.0.0.1:5462/terminal`: the Docker Postgres.
+
+In a worktree without its own `.envrc`, prefix each command with `direnv exec "<main checkout>"`.
+
+```sh
+pnpm --filter terminal-db db:up      # the Postgres container, terminal-postgres on 127.0.0.1:5462, shared by every worktree
+pnpm terminal:db:migrate             # apply packages/terminal-db/migrations to DATABASE_URL
+pnpm terminal:dev:api                # terminal-api on http://localhost:8811, with --test-scheduled
+pnpm terminal:dev:web                # terminal-web built through OpenNext and run on http://localhost:3111
+```
+
+- `terminal:dev:api` hands `wrangler dev` the database as `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE` and `RPC_URL` through the environment, never on a command line; `wrangler.jsonc` declares `RPC_URL` as its one required secret.
+  `curl localhost:8811/health` shows the database, the slot and the Worker's version; `curl "localhost:8811/__scheduled?cron=*+*+*+*+*"` fires the cron.
+- `terminal:dev:web` builds the production bundle first; `pnpm --filter terminal-web dev` is the faster Next.js dev server on the same port.
+- `TEST_DATABASE_URL=postgres://terminal:terminal@127.0.0.1:5462/postgres` lets the unit tests make and drop their own databases: `pnpm --recursive --filter 'terminal-*' test`.
+- `pnpm terminal:lint` runs ESLint over the terminal's packages, whose TypeScript is 6.0 (typescript-eslint and Next.js do not support 7 yet); the rest of the workspace stays on 7.
+
+### Aviary's end-to-end tests
+
+`pnpm terminal:e2e` runs Playwright (`tests/terminal-e2e`) on the local run: it starts both Workers unless they are already up, checks every page at 1440, 390 and 360 px in the light and the dark theme, and saves each page's screenshot to `tests/terminal-e2e/screenshots/<width>-<theme>/` for the PR.
+`E2E_RPC` says where the API's RPC goes: `devnet` (the default outside CI) uses `RPC_URL`; `fixtures` (CI's) replays `tests/terminal-e2e/fixtures/devnet-rpc.json` with no network; `record` (`pnpm --filter terminal-e2e record`) runs against devnet and records every answer into that file (`PIPESCOPE-102`).
+The first run needs `pnpm --filter terminal-e2e exec playwright install chromium`.
+
+Passed on 2026-11-22 with Node 24.4.1 (#113): 36 tests, in 1.4 minutes against devnet and 1.2 minutes on the recorded fixtures.
+
 ## Known problems
 
 - **Node 26 and public devnet WebSockets.**

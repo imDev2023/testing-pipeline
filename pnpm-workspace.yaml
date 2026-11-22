@@ -1,12 +1,22 @@
 # One pnpm workspace for every TypeScript package in the repo. Each program's demo scripts
-# live beside it; shared packages (strategy-actions, keeper-jobs) live in packages/, and apps
-# (the keeper runner, Aviary's later) in apps/.
+# live beside it; shared packages (strategy-actions, keeper-jobs) live in packages/, apps (the
+# keeper runner, Aviary's two Workers) in apps/, and end-to-end suites in tests/.
 packages:
   - programs/*/scripts
   - packages/*
   - apps/*
+  - tests/*
 
-# esbuild, the keeper runner's bundler, needs no install script: its binary comes from its
-# platform package.
+# The terminal's one pin of Pipeline's TypeScript SDK (PIPESCOPE-87,
+# docs/spec/pipescope-architecture.md "Pipeline's packages"): its packages name it as
+# `catalog:`, and a move to a newer release is a PR of its own.
+catalog:
+  "@pipeline-sol/sdk": 0.3.0
+
+# esbuild, the keeper runner's and wrangler's bundler, needs no install script: its binary
+# comes from its platform package. workerd, the runtime `wrangler dev` runs Aviary's Workers
+# in, does the same; sharp, Next's image optimiser, is not used (images are unoptimised).
 allowBuilds:
   esbuild: false
+  workerd: false
+  sharp: false

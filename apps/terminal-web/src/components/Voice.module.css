@@ -1,0 +1,10 @@
+.ai {
+  font-family: var(--font-serif);
+  font-size: var(--ai-size);
+  line-height: var(--ai-line);
+}
+
+.author {
+  color: var(--author);
+  font-style: italic;
+}
