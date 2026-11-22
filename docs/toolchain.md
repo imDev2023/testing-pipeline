@@ -330,6 +330,48 @@ That passed on 2026-11-16 in one run of 2 minutes 14 seconds, most of it waiting
 Both tokens were launched, bought and sold through the router, swept 31,320,632,871 of the token each from their fee accounts to the treasury, and had a wallet-to-wallet transfer and a sell with an integrator fee refused by the hook; the first unlocked by its deadline with 54,635,805 of 5,000,000,000 collected (12,873 units), the second by its goal with 133,135,805 of 100,000,000 collected (13,225 units), and each then sent and traded without hook accounts.
 The other order, with the deadline only 70 seconds away, stopped as it should before the second token sent anything, its deadline 37 seconds away by then.
 
+Since [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73), the script also does these:
+
+- `--record <file>` writes every signature and address of the run as JSON, also when it stops part way.
+- The wallet-to-wallet transfer, and for a token unlocked by its goal an `unlock` sent while the tax collected is still below the goal, are sent past the preflight, so each refusal lands on chain with a signature (`HOOK-39`).
+- `--pipeline-check <binary>` runs `pipeline-check --fail-on-warn` on each home market while the token is contained (step 10a) and after its unlock (step 14), with the explicit `--amounts` a market on a virtual reserve needs, and stops unless every check passed but `exact_out_refund`, skipped; `--conformance-out <dir>` keeps each report (`HOOK-38`).
+- `--quote-mint` may be given once for each token, and `new` quotes a token in a fresh SPL Token mint the script creates once per run and mints the launcher; `--unlock none` leaves a token contained.
+  On a home market quoted in wrapped SOL, Pipeline 0.3 takes its fee in SOL, so only a token quoted in another mint pays Pipeline's fee in the token and has it swept through the hook (`HOOK-41`).
+- Before it sends anything, it also refuses a `--record` path whose directory does not exist, an `--unlock goal` whose goal the launch's own buy and sell may already collect (80,000,000 with wrapped SOL), and with `--pipeline-check` a quote mint of fewer than 6 decimals, whose real reserve could not pay a sell of the checker's largest trade.
+
+The devnet launch is one run with three tokens (`HOOK-40`):
+
+```sh
+NOW=$(date +%s)
+WSOL=So11111111111111111111111111111111111111112
+pnpm launch --cluster devnet --launcher ~/.config/testing-pipeline/devnet/wallet.json \
+  --goal 5000000000 --deadline $((NOW + 240)) --unlock deadline --quote-mint $WSOL \
+  --goal 100000000 --deadline $((NOW + 86400)) --unlock goal --quote-mint $WSOL \
+  --goal 1000000000 --deadline $((NOW + 2592000)) --unlock none --quote-mint new \
+  --pipeline-check ../../../fixtures/pipeline/target/release/pipeline-check \
+  --conformance-out ../conformance/devnet \
+  --record ../../../deployments/devnet-demo-containment-hook.json
+```
+
+The same run with `--cluster http://127.0.0.1:8973` passed on 2026-11-22 in 260 seconds, most of it waiting for the first token's deadline, from a fresh validator running devnet's Pipeline 0.3 router after the tax AMM's demo.
+
+#### On devnet
+
+The hook went to devnet on 2026-11-22.
+
+- **Deploy.** `scripts/deploy-devnet.sh containment-hook`, the first of the three steps of "Deploy to devnet" (the hook is not a strategy, so there is nothing to register and no metadata to pin), deployed `77b6ddc` from `main` over TPU in slot 525,139,692, signature `2Qb6w8uUj6PDSs5v488noLHCc6hnJhd6m81es6Ddya5xuR5Jwe71Eymyv1rrnZkNo1eo6v8S33ws4EfnjvZ8i4iu`.
+  - The executable hash is `f6ac2df343a63b7acf351152d2106eb3ee2ea517a8815aed2165ae7aba4cdd98` (211,056 bytes), which `solana-verify get-program-hash -u devnet` matched.
+  - Its upgrade authority is `upgrade-authority.json`'s key, `Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe`.
+  - All 121 hook tests passed on those exact bytes first, beside the tax AMM's bytes dumped from devnet.
+  - When devnet's router moved to Pipeline 0.3 the same day ([#194](https://github.com/imDev2023/testing-pipeline/issues/194)), they passed again on the same bytes against the 0.3 router, so the deploy stands.
+- **Launch.** The three-token run above passed on devnet in 394 seconds, with `pipeline-check` 0.3.0 reporting 13 pass, 0 warn, 0 fail on every home market while contained and after each unlock.
+  Every signature and address is in `deployments/devnet-demo-containment-hook.json`, and the reports are in `programs/containment-hook/conformance/devnet/`.
+  - The first token unlocked by its deadline, with 54,635,805 of its goal of 5,000,000,000 collected (`unlock` 13,819 units).
+  - The second unlocked by its goal: refused on chain at 54,635,805 collected, unlocked once one more round had taken it to 133,135,805 (`unlock` 14,171 units).
+  - The third, quoted in a fresh SPL Token mint, paid Pipeline's fee of 32,332,288 of the token on its sell into its fee account through the hook, and `sweep_fees` moved it to Pipeline's treasury with the hook accounts; it stays contained, its deadline 30 days away.
+- **A refused transaction the RPC had not served yet.** A first run stopped at the second token's refused `unlock`: the refusal had landed with the hook's error, but devnet's RPC answered `getTransaction` with nothing just after confirming it.
+  The script now asks again for up to 30 seconds (`LANDED_TRANSACTION_WAIT_MS`).
+
 ### CI
 
 `.github/workflows/ci.yml`, on every pull request and every push to `main`:

@@ -3688,6 +3688,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
 
+### HOOK-38: How the launch script checks a home market's conformance
+
+- Question: How does the launch script show that a contained token's home market passes Pipeline's conformance checker, while the token is contained and after its unlock?
+- Answer: Given `--pipeline-check`, it runs `pipeline-check --fail-on-warn` on the home market after the launch's refusals and again after the unlock, with the explicit trade sizes `CONFORMANCE_AMOUNTS` (1,000,000, 100,000,000 and 1,000,000,000 base units) that a market launched single-sided on a virtual quote reserve needs, and stops unless every check passed but `exact_out_refund`, skipped.
+- Alternatives: The checker's own sizes, which it takes from vault balances and which ask a large sell of the token that the little real quote reserve cannot pay (`InsufficientLiquidity`, a warn); running the checker by hand between two runs of the script, which would split one token's life over two runs.
+- Specified in: [`docs/toolchain.md`, Containment hook](toolchain.md#containment-hook)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-39: Which refusals the launch script lands on chain
+
+- Question: Which of the hook's refusals does the launch script send past the preflight, so that each lands on chain with a signature, rather than showing it in simulation?
+- Answer: The wallet-to-wallet `transfer_checked` of every token, and, for a token unlocked by its goal, the `unlock` sent while the home market's `tax_collected` is above zero but below the goal; the sell with an integrator fee, the `unlock` right after the seed and the second `unlock` stay in simulation.
+- Alternatives: Every refusal in simulation, which leaves the devnet demo without a signature for what containment refuses; every refusal on chain, which adds failed transactions that show nothing the simulated ones do not.
+- Specified in: [`docs/toolchain.md`, Containment hook](toolchain.md#containment-hook)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-40: The devnet demo's contained tokens and their record
+
+- Question: What terms do the devnet demo's contained tokens get, and where is the run recorded?
+- Answer: One run of the launch script: the first token against wrapped SOL with a goal of 5,000,000,000 lamports and a deadline 240 seconds after the run starts, unlocked by the deadline, the second against wrapped SOL with a goal of 100,000,000 lamports and a deadline a day away, unlocked by the goal, and the third against the devnet SPL Token mint of `HOOK-41`, left contained; every signature and address of the run is in `deployments/devnet-demo-containment-hook.json`, and each `pipeline-check` report in `programs/containment-hook/conformance/devnet/`.
+- Alternatives: A deadline of days for the first token, which would leave the ticket open until it passed; a goal of whole SOL for the second, which would cost the launcher a round of trades for every 0.03 SOL of tax.
+- Specified in: [`docs/toolchain.md`, Containment hook](toolchain.md#containment-hook)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-41: Pipeline's fee in the token on devnet
+
+- Question: Since Pipeline 0.3.0 takes its fee in a market's fee mint, which is wrapped SOL on any market that trades it, how does the devnet demo still show Pipeline's fee in a contained token swept through the hook?
+- Answer: The two contained tokens against wrapped SOL sweep Pipeline's fee in SOL from the market's wrapped-SOL fee account, and a third contained token, quoted in a devnet SPL Token mint of ours, pays the fee on its sells in the token into its fee account through the hook, which `sweep_fees` then moves to Pipeline's treasury with the hook accounts.
+- Alternatives: Sweeping only the wrapped-SOL fee accounts, which never shows the hook passing the fee account; quoting both tokens in an SPL Token mint of ours instead of wrapped SOL, which leaves a home market quoted in wrapped SOL, the launch script's default quote, untried on devnet.
+- Specified in: [`docs/spec/containment-hook.md`, Done means](spec/containment-hook.md#done-means)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
 ## Buy wall AMM (POOL4)
 
 `POOL4-01` to `POOL4-21` keep the numbers their tickets proposed, which the buy wall AMM's build tickets already cite.
