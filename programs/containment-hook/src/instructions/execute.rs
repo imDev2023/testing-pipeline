@@ -14,6 +14,11 @@
 //!    directly.
 //! 4. The source or the destination is the home market's vault for the token or the
 //!    market's fee account for it, both recorded in the config by `bind`.
+//! 5. A destination other than those two is a Token-2022 account of the mint whose owner can
+//!    never change (the immutable owner extension, which every associated token account of
+//!    Token-2022 carries). Otherwise a buy could deliver into an account its owner then hands
+//!    to another wallet with `SetAuthority(AccountOwner)`, which moves no tokens and calls no
+//!    hook, so the token would leave the home market without a transfer.
 //!
 //! It makes no CPI, because on a buy it already runs at the last call level the runtime
 //! allows (router, strategy, Token-2022, hook), and it never searches for a bump. Minting
@@ -38,7 +43,8 @@ pub struct Execute<'info> {
     /// CHECK: the handler checks it is the config's mint and the source's.
     pub mint: UncheckedAccount<'info>,
     /// The destination token account.
-    /// CHECK: only its address is compared with the allowed accounts.
+    /// CHECK: its address is compared with the allowed accounts, and any other destination
+    /// is checked to be a Token-2022 account of the mint whose owner can never change.
     pub destination: UncheckedAccount<'info>,
     /// The source's owner or delegate.
     /// CHECK: not read; who signs is Token-2022's to check.
@@ -61,9 +67,14 @@ pub fn process_execute(ctx: Context<Execute>, _amount: u64) -> Result<()> {
         HookError::NotTransferring
     );
     let allowed = [config.vault, config.fee_account];
+    let into_the_market = allowed.contains(accounts.destination.key);
     require!(
-        allowed.contains(accounts.source.key) || allowed.contains(accounts.destination.key),
+        allowed.contains(accounts.source.key) || into_the_market,
         HookError::TransferRefused
+    );
+    require!(
+        into_the_market || token_account::owner_is_immutable(&accounts.destination, mint),
+        HookError::DestinationOwnerCanChange
     );
     Ok(())
 }

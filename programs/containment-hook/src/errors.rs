@@ -51,4 +51,6 @@ pub enum HookError {
     UnlockNotDue,
     #[msg("The token is already unlocked")]
     AlreadyUnlocked,
+    #[msg("A contained token can go only to an account whose owner can't change")]
+    DestinationOwnerCanChange,
 }
