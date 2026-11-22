@@ -77,7 +77,10 @@ fn an_in_swap_redeem_from_a_smart_wallet_with_a_hooked_token_fits_the_call_depth
         .unwrap();
 
     let paid_into = env.wallet_token_account(&market, &trader.pubkey(), lent);
-    assert_eq!(env.balance(&paid_into), quote.amount_out);
+    assert_eq!(
+        env.balance(&paid_into),
+        env.kept(&market, lent, quote.amount_out)
+    );
     let redeemed = events::<ShortfallRedeemed>(&meta.logs);
     assert_eq!(redeemed.len(), 1);
     assert_eq!(redeemed[0].shortfall, quote.amount_out - buffer);
