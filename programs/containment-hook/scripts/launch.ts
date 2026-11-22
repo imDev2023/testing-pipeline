@@ -229,6 +229,8 @@ const HOOKED_MINT_SIZE = 165 + 1 + 4 + 64;
 const TRANSFER_HOOK_EXTENSION = 36;
 const TRANSFER_HOOK_INITIALIZE = 0;
 
+// How long the script waits for the RPC to serve a transaction it has seen land.
+const LANDED_TRANSACTION_WAIT_MS = 30_000;
 const LOCALNET_URL = 'http://127.0.0.1:8899';
 const DEVNET_URL = 'https://api.devnet.solana.com';
 const GENESIS_HASHES = {
@@ -356,6 +358,20 @@ async function landed(label: string, signature: Signature) {
         if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return null;
         if (i > 120) fail(`${label}: not confirmed after 60 s (${explorer('tx', signature)})`);
         await sleep(500);
+    }
+}
+
+/**
+ * A landed transaction as the RPC returns it, at `confirmed`. A devnet RPC node can answer
+ * `getSignatureStatuses` before `getTransaction` serves the transaction, so this asks again
+ * for up to `LANDED_TRANSACTION_WAIT_MS` before it gives up.
+ */
+async function landedTransaction(label: string, signature: Signature) {
+    for (let waited = 0; ; waited += 1_000) {
+        const tx = await rpc.getTransaction(signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }).send();
+        if (tx) return tx;
+        if (waited >= LANDED_TRANSACTION_WAIT_MS) fail(`${label}: the RPC did not serve transaction ${signature} after ${LANDED_TRANSACTION_WAIT_MS / 1000} s (${explorer('tx', signature)})`);
+        await sleep(1_000);
     }
 }
 
@@ -535,10 +551,8 @@ async function trade(
     const before = await tokenBalance(traderOutput);
     const signature = await send(label, trader, [instruction]);
     const received = (await tokenBalance(traderOutput)) - before;
-    const tx = await rpc
-        .getTransaction(signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-        .send();
-    if (!tx?.meta?.innerInstructions) fail(`transaction ${signature} not found`);
+    const tx = await landedTransaction(label, signature);
+    if (!tx.meta?.innerInstructions) fail(`transaction ${signature} has no inner instructions`);
     const keys = [...tx.transaction.message.accountKeys, ...(tx.meta.loadedAddresses?.writable ?? []), ...(tx.meta.loadedAddresses?.readonly ?? [])];
     const event = pipeline.extractEventsFromInnerInstructions(keys, tx.meta.innerInstructions).find((candidate) => candidate.type === 'Swap');
     if (!event || event.type !== 'Swap') fail(`transaction ${signature} has no swap event`);
@@ -606,11 +620,8 @@ async function sendRefused(
     await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64', skipPreflight: true }).send();
     const err = await landed(label, signature);
     if (!err) fail(`${label} was not refused: it succeeded on chain (${explorer('tx', signature)})`);
-    const tx = await rpc
-        .getTransaction(signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-        .send();
-    const logs = tx?.meta?.logMessages ?? [];
-    if (!refusedByTheHook(logs, name, code)) fail(`${label} failed on chain, but not by the hook with ${name}: ${show(err)}\n${logs.join('\n')}`);
+    const logs = (await landedTransaction(label, signature)).meta?.logMessages ?? [];
+    if (!refusedByTheHook(logs, name, code)) fail(`${label} failed on chain, but not by the hook with ${name}: ${show(err)} (${explorer('tx', signature)})\n${logs.join('\n')}`);
     info(`${label}: refused on chain by the hook with ${name} (${code}): ${explorer('tx', signature)}`);
     record.push([`${label} (refused by the hook with ${name})`, signature]);
     return signature;
@@ -1237,10 +1248,7 @@ async function launchToken(
             await sleep(1_000);
         }
         const unlockSignature = await send('unlock', unlocker, [unlockInstruction]);
-        const unlockTx = await rpc
-            .getTransaction(unlockSignature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-            .send();
-        const unlockLogs = unlockTx?.meta?.logMessages ?? [];
+        const unlockLogs = (await landedTransaction('unlock', unlockSignature)).meta?.logMessages ?? [];
         const reason = unlockBy === 'goal' ? 'Program log: Unlocked by the goal' : 'Program log: Unlocked by the deadline';
         if (!unlockLogs.some((line) => line.startsWith(reason))) fail(`the unlock's logs do not say "${reason}":\n${unlockLogs.join('\n')}`);
         const [unlockUnits] = hookCompute(unlockLogs);

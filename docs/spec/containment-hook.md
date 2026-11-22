@@ -338,3 +338,19 @@ By [Containment hook: invariant fuzzing of contained tokens](https://github.com/
 - The most each instruction took across them: `Execute` 5,603 units of its 10,000, `unlock` 13,655 of its 30,000, and `bind` 20,916 of its 60,000 once its bump searches beyond the first bumps are left out (see "Compute ceilings"); with them, an earlier run of 20,000 measured `bind` at up to 55,416 units.
 - Each of the five invariants caught a deliberate fault in the hook on its own, with only it checked: the allow rule passing every transfer (1), `Execute` approving when Token-2022 calls it without the validation account and the config, as `test-hook` does (2), `unlock` also rewriting the deadline (3), `unlock` clearing the hook program but not the hook authority (4), and the fee account left out of the allowed accounts, which stops every sell (5).
 - The fuzzer found three failures, all of its own model and none of the hook's, each fixed with a regression test: a transfer from an account to itself, which Token-2022 completes before it calls any hook (see "What this allows"); the seeder spending part of its seed before the seed, which the tax AMM's model now expects to be refused with `InsufficientFunds`; and that model judging a seed's two sides in the program's order.
+
+By [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73) on 2026-11-22, on devnet, with the hook deployed from `77b6ddc` and devnet's router running Pipeline 0.3.0 (`48a6b5f`):
+
+- `bind` did not fit in the creation transaction on devnet either: with it, the creation transaction is 1,274 of the 1,232 bytes a transaction may hold (688 with an address lookup table), so the script sent it in the next one, before the seed, for each of the three tokens.
+  Without `bind`, the creation transaction landed as one.
+- `Execute` cost the same on devnet as in LiteSVM and on a local validator:
+
+  | Hooked transfer | `Execute` (CU), devnet |
+  | --- | --- |
+  | Out of the vault, on a buy | 5,578 |
+  | Into the vault, on a sell | 5,602 |
+  | Into the fee account, on a sell (the token quoted in an SPL Token mint) | 5,603 |
+
+- On a home market quoted in wrapped SOL, a sell ran the hook once, into the vault, since Pipeline's fee came out of the SOL it bought back.
+- `unlock` cost 13,819 units by the deadline and 14,171 by the goal, about 950 more than on a local validator, still under its 30,000 ceiling.
+- Every signature and address of the run is in `deployments/devnet-demo-containment-hook.json`, and `pipeline-check` 0.3.0's reports, 13 pass, 0 warn, 0 fail on each home market while contained and after the unlock, are in `programs/containment-hook/conformance/devnet/`.
