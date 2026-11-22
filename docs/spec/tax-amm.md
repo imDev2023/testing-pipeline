@@ -34,6 +34,7 @@ Terms are as in `GLOSSARY.md`: tax market, tax side, buy tax, sell tax, tax auth
 | `SUITE_SHARE_BPS` | 1000 (10% of the tax) | The suite share, taken from every tax before the creator's split |
 | `SUITE_TREASURY` | set at build time | The wallet the suite share is paid to; on devnet a wallet whose key is in `~/.config/testing-pipeline/devnet/` |
 | `MAX_RECIPIENTS` | 4 | Tax recipients per market |
+| `RATE_CHANGE_DELAY_SLOTS` | 300 (about two minutes) | How long a change of rates waits before quotes and swaps apply it ("Rates") |
 | `CONTAINMENT_HOOK_ID` | the containment hook's program id, with its unlock seed `CONTAINMENT_UNLOCK_SEED` | The one transfer hook program a market's mint may name, only with the mint's unlock PDA as hook authority ("Mint rules") |
 | `QUOTE_MINTS` | both native SOL mints and the cluster's USDC | The mints that may keep a mint or freeze authority when a market is seeded ("Mint rules"); a mainnet build names mainnet's USDC |
 
@@ -186,6 +187,13 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
 
 - A buy tax and a sell tax, each in basis points, each between 0 and `MAX_TAX_BPS`.
 - Each side also has a range, `[min, max]`, fixed at creation inside `[0, MAX_TAX_BPS]`; the rate can only ever move inside it.
+- A change of rates waits `RATE_CHANGE_DELAY_SLOTS` (300 slots, about two minutes) before quotes and swaps apply it, longer than any transaction's lifetime (a blockhash lasts 150 slots), so no change can reach a swap already signed; decreases wait too, so the tax authority can't drop its own trades' tax around anyone else's (hardening finding H010, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  Without it the authority could put a change on either side of a victim's swap, in one transaction, and take the victim's whole slippage allowance as tax for recipients it names.
+  - `set_taxes` stores the new rates as the market's pending rates, with the slot they apply from, and emits `TaxesChanged` with that slot.
+  - Quotes and swaps read the clock: from that slot on they apply the pending rates, and the first swap then makes them the market's rates, with nothing pending.
+  - A second change before the first applies replaces it and waits again; rates equal to those in force cancel a pending change; a change that is due but that no swap has applied yet is the market's rates, so a later change never undoes it at once.
+  - Renouncing makes a due change the market's rates and cancels one still pending, so a renounced market's taxes never change again.
+  - The pending rates and their slot (0 for none) took 12 of the market state's reserved bytes, at offsets 532, 534 and 536, without moving any field or changing the version byte: markets created before read zeros there, which is no pending change (see "Counters for the containment hook").
 
 ### Tax authority
 
@@ -193,7 +201,7 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
   - `set_taxes { buy_tax_bps, sell_tax_bps }`, each inside its fixed range;
   - `set_recipients { recipient_0..3, share_0..3, burn_share_bps }`, under the same rules as at creation;
   - `renounce_tax_authority`, after which the market's taxes and recipients never change again.
-- Changes take effect immediately.
+- Recipient changes and renouncing take effect at once; a change of rates waits, as "Rates" says.
 - Nobody else can change anything about a market, us included; the program has no admin.
 - Built by [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62) on 2026-11-12, with these rules besides:
   - `set_taxes` and creation share one rate rule, and `set_recipients` and creation share one split rule (`programs/tax-amm/src/params.rs`), so a change can never pass a rule creation would refuse.
@@ -255,7 +263,7 @@ Every instruction refuses a market state whose version byte is newer than the ve
 The account's size, the tax side's offset and the room left after `tax_collected` are checked against the account's real layout when the program compiles, and `tests/layout.rs` pins every field's offset and the discriminator's eight bytes (H041).
 The build fixes the offsets in the ticket that creates markets, publishes them as constants in the tax AMM's crate and pins them with a test, so the two programs cannot drift apart unnoticed.
 [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) fixed them on 2026-11-12: the market state is 596 bytes, the tax side is the byte at offset 10 and `tax_collected` the little-endian u128 at offset 460, published as `state::layout::TAX_SIDE`, `TAX_COLLECTED` and `LEN` and pinned with every other field's offset by `programs/tax-amm/tests/layout.rs`.
-Besides the fields this file names, the market state holds its status (created; the seed adds open), the vault authority's bump, a flag set when the tax authority renounces, so Aviary can tell a renounced market from one created without an authority, and 64 zero bytes at the end, so a later version can add a field without moving any or reallocating existing markets.
+Besides the fields this file names, the market state holds its status (created; the seed adds open), the vault authority's bump, a flag set when the tax authority renounces, so Aviary can tell a renounced market from one created without an authority, and zero bytes at the end, so a later version can add a field without moving any or reallocating existing markets: 64 in the first build, 52 since the pending rates of "Rates" took 12 in #67.
 Containment hook policy chose `tax_collected`: the unlock reads it, a home market's tax side must be the quote mint, and no minimum tax is needed, because the goal counts tax and not volume (`docs/spec/containment-hook.md`, "Unlock goal").
 
 ## Custom actions and metadata
@@ -301,6 +309,7 @@ Everything here is read from the market state and the strategy metadata, and not
 ## Upgrades and freezing
 
 - Before a new build replaces the one deployed, its release gate reads every tax market on the cluster and quotes each one both ways with the new bytes, at the spec's price and exactly as the deployed build does, so an upgrade strands no market (hardening finding H038, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  It quotes at the cluster's slot when the markets were copied, since a pending rate change decides the rates in force.
   `scripts/deploy-devnet.sh` runs it on the very bytes it deploys (`programs/tax-amm/scripts/pre-deploy.sh`, `tests/release_gate.rs`) and records what it read in `deployments/release-gate/tax-amm/devnet.json`, and every `cargo test` runs it on the devnet markets copied into `tests/fixtures/release-gate/devnet/`.
 - Every market stores the router's market signer when it is created, and liquidity leaves a market only through swaps that signer signs, so the router is each market's only exit: a router that stopped signing for it, or a frozen build compiled with another router's address, would lock its reserves for good, although `distribute` and the tax authority's actions never need the router (hardening finding H034, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
   So before the program is frozen, the router's address compiled into it (`sos_h001_the_compiled_router_id_is_the_pinned_devnet_router` checks it against `fixtures/pins.env`) must be the live router's on that cluster.
@@ -372,7 +381,7 @@ For the bar's stateful fuzzing layer, beyond its shared three:
 1. Each vault holds at least the market's real reserve of its mint, plus everything owed when it is the tax-side vault; donations only ever add to the surplus.
 2. A swap never lowers the product of the effective reserves, never pays out more of a side than its real reserve, and never changes the virtual reserve.
 3. Every tax is split exactly: the suite share, the tax recipients' parts and the burn add up to the tax, and `tax_collected` always equals what has been paid out or burned plus what is still owed.
-4. No rate ever leaves its range or passes `MAX_TAX_BPS`, and nothing fixed at creation ever changes: the mints, the tax side, the ranges, the seeder and the virtual reserve.
+4. No rate, in force or pending, ever leaves its range or passes `MAX_TAX_BPS`, the rates in force never change within a slot (only a pending change reaching its slot changes them), and nothing fixed at creation ever changes: the mints, the tax side, the ranges, the seeder and the virtual reserve.
 5. After the seed, only router swaps change the real reserves, and only router swaps ever change the counters; `distribute` moves at most what its slot is owed.
 6. The counters never fall.
 7. Once the tax authority has renounced, or on a market created without one, the rates and the tax recipients never change.

@@ -47,6 +47,9 @@ fn distinct_market() -> TaxMarket {
         swap_count: u64::from_le_bytes([0xF4; 8]),
         created_slot: u64::from_le_bytes([0xF5; 8]),
         created_at: i64::from_le_bytes([0xF6; 8]),
+        pending_buy_tax_bps: 0xF7F7,
+        pending_sell_tax_bps: 0xF8F8,
+        pending_from_slot: u64::from_le_bytes([0xF9; 8]),
         reserved: [0; RESERVED_LEN],
     }
 }
@@ -123,7 +126,12 @@ fn every_field_sits_at_its_pinned_offset() {
         ("swap_count", 508, vec![0xF4; 8]),
         ("created_slot", 516, vec![0xF5; 8]),
         ("created_at", 524, vec![0xF6; 8]),
-        ("reserved", 532, vec![0; RESERVED_LEN]),
+        // Taken from the reserve in #67, so markets created before read zeros: nothing
+        // pending.
+        ("pending_buy_tax_bps", 532, le16(0xF7F7)),
+        ("pending_sell_tax_bps", 534, le16(0xF8F8)),
+        ("pending_from_slot", 536, vec![0xF9; 8]),
+        ("reserved", 544, vec![0; RESERVED_LEN]),
     ];
     let mut next = 0;
     for (name, offset, expected) in &pinned {

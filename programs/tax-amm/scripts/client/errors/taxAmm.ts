@@ -95,6 +95,12 @@ export const TAX_AMM_ERROR__NOT_A_WALLET = 0x1795; // 6037
 export const TAX_AMM_ERROR__NEWER_STATE_VERSION = 0x1796; // 6038
 /** Underflow: Arithmetic underflow */
 export const TAX_AMM_ERROR__UNDERFLOW = 0x1797; // 6039
+/** TransferHookNotAllowed: A mint's transfer hook must be cleared, or be the containment hook with the mint's unlock PDA as its authority */
+export const TAX_AMM_ERROR__TRANSFER_HOOK_NOT_ALLOWED = 0x1798; // 6040
+/** MintAuthoritySet: A mint other than a quote mint must have no mint authority when its market is seeded */
+export const TAX_AMM_ERROR__MINT_AUTHORITY_SET = 0x1799; // 6041
+/** FreezeAuthoritySet: A mint other than a quote mint must have no freeze authority when its market is seeded */
+export const TAX_AMM_ERROR__FREEZE_AUTHORITY_SET = 0x179a; // 6042
 
 export type TaxAmmError =
   | typeof TAX_AMM_ERROR__ALREADY_RENOUNCED
@@ -107,8 +113,10 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__BURN_ON_NATIVE_SOL
   | typeof TAX_AMM_ERROR__EQUAL_MINTS
   | typeof TAX_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED
+  | typeof TAX_AMM_ERROR__FREEZE_AUTHORITY_SET
   | typeof TAX_AMM_ERROR__INSUFFICIENT_LIQUIDITY
   | typeof TAX_AMM_ERROR__MARKET_NOT_OPEN
+  | typeof TAX_AMM_ERROR__MINT_AUTHORITY_SET
   | typeof TAX_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED
   | typeof TAX_AMM_ERROR__NEWER_STATE_VERSION
   | typeof TAX_AMM_ERROR__NO_RECIPIENT
@@ -130,6 +138,7 @@ export type TaxAmmError =
   | typeof TAX_AMM_ERROR__SHARES_NOT_WHOLE
   | typeof TAX_AMM_ERROR__SHARE_WITHOUT_RECIPIENT
   | typeof TAX_AMM_ERROR__TAX_ABOVE_CAP
+  | typeof TAX_AMM_ERROR__TRANSFER_HOOK_NOT_ALLOWED
   | typeof TAX_AMM_ERROR__UNDERFLOW
   | typeof TAX_AMM_ERROR__UNUSED_SLOT
   | typeof TAX_AMM_ERROR__WRONG_ACCOUNT
@@ -151,8 +160,10 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__BURN_ON_NATIVE_SOL]: `Native SOL can't be burned, so its tax side has no burn share`,
     [TAX_AMM_ERROR__EQUAL_MINTS]: `A market's two mints must differ`,
     [TAX_AMM_ERROR__EXACT_OUT_NOT_SUPPORTED]: `Exact-out swaps are not supported`,
+    [TAX_AMM_ERROR__FREEZE_AUTHORITY_SET]: `A mint other than a quote mint must have no freeze authority when its market is seeded`,
     [TAX_AMM_ERROR__INSUFFICIENT_LIQUIDITY]: `The trade would pay out more than the market's real reserve`,
     [TAX_AMM_ERROR__MARKET_NOT_OPEN]: `The market is not open: it has not been seeded`,
+    [TAX_AMM_ERROR__MINT_AUTHORITY_SET]: `A mint other than a quote mint must have no mint authority when its market is seeded`,
     [TAX_AMM_ERROR__MINT_EXTENSION_NOT_ALLOWED]: `The mint carries an extension the mint rules refuse`,
     [TAX_AMM_ERROR__NEWER_STATE_VERSION]: `The market state was written by a newer version of this program than the one running`,
     [TAX_AMM_ERROR__NO_RECIPIENT]: `A market needs at least one tax recipient`,
@@ -174,6 +185,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [TAX_AMM_ERROR__SHARES_NOT_WHOLE]: `The recipients' shares and the burn share must sum to 10,000`,
     [TAX_AMM_ERROR__SHARE_WITHOUT_RECIPIENT]: `An unused recipient slot must have no share`,
     [TAX_AMM_ERROR__TAX_ABOVE_CAP]: `A tax range may not go above MAX_TAX_BPS`,
+    [TAX_AMM_ERROR__TRANSFER_HOOK_NOT_ALLOWED]: `A mint's transfer hook must be cleared, or be the containment hook with the mint's unlock PDA as its authority`,
     [TAX_AMM_ERROR__UNDERFLOW]: `Arithmetic underflow`,
     [TAX_AMM_ERROR__UNUSED_SLOT]: `The tax recipient slot is unused: it has no wallet to pay`,
     [TAX_AMM_ERROR__WRONG_ACCOUNT]: `Unexpected account`,

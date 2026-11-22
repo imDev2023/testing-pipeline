@@ -113,6 +113,14 @@ export type TaxMarket = {
   /** When the market was created. */
   createdSlot: bigint;
   createdAt: bigint;
+  /**
+   * The buy and sell tax `set_taxes` set, which apply from `pending_from_slot`
+   * ([`TaxMarket::rates_at`]; docs/spec/tax-amm.md, "Rates").
+   */
+  pendingBuyTaxBps: number;
+  pendingSellTaxBps: number;
+  /** The slot the pending rates apply from; 0 when no change is pending. */
+  pendingFromSlot: bigint;
   reserved: ReadonlyUint8Array;
 };
 
@@ -161,6 +169,14 @@ export type TaxMarketArgs = {
   /** When the market was created. */
   createdSlot: number | bigint;
   createdAt: number | bigint;
+  /**
+   * The buy and sell tax `set_taxes` set, which apply from `pending_from_slot`
+   * ([`TaxMarket::rates_at`]; docs/spec/tax-amm.md, "Rates").
+   */
+  pendingBuyTaxBps: number;
+  pendingSellTaxBps: number;
+  /** The slot the pending rates apply from; 0 when no change is pending. */
+  pendingFromSlot: number | bigint;
   reserved: ReadonlyUint8Array;
 };
 
@@ -197,7 +213,10 @@ export function getTaxMarketEncoder(): FixedSizeEncoder<TaxMarketArgs> {
       ["swapCount", getU64Encoder()],
       ["createdSlot", getU64Encoder()],
       ["createdAt", getI64Encoder()],
-      ["reserved", fixEncoderSize(getBytesEncoder(), 64)],
+      ["pendingBuyTaxBps", getU16Encoder()],
+      ["pendingSellTaxBps", getU16Encoder()],
+      ["pendingFromSlot", getU64Encoder()],
+      ["reserved", fixEncoderSize(getBytesEncoder(), 52)],
     ]),
     (value) => ({ ...value, discriminator: TAX_MARKET_DISCRIMINATOR }),
   );
@@ -235,7 +254,10 @@ export function getTaxMarketDecoder(): FixedSizeDecoder<TaxMarket> {
     ["swapCount", getU64Decoder()],
     ["createdSlot", getU64Decoder()],
     ["createdAt", getI64Decoder()],
-    ["reserved", fixDecoderSize(getBytesDecoder(), 64)],
+    ["pendingBuyTaxBps", getU16Decoder()],
+    ["pendingSellTaxBps", getU16Decoder()],
+    ["pendingFromSlot", getU64Decoder()],
+    ["reserved", fixDecoderSize(getBytesDecoder(), 52)],
   ]);
 }
 

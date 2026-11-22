@@ -31,7 +31,7 @@ use proptest::prelude::*;
 use proptest::strategy::BoxedStrategy;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
-use tax_amm::config::{MAX_RECIPIENTS, MAX_TAX_BPS, SUITE_TREASURY};
+use tax_amm::config::{MAX_RECIPIENTS, MAX_TAX_BPS, RATE_CHANGE_DELAY_SLOTS, SUITE_TREASURY};
 use tax_amm::params::NATIVE_MINTS;
 use tax_amm::state::{MarketStatus, BURN_SLOT, OWED_SLOTS, SUITE_SLOT};
 use tax_amm::{InitParams, TaxMarket};
@@ -369,6 +369,8 @@ impl Outcome {
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     pub state: TaxMarket,
+    /// The VM's slot, which decides the rates in force (docs/spec/tax-amm.md, "Rates").
+    pub slot: u64,
     pub vaults: [u64; 2],
     /// Everything every known account holds, by mint: wallets, vaults, Pipeline's fee
     /// accounts, the launchpad's escrows and [`TaxWorld::other_accounts`].
@@ -630,12 +632,18 @@ fn split_refusal(
     Err(refusal.into())
 }
 
-/// The spec's price of a trade, or the name of the error it refuses with.
-fn spec_price(state: &TaxMarket, input: usize, output: usize, amount: u64) -> Result<u64, String> {
+/// The spec's price of a trade at `slot`, or the name of the error it refuses with.
+fn spec_price(
+    state: &TaxMarket,
+    slot: u64,
+    input: usize,
+    output: usize,
+    amount: u64,
+) -> Result<u64, String> {
     if state.status != MarketStatus::Open {
         return Err("MarketNotOpen".into());
     }
-    match Model::of(state).price(input, output, amount) {
+    match Model::of(state).at(slot).price(input, output, amount) {
         Ok(trade) => Ok(trade.out),
         Err(Refusal::ZeroOutput) => Err("ZeroOutput".into()),
         Err(Refusal::BeyondRealReserve) => Err("InsufficientLiquidity".into()),
@@ -1251,7 +1259,7 @@ impl TaxWorld {
         if amount == 0 {
             return Outcome::of(Action::Skip, Ok(()), Ok(()));
         }
-        let model = spec_price(state, input, output, amount);
+        let model = spec_price(state, self.env.slot(), input, output, amount);
         let mut costs = vec![];
         if let Ok(meta) = self
             .env
@@ -1336,6 +1344,7 @@ impl TaxWorld {
         });
         Snapshot {
             state: self.state(),
+            slot: env.slot(),
             vaults,
             held,
             supply: [0, 1].map(|i| env.supply(&market.mints[i])),
@@ -1508,7 +1517,9 @@ impl Product for TaxAmm {
                 .prop_map(|(who, used, picks, weights, burn, flaw)| Step::SetRecipients { who, used, picks, weights, burn, flaw }),
             1 => who().prop_map(|who| Step::Renounce { who }),
             2 => (0..2u8, size()).prop_map(|(side, size)| Step::Donate { side, size }),
-            1 => (0..1_000_000u32, 0..10_000_000u32).prop_map(|(slots, seconds)| Step::Warp { slots, seconds }),
+            // Some warps land inside a pending rate change's delay, some past it.
+            1 => (prop_oneof![0..1_000_000u32, 0..2 * RATE_CHANGE_DELAY_SLOTS as u32], 0..10_000_000u32)
+                .prop_map(|(slots, seconds)| Step::Warp { slots, seconds }),
             1 => (0..2u8).prop_map(|input| Step::Bypass { input }),
         ]
         .boxed()
@@ -1638,6 +1649,7 @@ fn value_is_conserved(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
 fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     let w = c.world;
     let state = &c.after.state;
+    let slot = c.after.slot;
     if let (Action::Swap { all: true, .. }, Some(swap)) = (c.outcome.action, &c.outcome.swap) {
         ensure!(
             swap.model.is_err() || swap.swap.is_ok(),
@@ -1648,10 +1660,12 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     if state.status != MarketStatus::Open {
         return Ok(());
     }
-    // What a holder can sell depends only on the market state and the holdings, so a step
-    // that changed neither leaves the last check standing.
-    let unchanged =
-        c.before.state_data == c.after.state_data && c.before.holdings == c.after.holdings;
+    // What a holder can sell depends only on the market state, the rates in force and the
+    // holdings, so a step that changed none of them leaves the last check standing; a warp
+    // can bring a pending rate change into force without touching the state.
+    let unchanged = c.before.state_data == c.after.state_data
+        && c.before.holdings == c.after.holdings
+        && c.before.state.rates_at(c.before.slot) == state.rates_at(slot);
     if unchanged && c.outcome.action != Action::Start {
         return Ok(());
     }
@@ -1676,7 +1690,7 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
                 continue;
             };
             let name = refusal(&failure);
-            let model = spec_price(state, input, output, amount);
+            let model = spec_price(state, slot, input, output, amount);
             ensure!(
                 model.as_ref().err() == Some(&name),
                 "{wallet} can't sell {amount} of mint {input}: {name}, where the spec gives {model:?}"
@@ -1690,7 +1704,9 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
                 // out more than the real reserve only grows with the amount, so a binary search
                 // finds where it starts.
                 let beyond = |amount: u64| {
-                    spec_price(state, input, output, amount).err().as_deref()
+                    spec_price(state, slot, input, output, amount)
+                        .err()
+                        .as_deref()
                         == Some("InsufficientLiquidity")
                 };
                 let (mut covered, mut refused) = (0u64, amount);
@@ -1707,7 +1723,7 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
                     at_edge == "InsufficientLiquidity",
                     "the spec refuses a sale of {refused} beyond the real reserve, the program gives {at_edge:?}"
                 );
-                if spec_price(state, input, output, covered).is_ok() {
+                if spec_price(state, slot, input, output, covered).is_ok() {
                     ensure!(
                         quote(input, covered).is_ok(),
                         "{wallet} can't sell {covered} of mint {input}, the most the real reserve covers"
@@ -1811,17 +1827,40 @@ fn every_tax_is_split_exactly(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     Ok(())
 }
 
-/// Spec 4: no rate ever leaves its range or passes `MAX_TAX_BPS`, and nothing fixed at
-/// creation ever changes.
+/// Spec 4: no rate, in force or pending, ever leaves its range or passes `MAX_TAX_BPS`, the
+/// rates in force never change within a slot (a change applies only from its slot,
+/// `RATE_CHANGE_DELAY_SLOTS` after `set_taxes`; hardening finding H010, #67), and nothing
+/// fixed at creation ever changes.
 fn rates_stay_in_range_and_creation_is_fixed(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     let (state, created) = (&c.after.state, &c.world.created_state);
-    for (rate, [min, max]) in [state.buy_tax_bps, state.sell_tax_bps]
-        .into_iter()
-        .zip(state.tax_ranges())
-    {
+    let pending = [state.pending_buy_tax_bps, state.pending_sell_tax_bps];
+    let mut rates = vec![[state.buy_tax_bps, state.sell_tax_bps]];
+    if state.pending_from_slot != 0 {
+        rates.push(pending);
         ensure!(
-            min <= rate && rate <= max && max <= MAX_TAX_BPS,
-            "rate {rate} against its range [{min}, {max}] and the cap {MAX_TAX_BPS}"
+            state.pending_from_slot <= c.after.slot + RATE_CHANGE_DELAY_SLOTS,
+            "a change pending until slot {} at slot {}, more than the delay away",
+            state.pending_from_slot,
+            c.after.slot
+        );
+    } else {
+        ensure!(pending == [0, 0], "pending rates {pending:?} with no slot");
+    }
+    for [buy, sell] in rates {
+        for (rate, [min, max]) in [buy, sell].into_iter().zip(state.tax_ranges()) {
+            ensure!(
+                min <= rate && rate <= max && max <= MAX_TAX_BPS,
+                "rate {rate} against its range [{min}, {max}] and the cap {MAX_TAX_BPS}"
+            );
+        }
+    }
+    let before = &c.before.state;
+    if c.before.slot == c.after.slot {
+        ensure!(
+            state.rates_at(c.after.slot) == before.rates_at(c.before.slot),
+            "{:?} changed the rates in force within slot {}",
+            c.outcome.action,
+            c.after.slot
         );
     }
     let fixed = |m: &TaxMarket| {
@@ -1925,6 +1964,11 @@ fn a_renounced_market_never_changes(c: &Checked<'_, TaxAmm>) -> Result<(), Strin
         (
             m.buy_tax_bps,
             m.sell_tax_bps,
+            (
+                m.pending_buy_tax_bps,
+                m.pending_sell_tax_bps,
+                m.pending_from_slot,
+            ),
             m.recipients,
             m.shares,
             m.burn_share_bps,
@@ -1982,7 +2026,7 @@ fn each_step_is_the_specs(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
             "net_sent {} for {amount}",
             result.net_sent
         );
-        let mut model = Model::of(&c.before.state);
+        let mut model = Model::of(&c.before.state).at(c.before.slot);
         model
             .swap(input, output, result.net_sent)
             .map_err(|refused| format!("the spec refuses a swap that settled: {refused:?}"))?;

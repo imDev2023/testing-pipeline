@@ -86,14 +86,17 @@ pub struct MarketView {
 }
 
 impl MarketView {
-    pub fn of(market: &TaxMarket) -> MarketView {
+    /// The market as quotes and swaps see it at `slot`, with the rates in force then
+    /// ([`TaxMarket::rates_at`]).
+    pub fn of(market: &TaxMarket, slot: u64) -> MarketView {
+        let [buy_tax_bps, sell_tax_bps] = market.rates_at(slot);
         MarketView {
             reserves: market.reserves,
             virtual_side: market.virtual_side,
             virtual_reserve: market.virtual_reserve,
             tax_side: market.tax_side,
-            buy_tax_bps: market.buy_tax_bps,
-            sell_tax_bps: market.sell_tax_bps,
+            buy_tax_bps,
+            sell_tax_bps,
         }
     }
 
@@ -123,13 +126,19 @@ impl MarketView {
     }
 }
 
-/// Prices an exact-in trade of `trade` against `market`, answering quotes.
-pub fn quote(market: &TaxMarket, trade: &TradeRequest) -> Result<QuoteResult> {
+/// Prices an exact-in trade of `trade` against `market` at `slot`, answering quotes.
+pub fn quote(market: &TaxMarket, slot: u64, trade: &TradeRequest) -> Result<QuoteResult> {
     require!(
         trade.mode == TradeMode::ExactIn,
         StrategyError::ExactOutNotSupported
     );
-    let fill = fill(market, trade.input_index, trade.output_index, trade.amount)?;
+    let fill = fill(
+        market,
+        slot,
+        trade.input_index,
+        trade.output_index,
+        trade.amount,
+    )?;
     Ok(QuoteResult {
         amount_in: fill.amount_in,
         amount_out: fill.amount_out,
@@ -137,15 +146,15 @@ pub fn quote(market: &TaxMarket, trade: &TradeRequest) -> Result<QuoteResult> {
 }
 
 /// Prices `amount_in` of mint index `input` for mint index `output` against `market`, as
-/// it stands: refused until the market is open, and for any direction that is not one of
-/// its two.
-pub fn fill(market: &TaxMarket, input: u8, output: u8, amount_in: u64) -> Result<Fill> {
+/// it stands at `slot`: refused until the market is open, and for any direction that is
+/// not one of its two.
+pub fn fill(market: &TaxMarket, slot: u64, input: u8, output: u8, amount_in: u64) -> Result<Fill> {
     require!(
         market.status == MarketStatus::Open,
         StrategyError::MarketNotOpen
     );
     let (i, o) = TaxMarket::direction(input, output).ok_or(StrategyError::WrongAccount)?;
-    let (sides, tax) = MarketView::of(market).terms(i, o);
+    let (sides, tax) = MarketView::of(market, slot).terms(i, o);
     Ok(exact_in(sides, tax, amount_in)?)
 }
 

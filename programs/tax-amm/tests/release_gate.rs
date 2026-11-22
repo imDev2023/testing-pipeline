@@ -3,14 +3,16 @@
 //! every tax market on the cluster, so the upgrade strands none.
 //!
 //! `scripts/gate_snapshot.py` copies every tax market on a cluster (each market state with
-//! its mints and vaults) and the deployed program into a folder. The gate loads them into
-//! LiteSVM and, for every market, with the new build: reads the market state, asks
+//! its mints and vaults), the cluster's slot and the deployed program into a folder. The gate
+//! loads them into LiteSVM, its clock at that slot, since the rates a market charges depend
+//! on it (a pending rate change, docs/spec/tax-amm.md, "Rates"), and, for every market, with
+//! the new build: reads the market state, asks
 //! `pipeline_market_info` for it, and quotes a trade each way, which must equal the spec's
 //! price (`common/model.rs`). With the deployed build beside it, every quote and every
 //! refusal must also be the deployed build's.
 //!
 //! - In every `cargo test`, the gate runs the build under test against
-//!   `tests/fixtures/release-gate/devnet/`, the devnet markets copied on 2026-11-20.
+//!   `tests/fixtures/release-gate/devnet/`, the devnet markets copied on 2026-11-22.
 //! - `scripts/pre-deploy.sh`, which `scripts/deploy-devnet.sh` runs on the very bytes it is
 //!   about to deploy, copies the cluster's markets afresh and runs
 //!   [`the_release_gate_passes_the_candidate_on_the_clusters_markets`] on them:
@@ -51,7 +53,7 @@ fn snapshot(dir: &Path) -> Vec<(Pubkey, solana_account::Account)> {
     let mut accounts = vec![];
     for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
         let path = entry.unwrap().path();
-        if path.extension().is_none_or(|ext| ext != "json") {
+        if path.extension().is_none_or(|ext| ext != "json") || path.ends_with(SLOT_FILE) {
             continue;
         }
         let record: serde_json::Value =
@@ -74,9 +76,26 @@ fn snapshot(dir: &Path) -> Vec<(Pubkey, solana_account::Account)> {
     accounts
 }
 
-/// A VM running `program` as the tax AMM, holding every account of the snapshot.
-fn vm(program: &[u8], accounts: &[(Pubkey, solana_account::Account)]) -> Env {
+/// The file of a snapshot folder holding the cluster's slot when its accounts were read.
+const SLOT_FILE: &str = "slot.json";
+
+/// The cluster's slot when the snapshot in `dir` was taken.
+fn snapshot_slot(dir: &Path) -> u64 {
+    let path = dir.join(SLOT_FILE);
+    let record: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())),
+    )
+    .unwrap();
+    record["slot"].as_u64().expect("a slot")
+}
+
+/// A VM running `program` as the tax AMM, holding every account of the snapshot, its clock at
+/// the snapshot's slot.
+fn vm(program: &[u8], accounts: &[(Pubkey, solana_account::Account)], slot: u64) -> Env {
     let mut svm = LiteSVM::new();
+    let mut clock: solana_clock::Clock = svm.get_sysvar();
+    clock.slot = slot;
+    svm.set_sysvar(&clock);
     svm.add_program(strategy_id(), program).unwrap();
     let admin = Keypair::new();
     svm.airdrop(&admin.pubkey(), 10 * SOL).unwrap();
@@ -121,7 +140,8 @@ fn read(env: &Env, market_state: &Pubkey) -> Result<Reading, String> {
         vaults,
         created: Default::default(),
     };
-    let model = Model::of(&state);
+    // The rates in force at the VM's slot, the cluster's when the snapshot was taken.
+    let model = Model::of(&state).at(env.slot());
     let quote = |input: usize| {
         let effective = state.reserves[input] as u128
             + if state.virtual_side as usize == input {
@@ -177,9 +197,10 @@ fn harness_refusal(failure: &str) -> String {
 /// `deployed` when given, which must agree. Returns what the candidate read.
 fn gate(snapshot_dir: &Path, candidate: &[u8], deployed: Option<&[u8]>) -> Vec<Reading> {
     let accounts = snapshot(snapshot_dir);
+    let slot = snapshot_slot(snapshot_dir);
     let states = market_states(&accounts);
-    let new = vm(candidate, &accounts);
-    let old = deployed.map(|program| vm(program, &accounts));
+    let new = vm(candidate, &accounts, slot);
+    let old = deployed.map(|program| vm(program, &accounts, slot));
     let mut readings = vec![];
     for state in &states {
         let reading = read(&new, state)
@@ -216,7 +237,7 @@ fn fixture() -> PathBuf {
 }
 
 /// The build under test reads and quotes every tax market that was on devnet on
-/// 2026-11-20, at the spec's price, so it strands none of them.
+/// 2026-11-22, at the spec's price, so it strands none of them.
 #[test]
 fn sos_h038_the_build_reads_and_quotes_every_devnet_market_at_the_specs_price() {
     let readings = gate(&fixture(), &strategy_so(), None);

@@ -188,7 +188,7 @@ const STATED: [(&str, &str); 10] = [
     ("every_tax_is_split_exactly", "Every tax is split exactly"),
     (
         "rates_stay_in_range_and_creation_is_fixed",
-        "No rate ever leaves its range or passes `MAX_TAX_BPS`",
+        "No rate, in force or pending, ever leaves its range or passes `MAX_TAX_BPS`, the rates in force never change within a slot",
     ),
     (
         "only_swaps_move_reserves_and_counters",

@@ -36,8 +36,11 @@ pub const BURN_SLOT: u8 = MAX_RECIPIENTS as u8;
 pub const SUITE_SLOT: u8 = MAX_RECIPIENTS as u8 + 1;
 
 /// Room kept at the end of the account, all zeros, so a later version can add a field
-/// without moving any and without reallocating existing markets.
-pub const RESERVED_LEN: usize = 64;
+/// without moving any and without reallocating existing markets. It was 64 bytes in the
+/// first build; the pending rates took 12 of them in #67, without moving any field or
+/// changing the version byte, so markets created before read all zeros there: no pending
+/// change.
+pub const RESERVED_LEN: usize = 52;
 
 /// Byte offsets in the account, discriminator included. The containment hook reads these
 /// directly; they never change.
@@ -112,6 +115,12 @@ pub struct TaxMarket {
     /// When the market was created.
     pub created_slot: u64,
     pub created_at: i64,
+    /// The buy and sell tax `set_taxes` set, which apply from `pending_from_slot`
+    /// ([`TaxMarket::rates_at`]; docs/spec/tax-amm.md, "Rates").
+    pub pending_buy_tax_bps: u16,
+    pub pending_sell_tax_bps: u16,
+    /// The slot the pending rates apply from; 0 when no change is pending.
+    pub pending_from_slot: u64,
     pub reserved: [u8; RESERVED_LEN],
 }
 
@@ -156,6 +165,33 @@ impl TaxMarket {
             return Err(StrategyError::NotTaxAuthority);
         }
         Ok(())
+    }
+
+    /// The buy and sell tax quotes and swaps apply at `slot`: the pending rates once `slot`
+    /// reaches the slot they apply from, the market's rates before then.
+    pub fn rates_at(&self, slot: u64) -> [u16; 2] {
+        if self.pending_from_slot != 0 && slot >= self.pending_from_slot {
+            [self.pending_buy_tax_bps, self.pending_sell_tax_bps]
+        } else {
+            [self.buy_tax_bps, self.sell_tax_bps]
+        }
+    }
+
+    /// Makes due pending rates the market's rates, leaving nothing pending; a change not yet
+    /// due stays pending. Every instruction that writes the rates or the pending ones does
+    /// this first, so a due change is never lost and never undone at once.
+    pub fn apply_due_rates(&mut self, slot: u64) {
+        if self.pending_from_slot != 0 && slot >= self.pending_from_slot {
+            [self.buy_tax_bps, self.sell_tax_bps] = self.rates_at(slot);
+            self.clear_pending_rates();
+        }
+    }
+
+    /// Cancels any pending change.
+    pub fn clear_pending_rates(&mut self) {
+        self.pending_buy_tax_bps = 0;
+        self.pending_sell_tax_bps = 0;
+        self.pending_from_slot = 0;
     }
 
     /// The fixed `[min, max]` range of the buy tax, then of the sell tax.

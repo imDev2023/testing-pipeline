@@ -27,7 +27,7 @@ fn market_with_authority(env: &mut Env, authority: &Keypair) -> Market {
 }
 
 #[test]
-fn set_taxes_changes_both_rates_and_the_next_swap_pays_them() {
+fn set_taxes_changes_both_rates_and_the_swaps_after_its_delay_pay_them() {
     let mut env = Env::new();
     let authority = Keypair::new();
     let market = market_with_authority(&mut env, &authority);
@@ -39,12 +39,17 @@ fn set_taxes_changes_both_rates_and_the_next_swap_pays_them() {
         &authority,
     )
     .unwrap();
-    let after = env.tax_market(&market.market_state);
-    assert_eq!((after.buy_tax_bps, after.sell_tax_bps), (800, 0));
+    let pending = env.tax_market(&market.market_state);
+    assert_eq!(
+        (pending.pending_buy_tax_bps, pending.pending_sell_tax_bps),
+        (800, 0)
+    );
 
-    // The next swap each way is priced, and taxed, at the new rates.
+    // Once the change applies, the next swap each way is priced, and taxed, at the new rates.
+    env.warp_slots(tax_amm::config::RATE_CHANGE_DELAY_SLOTS);
     let trader = env.funded_wallet(&market, 10_000_000_000_000);
-    let mut model = Model::of(&after);
+    let mut model = Model::of(&pending).at(env.slot());
+    assert_eq!((model.buy_tax_bps, model.sell_tax_bps), (800, 0));
     for (i, o) in [(1, 0), (0, 1)] {
         let trade = model.swap(i, o, 1_000_000_000).unwrap();
         let result = env.swap(&market, &trader, (i, o), 1_000_000_000).unwrap();
@@ -177,12 +182,18 @@ fn each_action_is_accepted_from_the_tax_authority_and_refused_from_every_other_s
             each_action(&market.market_state, &authority.pubkey(), &state)[action].clone();
         env.send_signed(instruction, &authority)
             .unwrap_or_else(|e| panic!("{name} from the tax authority: {e}"));
+        let after = env.tax_market(&market.market_state);
         assert_ne!(
             (
-                env.tax_market(&market.market_state).params(),
-                env.tax_market(&market.market_state).tax_authority_renounced
+                after.params(),
+                set_rates(&after),
+                after.tax_authority_renounced
             ),
-            (state.params(), state.tax_authority_renounced),
+            (
+                state.params(),
+                set_rates(&state),
+                state.tax_authority_renounced
+            ),
             "{name} changed the market"
         );
     }
@@ -220,7 +231,7 @@ fn set_taxes_refuses_a_rate_outside_its_range_on_either_side() {
         )
         .unwrap();
         let s = env.tax_market(&market.market_state);
-        assert_eq!((s.buy_tax_bps, s.sell_tax_bps), (buy, sell));
+        assert_eq!(set_rates(&s), (buy, sell));
     }
 }
 
@@ -268,11 +279,14 @@ fn no_sequence_of_set_taxes_takes_a_rate_past_its_range_or_the_cap() {
             expected = (buy, sell);
         }
         let s = env.tax_market(&market.market_state);
-        assert_eq!((s.buy_tax_bps, s.sell_tax_bps), expected);
-        assert!((buy_min..=buy_max).contains(&s.buy_tax_bps));
-        assert!((sell_min..=sell_max).contains(&s.sell_tax_bps));
-        assert!(s.buy_tax_bps <= tax_amm::config::MAX_TAX_BPS);
-        assert!(s.sell_tax_bps <= tax_amm::config::MAX_TAX_BPS);
+        assert_eq!(set_rates(&s), expected);
+        // Whatever is in force and whatever is pending stays inside its range and the cap.
+        for (buy, sell) in [(s.buy_tax_bps, s.sell_tax_bps), set_rates(&s)] {
+            assert!((buy_min..=buy_max).contains(&buy));
+            assert!((sell_min..=sell_max).contains(&sell));
+            assert!(buy <= tax_amm::config::MAX_TAX_BPS);
+            assert!(sell <= tax_amm::config::MAX_TAX_BPS);
+        }
     }
 }
 
@@ -311,7 +325,7 @@ fn a_range_fixed_at_a_single_value_never_moves() {
     )
     .unwrap();
     let s = env.tax_market(&market.market_state);
-    assert_eq!((s.buy_tax_bps, s.sell_tax_bps), (300, 200));
+    assert_eq!(set_rates(&s), (300, 200));
     assert_eq!(s.tax_ranges()[0], [300, 300]);
 }
 
@@ -597,8 +611,11 @@ fn a_renounced_market_refuses_all_three_actions_for_good() {
 }
 
 #[test]
-fn a_swap_quoted_before_a_rate_change_is_protected_by_its_minimum_output() {
-    for (rates, higher) in [((1_000u16, 1_000u16), true), ((0, 0), false)] {
+fn a_swap_quoted_before_a_rate_change_is_priced_at_the_rates_it_was_quoted_at() {
+    // A change waits longer than any transaction's lifetime (docs/spec/tax-amm.md, "Rates"),
+    // so a swap quoted and signed before it lands at the quoted rates, whichever way the
+    // rates move; `tests/rate_changes.rs` has the rest.
+    for rates in [(1_000u16, 1_000u16), (0, 0)] {
         let mut env = Env::new();
         let authority = Keypair::new();
         let mints = [
@@ -614,10 +631,7 @@ fn a_swap_quoted_before_a_rate_change_is_protected_by_its_minimum_output() {
         let market = env.seeded_market(mints, &params, [100_000_000_000, 200_000_000_000]);
         let trader = env.funded_wallet(&market, 10_000_000_000_000);
         for (i, o) in [(1, 0), (0, 1)] {
-            // Quoted at the old rates, then the rates change, then the swap lands.
             let quote = env.quote(&market, &exact_in(i, o, 1_000_000_000)).unwrap();
-            let current = env.tax_market(&market.market_state);
-            let old = (current.buy_tax_bps, current.sell_tax_bps);
             env.send_signed(
                 set_taxes_instruction(&market.market_state, &authority.pubkey(), rates.0, rates.1),
                 &authority,
@@ -627,24 +641,21 @@ fn a_swap_quoted_before_a_rate_change_is_protected_by_its_minimum_output() {
                 min_amount_out: quote.amount_out,
                 ..SwapOptions::default()
             };
-            let result = env.swap_with(&market, &trader, (i, o), 1_000_000_000, &options);
-            if higher {
-                // A higher tax pays less than the quote, so the router refuses the swap.
-                let failure = result.unwrap_err();
-                assert!(
-                    failure.contains("InsufficientOutput"),
-                    "{i}->{o}: {failure}"
-                );
-            } else {
-                // A lower tax pays at least the quote.
-                let meta = result.unwrap();
-                let swapped: pipeline_client::SwapResult =
-                    borsh::from_slice(&meta.return_data.data).unwrap();
-                assert!(swapped.received >= quote.amount_out, "{i}->{o}");
-            }
-            // Put the old rates back for the other direction.
+            let meta = env
+                .swap_with(&market, &trader, (i, o), 1_000_000_000, &options)
+                .unwrap();
+            let swapped: pipeline_client::SwapResult =
+                borsh::from_slice(&meta.return_data.data).unwrap();
+            assert_eq!(swapped.received, quote.amount_out, "{rates:?} {i}->{o}");
+            // Put the rates in force back, which cancels the pending change.
+            let current = env.tax_market(&market.market_state);
             env.send_signed(
-                set_taxes_instruction(&market.market_state, &authority.pubkey(), old.0, old.1),
+                set_taxes_instruction(
+                    &market.market_state,
+                    &authority.pubkey(),
+                    current.buy_tax_bps,
+                    current.sell_tax_bps,
+                ),
                 &authority,
             )
             .unwrap();
@@ -671,10 +682,11 @@ fn none_of_the_three_actions_changes_a_reserve_an_owed_amount_or_a_counter() {
 }
 
 #[test]
-fn set_taxes_emits_the_new_rates() {
+fn set_taxes_emits_the_new_rates_and_the_slot_they_apply_from() {
     let mut env = Env::new();
     let authority = Keypair::new();
     let market = market_with_authority(&mut env, &authority);
+    let slot = env.slot();
     let meta = env
         .send_signed(
             set_taxes_instruction(&market.market_state, &authority.pubkey(), 450, 650),
@@ -689,6 +701,7 @@ fn set_taxes_emits_the_new_rates() {
             tax_authority: ak(&authority.pubkey()),
             buy_tax_bps: 450,
             sell_tax_bps: 650,
+            from_slot: slot + tax_amm::config::RATE_CHANGE_DELAY_SLOTS,
         }]
     );
 }

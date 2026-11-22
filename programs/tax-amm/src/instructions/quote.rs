@@ -9,7 +9,7 @@ use crate::interface::TradeRequest;
 use crate::pricing;
 
 pub fn quote(ctx: Context<ReadTrade>, request: TradeRequest) -> Result<()> {
-    let quote = pricing::quote(&ctx.accounts.market_state, &request)?;
+    let quote = pricing::quote(&ctx.accounts.market_state, Clock::get()?.slot, &request)?;
     set_return_data(&crate::borsh_encode(&quote)?);
     Ok(())
 }

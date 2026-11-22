@@ -27,7 +27,9 @@ pub struct Seeded {
     pub amounts: [u64; 2],
 }
 
-/// The tax authority changed the market's rates; the next swap pays them.
+/// The tax authority set the market's rates, which quotes and swaps apply from `from_slot`
+/// (docs/spec/tax-amm.md, "Rates"). Rates equal to those in force cancel a pending change,
+/// with `from_slot` the slot of the call.
 #[event]
 #[derive(Debug, PartialEq, Eq)]
 pub struct TaxesChanged {
@@ -35,6 +37,7 @@ pub struct TaxesChanged {
     pub tax_authority: Pubkey,
     pub buy_tax_bps: u16,
     pub sell_tax_bps: u16,
+    pub from_slot: u64,
 }
 
 /// The tax authority changed the market's tax recipients, their shares or the burn share.

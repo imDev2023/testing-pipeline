@@ -101,6 +101,9 @@ fn only_router_swaps_bring_the_goal_closer() {
         env.send_signed(instruction, &authority)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         unchanged(&env, name);
+        // A rate change applies `RATE_CHANGE_DELAY_SLOTS` later (docs/spec/tax-amm.md,
+        // "Rates"), and renouncing cancels one still pending.
+        env.warp_slots(tax_amm::config::RATE_CHANGE_DELAY_SLOTS);
     }
     assert!(env.tax_market(&market.market_state).tax_authority_renounced);
 

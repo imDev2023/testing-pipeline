@@ -19,7 +19,9 @@
 //   9. read the market state back: its reserves, owed amounts and counters must equal this
 //      script's own calculation from the spec's formulas (spec-model.ts), to the unit;
 //  10. as the tax authority, change both rates through the metadata's `set_taxes` action,
-//      then trade both ways again and check each swap was taxed at the new rates;
+//      check they wait as the market's pending rates, trade once more at the old rates,
+//      wait until the slot they apply from (RATE_CHANGE_DELAY_SLOTS later), then trade both
+//      ways again and check each swap was taxed at the new rates;
 //  11. change a tax recipient through the metadata's `set_recipients` action, and check the
 //      slot names the new wallet with what it is owed unchanged;
 //  12. renounce through the metadata's `renounce_tax_authority` action, and check that both
@@ -139,6 +141,7 @@ import {
     getTaxAmmErrorMessage,
     BURN_SLOT,
     MarketStatus,
+    RATE_CHANGE_DELAY_SLOTS,
     SUITE_SHARE_BPS,
     SUITE_SLOT,
     SUITE_TREASURY,
@@ -1247,22 +1250,43 @@ async function tokenMarket(payer: KeyPairSigner, programId: Address, metadata: p
         return result;
     };
 
-    step("10. Changing both rates through the metadata's set_taxes action, then trading at them");
+    step("10. Changing both rates through the metadata's set_taxes action, then trading at them once they apply");
     const [newBuy, newSell] = TOKEN_MARKET.newTaxesBps;
     await send(`set_taxes (buy ${newBuy}, sell ${newSell})`, payer, [
         await authorityAction('set_taxes', { buy_tax_bps: newBuy, sell_tax_bps: newSell }),
     ]);
     const { data: retaxed } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
-    if (retaxed.buyTaxBps !== newBuy || retaxed.sellTaxBps !== newSell) {
-        fail(`the market state's rates are ${retaxed.buyTaxBps} and ${retaxed.sellTaxBps}, not ${newBuy} and ${newSell}`);
+    // A change waits RATE_CHANGE_DELAY_SLOTS as the market's pending rates (TAX-05).
+    if (
+        retaxed.buyTaxBps !== sent.buyTaxBps ||
+        retaxed.sellTaxBps !== sent.sellTaxBps ||
+        retaxed.pendingBuyTaxBps !== newBuy ||
+        retaxed.pendingSellTaxBps !== newSell ||
+        retaxed.pendingFromSlot === 0n
+    ) {
+        fail(
+            `the market state's rates are ${retaxed.buyTaxBps} and ${retaxed.sellTaxBps}, pending ${retaxed.pendingBuyTaxBps} and ${retaxed.pendingSellTaxBps} from slot ${retaxed.pendingFromSlot}`,
+        );
     }
-    info(`buy tax ${sent.buyTaxBps} -> ${retaxed.buyTaxBps} bps, sell tax ${sent.sellTaxBps} -> ${retaxed.sellTaxBps} bps`);
+    const fromSlot = retaxed.pendingFromSlot;
+    info(`buy tax ${sent.buyTaxBps} -> ${newBuy} bps, sell tax ${sent.sellTaxBps} -> ${newSell} bps, from slot ${fromSlot}, ${RATE_CHANGE_DELAY_SLOTS} slots after the change`);
+    // Until then a trade is taxed at the old rates.
+    const [firstInput, firstOutput, firstAmount] = TOKEN_MARKET.trades[0]!;
+    await tradeAndCheck(firstInput, firstOutput, firstAmount);
+    info(`a trade at slot ${await rpc.getSlot({ commitment: 'confirmed' }).send()} paid the old rates`);
+    while ((await rpc.getSlot({ commitment: 'confirmed' }).send()) < fromSlot) {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
     spec.buyTaxBps = newBuy;
     spec.sellTaxBps = newSell;
     // The same trades again: each quote must be the spec's price at the new rates.
     for (const [input, output, amount] of TOKEN_MARKET.trades) await tradeAndCheck(input, output, amount);
     await checkBooks();
-    record.push(['set_taxes', `the next swaps were taxed at ${newBuy} and ${newSell} bps`]);
+    const { data: applied } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });
+    if (applied.buyTaxBps !== newBuy || applied.sellTaxBps !== newSell || applied.pendingFromSlot !== 0n) {
+        fail(`after the change applied, the market state's rates are ${applied.buyTaxBps} and ${applied.sellTaxBps}, pending from slot ${applied.pendingFromSlot}`);
+    }
+    record.push(['set_taxes', `a trade before slot ${fromSlot} paid the old rates; the swaps after it were taxed at ${newBuy} and ${newSell} bps`]);
 
     step("11. Changing a tax recipient through the metadata's set_recipients action");
     const { data: beforeHandover } = await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' });

@@ -77,6 +77,7 @@ fn the_constants_are_defined_once_in_the_config_module() {
         ("CONTAINMENT_HOOK_ID", false),
         ("CONTAINMENT_UNLOCK_SEED", false),
         ("QUOTE_MINTS", false),
+        ("RATE_CHANGE_DELAY_SLOTS", true),
     ] {
         let mut defined: Vec<String> = files_containing(&format!("const {name}"))
             .into_iter()

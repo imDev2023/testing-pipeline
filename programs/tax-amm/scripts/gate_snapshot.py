@@ -6,7 +6,8 @@ any new build replaces the deployed one) reads and quotes every tax market with 
 (docs/spec/tax-amm.md, "Upgrades and freezing"; hardening finding H038, #67). This script
 gives it the markets: each market state the program owns (its discriminator and exact size),
 and both of its vaults and mints, as the solana CLI's account JSON, one file per account,
-named by address. With --deployed it also saves the program deployed on the cluster, as
+named by address, and the cluster's slot once they are read, as slot.json, since the rates a
+market charges depend on it (docs/spec/tax-amm.md, "Rates"). With --deployed it also saves the program deployed on the cluster, as
 deployed.so, for the gate to compare the new build against.
 
     gate_snapshot.py --url <cluster URL> --program <program id> --out <dir> [--deployed]
@@ -119,7 +120,9 @@ def main() -> None:
             if account is None:
                 raise SystemExit(f"{address}, a mint or vault of a tax market, does not exist")
             write(out, address, account)
-    print(f"{len(markets)} tax markets and {len(others)} mints and vaults copied to {out}")
+    slot = rpc(url, "getSlot", [{"commitment": "confirmed"}])
+    (out / "slot.json").write_text(json.dumps({"slot": slot}) + "\n")
+    print(f"{len(markets)} tax markets and {len(others)} mints and vaults copied to {out}, at slot {slot}")
 
     if args.deployed:
         subprocess.run(

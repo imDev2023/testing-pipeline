@@ -53,6 +53,15 @@ pub const QUOTE_MINTS: [Pubkey; 3] = [
     pubkey!("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"),
 ];
 
+/// How many slots after `set_taxes` its new rates apply: 300 slots, about two minutes, longer
+/// than any transaction's lifetime (a blockhash lasts 150 slots), so no rate change can
+/// reach a swap already signed, as the tax authority could otherwise put a change on either
+/// side of a victim's swap and take its slippage allowance as tax (docs/spec/tax-amm.md,
+/// "Rates"; hardening finding H010, #67). Decreases wait too. Published in the IDL
+/// (`#[constant]`), for Aviary's tax panel.
+#[constant]
+pub const RATE_CHANGE_DELAY_SLOTS: u64 = 300;
+
 /// Tax recipients per market.
 pub const MAX_RECIPIENTS: usize = 4;
 
@@ -64,6 +73,8 @@ pub const MAX_RECIPIENTS: usize = 4;
 const _: () = assert!(MAX_TAX_BPS < 10_000);
 const _: () = assert!(SUITE_SHARE_BPS <= 10_000);
 const _: () = assert!(MAX_RECIPIENTS >= 1 && MAX_RECIPIENTS + 2 <= u8::MAX as usize);
+// A blockhash lasts 150 slots, so a delay of 150 or fewer could still reach a signed swap.
+const _: () = assert!(RATE_CHANGE_DELAY_SLOTS > 150);
 
 // The `security.txt` every program of ours embeds (docs/spec/README.md, "Verified builds").
 // `name` is the program's public name, which lives only here and in `metadata.json`

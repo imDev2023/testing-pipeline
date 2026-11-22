@@ -533,6 +533,18 @@ impl Env {
         market
     }
 
+    /// The VM's current slot.
+    pub fn slot(&self) -> u64 {
+        self.svm.get_sysvar::<solana_clock::Clock>().slot
+    }
+
+    /// Moves the VM's clock `slots` slots on.
+    pub fn warp_slots(&mut self, slots: u64) {
+        let mut clock: solana_clock::Clock = self.svm.get_sysvar();
+        clock.slot += slots;
+        self.svm.set_sysvar(&clock);
+    }
+
     /// Clears a Token-2022 mint's transfer hook as the containment hook's `unlock` does: no
     /// program, then no authority, signed by the admin as its hook authority.
     pub fn clear_transfer_hook(&mut self, mint: &Pubkey) {
@@ -1153,6 +1165,13 @@ pub struct SwapOptions {
     pub mode: Option<TradeMode>,
     /// The strategy accounts to pass instead of resolving them.
     pub strategy_accounts: Option<Vec<AccountMeta>>,
+}
+
+/// The buy and sell tax a market's tax authority last set: its pending rates while a change
+/// waits (docs/spec/tax-amm.md, "Rates"), the rates in force otherwise.
+pub fn set_rates(state: &TaxMarket) -> (u16, u16) {
+    let [buy, sell] = state.rates_at(u64::MAX);
+    (buy, sell)
 }
 
 /// The containment hook's program id, as the tax AMM compiles it in: the one transfer hook

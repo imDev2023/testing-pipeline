@@ -180,6 +180,9 @@ impl NewMarket<'_, '_> {
             swap_count: 0,
             created_slot: clock.slot,
             created_at: clock.unix_timestamp,
+            pending_buy_tax_bps: 0,
+            pending_sell_tax_bps: 0,
+            pending_from_slot: 0,
             reserved: [0; RESERVED_LEN],
         })
     }
