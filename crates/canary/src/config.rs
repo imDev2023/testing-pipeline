@@ -8,8 +8,10 @@
 //! the spec section that explains it and the decision's block in `docs/decisions.md`
 //! change in one PR.
 
-/// The Canary version that produced a result (`harness` on every record).
-pub const HARNESS: &str = "canary/0.2.0";
+/// The Canary version that produced a result (`harness` on every record). 0.3.0 since Pipeline
+/// 0.3, whose fee mints changed how `cost` values the sale's fee and how quotes compare with
+/// swaps.
+pub const HARNESS: &str = "canary/0.3.0";
 
 // ---------------------------------------------------------------------------------------
 // Units (not policy, but written only here so the policy grep has no false friends)

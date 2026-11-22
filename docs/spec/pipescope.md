@@ -45,7 +45,7 @@ Not in the first version:
 
 - One market, one hop, exact-in only: the trader picks any two of the market's two to four mints as input and output.
 - SOL is wrapped and unwrapped for the trader.
-- The market's `init_fee_account` is added to the transaction when a sell needs it.
+- The market's `init_fee_account` is added to the transaction when the mint the swap pays Pipeline's fee in has no fee account yet: since Pipeline 0.3 that is the market's fee mint on a trade into it (wrapped SOL, on a market that trades it, `BAR-44`), and the input on every other trade.
 - A default slippage, which the trader can change; its value (`PIPESCOPE-08`) lives in the screens' config module ([`pipescope-screens.md`](pipescope-screens.md), One place for every value), and this file does not repeat it.
 
 ### Simulate before every signature

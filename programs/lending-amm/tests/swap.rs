@@ -62,7 +62,11 @@ fn exact_in_both_ways_at_lp_fees_of_0_30_and_200_bps() {
             let vault_in = env.balance(&market.vaults[input]);
             let result = env.swap(&market, &trader, sides, amount).unwrap();
             assert_eq!(result.received, out, "the swap delivers its quote");
-            assert_eq!(env.balance(&paid_out), held + out);
+            assert_eq!(
+                env.balance(&paid_out),
+                held + env.kept(&market, output, out),
+                "the trader keeps the quote, less Pipeline's fee when it is taken in the output"
+            );
             // The whole input joins its side and stays in the input vault.
             assert_eq!(env.balance(&market.vaults[input]), vault_in + amount);
             let after = env.market_state(&market.market_state).reserves;

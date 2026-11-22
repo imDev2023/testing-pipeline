@@ -181,7 +181,8 @@ _Avoid_: the protocol, the platform, the Factory (that is MetalLegBob's)
 
 **Fee mint**:
 A mint Aviary takes its integrator fee in when a trader pays with it: SOL and USDC; a swap paying with any other mint carries no integrator fee.
-_Avoid_: quote mint (a market need not quote in it), fee token
+Not Pipeline's fee mint, the one mint of a market that Pipeline's router, since 0.3, takes its own fee in when a trade's output is that mint (wrapped SOL on a market that trades it, unless the strategy declares another); call that one **Pipeline's fee mint**.
+_Avoid_: quote mint (a market need not quote in it), fee token, fee mint alone for Pipeline's
 
 **Fee wallet**:
 The wallet Aviary's integrator fees are paid into; it is not the suite's treasury, which receives the tax AMM's suite share.
