@@ -273,3 +273,41 @@ fn renouncing_applies_a_due_change_and_cancels_one_still_pending() {
         );
     }
 }
+
+#[test]
+fn rates_equal_to_those_in_force_cancel_a_pending_change_at_once() {
+    let mut env = Env::new();
+    let authority = Keypair::new();
+    let (market, trader) = market_with_authority(&mut env, &authority);
+    set_taxes(&mut env, &market, &authority, 800, 900);
+    env.warp_slots(RATE_CHANGE_DELAY_SLOTS / 2);
+    let slot = env.slot();
+    let events = set_taxes(&mut env, &market, &authority, 300, 500);
+    assert_eq!(
+        events,
+        [TaxesChanged {
+            market_state: ak(&market.market_state),
+            tax_authority: ak(&authority.pubkey()),
+            buy_tax_bps: 300,
+            sell_tax_bps: 500,
+            from_slot: slot,
+        }]
+    );
+    let state = env.tax_market(&market.market_state);
+    assert_eq!(
+        (
+            state.pending_buy_tax_bps,
+            state.pending_sell_tax_bps,
+            state.pending_from_slot
+        ),
+        (0, 0, 0)
+    );
+    env.warp_slots(RATE_CHANGE_DELAY_SLOTS);
+    assert_trades_at(
+        &mut env,
+        &market,
+        &trader,
+        (300, 500),
+        "after the cancelled change's slot",
+    );
+}

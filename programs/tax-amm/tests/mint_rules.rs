@@ -180,7 +180,7 @@ type HookAuthority = Box<dyn Fn(&Pubkey) -> Pubkey>;
 fn sos_h007_a_mint_whose_transfer_hook_could_refuse_sells_is_refused() {
     let foreign = Pubkey::new_unique();
     let wallet = Pubkey::new_unique();
-    let cases: [(&str, Pubkey, HookAuthority); 5] = [
+    let cases: [(&str, Pubkey, HookAuthority); 7] = [
         (
             "another program, a wallet its authority",
             foreign,
@@ -205,6 +205,20 @@ fn sos_h007_a_mint_whose_transfer_hook_could_refuse_sells_is_refused() {
             "no program, but an authority that could set one",
             Pubkey::default(),
             Box::new(move |_| wallet),
+        ),
+        // A hook with no authority can never be repointed, but its program's own code (or an
+        // upgrade of it) can still refuse sells: only the containment hook may run.
+        (
+            "another program, no authority",
+            foreign,
+            Box::new(|_| Pubkey::default()),
+        ),
+        // The containment hook with no authority could never be cleared, so its token could
+        // never unlock; a contained mint's authority is its unlock PDA.
+        (
+            "the containment hook, no authority",
+            containment_hook_id(),
+            Box::new(|_| Pubkey::default()),
         ),
     ];
     for (what, program, authority) in cases {
@@ -795,4 +809,117 @@ fn sos_h015_check_mint_does_not_read_the_option_tags_only_token_programs_write()
     data[..4].copy_from_slice(&[2, 0, 0, 0]);
     assert_eq!(token_2022_reading(&data), None);
     assert_eq!(check_mint(&TOKEN_2022_PROGRAM_ID, &data), Ok(()));
+}
+
+/// The side a single-sided seed leaves empty, priced by its virtual reserve, is checked like
+/// the other: a mint authority on it is refused, though nothing of it moves.
+#[test]
+fn sos_h008_the_empty_side_of_a_single_sided_seed_is_checked_too() {
+    let mut env = Env::new();
+    let seeder = solana_keypair::Keypair::new();
+    let kept = MintOptions {
+        mint_authority: true,
+        ..MintOptions::default()
+    };
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint_with(&TOKEN, kept), TOKEN),
+    ];
+    let params = tax_amm::InitParams {
+        virtual_side: 1,
+        virtual_reserve: 50_000_000_000,
+        ..valid_params(&seeder.pubkey())
+    };
+    let market = env.create_tax_market(mints, &params).unwrap();
+    env.fund(&seeder.pubkey(), &market, [SEEDED[0], 0]);
+    assert_refused(
+        env.seed(&market, &seeder, [SEEDED[0], 0]),
+        StrategyError::MintAuthoritySet,
+    );
+}
+
+/// A contained mint can't graduate from a launchpad (`HOOK-14`): `pipeline_seed_liquidity`
+/// creates and seeds in one call, so the mint can't be bound to the market first, and no
+/// transfer of a contained mint not yet bound can go through.
+#[test]
+fn a_contained_mint_cannot_graduate_from_a_launchpad() {
+    let mut env = Env::new();
+    let contained = env.create_contained_mint();
+    let launch_mints = [(contained, TOKEN_2022), (env.create_mint(&TOKEN), TOKEN)];
+    // The mint authority, which `bind` would need, is revoked as a launch does before any
+    // seed, so only the hook can refuse.
+    let admin = env.admin.pubkey();
+    let revoke = spl_token_2022_interface::instruction::set_authority(
+        &TOKEN_2022,
+        &contained,
+        None,
+        spl_token_2022_interface::instruction::AuthorityType::MintTokens,
+        &admin,
+        &[],
+    )
+    .unwrap();
+    env.send(&[revoke], &[]).unwrap();
+    let launch = env.launch(launch_mints, SEEDED);
+    // The hook's accounts as any caller passes them: the hook program, its validation
+    // account and the mint's config, neither of which exists before `bind`.
+    let hook = containment_hook_id();
+    let pda = |seed: &[u8]| Pubkey::find_program_address(&[seed, contained.as_ref()], &hook).0;
+    let mut accounts = launchpad::seed_liquidity_own_accounts(&launch);
+    accounts.extend([
+        pipeline_client::AccountMeta::new_readonly(hook, false),
+        pipeline_client::AccountMeta::new_readonly(pda(b"extra-account-metas"), false),
+        pipeline_client::AccountMeta::new_readonly(pda(b"config"), false),
+    ]);
+    let graduate = env.graduate_instruction(
+        &launch,
+        SEEDED,
+        init_data(&valid_params(&Pubkey::new_unique())),
+        accounts,
+    );
+    let refused = env.send_as_creator(&launch, &[graduate]).unwrap_err();
+    // Token-2022 finds no validation account for a mint not yet bound, so it refuses the
+    // escrow's transfer before the hook could run.
+    assert!(
+        refused.contains("Instruction: TransferChecked")
+            && refused.contains(&format!(
+                "Program {TOKEN_2022} failed: invalid account data"
+            )),
+        "{refused}"
+    );
+    assert!(env.svm.get_account(&launch.market_state()).is_none());
+}
+
+/// Hardening round 2, R01 (#67): a market an earlier build created, still unseeded when this
+/// build replaced it, may hold a mint whose transfer hook this build would refuse at creation.
+/// The seed checks the hook again, so such a market never opens. The earlier build is stood in
+/// for by writing a foreign hook into the mint after the market's creation, which Token-2022
+/// itself never allows.
+#[test]
+fn sos_r01_a_market_created_before_the_hook_rule_never_opens_with_a_foreign_hook() {
+    let mut env = Env::new();
+    let seeder = solana_keypair::Keypair::new();
+    let hooked = env.create_mint_with_cleared_hook();
+    let other = env.create_mint(&TOKEN);
+    let params = valid_params(&seeder.pubkey());
+    let market = env
+        .create_tax_market([(hooked, TOKEN_2022), (other, TOKEN)], &params)
+        .unwrap();
+    // The extension's value: the hook authority, then the hook program.
+    let mut mint = env.svm.get_account(&hooked).unwrap();
+    let value = mint.data.len() - 64;
+    mint.data[value..value + 32].copy_from_slice(Pubkey::new_unique().as_ref());
+    mint.data[value + 32..].copy_from_slice(Pubkey::new_unique().as_ref());
+    env.svm.set_account(hooked, mint).unwrap();
+    let data = env.svm.get_account(&hooked).unwrap().data;
+    assert_ne!(
+        find_extension(&data, ExtensionType::TransferHook as u16).unwrap(),
+        &[0u8; 64][..]
+    );
+    env.fund(&seeder.pubkey(), &market, SEEDED);
+    let terms = terms_of(&env.tax_market(&market.market_state));
+    let seed = seed_instruction(&market, &seeder.pubkey(), SEEDED, terms, vec![]);
+    assert_refused(
+        env.send(&[seed], &[&seeder]),
+        StrategyError::TransferHookNotAllowed,
+    );
 }

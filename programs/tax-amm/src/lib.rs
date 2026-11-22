@@ -115,7 +115,7 @@ pub mod tax_amm {
     }
 
     /// Custom action: the tax authority moves the buy and sell tax, each inside the range
-    /// fixed at creation. The next swap pays the new rates.
+    /// fixed at creation. They apply from `RATE_CHANGE_DELAY_SLOTS` later (`config`).
     pub fn set_taxes(
         ctx: Context<TaxAuthorityAction>,
         buy_tax_bps: u16,

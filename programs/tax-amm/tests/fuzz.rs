@@ -96,7 +96,7 @@ const SHAPES_REACHED: [&str; 22] = [
     "taxed on side 0",
     "taxed on side 1",
 ];
-const OUTCOMES_REACHED: [&str; 45] = [
+const OUTCOMES_REACHED: [&str; 50] = [
     "bypass: NotPipeline",
     "clock jump: settled",
     "distribute to the burn: NotSlotWallet",
@@ -108,6 +108,11 @@ const OUTCOMES_REACHED: [&str; 45] = [
     "distribute: UnusedSlot",
     "distribute: settled",
     "donation: settled",
+    "rates: a swap applied a due change",
+    "rates: a swap while a change waits",
+    "rates: renounce cancelled a pending change",
+    "rates: set_taxes cancelled a pending change",
+    "rates: set_taxes set a pending change",
     "renounce_tax_authority: AlreadyRenounced",
     "renounce_tax_authority: NoTaxAuthority",
     "renounce_tax_authority: NotTaxAuthority",

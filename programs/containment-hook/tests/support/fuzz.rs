@@ -387,13 +387,7 @@ struct Containment<'a> {
 
 impl Surroundings for Containment<'_> {
     fn create_mint(&self, env: &mut Env, at: &Keypair) -> Pubkey {
-        let options = MintOptions {
-            mint_authority: true,
-            transfer_hook: Some(hook_id()),
-            transfer_hook_authority: Some(unlock_pda(&at.pubkey())),
-            ..MintOptions::default()
-        };
-        env.create_mint_at(at, &TOKEN_2022, options)
+        env.create_contained_mint_at(at)
     }
 
     fn before_seed(&self, env: &mut Env, market: &Market) -> Result<(), String> {
@@ -406,7 +400,12 @@ impl Surroundings for Containment<'_> {
         self.bind_cost.set(
             hook_compute(&meta.logs)
                 .first()
-                .map(|cost| cost.saturating_sub(search)),
+                // Never clamped: a search costing more than the whole call is a harness bug
+                // (as hardening finding T03 of #67 said of the tax AMM's).
+                .map(|cost| {
+                    cost.checked_sub(search)
+                        .expect("the bump search costs less than bind")
+                }),
         );
         revoke_mint_authority(env, &mint);
         Ok(())

@@ -233,7 +233,7 @@ impl TaxMarket {
 
     /// The addresses of this market and the programs it runs on, which can't be tax
     /// recipients ([`crate::params::own_addresses`]).
-    pub fn own_addresses(&self, market_state: &Pubkey, vault_authority: &Pubkey) -> [Pubkey; 12] {
+    pub fn own_addresses(&self, market_state: &Pubkey, vault_authority: &Pubkey) -> [Pubkey; 13] {
         crate::params::own_addresses(
             market_state,
             vault_authority,

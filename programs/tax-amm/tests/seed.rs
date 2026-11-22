@@ -244,8 +244,9 @@ fn the_creation_transaction_seeds_the_market_it_creates() {
         );
         let size = wire_size(&transaction);
         println!("the creation transaction on {what}: {size} of {MAX_TRANSACTION_BYTES} bytes");
-        // Mints of one token program fit without an address lookup table; a mixed pair or a
-        // hooked mint does not (docs/spec/tax-amm.md, "Not measured yet").
+        // Mints of one token program fit without an address lookup table, with 23 bytes to
+        // spare; a mixed pair, or a mint whose hook is cleared, is 9 bytes over
+        // (docs/spec/tax-amm.md, "Creating a market").
         if kinds[0] == kinds[1] {
             assert!(size <= MAX_TRANSACTION_BYTES, "{what}: {size}");
         }

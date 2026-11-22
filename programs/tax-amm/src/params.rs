@@ -145,7 +145,8 @@ pub fn check_split(
 
 /// The market's own addresses and the programs it runs on: its market state, vault
 /// authority, vaults and mints, this program, the router and the market's signer under it,
-/// and the token programs. None of them can ever move a token out of its associated token
+/// the token programs, and the containment hook (`crate::config::CONTAINMENT_HOOK_ID`), the
+/// one hook program a market's mint may run, which never moves a token it holds. None of them can ever move a token out of its associated token
 /// account, so none can be a tax recipient ([`check_wallets`]).
 pub fn own_addresses(
     market_state: &Pubkey,
@@ -153,7 +154,7 @@ pub fn own_addresses(
     mints: &[Pubkey; 2],
     vaults: &[Pubkey; 2],
     market_signer: &Pubkey,
-) -> [Pubkey; 12] {
+) -> [Pubkey; 13] {
     [
         *market_state,
         *vault_authority,
@@ -167,6 +168,7 @@ pub fn own_addresses(
         anchor_spl::token::ID,
         anchor_spl::token_2022::ID,
         anchor_spl::associated_token::ID,
+        crate::config::CONTAINMENT_HOOK_ID,
     ]
 }
 

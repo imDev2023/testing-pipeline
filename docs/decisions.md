@@ -3199,7 +3199,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-52: What every holder can exit means on a tax market
 
 - Question: How does the fuzzer check the bar's shared invariant that every holder can still exit, given that a tax market never pays out its virtual reserve?
-- Answer: Every wallet's whole holding of either mint quotes, or is refused as dust or, only on a market with a virtual reserve, because the curve would pay out more than the real reserve, in which case the largest sale the real reserve covers must quote; every sequence ends with every wallet selling all it holds, and each sale settles unless the spec refuses it.
+- Answer: Every wallet's whole holding of either mint quotes, or is refused as dust or, only on a market with a virtual reserve, because the curve would pay out more than the real reserve, in which case the largest sale the real reserve covers must quote unless it is itself dust (hardening finding H036, signed off); every sequence ends with every wallet selling all it holds, and each sale settles unless the spec refuses it.
 - Alternatives: Requiring every whole holding to sell, which a single-sided launch refuses by design; checking quotes only, which would miss a swap that fails after its quote.
 - Specified in: [`docs/spec/tax-amm.md`, Invariants](spec/tax-amm.md#invariants)
 - Changes by: spec only

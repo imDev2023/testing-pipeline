@@ -813,6 +813,7 @@ fn sos_h024_set_recipients_refuses_one_of_the_markets_own_addresses() {
         TOKEN,
         TOKEN_2022,
         pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
+        containment_hook_id(),
     ];
     let none = Pubkey::default();
     for address in own {

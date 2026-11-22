@@ -335,6 +335,8 @@ fn own_addresses(state: &Pubkey, mints: [Pubkey; 2]) -> Vec<Pubkey> {
         TOKEN,
         TOKEN_2022,
         pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
+        // The containment hook, which never moves a token it is paid (round 2, #67).
+        containment_hook_id(),
     ]
 }
 

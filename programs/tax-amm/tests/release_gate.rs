@@ -327,7 +327,10 @@ fn the_gate_quotes_a_market_with_a_pending_rate_change_at_the_rates_in_force() {
         let readings = gate(&dir, &strategy_so(), None);
         quotes.push(readings[0].quotes.clone());
     }
-    assert_ne!(quotes[0], quotes[1], "a due change is in force, a waiting one is not");
+    assert_ne!(
+        quotes[0], quotes[1],
+        "a due change is in force, a waiting one is not"
+    );
 }
 
 /// The live gate, which `scripts/pre-deploy.sh` runs on a fresh copy of the cluster's

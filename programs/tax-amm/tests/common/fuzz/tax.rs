@@ -154,6 +154,9 @@ pub enum Rate {
     Within(u16),
     /// Exactly these basis points, inside the range or not.
     Exactly(u16),
+    /// The rate in force, which with the other in force cancels a pending change
+    /// (docs/spec/tax-amm.md, "Rates").
+    InForce,
 }
 
 /// How a `set_recipients` step breaks the split rules, if it does.
@@ -493,6 +496,7 @@ fn rate() -> impl Strategy<Value = Rate> {
     prop_oneof![
         4 => (0..=1_000u16).prop_map(Rate::Within),
         1 => (0..=MAX_TAX_BPS + 100).prop_map(Rate::Exactly),
+        1 => Just(Rate::InForce),
     ]
 }
 
@@ -1068,13 +1072,15 @@ impl TaxWorld {
             Step::SetTaxes { who, buy, sell } => {
                 let signer = self.signer(who).insecure_clone();
                 let ranges = state.tax_ranges();
-                let bps = |rate: Rate, [min, max]: [u16; 2]| match rate {
+                let in_force = state.rates_at(self.env.slot());
+                let bps = |rate: Rate, [min, max]: [u16; 2], side: usize| match rate {
                     Rate::Within(thousandths) => {
                         min + ((max - min) as u32 * thousandths.min(1_000) as u32 / 1_000) as u16
                     }
                     Rate::Exactly(bps) => bps,
+                    Rate::InForce => in_force[side],
                 };
-                let (buy, sell) = (bps(buy, ranges[0]), bps(sell, ranges[1]));
+                let (buy, sell) = (bps(buy, ranges[0], 0), bps(sell, ranges[1], 1));
                 let expected = authorization(&state, &signer.pubkey()).and_then(|()| {
                     let outside = [buy, sell]
                         .iter()
@@ -1242,7 +1248,36 @@ impl TaxWorld {
         self.record(&costs);
         outcome.costs = costs;
         *self.tally.entry(outcome.label()).or_default() += 1;
+        if let Some(label) = self.rate_change_label(&state, &outcome) {
+            *self.tally.entry(label.into()).or_default() += 1;
+        }
         outcome
+    }
+
+    /// What a step that settled did to a pending rate change (docs/spec/tax-amm.md, "Rates"),
+    /// for the run's tally, so a run that never reached one of these states fails.
+    fn rate_change_label(&self, before: &TaxMarket, outcome: &Outcome) -> Option<&'static str> {
+        if outcome.result.is_err() {
+            return None;
+        }
+        let (slot, after) = (self.env.slot(), self.state());
+        let pending = before.pending_from_slot;
+        match outcome.action {
+            Action::Swap { .. } if pending != 0 && slot >= pending => {
+                Some("rates: a swap applied a due change")
+            }
+            Action::Swap { .. } if pending != 0 => Some("rates: a swap while a change waits"),
+            Action::SetTaxes if after.pending_from_slot != 0 => {
+                Some("rates: set_taxes set a pending change")
+            }
+            Action::SetTaxes if pending != 0 && slot < pending => {
+                Some("rates: set_taxes cancelled a pending change")
+            }
+            Action::Renounce if pending != 0 && slot < pending => {
+                Some("rates: renounce cancelled a pending change")
+            }
+            _ => None,
+        }
     }
 
     fn authority_action(
@@ -1867,6 +1902,19 @@ fn rates_stay_in_range_and_creation_is_fixed(c: &Checked<'_, TaxAmm>) -> Result<
         }
     }
     let before = &c.before.state;
+    // A change set by this step applies exactly `RATE_CHANGE_DELAY_SLOTS` after it.
+    let set_now = state.pending_from_slot != before.pending_from_slot
+        || [state.pending_buy_tax_bps, state.pending_sell_tax_bps]
+            != [before.pending_buy_tax_bps, before.pending_sell_tax_bps];
+    if set_now && state.pending_from_slot != 0 {
+        ensure!(
+            state.pending_from_slot == c.after.slot + RATE_CHANGE_DELAY_SLOTS,
+            "{:?} set a change from slot {} at slot {}, not {RATE_CHANGE_DELAY_SLOTS} later",
+            c.outcome.action,
+            state.pending_from_slot,
+            c.after.slot
+        );
+    }
     if c.before.slot == c.after.slot {
         ensure!(
             state.rates_at(c.after.slot) == before.rates_at(c.before.slot),

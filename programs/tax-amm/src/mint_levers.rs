@@ -2,7 +2,8 @@
 //! allowlist (docs/spec/tax-amm.md, "Mint rules"): no lever a token's issuer could pull
 //! once buyers are in. At creation a mint's transfer hook must be cleared or be the
 //! containment hook with the mint's unlock PDA as its authority (hardening finding H007,
-//! #67); at the seed, through either seed path, a mint outside the quote list
+//! #67), checked again at the seed for a market an earlier build created (round 2, R01); and
+//! at the seed, through either seed path, a mint outside the quote list
 //! ([`QUOTE_MINTS`]) must have no mint authority and no freeze authority (H008, H016). None
 //! of these can be undone once a market opens: Token-2022 never sets an authority that is
 //! none again, so the hook of a cleared mint and the authorities checked at the seed stay

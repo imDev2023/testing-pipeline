@@ -787,7 +787,7 @@
       "name": "set_taxes",
       "docs": [
         "Custom action: the tax authority moves the buy and sell tax, each inside the range",
-        "fixed at creation. The next swap pays the new rates."
+        "fixed at creation. They apply from `RATE_CHANGE_DELAY_SLOTS` later (`config`)."
       ],
       "discriminator": [
         86,
@@ -1854,7 +1854,8 @@
       "name": "MAX_TAX_BPS",
       "docs": [
         "The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so the",
-        "tax alone can never stop a holder selling. It says nothing of the mints, whose own",
+        "tax alone can never stop a holder selling more than dust (it rounds up to the next unit).",
+        "It says nothing of the mints, whose own",
         "authorities and transfer hooks the mint rules govern. Published in the IDL",
         "(`#[constant]`)."
       ],
@@ -1865,7 +1866,7 @@
       "name": "RATE_CHANGE_DELAY_SLOTS",
       "docs": [
         "How many slots after `set_taxes` its new rates apply: 300 slots, about two minutes, longer",
-        "than any transaction's lifetime (a blockhash lasts 150 slots), so no rate change can",
+        "than any transaction's lifetime (a blockhash lasts 150 blocks), so no rate change can",
         "reach a swap already signed, as the tax authority could otherwise put a change on either",
         "side of a victim's swap and take its slippage allowance as tax (docs/spec/tax-amm.md,",
         "\"Rates\"; hardening finding H010, #67). Decreases wait too. Published in the IDL",
