@@ -530,7 +530,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-48: Progress site: links into the repository
 
 - Question: Where do the site's links into the repository point now that the repository is public?
-- Answer: Straight at it on GitHub, a file written relative to another at the branch it was read from, and a refresh stops on a link to a file, a folder or a commit the repository does not hold, so no link the site shows is broken.
+- Answer: Straight at it on GitHub, a file written relative to another at the branch it was read from, and a refresh stops on a link to a file, a folder, a section, a commit or a ticket the repository does not hold, so no link the site shows is broken.
 - Alternatives: The site's own page where it has one and GitHub otherwise; the site's own pages and plain text for the rest, as while the repository was private.
 - Specified in: [`site/README.md`, What is shown](../site/README.md#what-is-shown)
 - Changes by: spec only
