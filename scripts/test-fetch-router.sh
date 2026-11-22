@@ -152,6 +152,24 @@ else
   pass "a hash mismatch fails without retrying"
 fi
 
+# 7. The daily pin check tells the two failures apart by exit status: 3 when devnet's router
+# no longer matches the pin, 1 when it could not be downloaded at all.
+status=0
+run_fetch 'an upgraded router' || status=$?
+if [ "$status" -ne 3 ]; then
+  fail "a hash mismatch exited $status, not 3"
+else
+  pass "a hash mismatch exits 3"
+fi
+echo 100 > "$work/failures"
+status=0
+FAKE_FAILURES="$work/failures" run_fetch 'the pinned router' || status=$?
+if [ "$status" -ne 1 ]; then
+  fail "a download that never succeeds exited $status, not 1"
+else
+  pass "a download that never succeeds exits 1"
+fi
+
 if [ "$failures" -gt 0 ]; then
   echo "$failures failed" >&2
   exit 1

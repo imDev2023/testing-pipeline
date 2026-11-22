@@ -1,0 +1,76 @@
+# The daily router pin check (BAR-43). Pipeline's router on devnet is upgradeable, and an
+# upgrade fails every on-chain CI job until a PR re-pins it (BAR-32), so this dumps the
+# router once a day with scripts/fetch-router.sh and compares it with ROUTER_SHA256 in
+# fixtures/pins.env. When they differ the run fails and opens an issue (or comments on the
+# one already open), so an upgrade is noticed within a day, not when a PR next happens to run
+# the on-chain jobs. A failed download fails the run too, but opens no issue.
+name: Router pin
+
+on:
+  schedule:
+    # 06:17 UTC every day, off the hour, when GitHub's scheduler is least loaded.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/router-pin.yml"
+      - "scripts/fetch-router.sh"
+      - "scripts/test-fetch-router.sh"
+      - "scripts/report-router-pin.sh"
+      - "scripts/test-report-router-pin.sh"
+      - "scripts/install-toolchain.sh"
+      - "fixtures/pins.env"
+
+concurrency:
+  group: router-pin-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: devnet's router matches the pin
+    # GitHub's runners unless CI_RUNS_ON names others (docs/toolchain.md, "CI on the owner's iMac").
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cache the Agave CLI
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/testing-pipeline/toolchain/agave-*
+          key: ${{ runner.os }}-agave-${{ hashFiles('scripts/install-toolchain.sh') }}
+      - name: The pin check's scripts tell a changed router from a failed download, and report it once
+        run: scripts/test-fetch-router.sh && scripts/test-report-router-pin.sh
+      - name: Install the Agave CLI
+        run: scripts/install-toolchain.sh agave
+      - name: Dump devnet's router and compare it with the pin
+        id: fetch
+        run: |
+          set +e
+          source scripts/toolchain-env.sh
+          scripts/fetch-router.sh 2>&1 | tee fetch.log
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          {
+            case "$status" in
+              0) echo "Devnet's router matches \`ROUTER_SHA256\` in \`fixtures/pins.env\`." ;;
+              3) echo "**Devnet's router no longer matches the pin.**" ;;
+              *) echo "**The router could not be dumped from devnet** (exit $status); nothing was compared." ;;
+            esac
+            echo
+            echo '```'
+            cat fetch.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Open or update the issue that says the router changed
+        if: failure() && steps.fetch.outputs.status == '3' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/report-router-pin.sh fetch.log "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

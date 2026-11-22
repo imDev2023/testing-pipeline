@@ -27,6 +27,7 @@ pub fn receipt(spent: u64, received: u64) -> SwapReceipt {
         net_sent: spent,
         received,
         pipeline_fee: 0,
+        fee_mint: 0,
         compute_units: 1,
         strategy_compute_units: None,
     }
@@ -37,6 +38,7 @@ pub fn quote_for(r: &SwapReceipt) -> Quote {
         amount_in: r.net_sent,
         net_sent: r.net_sent,
         pipeline_fee: r.pipeline_fee,
+        fee_mint: r.fee_mint,
         total_spend: r.trader_spent,
         amount_out: r.received,
         strategy_amount_out: r.received,

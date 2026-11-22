@@ -173,6 +173,9 @@ fn market_record(
         created_at: 0,
         bump: 0,
         fee_authority_bump: 0,
+        // Wrapped SOL, the mint the router records as a market's fee mint when the market
+        // trades it and its strategy declares none, as the buy wall AMM's does (Pipeline 0.3).
+        fee_mint_index: 1,
     };
     let mut data = client::account_discriminator("Market").to_vec();
     record.serialize(&mut data).map_err(|e| e.to_string())?;

@@ -276,6 +276,7 @@ For each swap's `fee`, in lamports:
 - the market's part is the rest: `to_wall = floor(rest × wall_split_bps / 10,000)` joins `idle_sol`, and what is left is added to `fees_recipient`.
 
 Traders pay this fee on top of Pipeline's 0.25%.
+Since Pipeline 0.3 the router also takes its 0.25% in SOL both ways (`BAR-44`): on a buy from the SOL sent in, and on a sell out of the SOL the sell brings back, so a seller keeps `out` less Pipeline's fee.
 Taking it in SOL in both directions means no recipient is ever paid in the token, so none has tokens to sell, and no fee payout passes through a transfer hook.
 Nothing is paid out during a swap, so a swap needs no recipient accounts and a broken recipient account can never block trading.
 

@@ -418,12 +418,26 @@ async function tokenBalance(account: Address): Promise<bigint> {
 type HookAccountsFor = (source: Address, destination: Address, authority: Address) => Promise<AccountMeta[]>;
 
 /**
+ * The side a trade into `outputMint` pays Pipeline's fee on, from the market the router
+ * recorded. Since Pipeline 0.3 it is the output when that is the market's fee mint: on a
+ * home market quoted in wrapped SOL a sell pays the fee in SOL, out of what arrived, and the
+ * token never moves into its fee account; on any other quote mint it is the token, as before.
+ */
+async function routerFeeSide(market: Address, outputMint: Address): Promise<pipeline.FeeSide> {
+    const recorded = await account(market);
+    const decoded = recorded && pipeline.decodeMarket(recorded.data);
+    if (!decoded) fail(`the router has no market at ${market}`);
+    return pipeline.feeSideOf(decoded, outputMint);
+}
+
+/**
  * The router's `swap` of `amount` of mint `input` for mint `output` by `trader`, built with
  * the SDK as a terminal builds it, with the contained token's hook accounts: after the
  * strategy's accounts when it is the output, which the tax AMM moves out of its vault, and as
  * the router's input hook accounts when it is the input, which the router moves into the
- * vault and, for its fee, into the fee account. Quoted at `confirmed`, the commitment the
- * launch confirms at.
+ * vault and, when Pipeline's fee is taken in the token, into the fee account. Its minimum is
+ * what the trader keeps of the quote. Quoted at `confirmed`, the commitment the launch
+ * confirms at.
  */
 async function swapInstruction(
     trader: KeyPairSigner,
@@ -443,6 +457,8 @@ async function swapInstruction(
     const strategyAccounts = await pipeline.resolveAccounts(rpc, view, request, trader.address, simulation);
     const { quote } = await pipeline.quoteStrategy(rpc, view, request, strategyAccounts, trader.address, simulation);
     const buying = output === CONTAINED_INDEX;
+    const feeSide = await routerFeeSide(view.market, view.mints[output]!);
+    const kept = feeSide === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
     // On a buy the tax AMM pays out of its vault, signed by its vault authority.
     const tail = buying
         ? await hookAccounts(view.vaults[output]!, traderOutput, (await findAuthorityPda({ marketState: view.marketState }))[0])
@@ -467,18 +483,20 @@ async function swapInstruction(
             mode: pipeline.TradeMode.ExactIn,
             amountIn: amount,
             amountOut: 0n,
-            minAmountOut: options.minAmountOut ?? quote.amountOut,
+            minAmountOut: options.minAmountOut ?? kept,
             integratorFeeBps: options.integratorFeeBps ?? 0,
             extra: new Uint8Array(),
         },
+        feeSide,
     );
-    return { instruction, quote, traderOutput };
+    return { instruction, quote, kept, feeSide, traderOutput };
 }
 
 /**
  * Swaps through the router with [`swapInstruction`], and stops unless the swap delivered its
- * quote; returns what it delivered, Pipeline's fee and what the hook's `Execute` cost on each
- * hooked transfer, from the transaction's logs.
+ * quote and the trader kept it, less Pipeline's fee when that is taken in the output; returns
+ * what the trader kept, Pipeline's fee and the side it was taken on, and what the hook's
+ * `Execute` cost on each hooked transfer, from the transaction's logs.
  */
 async function trade(
     trader: KeyPairSigner,
@@ -492,7 +510,7 @@ async function trade(
     hooked = true,
 ) {
     const label = `swap ${amount} of ${input === CONTAINED_INDEX ? 'the token' : 'the quote mint'} for ${output === CONTAINED_INDEX ? 'the token' : 'the quote mint'}`;
-    const { instruction, quote, traderOutput } = await swapInstruction(trader, view, input, output, amount, tokenHolder, quoteHolder, hookAccounts);
+    const { instruction, quote, kept, feeSide, traderOutput } = await swapInstruction(trader, view, input, output, amount, tokenHolder, quoteHolder, hookAccounts);
     info(`${label}: quoted ${quote.amountOut}`);
     const before = await tokenBalance(traderOutput);
     const signature = await send(label, trader, [instruction]);
@@ -504,17 +522,18 @@ async function trade(
     const keys = [...tx.transaction.message.accountKeys, ...(tx.meta.loadedAddresses?.writable ?? []), ...(tx.meta.loadedAddresses?.readonly ?? [])];
     const event = pipeline.extractEventsFromInnerInstructions(keys, tx.meta.innerInstructions).find((candidate) => candidate.type === 'Swap');
     if (!event || event.type !== 'Swap') fail(`transaction ${signature} has no swap event`);
-    if (received !== quote.amountOut || event.data.received !== quote.amountOut) {
-        fail(`${label}: received ${received} (event: ${event.data.received}), quoted ${quote.amountOut}`);
+    if (received !== kept || event.data.received !== quote.amountOut) {
+        fail(`${label}: kept ${received} (event: ${event.data.received} arrived), quoted ${quote.amountOut} to keep ${kept}`);
     }
     const hookUnits = hookCompute(tx.meta.logMessages ?? []);
-    // While contained, the hook runs on the vault's transfer of a buy, and on both of a sell's
-    // transfers into the vault and the fee account; after the unlock, never.
-    const expected = hooked ? (output === CONTAINED_INDEX ? 1 : 2) : 0;
+    // While contained, the hook runs on the vault's transfer of a buy, and on a sell's transfer
+    // into the vault and, when Pipeline's fee is taken in the token, its transfer into the fee
+    // account; after the unlock, never.
+    const expected = hooked ? (output === CONTAINED_INDEX ? 1 : feeSide === 'input' ? 2 : 1) : 0;
     if (hookUnits.length !== expected) fail(`${label}: the hook ran ${hookUnits.length} times, not ${expected}`);
     const hook = hooked ? `the hook's Execute took ${hookUnits.join(' and ')} CU` : 'the hook did not run';
-    info(`${label}: received exactly the quote, Pipeline's fee ${event.data.pipelineFee}; ${hook}`);
-    return { received, pipelineFee: event.data.pipelineFee, hookUnits };
+    info(`${label}: the quote arrived and ${received} was kept, Pipeline's fee ${event.data.pipelineFee} in the ${feeSide}; ${hook}`);
+    return { received, pipelineFee: event.data.pipelineFee, feeSide, hookUnits };
 }
 
 /** The compute units each invocation of the hook consumed, in order, from a transaction's logs. */
@@ -951,33 +970,46 @@ async function launchToken(
     record.push(['buy', `${buy} of the quote mint bought ${bought.received} of the token, its quote; Execute ${bought.hookUnits.join(' and ')} CU`]);
 
     step('8. Selling half of it back the same way');
-    const feeBefore = await tokenBalance(feeAccounts[CONTAINED_INDEX]!);
+    // Since Pipeline 0.3 the sell pays Pipeline's fee in the market's fee mint when that is
+    // its output (wrapped SOL), and in the token otherwise.
+    const sellFeeIndex = (await routerFeeSide(market, quoteMint)) === 'output' ? QUOTE_INDEX : CONTAINED_INDEX;
+    const feeIn = sellFeeIndex === CONTAINED_INDEX ? 'the token' : 'the quote mint';
+    const feeBefore = await tokenBalance(feeAccounts[sellFeeIndex]!);
     const sold = await trade(launcher, view, CONTAINED_INDEX, QUOTE_INDEX, bought.received / 2n, holder, quoteHolder, hookAccounts);
-    const feeAfter = await tokenBalance(feeAccounts[CONTAINED_INDEX]!);
+    const feeAfter = await tokenBalance(feeAccounts[sellFeeIndex]!);
     if (sold.pipelineFee === 0n || feeAfter - feeBefore !== sold.pipelineFee) {
-        fail(`the fee account grew by ${feeAfter - feeBefore}, but the sell paid Pipeline ${sold.pipelineFee}`);
+        fail(`the fee account for ${feeIn} grew by ${feeAfter - feeBefore}, but the sell paid Pipeline ${sold.pipelineFee}`);
     }
-    info(`Pipeline's fee of ${sold.pipelineFee}, in the token, went into the fee account through the hook`);
-    record.push(['sell', `${bought.received / 2n} of the token sold for ${sold.received}, its quote; fee ${sold.pipelineFee} into the fee account; Execute ${sold.hookUnits.join(' and ')} CU`]);
+    info(`Pipeline's fee of ${sold.pipelineFee}, in ${feeIn}, went into its fee account${sellFeeIndex === CONTAINED_INDEX ? ' through the hook' : ''}`);
+    record.push(['sell', `${bought.received / 2n} of the token sold, ${sold.received} kept; fee ${sold.pipelineFee} in ${feeIn} into its fee account; Execute ${sold.hookUnits.join(' and ')} CU`]);
 
-    step("9. Sweeping Pipeline's fee to its treasury with sweep_fees, with the hook accounts");
+    // The sell's fee account: the token's, swept through the hook with its accounts, or, on a
+    // home market quoted in wrapped SOL, the quote mint's, which has no hook; the token's fee
+    // account then stays empty (Pipeline 0.3).
+    const sweepsToken = sellFeeIndex === CONTAINED_INDEX;
+    step(`9. Sweeping Pipeline's fee to its treasury with sweep_fees${sweepsToken ? ', with the hook accounts' : ''}`);
     const routerConfig = await account(await pipeline.configPda());
     const treasuryOwner = (routerConfig && pipeline.decodeConfig(routerConfig.data)?.treasuryOwner) ?? fail("the router's config cannot be read");
-    const treasury = await pipeline.associatedTokenAddress(treasuryOwner, mint, TOKEN_2022_PROGRAM_ADDRESS);
+    const feeMint = sweepsToken ? mint : quoteMint;
+    const feeTokenProgram = sweepsToken ? TOKEN_2022_PROGRAM_ADDRESS : TOKEN_PROGRAM_ADDRESS;
+    const treasury = await pipeline.associatedTokenAddress(treasuryOwner, feeMint, feeTokenProgram);
     await send("create the treasury's token account", launcher, [
-        await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: treasuryOwner, mint, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS }),
+        await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: treasuryOwner, mint: feeMint, tokenProgram: feeTokenProgram }),
     ]);
-    const owed = await tokenBalance(feeAccounts[CONTAINED_INDEX]!);
+    const owed = await tokenBalance(feeAccounts[sellFeeIndex]!);
     const treasuryBefore = await tokenBalance(treasury);
-    const sweepTail = await hookAccounts(feeAccounts[CONTAINED_INDEX]!, treasury, await pipeline.feeAuthorityPda(market));
-    const sweep = await pipeline.sweepFees({ market, mint, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS, treasuryOwner, hookAccounts: sweepTail });
+    const sweepTail = sweepsToken ? await hookAccounts(feeAccounts[CONTAINED_INDEX]!, treasury, await pipeline.feeAuthorityPda(market)) : [];
+    const sweep = await pipeline.sweepFees({ market, mint: feeMint, tokenProgram: feeTokenProgram, treasuryOwner, hookAccounts: sweepTail });
     await send('sweep_fees', launcher, [sweep]);
     const swept = (await tokenBalance(treasury)) - treasuryBefore;
-    if ((await tokenBalance(feeAccounts[CONTAINED_INDEX]!)) !== 0n || swept !== owed) {
+    if ((await tokenBalance(feeAccounts[sellFeeIndex]!)) !== 0n || swept !== owed) {
         fail(`sweep_fees moved ${swept} of the ${owed} the fee account held`);
     }
-    info(`sweep_fees moved all ${owed} of the token from the fee account to the treasury owner ${treasuryOwner}, through the hook`);
-    record.push(['swept', `${owed} of the token from the fee account to Pipeline's treasury, through the hook`]);
+    if (!sweepsToken && (await tokenBalance(feeAccounts[CONTAINED_INDEX]!)) !== 0n) {
+        fail("the token's fee account holds tokens, though every fee on this market is taken in the quote mint");
+    }
+    info(`sweep_fees moved all ${owed} of ${feeIn} from the fee account to the treasury owner ${treasuryOwner}${sweepsToken ? ', through the hook' : "; the token's fee account stays empty"}`);
+    record.push(['swept', `${owed} of ${feeIn} from the fee account to Pipeline's treasury${sweepsToken ? ', through the hook' : ''}`]);
 
     step('10. Showing the hook refusing what containment refuses, in simulation');
     const stranger = (await generateKeyPairSigner()).address;
