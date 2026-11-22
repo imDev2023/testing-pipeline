@@ -2139,10 +2139,11 @@ async function compareHostedQuotes(payer: KeyPairSigner, view: pipeline.MarketVi
     const snapshot = async () =>
         JSON.stringify(await Promise.all([view.marketState!, ...view.vaults, RESERVE].map(async (account) => Buffer.from((await accountData(account)) ?? []).toString('base64'))));
     const simulation = { commitment: 'confirmed' } as const;
-    // A tenth of the buffer's worth each way: a buy of WSOL within it, and a sale of the token
-    // whose output the buffer pays alone.
+    // Each way within the buffer: a buy with a tenth of it, and a sale of a hundredth of the
+    // token reserve, which pays out about a hundredth of the lent side, while the buffer holds
+    // about a fifth of it.
     const wsolIn = (await buffer()) / 10n;
-    const tokenIn = tokenReserve / 1_000n;
+    const tokenIn = tokenReserve / 100n;
     for (const [label, input, amount] of [['buy', 1, wsolIn], ['sell', 0, tokenIn]] as const) {
         const output = input === 1 ? 0 : 1;
         for (let attempt = 0; ; attempt++) {

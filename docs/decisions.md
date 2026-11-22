@@ -5277,7 +5277,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-103: How the release gate is shown to catch stranding
 
 - Question: How is the lending AMM's release gate shown to refuse a build that would strand a market?
-- Answer: A test build that swaps two fields of the market state, listed in `programs/lending-amm/gate/test-builds.json` and built from an edited copy of the source by `scripts/broken-builds.py` beside the fuzzer's broken builds, must be refused on a market holding cTokens, and the fuzzer's `no-sale-beyond-the-buffer` on every market and on the gate's own.
+- Answer: A test build that swaps two fields of the market state, listed in `programs/lending-amm/gate/test-builds.json` and built from an edited copy of the source by `scripts/broken-builds.py` beside the fuzzer's broken builds, must be refused on a market holding cTokens, one whose `rebalance` succeeds but lends nothing on its own market and where the deployed build sold beyond the buffer, and the fuzzer's `no-sale-beyond-the-buffer` on every market and on the gate's own.
 - Alternatives: A `test-builds` command of the gate's own, as the buy wall AMM's has.
 - Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
 - Changes by: spec only

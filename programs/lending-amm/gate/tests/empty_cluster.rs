@@ -74,3 +74,20 @@ fn an_empty_cluster_refuses_a_build_declared_for_another_address() {
     assert_eq!(failures[0].step, "make a market of its own", "{report}");
     assert!(failures[0].detail.contains("4100"), "{report}");
 }
+
+#[test]
+fn an_empty_cluster_refuses_a_build_whose_rebalance_lends_nothing() {
+    // Its rebalance succeeds but deposits nothing, so its own market never holds cTokens and a
+    // sale beyond the buffer has nothing to redeem: the market must still be shown lending.
+    let snapshot = common::snapshot(common::registered(&programs::current_build()), &[]);
+    let report = common::run(
+        &snapshot,
+        &programs::broken_build("rebalance-lends-nothing"),
+    );
+    assert!(!report.passed(), "{report}");
+    let own = report.own_market.as_ref().unwrap();
+    let make = own.steps.first().unwrap();
+    assert_eq!(make.name, "make a market of its own", "{report}");
+    assert!(!make.passed, "{report}");
+    assert!(make.detail.contains("lent nothing"), "{report}");
+}

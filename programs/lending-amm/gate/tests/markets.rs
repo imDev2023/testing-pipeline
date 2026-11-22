@@ -82,3 +82,27 @@ fn a_build_that_cannot_sell_beyond_the_buffer_is_refused_where_the_deployed_buil
         );
     }
 }
+
+#[test]
+fn a_build_whose_rebalance_lends_nothing_is_refused_where_the_deployed_build_sold_beyond_the_buffer(
+) {
+    // On the fresh market the deployed build's rebalance lends and its sale beyond the buffer
+    // redeems from Kamino; the candidate's rebalance lends nothing, so it has no such sale to make,
+    // and skipping what the deployed build did must count against it.
+    let build = programs::current_build();
+    let (session, markets) = common::with_markets(&build);
+    let snapshot = common::snapshot(session, &markets);
+    let report = common::run(
+        &snapshot,
+        &programs::broken_build("rebalance-lends-nothing"),
+    );
+    assert!(!report.passed(), "{report}");
+    let fresh = markets[1].to_string();
+    assert!(
+        report
+            .failures()
+            .iter()
+            .any(|f| f.market_state == fresh && f.step.starts_with("sell beyond the buffer")),
+        "{report}"
+    );
+}

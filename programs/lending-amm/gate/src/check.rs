@@ -614,11 +614,36 @@ fn check_market(session: &mut Session, market_state: &Pubkey, mode: &Mode, steps
     let name = "sell beyond the buffer";
     match beyond_buffer_amount(session, &view) {
         Err(error) => steps.fail(StepKind::SellBeyondBuffer, name, error),
-        Ok(None) => steps.pass(
-            StepKind::SellBeyondBuffer,
-            name,
-            "not run: the market has nothing lent, so the buffer is the whole lent side",
-        ),
+        // Nothing lent, so the buffer is the whole lent side and no sale can redeem from Kamino.
+        // The deployed build's replay then records no such step; a candidate that leaves nothing
+        // lent where the deployed build sold beyond the buffer has skipped a sale the deployed
+        // build made, and on the gate's own market, whose rebalance must lend, it always counts.
+        Ok(None) => match mode {
+            Mode::Record => {}
+            Mode::Own => steps.fail(
+                StepKind::SellBeyondBuffer,
+                name,
+                "not run: the market has nothing lent, so no sale can redeem from Kamino",
+            ),
+            Mode::Check { baseline, .. } => {
+                if baseline.outcome(&market_state.to_string(), &StepKind::SellBeyondBuffer)
+                    == Some(&Outcome::Passed)
+                {
+                    steps.fail(
+                        StepKind::SellBeyondBuffer,
+                        name,
+                        "not run: the candidate left nothing lent, where the deployed build sold \
+                         beyond the buffer, redeeming from Kamino",
+                    )
+                } else {
+                    steps.pass(
+                        StepKind::SellBeyondBuffer,
+                        name,
+                        "not run: the market has nothing lent, as under the deployed build",
+                    )
+                }
+            }
+        },
         Ok(Some(amount)) => {
             trade(
                 session,

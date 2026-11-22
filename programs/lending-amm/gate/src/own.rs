@@ -252,6 +252,15 @@ pub fn lend(session: &mut Session, view: &MarketView) -> Result<String, String> 
         .send(&[ix], &[&keeper])
         .map_err(|e| format!("rebalance: {e}"))?;
     let state = session.state(&view.market_state)?;
+    // Its buffer holds the whole lent side, far above its band, in a world whose reserve can take
+    // it, so a rebalance that leaves it holding no cTokens has not lent: every later step would
+    // pass without the market ever lending, or a sale ever redeeming from Kamino.
+    if state.ctokens == 0 {
+        return Err(format!(
+            "rebalance lent nothing: 0 cTokens, a buffer of {}",
+            state.reserves[view.lent]
+        ));
+    }
     Ok(format!(
         "{} cTokens, a buffer of {}",
         state.ctokens, state.reserves[view.lent]

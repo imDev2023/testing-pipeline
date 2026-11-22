@@ -8,6 +8,14 @@
       "file": "src/state.rs",
       "find": "    pub ctokens: u64,\n    /// Running total of the lent mint deposited into Kamino.\n    pub deposited: u128,\n",
       "replace": "    /// Running total of the lent mint deposited into Kamino.\n    pub deposited: u128,\n    pub ctokens: u64,\n"
+    },
+    {
+      "name": "rebalance-lends-nothing",
+      "why": "rebalance succeeds but never deposits, as a careless edit to its plan would leave it: no market lends again, and a gate that only checks a rebalance's transaction would never reach a sale that redeems from Kamino (review finding of #87's part 1).",
+      "gate": "refused on its own market, and on every market where the deployed build lent and then sold beyond the buffer",
+      "file": "src/instructions/rebalance.rs",
+      "find": "    let Some(planned) = decision.planned else {\n",
+      "replace": "    let Some(planned) = decision.planned.filter(|planned| !matches!(planned, Move::Deposit(_))) else {\n"
     }
   ]
 }
