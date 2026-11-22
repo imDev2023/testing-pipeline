@@ -537,6 +537,86 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-20 in [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186)
 
+### SUITE-49: Keeper runner: the socket and discovery off Alchemy
+
+- Question: Alchemy's free devnet endpoint serves neither `logsSubscribe` on its socket nor `getProgramAccounts`, so where do the runner's socket and market discovery go?
+- Answer: To Aviary's own Helius key once the project's `.env` has it as `RPC_URL`, and until then to Solana's public devnet endpoint, which serves both free and without a key, each its own setting (`WS_URL`, `DISCOVERY_RPC_URL`); reads, simulations and sends stay on Alchemy.
+- Alternatives: The owner's shared Helius key, already rate-limited when several sessions run; everything on the public endpoint; a paid Alchemy tier, which the spec rules out.
+- Specified in: [`docs/spec/keeper-runner.md`, RPC](spec/keeper-runner.md#rpc)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
+### SUITE-50: Keeper runner: nothing to do when a program does not refuse
+
+- Question: The tax AMM's `distribute` on a slot owed nothing succeeds without effect rather than refusing, so how does the runner tell that a payout had nothing to do, as when another keeper paid it first?
+- Answer: The tax AMM's entry in `packages/keeper-jobs` has no "nothing to do" refusal code and counts a simulation that emits no `Distributed` event as nothing to do, which costs the runner only that simulation.
+- Alternatives: A `NothingOwed` refusal in the program, which would need an upgrade of the deployed program; reading the slot's owed amount again just before simulating, which still races another keeper.
+- Specified in: [`docs/spec/keeper-runner.md`, One definition of due](spec/keeper-runner.md#one-definition-of-due)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
+### SUITE-51: Keeper runner: what a job costs
+
+- Question: How does the runner estimate a job's cost before sending it, and count what it spent?
+- Answer: The estimate is what the simulation takes from the keeper wallet (its fee and any rent it pays); once landed, a transaction counts what left the wallet and never less than its fee, put to the first known market among its accounts, the same way whether just sent or rebuilt after a restart.
+- Alternatives: The fee plus the rent of the token accounts the runner expects a job to create, which every product would have to predict.
+- Specified in: [`docs/spec/keeper-runner.md`, Sending a job](spec/keeper-runner.md#sending-a-job)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
+### SUITE-52: Keeper runner: when the RPC fails
+
+- Question: Does a job count as failed, and so move towards parking, when the RPC cannot be asked?
+- Answer: No: only the job's own failure counts (a refusal, a transaction that landed failed, an instruction that cannot be built); after a transport error, a timeout or a send that never lands the job is due again in the next pass.
+- Alternatives: Counting every error as a failure, so an RPC outage of a few minutes would park jobs that would succeed.
+- Specified in: [`docs/spec/keeper-runner.md`, Failures](spec/keeper-runner.md#failures)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
+### SUITE-53: Keeper runner: a misspelt setting
+
+- Question: What does the runner do with a `KEEPER_` variable that names no setting?
+- Answer: It refuses to start and names the variable and the settings there are, so a misspelt override never leaves a default in force.
+- Alternatives: Ignoring it with a warning in the log.
+- Specified in: [`docs/spec/keeper-runner.md`, Spending caps](spec/keeper-runner.md#spending-caps)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94)
+
+### SUITE-54: Keeper runner: a payout into an account it would create
+
+- Question: When does the runner send a payout whose recipient's token account does not exist yet, so that the payout would create it at the keeper wallet's expense?
+- Answer: Only once what it pays is worth at least that account's rent (2,039,280 lamports for a plain token account, 2,074,080 for a Token-2022 one and 2,108,880 when its mint has a transfer hook, cleared or not), a buy wall market's rewards valued in SOL at the market's current price and its fees being SOL already; until then the job is skipped at no cost and checked again in its next pass, and a payout into an account that exists is sent whatever it pays.
+- Alternatives: Always paying, so a recipient that closes its account after each payout gets the runner's rent back each time; valuing rewards at the wall's price rather than the market's.
+- Specified in: [`docs/spec/keeper-runner.md`, Sending a job](spec/keeper-runner.md#sending-a-job)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-21 in [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95)
+
+### SUITE-55: Keeper runner: unwrapping tips under the caps
+
+- Question: Do the spending caps and `MIN_BALANCE` hold the transaction that unwraps the keeper wallet's tips?
+- Answer: No: it brings the tips and the account's rent back into the float, far more than its fee, so it is sent whenever the wrapped-SOL account holds more than `TIP_UNWRAP_AT`, even below `MIN_BALANCE` or past a cap; its fee still counts in today's spend, which caps every later job.
+- Alternatives: Holding it like a job, so a wallet below `MIN_BALANCE` could not recover the tips that would lift it back above.
+- Specified in: [`docs/spec/keeper-runner.md`, Keeper tips](spec/keeper-runner.md#keeper-tips)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-21 in [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95)
+
+### SUITE-56: Keeper runner: `settle` at most hourly across a restart
+
+- Question: How does the runner keep a job of the hourly pass, such as the buy wall AMM's `settle`, to once every `SETTLE_INTERVAL` on a market when it restarts, since its start runs a full pass?
+- Answer: It learns when each hourly job last ran on each market from the keeper wallet's own successful transactions of the last `SETTLE_INTERVAL`, read whenever it rebuilds today's spend, each job recognised by its instruction's discriminator from `packages/keeper-jobs`; a job that ran less than `SETTLE_INTERVAL` ago on a market waits, in every pass the start's included.
+- Alternatives: Remembering only what this run sent, so a restart within the hour settles again; a state file, which the runner otherwise does without.
+- Specified in: [`docs/spec/keeper-runner.md`, Triggers](spec/keeper-runner.md#triggers)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-21 in [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95)
+
 ## Engineering and security bar (BAR)
 
 ### BAR-01: Framework
@@ -5039,3 +5119,5 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `POOL4-54` to `POOL4-56`: set by the session of [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `TAX-54`, `POOL4-54`: `programs/tax-amm/scripts/publish.ts` and `tests/published.rs` were copied for the buy wall AMM with only the program's names changed; the lending AMM's devnet ticket will need a third copy, so the shared part belongs in one helper the three programs call.
 - `SUITE-48`: set by the session of [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186), which read its ticket as every link going to GitHub, and not yet put to the owner, so it is that session's default until the owner has been asked.
+- `SUITE-49` to `SUITE-53`: set by the session of [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
+- `SUITE-54` to `SUITE-56`: set by the session of [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.

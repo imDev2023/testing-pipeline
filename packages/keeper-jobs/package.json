@@ -1,0 +1,27 @@
+{
+    "name": "keeper-jobs",
+    "private": true,
+    "type": "module",
+    "description": "Every keeper job of our strategies: its due rule as a pure function of the market state, its instruction builder and the refusals that mean nothing to do, for the keeper runner and Aviary's panels (docs/spec/keeper-runner.md, \"One definition of due\")",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "exports": {
+        ".": "./index.ts"
+    },
+    "scripts": {
+        "test": "node --test",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@solana-program/token": "0.18.0",
+        "@solana-program/token-2022": "0.20.0",
+        "@solana/kit": "8.6.0",
+        "buy-wall-amm-scripts": "workspace:*",
+        "tax-amm-scripts": "workspace:*"
+    },
+    "devDependencies": {
+        "@types/node": "24.19.2",
+        "typescript": "7.0.2"
+    }
+}

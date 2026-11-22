@@ -1,0 +1,3 @@
+# Only the bundle goes into the image: no sources, no node_modules, and never a key file.
+*
+!dist/keeper.mjs
