@@ -168,6 +168,7 @@ import {
     getMintToInstruction,
     getSetAuthorityInstruction,
     getSyncNativeInstruction,
+    getTokenDecoder,
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
 import * as pipeline from '@pipeline-placeholder/sdk';
@@ -176,6 +177,7 @@ import { buildActionInstruction, findAction } from 'strategy-actions';
 import { findSeederPda, graduateInstruction, graduationFromLogs, LAUNCHPAD_PROGRAM_ADDRESS } from '../../tax-amm/scripts/launchpad.ts';
 import {
     fetchMarketState,
+    getMarketStateDecoder,
     findMarketStatePda,
     findSolVaultPda,
     findTokenVaultPda,
@@ -1537,14 +1539,22 @@ function flatBooks(books: Books): [string, bigint][] {
  * lists every field.
  */
 async function checkBooks(label: string, view: pipeline.MarketView, books: Books, print = false) {
-    const { data } = await fetchMarketState(rpc, view.marketState, { commitment: 'confirmed' });
+    // The market state and both vaults in one read, so all three are as of one slot even when
+    // someone else (a keeper runner placing the wall) acts on the market meanwhile.
+    const { value } = await rpc
+        .getMultipleAccounts([view.marketState, view.vaults[0]!, view.vaults[1]!], { encoding: 'base64', commitment: 'confirmed' })
+        .send();
+    const [stateBytes, tokenVaultBytes, solVaultBytes] = value.map((account, i) =>
+        account ? new Uint8Array(Buffer.from(account.data[0], 'base64')) : fail(`after ${label} account ${i} of the market is missing`),
+    );
+    const data = getMarketStateDecoder().decode(stateBytes!);
     const read = new Map(flatBooks(booksFromState(data)));
     for (const [key, wanted] of flatBooks(books)) {
         const got = read.get(key);
         if (got !== wanted) fail(`after ${label} the market state's ${key} is ${got}, but the spec's formulas give ${wanted}`);
         if (print) info(`${key.padEnd(24)} ${got}`);
     }
-    const [vaultTokens, vaultSol] = await Promise.all(view.vaults.map((vault) => tokenBalance(vault!)));
+    const [vaultTokens, vaultSol] = [tokenVaultBytes!, solVaultBytes!].map((bytes) => getTokenDecoder().decode(bytes).amount);
     const tokenLedgers = books.poolTokens + books.retiredTokens + books.rewardsOwed;
     const solLedgers = books.poolSol + books.idleSol + books.feesRecipient + books.feesDesigner + books.feesSuite;
     if (vaultTokens !== tokenLedgers || vaultSol !== solLedgers) {
