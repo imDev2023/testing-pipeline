@@ -19,6 +19,7 @@ on:
       - "scripts/report-router-pin.sh"
       - "scripts/test-report-router-pin.sh"
       - "scripts/install-toolchain.sh"
+      - "scripts/toolchain-env.sh"
       - "fixtures/pins.env"
 
 concurrency:

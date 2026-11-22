@@ -62,7 +62,11 @@ mkdir -p "$ROOT"
 
 # cargo-build-sbf relinks rustup's toolchains named *solana*; remember the machine's own
 # `solana` link (used by agave-install's cargo-build-sbf) so it can be put back.
-solana_link_before="$(rustup toolchain list -v | awk '$1 == "solana" { print $NF }')"
+# (Only the `solana` part needs rustup; `agave` alone runs where there is none.)
+solana_link_before=""
+if want solana; then
+  solana_link_before="$(rustup toolchain list -v | awk '$1 == "solana" { print $NF }')"
+fi
 
 if want solana || want kani || want verify; then
   echo "== Rust $RUST_VERSION (Pipeline's rust-toolchain.toml)"

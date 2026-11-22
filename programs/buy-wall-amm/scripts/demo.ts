@@ -1852,7 +1852,7 @@ async function main() {
         const received = (await tokenBalance(payerAccounts[output]!)) - before;
         if (received !== kept) fail(`${label}: kept ${received}, quoted ${quote.amountOut} to keep ${kept}`);
         info(`${label}: the quote arrived, and ${received} was kept after Pipeline's fee in the ${feeSide}`);
-        record.push([label, `${amount} in, ${received} out`]);
+        record.push([label, `${amount} in, ${quote.amountOut} out, ${received} kept`]);
 
         // "After pricing", in its order. The market state records the time the swap ran as
         // its decay_time, and the transaction its slot: the only values the demo takes from
