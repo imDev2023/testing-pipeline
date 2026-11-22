@@ -6,7 +6,7 @@ No external review of this program has been done.
 The investigators read the code at `61923c7`, whose `programs/tax-amm/src` is byte for byte the same as at `77b6ddc`.
 Code locations are at `77b6ddc`: those starting with `src/` or `tests/` are relative to `programs/tax-amm/`, every other path is from the repository root.
 "Buy wall Hnnn" means finding Hnnn of the sister program's round 1 ([`docs/security/buy-wall-amm/round-1.md`](../buy-wall-amm/round-1.md)).
-Dispositions marked `PENDING` are filled in once the owner has answered the questions posted on #67 on 2026-11-20; round 2, which verifies every fix, has not run yet.
+The owner answered the questions posted on #67 on 2026-11-20 with 1a, 2a, 3a, 4a and 5a on 2026-11-22, and each disposition below says what came of it; round 2, which verified every fix, is [round-2.md](round-2.md).
 
 ## Summary
 
@@ -55,54 +55,54 @@ The ten notes the ticket carried from an earlier code review of the fuzz harness
 
 ## Findings
 
-Dispositions: "fixed" means fixed in #67 with the regression test named below, waiting for round 2's verification.
-A disposition marked PENDING with the owner and a question number waits on the owner's answer to that question of the ones posted on #67 on 2026-11-20.
-A disposition marked PENDING with the coordinator belongs to a finding that none of those questions names; it is still to be recorded.
+Dispositions as of 2026-11-22: "fixed" means fixed in #67 with the regression test named below, which fails without the fix; round 2 ([round-2.md](round-2.md)) verified each.
+The owner answered the questions posted on #67 on 2026-11-20 with 1a, 2a, 3a, 4a and 5a on 2026-11-22: 1a to 4a chose the fixes below, and 5a signed off every Low left open, recorded with its reason in [sign-offs.md](sign-offs.md).
+Each answer is a default the program's designer may change.
 
 | ID | Title | Status | Severity | Root-cause class | Disposition |
 | --- | --- | --- | --- | --- | --- |
-| H007 | A live transfer hook turns an Open market into a honeypot | Confirmed | Medium | Spec-level design | PENDING(owner, question 1) |
-| H008 | A live mint authority drains the real reserve | Confirmed | Medium | Spec-level design | PENDING(owner, question 1) |
-| H009 | A creator holding every role stages a rug | Confirmed | Medium | Spec-level design (composite) | PENDING(owner, question 1) |
-| H010 | The tax authority's capital-free rate flip around a victim swap | Confirmed | Medium | Spec-level design | PENDING(owner, question 2) |
-| H019 | A seeder lured into a look-alike market (the seed binds no terms) | Confirmed | Medium | Spec-level design | PENDING(owner, question 4) |
-| H023 | The tax authority redirects or front-runs recipients' owed tax | Confirmed | Medium | Spec-level design | PENDING(owner, question 3) |
-| H036 | The exit guarantee broken by tokens held outside the market | Potential | Medium | Spec-level design | PENDING(owner, question 5) |
+| H007 | A live transfer hook turns an Open market into a honeypot | Confirmed | Medium | Spec-level design | Fixed (1a, `TransferHookNotAllowed`) |
+| H008 | A live mint authority drains the real reserve | Confirmed | Medium | Spec-level design | Fixed (1a, `MintAuthoritySet`) |
+| H009 | A creator holding every role stages a rug | Confirmed | Medium | Spec-level design (composite) | Fixed (1a and 2a); remainder is H036, signed off |
+| H010 | The tax authority's capital-free rate flip around a victim swap | Confirmed | Medium | Spec-level design | Fixed (2a, `RATE_CHANGE_DELAY_SLOTS`) |
+| H019 | A seeder lured into a look-alike market (the seed binds no terms) | Confirmed | Medium | Spec-level design | Fixed (4a, `TermsChanged`) |
+| H023 | The tax authority redirects or front-runs recipients' owed tax | Confirmed | Medium | Spec-level design | Fixed (3a, `OwedSlotRedirected`) |
+| H036 | The exit guarantee broken by tokens held outside the market | Potential | Medium | Spec-level design | Signed off (5a) |
 | H024 | A recipient named as an unpayable or market-owned address | Confirmed | Low | Spec-level design | Fixed (`NotAWallet`) |
-| H034 | The router is every market's only exit | Confirmed | Low | Spec-level design | PENDING(owner, question 5) |
-| H035 | A recipient's sandwich is cheaper than an outsider's | Confirmed | Low | Spec-level design | PENDING(owner, question 5) |
-| H037 | Lowering `MAX_TAX_BPS` in an upgrade blocks markets above it | Confirmed | Low | Operational | PENDING(owner, question 5) |
+| H034 | The router is every market's only exit | Confirmed | Low | Spec-level design | Signed off (5a) |
+| H035 | A recipient's sandwich is cheaper than an outsider's | Confirmed | Low | Spec-level design | Signed off (5a) |
+| H037 | Lowering `MAX_TAX_BPS` in an upgrade blocks markets above it | Confirmed | Low | Operational | Signed off (5a) |
 | H038 | No pre-deploy release gate for tax AMM upgrades | Confirmed | Low | Operational | Fixed (release gate) |
-| H039 | A single shared upgrade key | Confirmed | Low | Operational | PENDING(coordinator) |
-| H013 | `pipeline_seed_liquidity` measures `taken` across both transfers | Potential | Low | Code defect | PENDING(coordinator) |
-| H016 | A freeze authority freezes vaults, recipients or holders | Potential | Low | Spec-level design | PENDING(owner, question 1) |
-| H025 | A recipient's token-account configuration blocks its payouts | Potential | Low | Spec-level design | PENDING(owner, question 5) |
-| H026 | A hook strands owed tax or the suite share | Potential | Low | Spec-level design | PENDING(owner, question 5) |
-| H028 | A hook acts as tax authority between the router's steps | Potential | Low | Spec-level design | PENDING(owner, question 5) |
-| H030 | A hook behaves differently in simulation than in execution | Potential | Low | Spec-level design | PENDING(owner, question 5) |
+| H039 | A single shared upgrade key | Confirmed | Low | Operational | Signed off (5a; mainnet checklist) |
+| H013 | `pipeline_seed_liquidity` measures `taken` across both transfers | Potential | Low | Code defect | Closed by 1a |
+| H016 | A freeze authority freezes vaults, recipients or holders | Potential | Low | Spec-level design | Fixed (1a, `FreezeAuthoritySet`) |
+| H025 | A recipient's token-account configuration blocks its payouts | Potential | Low | Spec-level design | Signed off (5a) |
+| H026 | A hook strands owed tax or the suite share | Potential | Low | Spec-level design | Closed for foreign hooks by 1a; remainder signed off |
+| H028 | A hook acts as tax authority between the router's steps | Potential | Low | Spec-level design | Closed for foreign hooks by 1a and 2a; remainder signed off |
+| H030 | A hook behaves differently in simulation than in execution | Potential | Low | Spec-level design | Signed off (5a) |
 | H041 | The layout the containment hook reads is not tied at compile time | Potential | Low | Test or proof gap | Fixed (compile-time asserts) |
-| H044 | A compromised tax authority cannot be rotated; renounce freezes whatever is set | Potential | Low | Spec-level design | PENDING(owner, question 5) |
-| H055 | The seeder sets the opening price and trades first | Potential | Low | Spec-level design | PENDING(owner, question 5) |
-| H056 | A market's age is its creation, not its opening | Potential | Low | Spec-level design | PENDING(owner, question 5) |
-| H061 | A recipient makes `distribute` callers pay its account rent again | Potential | Low | Operational | PENDING(owner, question 5) |
-| H062 | Created markets naming any seeder live forever | Potential | Low | Spec-level design | PENDING(owner, question 5) |
+| H044 | A compromised tax authority cannot be rotated; renounce freezes whatever is set | Potential | Low | Spec-level design | Signed off (5a) |
+| H055 | The seeder sets the opening price and trades first | Potential | Low | Spec-level design | Signed off (5a) |
+| H056 | A market's age is its creation, not its opening | Potential | Low | Spec-level design | Signed off (5a) |
+| H061 | A recipient makes `distribute` callers pay its account rent again | Potential | Low | Operational | Signed off (5a) |
+| H062 | Created markets naming any seeder live forever | Potential | Low | Spec-level design | Signed off (5a) |
 | H069 | The version byte is never read | Potential | Low | Test or proof gap | Fixed (`NewerStateVersion`) |
-| H071 | The devnet suite treasury is compiled in | Potential | Low | Operational | PENDING(coordinator) |
-| H086 | Supply kept outside the seed sells into buyers' quote | Potential | Low | Spec-level design | PENDING(owner, question 5) |
-| H092 | Look-alike markets for traders | Potential | Low | Spec-level design | PENDING(owner, question 5) |
-| H096 | Rates raised inside their range before an exit | Potential | Low | Spec-level design | PENDING(owner, question 5) |
-| H100 | Published wording overstates the honeypot guarantee | Potential | Low | Spec-level design | PENDING(coordinator) |
+| H071 | The devnet suite treasury is compiled in | Potential | Low | Operational | Signed off (5a; mainnet checklist) |
+| H086 | Supply kept outside the seed sells into buyers' quote | Potential | Low | Spec-level design | Signed off (5a) |
+| H092 | Look-alike markets for traders | Potential | Low | Spec-level design | Signed off (5a) |
+| H096 | Rates raised inside their range before an exit | Potential | Low | Spec-level design | Signed off (5a) |
+| H100 | Published wording overstates the honeypot guarantee | Potential | Low | Spec-level design | Fixed (wording) |
 | H047 | The build-time constants' safe ranges are not asserted at compile time | Confirmed | Info | Test or proof gap | Fixed (compile-time asserts) |
 | H049 | Underflows reported as `Overflow` | Confirmed | Info | Code defect | Fixed (`Underflow`) |
-| H050 | Dust trades pay above the 10% cap by under one unit | Confirmed | Info | Spec-level design | PENDING(coordinator) |
-| H076 | A ground recipient wallet pushes its own payout past the default compute limit | Potential | Info | Spec-level design | PENDING(owner, question 5) |
-| H080 | A creator's hook refuses its own seed | Potential | Info | Spec-level design | PENDING(owner, question 5) |
-| H082 | Buy and sell tax names flip when the tax side is the token | Potential | Info | Spec-level design | PENDING(coordinator) |
+| H050 | Dust trades pay above the 10% cap by under one unit | Confirmed | Info | Spec-level design | Info: documented |
+| H076 | A ground recipient wallet pushes its own payout past the default compute limit | Potential | Info | Spec-level design | Signed off (5a) |
+| H080 | A creator's hook refuses its own seed | Potential | Info | Spec-level design | Signed off (5a) |
+| H082 | Buy and sell tax names flip when the tax side is the token | Potential | Info | Spec-level design | Info: interfaces label by direction |
 
 ## Medium findings
 
 Each Medium is spec-level design: the program does what the spec and the decision register say, and the finding is that what they permit does harm.
-Each fix changes a decision, so each waits on the owner; every decision is a default the program's designer may change.
+Each fix changed a decision, so each waited on the owner, who chose 1a, 2a, 3a and 4a on 2026-11-22; every decision is a default the program's designer may change.
 
 ### H007: A live transfer hook turns an Open market into a honeypot
 
@@ -122,7 +122,7 @@ Fix: the options of question 1 on #67.
 1c keeps `TAX-16` as it is, disclosed only, with a written downgrade to Low.
 Proposed regression tests: `sos_h007_a_market_is_refused_while_a_mints_transfer_hook_is_live`, `sos_h007_a_token_whose_hook_was_cleared_creates_and_trades`, `sos_h007_the_containment_hook_with_any_other_authority_is_refused`, `sos_h007_a_contained_token_creates_binds_seeds_trades_and_unlocks` and `sos_h007_a_flipped_hook_refuses_every_sell_but_the_creators`.
 
-Disposition: PENDING(owner, question 1).
+Disposition: Fixed by the owner's answer 1a of 2026-11-22 in `ed84acb`: creation refuses a transfer hook unless it is cleared or is the containment hook with the mint's unlock PDA as its authority (`TransferHookNotAllowed`, `src/mint_levers.rs`); regression test `sos_h007_a_mint_whose_transfer_hook_could_refuse_sells_is_refused` (`tests/mint_rules.rs`), through the router and through a launchpad.
 
 ### H008: A live mint authority drains the real reserve
 
@@ -141,7 +141,7 @@ Fix: the options of question 1 on #67.
 Under 1a what is left is supply held outside the seed (H036, H086), bounded and readable from the mint before anyone buys.
 Proposed regression tests: `sos_h008_a_seed_is_refused_while_a_non_quote_mint_keeps_its_mint_authority`, `sos_h008_a_graduation_is_refused_while_a_non_quote_mint_keeps_its_mint_authority`, `sos_h008_a_listed_quote_with_a_mint_authority_seeds_and_trades`, `sos_h008_a_tax_on_the_token_side_does_not_sidestep_the_rule` and `sos_h008_a_contained_token_seeds_after_bind_and_revoke`.
 
-Disposition: PENDING(owner, question 1).
+Disposition: Fixed by answer 1a in `ed84acb`: both seed paths refuse a mint outside the quote list (`TAX-58`) that keeps a mint authority (`MintAuthoritySet`); regression test `sos_h008_a_mint_with_a_mint_authority_is_refused_at_the_seed` (`tests/mint_rules.rs`).
 
 ### H009: A creator holding every role stages a rug
 
@@ -159,7 +159,7 @@ Fix: the options of question 1 on #67.
 1b removes only the hook step; 1c keeps every lever, disclosed only, with a written downgrade to Low.
 Proposed regression tests: `sos_h009_a_seed_is_refused_while_the_untaxed_mint_keeps_a_mint_authority`, the same for a freeze authority and a live hook other than containment, `sos_h009_a_contained_token_seeds_only_after_its_mint_authority_is_revoked` and `sos_h009_every_role_creator_takes_no_more_than_its_tax_share_and_its_own_bag`.
 
-Disposition: PENDING(owner, question 1).
+Disposition: Fixed by answers 1a (`ed84acb`) and 2a (`4d025f0`): the hook flip, the mint-and-dump, the freeze and the rate flip are each refused, with the regression tests of H007, H008, H016 and H010; what the composite keeps, supply held outside the seed selling first, is H036 and H086, signed off by the owner (answer 5a, 2026-11-22; [sign-offs.md](sign-offs.md)).
 
 ### H010: The tax authority's capital-free rate flip around a victim swap
 
@@ -178,7 +178,7 @@ Fix: the options of question 2 on #67.
 A delayed change also closes H028 and the authority's part of H035, and turns H096 into a change traders can see ahead of time.
 Proposed regression tests: `sos_h010_a_rate_change_applies_only_from_its_activation_slot` and `sos_h010_a_rate_flip_bundled_around_a_swap_takes_at_most_the_victims_slippage`, or for a step cap `sos_h010_a_rate_change_beyond_the_step_is_refused` and `sos_h010_a_second_rate_change_in_one_slot_is_refused`.
 
-Disposition: PENDING(owner, question 2).
+Disposition: Fixed by answer 2a in `4d025f0`: a change of rates waits `RATE_CHANGE_DELAY_SLOTS` (300 slots) as pending rates, so it can never reach a swap already signed; regression test `sos_h010_a_rate_change_never_reaches_a_swap_in_the_same_transaction` (`tests/rate_changes.rs`), and the fuzzer's invariant 4 checks that the rates in force never change within a slot.
 
 ### H019: A seeder lured into a look-alike market (the seed binds no terms)
 
@@ -198,7 +198,7 @@ Fix: the options of question 4 on #67.
 A bound on the virtual reserve at creation, as a `src/config.rs` constant or a ratio to the seed, was considered as a secondary measure.
 Proposed regression test: `sos_h019_a_seed_on_a_decoy_with_a_hostile_virtual_reserve_is_refused_by_the_expected_terms`.
 
-Disposition: PENDING(owner, question 4).
+Disposition: Fixed by answer 4a in `deae3ee`: `seed` takes the hash of the market's terms and refuses a mismatch before anything moves (`TermsChanged`, `TAX-59`); regression test `sos_h019_a_seed_whose_terms_are_not_the_markets_is_refused` (`tests/seed.rs`).
 
 ### H023: The tax authority redirects or front-runs recipients' owed tax
 
@@ -218,7 +218,7 @@ Fix: the options of question 3 on #67.
 H024's refusal of the market's own addresses, which turned this rename into a silent burn, is fixed either way.
 Proposed regression tests: `sos_h023_set_recipients_refuses_to_change_the_wallet_of_a_slot_that_is_still_owed`, `sos_h023_swapping_two_owed_slots_wallets_is_refused` and `sos_h023_owed_follows_the_slot_to_its_new_wallet`.
 
-Disposition: PENDING(owner, question 3).
+Disposition: Fixed by answer 3a in `c8fe315`: `set_recipients` refuses to hand a slot still owed tax to another wallet (`OwedSlotRedirected`, `TAX-39`); regression test `sos_h023_set_recipients_refuses_to_hand_an_owed_slot_to_another_wallet` (`tests/tax_authority.rs`).
 
 ### H036: The exit guarantee broken by tokens held outside the market
 
@@ -239,7 +239,7 @@ Measures considered: restating `TAX-52` as "a quote is refused only as dust or b
 Under 1a of question 1, the unbounded form (a live mint authority, H008) is gone and what remains is supply anyone can count before buying.
 Proposed regression test: `sos_h036_a_buyer_cannot_sell_after_an_outside_bag_takes_the_real_quote`.
 
-Disposition: PENDING(owner, question 5).
+Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 
 ## Low and Info findings
 
@@ -262,69 +262,69 @@ Disposition: PENDING(owner, question 5).
   Fixed: every instruction refuses a market state whose version byte is newer than the running program's (`NewerStateVersion`); the spec states it beside the market state's layout.
   Regression test: `sos_h069_a_market_state_written_by_a_newer_version_is_refused_by_every_instruction` (`tests/layout.rs`).
 
-### Waiting on the owner (question 1)
+### Decided by the owner (question 1)
 
 - **H016** (`programs/mint-rules/src/lib.rs:7-8`, `src/instructions/swap.rs:104-114`, `src/instructions/distribute.rs:113-155`): a live freeze authority, allowed by `TAX-16`, can freeze a vault (stopping every swap and payout of that side until thawed), a recipient's account (stopping its slot) or chosen holders (a trap of the H007 class).
-  Low for the program; it rides on question 1, where 1a refuses a freeze authority at the seed on every mint off the quote list.
-  Disposition: PENDING(owner, question 1).
+  Low for the program; it rode on question 1, whose answer 1a refuses a freeze authority at the seed on every mint off the quote list.
+  Disposition: Fixed by answer 1a in `ed84acb`: both seed paths refuse a mint outside the quote list that keeps a freeze authority (`FreezeAuthoritySet`); regression test `sos_h016_a_mint_with_a_freeze_authority_is_refused_at_the_seed` (`tests/mint_rules.rs`). A quote mint's issuer (Circle, for USDC) can still freeze, which `TAX-58` accepts.
 
-### Waiting on the owner (question 5)
+### Signed off by the owner (question 5)
 
-Question 5 lists these with H036 as the findings that stay open, each with no loss beyond what is stated or a precondition outside the program: 5a signs them all off, recorded in this folder with each reason, and 5b names the ones to fix first.
+Question 5 listed these with H036 as the findings that stay open, each with no loss beyond what is stated or a precondition outside the program; the owner's 5a signed them all off, each with its reason in [sign-offs.md](sign-offs.md).
 
 - **H025** (`src/instructions/distribute.rs:81-95`, `:132-155`): a recipient whose own token account requires memos, or is frozen, cannot be paid; only its own slot is blocked, and `set_recipients` can move it while the authority exists.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H026** (`src/instructions/distribute.rs:132-155`, `src/token.rs:41-78`): a hook on the tax side can refuse payouts to chosen wallets, stranding the suite share or a partner's slot; no reserve or other slot is touched; gone under 1a.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Closed for foreign hooks by answer 1a (`ed84acb`): a tax side can carry a live hook only if it is a contained mint, which `bind` never makes its own home market's tax side, so in any other market its transfers are refused from the start and the market can't trade; the remainder is signed off by the owner (answer 5a, 2026-11-22; [sign-offs.md](sign-offs.md)).
 - **H028** (`src/instructions/set_taxes.rs:12-32`, `src/instructions/tax_authority.rs:15-41`): a tax authority that is a PDA of a mint's hook program can change the rate inside the router's own transaction, between its input transfer and its fee transfer, needing no ordering power; bounded by the range, the 10% cap and `min_amount_out`; gone under 1a and 2a.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Closed by answers 1a (`ed84acb`), since no hook but the containment hook, which never acts as a tax authority, runs inside a market's transfers, and 2a (`4d025f0`), since a change of rates now waits 300 slots whoever sends it; the remainder is signed off by the owner (answer 5a, 2026-11-22; [sign-offs.md](sign-offs.md)).
 - **H030** (`src/instructions/swap.rs:104-114`): a hook can behave differently in simulation than in execution; the program has no simulation-dependent branch, so this is Canary's side.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H034** (`src/instructions/init_market.rs:57-72`, `:178-190`, `src/instructions/swap.rs:29-33`): every market stores the router's market signer at creation, so the router is its only exit; a router that stopped signing, or a frozen build compiled with another router's address, would lock its reserves for good, though `distribute` and the authority's actions never need the router.
   The spec now states it under "Upgrades and freezing", and `sos_h001_the_compiled_router_id_is_the_pinned_devnet_router` checks the compiled router id.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H035** (`src/pricing.rs:127-150`, `:171-197`, `src/instructions/set_taxes.rs:12-32`): a tax recipient sandwiches a victim more cheaply than an outsider, since most of its own tax comes back to it; up to about 0.79 SOL of a 5 SOL trade at 20% slippage, inside the same slippage budget as H010, which it does not stack beyond.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H037** (`src/config.rs:13-16`, `src/params.rs:77-110`, `src/pricing.rs:158-168`): an upgrade lowering `MAX_TAX_BPS` would block swaps and `set_taxes` on every market whose rates sit above the new cap; booked tax still pays out; only the trusted upgrade key can do it.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H044** (`src/state.rs:138-152`, `src/instructions/renounce_tax_authority.rs:17-18`): a compromised tax authority cannot be rotated (`TAX-05`), and `renounce_tax_authority` freezes whatever rates and recipients are set at that moment.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H055** (`src/instructions/seed.rs:85-88`, `src/instructions/seed_liquidity.rs:143-145`): the market opens in the seed, so the seeder chooses the opening price and can trade first.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H056** (`src/state.rs:105-107`, `src/instructions/seed.rs:85-91`): a market's recorded slot and time are its creation, not its opening, so an age shown from them overstates how long it has traded.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H061** (`src/instructions/distribute.rs:132-144`): a recipient that closes its token account after each payout makes the next `distribute` caller pay about 0.002 SOL of rent again; the keeper caps what it spends.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H062** (`src/instructions/init_market.rs:54-83`, `src/params.rs:65-67`): anyone can create Created markets naming any seeder, and they stay forever with no funds in them; recalibrated from Info to Low because it is the decoy step of H019.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H076** (Info; `src/instructions/distribute.rs:82-90`): a recipient wallet ground for many associated token account bumps can push its own creating payout past 200,000 compute units; any caller raising the limit pays it.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H080** (Info; `src/instructions/seed.rs:110-147`): a creator's hook can refuse its own seed; the seed reverts atomically and the market stays Created, with no funds at risk.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H086** (`src/pricing.rs:203-213`): supply kept back or pre-mined sells into the curve and takes quote in proportion, as in any constant-product pool; with a virtual reserve it is H036; recalibrated from Info to Low for consistency with H036 and the buy wall's H040.
   The spec's "Locked for good" now says so.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H092** (`src/instructions/init_market.rs:54-83`): look-alike markets for the same pair can route traders into a live authority and a wide range; Aviary's side.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 - **H096** (`src/instructions/set_taxes.rs:12-32`): a live authority can attract buyers at a low rate and raise the sell rate inside its public range before an exit wave; two minutes' notice under 2a.
-  Disposition: PENDING(owner, question 5).
+  Disposition: Signed off by the owner (answer 5a, 2026-11-22), with its reason in [sign-offs.md](sign-offs.md).
 
-### Not named in the owner's questions
+### Not decided by the owner's questions
 
 - **H013** (`src/instructions/seed_liquidity.rs:118-141`): `pipeline_seed_liquidity` reads both escrows before `take_seed` and derives `taken` from their balances afterwards, so a hook on one mint, running inside that side's transfer, can change the other escrow's balance between the two readings; `taken` then under-reports what left, or the subtraction fails and the graduation is refused (H049's reachable underflow).
   Reserves and vaults are unaffected, since `arrived` is measured per side inside `take_seed`.
-  Question 5 names H013 among the Lows fixed regardless of the answers (`taken` set to the amounts each transferred side moved), but no fix was on the branch when this record was drafted.
-  Disposition: PENDING(coordinator).
+  Question 5 named H013 among the Lows fixed regardless of the answers; the addendum of 2026-11-20 said 1a would close it instead, which it did.
+  Disposition: Closed by answer 1a (`ed84acb`) with no change of its own: the only live hook a mint may carry is the containment hook, which refuses every transfer of a mint not yet bound, and a mint can't be bound to a market that `pipeline_seed_liquidity` has not created yet, so no hook runs inside a graduation's transfers and `taken` is exactly what each escrow sent.
 - **H039** (`scripts/deploy-devnet.sh:104-128`, `docs/spec/tax-amm.md`, "Upgrades and freezing"): one upgrade key, shared with the suite's other devnet programs, can replace the program; no value is at risk on devnet, and on mainnet everything rests on the freeze ([`TAX-21`](../../decisions.md#tax-21-mainnet-upgrade-policy)); recalibrated from Info to Low, matching the buy wall's H024.
-  Disposition: PENDING(coordinator).
+  Disposition: Signed off by the owner (answer 5a and its addendum, 2026-11-22; [sign-offs.md](sign-offs.md)): freezing the program before mainnet stays a mainnet checklist item.
 - **H071** (`src/config.rs:27-28`, `:40-49`): the devnet `SUITE_TREASURY` is compiled in with no cluster feature or build-time check, and `security.txt` carries no `source_revision`; `scripts/deploy-devnet.sh` refuses mainnet, so no scripted path ships the wrong key today; recalibrated from Info to Low, matching the buy wall's H021.
-  Disposition: PENDING(coordinator).
+  Disposition: Signed off by the owner (answer 5a and its addendum, 2026-11-22; [sign-offs.md](sign-offs.md)): a mainnet build must name mainnet's treasury, and mainnet's USDC in `QUOTE_MINTS`, before it is frozen.
 - **H100** (`src/config.rs:13-14`): the honeypot claim is true as scoped ("no tax market can be a honeypot through its tax"), but published wording that drops the scope overstates it while H007, H008 and H016 stay open.
-  Disposition: PENDING(coordinator).
+  Disposition: Fixed in the wording in `5eccfd4`: `MAX_TAX_BPS` and the spec now say the cap guarantees the tax alone, and the mint rules govern what a mint's authorities and hook can do.
 - **H050** (Info; `src/pricing.rs:158-168`): the tax is the rate rounded up to the next unit, so a dust trade pays above 10% by under one unit; documentation only.
-  Disposition: PENDING(coordinator).
+  Disposition: Info, documented in the spec's "Pricing and the tax" (the tax is the rate rounded up to the next unit); no sign-off needed.
 - **H082** (Info; `src/pricing.rs:100-123`): buy and sell tax are named by the tax side, so on a market whose tax side is the token they are flipped from a trader's view; interfaces must label rates by direction.
-  Disposition: PENDING(coordinator).
+  Disposition: Info: interfaces label the rates by direction from the tax side, as the spec's "In Aviary" says; no sign-off needed.
 
 ## Ticket notes T01 to T10
 
