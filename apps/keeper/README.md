@@ -4,8 +4,15 @@ The keeper runner calls every keeper job of every market of our strategies when 
 Its design is [`docs/spec/keeper-runner.md`](../../docs/spec/keeper-runner.md); this file says how to run it.
 Every keeper job is permissionless, so anyone can run their own copy with their own key.
 
-Today it runs one job, the tax AMM's `distribute`, one transaction per owed slot, the burn slot included, in the daily pass.
-The buy wall AMM's four jobs and the lending AMM's `rebalance` join it by adding their entries to [`packages/keeper-jobs`](../../packages/keeper-jobs), with no change here.
+Today it runs five jobs, each defined in [`packages/keeper-jobs`](../../packages/keeper-jobs):
+
+- the tax AMM's `distribute`, one transaction per owed slot, the burn slot included, in the daily pass;
+- the buy wall AMM's `place_wall`, after each transaction on a market and in every sweep;
+- its `settle`, in the hourly pass, at most once every `KEEPER_SETTLE_INTERVAL` on each market;
+- its `pay_rewards` and `sweep_fees`, one transaction per fee slot, in the daily pass, slot 1 only once the program's `DESIGNER_RECIPIENT` is set.
+
+`place_wall` tips the keeper wallet's wrapped-SOL account, which the placement creates when it is missing; once that account holds more than `KEEPER_TIP_UNWRAP_AT`, the end of the pass closes it into the float.
+The lending AMM's `rebalance` joins them by adding its entry to `packages/keeper-jobs`, with no change here.
 
 ## The decisions it rests on
 
@@ -25,7 +32,11 @@ They are all in the decision register, [`docs/decisions.md`](../../docs/decision
 - `SUITE-51`: a job's cost is what its simulation takes from the wallet, and what it spent is what left the wallet once it landed, never less than its fee.
 - `SUITE-52`: an RPC that cannot be asked never counts as the job failing.
 - `SUITE-53`: a misspelt `KEEPER_` variable stops the runner at start.
+- `SUITE-54`: a payout that would create its recipient's token account waits until it pays at least that account's rent.
+- `SUITE-55`: no cap and not the minimum balance hold the unwrapping of the tips, whose fee still counts in today's spend.
+- `SUITE-56`: `settle` runs at most once every `KEEPER_SETTLE_INTERVAL` on a market, a restart included, learned from the keeper wallet's own transactions.
 - `TAX-43`, `TAX-45`, `TAX-48`: how the tax AMM's `distribute` names its slots and their wallets, and why only the burn takes the mint writable.
+- `POOL4-37`, `POOL4-38`, `POOL4-48`, `POOL4-50`: how the buy wall AMM's payouts name their recipients' accounts and who signs them, why `pay_rewards` needs no hook accounts, and why `place_wall` waits for a slot no swap has run in.
 
 ## Settings
 
@@ -72,6 +83,10 @@ launchd has no direnv, so the script loads `~/.config/env/global.env` and the pr
 A setting for the agent goes into the project's `.env`, followed by `pnpm keeper:install` again.
 The log is `~/Library/Logs/testing-pipeline-keeper.log`, one JSON row a line: `start` with the settings, a `pass` row per pass, and a `job` row for each job sent, held, parked or skipped, with its signature, cost or reason.
 When the Mac sleeps the jobs wait, and the full pass at the next start catches up.
+An `unwrap` row says when the tips were closed into the float.
+
+While the agent runs, the buy wall AMM's demo market on devnet never keeps a job due for long: the runner places the wall within seconds of a trade that makes it due.
+So stop the agent (`pnpm keeper:uninstall`) before `programs/buy-wall-amm/scripts/demo.ts --market <its state> --trade-only`, which the release gate's devnet fixture is saved after, and before the demo walks the market's keeper jobs itself; install it again afterwards.
 
 ## Docker
 
@@ -92,10 +107,10 @@ In Docker the rows go to standard output.
 ## Testing
 
 ```sh
-pnpm --filter keeper test           # settings, no chain needed (CI runs these, and packages/keeper-jobs's tests)
+pnpm --filter keeper test           # settings and the runner's genericity, no chain needed (CI runs these, and packages/keeper-jobs's tests)
 ```
 
-The runner's own tests run against a local validator running devnet's router and the tax AMM, after the tax AMM's local demo has registered the strategy (`docs/toolchain.md`, "Local demo run"), with a fake clock for the passes:
+The runner's own tests run against a local validator running devnet's router, the tax AMM and the buy wall AMM, after both local demos have registered their strategies (`docs/toolchain.md`, "Local demo run"), with a fake clock for the passes:
 
 ```sh
 source scripts/toolchain-env.sh
@@ -103,8 +118,12 @@ scripts/local-validator.sh          # in another shell
 (cd programs/tax-amm/scripts && pnpm demo --cluster localnet \
   --payer ~/.config/testing-pipeline/devnet/wallet.json \
   --upgrade-authority ~/.config/testing-pipeline/devnet/upgrade-authority.json)
+(cd programs/buy-wall-amm/scripts && pnpm demo --cluster localnet \
+  --payer ~/.config/testing-pipeline/devnet/wallet.json \
+  --upgrade-authority ~/.config/testing-pipeline/devnet/upgrade-authority.json)
 pnpm --filter keeper test:local     # LOCAL_VALIDATOR_URL names another validator
 ```
 
 They show a job sent when due and only then, a market owing nothing sending nothing, another keeper paying first costing only a simulation, each cap and the minimum balance holding a job, today's spend rebuilt after a restart equal to the spend before it, a failing job retried at `RETRY_DELAYS` and then parked until its market changes, an RPC hiccup while building a job not counted as its failure, and `keeper once` running one pass and exiting without ever printing the key.
+For the buy wall AMM they show the wall placed from the runner's own socket after the swap that makes it due, its tip landing in the keeper wallet's wrapped-SOL account, which the same transaction creates, the tips unwrapped once that account holds more than `TIP_UNWRAP_AT` and not at exactly it, `settle` never twice within `SETTLE_INTERVAL` on a market even across a restart, and the daily pass paying the rewards and sweeping fee slots 0 and 2 but never slot 1, with a payout into a missing account worth less than its rent left waiting at no cost.
 Each test makes its own markets and sees only those, so the tests can share one validator.

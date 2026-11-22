@@ -17,14 +17,15 @@
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {
+        "@solana-program/token": "0.18.0",
         "@solana/kit": "8.6.0",
         "keeper-jobs": "workspace:*"
     },
     "devDependencies": {
         "@pipeline-placeholder/sdk": "link:../../fixtures/pipeline/sdk/ts",
         "@solana-program/system": "0.16.0",
-        "@solana-program/token": "0.18.0",
         "@types/node": "24.19.2",
+        "buy-wall-amm-scripts": "workspace:*",
         "esbuild": "0.28.2",
         "strategy-actions": "workspace:*",
         "tax-amm-scripts": "workspace:*",

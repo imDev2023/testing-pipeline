@@ -84,15 +84,28 @@ export async function landed(chain: Chain, signature: Signature): Promise<Landed
     throw new ChainError(`the node has no details of ${signature} after 10 s`);
 }
 
-/** Today's spend, from the keeper wallet's transactions since 00:00 UTC of `nowMs`. */
-export async function rebuildSpend(chain: Chain, keeper: Address, nowMs: number, isMarket: (address: Address) => boolean): Promise<Spend> {
+/**
+ * Today's spend, from the keeper wallet's transactions since 00:00 UTC of `nowMs`, and every
+ * transaction it landed in the last `lookBackMs` too (yesterday's among them when the day is
+ * younger), from which the runner learns when each job last ran.
+ */
+export async function rebuildSpend(
+    chain: Chain,
+    keeper: Address,
+    nowMs: number,
+    isMarket: (address: Address) => boolean,
+    lookBackMs = 0,
+): Promise<{ spend: Spend; transactions: LandedTransaction[] }> {
     const spend = new Spend(utcDay(nowMs), isMarket);
-    const since = dayStart(nowMs) / 1000;
+    const today = dayStart(nowMs) / 1000;
+    const since = Math.min(today, Math.floor((nowMs - lookBackMs) / 1000));
+    const transactions: LandedTransaction[] = [];
     for (const signature of await chain.signaturesSince(keeper, since)) {
         // A missing transaction would undercount, so a rebuild that cannot read one fails.
         const transaction = await landed(chain, signature);
         if (transaction.blockTime !== null && transaction.blockTime < since) continue;
-        spend.add(transaction.accountKeys, spendOf(transaction, keeper));
+        transactions.push(transaction);
+        if (transaction.blockTime === null || transaction.blockTime >= today) spend.add(transaction.accountKeys, spendOf(transaction, keeper));
     }
-    return spend;
+    return { spend, transactions };
 }

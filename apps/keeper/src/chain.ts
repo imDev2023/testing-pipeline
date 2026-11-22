@@ -13,6 +13,7 @@ import {
     createSolanaRpc,
     createSolanaRpcSubscriptions,
     createTransactionMessage,
+    getBase58Encoder,
     getBase64EncodedWireTransaction,
     getBase64Encoder,
     getSignatureFromTransaction,
@@ -49,6 +50,9 @@ export type Simulation = Result & {
     payerLamportsAfter: bigint;
 };
 
+/** One instruction of a landed transaction, its accounts and program resolved. */
+export type LandedInstruction = { programAddress: Address; accounts: Address[]; data: Uint8Array };
+
 export type LandedTransaction = Result & {
     signature: Signature;
     blockTime: number | null;
@@ -58,6 +62,8 @@ export type LandedTransaction = Result & {
     payerLamportsBefore: bigint;
     payerLamportsAfter: bigint;
     accountKeys: Address[];
+    /** The transaction's own instructions (not the ones they invoked). */
+    instructions: LandedInstruction[];
 };
 
 export interface Chain {
@@ -241,6 +247,8 @@ export function rpcChain(urls: { rpcUrl: string; discoveryRpcUrl: string; wsUrl:
             );
             if (!landed?.meta) return null;
             const keys = landed.transaction.message.accountKeys;
+            const accountKeys = [...keys, ...(landed.meta.loadedAddresses?.writable ?? []), ...(landed.meta.loadedAddresses?.readonly ?? [])];
+            const base58 = getBase58Encoder();
             return {
                 ...resultOf(landed.meta.err, landed.meta.logMessages),
                 signature,
@@ -249,7 +257,12 @@ export function rpcChain(urls: { rpcUrl: string; discoveryRpcUrl: string; wsUrl:
                 fee: BigInt(landed.meta.fee),
                 payerLamportsBefore: BigInt(landed.meta.preBalances[0]!),
                 payerLamportsAfter: BigInt(landed.meta.postBalances[0]!),
-                accountKeys: [...keys, ...(landed.meta.loadedAddresses?.writable ?? []), ...(landed.meta.loadedAddresses?.readonly ?? [])],
+                accountKeys,
+                instructions: landed.transaction.message.instructions.map((instruction) => ({
+                    programAddress: accountKeys[instruction.programIdIndex]!,
+                    accounts: instruction.accounts.map((index) => accountKeys[index]!),
+                    data: new Uint8Array(base58.encode(instruction.data)),
+                })),
             };
         },
 

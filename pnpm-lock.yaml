@@ -10,6 +10,9 @@ importers:
 
   apps/keeper:
     dependencies:
+      '@solana-program/token':
+        specifier: 0.18.0
+        version: 0.18.0(@solana/kit@8.6.0(typescript@7.0.2))
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@7.0.2)
@@ -23,12 +26,12 @@ importers:
       '@solana-program/system':
         specifier: 0.16.0
         version: 0.16.0(@solana/kit@8.6.0(typescript@7.0.2))
-      '@solana-program/token':
-        specifier: 0.18.0
-        version: 0.18.0(@solana/kit@8.6.0(typescript@7.0.2))
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
+      buy-wall-amm-scripts:
+        specifier: workspace:*
+        version: link:../../programs/buy-wall-amm/scripts
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -53,6 +56,9 @@ importers:
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@7.0.2)
+      buy-wall-amm-scripts:
+        specifier: workspace:*
+        version: link:../../programs/buy-wall-amm/scripts
       tax-amm-scripts:
         specifier: workspace:*
         version: link:../../programs/tax-amm/scripts
