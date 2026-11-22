@@ -268,5 +268,6 @@ No CRITICAL, HIGH or MEDIUM finding is open.
 | R2F-04 | 2 follow-up | INFO | New | Wording fixes |
 
 Totals open: 23 LOW (19 from round 1, 3 from round 2, 1 new) and 14 INFO.
+Every line of this table was accepted by the owner's sign-off of 2026-11-22, recorded in [README.md](README.md#owners-sign-off) with the work some lines name.
 R2F-02 was fixed after this follow-up: the spec and `rebalance`'s metadata tell the keeper to send `rebalance` alone while the lending market's emergency mode is on, when klend refuses the refresh, and `sos_r2_04_a_wait_to_leave_withdraw_mode_does_not_outlast_a_kamino_emergency` now runs under both emergency modes, sending `rebalance` alone, which also covers R2F-03's lending market case.
 Closed in this follow-up: R2-01 (MEDIUM), R2-04 (LOW, residual R2F-02), R2-07, R2-10, R2-12, R2-13, R2-14, R2-19; R2-05 and R2-09 drop to INFO residuals.
