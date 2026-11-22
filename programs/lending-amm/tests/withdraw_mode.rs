@@ -103,14 +103,24 @@ fn in_withdraw_mode_it_stays_while_kamino_is_at_or_below_the_exit_threshold_then
             assert!(before.withdraw_mode);
         }
 
-        // One unit above the exit threshold it leaves, and the band applies again in the same
-        // call: the buffer holds the whole lent side, so it lends the surplus.
+        // One unit above the exit threshold it starts waiting, recording when it first saw it
+        // so; once the free liquidity has stayed there for `WITHDRAW_MODE_EXIT_DELAY_SLOTS` it
+        // leaves, and the band applies again in the same call: the buffer holds the whole lent
+        // side, so it lends the surplus.
+        use lending_amm::config::WITHDRAW_MODE_EXIT_DELAY_SLOTS as DELAY;
         let free = WITHDRAW_MODE_EXIT * exposure + 1;
         env.set_free_liquidity(&market, free);
+        let seen = env.clock().slot;
+        env.rebalance(&market, None).unwrap();
+        let waiting = env.market_state(&market.market_state);
+        assert!(waiting.withdraw_mode);
+        assert_eq!(waiting.exit_seen_slot, seen);
+        env.advance_clock(DELAY, (DELAY * 2 / 5) as i64);
         let meta = env.rebalance(&market, None).unwrap();
         let state = env.market_state(&market.market_state);
         println!("lent {lent}: left withdraw mode at {free} free, X {exposure}, lent again for {} cTokens", state.ctokens);
         assert!(!state.withdraw_mode);
+        assert_eq!(state.exit_seen_slot, 0);
         assert!(state.ctokens > 0);
         let left = events::<WithdrawModeLeft>(&meta.logs);
         assert_eq!(left.len(), 1);

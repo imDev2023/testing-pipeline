@@ -998,6 +998,154 @@
       "args": []
     },
     {
+      "name": "remove_lent_side",
+      "docs": [
+        "Burns `lp` of the LP's shares for their part of the buffer, in the lent mint, and of the",
+        "cTokens, in kind, leaving the other side's part to the LPs who stay: the way out when the",
+        "other mint's freeze authority or transfer hook stops `remove_liquidity`."
+      ],
+      "discriminator": [
+        167,
+        127,
+        36,
+        38,
+        141,
+        236,
+        21,
+        205
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "docs": [
+            "The LP, who pays for their cToken account if it is missing."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market_state",
+          "writable": true
+        },
+        {
+          "name": "lp_mint",
+          "writable": true,
+          "relations": [
+            "market_state"
+          ]
+        },
+        {
+          "name": "lp_shares",
+          "docs": [
+            "The token account of the LP mint the shares are burned from, which the LP owns."
+          ],
+          "writable": true
+        },
+        {
+          "name": "lp_token_0",
+          "docs": [
+            "program checks it."
+          ],
+          "writable": true
+        },
+        {
+          "name": "lp_token_1",
+          "writable": true
+        },
+        {
+          "name": "vault_0",
+          "writable": true
+        },
+        {
+          "name": "vault_1",
+          "writable": true
+        },
+        {
+          "name": "mint_0"
+        },
+        {
+          "name": "mint_1"
+        },
+        {
+          "name": "authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market_state"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctoken_account",
+          "writable": true
+        },
+        {
+          "name": "collateral_mint",
+          "docs": [
+            "The reserve's collateral (cToken) mint, which the market recorded."
+          ]
+        },
+        {
+          "name": "lp_ctoken",
+          "docs": [
+            "and created at the LP's expense if missing."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program_0"
+        },
+        {
+          "name": "token_program_1"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "SPL Token, the program of the LP mint, the lent mint and the cToken mint."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "lp",
+          "type": "u64"
+        },
+        {
+          "name": "min_lent",
+          "type": "u64"
+        },
+        {
+          "name": "min_ctokens",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "remove_liquidity",
       "docs": [
         "Burns `lp` of the LP's shares for their part of the other side, the buffer and the",
@@ -1205,6 +1353,19 @@
     }
   ],
   "events": [
+    {
+      "name": "LentSideRemoved",
+      "discriminator": [
+        119,
+        163,
+        51,
+        136,
+        154,
+        170,
+        199,
+        78
+      ]
+    },
     {
       "name": "LiquidityAdded",
       "discriminator": [
@@ -1572,12 +1733,27 @@
     {
       "code": 6049,
       "name": "RebalanceNotAlone",
-      "msg": "rebalance must be called directly, beside nothing but compute budget instructions, klend's refresh_reserve and other rebalance calls"
+      "msg": "rebalance must be called directly, once per transaction, beside nothing but compute budget instructions and klend's refresh_reserve or refresh_reserves_batch"
     },
     {
       "code": 6050,
       "name": "BadSeedAmounts",
       "msg": "SeedRequest.amounts must hold exactly one amount for each of the market's two mints"
+    },
+    {
+      "code": 6051,
+      "name": "ReserveStale",
+      "msg": "The Kamino reserve's stored rate is too old to value the market's cTokens: put klend's refresh_reserve first in the same transaction"
+    },
+    {
+      "code": 6052,
+      "name": "ReserveWrongVersion",
+      "msg": "The Kamino reserve's version is one this program was not written for: quotes, swaps, adding and rebalance are refused, and removal is in kind only"
+    },
+    {
+      "code": 6053,
+      "name": "BelowMinCtokens",
+      "msg": "The removal would pay out fewer cTokens than min_ctokens"
     }
   ],
   "types": [
@@ -1772,13 +1948,78 @@
             "type": "i64"
           },
           {
+            "name": "exit_seen_slot",
+            "docs": [
+              "For a market in withdraw mode, the slot of the `rebalance` that first saw Kamino's freely",
+              "available liquidity above the exit threshold, since when every `rebalance` has; 0",
+              "otherwise, as in markets created before the field was taken from the reserved space",
+              "(docs/spec/lending-pool.md, \"Withdraw mode\")."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "reserved",
             "type": {
               "array": [
                 "u8",
-                256
+                248
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "LentSideRemoved",
+      "docs": [
+        "An LP left with the lent side alone through `remove_lent_side`, giving up the other side's",
+        "part to the LPs who stay (docs/spec/lending-pool.md, \"Removing\")."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_state",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "The LP shares burned."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "share_count",
+            "docs": [
+              "The market's share count after the removal, the locked minimum included."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "lent",
+            "docs": [
+              "The buffer's part, paid in the lent mint."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ctokens",
+            "docs": [
+              "The cTokens' part, paid as cTokens."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "other_left",
+            "docs": [
+              "The other side's part, `R x lp / N`, left in the market for the LPs who stay."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -2410,6 +2651,20 @@
   ],
   "constants": [
     {
+      "name": "ADD_MAX_RESERVE_AGE_SLOTS",
+      "docs": [
+        "How many slots old the reserve's last refresh may be when `add_liquidity` values a market's",
+        "cTokens: 0, refreshed in the same slot, as klend itself asks before it states its exchange",
+        "rate. Adding and removing charge no fee, so any interest the stored rate has not counted yet",
+        "would go to whoever adds just before the reserve refreshes and leaves just after, out of the",
+        "LPs' yield (finding H001, docs/security/lending-amm/). A depositor puts klend's",
+        "`refresh_reserve` first in the same transaction. Exported in the IDL, as is the trade bound,",
+        "from which forms, keepers and the demo read them."
+      ],
+      "type": "u64",
+      "value": "0"
+    },
+    {
       "name": "BUFFER_MAX_BPS",
       "docs": [
         "...or above this."
@@ -2453,6 +2708,18 @@
       "value": "1000"
     },
     {
+      "name": "TRADE_MAX_RESERVE_AGE_SLOTS",
+      "docs": [
+        "How many slots old the reserve's last refresh may be when a quote or a swap values a market's",
+        "cTokens: about an hour. A trade at the stored rate and one back after a refresh pay Pipeline's",
+        "fee twice, 0.5%, besides the LP fee, which may be 0; an hour of interest at the steepest rate",
+        "the deploy sees, our devnet reserves' 1,000% a year, is about 0.11%, so no such round trip",
+        "pays. Beyond it a trader, a keeper or Aviary puts klend's `refresh_reserve` first."
+      ],
+      "type": "u64",
+      "value": "9000"
+    },
+    {
       "name": "WITHDRAW_MODE_ENTER",
       "docs": [
         "Enter withdraw mode when Kamino's freely available liquidity is below this many times",
@@ -2470,6 +2737,19 @@
       ],
       "type": "u64",
       "value": "10"
+    },
+    {
+      "name": "WITHDRAW_MODE_EXIT_DELAY_SLOTS",
+      "docs": [
+        "How many slots a market in withdraw mode must have seen Kamino's freely available liquidity",
+        "above the exit threshold before it leaves: about an hour. Any `rebalance` in between that sees",
+        "it at or below the threshold starts the wait again. One reading can be inflated at no risk, by",
+        "a deposit and a redeem around `rebalance` in one Jito bundle, which would lend the market's",
+        "liquidity into a crunch; readings an hour apart, with the keeper's sweeps between them, cannot",
+        "(finding H004, docs/security/lending-amm/). Exported in the IDL, from which keepers read it."
+      ],
+      "type": "u64",
+      "value": "9000"
     }
   ]
 }

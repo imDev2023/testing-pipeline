@@ -19,6 +19,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, MintTo, Token};
 use anchor_spl::token_interface::{Mint, TokenInterface};
 
+use crate::config;
 use crate::errors::StrategyError;
 use crate::events::LiquidityAdded;
 use crate::kamino;
@@ -94,10 +95,21 @@ pub fn add_liquidity_handler<'info>(
     let other_index = market.other_index();
     let max = [max_0, max_1];
     let (max_other, max_lent) = (max[other_index], max[lent_index]);
-    let reserve = kamino::reserve_of(&market.lent_mint(), &ctx.accounts.reserve.to_account_info())?;
+    let reserve = kamino::reserve_of(
+        market.lent_entry()?,
+        &ctx.accounts.reserve.to_account_info(),
+    )?;
     // A deprecated reserve never redeems again, so the market takes no new liquidity it would lend
     // there or price against it (docs/spec/lending-pool.md, "When Kamino can't pay").
     require!(!reserve.deprecated(), StrategyError::ReserveDeprecated);
+    // Once the market holds cTokens, the depositor buys a share of them at the stored rate, which
+    // must count every slot's interest so far, or the depositor would take interest owed to the
+    // LPs already in (docs/spec/lending-pool.md, "The stored rate, everywhere").
+    require!(
+        market.ctokens == 0
+            || reserve.refreshed_within(Clock::get()?.slot, config::ADD_MAX_RESERVE_AGE_SLOTS),
+        StrategyError::ReserveStale
+    );
     let first = !market.is_open();
     let deposit = if first {
         shares::first_deposit(max_other, max_lent)?

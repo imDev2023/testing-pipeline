@@ -6,6 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from "./lentSideRemoved.ts";
 export * from "./liquidityAdded.ts";
 export * from "./liquidityRemoved.ts";
 export * from "./marketCreated.ts";
