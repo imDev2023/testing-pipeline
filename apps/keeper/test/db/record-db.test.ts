@@ -57,7 +57,7 @@ test('a recorded pass and its jobs are written to the database, and nothing is l
     try {
         const records = await readKeeperRecords(db, { wallet: WALLET, now: new Date('2026-11-22T00:05:00Z'), recentJobs: 10, since: null });
         const { jobs, wallet, ...rest } = pass;
-        assert.deepEqual(records.latest, rest);
+        assert.deepEqual(records.latest, { ...rest, recordedJobs: jobs.length });
         assert.deepEqual(records.recent, jobs.map((job) => ({ ...job, pass: 'daily' })));
         assert.equal(wallet, WALLET);
     } finally {
