@@ -2,13 +2,17 @@
 // judged as tests/conformance.rs judges `check_market` in LiteSVM.
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { judgeConformance } from './conformance.ts';
 
-// A real report: the tax AMM's demo market on devnet, checked on 2026-11-20.
-const report = JSON.parse(readFileSync(new URL('../../tax-amm/conformance/devnet.json', import.meta.url), 'utf8'));
+// A real report: one of the launch script's own, on a contained token's home market on devnet
+// (conformance/devnet/, written with --conformance-out), whichever run wrote them last.
+const reports = new URL('../conformance/devnet/', import.meta.url);
+const reportFile = readdirSync(reports).filter((name) => name.endsWith('.json')).sort()[0];
+assert.ok(reportFile, 'conformance/devnet/ holds no report');
+const report = JSON.parse(readFileSync(new URL(reportFile, reports), 'utf8'));
 const market = report.market.address as string;
 
 function withCheck(id: string, status: string) {
@@ -16,7 +20,9 @@ function withCheck(id: string, status: string) {
 }
 
 test('a report with every check passed but exact_out_refund skipped passes', () => {
-    assert.deepEqual(judgeConformance(report, market), { ok: true, passed: 13, skipped: ['exact_out_refund'] });
+    const passed = report.checks.filter((check: { status: string }) => check.status === 'pass').length;
+    assert.ok(passed > 0);
+    assert.deepEqual(judgeConformance(report, market), { ok: true, passed, skipped: ['exact_out_refund'] });
 });
 
 test('a warn or a fail is refused, naming the check and its message', () => {

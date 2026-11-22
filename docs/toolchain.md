@@ -324,6 +324,7 @@ Since [Containment hook: deploy on devnet and launch a contained token](https://
 - `--pipeline-check <binary>` runs `pipeline-check --fail-on-warn` on each home market while the token is contained (step 10a) and after its unlock (step 14), with the explicit `--amounts` a market on a virtual reserve needs, and stops unless every check passed but `exact_out_refund`, skipped; `--conformance-out <dir>` keeps each report (`HOOK-38`).
 - `--quote-mint` may be given once for each token, and `new` quotes a token in a fresh SPL Token mint the script creates once per run and mints the launcher; `--unlock none` leaves a token contained.
   On a home market quoted in wrapped SOL, Pipeline 0.3 takes its fee in SOL, so only a token quoted in another mint pays Pipeline's fee in the token and has it swept through the hook (`HOOK-41`).
+- Before it sends anything, it also refuses a `--record` path whose directory does not exist, an `--unlock goal` whose goal the launch's own buy and sell may already collect (80,000,000 with wrapped SOL), and with `--pipeline-check` a quote mint of fewer than 6 decimals, whose real reserve could not pay a sell of the checker's largest trade.
 
 The devnet launch is one run with three tokens (`HOOK-40`):
 

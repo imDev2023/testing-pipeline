@@ -96,7 +96,7 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 
 import {
@@ -192,6 +192,10 @@ const TRADES = { buyUnits: 1n, integratorFeeBps: 50 } as const;
 // tax AMM's own conformance test gives such a market, each covered by the real quote reserve
 // the launch's own buy leaves.
 const CONFORMANCE_AMOUNTS = [1_000_000n, 100_000_000n, 1_000_000_000n] as const;
+// The fewest decimals a quote mint may have for those sizes: the launch's buy is one whole unit
+// of it, so with fewer the real quote reserve it leaves cannot pay a sell of the largest size.
+// Wrapped SOL's 9 and the fresh mint's 6 both passed on devnet on 2026-11-22.
+const CONFORMANCE_MIN_QUOTE_DECIMALS = 6;
 // How `--unlock` waits for the unlock and sends it. By the goal, the script buys with
 // `TRADES.buyUnits` and sells the same amount of the token back, round after round, and
 // refuses up front a goal that would take more rounds than `maxGoalRounds`, counting only each
@@ -231,6 +235,8 @@ const TRANSFER_HOOK_INITIALIZE = 0;
 
 // How long the script waits for the RPC to serve a transaction it has seen land.
 const LANDED_TRANSACTION_WAIT_MS = 30_000;
+// How long one run of `pipeline-check` may take before the script stops it.
+const PIPELINE_CHECK_TIMEOUT_MS = 600_000;
 const LOCALNET_URL = 'http://127.0.0.1:8899';
 const DEVNET_URL = 'https://api.devnet.solana.com';
 const GENESIS_HASHES = {
@@ -287,11 +293,16 @@ try {
     throw error;
 }
 const onDevnet = !cluster.local;
-const pipelineCheck = options['pipeline-check'];
+// Both paths are resolved against the current directory, as the checks below resolve them, so
+// a bare file name is never looked up on PATH instead.
+const pipelineCheck = options['pipeline-check'] && resolve(options['pipeline-check']);
 const conformanceOut = options['conformance-out'];
 if (conformanceOut && !pipelineCheck) usage('--conformance-out needs --pipeline-check, whose reports it keeps');
 if (pipelineCheck && !existsSync(pipelineCheck)) usage(`--pipeline-check: no file at ${pipelineCheck}`);
-const recordPath = options.record;
+const recordPath = options.record && resolve(options.record);
+// The record is written at the end of a run that spends SOL, so a path it cannot be written to
+// is refused before anything is sent.
+if (recordPath && !existsSync(dirname(recordPath))) usage(`--record: no directory ${dirname(recordPath)} to write ${basename(recordPath)} in`);
 
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
 const retryingTransport = (async (...args: Parameters<typeof baseTransport>) => {
@@ -638,17 +649,26 @@ async function checkConformance(market: Address, when: 'contained' | 'unlocked')
         info('not checked: give --pipeline-check <binary> to run Pipeline\'s conformance checker on the home market');
         return;
     }
-    const args = ['--url', onDevnet ? 'devnet' : cluster.url, '--market', market, '--amounts', CONFORMANCE_AMOUNTS.join(','), '--fail-on-warn', '--json'];
+    // The RPC the launch uses, named `devnet` when it is the public one, as the reports say.
+    const args = ['--url', cluster.url === DEVNET_URL ? 'devnet' : cluster.url, '--market', market, '--amounts', CONFORMANCE_AMOUNTS.join(','), '--fail-on-warn', '--json'];
     let stdout: string;
+    let exited = 'exited 0';
     try {
-        ({ stdout } = await promisify(execFile)(pipelineCheck, args, { maxBuffer: 64 * 1024 * 1024, timeout: 600_000 }));
+        ({ stdout } = await promisify(execFile)(pipelineCheck, args, { maxBuffer: 64 * 1024 * 1024, timeout: PIPELINE_CHECK_TIMEOUT_MS }));
     } catch (error) {
         // `--fail-on-warn` exits non-zero on a warn or a fail, with the report still printed.
-        const failed = error as { stdout?: string; stderr?: string; message: string };
+        const failed = error as { stdout?: string; stderr?: string; message: string; code?: number | string; killed?: boolean };
+        exited = failed.killed ? `was stopped after ${PIPELINE_CHECK_TIMEOUT_MS / 1000} s` : `exited ${failed.code ?? 'abnormally'}`;
         if (!failed.stdout) fail(`pipeline-check did not run: ${failed.message}\n${failed.stderr ?? ''}`);
         stdout = failed.stdout;
     }
-    const report = JSON.parse(stdout) as ConformanceReport;
+    let report: ConformanceReport;
+    try {
+        report = JSON.parse(stdout) as ConformanceReport;
+        if (typeof report?.market?.address !== 'string' || !Array.isArray(report.checks)) throw new Error('not a pipeline-check-report/1');
+    } catch (error) {
+        fail(`pipeline-check ${exited} without a report on ${market} (${error instanceof Error ? error.message : String(error)}); it printed:\n${stdout.slice(0, 2_000)}`);
+    }
     if (conformanceOut) {
         mkdirSync(conformanceOut, { recursive: true });
         const file = join(conformanceOut, `${market}-${when}.json`);
@@ -717,6 +737,9 @@ async function main() {
             if (quote?.owner !== TOKEN_PROGRAM_ADDRESS) fail(`the quote mint ${quoteMint} is not an SPL Token mint on this cluster`);
             decimals = quote.data[44]!;
         }
+        if (pipelineCheck && decimals < CONFORMANCE_MIN_QUOTE_DECIMALS) {
+            fail(`the quote mint ${quoteMint} has ${decimals} decimals: --pipeline-check's trade sizes, CONFORMANCE_AMOUNTS, need a quote mint of at least ${CONFORMANCE_MIN_QUOTE_DECIMALS}, whose real reserve after the launch's buy covers a sell of the largest`);
+        }
         const buy = TRADES.buyUnits * 10n ** BigInt(decimals);
         const [quoteHolder] = await findAssociatedTokenPda({ owner: launcher.address, mint: quoteMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
         quotes.set(quoteMint, { buy, buySpend: pipeline.maxTotalSpend(buy, 0) ?? fail('the buy overflows'), quoteHolder });
@@ -724,11 +747,18 @@ async function main() {
     const quoteFor = (i: number) => ({ quoteMint: quoteOf[i]!, ...quotes.get(quoteOf[i]!)! });
     // By the goal, the rounds of trades each token takes, counting only each round's buy tax,
     // and what they may cost: both taxes and Pipeline's fees on each round's buy.
+    // What the launch's own buy and sell may collect, both taxes on the whole buy: a goal at or
+    // below it could be reached before step 11 shows the unlock refused below the goal, or
+    // before the deadline unlocks it, so either `--unlock` refuses it before anything is sent.
     const goalRounds = tokens.map(({ unlockGoal, unlockBy }, i) => {
         const { buy } = quoteFor(i);
         const buyTax = (buy * BigInt(HOME_MARKET.buyTaxBps)) / 10_000n;
+        const launchTax = (buy * BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps)) / 10_000n;
         if (unlockBy === 'goal') {
             if (buyTax === 0n) fail(`a buy of ${buy} base units of the quote mint pays no tax, so --unlock goal could never reach the goal; use --unlock deadline`);
+            if (unlockGoal <= launchTax) {
+                fail(`token ${i + 1}: --unlock goal needs a goal above what the launch's own buy and sell may collect, ${launchTax}, so the unlock is first shown refused below it, not ${unlockGoal}`);
+            }
             const rounds = Number((unlockGoal + buyTax - 1n) / buyTax);
             if (rounds > UNLOCKING.maxGoalRounds) {
                 fail(`token ${i + 1}: --goal ${unlockGoal} would take about ${rounds} rounds of trades of ${buy} to collect, more than the ${UNLOCKING.maxGoalRounds} --unlock goal makes; give a smaller goal or use --unlock deadline`);
@@ -736,7 +766,6 @@ async function main() {
             return rounds;
         }
         if (unlockBy === 'deadline') {
-            const launchTax = (buy * BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps)) / 10_000n;
             if (unlockGoal <= launchTax) {
                 fail(`token ${i + 1}: --unlock deadline needs a goal the launch's own buy and sell cannot reach, above ${launchTax}, not ${unlockGoal}`);
             }
@@ -1292,6 +1321,10 @@ async function launchToken(
 
 main().catch((error) => {
     console.error(error instanceof Stopped ? `\nStopped: ${error.message}` : error);
-    writeRecord(`stopped: ${error instanceof Error ? error.message : String(error)}`);
+    try {
+        writeRecord(`stopped: ${error instanceof Error ? error.message : String(error)}`);
+    } catch (writeError) {
+        console.error(`The record could not be written to ${recordPath}: ${writeError}`);
+    }
     process.exit(1);
 });

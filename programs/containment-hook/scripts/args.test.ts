@@ -51,4 +51,5 @@ test('flags that do not pair up with the tokens are refused', () => {
     refused({ goal: ['1.5'], deadline: ['1797000000'] }, /--goal must be a whole number/);
     refused({ goal: ['18446744073709551616'], deadline: ['1797000000'] }, /--goal must fit in a u64/);
     refused({ goal: ['1'], deadline: ['2026-12-12T07:58:31'] }, /time zone/);
+    refused({ goal: ['1'], deadline: ['99999999999999'] }, /--deadline is too far away to be a time/);
 });

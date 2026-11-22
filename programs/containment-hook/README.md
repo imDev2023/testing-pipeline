@@ -43,6 +43,7 @@ The hook is not a strategy, so it is never registered with Pipeline's router; it
 To check the deploy yourself, with `solana-verify` 0.5.2 or later and Docker, rebuild the commit as the deploy did, from an export of it and with the image it pinned, and compare the two hashes:
 
 ```sh
+mkdir -p /tmp/containment-hook-77b6ddc
 git archive 77b6ddc programs | tar -x -C /tmp/containment-hook-77b6ddc
 solana-verify build /tmp/containment-hook-77b6ddc/programs --library-name containment_hook --arch v3 \
   --base-image solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd

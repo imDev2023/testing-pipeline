@@ -5,6 +5,8 @@ import { isAddress } from '@solana/kit';
 
 export const WRAPPED_SOL = 'So11111111111111111111111111111111111111112';
 const U64_MAX = 2n ** 64n - 1n;
+// The latest time JavaScript's `Date` can hold, in Unix seconds (8.64e15 ms).
+const LATEST_TIME_SECS = 8_640_000_000_000n;
 
 /** A flag the launch script cannot take; it prints the message with its usage and exits. */
 export class UsageError extends Error {}
@@ -37,7 +39,10 @@ function parseGoal(goal: string): bigint {
 /** `--deadline`: Unix seconds, or an ISO 8601 time with its time zone. */
 function parseDeadline(deadline: string | undefined): bigint {
     if (deadline === undefined) usage('--deadline is required: when the unlock is due whatever the tax collected');
-    if (/^\d+$/.test(deadline)) return BigInt(deadline);
+    if (/^\d+$/.test(deadline)) {
+        if (BigInt(deadline) > LATEST_TIME_SECS) usage(`--deadline is too far away to be a time: ${deadline} Unix seconds`);
+        return BigInt(deadline);
+    }
     if (!/(Z|[+-]\d\d:\d\d)$/.test(deadline)) usage(`--deadline must be Unix seconds or an ISO 8601 time with a time zone, not "${deadline}"`);
     const ms = Date.parse(deadline);
     if (Number.isNaN(ms)) usage(`--deadline is not a time: "${deadline}"`);
