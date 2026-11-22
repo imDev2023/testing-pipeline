@@ -1606,6 +1606,19 @@ async function main() {
         fail(`metadata.json must pass with zero warnings:\n   ${local.warnings.join('\n   ')}`);
     }
     info(`metadata.json is valid with zero warnings: "${local.value.name}"`);
+    // Once the metadata pins a deploy, the router is pointed at it at its commit, never at main's
+    // link, whose content moves with every later change (TAX-54); whether or not that link resolves.
+    if (onDevnet && metadataUri === `${RAW_REPO}/main/programs/buy-wall-amm/metadata.json`) {
+        let onMain: { source?: { commit?: string } } | undefined;
+        try {
+            const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim();
+            onMain = JSON.parse(execFileSync('git', ['-C', root, 'show', 'origin/main:programs/buy-wall-amm/metadata.json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+        } catch {
+            // No git or no origin/main here: the checkout's copy says.
+        }
+        const pinned = onMain?.source?.commit ?? (local.value as { source?: { commit?: string } }).source?.commit;
+        if (pinned) fail(`the metadata.json on main is pinned to the deploy of ${pinned}: register it at the commit that holds it, not on main`);
+    }
     const published = await pipeline.fetchStrategyMetadata(metadataUri);
     if (published.ok && published.warnings.length === 0) {
         info(`${metadataUri} is valid with zero warnings`);

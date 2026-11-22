@@ -1059,6 +1059,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-22 in [Pipeline 0.3: re-pin the router, SDK and pipeline-check, adapt every program and Canary, and check the pin daily](https://github.com/imDev2023/testing-pipeline/issues/194)
 
+### BAR-45: One publishing tool for every program
+
+- Question: How do the programs pin and verify the metadata they publish for a devnet deploy, now that a third program needs the same steps?
+- Answer: With one shared tool, `packages/strategy-publish` for pinning and verifying and `programs/published-check` for the checks each program's `tests/published.rs` runs, each program naming only its folder, its name and its IDL; the tax AMM's and the buy wall AMM's copies moved onto it unchanged in behaviour.
+- Alternatives: A third copy of `publish.ts` and `tests/published.rs` with only the names changed, as the buy wall AMM made of the tax AMM's.
+- Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -5057,11 +5067,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-82: The demo market's size and the tests' second depositor
 
 - Question: How large is the demo market, and how do the `devnet` build's tests keep its WSOL reserve out of withdraw mode?
-- Answer: The demo market's lent side stays near 0.4 SOL, so it fits the 5 SOL the devnet wallet keeps free in the WSOL reserve, and the `devnet` build's tests give the dumped reserve a second depositor of their own that keeps 2,500 SOL free.
-- Alternatives: Topping the devnet reserve up for the demo, which would make the devnet ticket's demo depend on a larger second depositor; shrinking every test market to fit 5 SOL.
+- Answer: The demo market's first deposit puts 0.5 SOL on the lent side, as the devnet ticket asks, and its later deposits are small enough that the lent side stays near 0.6 SOL, so it fits the 5 SOL the devnet wallet keeps free in the WSOL reserve, and the `devnet` build's tests give the dumped reserve a second depositor of their own that keeps 2,500 SOL free.
+- Alternatives: The earlier default, a lent side near 0.4 SOL from a first deposit of 0.35 SOL, which the devnet ticket's 0.5 SOL ruled out; topping the devnet reserve up for the demo, which would make the devnet ticket's demo depend on a larger second depositor; shrinking every test market to fit 5 SOL.
 - Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
 
 ### LENDING-83: Rebalance runs alone in its transaction
@@ -5204,6 +5214,76 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
 
+### LENDING-97: How the devnet demo shows the lending yield
+
+- Question: How does the devnet demo show that the market earns from Kamino while a borrower holds a loan?
+- Answer: Right after the test borrower borrows, the demo reads the market's lending yield so far, `V + redeemed - deposited` at the stored rate klend's `refresh_reserve` leaves, twice, refreshing the reserve before each read, and stops unless the second read is the higher, reading again for up to a minute while interest is still below a lamport.
+- Alternatives: Reading the yield across the hour of withdraw mode's wait, when the market holds no cTokens and earns nothing; comparing the stored rate alone, which says nothing about the market.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-98: Pipeline's hosted API on a market that reads Kamino
+
+- Question: What does the devnet demo do with Pipeline's hosted API, when a lending AMM market's quotes read Kamino's reserve, an account of another program?
+- Answer: It requires the API to list the demo market, and quotes a buy and a sale within the buffer through it; each quote it gives must equal the program's own on the same state with the same accounts resolved, while a refusal is recorded with the API's answer and does not stop the run.
+- Alternatives: Stopping the run on a refusal, which would make our devnet demo depend on Pipeline's API reading other programs' accounts; skipping the API.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-99: Where the release gates' shared code lives
+
+- Question: Where does the code the buy wall AMM's and the lending AMM's release gates share live?
+- Answer: In one host crate, `programs/release-gate`: the gate records the deploy path trusts, the read-only cluster reads, the release declaration and the reading of a failed step's error, which the buy wall AMM's gate re-exports with its behaviour unchanged.
+- Alternatives: The lending AMM's gate depending on the buy wall AMM's gate crate; a copy of the code in each gate.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-100: How the release gate replays a stale Kamino reserve
+
+- Question: How does the release gate replay a market whose Kamino reserve the cluster left stale, with no live oracle in LiteSVM?
+- Answer: Each replay marks the reserve's saved price as checked at the snapshot's clock and refreshes it with klend's own `refresh_reserve` before anything else, the same in the deployed build's replay and the candidate's, so both compare on identical state.
+- Alternatives: Moving the Pyth account's publish time; copying live oracle accounts, which would differ between the two replays.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-101: What the release gate runs on each market
+
+- Question: What does the lending AMM's release gate run on each market?
+- Answer: Account resolution both ways, quotes both ways at a tenth, a hundredth and a thousandth of the input vault compared with the deployed build's, `pipeline_market_info`, `rebalance` when it is due or the deployed build ran it, a buy and the sale of what it bought, and a sale beyond the buffer that redeems from Kamino, each swap delivering exactly its quote.
+- Alternatives: Adding liquidity and every removal (cash, in kind, the lent side alone) as well, which could be added later.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-102: The release gate's own market
+
+- Question: In what world does the release gate make and trade a market of its own with the candidate?
+- Answer: In one holding only the router, klend, the candidate and the lent mints' Kamino accounts with Kamino's stops cleared and a second depositor of 2,500 SOL in each reserve, where it creates a WSOL-lent market of 10 SOL at 30 basis points and rebalances, trades and sells beyond the buffer, every step counting.
+- Alternatives: Using the cluster's reserve as it is, where a borrower or an emergency switch on devnet could refuse every candidate, an emergency fix included.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-103: How the release gate is shown to catch stranding
+
+- Question: How is the lending AMM's release gate shown to refuse a build that would strand a market?
+- Answer: A test build that swaps two fields of the market state, listed in `programs/lending-amm/gate/test-builds.json` and built from an edited copy of the source by `scripts/broken-builds.py` beside the fuzzer's broken builds, must be refused on a market holding cTokens, and the fuzzer's `no-sale-beyond-the-buffer` on every market and on the gate's own.
+- Alternatives: A `test-builds` command of the gate's own, as the buy wall AMM's has.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -5258,8 +5338,8 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `BAR-04`, `BAR-29`, `PIPESCOPE-87`: Pipeline's crates are on crates.io and its SDK on npm since 2026-11-10; the terminal uses the published packages, while the bar still pins the on-chain workspace's crates by git `rev` and the programs' demo scripts link a local SDK build from `scripts/fetch-pipeline.sh`; whether they move to the published packages is for the bar's owner.
 - `BAR-40`, `TAX-51`, `TAX-52`: set by the session of [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-54` to `POOL4-56`: set by the session of [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
-- `TAX-54`, `POOL4-54`: `programs/tax-amm/scripts/publish.ts` and `tests/published.rs` were copied for the buy wall AMM with only the program's names changed; the lending AMM's devnet ticket will need a third copy, so the shared part belongs in one helper the three programs call.
 - `SUITE-48`: set by the session of [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186), which read its ticket as every link going to GitHub, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `SUITE-49` to `SUITE-53`: set by the session of [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `SUITE-54` to `SUITE-56`: set by the session of [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-99` to `PIPESCOPE-103`: set by the session of [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted; Devnet help's wallet steps (`apps/terminal-web/src/content/devnet-help.ts`) follow each wallet's help pages of 2026-11-22 and were not tried in the wallets.
+- `BAR-45`, `LENDING-97` to `LENDING-103` and the 2026-11-22 change to `LENDING-82`: set by the session of [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.

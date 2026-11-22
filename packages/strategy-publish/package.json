@@ -1,0 +1,24 @@
+{
+    "name": "strategy-publish",
+    "private": true,
+    "type": "module",
+    "description": "Publishing a strategy's metadata for a devnet deploy, the same steps for every program of ours: pinning metadata.json to the deployed commit and its conformance report, and verifying what is published as anyone would see it",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "exports": {
+        ".": "./index.ts"
+    },
+    "scripts": {
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@pipeline-placeholder/sdk": "link:../../fixtures/pipeline/sdk/ts",
+        "@solana-program/token": "0.18.0",
+        "@solana/kit": "8.6.0"
+    },
+    "devDependencies": {
+        "@types/node": "24.19.2",
+        "typescript": "7.0.2"
+    }
+}

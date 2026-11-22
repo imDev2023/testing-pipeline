@@ -49,6 +49,7 @@ litesvm.workspace = true
 pipeline-check.workspace = true
 pipeline-client.workspace = true
 proptest.workspace = true
+published-check.workspace = true
 serde_json.workspace = true
 solana-account.workspace = true
 solana-clock.workspace = true

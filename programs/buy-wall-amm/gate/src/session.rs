@@ -13,6 +13,11 @@ use solana_transaction::Transaction;
 use spl_token_2022_interface::extension::{transfer_hook, StateWithExtensions};
 
 use crate::snapshot::QuoteOutcome;
+use release_gate::errors::failure;
+// Shared with the lending AMM's gate (programs/release-gate/src/errors.rs).
+pub use release_gate::errors::{
+    compared_keys, failing_program, failure_error, first_line, spendable,
+};
 
 pub const SOL: u64 = 1_000_000_000;
 pub const TOKEN: Pubkey = client::TOKEN_PROGRAM_ID;
@@ -555,22 +560,6 @@ impl Session {
     }
 }
 
-/// The most a wallet holding `held` can send in a swap, Pipeline's fee coming on top of
-/// what it sends.
-pub fn spendable(held: u64) -> u64 {
-    let budget = |amount: u64| {
-        pipeline_strategy_interface::fees::max_total_spend(amount, 0).unwrap_or(u64::MAX)
-    };
-    let mut amount = (held as u128 * 10_000 / 10_025) as u64;
-    while amount > 0 && budget(amount) > held {
-        amount -= 1;
-    }
-    while budget(amount + 1) <= held {
-        amount += 1;
-    }
-    amount
-}
-
 /// An anonymous exact-in trade request.
 pub fn exact_in(input: usize, output: usize, amount: u64) -> psi::TradeRequest {
     psi::TradeRequest {
@@ -733,54 +722,6 @@ pub fn role_key(program: &Pubkey, role: &[u8], of: &Pubkey) -> Keypair {
     Keypair::new_from_array(seed.to_bytes())
 }
 
-/// The program whose failure an error's logs show first: the innermost one, where the
-/// failure started (a transfer hook's, say, under the token program and the router). `None`
-/// for an error no program raised, such as the gate's own.
-pub fn failing_program(error: &str) -> Option<String> {
-    error.lines().find_map(|line| {
-        let rest = line.strip_prefix("Program ")?;
-        let (program, tail) = rest.split_once(' ')?;
-        let valid = program.len() >= 32 && program.parse::<Pubkey>().is_ok();
-        (valid && tail.starts_with("failed")).then(|| program.to_string())
-    })
-}
-
-/// What tells one failure from another: the instruction error in its first line, which
-/// carries the failing program's own error code (`InstructionError(0, Custom(6033))`), or the
-/// whole first line when no program raised it.
-pub fn failure_error(message: &str) -> String {
-    let line = first_line(message);
-    let Some(start) = line.find("InstructionError(") else {
-        return line;
-    };
-    let mut depth = 0;
-    for (at, c) in line[start..].char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            _ => continue,
-        }
-        if depth == 0 {
-            return line[start..=start + at].to_string();
-        }
-    }
-    line
-}
-
-/// The two keys a failed `require_keys_eq!` compared, as Anchor logs them: the left, then the
-/// right.
-pub fn compared_keys(message: &str) -> Option<(Pubkey, Pubkey)> {
-    let logs: Vec<&str> = message
-        .lines()
-        .filter_map(|line| line.strip_prefix("Program log: "))
-        .collect();
-    let at = logs.iter().position(|line| *line == "Left:")?;
-    match logs.get(at + 1..at + 4)? {
-        [left, "Right:", right] => Some((left.parse().ok()?, right.parse().ok()?)),
-        _ => None,
-    }
-}
-
 /// A program's name for the report: the buy wall AMM, the router or a token program by
 /// name, any other by its address.
 pub fn program_name(program: &str, ours: &Pubkey) -> String {
@@ -805,15 +746,6 @@ pub fn key(anchor: &anchor_lang::prelude::Pubkey) -> Pubkey {
     Pubkey::new_from_array(anchor.to_bytes())
 }
 
-fn failure(error: &impl std::fmt::Debug, logs: &[String]) -> String {
-    format!("{error:?}\n{}", logs.join("\n"))
-}
-
-/// The error alone, without the logs.
-pub fn first_line(message: &str) -> String {
-    message.lines().next().unwrap_or_default().to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -828,50 +760,5 @@ mod tests {
         assert_ne!(key(b"trader", &a), key(b"keeper", &a));
         let payer = |svm| Session::new(svm, program).payer.pubkey();
         assert_eq!(payer(LiteSVM::new()), payer(LiteSVM::new()));
-    }
-
-    #[test]
-    fn two_failures_differ_by_their_instruction_error_or_else_their_whole_message() {
-        assert_eq!(
-            failure_error("InstructionError(0, Custom(6033))\nProgram log: anything"),
-            "InstructionError(0, Custom(6033))"
-        );
-        assert_eq!(
-            failure_error("its quote was refused: InstructionError(1, InvalidAccountData) then"),
-            "InstructionError(1, InvalidAccountData)"
-        );
-        assert_eq!(
-            failure_error("received 5, not the quote 6\nmore"),
-            "received 5, not the quote 6"
-        );
-    }
-
-    #[test]
-    fn the_keys_a_failed_comparison_logged_are_read_back_in_order() {
-        let (left, right) = (Pubkey::new_unique(), Pubkey::new_unique());
-        let logs = format!(
-            "InstructionError(0, Custom(6000))\nProgram log: AnchorError occurred.\nProgram log: \
-             Left:\nProgram log: {left}\nProgram log: Right:\nProgram log: {right}\nProgram x \
-             failed"
-        );
-        assert_eq!(compared_keys(&logs), Some((left, right)));
-        assert_eq!(compared_keys("InstructionError(0, Custom(6000))"), None);
-    }
-
-    #[test]
-    fn a_failure_is_placed_in_the_innermost_program_that_failed() {
-        let (hook, token, router) = (
-            Pubkey::new_unique(),
-            TOKEN_2022.to_string(),
-            client::PROGRAM_ID.to_string(),
-        );
-        let logs = format!(
-            "InstructionError(0, Custom(32343))\nProgram {router} invoke [1]\nProgram log: \
-             transfer failed to go through\nProgram {hook} invoke [3]\nProgram {hook} failed: \
-             custom program error: 0x7e57\nProgram {token} failed: custom program error: \
-             0x7e57\nProgram {router} failed: custom program error: 0x7e57"
-        );
-        assert_eq!(failing_program(&logs), Some(hook.to_string()));
-        assert_eq!(failing_program("not run: the buy before it failed"), None);
     }
 }

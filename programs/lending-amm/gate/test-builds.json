@@ -1,0 +1,13 @@
+{
+  "about": "The lending AMM release gate's test builds: copies of the program with a mistake that would strand a live market, each one careless edit to a copy of its source, built by scripts/broken-builds.py with the fuzzer's broken builds and run by gate/tests/markets.rs, which checks that the gate refuses each one. The program's own source never carries them.",
+  "builds": [
+    {
+      "name": "moves-a-field",
+      "why": "The recorded cTokens moved after the running total deposited, as a careless reordering of the market state's fields would: every live market's cTokens and totals are read from the wrong bytes.",
+      "gate": "refused on every market holding cTokens",
+      "file": "src/state.rs",
+      "find": "    pub ctokens: u64,\n    /// Running total of the lent mint deposited into Kamino.\n    pub deposited: u128,\n",
+      "replace": "    /// Running total of the lent mint deposited into Kamino.\n    pub deposited: u128,\n    pub ctokens: u64,\n"
+    }
+  ]
+}
