@@ -27,6 +27,7 @@ import {
   type TransactionHandler,
 } from "terminal-indexer";
 import { markets, strategies } from "terminal-db";
+import { isNull } from "drizzle-orm";
 
 export const ROUTER = PIPELINE_PROGRAM_ADDRESS;
 
@@ -45,11 +46,16 @@ export class IndexerCore {
   private readonly handle: TransactionHandler;
   /** The router's cursor, once read; undefined until the first run of this instance reads it. */
   private cursor: Cursor | null | undefined = undefined;
-  /** Whether this instance has read again what older code could not decode, which it does on its first run. */
-  private reindexed = false;
+  /** Whether this instance has made its first run, which also reads every unread market and re-indexes what older code could not decode. */
+  private started = false;
   /** The strategies and markets already indexed, read once per instance for the registry snapshot. */
   private known: { strategies: Set<string>; markets: Set<string> } | null = null;
   private running: Promise<ReconcileOutcome> | null = null;
+  /**
+   * Markets whose accounts are still to be read because the read after their event failed: the
+   * cursor has already moved past the event, so nothing else would name them again.
+   */
+  private unread = new Set<string>();
 
   constructor(private readonly deps: { rpcUrl: string; openDb: OpenDb; source?: HistorySource; handler?: TransactionHandler }) {
     this.source = deps.source ?? historySource(deps.rpcUrl);
@@ -68,21 +74,30 @@ export class IndexerCore {
   }
 
   private async reconcileOnce(): Promise<ReconcileOutcome> {
-    if (this.cursor && this.reindexed && !(await this.source.hasAfter(ROUTER, this.cursor))) {
+    if (this.cursor && this.started && this.unread.size === 0 && !(await this.source.hasAfter(ROUTER, this.cursor))) {
       return { quiet: true, indexed: { counts: {}, markets: [] }, cursor: this.cursor };
     }
     return this.withDb(async (db) => {
       try {
         const indexed: IndexResult = { counts: {}, markets: [] };
-        if (!this.reindexed) {
-          addResult(indexed, await reindexUnknown(db, this.handle));
-          this.reindexed = true;
+        if (!this.started) {
+          // Once per instance, so after each deploy or restart: every market Postgres holds as never
+          // read is read with this run's, and what older code could not decode is read again. A
+          // transaction that still cannot be read keeps its record and is tried by the next
+          // instance; it never holds up the router's history.
+          for (const { address } of await db.select({ address: markets.address }).from(markets).where(isNull(markets.readSlot))) this.unread.add(address);
+          this.started = true;
+          try {
+            addResult(indexed, await reindexUnknown(db, this.handle));
+          } catch (e) {
+            console.error("reading again what older code could not decode failed; the next instance tries again", e);
+          }
         }
         // The first run backfills the router's whole history, page after page, before it returns.
         const { result, cursor } = await reconcileAccount(db, this.source, this.handle, ROUTER, { cursor: this.cursor ?? (await readCursor(db, ROUTER)) });
         addResult(indexed, result);
-        await refreshMarkets(db, this.deps.rpcUrl, indexed.markets);
         this.cursor = cursor;
+        await this.refresh(db, indexed.markets);
         this.learn(indexed);
         return { quiet: false, indexed, cursor };
       } catch (e) {
@@ -104,13 +119,24 @@ export class IndexerCore {
     }
     return this.withDb(async (db) => {
       const added = await indexRegistry(db, registry);
-      await refreshMarkets(db, this.deps.rpcUrl, added.markets);
+      await this.refresh(db, added.markets);
       this.known = {
         strategies: new Set((await db.select({ program: strategies.program }).from(strategies)).map((s) => s.program)),
         markets: new Set((await db.select({ address: markets.address }).from(markets)).map((m) => m.address)),
       };
       return added;
     });
+  }
+
+  /**
+   * Reads the accounts of the markets named and of every market still unread; if the read fails,
+   * they all stay unread for the next run.
+   */
+  private async refresh(db: Db, named: string[]) {
+    for (const market of named) this.unread.add(market);
+    const due = [...this.unread];
+    await refreshMarkets(db, this.deps.rpcUrl, due);
+    for (const market of due) this.unread.delete(market);
   }
 
   /** Adds what a reconciliation indexed to what the snapshot knows, so a market just indexed never wakes the database again. */

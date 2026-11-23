@@ -5,9 +5,9 @@
 import { readFileSync } from "node:fs";
 import { encodeAccount, getStrategyCodec, PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { address } from "@solana/kit";
-import { createDb, strategies, trades } from "terminal-db";
+import { createDb, markets, strategies, trades } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
-import type { RawTransaction } from "terminal-indexer";
+import { DECODER_VERSION, indexTransactions, pipelineHandler, type RawTransaction, type TransactionHandler } from "terminal-indexer";
 import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IndexerCore } from "../src/indexerCore";
@@ -73,6 +73,42 @@ describe("reconciliation of the router", () => {
     await expect(new IndexerCore({ rpcUrl: rpc.url, openDb }).reconcile()).rejects.toThrow("getMultipleAccounts");
     expect(openDb).toHaveBeenCalledTimes(1);
     expect(closed).toBe(1);
+  });
+});
+
+describe("reading a market's accounts", () => {
+  it("is tried again on the next run when it failed, though the chain has nothing new", async () => {
+    const { indexer } = core();
+    rpc.refuse.add("getMultipleAccounts");
+    await expect(indexer.reconcile()).rejects.toThrow("getMultipleAccounts");
+    rpc.refuse.clear();
+    await indexer.reconcile();
+    expect(await reader.db.select({ address: markets.address, readSlot: markets.readSlot }).from(markets)).toEqual([{ address: "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz", readSlot: 525_200_000n }]);
+  });
+
+  it("is done on a new instance's first run for every market never read, as after a restart", async () => {
+    rpc.refuse.add("getMultipleAccounts");
+    await expect(core().indexer.reconcile()).rejects.toThrow("getMultipleAccounts");
+    rpc.refuse.clear();
+    await core().indexer.reconcile();
+    expect((await reader.db.select({ readSlot: markets.readSlot }).from(markets))[0]?.readSlot).toBe(525_200_000n);
+  });
+});
+
+describe("reading again what older code could not decode", () => {
+  it("never stops the router's reconciliation, even when a kept transaction cannot be read again", async () => {
+    // A transaction an older decoder kept as unknown, which the current handler fails on.
+    const kept = fixture("swap");
+    const { db, close } = createDb(database.url);
+    await indexTransactions(db, pipelineHandler({ decode: () => null, decoderVersion: DECODER_VERSION - 1 }), [kept]);
+    await close();
+    const real = pipelineHandler();
+    const handler: TransactionHandler = async (db, raw) => {
+      if (raw.transaction.signatures[0] === kept.transaction.signatures[0]) throw new Error("this transaction cannot be read");
+      return real(db, raw);
+    };
+    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler });
+    expect((await indexer.reconcile()).indexed.counts).toEqual({ strategies: 1, markets: 1 });
   });
 });
 

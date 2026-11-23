@@ -161,7 +161,8 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
   - `POST` prepare for a swap, a custom action and a new market, each returning the unsigned transaction with its simulation's outcome and balance changes;
   - `POST` a trade's signature (the fast path);
   - `POST` a "This is wrong" report against an explanation key.
-- **Paging** (`PIPESCOPE-104`): markets are listed newest first and trades newest first, each page ending with a `next` cursor that the following page passes as `before`, so a page never repeats or skips a row when new ones arrive; a page holds what the caller asks for up to 200 markets or 1,000 trades (the hosted API's own limit for trades), and the pages ask for what the screens' config says, 50 feed rows and 40 trades. Both limits are `PAGE_LIMITS` in the config module.
+- **Paging** (`PIPESCOPE-104`): markets are listed newest first and trades newest first, each page ending with a `next` cursor that the following page passes as `before`, so a page never repeats or skips a row when new ones arrive; a page holds what the caller asks for up to 200 markets or 1,000 trades (the hosted API's own limit for trades), and the pages ask for what the screens' config says, 50 feed rows and 40 trades.
+  Both limits are `PAGE_LIMITS` in the config module.
 - Owner-only operations are not in the API: the explainer's approve command and the reports list read and write Postgres directly from the owner's Mac.
 
 ## Trading path
