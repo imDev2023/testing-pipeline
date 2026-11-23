@@ -124,7 +124,12 @@ describe.skipIf(!ready)("parity with Pipeline's hosted devnet API", () => {
       if (!more || !last) break;
       cursor = { signature: last.transaction.signatures[0]!, slot: last.slot, blockIndex: last.transactionIndex ?? null };
     }
-    const ours = (await Promise.all((await api.markets()).map((m) => api.trades({ market: m.address })))).flat().filter((t) => t.slot <= cutoff);
+    // A few markets at a time: each request opens its own database connection under `wrangler dev`, and
+    // the Docker Postgres takes 100, fewer than devnet's markets.
+    const ours: Trade[] = [];
+    const all = await api.markets();
+    for (let i = 0; i < all.length; i += 8) ours.push(...(await Promise.all(all.slice(i, i + 8).map((m) => api.trades({ market: m.address })))).flat());
+    ours.splice(0, ours.length, ...ours.filter((t) => t.slot <= cutoff));
     expect(onChain.length).toBeGreaterThan(0);
     for (const gap of HOSTED_API_GAPS) expect(onChain.some((s) => s.signature === gap.signature && s.market === gap.market), gap.signature).toBe(true);
     expect(sorted(ours.map(({ signature, market, net_sent, received }) => ({ signature, market, net_sent, received })))).toEqual(sorted(onChain));
