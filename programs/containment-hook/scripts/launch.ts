@@ -107,30 +107,18 @@ import { parseArgs, promisify } from 'node:util';
 
 import {
     address,
-    addSignersToTransactionMessage,
-    appendTransactionMessageInstructions,
     AccountRole,
     compressTransactionMessageUsingAddressLookupTables,
-    createDefaultRpcTransport,
-    createKeyPairSignerFromBytes,
-    createSolanaRpcFromTransport,
-    createTransactionMessage,
     generateKeyPairSigner,
     getAddressEncoder,
     getBase64EncodedWireTransaction,
     getSignatureFromTransaction,
     getTransactionMessageSize,
     getTransactionMessageSizeLimit,
-    lamports,
-    pipe,
-    setTransactionMessageFeePayerSigner,
-    setTransactionMessageLifetimeUsingBlockhash,
     signTransactionMessageWithSigners,
-    type AccountMeta,
     type Address,
     type Instruction,
     type KeyPairSigner,
-    type Signature,
 } from '@solana/kit';
 import { getCreateAccountInstruction, getTransferSolInstruction } from '@solana-program/system';
 import {
@@ -154,6 +142,7 @@ import * as pipeline from '@pipeline-placeholder/sdk';
 import { buildActionInstruction, findAction } from 'strategy-actions';
 
 import { parseTokens, UsageError, type TokenTerms } from './args.ts';
+import { clusterUrl, connect, DEVNET_URL, fail, hookCompute, info, loadKey, refusedByTheHook, show, sleep, Stopped, TOKEN_2022_PROGRAM_ADDRESS, type ContainedView, type HookAccountsFor } from './chain.ts';
 import { judgeConformance, type ConformanceReport } from './conformance.ts';
 
 import {
@@ -170,10 +159,9 @@ import {
     getUnlockInstructionAsync,
     MAX_UNLOCK_DEADLINE_SECS,
 } from './client/index.ts';
-import { fetchTaxMarket, findAuthorityPda, findVault0Pda, findVault1Pda, MarketStatus, TAX_AMM_PROGRAM_ADDRESS } from '../../tax-amm/scripts/client/index.ts';
+import { fetchTaxMarket, findVault0Pda, findVault1Pda, MarketStatus, TAX_AMM_PROGRAM_ADDRESS } from '../../tax-amm/scripts/client/index.ts';
 import { termsArg, termsHash } from '../../tax-amm/scripts/terms.ts';
 
-const TOKEN_2022_PROGRAM_ADDRESS = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
 const WRAPPED_SOL = address('So11111111111111111111111111111111111111112');
 const DEFAULT_ADDRESS = address('11111111111111111111111111111111');
 
@@ -251,18 +239,8 @@ const HOOKED_MINT_SIZE = 165 + 1 + 4 + 64;
 const TRANSFER_HOOK_EXTENSION = 36;
 const TRANSFER_HOOK_INITIALIZE = 0;
 
-// How long the script waits for the RPC to serve a transaction it has seen land.
-const LANDED_TRANSACTION_WAIT_MS = 30_000;
 // How long one run of `pipeline-check` may take before the script stops it.
 const PIPELINE_CHECK_TIMEOUT_MS = 600_000;
-const LOCALNET_URL = 'http://127.0.0.1:8899';
-const DEVNET_URL = 'https://api.devnet.solana.com';
-const GENESIS_HASHES = {
-    devnet: 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG',
-    testnet: '4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY',
-    mainnet: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',
-};
-const LOCAL_HOSTS = ['127.0.0.1', 'localhost', '[::1]', '0.0.0.0'];
 
 const { values: options } = parseArgs({
     options: {
@@ -287,20 +265,7 @@ function usage(message: string): never {
     process.exit(2);
 }
 
-function clusterUrl(cluster: string | undefined): { url: string; local: boolean } {
-    if (!cluster) usage('--cluster is required');
-    if (cluster === 'localnet') return { url: LOCALNET_URL, local: true };
-    if (cluster === 'devnet') return { url: DEVNET_URL, local: false };
-    let host: string;
-    try {
-        host = new URL(cluster).hostname;
-    } catch {
-        usage(`--cluster must be localnet, devnet or an RPC URL, not "${cluster}"`);
-    }
-    return { url: cluster, local: LOCAL_HOSTS.includes(host) };
-}
-
-const cluster = clusterUrl(options.cluster);
+const cluster = clusterUrl(options.cluster, usage);
 const launcherPath = options.launcher ?? usage('--launcher is required');
 type Terms = TokenTerms;
 let tokens: Terms[];
@@ -322,140 +287,14 @@ const recordPath = options.record && resolve(options.record);
 // is refused before anything is sent.
 if (recordPath && !existsSync(dirname(recordPath))) usage(`--record: no directory ${dirname(recordPath)} to write ${basename(recordPath)} in`);
 
-const baseTransport = createDefaultRpcTransport({ url: cluster.url });
-const retryingTransport = (async (...args: Parameters<typeof baseTransport>) => {
-    for (let attempt = 0; ; attempt++) {
-        try {
-            return await baseTransport(...args);
-        } catch (error) {
-            if (attempt >= 8 || !String(error).includes('429')) throw error;
-            await sleep(500 * 2 ** attempt);
-        }
-    }
-}) as typeof baseTransport;
-const rpc = createSolanaRpcFromTransport(retryingTransport);
-
 const record: [string, string][] = [];
-
-function sleep(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const { rpc, explorer, checkCluster, landed, landedTransaction, latestBlockhash, message, send, simulate, fundLocally, account, tokenBalance, clusterTime, routerFeeSide, swapInstruction, trade } = connect(cluster, record);
 
 /** Names the token being launched in each step's title, when the run launches several. */
 let stepPrefix = '';
 
 function step(title: string) {
     console.log(`\n== ${stepPrefix}${title}`);
-}
-
-function info(message: string) {
-    console.log(`   ${message}`);
-}
-
-/** Why the launch stopped; `main` prints it and exits. */
-class Stopped extends Error {}
-
-function fail(message: string): never {
-    throw new Stopped(message);
-}
-
-function explorer(kind: 'tx' | 'address', value: string) {
-    return onDevnet ? `https://orbmarkets.io/${kind}/${value}?cluster=devnet` : value;
-}
-
-async function checkCluster() {
-    const genesis = await rpc.getGenesisHash().send();
-    if (genesis === GENESIS_HASHES.mainnet || genesis === GENESIS_HASHES.testnet) {
-        fail(`${cluster.url} is ${genesis === GENESIS_HASHES.mainnet ? 'mainnet' : 'testnet'}; contained tokens launch only on devnet or a local validator`);
-    }
-    if (!cluster.local && genesis !== GENESIS_HASHES.devnet) {
-        fail(`${cluster.url} is not devnet (genesis hash ${genesis}); contained tokens launch only on devnet or a local validator`);
-    }
-    info(`cluster: ${cluster.local ? 'a local validator' : 'devnet'} (genesis hash ${genesis})`);
-}
-
-async function loadKey(path: string): Promise<KeyPairSigner> {
-    return createKeyPairSignerFromBytes(new Uint8Array(JSON.parse(readFileSync(path, 'utf8'))));
-}
-
-/** Waits until `signature` has landed, and returns its error, if it failed. */
-async function landed(label: string, signature: Signature) {
-    for (let i = 0; ; i++) {
-        const { value } = await rpc.getSignatureStatuses([signature]).send();
-        const status = value[0];
-        if (status?.err) return status.err;
-        if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return null;
-        if (i > 120) fail(`${label}: not confirmed after 60 s (${explorer('tx', signature)})`);
-        await sleep(500);
-    }
-}
-
-/**
- * A landed transaction as the RPC returns it, at `confirmed`. A devnet RPC node can answer
- * `getSignatureStatuses` before `getTransaction` serves the transaction, so this asks again
- * for up to `LANDED_TRANSACTION_WAIT_MS` before it gives up.
- */
-async function landedTransaction(label: string, signature: Signature) {
-    for (let waited = 0; ; waited += 1_000) {
-        const tx = await rpc.getTransaction(signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }).send();
-        if (tx) return tx;
-        if (waited >= LANDED_TRANSACTION_WAIT_MS) fail(`${label}: the RPC did not serve transaction ${signature} after ${LANDED_TRANSACTION_WAIT_MS / 1000} s (${explorer('tx', signature)})`);
-        await sleep(1_000);
-    }
-}
-
-async function waitFor(label: string, signature: Signature) {
-    const err = await landed(label, signature);
-    if (err) fail(`${label} failed: ${JSON.stringify(err, (_, v) => (typeof v === 'bigint' ? v.toString() : v))} (${explorer('tx', signature)})`);
-}
-
-type Blockhash = Awaited<ReturnType<ReturnType<typeof rpc.getLatestBlockhash>['send']>>['value'];
-
-async function latestBlockhash(): Promise<Blockhash> {
-    return (await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()).value;
-}
-
-/** A version 0 transaction message of `instructions`, paid for by `feePayer`. */
-function message(feePayer: KeyPairSigner, instructions: Instruction[], extra: KeyPairSigner[], blockhash: Blockhash) {
-    return pipe(
-        createTransactionMessage({ version: 0 }),
-        (m) => setTransactionMessageFeePayerSigner(feePayer, m),
-        (m) => setTransactionMessageLifetimeUsingBlockhash(blockhash, m),
-        (m) => appendTransactionMessageInstructions(instructions, m),
-        (m) => addSignersToTransactionMessage(extra, m),
-    );
-}
-
-/** Sends a transaction and waits for confirmation by polling. */
-async function send(label: string, feePayer: KeyPairSigner, instructions: Instruction[], extra: KeyPairSigner[] = []) {
-    const signed = await signTransactionMessageWithSigners(message(feePayer, instructions, extra, await latestBlockhash()));
-    const signature = getSignatureFromTransaction(signed);
-    await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64' }).send();
-    await waitFor(label, signature);
-    info(`${label}: ${explorer('tx', signature)}`);
-    record.push([label, signature]);
-    return signature;
-}
-
-async function fundLocally(key: Address, amount: bigint) {
-    const { value: balance } = await rpc.getBalance(key, { commitment: 'confirmed' }).send();
-    if (balance >= amount) return;
-    for (let attempt = 0; ; attempt++) {
-        try {
-            const signature = await rpc.requestAirdrop(key, lamports(amount - balance)).send();
-            await waitFor('airdrop to the launcher', signature);
-            info(`airdropped ${Number(amount - balance) / 1e9} SOL to the launcher`);
-            return;
-        } catch (error) {
-            if (attempt >= 5) throw error;
-            await sleep(2_000);
-        }
-    }
-}
-
-async function account(address: Address) {
-    const { value } = await rpc.getAccountInfo(address, { encoding: 'base64', commitment: 'confirmed' }).send();
-    return value && { owner: value.owner, executable: value.executable, data: new Uint8Array(Buffer.from(value.data[0], 'base64')) };
 }
 
 /** Token-2022's `InitializeTransferHook`: the hook authority and the hook program of `mint`. */
@@ -470,156 +309,6 @@ function initializeTransferHook(mint: Address, authority: Address, program: Addr
         accounts: [{ address: mint, role: AccountRole.WRITABLE }],
         data,
     };
-}
-
-const show = (value: unknown) => JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
-
-/** A token account's balance. */
-async function tokenBalance(account: Address): Promise<bigint> {
-    const { value } = await rpc.getTokenAccountBalance(account, { commitment: 'confirmed' }).send();
-    return BigInt(value.amount);
-}
-
-type HookAccountsFor = (source: Address, destination: Address, authority: Address) => Promise<AccountMeta[]>;
-
-/**
- * The side a trade into `outputMint` pays Pipeline's fee on, from the market the router
- * recorded. Since Pipeline 0.3 it is the output when that is the market's fee mint: on a
- * home market quoted in wrapped SOL a sell pays the fee in SOL, out of what arrived, and the
- * token never moves into its fee account; on any other quote mint it is the token, as before.
- */
-async function routerFeeSide(market: Address, outputMint: Address): Promise<pipeline.FeeSide> {
-    const recorded = await account(market);
-    const decoded = recorded && pipeline.decodeMarket(recorded.data);
-    if (!decoded) fail(`the router has no market at ${market}`);
-    return pipeline.feeSideOf(decoded, outputMint);
-}
-
-/**
- * The router's `swap` of `amount` of mint `input` for mint `output` by `trader`, built with
- * the SDK as a terminal builds it, with the contained token's hook accounts: after the
- * strategy's accounts when it is the output, which the tax AMM moves out of its vault, and as
- * the router's input hook accounts when it is the input, which the router moves into the
- * vault and, when Pipeline's fee is taken in the token, into the fee account. Its minimum is
- * what the trader keeps of the quote. Quoted at `confirmed`, the commitment the launch
- * confirms at.
- */
-async function swapInstruction(
-    trader: KeyPairSigner,
-    view: pipeline.MarketView,
-    input: number,
-    output: number,
-    amount: bigint,
-    tokenHolder: Address,
-    quoteHolder: Address,
-    hookAccounts: HookAccountsFor,
-    options: { integratorFeeAccount?: Address; integratorFeeBps?: number; minAmountOut?: bigint } = {},
-) {
-    const holders = input === CONTAINED_INDEX ? [tokenHolder, quoteHolder] : [quoteHolder, tokenHolder];
-    const [traderInput, traderOutput] = holders as [Address, Address];
-    const request = { mode: pipeline.TradeMode.ExactIn, inputIndex: input, outputIndex: output, amount, trader: trader.address, extra: new Uint8Array() };
-    const simulation = { commitment: 'confirmed' } as const;
-    const strategyAccounts = await pipeline.resolveAccounts(rpc, view, request, trader.address, simulation);
-    const { quote } = await pipeline.quoteStrategy(rpc, view, request, strategyAccounts, trader.address, simulation);
-    const buying = output === CONTAINED_INDEX;
-    const feeSide = await routerFeeSide(view.market, view.mints[output]!);
-    const kept = feeSide === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
-    // On a buy the tax AMM pays out of its vault, signed by its vault authority.
-    const tail = buying
-        ? await hookAccounts(view.vaults[output]!, traderOutput, (await findAuthorityPda({ marketState: view.marketState }))[0])
-        : await hookAccounts(traderInput, view.vaults[input]!, trader.address);
-    const instruction = await pipeline.swap(
-        {
-            trader: trader.address,
-            strategyProgram: view.strategyProgram,
-            marketState: view.marketState,
-            traderInput,
-            traderOutput,
-            inputVault: view.vaults[input]!,
-            inputMint: view.mints[input]!,
-            outputMint: view.mints[output]!,
-            inputTokenProgram: view.tokenPrograms[input]!,
-            outputTokenProgram: view.tokenPrograms[output]!,
-            integratorFeeAccount: options.integratorFeeAccount ?? null,
-            strategyAccounts: buying ? [...strategyAccounts, ...tail] : strategyAccounts,
-            inputHookAccounts: buying ? [] : tail,
-        },
-        {
-            mode: pipeline.TradeMode.ExactIn,
-            amountIn: amount,
-            amountOut: 0n,
-            minAmountOut: options.minAmountOut ?? kept,
-            integratorFeeBps: options.integratorFeeBps ?? 0,
-            extra: new Uint8Array(),
-        },
-        feeSide,
-    );
-    return { instruction, quote, kept, feeSide, traderOutput };
-}
-
-/**
- * Swaps through the router with [`swapInstruction`], and stops unless the swap delivered its
- * quote and the trader kept it, less Pipeline's fee when that is taken in the output; returns
- * what the trader kept, Pipeline's fee and the side it was taken on, and what the hook's
- * `Execute` cost on each hooked transfer, from the transaction's logs.
- */
-async function trade(
-    trader: KeyPairSigner,
-    view: pipeline.MarketView,
-    input: number,
-    output: number,
-    amount: bigint,
-    tokenHolder: Address,
-    quoteHolder: Address,
-    hookAccounts: HookAccountsFor,
-    hooked = true,
-) {
-    const label = `swap ${amount} of ${input === CONTAINED_INDEX ? 'the token' : 'the quote mint'} for ${output === CONTAINED_INDEX ? 'the token' : 'the quote mint'}`;
-    const { instruction, quote, kept, feeSide, traderOutput } = await swapInstruction(trader, view, input, output, amount, tokenHolder, quoteHolder, hookAccounts);
-    info(`${label}: quoted ${quote.amountOut}`);
-    const before = await tokenBalance(traderOutput);
-    const signature = await send(label, trader, [instruction]);
-    const received = (await tokenBalance(traderOutput)) - before;
-    const tx = await landedTransaction(label, signature);
-    if (!tx.meta?.innerInstructions) fail(`transaction ${signature} has no inner instructions`);
-    const keys = [...tx.transaction.message.accountKeys, ...(tx.meta.loadedAddresses?.writable ?? []), ...(tx.meta.loadedAddresses?.readonly ?? [])];
-    const event = pipeline.extractEventsFromInnerInstructions(keys, tx.meta.innerInstructions).find((candidate) => candidate.type === 'Swap');
-    if (!event || event.type !== 'Swap') fail(`transaction ${signature} has no swap event`);
-    if (received !== kept || event.data.received !== quote.amountOut) {
-        fail(`${label}: kept ${received} (event: ${event.data.received} arrived), quoted ${quote.amountOut} to keep ${kept}`);
-    }
-    const hookUnits = hookCompute(tx.meta.logMessages ?? []);
-    // While contained, the hook runs on the vault's transfer of a buy, and on a sell's transfer
-    // into the vault and, when Pipeline's fee is taken in the token, its transfer into the fee
-    // account; after the unlock, never.
-    const expected = hooked ? (output === CONTAINED_INDEX ? 1 : feeSide === 'input' ? 2 : 1) : 0;
-    if (hookUnits.length !== expected) fail(`${label}: the hook ran ${hookUnits.length} times, not ${expected}`);
-    const hook = hooked ? `the hook's Execute took ${hookUnits.join(' and ')} CU` : 'the hook did not run';
-    info(`${label}: the quote arrived and ${received} was kept, Pipeline's fee ${event.data.pipelineFee} in the ${feeSide}; ${hook}`);
-    return { received, pipelineFee: event.data.pipelineFee, feeSide, hookUnits };
-}
-
-/** The compute units each invocation of the hook consumed, in order, from a transaction's logs. */
-function hookCompute(logs: readonly string[]): number[] {
-    const consumed = `Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} consumed `;
-    return logs.filter((line) => line.startsWith(consumed)).map((line) => Number(line.slice(consumed.length).split(' ')[0]));
-}
-
-/** Simulates `instruction` and returns whether it failed, with its logs. */
-async function simulate(feePayer: KeyPairSigner, instruction: Instruction) {
-    const signed = await signTransactionMessageWithSigners(message(feePayer, [instruction], [], await latestBlockhash()));
-    const { value } = await rpc
-        .simulateTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64', commitment: 'confirmed' })
-        .send();
-    return { err: value.err, logs: value.logs ?? [] };
-}
-
-/** Whether `logs` show the hook failing with the error `name`, number `code`. */
-function refusedByTheHook(logs: readonly string[], name: string, code: number) {
-    return (
-        logs.some((line) => line.includes(`Error Code: ${name}. Error Number: ${code}.`)) &&
-        logs.some((line) => line.startsWith(`Program ${CONTAINMENT_HOOK_PROGRAM_ADDRESS} failed`))
-    );
 }
 
 /** Simulates `instruction` and stops unless the hook refuses it with the error `name`. */
@@ -666,7 +355,7 @@ async function sendRefused(
  * created for the simulation, which cannot run on an account that does not exist, and closed
  * after it, so the launcher gets its rent back.
  */
-async function showHookRefusal(trader: KeyPairSigner, view: pipeline.MarketView, quoteHolder: Address, hookAccounts: HookAccountsFor): Promise<boolean> {
+async function showHookRefusal(trader: KeyPairSigner, view: ContainedView, quoteHolder: Address, hookAccounts: HookAccountsFor): Promise<boolean> {
     const account = await generateKeyPairSigner();
     const space = getTokenSize([{ __kind: 'TransferHookAccount', transferring: false }]);
     const rent = await rpc.getMinimumBalanceForRentExemption(BigInt(space), { commitment: 'confirmed' }).send();
@@ -742,13 +431,6 @@ function writeRecord(outcome: string) {
     console.log(`Record written to ${recordPath}`);
 }
 
-/** The cluster's clock, as the latest confirmed block's time. */
-async function clusterTime(): Promise<bigint> {
-    const time = await rpc.getBlockTime(await rpc.getSlot({ commitment: 'confirmed' }).send()).send();
-    if (time === null) fail('the cluster did not give its time');
-    return BigInt(time);
-}
-
 async function main() {
     const launcher = await loadKey(launcherPath);
     const hookProgram = CONTAINMENT_HOOK_PROGRAM_ADDRESS;
@@ -762,7 +444,7 @@ async function main() {
             `Token ${i + 1}: quoted in ${quoteMint === 'new' ? 'a fresh SPL Token mint' : quoteMint}, unlock goal ${unlockGoal} quote-mint base units, unlock deadline ${new Date(Number(unlockDeadline) * 1000).toISOString()} (${unlockDeadline})${unlockBy ? `, unlocked by the ${unlockBy}` : ', left contained'}`,
         );
     }
-    await checkCluster();
+    await checkCluster('contained tokens launch only on devnet or a local validator');
     if (cluster.local) {
         step('0. Funding the launcher on the local validator');
         await fundLocally(launcher.address, LOCAL_FUNDING);
@@ -1178,7 +860,7 @@ async function launchToken(
     // from the validation account just read.
     const hookAccounts: HookAccountsFor = (source, destination, owner) =>
         resolveExtraAccountMetasForExecute({ rpc, transferHookProgramAddress: hookProgram, source, mint, destination, owner, amount: 0n });
-    const view: pipeline.MarketView = {
+    const view: ContainedView = {
         market,
         strategyProgram: taxAmm,
         marketState,
@@ -1186,6 +868,7 @@ async function launchToken(
         vaults,
         tokenPrograms: mints.map(({ tokenProgram }) => tokenProgram),
         supportsExactOut: false,
+        containedIndex: CONTAINED_INDEX,
     };
 
     step("6. Seeding the home market through the metadata's seed action, with the hook accounts");

@@ -430,3 +430,5 @@ By [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pip
 
 - The owner rule costs a buy about 100 units, one walk of the destination's extension entries; a sell, whose destination is the vault, does not walk it.
 - `bind` reads the quote mint too, about 500 units.
+
+On devnet on 2026-11-23, with release 0.1.1 deployed: `Execute` cost 5,676 units on a buy, 5,611 into the vault and 5,614 into the fee account on a sell, as in LiteSVM; `unlock` cost 13,821 units by the deadline and 14,173 by the goal, for tokens bound by the earlier build as for new ones (`deployments/devnet-demo-containment-hook-0.1.1.json`).
