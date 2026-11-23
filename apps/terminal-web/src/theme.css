@@ -79,13 +79,20 @@
   --header-columns: auto 1fr auto;
   --header-areas: "brand links end";
 
-  /* Tables: rows and columns on wide screens (components/Table.tsx). */
+  /* Tables: rows and columns on wide screens (components/Table.tsx, components/ListingTable.module.css). */
   --table-display: table;
   --table-head-display: table-header-group;
   --table-body-display: table-row-group;
   --table-row-display: table-row;
   --table-cell-display: table-cell;
   --table-label-display: none;
+  /* A listing's spacing (the feed's markets and strategies): its cells carry the padding and the
+     rules between rows on wide screens, its rows as blocks at 720 px and narrower. */
+  --listing-cell-padding: 12px 16px;
+  --listing-cell-rule: 1px;
+  --listing-row-padding: 0;
+  --listing-row-rule: 0;
+  --listing-number-align: right;
 }
 
 :root[data-theme="light"] {
@@ -116,5 +123,10 @@
     --table-row-display: grid;
     --table-cell-display: grid;
     --table-label-display: block;
+    --listing-cell-padding: 0;
+    --listing-cell-rule: 0;
+    --listing-row-padding: 14px 16px;
+    --listing-row-rule: 1px;
+    --listing-number-align: left;
   }
 }

@@ -150,7 +150,7 @@ The feed is one table of markets, newest first, with strategies on a second tab.
   - its strategy, by name and short address, or by short address with "Metadata unavailable";
   - when it was created;
   - liquidity, as what each vault holds;
-  - volume in the last 24 hours in the quote mint, with the number of trades;
+  - volume in the last 24 hours in the quote mint, with the number of trades; on a market of three or four mints the count takes every trade, and the volume those with the quote mint on one side, since no other trade has an amount of it (`PIPESCOPE-106`);
   - Canary ([What a row says about Canary](#what-a-row-says-about-canary));
   - Pipeline's trust flags.
 - **A strategy's row**: its name and short address; when it was registered; how many markets it has; its current version's slot and who can upgrade it; the range of Canary's round-trip return over its markets that trade, and how many of its markets its current version cannot read; and its trust flags.

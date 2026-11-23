@@ -60,6 +60,9 @@ fn files_containing(needle: &str) -> Vec<String> {
         // written by hand; `tests/kamino.rs` checks they are the reserves the config module
         // names.
         .filter(|path| !path.starts_with("lending-amm/tests/fixtures/"))
+        // The devnet demo market's `pipeline-check` report records a run, naming the accounts
+        // that run read; tests/published.rs checks it is of the deployed code.
+        .filter(|path| !path.starts_with("lending-amm/conformance/"))
         .collect()
 }
 

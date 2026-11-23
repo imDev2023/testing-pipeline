@@ -745,6 +745,27 @@ pnpm demo --cluster devnet --payer ... --upgrade-authority ... --record <scratch
 Before it, `npm run cli -- setup` and `status` in `scripts/kamino-devnet` must report our Kamino lending market unchanged, with the second depositor's 5 SOL in the WSOL reserve, and both reserves' Pyth price accounts must still exist, since klend's `refresh_reserve` reads them.
 On devnet the demo walks the whole product on one market, as on a local validator, and steps 28 to 30 (the launchpad) are skipped; step 25's wait is `WITHDRAW_MODE_EXIT_DELAY_SLOTS` of devnet's slots, about an hour, and step 31 asks Pipeline's hosted API to list and quote the market (`LENDING-98`).
 Step 27 ends with the buffer back at its target and prints two sales of the token whose output lands just inside and just beyond the buffer, which `pipeline-check --amounts` takes for the checks on both sides of the buffer's edge.
+`--hosted-api <router market>` runs step 31 alone on a market an earlier run made, and `--record` writes what a run did even when it stops part way, by a failed check or a thrown error.
+
+The lending AMM went to devnet this way on 2026-11-22 and 2026-11-23:
+
+- **Kamino.** `setup` reported our lending market in place with nothing to create, `layout` matched every offset, and `status` showed the second depositor's 5.0001 SOL in the WSOL reserve, none borrowed and every stop off.
+- **The release gate.** The verified build of `25a209c`, executable hash `34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c`, built in 172 seconds, and every lending AMM and gate test, 263, passed on those bytes.
+  `lending-gate run --cluster devnet` found no market, made and traded one of its own with them, its sale beyond the buffer redeeming 6,000,169,061 lamports from Kamino, exactly its quote, and recorded the pass (`deployments/release-gate/lending-amm/devnet.json`).
+- **Deploy.** `deploy-devnet.sh lending-amm` built the commit again, the first try failing with `can't find crate` and the second building the same hash ("Known problems"); the pre-deploy check found the gate's pass, and the program was deployed over TPU in slot 525,242,911, signature `2rK27mtodhzgDZNKM8tSr8EpJJWBift2faAx8ARnk9CFg5io4ZH4P2CmA8gCwHQpV2MyF17RR4kyHzVN12nHQyKb`, with `solana-verify get-program-hash -u devnet` giving the build's hash.
+- **The demo.** Its first run registered the strategy and walked steps 4 to 21, then klend refused the test borrower's borrow with `PriceTooOld`: devnet's sponsored Pyth feeds had stopped updating for over 25 minutes, past our reserves' 600-second price max age, which `setup` then raised to a week (`LENDING-40` changed); the second run's borrow landed, and public devnet dropped a connection right after, which the demo now retries.
+  The third run passed every step from 4 to 30, 28 to 30 skipped, in about 90 minutes, an hour of it withdraw mode's wait, and stopped at step 31's sale, whose comparison then took the strategy's quote for what the trader keeps; with the comparison fixed, `--hosted-api` ran step 31 alone on the same market and passed (below):
+  - the token held no authorities, and the market was created and funded with 0.5 SOL on its lent side in one transaction;
+  - `rebalance` lent 447,949,380 lamports for 447,943,772 cTokens and a second one was refused with `WithinBand`;
+  - a sale beyond the buffer built from a smaller sale's accounts was refused with `RedeemAccountsMissing`, and with its own accounts redeemed its shortfall inside the swap, the trader receiving exactly the quote;
+  - the second wallet's deposit was refused with `ReserveStale` until klend's `refresh_reserve` went first, which works with devnet's Pyth accounts, and it removed in cash, in kind and the lent side alone, redeemed its cTokens at klend and locked shares;
+  - with the loan held the lending yield rose from 83 to 140 lamports between slots 525,425,925 and 525,425,935;
+  - `rebalance` entered withdraw mode at 1,556,837,980 lamports free, redeeming all 284,303,018 cTokens for 284,306,864, refused to move again until the wait was over, and left it at 5,574,119,164 free, lending 321,367,826;
+  - with emergency mode on a sale within the buffer traded, one beyond it was refused by the quote and the swap with `BeyondBuffer`, `rebalance` with `KaminoStopped` and a cash removal with `KaminoCannotPay`, and the second wallet left in kind; with it off a sale beyond the buffer redeemed again and `rebalance` restored the buffer.
+- **Pipeline's hosted API** listed the demo market and quoted it: a buy of 5,886,771 lamports at 10,379,899,096 of the token, and a sale of 5,309,366,395 at 2,898,322 lamports kept, each exactly what the program's own quote leaves the trader on the same state (Pipeline 0.3 takes its fee out of a sale into WSOL, so the strategy's 2,905,586 less 0.25%).
+  So the API quotes a market whose swaps read another program's account.
+- **Conformance.** `pipeline-check --url devnet --market AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu --fail-on-warn` reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped, at its default sizes (`programs/lending-amm/conformance/devnet.json`) and with `--amounts 131473535384,134801897064`, sales paying out 99% and 101% of the buffer, resolving up to 11 strategy accounts and using up to 99,225 compute units; `--list-markets` listed the market.
+- A `pipeline-check` built at a new path waited on LuLu until the owner allowed it ("Known problems").
 
 ## Local validator
 
@@ -801,6 +822,19 @@ pnpm terminal:dev:web                # terminal-web built through OpenNext and r
 `pnpm terminal:e2e` runs Playwright (`tests/terminal-e2e`) on the local run: it starts both Workers unless they are already up, checks every page at 1440, 390 and 360 px in the light and the dark theme, and saves each page's screenshot to `tests/terminal-e2e/screenshots/<width>-<theme>/` for the PR.
 `E2E_RPC` says where the API's RPC goes: `devnet` (the default outside CI) uses `RPC_URL`; `fixtures` (CI's) replays `tests/terminal-e2e/fixtures/devnet-rpc.json` with no network; `record` (`pnpm --filter terminal-e2e record`) runs against devnet and records every answer into that file (`PIPESCOPE-102`).
 The first run needs `pnpm --filter terminal-e2e exec playwright install chromium`.
+Before the tests, `src/global-setup.ts` fires the cron and waits for the indexer's first run, which backfills the router's whole history into the database, so the feed has devnet's markets to show; on the recorded fixtures that history is the one recorded, so a run on an empty database draws the same pages.
+
+### Aviary's devnet tests
+
+`tests/devnet` holds the indexer's restart test and the parity checks against Pipeline's hosted devnet API (`docs/spec/pipescope-architecture.md`, Indexer).
+Each starts its own `terminal-api` under `wrangler dev`, on a throwaway database made on `TEST_DATABASE_URL` and on ports 8822 and 8824, so it never meets a local run already up; the restart test spends a little devnet SOL in fees from the project's devnet wallet.
+
+```sh
+direnv exec "<main checkout>" pnpm --filter terminal-devnet devnet
+```
+
+They read devnet, so they never run in CI.
+`wrangler dev`'s `workerd` reaches devnet only once LuLu allows its path, which differs in every worktree (`node_modules/.pnpm/@cloudflare+workerd-darwin-64@<version>/node_modules/@cloudflare/workerd-darwin-64/bin/workerd`, unsigned, so LuLu cannot allow it by signature).
 
 Passed on 2026-11-22 with Node 24.4.1 (#113): 36 tests, in 1.4 minutes against devnet and 1.2 minutes on the recorded fixtures.
 

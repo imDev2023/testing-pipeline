@@ -16,9 +16,12 @@
         "types": "wrangler types --env-interface CloudflareBindings"
     },
     "dependencies": {
+        "@pipeline-sol/sdk": "catalog:",
         "@solana/kit": "8.6.0",
+        "drizzle-orm": "0.45.4",
         "hono": "4.13.20",
         "terminal-db": "workspace:*",
+        "terminal-indexer": "workspace:*",
         "zod": "4.6.7"
     },
     "devDependencies": {

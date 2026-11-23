@@ -66,14 +66,33 @@ export const TOKEN_IMAGE = {
   maxBytes: 1024 * 1024,
 } as const;
 
+/** Wrapped SOL, and the cluster's USDC: Circle's devnet mint (docs/spec/pipescope.md, The integrator fee). */
+export const WRAPPED_SOL = "So11111111111111111111111111111111111111112";
+export const CLUSTER_USDC = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+
 /**
  * The quote mint order (PIPESCOPE-74): wrapped SOL, then the cluster's USDC, then the later mint of
- * the pair. The cluster's USDC is Circle's devnet mint (docs/spec/pipescope.md, The integrator fee).
+ * the pair in the market's own order (./pairs).
  */
-export const QUOTE_MINT_ORDER = [
-  "So11111111111111111111111111111111111111112",
-  "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-] as const;
+export const QUOTE_MINT_ORDER = [WRAPPED_SOL, CLUSTER_USDC] as const;
+
+/**
+ * The names Aviary itself gives mints, set plainly as its own words; every other name is its
+ * author's and comes with token names (#120).
+ */
+export const AVIARY_MINT_NAMES: Readonly<Record<string, string>> = { [WRAPPED_SOL]: "SOL", [CLUSTER_USDC]: "USDC" };
+
+/** How far back a market's volume and trade count reach (docs/spec/pipescope-screens.md, Feed). */
+export const VOLUME_WINDOW_SECONDS = 24 * 60 * 60;
+
+/**
+ * Paging of the read endpoints: how many rows a page holds when the caller names no limit, and the
+ * most it may ask for. The pages ask for what the screens' config says (50 feed rows, 40 trades).
+ */
+export const PAGE_LIMITS = {
+  markets: { default: 50, max: 200 },
+  trades: { default: 40, max: 1000 },
+} as const;
 
 /** How stale a public cache may be (PIPESCOPE-32). */
 export const PUBLIC_CACHE_MAX_AGE_SECONDS = 60;
