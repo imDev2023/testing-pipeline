@@ -3341,11 +3341,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-02: Integrator fees on sells
 
 - Question: Can an integrator charge a fee on a sell of a contained token?
-- Answer: No: no integrator fee account is allowed, so integrators pass a zero fee on sells; buys pay their integrator fee in the quote mint as usual.
-- Alternatives: A launcher-set list of integrator fee accounts allowed as destinations.
+- Answer: No: no integrator fee account is allowed, so integrators pass a zero fee on sells; buys pay their integrator fee in the quote mint as usual; an integrator fee account that is the home vault or the fee account itself passes, but paying either is a donation.
+- Alternatives: The earlier default, the same without the note on the vault and the fee account (made exact by hardening finding H045 of #74 on 2026-11-23); a launcher-set list of integrator fee accounts allowed as destinations.
 - Specified in: [`docs/spec/containment-hook.md`, What this refuses](spec/containment-hook.md#what-this-refuses)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
 
 ### HOOK-03: One home market
