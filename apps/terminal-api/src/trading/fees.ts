@@ -3,7 +3,7 @@
 // var, read and checked here, the one place a swap or a page gets them from.
 import { PIPELINE_FEE_BPS } from "@pipeline-sol/sdk";
 import { HTTPException } from "hono/http-exception";
-import { AVIARY_MINT_NAMES } from "../config";
+import { AVIARY_MINT_NAMES, LAMPORTS_PER_SIGNATURE } from "../config";
 import type { Fees } from "../contract";
 import type { IntegratorFeeVar } from "../env";
 
@@ -41,5 +41,6 @@ export function feesView(setting: IntegratorFeeVar): Fees {
     integrator_fee_bps: fee.bps,
     fee_wallet: fee.wallet,
     fee_mints: Object.entries(fee.accounts).map(([mint, account]) => ({ mint, symbol: AVIARY_MINT_NAMES[mint] ?? mint, account })),
+    network_fee_per_signature: LAMPORTS_PER_SIGNATURE,
   };
 }

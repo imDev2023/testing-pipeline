@@ -18,7 +18,10 @@ export const COMMITMENT = "confirmed";
 
 /** A refusal from the strategy or the chain, decoded, which the routes answer with a 422 and the failure. */
 export class Refused extends Error {
-  constructor(readonly failure: ReturnType<typeof decodeFailure>) {
+  constructor(
+    readonly failure: ReturnType<typeof decodeFailure>,
+    readonly logs: readonly string[] = [],
+  ) {
     super(failure.sentence);
   }
 }
@@ -71,7 +74,7 @@ export async function quoteTyped(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFeeV
       },
     };
   } catch (e) {
-    if (e instanceof SimulationError) throw new Refused(decodeFailure(e.err, e.logs, { strategy: market.view.strategyProgram }));
+    if (e instanceof SimulationError) throw new Refused(decodeFailure(e.err, e.logs, { strategy: market.view.strategyProgram }), e.logs);
     throw e;
   }
 }

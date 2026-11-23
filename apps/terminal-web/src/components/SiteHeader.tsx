@@ -3,11 +3,12 @@ import { BRAND } from "@/brand";
 import { CLUSTER } from "@/config";
 import { ROUTES } from "@/routes";
 import { NavLink } from "./NavLink";
+import { WalletButton } from "./wallet/WalletButton";
 import styles from "./SiteHeader.module.css";
 
 /**
- * The header of every page: the name, the devnet tag and the links to the pages that exist. Create
- * market, Wallet, the search box and the wallet button join as their pages land
+ * The header of every page: the name, the devnet tag, the links to the pages that exist and the
+ * wallet button. Create market, Wallet and the search box join as their pages land
  * (docs/spec/pipescope-screens.md, "On every page").
  */
 export function SiteHeader() {
@@ -26,6 +27,7 @@ export function SiteHeader() {
         <nav className={styles.links} aria-label="Pages">
           <NavLink href={ROUTES.feed}>Feed</NavLink>
         </nav>
+        <WalletButton />
       </div>
     </header>
   );

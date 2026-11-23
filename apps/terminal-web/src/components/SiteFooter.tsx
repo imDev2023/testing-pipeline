@@ -8,8 +8,8 @@ import { AiText, AuthorText } from "./Voice";
 
 /**
  * The footer of every page (docs/spec/pipescope-screens.md, "On every page"): the three styles of
- * "Who is speaking", the devnet line, the links (Devnet help and the keeper page, PIPESCOPE-97) and
- * the theme control. Fees joins the links as it lands, and the official Telegram bot and channel once the API names them.
+ * "Who is speaking", the devnet line, the links (Fees, Devnet help and the keeper page, PIPESCOPE-97)
+ * and the theme control. The official Telegram bot and channel join once the API names them.
  */
 export function SiteFooter({ theme }: { theme: ThemeChoice }) {
   return (
@@ -34,6 +34,7 @@ export function SiteFooter({ theme }: { theme: ThemeChoice }) {
             Devnet only. {BRAND.name} never holds your keys: every transaction is signed in your own wallet, after a simulation you see first.
           </p>
           <nav className={styles.links} aria-label="About">
+            <Link href={ROUTES.fees}>Fees</Link>
             <Link href={ROUTES.devnetHelp}>Devnet help</Link>
             <Link href={ROUTES.keeper}>Keeper</Link>
           </nav>

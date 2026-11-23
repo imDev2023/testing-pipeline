@@ -19,6 +19,7 @@ import { MintLabel } from "../MintLabel";
 import type { Loaded } from "../Panel";
 import table from "../ListingTable.module.css";
 import { CandleChart } from "./CandleChart";
+import { TradeBox } from "./TradeBox";
 import styles from "./Market.module.css";
 
 type Interval = (typeof CHART_INTERVALS)[number];
@@ -223,6 +224,15 @@ export function MarketLive({ market }: { market: Market }) {
     onOpen: () => void resync(),
   });
 
+  /** A trade the trade box sent, read back by the fast path: at the top of Trades now, replaced in place once the indexer has it. */
+  const traded = useCallback(
+    (arriving: Trade[]) => {
+      arrive(arriving.filter((t) => t.market === market.address));
+      refreshCandles();
+    },
+    [arrive, refreshCandles, market.address],
+  );
+
   // ---- The chart's panel ----
   const baseMint = mintOf(pair.base);
   const quoteMint = mintOf(pair.quote);
@@ -285,6 +295,12 @@ export function MarketLive({ market }: { market: Market }) {
           </>
         )}
       </section>
+
+      {market.mints.every((m) => m.decimals !== null) ? (
+        <TradeBox market={market} onTraded={traded} />
+      ) : (
+        <p className={`${styles.panel} ${styles.tradeArea}`}>This market&apos;s mints have not been read yet, so it cannot be quoted. Try again in a minute.</p>
+      )}
 
       <section className={styles.tradesArea} aria-labelledby="panel-trades" aria-busy={trades.status === "loading"}>
         <div className={styles.tradesHead}>

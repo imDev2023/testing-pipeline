@@ -25,6 +25,10 @@
   grid-area: chart;
 }
 
+.tradeArea {
+  grid-area: trade;
+}
+
 .tradesArea {
   grid-area: trades;
   min-width: 0;

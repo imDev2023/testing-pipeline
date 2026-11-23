@@ -24,8 +24,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 /**
  * A market's page (docs/spec/pipescope-screens.md, Market page): its head, then the top band, the
- * chart with the trades beneath it, live. The trade box joins the top band with #121; the lower
- * band's explanation, forms and facts panel with their tickets.
+ * chart with the trades beneath it, live, and the trade box in the column beside them. The lower
+ * band's explanation, forms and facts panel come with their tickets.
  */
 export default async function MarketPage({ params }: Props) {
   const { address } = await params;
@@ -46,7 +46,7 @@ export default async function MarketPage({ params }: Props) {
   return (
     <div className={bands.page}>
       <MarketHead market={value} base={base} quote={quote} />
-      <div className={bands.top}>
+      <div className={`${bands.top} ${bands.withTrade}`}>
         {/* The chart's length and Flip are read from the page's address. */}
         <Suspense fallback={null}>
           <MarketLive market={value} />

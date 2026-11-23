@@ -301,6 +301,8 @@ export const Fees = z.object({
   integrator_fee_bps: z.number().int(),
   fee_wallet: Address,
   fee_mints: z.array(FeeMint),
+  /** Solana's network fee for each signature, in lamports. */
+  network_fee_per_signature: z.number().int(),
 });
 export type Fees = z.infer<typeof Fees>;
 
@@ -320,8 +322,8 @@ export const Failure = z.object({
 });
 export type Failure = z.infer<typeof Failure>;
 
-/** A refusal from a strategy or the chain: the sentence, and the failure decoded, with its raw error. */
-export const Refusal = ApiError.extend({ failure: Failure });
+/** A refusal from a strategy or the chain: the sentence, the failure decoded with its raw error, and the program's log lines when a simulation gave them. */
+export const Refusal = ApiError.extend({ failure: Failure, logs: z.array(z.string()).optional() });
 export type Refusal = z.infer<typeof Refusal>;
 
 /**
@@ -419,3 +421,7 @@ export type TradeSignature = z.infer<typeof TradeSignature>;
  */
 export const TradeReport = z.object({ signature: z.string(), slot: z.number().int(), trades: z.array(Trade) });
 export type TradeReport = z.infer<typeof TradeReport>;
+
+/** `GET /v1/traders/{trader}/balances?mints=`: what the wallet holds in each mint asked; for wrapped SOL, its plain SOL, which a swap wraps. */
+export const Balances = z.object({ trader: Address, balances: z.array(z.object({ mint: Address, amount: Amount })) });
+export type Balances = z.infer<typeof Balances>;

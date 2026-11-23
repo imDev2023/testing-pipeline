@@ -55,6 +55,8 @@ export default defineConfig({
     // Live updates: swaps landed on devnet, or announced on the fixture socket (src/live.ts).
     { name: "live", testMatch: /live\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
     { name: "api", testMatch: /api\.spec\.ts/ },
+    // The trade box with the Playwright test wallet: quotes, reviews and refusals, never sending (src/trade.spec.ts).
+    { name: "trade", testMatch: /trade\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
   ],
   webServer: [
     // The fixture RPC, first, so the API can read it from its first request.

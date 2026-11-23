@@ -7,11 +7,12 @@ import type { Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { createDb, markets } from "terminal-db";
 import type { z } from "zod";
-import { Fees, PrepareSwapRequest, PreparedSwap, Quote, TradeReport, TradeSignature, type Refusal } from "../contract";
+import { Balances, Fees, PrepareSwapRequest, PreparedSwap, Quote, TradeReport, TradeSignature, type Refusal } from "../contract";
 import type { AppEnv } from "../index";
 import { indexer } from "../index";
 import { limitTrades } from "../rateLimits";
 import { tradeViews } from "../views";
+import { parseMints, readBalances } from "./balances";
 import { awaitTrade, provisionalTrades } from "./fastPath";
 import { feesView } from "./fees";
 import { readTradeMarket } from "./market";
@@ -40,10 +41,17 @@ async function bodyOf<T extends z.ZodType>(c: Context<AppEnv>, schema: T): Promi
 }
 
 /** A refusal from the strategy or the chain, as a 422 with the failure decoded. */
-const refused = (c: Context<AppEnv>, e: Refused) => c.json<Refusal>({ error: e.failure.sentence, failure: e.failure }, 422);
+const refused = (c: Context<AppEnv>, e: Refused) => c.json<Refusal>({ error: e.failure.sentence, failure: e.failure, logs: [...e.logs] }, 422);
 
 export function tradingRoutes(app: Hono<AppEnv>) {
   app.get("/v1/fees", (c) => c.json(Fees.parse(feesView(c.env.INTEGRATOR_FEE))));
+
+  app.get("/v1/traders/:trader/balances", async (c) => {
+    const trader = address(addressOf(c.req.param("trader"), "trader"));
+    const mints = parseMints(c.req.query("mints"));
+    if (!mints) throw new HTTPException(400, { message: "mints is a comma-separated list of one to four mint addresses." });
+    return c.json(Balances.parse(await readBalances(createSolanaRpc(c.env.RPC_URL), trader, mints)));
+  });
 
   app.get("/v1/quote", limitTrades, async (c) => {
     const market = addressOf(c.req.query("market"), "market");

@@ -108,6 +108,9 @@ export const TOKEN_IMAGE = {
   maxBytes: 1024 * 1024,
 } as const;
 
+/** Solana's base fee for each signature a transaction carries, in lamports, which the Fees page states. */
+export const LAMPORTS_PER_SIGNATURE = 5_000;
+
 /** Wrapped SOL, and the cluster's USDC: Circle's devnet mint (docs/spec/pipescope.md, The integrator fee). */
 export const WRAPPED_SOL = "So11111111111111111111111111111111111111112";
 export const CLUSTER_USDC = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";

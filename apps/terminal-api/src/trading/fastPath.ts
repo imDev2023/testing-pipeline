@@ -44,7 +44,7 @@ export async function awaitTrade(
       const raw = await readBack(rpcUrl, signature);
       if (status.err !== null || raw.meta?.err) {
         const failure = decodeFailure(status.err ?? raw.meta?.err, raw.meta?.logMessages ?? [], { strategy: strategy ?? "" });
-        throw new Refused({ ...failure, sentence: `The swap failed on chain: ${failure.sentence}` });
+        throw new Refused({ ...failure, sentence: `The swap failed on chain: ${failure.sentence}` }, raw.meta?.logMessages ?? []);
       }
       return raw;
     }

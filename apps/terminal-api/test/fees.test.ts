@@ -29,6 +29,7 @@ describe("GET /v1/fees (PIPESCOPE-10 to PIPESCOPE-13, PIPESCOPE-91)", () => {
         { mint: WSOL, symbol: "SOL", account: "2aCTxPmrJvo9b99kfnR2yk7k647oFb1m5nMWkWmAvThn" },
         { mint: USDC, symbol: "USDC", account: "6DEijYZbuMg7nQSvYD6KzFuB6jytvCGGmSbtarErySwC" },
       ],
+      network_fee_per_signature: 5000,
     });
   });
 

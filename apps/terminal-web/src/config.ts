@@ -8,6 +8,8 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8811
 
 /** The cluster Aviary reads: devnet only until Pipeline's router is on mainnet. */
 export const CLUSTER = "devnet";
+/** The Wallet Standard chain a wallet signs for: Aviary's cluster. */
+export const CHAIN = `solana:${CLUSTER}` as const;
 
 /** The block explorer an address or a transaction links to, on the cluster above, whatever the address holds. */
 export const EXPLORER = {
@@ -22,6 +24,13 @@ export const MAX_SLIPPAGE_PERCENT = 50;
 export const QUOTE_PAUSE_MS = 350;
 /** SOL kept back for network fees and rent when the trader uses their whole balance. */
 export const SOL_KEPT_BACK = 0.01;
+/**
+ * How old a prepared swap may be when the trader asks to sign it: its blockhash lasts about a minute,
+ * so an older one is built and simulated again before the wallet is asked.
+ */
+export const PREPARED_SWAP_MAX_AGE_MS = 45_000;
+/** How many of the program's last log lines a failed simulation shows behind its disclosure. */
+export const FAILED_SIMULATION_LOG_LINES = 12;
 
 /**
  * The chart (PIPESCOPE-75): the candle lengths offered, by the API's names for them, and the one it
