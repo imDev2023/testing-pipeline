@@ -39,8 +39,22 @@ export function useLoad<T>(load: (signal: AbortSignal) => Promise<T>): { state: 
  * (docs/spec/pipescope-screens.md, "On every page"). `what` names what it loads, as a sentence
  * would: "devnet's latest slot".
  */
+const headingOf = (title: string) => `panel-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+
+/** A panel under its heading whose content is already in hand, so it neither loads nor fails as a whole. */
+export function StaticPanel({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className={styles.panel} aria-labelledby={headingOf(title)}>
+      <h2 id={headingOf(title)} className={styles.title}>
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
 export function PanelFrame<T>({ title, what, state, retry, children }: { title: string; what: string; state: Loaded<T>; retry: () => void; children: (data: T) => ReactNode }) {
-  const heading = `panel-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const heading = headingOf(title);
   return (
     <section className={styles.panel} aria-labelledby={heading} aria-busy={state.status === "loading"}>
       <h2 id={heading} className={styles.title}>

@@ -1,13 +1,16 @@
 // The feed's read endpoints (docs/spec/pipescope-architecture.md, API; the zod contract in
-// ./contract): strategies, markets newest first and paged (all, or one strategy's), a market, its
-// trades and candles and a trader's swaps, all from Postgres, where the indexer keeps them.
+// ./contract): strategies with their facts, markets newest first and paged (all, or one strategy's)
+// with the feed's four filters, a market, its facts, its trades and candles and a trader's swaps, all
+// from Postgres, where the indexer keeps them.
 import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { FLAGS } from "@pipeline-sol/sdk";
 import { marketMints, markets, mints, strategies, trades, type Db } from "terminal-db";
 import { writtenCandles, type CandleRow } from "terminal-indexer";
-import { CANDLES, PAGE_LIMITS } from "./config";
-import { Candles, Market, MarketsPage, Strategy, StrategiesList, TradesPage } from "./contract";
+import { CANDLES, PAGE_LIMITS, VOLUME_WINDOW_SECONDS, WRAPPED_SOL } from "./config";
+import { Candles, Market, MarketFacts, MarketsPage, StrategiesList, StrategyDetail, TradesPage } from "./contract";
+import { flagFacts, marketFlagsSql, mintFacts, strategyColumns as factColumns, strategyViews } from "./facts";
 import { dbOf, requestDb, type DbEnv } from "./requestDb";
 import { marketPair } from "./pairs";
 import { priceOf } from "./prices";
@@ -45,52 +48,124 @@ export const notFound = (what: string) => new HTTPException(404, { message: `Avi
 // ---- Strategies ----
 
 const strategyColumns = {
-  program: strategies.program,
-  metadataUri: strategies.metadataUri,
-  feePaid: strategies.feePaid,
-  registeredAt: strategies.registeredAt,
-  registeredSignature: strategies.registeredSignature,
+  ...factColumns,
   marketCount: sql<number>`(select count(*)::int from ${markets} where ${markets.strategyProgram} = ${strategies.program})`,
 };
 
-type StrategyRow = { program: string; metadataUri: string; feePaid: string | null; registeredAt: Date; registeredSignature: string | null; marketCount: number };
-
-const strategyView = (s: StrategyRow): Strategy => ({
-  program: s.program,
-  metadata_uri: s.metadataUri,
-  fee_paid: s.feePaid,
-  registered_at: s.registeredAt.toISOString(),
-  registered_signature: s.registeredSignature,
-  market_count: s.marketCount,
-});
-
 feed.get("/v1/strategies", async (c) => {
-  const rows = await db(c).select(strategyColumns).from(strategies).orderBy(desc(strategies.registeredAt), desc(strategies.program));
-  return c.json(StrategiesList.parse({ strategies: rows.map(strategyView) }));
+  const database = db(c);
+  const views = await strategyViews(database, await database.select(strategyColumns).from(strategies).orderBy(desc(strategies.registeredAt), desc(strategies.program)));
+  return c.json(StrategiesList.parse({ strategies: views, flags_present: flagFacts(views.flatMap((v) => v.flags)) }));
 });
 
 feed.get("/v1/strategies/:program", async (c) => {
-  const [row] = await db(c).select(strategyColumns).from(strategies).where(eq(strategies.program, c.req.param("program")));
+  const database = db(c);
+  const [row] = await database.select(strategyColumns).from(strategies).where(eq(strategies.program, c.req.param("program")));
   if (!row) throw notFound("strategy registered with Pipeline");
-  return c.json(Strategy.parse(strategyView(row)));
+  const [view] = await strategyViews(database, [row]);
+  return c.json(StrategyDetail.parse({ ...view!, flag_facts: flagFacts(view!.flags) }));
 });
 
 // ---- Markets ----
+
+// ---- The feed's filters (PIPESCOPE-05, PIPESCOPE-72) ----
+
+/** A whole number from the query, from `min` to `max`, or a 400 saying what it takes. */
+function wholeOf(c: Context<FeedEnv>, name: string, [min, max]: [bigint, bigint], what: string): bigint | null {
+  const raw = c.req.query(name);
+  if (raw === undefined) return null;
+  if (!/^\d{1,40}$/.test(raw) || BigInt(raw) < min || BigInt(raw) > max) throw new HTTPException(400, { message: `${name} is ${what}.` });
+  return BigInt(raw);
+}
+
+/** The most lamports a filter takes, u64's largest, and the longest time since creation, a hundred years. */
+const U64_MAX = 2n ** 64n - 1n;
+const CREATED_WITHIN_MAX_SECONDS = 100n * 365n * 86_400n;
+
+/** The flags to hide, each one of Pipeline's, or a 400. */
+function hiddenOf(c: Context<FeedEnv>): string[] {
+  const raw = c.req.query("hide");
+  if (raw === undefined || raw === "") return [];
+  const flags = raw.split(",");
+  if (!flags.every((f) => (FLAGS as string[]).includes(f))) throw new HTTPException(400, { message: "hide names Pipeline's trust flags, separated by commas." });
+  return flags;
+}
+
+/** A market's SOL vault holds, as SQL: zero for a market with no SOL side, which `hasSolSide` tells. */
+const solLiquidity = sql`(select coalesce(max(mm.vault_amount), 0) from ${marketMints} mm where mm.market = ${markets.address} and mm.mint = ${WRAPPED_SOL})`;
+const hasSolSide = sql`exists (select 1 from ${marketMints} mm where mm.market = ${markets.address} and mm.mint = ${WRAPPED_SOL})`;
+/** SOL moved by a market's trades since `since`, both ways: what went in as SOL and what came out as SOL. */
+const solVolume = (since: bigint) =>
+  sql`(select coalesce(sum(case when t.input_mint = ${WRAPPED_SOL} then t.net_sent when t.output_mint = ${WRAPPED_SOL} then t.received else 0 end), 0) from ${trades} t where t.market = ${markets.address} and t.unix_timestamp >= ${since})`;
+
+/**
+ * The filters asked for, as one condition on `markets`: liquidity and volume on the SOL side (so
+ * either leaves out a market with no SOL side), the time since creation, and no hidden flag.
+ */
+function filtersOf(c: Context<FeedEnv>): { where: SQL | undefined; onSolSide: boolean } {
+  const lamports = `a whole number of lamports, at most ${U64_MAX}`;
+  const minLiquidity = wholeOf(c, "min_sol_liquidity", [0n, U64_MAX], lamports);
+  const minVolume = wholeOf(c, "min_sol_volume_24h", [0n, U64_MAX], lamports);
+  const within = wholeOf(c, "created_within", [1n, CREATED_WITHIN_MAX_SECONDS], `a whole number of seconds of at least 1 and at most ${CREATED_WITHIN_MAX_SECONDS}`);
+  const hide = hiddenOf(c);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const conditions = [
+    minLiquidity === null && minVolume === null ? undefined : hasSolSide,
+    // As numeric: a u64 of lamports can pass Postgres's bigint.
+    minLiquidity === null ? undefined : sql`${solLiquidity} >= ${String(minLiquidity)}::numeric`,
+    minVolume === null ? undefined : sql`${solVolume(BigInt(nowSeconds - VOLUME_WINDOW_SECONDS))} >= ${String(minVolume)}::numeric`,
+    within === null ? undefined : sql`${markets.createdAt} >= ${new Date((nowSeconds - Number(within)) * 1000).toISOString()}::timestamptz`,
+    hide.length ? sql`not (${marketFlagsSql} && ${sql.raw(`array[${hide.map((f) => `'${f}'`).join(",")}]::text[]`)})` : undefined,
+  ];
+  return { where: and(...conditions), onSolSide: minLiquidity !== null || minVolume !== null };
+}
 
 feed.get("/v1/markets", async (c) => {
   const limit = limitOf(c, PAGE_LIMITS.markets);
   const cursor = cursorOf(c, /^(\d+)_([1-9A-HJ-NP-Za-km-z]{32,44})$/);
   const strategy = c.req.query("strategy");
+  const { where: filtered } = filtersOf(c);
   const database = db(c);
   const ofStrategy: SQL | undefined = strategy === undefined ? undefined : eq(markets.strategyProgram, strategy);
   const after: SQL | undefined = cursor ? sql`(${markets.createdAt}, ${markets.address}) < (${new Date(Number(cursor[0])).toISOString()}::timestamptz, ${cursor[1]})` : undefined;
-  const [rows, [{ total } = { total: 0 }]] = await Promise.all([
-    database.select().from(markets).where(and(ofStrategy, after)).orderBy(desc(markets.createdAt), desc(markets.address)).limit(limit + 1),
-    database.select({ total: sql<number>`count(*)::int` }).from(markets).where(ofStrategy),
+  const [rows, [counts], present] = await Promise.all([
+    database.select().from(markets).where(and(ofStrategy, filtered, after)).orderBy(desc(markets.createdAt), desc(markets.address)).limit(limit + 1),
+    database
+      .select({
+        total: sql<number>`count(*)::int`,
+        matching: filtered ? sql<number>`(count(*) filter (where ${filtered}))::int` : sql<number>`count(*)::int`,
+        noSolSide: sql<number>`(count(*) filter (where not ${hasSolSide}))::int`,
+      })
+      .from(markets)
+      .where(ofStrategy),
+    database.execute<{ flag: string }>(sql`select distinct unnest(${marketFlagsSql}) as flag from ${markets} where ${ofStrategy ?? sql`true`}`),
   ]);
   const page = rows.slice(0, limit);
   const last = page.at(-1);
-  return c.json(MarketsPage.parse({ markets: await marketViews(database, page), total, next: rows.length > limit && last ? `${last.createdAt.getTime()}_${last.address}` : null }));
+  return c.json(
+    MarketsPage.parse({
+      markets: await marketViews(database, page),
+      total: counts?.total ?? 0,
+      matching: counts?.matching ?? 0,
+      no_sol_side: counts?.noSolSide ?? 0,
+      flags_present: flagFacts([...present].map((r) => r.flag)),
+      next: rows.length > limit && last ? `${last.createdAt.getTime()}_${last.address}` : null,
+    }),
+  );
+});
+
+feed.get("/v1/markets/:market/facts", async (c) => {
+  const database = db(c);
+  const [row] = await database.select().from(markets).where(eq(markets.address, c.req.param("market")));
+  if (!row) throw notFound("market created through Pipeline");
+  const [[market], [strategy], mintRows] = await Promise.all([
+    marketViews(database, [row]),
+    database.select(strategyColumns).from(strategies).where(eq(strategies.program, row.strategyProgram)),
+    mintFacts(database, row.address),
+  ]);
+  const [view] = strategy ? await strategyViews(database, [strategy]) : [];
+  if (!view) throw notFound("strategy registered with Pipeline");
+  return c.json(MarketFacts.parse({ market, strategy: { ...view, flag_facts: flagFacts(view.flags) }, mints: mintRows }));
 });
 
 feed.get("/v1/markets/:market", async (c) => {

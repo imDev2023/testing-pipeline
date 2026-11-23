@@ -3,8 +3,10 @@
 // it runs and is tested in Node: the router's reconciliation from its cursor, the backfill of its
 // whole history on the first run, the registry snapshot, the reconciliation of every strategy
 // program, which stores every call on it, and the ProgramData watch, which records each version of
-// the router and of every strategy (docs/spec/pipescope-architecture.md, Indexer). The live socket
-// comes with the live rooms (#118).
+// the router and of every strategy, with who can upgrade each (docs/spec/pipescope-architecture.md,
+// Indexer); and the metadata fetcher, run for each strategy whose registration or metadata URI it
+// indexes and every hour, with the hourly read of every mint (Metadata fetcher; ./metadata). The live
+// socket comes with the live rooms (#118).
 //
 // Neon's free plan has 100 compute-hours a month, so the database must sleep while devnet is quiet
 // (Data): each run asks the chain first and opens Postgres only when there is something new. What
@@ -21,6 +23,8 @@ import {
   indexTransactions,
   indexRegistry,
   readDeploySlots,
+  readProgramFacts,
+  refreshMints,
   recordVersion,
   signVersion,
   strategyCallsHandler,
@@ -39,13 +43,18 @@ import {
   type IndexResult,
   type TransactionHandler,
 } from "terminal-indexer";
-import { indexedTransactions, markets, programVersions, strategies, trades } from "terminal-db";
-import { eq, inArray, isNull, max, sql } from "drizzle-orm";
+import { indexedTransactions, markets, metadataSnapshots, programFacts, programVersions, strategies, trades } from "terminal-db";
+import { and, eq, inArray, isNull, max, notExists, sql } from "drizzle-orm";
 import { CANDLES, LIVE_ROOM_TRADES_MAX, RPC_WAITS, VERSION_TRANSACTION_LOOKS } from "./config";
 import type { LiveEvent } from "./contract";
+import { fetchStrategiesMetadata } from "./metadata";
+import type { FetchLike } from "./metadataFetch";
 import { marketViews, tradeViews } from "./views";
 
 export const ROUTER = PIPELINE_PROGRAM_ADDRESS;
+
+/** A program's facts as one string, to tell whether they changed. */
+const factsKey = (f: { upgradeAuthority: string | null; flags: readonly string[] }) => `${f.upgradeAuthority ?? ""}|${f.flags.join(",")}`;
 
 /** How many values one `in (...)` list holds, well inside Postgres's 65,535 parameters a query. */
 const IN_LIST_MAX = 1_000;
@@ -101,12 +110,22 @@ export class IndexerCore {
    */
   private deploySlots: Map<string, bigint> | null = null;
   private versionSlots = new Map<string, bigint>();
+  /** Strategies whose metadata is still to be fetched: noted by indexing, or on a new instance's first run. */
+  private unfetched = new Set<string>();
+  /** The metadata fetch running now, which the next waits for. */
+  private metadataTurn: Promise<unknown> = Promise.resolve();
   /** Versions recorded before the RPC served their transaction, looked for again on each watch. */
   private unsigned = new Map<string, { programData: string; deploySlot: bigint; looks: number }>();
   private runningStrategies: Promise<StrategiesOutcome> | null = null;
   private runningWatch: Promise<WatchOutcome> | null = null;
+  /** Each watched program's facts as last written (its upgrade authority and flags), read from Postgres with the slots. */
+  private facts = new Map<string, string>();
 
-  constructor(private readonly deps: { rpcUrl: string; openDb: OpenDb; source?: HistorySource; handler?: TransactionHandler }) {
+  /**
+   * `metadataFetch` is the fetch the metadata fetcher uses: the Worker's own, or in the end-to-end
+   * tests one that reads recorded documents; it is never defaulted, so no test fetches the web.
+   */
+  constructor(private readonly deps: { rpcUrl: string; openDb: OpenDb; metadataFetch: FetchLike; source?: HistorySource; handler?: TransactionHandler }) {
     this.source = deps.source ?? historySource(deps.rpcUrl, RPC_WAITS.block);
     this.handle = deps.handler ?? pipelineHandler({ candleSeconds: CANDLES.map((c) => c.seconds) });
     this.blockIndexOf = blockPositions(deps.rpcUrl, RPC_WAITS.block);
@@ -136,6 +155,26 @@ export class IndexerCore {
           // transaction that still cannot be read keeps its record and is tried by the next
           // instance; it never holds up the router's history.
           for (const { address } of await db.select({ address: markets.address }).from(markets).where(isNull(markets.readSlot))) this.unread.add(address);
+          // And every strategy whose metadata now was never fetched: none fetched yet (as after this
+          // code's first deploy), or the newest fetched for an earlier URI, its fetch after an update failed.
+          const unfetched = await db
+            .select({ program: strategies.program })
+            .from(strategies)
+            .where(
+              notExists(
+                db
+                  .select({ one: sql`1` })
+                  .from(metadataSnapshots)
+                  .where(
+                    and(
+                      eq(metadataSnapshots.program, strategies.program),
+                      eq(metadataSnapshots.uri, strategies.metadataUri),
+                      sql`${metadataSnapshots.id} = (select max(newest.id) from ${metadataSnapshots} newest where newest.program = ${strategies.program})`,
+                    ),
+                  ),
+              ),
+            );
+          for (const { program } of unfetched) this.unfetched.add(program);
           this.started = true;
           try {
             addResult(indexed, await reindexUnknown(db, this.handle));
@@ -148,6 +187,7 @@ export class IndexerCore {
         addResult(indexed, result);
         this.cursor = cursor;
         await this.refresh(db, indexed.markets);
+        this.toFetch(indexed.strategies);
         this.learn(indexed);
         return { quiet: false, indexed, cursor };
       } catch (e) {
@@ -170,6 +210,7 @@ export class IndexerCore {
     return this.withDb(async (db) => {
       const added = await indexRegistry(db, registry);
       await this.refresh(db, added.markets);
+      this.toFetch(added.strategies);
       if (added.strategies.length) this.watched = null;
       this.known = {
         strategies: new Set((await db.select({ program: strategies.program }).from(strategies)).map((s) => s.program)),
@@ -214,6 +255,8 @@ export class IndexerCore {
         // They stay unread for the next run; what was indexed is still handed on.
         console.error("reading the markets the live socket touched failed; the next run reads them", e);
       }
+      // Fetched by the next fetch (the Indexer's, after the next reconciliation), never holding up the live path.
+      this.toFetch(indexed.strategies);
       this.learn(indexed);
       return indexed;
     });
@@ -252,6 +295,52 @@ export class IndexerCore {
       }
       return events;
     });
+  }
+
+  /** Notes strategies whose metadata is to be fetched: indexing never waits on a document from the web. */
+  private toFetch(programs: string[]) {
+    for (const program of programs) this.unfetched.add(program);
+  }
+
+  /** Runs metadata fetches one at a time, so two never read the same newest row and both write a change. */
+  private inTurn<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.metadataTurn.then(work, work);
+    this.metadataTurn = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Fetches the metadata of every strategy noted since the last fetch (a registration, a
+   * `MetadataUpdated`, a strategy the snapshot found, or one a new instance found unfetched), storing
+   * what changed (./metadata). The Indexer runs it after publishing what a run indexed, so the live
+   * rooms never wait on the web. Postgres is opened only when something is noted; a strategy whose
+   * fetch fails stays noted for the next.
+   */
+  fetchPendingMetadata(): Promise<{ fetched: number; changed: string[] }> {
+    return this.inTurn(async () => {
+      const due = [...this.unfetched];
+      if (!due.length) return { fetched: 0, changed: [] };
+      const outcome = await this.withDb((db) => fetchStrategiesMetadata(db, due, { fetch: this.deps.metadataFetch }));
+      for (const program of due) this.unfetched.delete(program);
+      return outcome;
+    });
+  }
+
+  /** The hourly re-fetch of every strategy's metadata, since the document behind an unchanged URI can change with no event. */
+  refetchMetadata(): Promise<{ fetched: number; changed: string[] }> {
+    return this.inTurn(() =>
+      this.withDb(async (db) => {
+        const all = (await db.select({ program: strategies.program }).from(strategies)).map((s) => s.program);
+        const outcome = await fetchStrategiesMetadata(db, all, { fetch: this.deps.metadataFetch });
+        for (const program of all) this.unfetched.delete(program);
+        return outcome;
+      }),
+    );
+  }
+
+  /** The hourly read of every mint, for the trust flags of what changed since it was first read; returns how many it read. */
+  refreshMints(): Promise<number> {
+    return this.withDb((db) => refreshMints(db, this.deps.rpcUrl));
   }
 
   /** Drops candles past their length's retention (`CANDLES`, PIPESCOPE-30); returns how many went. */
@@ -360,12 +449,17 @@ export class IndexerCore {
           .groupBy(programVersions.program);
         this.deploySlots = new Map(newest.map((r) => [r.program, BigInt(r.seen)]));
         this.versionSlots = new Map(newest.map((r) => [r.program, r.version!]));
+        this.facts = new Map((await db.select().from(programFacts)).map((f) => [f.program, factsKey(f)]));
       });
     }
     const known = this.deploySlots!;
     const strategyPrograms = this.watched!;
     const slots = await readDeploySlots(this.deps.rpcUrl, [ROUTER, ...strategyPrograms]);
     const changed = [...slots].flatMap(([program, s]) => (s && known.get(program) !== s.deploySlot ? [{ program, programData: s.programData, seenSlot: s.deploySlot }] : []));
+    // Who can upgrade each program, from the same header: written when it changes, which an upgrade
+    // authority given up or handed on does without moving the slot.
+    const facts = await readProgramFacts(this.deps.rpcUrl, slots);
+    const newFacts = [...facts].filter(([program, f]) => this.facts.get(program) !== factsKey(f));
 
     // Upgrades whose transaction was not served yet: asked of the chain first, written only once found.
     const signed: { program: string; programData: string; deploySlot: bigint }[] = [];
@@ -375,9 +469,17 @@ export class IndexerCore {
     }
 
     const outcome: WatchOutcome = { quiet: true, recorded: [], upgraded: [] };
-    if (!changed.length && !signed.length) return outcome;
+    if (!changed.length && !signed.length && !newFacts.length) return outcome;
     return this.withDb(async (db) => {
       const failed: { program: string; error: unknown }[] = [];
+      const readSlot = [...slots.values()].reduce<bigint | null>((m, s) => (s && (m === null || s.deploySlot > m) ? s.deploySlot : m), null);
+      for (const [program, f] of newFacts) {
+        await db
+          .insert(programFacts)
+          .values({ program, upgradeAuthority: f.upgradeAuthority, flags: f.flags, readSlot, updatedAt: new Date() })
+          .onConflictDoUpdate({ target: programFacts.program, set: { upgradeAuthority: f.upgradeAuthority, flags: f.flags, readSlot, updatedAt: new Date() } });
+        this.facts.set(program, factsKey(f));
+      }
       for (const { program, programData, seenSlot } of changed) {
         const role = program === ROUTER ? "router" : "strategy";
         const previousSlot = this.versionSlots.get(program) ?? null;

@@ -39,3 +39,8 @@
   display: block;
   color: var(--ink2);
 }
+
+/* The author's description under the strategy's name, at a reading measure. */
+.description {
+  max-width: 760px;
+}

@@ -8,6 +8,7 @@ import { createDb, indexedTransactions, marketMints, markets, strategies, trades
 import { createTestDatabase } from "terminal-db/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { accountKeysOf, indexTransactions, pipelineHandler, type RawTransaction } from "../src/index";
+import { metadataUpdatedTransaction } from "./swaps";
 
 const fixture = (name: string) => JSON.parse(readFileSync(`${import.meta.dirname}/fixtures/${name}.json`, "utf8")) as RawTransaction;
 
@@ -65,12 +66,21 @@ describe("indexing registrations and new markets", () => {
       registeredSignature: registered.transaction.signatures[0],
     });
     expect(row!.metadataUri).toMatch(/^https:\/\//);
+    expect(result.strategies).toEqual(["J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"]);
+  });
+
+  it("sets a strategy's metadata URI from its MetadataUpdated event and names the strategy, for its document to be fetched", async () => {
+    const strategy = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t";
+    const result = await indexTransactions(client.db, pipelineHandler(), [metadataUpdatedTransaction({ id: 901, slot: 524_300_000, strategy, uri: "https://example.org/v2.json" })]);
+    expect(result).toEqual({ counts: { metadataUpdates: 1 }, markets: [], trades: [], strategies: [strategy] });
+    const [row] = await client.db.select().from(strategies).where(eq(strategies.program, strategy));
+    expect(row).toMatchObject({ metadataUri: "https://example.org/v2.json", metadataSlot: 524_300_000n });
   });
 
   it("writes the market from its MarketCreated event, with its mints in the market's own order, and names it to be read", async () => {
     const created = fixture("marketCreated");
     const result = await indexTransactions(client.db, pipelineHandler(), [created]);
-    expect(result).toEqual({ counts: { markets: 1 }, markets: ["7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz"], trades: [] });
+    expect(result).toEqual({ counts: { markets: 1 }, markets: ["7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz"], trades: [], strategies: [] });
     const [market] = await client.db.select().from(markets).where(eq(markets.address, "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz"));
     expect(market).toMatchObject({
       strategyProgram: "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t",

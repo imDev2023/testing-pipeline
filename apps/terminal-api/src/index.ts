@@ -77,6 +77,8 @@ export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
     registrySnapshot: async () => void (await indexer(env).snapshot(version)),
     programDataWatch: async () => void (await indexer(env).watchPrograms(version)),
     pruneCandles: async () => void (await indexer(env).prune(version)),
+    metadataRefetch: async () => void (await indexer(env).refetchMetadata(version)),
+    mintRefresh: async () => void (await indexer(env).refreshMints(version)),
   };
 }
 

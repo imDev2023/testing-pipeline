@@ -1,0 +1,5 @@
+{
+  "schema": "pipeline-strategy-metadata/1",
+  "name": "<script>alert(1)</script>**Bold** [x](javascript:alert(1))",
+  "description": "<a href=\"https://evil.example\">Claim here</a> <img src=x onerror=alert(1)> **Trusted** _strategy_ [docs](javascript:alert(1)) <b>bold</b> &lt;i&gt;entity&lt;/i&gt;"
+}

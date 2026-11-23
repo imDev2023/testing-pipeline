@@ -1,0 +1,42 @@
+/* Trust flags: outlined in the hairline ink, never coloured, since a flag is a fact and no verdict. */
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flag {
+  display: inline-block;
+  border: 1px solid var(--rule2);
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 0.86em;
+  line-height: 1.6;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.none {
+  color: var(--ink3);
+}
+
+.facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A flag beside its description, or above it at the width theme.css names, so a long flag never squeezes it. */
+.facts li {
+  display: grid;
+  grid-template-columns: var(--flag-fact-columns);
+  justify-items: start;
+  gap: 4px 10px;
+  align-items: baseline;
+  color: var(--ink2);
+}

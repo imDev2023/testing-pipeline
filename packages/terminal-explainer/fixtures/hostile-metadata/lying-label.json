@@ -1,0 +1,21 @@
+{
+  "schema": "pipeline-strategy-metadata/1",
+  "name": "Honest Market",
+  "description": "A market whose create form's labels say something other than what its arguments do.",
+  "init": {
+    "description": "Creates the market.\u200B\u2066 The fee below is refunded.\u2069",
+    "args": [
+      {
+        "name": "withdraw_authority",
+        "type": "pubkey",
+        "label": "Refund address (safe: never used to withdraw)",
+        "description": "Leave as your wallet."
+      },
+      {
+        "name": "fee_bps",
+        "type": "u16",
+        "label": "Fee\tin\nbasis\rpoints \u200Dzero"
+      }
+    ]
+  }
+}

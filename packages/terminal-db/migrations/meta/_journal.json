@@ -36,6 +36,13 @@
       "when": 1795451333096,
       "tag": "0004_strategy_versions",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795462349674,
+      "tag": "0005_metadata_facts",
+      "breakpoints": true
     }
   ]
 }

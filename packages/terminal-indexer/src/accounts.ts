@@ -1,11 +1,12 @@
 // Market accounts and mints (docs/spec/pipescope-architecture.md, Indexer, "Market accounts" and
 // "Mints"). There are no account subscriptions: after each event that touches a market, its state
 // and its vaults are read again; the router's `Market` account, which names the vaults, is read
-// once; and each mint is read once, when a market first brings it, with its Metaplex metadata
-// account, as raw bytes for the facts and the token names that later tickets read from them.
-import { decodeMarket, marketFeeMint } from "@pipeline-sol/sdk";
+// once; and each mint is read when a market first brings it, with its Metaplex metadata account, as
+// raw bytes for the token names that later read them and with Pipeline's trust flags, then again
+// every hour (`refreshMints`), since a mint's authorities, supply and extensions can change.
+import { decodeMarket, decodeMint, marketFeeMint, type Flag } from "@pipeline-sol/sdk";
 import { address, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, getUtf8Encoder } from "@solana/kit";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { marketMints, markets, mints, type Db } from "terminal-db";
 import { rpcCall } from "./rpc";
 
@@ -14,6 +15,8 @@ export const METADATA_PROGRAM = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 const TOKEN_PROGRAMS = new Set(["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]);
 /** The most accounts one `getMultipleAccounts` reads. */
 const ACCOUNTS_PER_CALL = 100;
+/** The most mints one statement writes: 13 columns each, well inside Postgres's 65,535 parameters. */
+const MINTS_PER_WRITE = 500;
 
 type AccountInfo = { owner: string; data: [string, "base64"] } | null;
 
@@ -102,19 +105,43 @@ export async function refreshMarkets(db: Db, rpcUrl: string, marketAddresses: st
   await readNewMints(db, rpcUrl, [...new Set(held.map((h) => h.mint))]);
 }
 
-/** Reads each mint not read before, with its Metaplex metadata account, once. */
+/**
+ * Reads each mint not read before, with its Metaplex metadata account, and any read before its
+ * trust flags were kept; the hourly `refreshMints` reads them all again.
+ */
 export async function readNewMints(db: Db, rpcUrl: string, mintAddresses: string[]): Promise<void> {
   if (!mintAddresses.length) return;
-  const seen = new Set((await db.select({ address: mints.address }).from(mints).where(inArray(mints.address, mintAddresses))).map((r) => r.address));
-  const fresh = mintAddresses.filter((m) => !seen.has(m));
+  const seen = new Set((await db.select({ address: mints.address }).from(mints).where(and(inArray(mints.address, mintAddresses), isNotNull(mints.flags)))).map((r) => r.address));
+  await readMints(db, rpcUrl, mintAddresses.filter((m) => !seen.has(m)));
+}
+
+/**
+ * Reads every mint again (the hourly job), so what can change after a mint is made shows on the
+ * pages: an authority given up or handed on, a supply minted or burned, a transfer fee or a pause
+ * set. Returns how many it read.
+ */
+export async function refreshMints(db: Db, rpcUrl: string): Promise<number> {
+  const all = (await db.select({ address: mints.address }).from(mints)).map((r) => r.address);
+  await readMints(db, rpcUrl, all);
+  return all.length;
+}
+
+/**
+ * Reads mints with their Metaplex metadata accounts in as few requests as it can, and keeps each
+ * with Pipeline's trust flags, as its SDK's `decodeMint` gives them at the current epoch (which picks
+ * a transfer fee in force); an account that is no mint is kept unreadable, with `mint-unreadable`.
+ */
+async function readMints(db: Db, rpcUrl: string, wanted: string[]): Promise<void> {
+  const fresh = [...new Set(wanted)];
   if (!fresh.length) return;
   const metadata = await Promise.all(fresh.map(metadataAddress));
-  const { slot, accounts } = await readAccounts(rpcUrl, [...fresh, ...metadata]);
+  const [{ slot, accounts }, { epoch }] = await Promise.all([readAccounts(rpcUrl, [...fresh, ...metadata]), rpcCall<{ epoch: number }>(rpcUrl, "getEpochInfo", [{ commitment: "confirmed" }])]);
   const rows = fresh.map((mint, i) => {
     const info = accounts.get(mint) ?? null;
     const data = bytesOf(info);
     const metadataInfo = accounts.get(metadata[i]!) ?? null;
     const readable = !!info && !!data && TOKEN_PROGRAMS.has(info.owner) && data.length >= 82 && data[45] === 1;
+    const decoded = readable ? decodeMint(address(mint), address(info!.owner), data!, BigInt(epoch)) : null;
     return {
       address: mint,
       readable,
@@ -126,7 +153,15 @@ export async function readNewMints(db: Db, rpcUrl: string, mintAddresses: string
       data: info ? info.data[0] : null,
       metadataData: metadataInfo && metadataInfo.owner === METADATA_PROGRAM ? metadataInfo.data[0] : null,
       readSlot: slot,
+      flags: decoded ? decoded.flags : (["mint-unreadable"] satisfies Flag[]),
+      readEpoch: BigInt(epoch),
     };
   });
-  await db.insert(mints).values(rows).onConflictDoNothing();
+  const set = Object.fromEntries(
+    (["readable", "tokenProgram", "decimals", "supply", "mintAuthority", "freezeAuthority", "data", "metadataData", "readSlot", "flags", "readEpoch"] as const).map((k) => [k, sql.raw(`excluded.${mints[k].name}`)]),
+  );
+  // In parts, so a refresh of every mint never makes one statement too large to build or to send.
+  for (let i = 0; i < rows.length; i += MINTS_PER_WRITE) {
+    await db.insert(mints).values(rows.slice(i, i + MINTS_PER_WRITE)).onConflictDoUpdate({ target: mints.address, set });
+  }
 }

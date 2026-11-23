@@ -27,6 +27,8 @@ export const JOB_INTERVAL_MINUTES = {
   verifiedBuilds: 1,
   /** Re-fetching every strategy's metadata, since the document behind an unchanged URI can change. */
   metadataRefetch: 60,
+  /** Reading every mint again, since its authorities, supply and extensions can change after it is made. */
+  mintRefresh: 60,
   /** Dropping candles past their length's retention (`CANDLES`), once a day, so the database wakes for it rarely (PIPESCOPE-109). */
   pruneCandles: 24 * 60,
 } as const;
@@ -96,11 +98,19 @@ export const ROOM_ANNOUNCE_RETRY_MS = SECOND;
 /** How often the trade fast path asks whether a signature has confirmed (PIPESCOPE-33). */
 export const FAST_PATH_CONFIRMATION_POLL_MS = 300;
 
-/** The metadata fetcher's limits (PIPESCOPE-36). */
+/**
+ * The metadata fetcher's limits (PIPESCOPE-36): `https:` only, a body of at most `maxBytes`, an
+ * answer within `timeoutMs` (redirects and body included), at most `maxRedirects` redirects, each to
+ * `https:`, and a JSON content type: one of `contentTypes`, or any type ending in `+json`. `text/plain`
+ * is there because GitHub serves raw files and gists, where most devnet metadata lives, as it.
+ */
 export const METADATA_FETCH = {
   maxBytes: 64 * 1024,
   timeoutMs: 5 * SECOND,
   maxRedirects: 3,
+  contentTypes: ["application/json", "text/plain"],
+  /** How many documents are fetched at once, as after a backfill names every strategy. */
+  concurrency: 4,
 } as const;
 
 /** The token images `terminal-api` keeps (PIPESCOPE-82): told by their first bytes, at most this size. */

@@ -1494,12 +1494,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-36: Fetching metadata
 
 - Question: When and how is strategy metadata fetched?
-- Answer: On `StrategyRegistered`, on `MetadataUpdated` and every hour, over `https:` only, at most 64 KB of JSON, with a 5 second timeout and at most 3 redirects, never fetching a URL found inside the document.
-- Alternatives: None recorded.
+- Answer: On `StrategyRegistered`, on `MetadataUpdated`, when the registry snapshot finds a strategy, and every hour, over `https:` only, at most 64 KB, of the type `application/json`, any `+json` type or `text/plain` (as GitHub serves raw files and gists), with a 5 second timeout and at most 3 redirects, each to `https:`, never fetching a URL found inside the document.
+- Alternatives: The earlier default, any JSON content type, which refused `text/plain` and so the documents GitHub serves, most of devnet's and all three of ours; no content-type check, as Pipeline's SDK has none.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Metadata fetcher](spec/pipescope-architecture.md#metadata-fetcher)
 - Changes by: build-time constant
-- Status: default
-- Decided: 2026-11-10 in [Pipescope architecture](https://github.com/imDev2023/testing-pipeline/issues/13)
+- Status: changed 2026-11-23
+- Decided: 2026-11-10 in [Pipescope architecture](https://github.com/imDev2023/testing-pipeline/issues/13); changed 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
 
 ### PIPESCOPE-37: Keys and paid calls on the server
 
@@ -2064,12 +2064,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-93: Pipeline's hosted API in the tests
 
 - Question: How far does the terminal lean on Pipeline's hosted devnet API?
-- Answer: As a test oracle only: the devnet tests compare our trades, candles, trust flags, quotes and unhooked swap transactions with its answers, and our Canary `conformance` result with its hosted checks; its `checks-*` flags are not shown, since Canary's own result says the same thing.
-- Alternatives: Serving the feed, charts or wallet page from it, which ADR 0003 ruled out; showing its `checks-*` flags beside Canary's result.
+- Answer: As a test oracle only: the devnet tests compare our trades, candles, trust flags, quotes and unhooked swap transactions with its answers, and our Canary `conformance` result with its hosted checks; its `checks-*` flags are not shown, since Canary's own result says the same thing, nor its `conformance-report` and `conformance-stale`, which need the report a strategy's metadata links fetched, a URL found inside a document (`PIPESCOPE-36`).
+- Alternatives: The earlier default, leaving out only `checks-*`; fetching the linked conformance report as an exception to `PIPESCOPE-36`; serving the feed, charts or wallet page from it, which ADR 0003 ruled out; showing its `checks-*` flags beside Canary's result.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
 - Changes by: spec only
-- Status: default
-- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+- Status: changed 2026-11-23
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22); changed 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
 
 ### PIPESCOPE-94: How signing is tested
 
@@ -2300,6 +2300,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
+
+### PIPESCOPE-117: Keeping program and mint facts current
+
+- Question: How does Aviary keep the facts behind the trust flags current, since an upgrade authority, a mint authority, a supply or an extension can change after it is first read?
+- Answer: Who can upgrade each program is read from the header the ProgramData watch already reads every minute and written when it changes; every mint is read again every hour (`mintRefresh` in `terminal-api`'s config module), its flags worked out with Pipeline's SDK's `decodeMint` at the epoch it was read in.
+- Alternatives: Reading each mint once, when a market first brings it, which leaves a flag showing after the authority behind it is gone; reading every mint every minute, which would wake the database for nothing.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
+
+### PIPESCOPE-118: What a metadata fetch keeps
+
+- Question: What does Aviary keep of each fetch of a strategy's metadata, and how does a refusal read?
+- Answer: One row per outcome in `metadata_snapshots` (the URI, Pipeline's SDK's status, the fetch's or validator's errors, the document's SHA-256, the document as validated and its author text as the explainer's normaliser leaves it), a new row only when the URI, the status or the hash changes; what could not be fetched is `metadata-unreachable`, and a document of a refused content type, not JSON, or refused by Pipeline's validator is `metadata-invalid`, as Pipeline's SDK gives them.
+- Alternatives: Keeping only the newest outcome, which loses the change a new explanation key needs; a status of our own for a refused content type.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Metadata fetcher](spec/pipescope-architecture.md#metadata-fetcher)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
+
+### PIPESCOPE-119: The feed's filters in the address and the API
+
+- Question: How do the feed's filters reach the API, and how does a filtered feed's address read?
+- Answer: The address carries `liquidity` and `volume` (one of the screens' steps, in SOL), `created` (`1h`, `24h` or `7d`) and `hide` (Pipeline's flags, separated by commas), ignoring any other value; `GET /v1/markets` takes `min_sol_liquidity` and `min_sol_volume_24h` in lamports, `created_within` in seconds and `hide`, and answers, besides the page, how many markets there are, how many the filters keep, how many have no SOL side, and every flag present with its description.
+- Alternatives: Filtering in the page over the markets loaded, which cannot count what is not loaded; filters kept in the browser and not the address.
+- Specified in: [`docs/spec/pipescope-screens.md`, Filters](spec/pipescope-screens.md#filters)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
+
+### PIPESCOPE-120: A strategy's name and description on the pages
+
+- Question: Which of a strategy's author text do the pages show, and what does a strategy show before its metadata is first fetched?
+- Answer: Its name from valid metadata wherever the strategy is named, and its description under the name at the head of its page, both as the explainer's normaliser leaves them, in the author's style; before the first fetch, the short address with "Metadata not read yet".
+- Alternatives: The name only; the author's text as fetched, with its control and text-direction characters.
+- Specified in: [`docs/spec/pipescope-screens.md`, Strategy page](spec/pipescope-screens.md#strategy-page)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
+
+### PIPESCOPE-121: The market page's facts before its explanation and forms
+
+- Question: Where does the market page's facts panel sit while the explanation and the forms have not landed beside it?
+- Answer: In the lower band, under the trades, at its full width, with "This market", "Its strategy" and "Its mints" side by side and one under another on narrow screens; the explanation and the forms take the band's first column when they land.
+- Alternatives: The facts in the band's right column with its left column empty.
+- Specified in: [`docs/spec/pipescope-screens.md`, Explanation, actions and facts](spec/pipescope-screens.md#explanation-actions-and-facts)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
 
 ## Canary checks (CANARY)
 
@@ -2983,6 +3033,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: build-time constant
 - Status: default
 - Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### EXPLAINER-22: What the normaliser strips and caps
+
+- Question: Which characters does the author-text normaliser strip, and what does it cap besides the name, the description and the action labels?
+- Answer: Every control character and every format character (Unicode `Cc` and `Cf`, which take in each text-direction mark and zero-width character), after line breaks and tabs become a space; the create form's description and each argument's description are capped as a description, at 600 characters, and each argument's label and each tag as a label, at 64; links, the image, the source, the conformance report and the security contact are left out, and what it removed is counted.
+- Alternatives: Stripping only control and text-direction characters, which leaves other invisible characters in a name.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Inputs](spec/pipescope-explainer.md#inputs)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
 
 ## Tax AMM (TAX)
 

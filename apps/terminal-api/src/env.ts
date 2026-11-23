@@ -28,4 +28,10 @@ export type Bindings = {
   LIVE_ROOMS: DurableObjectNamespace<LiveRoom>;
   /** The keeper runner's wallet (docs/spec/keeper-runner.md, "The keeper wallet"): the keeper page shows it, and only its signed heartbeats are kept. */
   KEEPER_WALLET: string;
+  /**
+   * Only in the end-to-end tests (tests/terminal-e2e): the fixture server's address, through which
+   * the metadata fetcher reads recorded documents instead of the web, as the API reads recorded RPC
+   * answers there (PIPESCOPE-102). Never set in a deployment.
+   */
+  TEST_METADATA_FIXTURES?: string;
 };

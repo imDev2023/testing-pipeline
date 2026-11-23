@@ -99,6 +99,11 @@
   --market-top-columns: minmax(0, 1fr) 388px;
   --market-top-areas: "chart trade" "trades trade";
   --chart-height: 380px;
+
+  /* Facts (components/Flags.module.css, components/facts/Facts.module.css): a flag beside its
+     description, and a fact's name beside its value; one under the other at 720 px and narrower. */
+  --flag-fact-columns: max-content minmax(0, 1fr);
+  --fact-columns: minmax(8em, 34%) minmax(0, 1fr);
 }
 
 :root[data-theme="light"] {
@@ -142,5 +147,7 @@
     --listing-row-rule: 1px;
     --listing-number-align: left;
     --chart-height: 280px;
+    --flag-fact-columns: minmax(0, 1fr);
+    --fact-columns: minmax(0, 1fr);
   }
 }

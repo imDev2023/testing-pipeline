@@ -79,3 +79,17 @@ export async function fakeRpc(answer: { slot: number; balance?: number } | { sta
   const { port } = server.address() as AddressInfo;
   return { url: `http://127.0.0.1:${port}/?api-key=secret-in-the-url`, close: () => new Promise((done) => server.close(() => done())) };
 }
+
+/**
+ * The web as the metadata fetcher sees it in a test: `documents` served as JSON by URL, anything
+ * else 404, and every URL asked kept in `asked`.
+ */
+export function metadataWeb(documents: Record<string, string> = {}) {
+  const asked: string[] = [];
+  const fetch = async (url: string) => {
+    asked.push(url);
+    const body = documents[url];
+    return body === undefined ? new Response("not found", { status: 404 }) : new Response(body, { headers: { "content-type": "application/json" } });
+  };
+  return { fetch, asked, documents };
+}

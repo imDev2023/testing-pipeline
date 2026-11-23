@@ -8,13 +8,14 @@ import { readFileSync } from "node:fs";
 import { PIPELINE_PROGRAM_ADDRESS, programDataPda } from "@pipeline-sol/sdk";
 import { address, getBase58Decoder } from "@solana/kit";
 import { asc, eq } from "drizzle-orm";
-import { createDb, markets, programVersions, readOutbox, strategyCalls, strategyInstructions } from "terminal-db";
+import { createDb, markets, programFacts, programVersions, readOutbox, strategyCalls, strategyInstructions } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import type { RawTransaction } from "terminal-indexer";
 import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
-import { programDataAccount, upgradeTransaction } from "terminal-indexer/testing/programs";
+import { programDataAccount, UPGRADE_AUTHORITY, upgradeTransaction } from "terminal-indexer/testing/programs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IndexerCore } from "../src/indexerCore";
+import { metadataWeb } from "./fakes";
 
 const fixture = (name: string) => JSON.parse(readFileSync(`${import.meta.dirname}/../../../packages/terminal-indexer/test/fixtures/${name}.json`, "utf8")) as RawTransaction;
 const [registered, created, swap] = ["registered", "marketCreated", "swap"].map(fixture) as [RawTransaction, RawTransaction, RawTransaction];
@@ -51,7 +52,7 @@ afterEach(async () => {
 
 function core() {
   const openDb = vi.fn(() => createDb(database.url));
-  return { indexer: new IndexerCore({ rpcUrl: rpc.url, openDb }), openDb };
+  return { indexer: new IndexerCore({ rpcUrl: rpc.url, openDb, metadataFetch: metadataWeb().fetch }), openDb };
 }
 
 const versionsOf = (program: string) => reader.db.select().from(programVersions).where(eq(programVersions.program, program)).orderBy(asc(programVersions.deploySlot));
@@ -169,11 +170,46 @@ describe("the ProgramData watch", () => {
     expect((await readOutbox(reader.db, "test")).at(-1)).toMatchObject({ kind: "router_upgraded", subject: PIPELINE_PROGRAM_ADDRESS });
   });
 
+  it("keeps who can upgrade each program, and writes it again only when it changes, as when an authority is given up", async () => {
+    const { indexer, openDb } = core();
+    await indexer.reconcile();
+    await indexer.watchPrograms();
+    const facts = async () => (await reader.db.select().from(programFacts).orderBy(asc(programFacts.program))).map((f) => [f.program, f.upgradeAuthority, f.flags]);
+    expect(await facts()).toEqual([
+      [STRATEGY, UPGRADE_AUTHORITY, ["upgradeable"]],
+      [PIPELINE_PROGRAM_ADDRESS, UPGRADE_AUTHORITY, ["upgradeable"]],
+    ].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+
+    openDb.mockClear();
+    await indexer.watchPrograms();
+    expect(openDb).not.toHaveBeenCalled();
+
+    // `solana program set-upgrade-authority --final` rewrites the header and leaves the slot as it was.
+    rpc.accounts.set(strategyData, programDataAccount(525_100_000n, code(["Distribute", "distribute"], ["PipelineSwap", "pipeline_swap"]), null));
+    expect(await indexer.watchPrograms()).toMatchObject({ recorded: [], upgraded: [] });
+    expect((await facts()).find(([p]) => p === STRATEGY)).toEqual([STRATEGY, null, ["frozen"]]);
+    expect(await versionsOf(STRATEGY)).toHaveLength(1);
+  });
+
+  it("still records versions when asking about a program with no ProgramData account fails", async () => {
+    const { indexer } = core();
+    await indexer.reconcile();
+    // A strategy whose program is gone: its facts are asked of the RPC with getAccountInfo, which refuses.
+    rpc.accounts.delete(strategyData);
+    rpc.failing.add(STRATEGY);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await indexer.watchPrograms()).toEqual({ quiet: false, recorded: [PIPELINE_PROGRAM_ADDRESS], upgraded: [] });
+    log.mockRestore();
+    expect((await reader.db.select().from(programFacts)).map((f) => f.program)).toEqual([PIPELINE_PROGRAM_ADDRESS]);
+  });
+
   it("is carried on by a new instance from what Postgres holds, as after a deploy, without recording the same version again", async () => {
     await core().indexer.reconcile();
     await core().indexer.watchPrograms();
-    const { indexer } = core();
+    const { indexer, openDb } = core();
     expect(await indexer.watchPrograms()).toEqual({ quiet: true, recorded: [], upgraded: [] });
+    // Nor does it write the programs' facts again: it read them from Postgres with the slots.
+    expect(openDb).toHaveBeenCalledTimes(1);
   });
 });
 
