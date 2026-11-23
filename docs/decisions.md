@@ -2261,6 +2261,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118)
 
+### PIPESCOPE-113: What makes a new strategy version
+
+- Question: Which changes of a program's ProgramData account make a new strategy version?
+- Answer: A deploy or an upgrade, keyed by its transaction's slot; an extension, which moves the ProgramData slot and keeps the code, makes none, and a version recorded before its transaction is served is looked for again on at most 30 watches, `VERSION_TRANSACTION_LOOKS`.
+- Alternatives: Every change of the ProgramData slot, which listed the extension before each upgrade as a version of its own with the same code (the buy wall AMM's on 2026-11-20).
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
+
+### PIPESCOPE-114: Who called a strategy's instruction
+
+- Question: Who is stored as having called an instruction on a strategy program?
+- Answer: The transaction's signers among the instruction's accounts, with the program that invoked it kept beside them, from successful transactions only; the API lists at most 100 signers an instruction, most calls first, `INSTRUCTION_SIGNERS_SHOWN`, and counts them all.
+- Alternatives: The transaction's fee payer, which names whoever paid rather than whoever the instruction needed; counting failed transactions too, which changed nothing.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
+
+### PIPESCOPE-115: How an instruction's name is cut from the bytes
+
+- Question: Where does a name compiled in as "Instruction: Name" end, when the next string runs on into it?
+- Answer: At the longest prefix whose discriminator is in the code, trying every prefix, with a discriminator split over two instruction slots counting as well as one side by side.
+- Alternatives: Cutting only at capital letters, which missed the outside builder's `SetMetadata` on devnet, where the next string begins in lower case.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
+
+### PIPESCOPE-116: The outbox for what follows the indexer
+
+- Question: How do Canary's runs and the Telegram bot's queue learn of a new strategy, market, strategy version or router upgrade?
+- Answer: From one outbox table in Postgres, each event written once in the order seen, which each reads on from a cursor of its own.
+- Alternatives: The indexer calling each of them directly, which loses an event whenever the one called is down; a queue product, which Aviary does not otherwise need.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims

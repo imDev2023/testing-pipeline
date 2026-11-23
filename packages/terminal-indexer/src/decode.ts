@@ -19,16 +19,28 @@ export const DECODER_VERSION = 1;
 /** Turns an event instruction's data into an event, or null when it does not know it. */
 export type EventDecoder = (data: ReadonlyUint8Array) => PipelineEvent | null;
 
+/** An instruction as `json` encoding gives it: its program and accounts as indexes into the transaction's account list, its data in base58. */
+export type CompiledInstruction = { programIdIndex: number; accounts?: number[]; data: string };
+
 /** A transaction as `getTransaction` returns it with `json` encoding, with its place in its block when the source knows it. */
 export type RawTransaction = {
   slot: number;
   blockTime: number | null;
   /** The transaction's position in its block; `getTransactionsForAddress` gives it, and `rpcSource` adds it from `getBlock`. */
   transactionIndex?: number;
-  transaction: { signatures: string[]; message: { accountKeys: string[] } };
+  transaction: {
+    signatures: string[];
+    message: {
+      accountKeys: string[];
+      /** How many of the first account keys signed it. */
+      header?: { numRequiredSignatures: number; numReadonlySignedAccounts: number; numReadonlyUnsignedAccounts: number };
+      /** The top-level instructions; each account and program is an index into the full account list. */
+      instructions?: CompiledInstruction[];
+    };
+  };
   meta: {
     err: unknown;
-    innerInstructions?: { index: number; instructions: { programIdIndex: number; data: string }[] }[] | null;
+    innerInstructions?: { index: number; instructions: (CompiledInstruction & { stackHeight?: number | null })[] }[] | null;
     loadedAddresses?: { writable: string[]; readonly: string[] } | null;
   } | null;
 };
