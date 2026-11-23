@@ -42,8 +42,11 @@ export type SignedTransaction = {
     lastValidBlockHeight: bigint;
 };
 
-/** How a transaction ended, simulated or landed: the program's custom error code if it refused with one. */
-export type Result = { failed: boolean; customError: number | null; error: string | null; logs: string[] };
+/**
+ * How a transaction ended, simulated or landed: the program's custom error code if it refused
+ * with one, and the index of the instruction that failed, if one did.
+ */
+export type Result = { failed: boolean; customError: number | null; failedInstruction: number | null; error: string | null; logs: string[] };
 
 export type Simulation = Result & {
     /** The fee payer's balance after the simulated transaction, its fee taken. */
@@ -103,13 +106,19 @@ function customErrorOf(error: unknown): number | null {
     return custom === undefined ? null : Number(custom);
 }
 
+/** The index of the instruction a transaction error names, if it names one. */
+function failedInstructionOf(error: unknown): number | null {
+    const index = (error as { InstructionError?: [unknown, unknown] } | null)?.InstructionError?.[0];
+    return typeof index === 'number' || typeof index === 'bigint' ? Number(index) : null;
+}
+
 const show = (value: unknown) => JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
 
 /** The error, with the log line that names it (such as "Error: Account is frozen") when there is one. */
 function resultOf(error: unknown, logs: readonly string[] | null | undefined): Result {
     const failed = error !== null && error !== undefined;
     const said = [...(logs ?? [])].reverse().find((line) => /error/i.test(line) && !/ failed: custom program error/.test(line));
-    return { failed, customError: customErrorOf(error), error: failed ? `${show(error)}${said ? `: ${said}` : ''}` : null, logs: [...(logs ?? [])] };
+    return { failed, customError: customErrorOf(error), failedInstruction: failedInstructionOf(error), error: failed ? `${show(error)}${said ? `: ${said}` : ''}` : null, logs: [...(logs ?? [])] };
 }
 
 /** Wraps an RPC call, so a transport failure is told apart from a job's failure. */

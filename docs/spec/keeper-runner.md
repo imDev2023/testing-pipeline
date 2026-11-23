@@ -23,7 +23,8 @@ Like every decision in this spec, each one here is a default MetalLegBob may cha
 | Buy wall AMM | `settle` | `retired_tokens` above 0, at most once an hour per market | The hourly pass |
 | Buy wall AMM | `pay_rewards` | `rewards_owed` above 0 | The daily pass |
 | Buy wall AMM | `sweep_fees { slot }` | A slot's ledger above 0; slot 1 only once `DESIGNER_RECIPIENT` is set | The daily pass, one transaction per slot |
-| Lending AMM | `rebalance` | The buffer is outside its band, or the market should enter or leave withdraw mode | After each transaction on the market, and the 10-minute sweep |
+| Lending AMM | `rebalance` | The program would act: the buffer outside its band by at least `MIN_REBALANCE`, the market entering or leaving withdraw mode or redeeming in it, or a sighting of the exit threshold to record or forget ([`SUITE-60`](../decisions.md#suite-60-keeper-runner-when-the-lending-amms-rebalance-is-due)) | After each transaction on the market, and the 10-minute sweep |
+| Lending AMM | klend's `refresh_reserve` | The market holds cTokens and its reserve was last refreshed more than half of `TRADE_MAX_RESERVE_AGE_SLOTS` ago, unless the lending market's emergency mode is on ([`SUITE-61`](../decisions.md#suite-61-keeper-runner-refreshing-the-lending-amms-reserves)) | After each transaction on the market, and the 10-minute sweep |
 | Tax AMM | `distribute { slot }` | A slot is owed more than 0 (the burn slot included) | The daily pass, one transaction per slot |
 
 - The containment hook's `unlock` has no keeper job in v1, as [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18) decided: anyone who wants it presses Aviary's Unlock button.
@@ -33,9 +34,11 @@ Like every decision in this spec, each one here is a default MetalLegBob may cha
 ### One definition of due
 
 - Each job's due rule is a pure function of the market state in one shared package, `packages/keeper-jobs`, with the instruction builder for that job.
+- A due rule that needs more than the market state names the accounts it reads in its product's entry (`watches`), and the runner reads them with the market in one `getMultipleAccounts`, so the rule sees one moment of the chain: the lending AMM's entry reads the market's Kamino reserve, its lending market and the clock sysvar, since withdraw mode and the reserve's age depend on them ([`SUITE-59`](../decisions.md#suite-59-keeper-runner-accounts-a-due-rule-reads-beyond-the-market)).
 - The keeper runner and Aviary's panels both use it, so a button shows in Aviary exactly when the runner would act.
 - Each product's package entry also names the refusal codes that mean "nothing to do" (for example the lending AMM's `WithinBand`, or a payout with nothing owed), which the runner treats as a skip, not a failure.
 - A program that succeeds without effect when there is nothing to do, rather than refusing, says so in its entry instead: the tax AMM's `distribute` on a slot owed nothing succeeds and moves nothing ([`TAX-43`](../decisions.md#tax-43-which-tax-slots-distribute-pays)), so its entry has no "nothing to do" code and counts a simulation that emits no `Distributed` event as nothing to do ([`SUITE-50`](../decisions.md#suite-50-keeper-runner-nothing-to-do-when-a-program-does-not-refuse)).
+- A refusal code counts as either only when the product's own program refused: the same number from another program in the transaction (klend's in the lending AMM's `refresh_reserve`, a token program's) is a failure like any other ([`SUITE-62`](../decisions.md#suite-62-keeper-runner-whose-refusal-codes-count)).
 - It also names the refusal codes that mean "try again in a later slot", which the runner retries from the next slot, never counting them as a failure: the buy wall AMM's `SwapThisSlot`, which refuses `place_wall` in a slot a swap already ran in ([`POOL4-50`](../decisions.md#pool4-50-when-the-walls-floor-moves); a market with a swap in every slot can starve it, the Low residual R2-03 the owner signed off).
 
 ## Which markets
@@ -141,6 +144,7 @@ A `KEEPER_` variable that names no setting stops the runner at start, so a missp
 - A new market's first payouts may create up to five recipient token accounts (a tax market with four recipients and the suite share), about 0.0102 SOL, so on its first day the last one can wait for the next day's cap; that is accepted.
 - What the runner has spent today is rebuilt from the chain whenever it starts: the keeper wallet's own transactions since 00:00 UTC (`getSignaturesForAddress`, then each one's fee and balance changes), per market from the accounts each one touched.
   A transaction's spend is what left the keeper wallet, and never less than its fee, so one that brings lamports back (unwrapping tips) still counts its fee; it is put to the first known market among its accounts.
+  A lending AMM reserve's `refresh_reserve` names no market, so its fee counts in today's total and against `DAILY_CAP` but against no market's cap: a reserve serves every market that lends to it, and the job is due at most once every 4,500 slots per reserve (`SUITE-61`).
   A sent job is counted the same way once it lands, so the spend the runner tracks and the spend a restart rebuilds are one sum ([`SUITE-51`](../decisions.md#suite-51-keeper-runner-what-a-job-costs)).
   So the runner keeps no state file, and a restart can never reset a cap.
   This holds because the keeper wallet is used by the runner alone.

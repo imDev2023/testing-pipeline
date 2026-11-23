@@ -82,10 +82,15 @@ const metadata = (() => {
     return parsed.value;
 })();
 
-/** Refuses to run unless the validator is local and the tax AMM is registered with its router. */
-export async function checkLocalValidator() {
+/** Refuses to run unless the validator is local. */
+export function checkLocalHost() {
     const host = new URL(LOCAL_URL).hostname;
     if (!['127.0.0.1', 'localhost'].includes(host)) throw new Error(`LOCAL_VALIDATOR_URL must be a local validator, not ${LOCAL_URL}`);
+}
+
+/** Refuses to run unless the validator is local and the tax AMM is registered with its router. */
+export async function checkLocalValidator() {
+    checkLocalHost();
     const strategy = await rpc.getAccountInfo(await pipeline.strategyPda(TAX_AMM_PROGRAM_ADDRESS), { encoding: 'base64' }).send();
     if (!strategy.value) {
         throw new Error(`the tax AMM is not registered on ${LOCAL_URL}: run its local demo first (docs/toolchain.md, "Local demo run")`);
