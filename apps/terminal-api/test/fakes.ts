@@ -36,6 +36,7 @@ export function bindings(overrides: Partial<Bindings> & { databaseUrl: string; r
     REPORTS: rateLimiter(10),
     TERMINAL_CACHE: {} as KVNamespace,
     INDEXER: {} as Bindings["INDEXER"],
+    LIVE_ROOMS: {} as Bindings["LIVE_ROOMS"],
     KEEPER_WALLET: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
     ...rest,
   };

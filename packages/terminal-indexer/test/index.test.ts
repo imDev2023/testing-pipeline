@@ -70,7 +70,7 @@ describe("indexing registrations and new markets", () => {
   it("writes the market from its MarketCreated event, with its mints in the market's own order, and names it to be read", async () => {
     const created = fixture("marketCreated");
     const result = await indexTransactions(client.db, pipelineHandler(), [created]);
-    expect(result).toEqual({ counts: { markets: 1 }, markets: ["7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz"] });
+    expect(result).toEqual({ counts: { markets: 1 }, markets: ["7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz"], trades: [] });
     const [market] = await client.db.select().from(markets).where(eq(markets.address, "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz"));
     expect(market).toMatchObject({
       strategyProgram: "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t",

@@ -2,6 +2,7 @@
 // The bindings `wrangler.jsonc` gives `terminal-api`. Per-environment values (the cluster, the rate
 // limits) live there; policy values the code uses live in ./config.
 import type { Indexer } from "./indexer";
+import type { LiveRoom } from "./liveRoom";
 
 /** The Workers rate-limiting binding: one call per request, counted per key over the binding's period. */
 export type RateLimiter = { limit(options: { key: string }): Promise<{ success: boolean }> };
@@ -23,6 +24,8 @@ export type Bindings = {
   TERMINAL_CACHE: KVNamespace;
   /** The indexer, one instance (docs/spec/pipescope-architecture.md, Indexer). */
   INDEXER: DurableObjectNamespace<Indexer>;
+  /** The live rooms, one per market and one for the feed, by name (docs/spec/pipescope-architecture.md, Live rooms). */
+  LIVE_ROOMS: DurableObjectNamespace<LiveRoom>;
   /** The keeper runner's wallet (docs/spec/keeper-runner.md, "The keeper wallet"): the keeper page shows it, and only its signed heartbeats are kept. */
   KEEPER_WALLET: string;
 };

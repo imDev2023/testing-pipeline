@@ -14,7 +14,12 @@ describe("the every-minute dispatcher (PIPESCOPE-89)", () => {
     expect(dueJobs(at("2026-11-22T10:30:00Z"))).not.toContain("metadataRefetch");
   });
 
-  it("makes every job due at the top of the hour", () => {
+  it("makes the daily candle pruning due only at midnight UTC", () => {
+    expect(dueJobs(at("2026-11-22T00:00:00Z"))).toContain("pruneCandles");
+    expect(dueJobs(at("2026-11-22T11:00:00Z"))).not.toContain("pruneCandles");
+  });
+
+  it("makes every hourly job due at the top of the hour", () => {
     expect(dueJobs(at("2026-11-22T11:00:00Z"))).toEqual([
       "reconcileRouter",
       "reconcileStrategies",

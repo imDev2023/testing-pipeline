@@ -1,0 +1,96 @@
+// The views the API serves of markets and trades, built in one place, so the feed's endpoints and the
+// live rooms (./liveRoom) send exactly the same thing: each market with its pair by the quote mint
+// order (PIPESCOPE-74), what its vaults hold and its last 24 hours; each trade with its pair and side.
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import type { markets} from "terminal-db";
+import { marketMints, mints, trades, type Db } from "terminal-db";
+import { AVIARY_MINT_NAMES, VOLUME_WINDOW_SECONDS } from "./config";
+import type { Market, Trade } from "./contract";
+import { marketPair, tradePair } from "./pairs";
+
+type MarketRow = typeof markets.$inferSelect;
+
+/** Each market's mints in order, with their vaults and decimals, and its last 24 hours, read for a page of markets at once. */
+export async function marketViews(database: Db, rows: MarketRow[]): Promise<Market[]> {
+  if (!rows.length) return [];
+  const addresses = rows.map((m) => m.address);
+  const held = await database
+    .select({ market: marketMints.market, position: marketMints.position, mint: marketMints.mint, vault: marketMints.vault, liquidity: marketMints.vaultAmount, decimals: mints.decimals })
+    .from(marketMints)
+    .leftJoin(mints, eq(mints.address, marketMints.mint))
+    .where(inArray(marketMints.market, addresses))
+    .orderBy(marketMints.market, marketMints.position);
+  const since = BigInt(Math.floor(Date.now() / 1000) - VOLUME_WINDOW_SECONDS);
+  const recent = await database
+    .select({
+      market: trades.market,
+      inputMint: trades.inputMint,
+      outputMint: trades.outputMint,
+      trades: sql<number>`count(*)::int`,
+      netSent: sql<string>`sum(${trades.netSent})::text`,
+      received: sql<string>`sum(${trades.received})::text`,
+    })
+    .from(trades)
+    .where(and(inArray(trades.market, addresses), gte(trades.unixTimestamp, since)))
+    .groupBy(trades.market, trades.inputMint, trades.outputMint);
+
+  return rows.map((m) => {
+    const own = held.filter((h) => h.market === m.address);
+    const { quote, base } = marketPair(own.map((h) => h.mint));
+    let count = 0;
+    let volume = 0n;
+    for (const r of recent.filter((r) => r.market === m.address)) {
+      count += r.trades;
+      if (r.inputMint === quote) volume += BigInt(r.netSent);
+      else if (r.outputMint === quote) volume += BigInt(r.received);
+    }
+    return {
+      address: m.address,
+      strategy: m.strategyProgram,
+      market_state: m.marketState,
+      created_at: m.createdAt.toISOString(),
+      created_by: m.createdBy,
+      created_signature: m.createdSignature,
+      fee_mint: m.feeMint,
+      supports_exact_out: m.supportsExactOut,
+      mints: own.map((h) => ({ mint: h.mint, symbol: AVIARY_MINT_NAMES[h.mint] ?? null, decimals: h.decimals, vault: h.vault, liquidity: h.liquidity })),
+      quote_mint: quote,
+      base_mint: base,
+      stats_24h: { trades: count, volume_quote: String(volume) },
+    };
+  });
+}
+
+type TradeRow = typeof trades.$inferSelect;
+
+/** Trades as the API serves them, each with its pair by its market's order of mints and whether it bought or sold the base mint. */
+export async function tradeViews(database: Db, rows: TradeRow[]): Promise<Trade[]> {
+  const marketsOf = [...new Set(rows.map((t) => t.market))];
+  const held = marketsOf.length
+    ? await database.select({ market: marketMints.market, mint: marketMints.mint }).from(marketMints).where(inArray(marketMints.market, marketsOf)).orderBy(marketMints.market, marketMints.position)
+    : [];
+  return rows.map((t): Trade => {
+    const { quote, base, side } = tradePair(held.filter((h) => h.market === t.market).map((h) => h.mint), t.inputMint, t.outputMint);
+    return {
+      signature: t.signature,
+      event_index: t.eventIndex,
+      slot: Number(t.slot),
+      block_index: t.blockIndex,
+      block_time: t.blockTime?.toISOString() ?? null,
+      market: t.market,
+      trader: t.trader,
+      input_mint: t.inputMint,
+      output_mint: t.outputMint,
+      mode: t.mode === 1 ? "exact_out" : "exact_in",
+      net_sent: t.netSent,
+      received: t.received,
+      pipeline_fee: t.pipelineFee,
+      fee_mint: t.feeMint,
+      integrator: t.integrator,
+      integrator_fee: t.integratorFee,
+      quote_mint: quote,
+      base_mint: base,
+      side,
+    };
+  });
+}

@@ -137,13 +137,20 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - Each trade is folded into its candle at every length the config module lists as it is indexed, by trade order (slot, in-block position, event index) rather than arrival, the same fold a rebuild makes (Top-pad's `candles.ts`); any candle can be rebuilt from trades.
 - Candles are kept per market and mint pair, since a market has two to four mints; a trade's price is `received / net_sent` for its pair (Pipeline's integrator guide); which mint of a pair is shown as the quote is for Aviary's v1 scope and screens.
 - Lengths and retention as Top-pad's, kept in the config module (`PIPESCOPE-30`): 1 s, 15 s, 1 m, 5 m, 15 m, 1 h, 4 h and 1 d; 1 s candles kept 7 days, 15 s candles 30 days, coarser ones and all trades forever.
+  Candles past their retention are dropped once a day, so the database wakes for it rarely (`PIPESCOPE-109`).
+- A swap's candle is the one its block's time falls in, which is where Pipeline's hosted API places it and can be a second later than the event's own clock; the event's clock serves only a block whose time is unknown (`PIPESCOPE-108`).
+- Prices are kept exactly: each open, high, low and close is the reduced fraction of the two amounts of the swap that set it, the pair's mints kept in address order, so a candle reads exactly either way round and at any decimals (`PIPESCOPE-107`).
+- `GET /v1/markets/{market}/candles?interval=&base=&quote=&limit=&from=` serves a length's newest candles, oldest first, 1,000 unless asked for up to 5,000 (`PAGE_LIMITS`), for the pair named by `base` and `quote` or the market's own, each price written to 36 significant digits (`PRICE_SIGNIFICANT_DIGITS`) and each series with `trade_count`, every swap of the pair it is built from (`PIPESCOPE-107`).
 - The API returns `quote_mint` and `base_mint` with every market, candle series and trade, from the quote mint order in the config module ([`pipescope-screens.md`](pipescope-screens.md), Price direction).
 
 ### Live rooms
 
 - One `LiveRoom` Durable Object per market and one for the feed, holding hibernatable browser WebSockets, so they cost no duration while idle; the indexer publishes each decoded trade, new market and new strategy version to its room, and rooms batch at the interval in the config module, 100 ms (`PIPESCOPE-31`).
-- A reconnecting browser resyncs from its last slot through the API.
-- The rooms tell the indexer when the first viewer arrives and when the last one leaves, which opens and closes its socket.
+- A browser opens `/v1/live/markets/{market}` or `/v1/live/feed`; a market's room is sent each new swap as the API's trade, and the feed's room and the market's own each market new or changed (its vaults, its last 24 hours) as the API's market, so a page puts each in place by its key and shows it once (`PIPESCOPE-110`).
+  The indexer publishes what the live path and reconciliation index, and only to rooms with a viewer, so with none it reads and sends nothing; a room due more than 100 new swaps at once (`LIVE_ROOM_TRADES_MAX`, as after a long backlog) is told to resync instead.
+- A browser resyncs through the API from its last slot each time it joins a room, the first time included: `GET /v1/markets/{market}/trades?after=` answers only the trades newer than the newest it shows, and when they fill a page, that page replaces the list (`PIPESCOPE-110`).
+- The rooms tell the indexer as each viewer arrives and when the last one leaves, which opens and closes its socket (a room the indexer did not hear of, as during a deploy, is counted at its next viewer); while it is open, its alarm also asks each room with a viewer how many it holds, so a room whose browsers left unseen never keeps the socket open (`PIPESCOPE-110`).
+- `GET /v1/indexer` shows the socket's state, the rooms keeping it open and when it closes, from the indexer's storage, which also records when and why it last opened or closed; the indexer logs each.
 
 ## API
 
@@ -256,6 +263,8 @@ Each is a named constant; the pages and the Telegram bot read what they show fro
 | Registry snapshot, ProgramData watch | every 10 minutes, every minute | `PIPESCOPE-28` |
 | Socket: reopen alarm, close after the last viewer | 15 s, 3 minutes | `PIPESCOPE-27`, `PIPESCOPE-28` |
 | Candle lengths and retention | as [Candles](#candles) | `PIPESCOPE-30` |
+| Candle pruning | once a day | `PIPESCOPE-109` |
+| Candle prices written to; candles a request is served, by default and at most | 36 significant digits; 1,000 and 5,000 | `PIPESCOPE-107` |
 | Live-room batching | 100 ms | `PIPESCOPE-31` |
 | Fast path: confirmation poll | every 300 ms | `PIPESCOPE-33` |
 | Metadata fetcher limits and re-fetch interval | as [Metadata fetcher](#metadata-fetcher), every hour | `PIPESCOPE-36` |

@@ -4,13 +4,18 @@
 // with strategies on a second tab, each tab with its count, under a head that says how many there
 // are and that nothing is curated. The Canary column, the trust flags and the filters come with
 // their tickets (#125, #119); strategy names with strategy metadata (#119), token names with #120.
+// Live (docs/spec/pipescope-architecture.md, Live rooms): the feed's room sends each market new or
+// changed; a new one joins the top, a changed one updates in place, and while the pointer or the
+// focus is on the table new rows wait, so the row under it never moves.
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { MarketsPage, StrategiesList, type Market, type Strategy } from "terminal-api/contract";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { MarketsPage, StrategiesList, type LiveEvent, type Market, type Strategy } from "terminal-api/contract";
 import { ApiFailure, getFromApi } from "@/api";
 import { BRAND } from "@/brand";
 import { FEED_ROWS_PER_LOAD } from "@/config";
 import { formatAge, formatDate, formatInteger, formatTokenAmount } from "@/format";
+import { placeMarkets } from "@/liveMerge";
+import { LIVE_ROOMS, useLiveRoom } from "@/live";
 import { ROUTES } from "@/routes";
 import { MintLabel } from "../MintLabel";
 import { ShortAddress } from "../ShortAddress";
@@ -30,17 +35,94 @@ export function Feed({ tab }: { tab: FeedTab }) {
   const [attempt, setAttempt] = useState(0);
   const [more, setMore] = useState<{ status: "idle" | "loading" } | { status: "failed"; message: string }>({ status: "idle" });
 
+  // What the page shows, kept in step with every change as it is made, so live arrivals, a resync and
+  // a further page each build on the latest and none overwrites another.
+  const loaded = useRef<Loaded | null>(null);
+  const show = useCallback((data: Loaded) => {
+    loaded.current = data;
+    setState({ status: "loaded", data });
+  }, []);
+  /** The room opened before the first page arrived: what changed in between is read once it has. */
+  const resyncDue = useRef(false);
+
+  // ---- Live ----
+  const holding = useRef(false);
+  const [held, setHeld] = useState<Market[]>([]);
+  const heldNow = useRef<Market[]>([]);
+  const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
+
+  /**
+   * Markets from the room or a resync, put in place: a market shown updates where it is, a newer one
+   * joins the top or, while the reader is on the table, waits; an older one not loaded yet stays for
+   * its own page (placeMarkets).
+   */
+  const arrive = useCallback(
+    (arriving: Market[]) => {
+      const data = loaded.current;
+      if (!data || !arriving.length) return;
+      const { markets: placed, added } = placeMarkets([...heldNow.current, ...data.markets], arriving);
+      const waiting = placed.slice(0, heldNow.current.length);
+      const markets = placed.slice(heldNow.current.length);
+      if (added.length) setFresh((before) => new Set([...before, ...added.map((m) => m.address)]));
+      if (holding.current) {
+        heldNow.current = [...added, ...waiting];
+        setHeld(heldNow.current);
+        show({ ...data, markets });
+        return;
+      }
+      heldNow.current = waiting;
+      show({ ...data, markets: [...added, ...markets], total: data.total + added.length });
+    },
+    [show],
+  );
+
+  const releaseHeld = useCallback(() => {
+    holding.current = false;
+    const waiting = heldNow.current;
+    const data = loaded.current;
+    heldNow.current = [];
+    setHeld([]);
+    if (waiting.length && data) show({ ...data, markets: [...waiting, ...data.markets], total: data.total + waiting.length });
+  }, [show]);
+
+  /** Whatever changed while the page was away from its room, or before it joined: the first page read again, and put in place. */
+  const resync = useCallback(() => {
+    if (!loaded.current) {
+      resyncDue.current = true;
+      return;
+    }
+    getFromApi(`/v1/markets?limit=${FEED_ROWS_PER_LOAD}`, MarketsPage).then(
+      (page) => arrive(page.markets),
+      () => {},
+    );
+  }, [arrive]);
+
+  useLiveRoom(LIVE_ROOMS.feed, {
+    onEvents: (events: LiveEvent[]) => {
+      if (events.some((e) => e.type === "resync")) resync();
+      arrive(events.flatMap((e) => (e.type === "market" ? [e.market] : [])));
+    },
+    onOpen: resync,
+  });
+
   useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
+    loaded.current = null;
     Promise.all([getFromApi(`/v1/markets?limit=${FEED_ROWS_PER_LOAD}`, MarketsPage, { signal }), getFromApi("/v1/strategies", StrategiesList, { signal })]).then(
-      ([page, { strategies }]) => setState({ status: "loaded", data: { markets: page.markets, total: page.total, next: page.next, strategies } }),
+      ([page, { strategies }]) => {
+        show({ markets: page.markets, total: page.total, next: page.next, strategies });
+        if (resyncDue.current) {
+          resyncDue.current = false;
+          resync();
+        }
+      },
       (e: unknown) => {
         if (!signal.aborted) setState({ status: "failed", message: failureOf(e) });
       },
     );
     return () => controller.abort();
-  }, [attempt]);
+  }, [attempt, show, resync]);
 
   const retry = useCallback(() => {
     setState({ status: "loading" });
@@ -48,16 +130,20 @@ export function Feed({ tab }: { tab: FeedTab }) {
   }, []);
 
   const loadMore = useCallback(async () => {
-    if (state.status !== "loaded" || !state.data.next) return;
+    const next = loaded.current?.next;
+    if (!next) return;
     setMore({ status: "loading" });
     try {
-      const page = await getFromApi(`/v1/markets?limit=${FEED_ROWS_PER_LOAD}&before=${encodeURIComponent(state.data.next)}`, MarketsPage);
-      setState({ status: "loaded", data: { ...state.data, markets: [...state.data.markets, ...page.markets], total: page.total, next: page.next } });
+      const page = await getFromApi(`/v1/markets?limit=${FEED_ROWS_PER_LOAD}&before=${encodeURIComponent(next)}`, MarketsPage);
+      // Built on what the page shows now, live arrivals during the read included; a market already shown is not shown twice.
+      const data = loaded.current!;
+      const shown = new Set(data.markets.map((m) => m.address));
+      show({ ...data, markets: [...data.markets, ...page.markets.filter((m) => !shown.has(m.address))], total: page.total, next: page.next });
       setMore({ status: "idle" });
     } catch (e) {
       setMore({ status: "failed", message: failureOf(e) });
     }
-  }, [state]);
+  }, [show]);
 
   return (
     <div className={styles.feed}>
@@ -92,7 +178,23 @@ export function Feed({ tab }: { tab: FeedTab }) {
           </nav>
           {tab === "markets" ? (
             <section aria-label="Markets" className={styles.section}>
-              <MarketsTable markets={state.data.markets} />
+              {held.length > 0 && (
+                <p>
+                  <button type="button" onClick={releaseHeld}>
+                    Show {plural(held.length, "new market", "new markets")}
+                  </button>
+                </p>
+              )}
+              <div
+                onPointerEnter={() => (holding.current = true)}
+                onPointerLeave={releaseHeld}
+                onFocus={() => (holding.current = true)}
+                onBlur={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) releaseHeld();
+                }}
+              >
+                <MarketsTable markets={state.data.markets} fresh={fresh} />
+              </div>
               {state.data.next && (
                 <div className={styles.more}>
                   <button type="button" onClick={loadMore} disabled={more.status === "loading"}>
@@ -135,7 +237,7 @@ function Age({ iso }: { iso: string }) {
   );
 }
 
-function MarketsTable({ markets }: { markets: Market[] }) {
+function MarketsTable({ markets, fresh }: { markets: Market[]; fresh: ReadonlySet<string> }) {
   return (
     <div className={table.scroll}>
       <table className={table.table}>
@@ -157,7 +259,7 @@ function MarketsTable({ markets }: { markets: Market[] }) {
             const base = m.mints.find((x) => x.mint === m.base_mint)!;
             const quote = m.mints.find((x) => x.mint === m.quote_mint)!;
             return (
-              <tr key={m.address} className={table.row}>
+              <tr key={m.address} className={`${table.row} ${fresh.has(m.address) ? styles.fresh : ""}`}>
                 <td className={table.main}>
                   <Link href={ROUTES.market(m.address)} className={table.rowLink}>
                     <MintLabel mint={base.mint} symbol={base.symbol} /> / <MintLabel mint={quote.mint} symbol={quote.symbol} />
