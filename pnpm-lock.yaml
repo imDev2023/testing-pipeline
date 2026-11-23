@@ -482,6 +482,9 @@ importers:
 
   tests/terminal-e2e:
     devDependencies:
+      '@pipeline-sol/sdk':
+        specifier: 'catalog:'
+        version: 0.3.0(typescript@6.0.3)
       '@playwright/test':
         specifier: 1.65.1
         version: 1.65.1

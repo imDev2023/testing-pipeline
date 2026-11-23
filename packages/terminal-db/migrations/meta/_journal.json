@@ -29,6 +29,13 @@
       "when": 1795441637358,
       "tag": "0003_candles",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795451333096,
+      "tag": "0004_strategy_versions",
+      "breakpoints": true
     }
   ]
 }

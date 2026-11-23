@@ -115,9 +115,16 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - **ProgramData watch** every minute: one `getMultipleAccounts` with a 45-byte `dataSlice` per 100 programs reads each strategy's and the router's last-deploy slot.
   A changed slot on a strategy is a new strategy version: it is recorded, a Canary run of all its markets starts, a verified build is requested if a source lead exists, and the strategy's markets are re-read.
   A changed slot on the router is recorded and flagged, and starts a Canary run of every market, since a router upgrade can change event layouts; events the decoder does not know are kept and indexed again by newer code.
+  A version is the code of one deploy or upgrade (the loader's `DeployWithMaxDataLen` or `Upgrade`, at the top level or through a multisig), keyed by that transaction's slot; an `ExtendProgram`, which a deploy tool sends just before an upgrade to make room, moves the ProgramData slot and keeps the code, so it is no new version, and a deploy in the same slot as an extension wins over it; while the RPC has not served the transaction that moved the slot and the code is the version's before, nothing is recorded and the next watch asks again, since an extension and an upgrade to the same bytes look alike until then (`PIPESCOPE-113`).
+  The ProgramData slot last seen is kept with the version in force, so a new instance of the indexer does not take an extension for a change; a version recorded before its transaction is served is looked for again on each watch, at most `VERSION_TRANSACTION_LOOKS` times.
+  A program seen for the first time has its version in force recorded with its bytes, and its earlier versions backfilled from the deploys in its ProgramData account's history, without bytes, since those are gone; a first sight is no upgrade and starts nothing.
 - **New markets**: each `MarketCreated`, and each market the registry snapshot finds, starts that market's Canary runs on the schedule of [`pipescope-canary.md`](pipescope-canary.md), When Canary runs.
 - **Strategy-program calls**: every instruction the indexer sees on a strategy program is stored with its caller, which Canary's `custom_instructions` result reads as who has called each instruction.
+  An instruction's callers are the transaction's signers among its accounts, and the program that invoked it is kept beside them; a failed transaction changed nothing and stores no call (`PIPESCOPE-114`).
+  Calls are counted by discriminator over the strategy program's whole history, so an instruction keeps its count across versions.
 - **Instruction lists**: when a strategy version is recorded, `terminal-api` reads its program's bytes once and stores the instructions compiled into it, as [`pipescope-canary.md`](pipescope-canary.md) (Custom instructions are listed, not called) defines them; the facts panel, the forms' instruction check, the explainer's F items and Canary's snapshot all read that one list (`PIPESCOPE-92`).
+  A name is every prefix of the letters and digits after "Instruction: ", since the next string in the bytes can begin with any letter (devnet's outside builder compiles in "SetMetadatafactory"), and the longest whose discriminator is in the code is kept; a discriminator counts side by side, or split over two instruction slots as a 64-bit immediate, as `match` arms compile it (`PIPESCOPE-115`).
+- **Events for what follows**: a new strategy, a new market, a new strategy version and a router upgrade are each written once to one outbox table, `outbox_events`, in the order seen, keyed so the same thing seen twice (by its event and by the snapshot) is one event; Canary's runs and the Telegram bot's queue each read on from a cursor of their own in `outbox_cursors` (`readOutbox`, `ackOutbox` in `packages/terminal-db`), so a reader that fails reads the event again (`PIPESCOPE-116`).
 - **Market accounts**: after each event or custom action that touches a market, its market state and vaults are re-read; there are no account subscriptions.
 - **Mints**: when a market brings a mint not yet seen, its mint account and on-chain token metadata are read once and stored, for the facts (Pipeline's trust flags) and for symbols and images, which `pipescope.md` treats as untrusted.
 - **Unknown or failed decodes** are kept with the transaction, and re-indexing transactions first indexed by older code is Top-pad's `reindexTransactions`.
@@ -186,9 +193,9 @@ Top-pad's flow (`apps/web/src/components/coin/QuickTrade.tsx`, `prepareSwap` the
 As built in [#121](https://github.com/imDev2023/testing-pipeline/issues/121):
 
 - `GET /v1/quote` takes the amount typed and works the market amount back from it (`pipescope-screens.md`, The amount typed), `POST /v1/swaps/prepare` builds and simulates the swap for the trader named, and `POST /v1/trades` takes the signature; all three count against the 60-a-minute limit (`PIPESCOPE-90`), and a refusal from a strategy or the chain is a 422 carrying the failure decoded, its raw error and the program's log lines.
-- A quote's simulation is paid for by the fee wallet, which does not sign, so a quote works before the trader's wallet holds any SOL (`PIPESCOPE-113`).
-- The fast path gives up after 60 s, about a blockhash's life, and says the trade joins Trades once the indexer reads it if it lands; its provisional key is the trade's slot and event index with no place in its block, which the indexer's own row, sent to the market's live room, replaces (`PIPESCOPE-114`).
-- A prepared swap older than 45 s when the trader asks to sign is built and simulated again before the wallet is asked, since its blockhash would soon expire (`PIPESCOPE-115`).
+- A quote's simulation is paid for by the fee wallet, which does not sign, so a quote works before the trader's wallet holds any SOL (`PIPESCOPE-117`).
+- The fast path gives up after 60 s, about a blockhash's life, and says the trade joins Trades once the indexer reads it if it lands; its provisional key is the trade's slot and event index with no place in its block, which the indexer's own row, sent to the market's live room, replaces (`PIPESCOPE-118`).
+- A prepared swap older than 45 s when the trader asks to sign is built and simulated again before the wallet is asked, since its blockhash would soon expire (`PIPESCOPE-119`).
 - The swap carries the strategy's quoted output in its `amount_out` argument, which exact-in does not read, as Pipeline's own builder does, so its router instruction is the hosted API's (`PIPESCOPE-93`).
 - `GET /v1/traders/{trader}/balances` reads the wallet's balance in up to four mints through RPC for the trade box, answering wrapped SOL with plain SOL, since a swap paying in it wraps SOL for the trader.
 - A mint with a transfer hook gets no quote until [hooked mints](https://github.com/imDev2023/testing-pipeline/issues/122) resolve its accounts.
@@ -276,11 +283,13 @@ Each is a named constant; the pages and the Telegram bot read what they show fro
 | Candle pruning | once a day | `PIPESCOPE-109` |
 | Candle prices written to; candles a request is served, by default and at most | 36 significant digits; 1,000 and 5,000 | `PIPESCOPE-107` |
 | Live-room batching | 100 ms | `PIPESCOPE-31` |
-| Fast path: confirmation poll, and how long it waits | every 300 ms, 60 s | `PIPESCOPE-33`, `PIPESCOPE-114` |
+| Fast path: confirmation poll, and how long it waits | every 300 ms, 60 s | `PIPESCOPE-33`, `PIPESCOPE-118` |
 | Metadata fetcher limits and re-fetch interval | as [Metadata fetcher](#metadata-fetcher), every hour | `PIPESCOPE-36` |
 | Quote mint order | wrapped SOL, then the cluster's USDC, then the later mint of the pair | `PIPESCOPE-74` |
 | Token image types and size | PNG, JPEG or WebP, at most 1 MB | `PIPESCOPE-82` |
 | Canary's schedule | as [`pipescope-canary.md`](pipescope-canary.md), When Canary runs | `CANARY-22`, `CANARY-23` |
+| ProgramData watch: looks for a version's transaction the RPC had not served | 30 | `PIPESCOPE-113` |
+| Signers listed with each of a strategy's instructions, most calls first | 100 | `PIPESCOPE-114` |
 | Public caches | up to 60 s stale | `PIPESCOPE-32` |
 | Keeper page: "looks stopped" after the runner's `SWEEP_INTERVAL` plus, and the latest jobs shown | 5 minutes, 20 | `PIPESCOPE-104` |
 | Keeper heartbeats: largest clock difference, fewest seconds between two of one kind | 2 minutes, 30 s | `SUITE-57` |

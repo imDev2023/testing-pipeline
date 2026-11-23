@@ -2,7 +2,7 @@
 // the theme follows the device and the footer overrides it, every colour and typeface comes from
 // theme.css, panels load and fail on their own, and the "nothing there" page names the address.
 import { expect, test, type Page } from "@playwright/test";
-import { MarketsPage, StrategiesList } from "terminal-api/contract";
+import { MarketsPage, StrategiesList, StrategyVersions } from "terminal-api/contract";
 import { KEEPER_SIGNATURE, postKeeperHeartbeat, seedKeeperRecords, TEST_KEEPER_WALLET } from "./keeper";
 import { API } from "./target";
 
@@ -188,6 +188,37 @@ test.describe("nothing there", () => {
       await expect(page.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${address}?cluster=devnet`);
       await page.getByRole("link", { name: "Go to the feed" }).click();
       await expect(page).toHaveURL("/");
+    }
+  });
+});
+
+test.describe("a strategy's page", () => {
+  // The buy wall AMM's strategy: upgraded once on devnet, with its demo market.
+  const STRATEGY = "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6";
+
+  test("lists its markets in the feed's table without the strategy column", async ({ page, request }) => {
+    const { markets, total } = MarketsPage.parse(await (await request.get(`${API}/v1/markets?strategy=${STRATEGY}`)).json());
+    expect(total).toBeGreaterThan(0);
+    await page.goto(`/strategies/${STRATEGY}`);
+    const section = page.getByRole("region", { name: /^Its markets/ });
+    await expect(section.getByRole("heading")).toHaveText(`Its markets ${total}`);
+    await expect(section.getByRole("columnheader")).toHaveText(["Market", "Created", "Liquidity", "Volume, 24h"]);
+    await expect(section.getByRole("row")).toHaveCount(markets.length + 1);
+    await section.getByRole("row").nth(1).getByRole("link").first().click();
+    await expect(page).toHaveURL(`/markets/${markets[0]!.address}`);
+  });
+
+  test("lists its versions newest first with their slots and transactions, the newest marked as the one the page is for", async ({ page, request }) => {
+    const { versions } = StrategyVersions.parse(await (await request.get(`${API}/v1/strategies/${STRATEGY}/versions`)).json());
+    expect(versions.length).toBeGreaterThanOrEqual(2);
+    await page.goto(`/strategies/${STRATEGY}`);
+    const rows = page.getByRole("region", { name: /^Version history/ }).getByRole("row");
+    await expect(rows).toHaveCount(versions.length + 1);
+    for (const [i, v] of versions.entries()) {
+      const row = rows.nth(i + 1);
+      await expect(row).toContainText(v.deploy_slot.toLocaleString("en-US"));
+      await expect(row).toContainText(i === 0 ? "The current version. The results and explanation on this page are for it." : "An earlier version, replaced by an upgrade.");
+      await expect(row.getByRole("link")).toHaveAttribute("href", `https://explorer.solana.com/tx/${v.signature}?cluster=devnet`);
     }
   });
 });

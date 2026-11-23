@@ -11,7 +11,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 
-export const RPC_PORT = 8812;
+/** 8812, or E2E_RPC_PORT, beside E2E_API_PORT (./target). */
+export const RPC_PORT = Number(process.env.E2E_RPC_PORT ?? 8812);
 /** Where a test tells the fixture socket a transaction has landed: a POST of `{ signature, slot }`. */
 export const LIVE_EMIT_PATH = "/__live/emit";
 const FIXTURES = `${import.meta.dirname}/../fixtures/devnet-rpc.json`;

@@ -60,7 +60,16 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
   { name: "market-trade-review", path: `/markets/${CP_MARKET}`, status: 200, ready: typed("0.1", "connect", "review"), wallet: true },
   { name: "market-trade-too-little", path: `/markets/${CP_MARKET}`, status: 200, ready: typed("500", "connect", "failed"), wallet: true },
   { name: "market-trade-refused", path: `/markets/${REFUSING_MARKET}`, status: 200, ready: typed("0.01", "connect", "refused"), wallet: true },
-  { name: "strategy", path: `/strategies/${STRATEGY}`, status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "Strategy", exact: true })).toBeVisible() },
+  {
+    name: "strategy",
+    path: `/strategies/${STRATEGY}`,
+    status: 200,
+    ready: async (page: Page) => {
+      // A body row: on a phone the table's head is not a row, so the last row is one either way.
+      await expect(page.getByRole("region", { name: /^Its markets/ }).getByRole("row").last()).toBeVisible();
+      await expect(page.getByRole("region", { name: /^Version history/ }).getByRole("row").last()).toBeVisible();
+    },
+  },
   { name: "fees", path: "/fees", status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "An example" })).toBeVisible() },
   { name: "devnet-help", path: "/devnet", status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "Get devnet USDC" })).toBeVisible() },
   { name: "keeper", path: "/keeper", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Latest jobs" }).getByRole("table")).toBeVisible() },

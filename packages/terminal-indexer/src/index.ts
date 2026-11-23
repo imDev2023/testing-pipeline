@@ -8,14 +8,18 @@ import type { IndexResult, TransactionHandler } from "./handler";
 import { addResult, emptyResult } from "./result";
 
 export * from "./accounts";
+export * from "./calls";
 export * from "./candles";
 export * from "./decode";
 export * from "./handler";
 export * from "./history";
+export * from "./instructions";
 export * from "./live";
+export * from "./programs";
 export * from "./registry";
 export * from "./result";
 export * from "./rpc";
+export * from "./versions";
 
 /** A batch in which some transactions could not be indexed; the rest were, so a retry only needs to bring these back. */
 export class IndexBatchError extends Error {

@@ -3,7 +3,7 @@
 // arrive from more than one source (reconciliation, the trade fast path, the live socket) and from a
 // re-index, and must write its rows once.
 import { sql } from "drizzle-orm";
-import { indexedTransactions, marketMints, markets, strategies, trades, type Db } from "terminal-db";
+import { appendOutbox, indexedTransactions, lockOutbox, marketMints, markets, strategies, trades, type Db } from "terminal-db";
 import { foldTrade, tradeTime } from "./candles";
 import { emptyResult } from "./result";
 import { DECODER_VERSION, decodeRouterEvents, type EventDecoder, type RawTransaction } from "./decode";
@@ -46,6 +46,8 @@ export function pipelineHandler({
     const touched = new Set<string>();
 
     await db.transaction(async (tx) => {
+      // It may write a new strategy or market to the outbox, so it holds the outbox's lock from its first write.
+      if (events.some(({ event }) => event.type === "StrategyRegistered" || event.type === "MarketCreated")) await lockOutbox(tx as unknown as Db);
       const [fresh] = await tx
         .insert(indexedTransactions)
         .values({ signature, slot, blockIndex, blockTime, decoderVersion, unknownEvents: unknown.length, raw: unknown.length ? raw : null })
@@ -63,6 +65,7 @@ export function pipelineHandler({
               .values({ program: strategy, metadataUri, feePaid: String(feePaid), registeredAt: blockTime ?? new Date(0), registeredSlot: slot, registeredSignature: signature })
               // Found first by the registry snapshot: the event adds what only it knows.
               .onConflictDoUpdate({ target: strategies.program, set: { feePaid: String(feePaid), registeredSlot: slot, registeredSignature: signature } });
+            await appendOutbox(tx as unknown as Db, { kind: "strategy_registered", subject: strategy, slot, payload: { metadataUri } });
             count("strategies");
             break;
           }
@@ -85,6 +88,7 @@ export function pipelineHandler({
               .insert(marketMints)
               .values(mints.map((mint, position) => ({ market, position, mint })))
               .onConflictDoNothing();
+            await appendOutbox(tx as unknown as Db, { kind: "market_created", subject: market, slot, payload: { strategy } });
             touched.add(market);
             count("markets");
             break;

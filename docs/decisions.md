@@ -2261,7 +2261,47 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118)
 
-### PIPESCOPE-113: Who pays for a quote's simulation
+### PIPESCOPE-113: What makes a new strategy version
+
+- Question: Which changes of a program's ProgramData account make a new strategy version?
+- Answer: A deploy or an upgrade, keyed by its transaction's slot; an extension, which moves the ProgramData slot and keeps the code, makes none, and a version recorded before its transaction is served is looked for again on at most 30 watches, `VERSION_TRANSACTION_LOOKS`.
+- Alternatives: Every change of the ProgramData slot, which listed the extension before each upgrade as a version of its own with the same code (the buy wall AMM's on 2026-11-20).
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
+
+### PIPESCOPE-114: Who called a strategy's instruction
+
+- Question: Who is stored as having called an instruction on a strategy program?
+- Answer: The transaction's signers among the instruction's accounts, with the program that invoked it kept beside them, from successful transactions only; the API lists at most 100 signers an instruction, most calls first, `INSTRUCTION_SIGNERS_SHOWN`, and counts them all.
+- Alternatives: The transaction's fee payer, which names whoever paid rather than whoever the instruction needed; counting failed transactions too, which changed nothing.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
+
+### PIPESCOPE-115: How an instruction's name is cut from the bytes
+
+- Question: Where does a name compiled in as "Instruction: Name" end, when the next string runs on into it?
+- Answer: At the longest prefix whose discriminator is in the code, trying every prefix, with a discriminator split over two instruction slots counting as well as one side by side.
+- Alternatives: Cutting only at capital letters, which missed the outside builder's `SetMetadata` on devnet, where the next string begins in lower case.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
+
+### PIPESCOPE-116: The outbox for what follows the indexer
+
+- Question: How do Canary's runs and the Telegram bot's queue learn of a new strategy, market, strategy version or router upgrade?
+- Answer: From one outbox table in Postgres, each event written once in the order seen, which each reads on from a cursor of its own.
+- Alternatives: The indexer calling each of them directly, which loses an event whenever the one called is down; a queue product, which Aviary does not otherwise need.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
+
+### PIPESCOPE-117: Who pays for a quote's simulation
 
 - Question: Which account pays the fee of the simulation behind a trade-box quote?
 - Answer: The fee wallet, which does not sign, so a quote works before the trader's wallet holds any SOL; it keeps a little devnet SOL for that.
@@ -2271,7 +2311,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
 
-### PIPESCOPE-114: How long the fast path waits
+### PIPESCOPE-118: How long the fast path waits
 
 - Question: How long does the trade fast path wait for a signature to confirm before it answers that it has not?
 - Answer: 60 s, about a blockhash's life, after which the page says the trade joins Trades once Aviary reads it, if it lands.
@@ -2281,7 +2321,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
 
-### PIPESCOPE-115: A prepared swap grown old
+### PIPESCOPE-119: A prepared swap grown old
 
 - Question: What happens when the trader asks to sign a swap that was prepared a while ago?
 - Answer: A prepared swap older than 45 s is built and simulated again, and shown again, before the wallet is asked, since its blockhash would soon expire.

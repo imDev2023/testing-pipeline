@@ -5,17 +5,28 @@
 // test can say what was asked.
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { RawTransaction } from "../src/decode";
+import { accountKeysOf, type RawTransaction } from "../src/decode";
 
-export type FakeAccount = { owner: string; data: Uint8Array; lamports?: number };
+export type FakeAccount = { owner: string; data: Uint8Array; lamports?: number; executable?: boolean };
+
+type DataSlice = { offset: number; length: number };
+
+/** An account as the RPC encodes it in base64, cut to `dataSlice` when one is asked for. */
+function accountInfo(account: FakeAccount | undefined, dataSlice?: DataSlice) {
+  if (!account) return null;
+  const data = dataSlice ? account.data.subarray(dataSlice.offset, dataSlice.offset + dataSlice.length) : account.data;
+  return { owner: account.owner, lamports: account.lamports ?? 1, data: [Buffer.from(data).toString("base64"), "base64"], executable: account.executable ?? false, rentEpoch: 0, space: account.data.length };
+}
 
 export type FakeRpc = {
   url: string;
   /** Every request, by method and params, in order. */
   requests: { method: string; params: unknown[] }[];
-  /** The account's history, oldest first; a test pushes to it as the chain moves on. */
+  /** The chain's transactions, oldest first; an account's history is those that name it. A test pushes to it as the chain moves on. */
   history: RawTransaction[];
   accounts: Map<string, FakeAccount>;
+  /** The slot the RPC says it read accounts at. */
+  slot: number;
   /** Signatures listed but not served by `getTransaction` yet, as a node behind the one that listed them. */
   unserved: Set<string>;
   /** Methods answered with "Method not found", as an RPC without Helius's methods answers. */
@@ -29,17 +40,19 @@ const order = (a: RawTransaction, b: RawTransaction) => a.slot - b.slot || a.tra
 const withoutIndex = ({ transactionIndex: _, ...rest }: RawTransaction) => rest;
 
 export async function fakeRpc(history: RawTransaction[] = []): Promise<FakeRpc> {
-  const fake: Omit<FakeRpc, "url" | "close"> = { requests: [], history: [...history], accounts: new Map(), unserved: new Set(), refuse: new Set() };
+  const fake: Omit<FakeRpc, "url" | "close"> = { requests: [], history: [...history], accounts: new Map(), slot: 525_200_000, unserved: new Set(), refuse: new Set() };
 
   const answer = (method: string, params: unknown[]): { result?: unknown; error?: unknown } => {
     if (fake.refuse.has(method)) return { error: { code: -32601, message: "Method not found" } };
     const sorted = [...fake.history].sort(order);
+    const historyOf = (account: string) => sorted.filter((t) => accountKeysOf(t).includes(account));
     switch (method) {
       case "getTransactionsForAddress": {
-        const [, opts] = params as [string, { transactionDetails: string; limit: number; paginationToken?: string; sortOrder: string }];
+        const [account, opts] = params as [string, { transactionDetails: string; limit: number; paginationToken?: string; sortOrder: string }];
         if (opts.sortOrder !== "asc") throw new Error("the indexer reads history oldest first");
-        const start = opts.paginationToken ? sorted.findIndex((t) => order(t, { slot: Number(opts.paginationToken!.split(":")[0]), transactionIndex: Number(opts.paginationToken!.split(":")[1]) } as RawTransaction) > 0) : 0;
-        const page = (start < 0 ? [] : sorted.slice(start)).slice(0, opts.limit);
+        const listed = historyOf(account);
+        const start = opts.paginationToken ? listed.findIndex((t) => order(t, { slot: Number(opts.paginationToken!.split(":")[0]), transactionIndex: Number(opts.paginationToken!.split(":")[1]) } as RawTransaction) > 0) : 0;
+        const page = (start < 0 ? [] : listed.slice(start)).slice(0, opts.limit);
         const data =
           opts.transactionDetails === "full"
             ? page
@@ -47,8 +60,8 @@ export async function fakeRpc(history: RawTransaction[] = []): Promise<FakeRpc> 
         return { result: { data, paginationToken: page.length === opts.limit ? tokenOf(page.at(-1)!) : null } };
       }
       case "getSignaturesForAddress": {
-        const [, opts] = params as [string, { before?: string; until?: string; limit: number }];
-        let newest = [...sorted].reverse();
+        const [account, opts] = params as [string, { before?: string; until?: string; limit: number }];
+        let newest = historyOf(account).reverse();
         if (opts.until) newest = newest.slice(0, Math.max(0, newest.findIndex((t) => signatureOf(t) === opts.until)));
         if (opts.before) newest = newest.slice(newest.findIndex((t) => signatureOf(t) === opts.before) + 1);
         return { result: newest.slice(0, opts.limit).map((t) => ({ signature: signatureOf(t), slot: t.slot, err: t.meta?.err ?? null, blockTime: t.blockTime })) };
@@ -70,21 +83,17 @@ export async function fakeRpc(history: RawTransaction[] = []): Promise<FakeRpc> 
         return { result: ours.length ? { signatures } : null };
       }
       case "getMultipleAccounts": {
-        const [addresses] = params as [string[]];
-        return {
-          result: {
-            context: { slot: 525_200_000 },
-            value: addresses.map((a) => {
-              const account = fake.accounts.get(a);
-              return account ? { owner: account.owner, lamports: account.lamports ?? 1, data: [Buffer.from(account.data).toString("base64"), "base64"], executable: false, rentEpoch: 0, space: account.data.length } : null;
-            }),
-          },
-        };
+        const [addresses, opts] = params as [string[], { dataSlice?: DataSlice } | undefined];
+        return { result: { context: { slot: fake.slot }, value: addresses.map((a) => accountInfo(fake.accounts.get(a), opts?.dataSlice)) } };
+      }
+      case "getAccountInfo": {
+        const [address, opts] = params as [string, { dataSlice?: DataSlice } | undefined];
+        return { result: { context: { slot: fake.slot }, value: accountInfo(fake.accounts.get(address), opts?.dataSlice) } };
       }
       case "getProgramAccounts": {
         const [program, opts] = params as [string, { filters?: { memcmp: { offset: number; bytes: string } }[] }];
         const matches = [...fake.accounts].filter(([, account]) => account.owner === program && (opts.filters ?? []).every((f) => memcmpMatches(account.data, f.memcmp)));
-        return { result: matches.map(([pubkey, account]) => ({ pubkey, account: { owner: account.owner, lamports: account.lamports ?? 1, data: [Buffer.from(account.data).toString("base64"), "base64"], executable: false, rentEpoch: 0, space: account.data.length } })) };
+        return { result: matches.map(([pubkey, account]) => ({ pubkey, account: accountInfo(account) })) };
       }
       default:
         return { error: { code: -32601, message: "Method not found" } };

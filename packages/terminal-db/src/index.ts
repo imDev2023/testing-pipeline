@@ -41,3 +41,4 @@ export async function probe(db: Db): Promise<{ serverTime: Date; migrations: num
   return { serverTime: new Date(row.server_time), migrations: Number(row.migrations) };
 }
 export * from "./keeper.ts";
+export * from "./outbox.ts";
