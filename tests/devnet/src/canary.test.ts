@@ -139,13 +139,16 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
     await until("the container to sleep", async () => !containerRunning(), 10 * MINUTE);
     const meter = awakeMeter();
     const sweepStart = new Date();
-    const strategies = [...new Set(markets.map((m) => m.strategy))];
-    for (const strategy of strategies) await rerun({ strategy });
+    for (const strategy of new Set(markets.map((m) => m.strategy))) await rerun({ strategy });
+    // A market that a run due at the time still holds is left to that run (CANARY-22's later runs,
+    // say), so the sweep is every run started since it began, once none is left open or due.
     const sweepRuns = await until(
       "the sweep's runs to end",
       async () => {
-        const rows = await db.db.select().from(canaryRuns).where(and(eq(canaryRuns.trigger, "rerun"), sql`${canaryRuns.startedAt} >= ${sweepStart}`));
-        return rows.length === strategies.length && rows.every((r) => r.finishedAt) && rows;
+        const rows = await db.db.select().from(canaryRuns).where(sql`${canaryRuns.startedAt} >= ${sweepStart}`);
+        const done = new Set((await db.db.select({ market: canaryRunMarkets.market }).from(canaryRunMarkets).where(inArray(canaryRunMarkets.runId, rows.length ? rows.map((r) => r.id) : [0n]))).map((r) => r.market));
+        log(`sweep: ${done.size} of ${markets.length} markets done`);
+        return rows.length > 0 && rows.every((r) => r.finishedAt) && done.size >= markets.length && rows;
       },
       60 * MINUTE,
     );
@@ -163,7 +166,7 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
       ofWhichTheSleepAfter: +(sleepHours * 4 * 30).toFixed(1),
     };
     log(`sweep: ${JSON.stringify(report)}`);
-    expect(figures.markets).toBe(markets.length);
+    expect(figures.markets).toBeGreaterThanOrEqual(markets.length);
     expect(figures.failed).toEqual([]);
   }, 90 * MINUTE);
 
