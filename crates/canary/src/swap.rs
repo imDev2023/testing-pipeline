@@ -10,7 +10,7 @@
 
 use borsh::BorshDeserialize;
 use litesvm::LiteSVM;
-use pipeline_client::{self as client, pda, AccountMeta, Instruction, Pubkey, TradeMode};
+use pipeline_client::{self as client, pda, AccountMeta, FeeSide, Instruction, Pubkey, TradeMode};
 use pipeline_strategy_interface::settlement::{self, SettleError};
 use pipeline_strategy_interface::{self as psi, discriminator};
 use serde::Serialize;
@@ -38,15 +38,21 @@ pub struct SwapRequest<'a> {
 /// What a committed swap did.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SwapReceipt {
-    /// What left the trader's input account, Pipeline's fee included.
+    /// What left the trader's input account, Pipeline's fee included when it was taken in
+    /// the input.
     pub trader_spent: u64,
-    /// What arrived in the trader's output account.
+    /// What the trader kept in their output account: what arrived, less Pipeline's fee
+    /// when it was taken in the output.
     pub trader_received: u64,
-    /// The settlement's figures, as the router (or the settlement code) reported them.
+    /// The settlement's figures, as the router (or the settlement code) reported them:
+    /// `received` is what arrived in the trader's output account, before any fee.
     pub net_sent: u64,
     pub received: u64,
     /// Pipeline's fee as the router charged it in the copy, never a constant of ours.
     pub pipeline_fee: u64,
+    /// The market's mint (by index) Pipeline's fee was taken in: the output when it is the
+    /// market's fee mint, the input otherwise (Pipeline 0.3).
+    pub fee_mint: usize,
     pub compute_units: u64,
     /// The strategy's own share of the compute, when the logs show it.
     pub strategy_compute_units: Option<u64>,
@@ -81,6 +87,7 @@ impl SwapPath for ThroughRouter {
         request: &SwapRequest,
     ) -> Result<SwapReceipt, Failure> {
         let (input, output, trader) = (request.input, request.output, request.trader);
+        let fee_side = FeeSide::of(&market.record, &market.mint(output));
         let accounts = client::SwapAccounts {
             trader,
             strategy_program: market.strategy(),
@@ -110,7 +117,7 @@ impl SwapPath for ThroughRouter {
         let mut tx = Transaction::new_with_payer(
             &[
                 compute_limit(SWAP_COMPUTE_LIMIT),
-                client::swap(&accounts, &args),
+                client::swap_with_fee_side(&accounts, &args, fee_side),
             ],
             Some(&trader),
         );
@@ -139,6 +146,11 @@ impl SwapPath for ThroughRouter {
             net_sent: result.net_sent,
             received: result.received,
             pipeline_fee: result.pipeline_fee,
+            fee_mint: if result.fee_mint == market.mint(output) {
+                output
+            } else {
+                input
+            },
             compute_units: meta.compute_units_consumed,
             strategy_compute_units: strategy_units(&meta.logs, &strategy_line),
         })
@@ -158,9 +170,11 @@ impl SwapPath for ThroughRouter {
 ///    checks are off in the copy), followed by the strategy's accounts and the input mint's
 ///    hook accounts, none signing ([`call_directly`]).
 /// 4. The router's refusal of a swap that lowered the trader's output balance, then
-///    `settlement::settle` on the balances the router measures.
-/// 5. Pipeline's fee from the trader's input account to the market's fee account for that
-///    mint.
+///    `settlement::settle` on the balances the router measures, or
+///    `settlement::settle_fee_on_output` when the output is the market's fee mint.
+/// 5. Pipeline's fee to the market's fee account for the mint it is taken in: from the
+///    trader's output account when the output is the market's fee mint, with every
+///    remaining account the router passes along, and from the input account otherwise.
 ///
 /// Any refusal puts the copy back as it was, as the router's refusal undoes its whole
 /// transaction. The strategy runs one call level higher than under the router, and in a
@@ -310,7 +324,13 @@ impl SwapPath for DirectToStrategy {
                 router_refused("OutputDecreased: the trader's output balance fell during the swap"),
             );
         }
-        let settled = match settlement::settle(
+        let fee_on_output = FeeSide::of(&market.record, &market.mint(output)) == FeeSide::Output;
+        let settle = if fee_on_output {
+            settlement::settle_fee_on_output
+        } else {
+            settlement::settle
+        };
+        let settled = match settle(
             &settlement::Measured {
                 input_before,
                 input_after,
@@ -327,20 +347,36 @@ impl SwapPath for DirectToStrategy {
             Err(error) => return undo(svm, router_refused(settle_words(error))),
         };
         let mut compute_units = called.compute_units;
+        let fee_mint = if fee_on_output { output } else { input };
         if settled.pipeline_fee > 0 {
             let fee_account = pda::fee_account(
                 &market.address,
-                &market.mint(input),
-                &market.token_program(input),
+                &market.mint(fee_mint),
+                &market.token_program(fee_mint),
             );
+            // From the output, the router passes every remaining account (the strategy's,
+            // which carry the output mint's hook accounts, then the input mint's), unsigned.
+            let (from, hooks) = if fee_on_output {
+                let remaining: Vec<AccountMeta> = strategy_accounts(request)
+                    .into_iter()
+                    .chain(request.hooks.input.iter().cloned())
+                    .map(|m| AccountMeta {
+                        is_signer: false,
+                        ..m
+                    })
+                    .collect();
+                (trader_output, remaining)
+            } else {
+                (trader_input, request.hooks.input.clone())
+            };
             let fee = transfer_checked(
                 market,
-                input,
-                &trader_input,
+                fee_mint,
+                &from,
                 &fee_account,
                 &trader,
                 settled.pipeline_fee,
-                &request.hooks.input,
+                &hooks,
             );
             match send(svm, &[fee], &trader, &market.strategy()) {
                 Ok(meta) => compute_units += meta.compute_units_consumed,
@@ -356,6 +392,7 @@ impl SwapPath for DirectToStrategy {
             net_sent: settled.net_sent,
             received: settled.received,
             pipeline_fee: settled.pipeline_fee,
+            fee_mint,
             compute_units,
             strategy_compute_units: called.strategy_compute_units,
         })

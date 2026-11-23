@@ -18,7 +18,8 @@
         "@solana-program/system": "0.16.0",
         "@solana-program/token": "0.18.0",
         "@solana/kit": "8.6.0",
-        "strategy-actions": "workspace:*"
+        "strategy-actions": "workspace:*",
+        "strategy-publish": "workspace:*"
     },
     "devDependencies": {
         "@codama/nodes-from-anchor": "1.5.6",

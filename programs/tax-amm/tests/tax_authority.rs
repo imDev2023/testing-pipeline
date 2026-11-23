@@ -659,7 +659,7 @@ fn a_swap_quoted_before_a_rate_change_is_priced_at_the_rates_it_was_quoted_at() 
             )
             .unwrap();
             let options = SwapOptions {
-                min_amount_out: quote.amount_out,
+                min_amount_out: env.kept(&market, o, quote.amount_out),
                 ..SwapOptions::default()
             };
             let meta = env

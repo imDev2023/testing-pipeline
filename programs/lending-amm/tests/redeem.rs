@@ -39,8 +39,12 @@ fn a_sell_beyond_the_buffer_redeems_its_shortfall_inside_the_swap() {
                 .swap_meta(&market, &trader, (other, lent_side), amount)
                 .unwrap();
 
-            // The trader receives exactly the quote.
-            assert_eq!(env.balance(&paid_into), quote.amount_out);
+            // The quote arrives, and the trader keeps it less Pipeline's fee when that is taken
+            // in the output (a sale into wrapped SOL, since Pipeline 0.3).
+            assert_eq!(
+                env.balance(&paid_into),
+                env.kept(&market, lent_side, quote.amount_out)
+            );
             // The redeem event carries the shortfall and what klend's real redeem paid.
             let redeemed = events::<ShortfallRedeemed>(&meta.logs);
             assert_eq!(redeemed.len(), 1, "one redeem");
@@ -251,7 +255,10 @@ fn a_swap_built_before_the_buffer_shrank_fails_with_its_own_error_until_resolved
             .swap_meta(&market, &first, (other, lent_side), amount)
             .unwrap();
         assert_eq!(events::<ShortfallRedeemed>(&meta.logs).len(), 1);
-        assert_eq!(balances(&env)[4], held[4] + quote.amount_out);
+        assert_eq!(
+            balances(&env)[4],
+            held[4] + env.kept(&market, lent_side, quote.amount_out)
+        );
     }
 }
 
@@ -418,7 +425,9 @@ fn what_klend_pays_above_the_shortfall_stays_in_the_buffer() {
             &((available as u128) << 60).to_le_bytes(),
         );
         let market = env.lending_market(lent, 30);
-        env.advance_clock(216_000, 86_400);
+        // As stale as quotes and swaps accept, so klend pays above the stored rate.
+        let age = lending_amm::config::TRADE_MAX_RESERVE_AGE_SLOTS;
+        env.advance_clock(age, (age * 2 / 5) as i64);
         let (other, lent_side) = (market.other_index(), market.lent_index);
         let buffer = env.buffer(&market);
         let amount = env.sell_paying(&market, 2 * buffer);

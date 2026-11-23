@@ -73,12 +73,15 @@ fn a_write_off_lowers_the_lent_value_the_price_and_every_lp_share_pro_rata() {
         assert!(supply_after < supply);
         assert!((supply - supply_after) >> 60 <= loss as u128);
         // V fell with the rate, pro rata, to the unit: V' x S = V x S', within one unit of V'.
+        // Both are rounded down from the reserve's true value, V' from the true value after the
+        // write-off, not from V, so V' can sit up to S'/S (under one unit) above V x S' / S as
+        // well as below it (seen on mainnet's USDC reserve as dumped in slot 472,946,807).
         assert!(value_after < value);
         let (scaled_after, scaled) = (
             value_after as u128 * (supply >> 30),
             value as u128 * (supply_after >> 30),
         );
-        assert!(scaled_after <= scaled && scaled - scaled_after <= supply >> 30);
+        assert!(scaled_after.abs_diff(scaled) <= supply >> 30);
         // Nothing the market recorded moved, and no share was minted or burned.
         assert_eq!(after.reserves, state.reserves);
         assert_eq!(after.ctokens, state.ctokens);
@@ -169,7 +172,10 @@ fn a_write_off_of_the_reserves_whole_supply_deprecates_it_and_the_market_trades_
             let meta = env
                 .swap_meta(&market, &trader, (other, lent_side), amount)
                 .unwrap();
-            assert_eq!(env.balance(&paid_into) - before, quote.amount_out);
+            assert_eq!(
+                env.balance(&paid_into) - before,
+                env.kept(&market, lent_side, quote.amount_out)
+            );
             assert!(!meta.logs.iter().any(
                 |line| line.starts_with(&format!("Program {} invoke", common::kamino::klend()))
             ));

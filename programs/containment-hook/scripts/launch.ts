@@ -26,20 +26,25 @@
 //   9. sweep Pipeline's fee from the fee account to its treasury with the router's
 //      `sweep_fees`, the hook accounts after its own, and stop unless the treasury got exactly
 //      what the fee account held;
-//  10. show, in simulation, the hook refusing a wallet-to-wallet `transfer_checked` and a sell
-//      that carries an integrator fee above zero.
+//  10. show the hook refusing a wallet-to-wallet `transfer_checked`, sent past the preflight
+//      so the refusal lands on chain with a signature, and, in simulation, a sell that carries
+//      an integrator fee above zero;
+//  10a. with `--pipeline-check`, run Pipeline's conformance checker on the home market while
+//      the token is contained, and stop unless every check passed but `exact_out_refund`.
 //
 // With `--unlock`, it goes on to unlock the token (docs/spec/containment-hook.md, "Unlock"):
 //
-//  11. wait for the unlock to fall due: with `--unlock goal`, buy and sell back through the
-//      router until the home market's `tax_collected` reaches the goal; with
+//  11. wait for the unlock to fall due: with `--unlock goal`, send `unlock` while the home
+//      market's `tax_collected` is still below the goal, landing its refusal on chain, then buy
+//      and sell back through the router until `tax_collected` reaches the goal; with
 //      `--unlock deadline`, wait until the cluster's clock reaches the deadline;
 //  12. send `unlock` from a fresh wallet with no tie to the token, and stop unless it was
 //      unlocked by what step 11 waited for, the mint's transfer hook program and hook
 //      authority are both unset, the config records the unlock time, and a second `unlock`
 //      is refused in simulation;
 //  13. show the token free of the hook: a wallet-to-wallet `transfer_checked`, a buy and a
-//      sell, each sent without hook accounts, all succeed without the hook running.
+//      sell, each sent without hook accounts, all succeed without the hook running;
+//  14. with `--pipeline-check`, run the conformance checker on the home market again.
 //
 // The hook accounts (the config, the hook program and the validation account) are resolved
 // from the validation account with Token-2022's own client, `resolveExtraAccountMetasForExecute`
@@ -51,8 +56,10 @@
 //
 //   node launch.ts --cluster <localnet|devnet|URL> --launcher <keypair.json> \
 //     --goal <quote-mint base units> --deadline <ISO 8601 time or Unix seconds> \
-//     [--unlock <goal|deadline>] [--goal ... --deadline ... [--unlock ...]] \
-//     [--quote-mint <address>]
+//     [--unlock <goal|deadline|none>] [--quote-mint <address|new>] \
+//     [--goal ... --deadline ... [--unlock ...] [--quote-mint ...]] \
+//     [--pipeline-check <binary> [--conformance-out <dir>]] \
+//     [--record <file.json>]
 //
 //   --cluster     localnet (http://127.0.0.1:8899), devnet, or an RPC URL of either; the
 //                 cluster's genesis hash must be devnet's, or the URL a local validator's
@@ -63,23 +70,35 @@
 //   --deadline    the unlock deadline; required, no default; the hook refuses one that is
 //                 not in the future or too far away
 //   --quote-mint  the SPL Token mint the token trades against and its tax is taken in
-//                 (default: wrapped SOL)
+//                 (default: wrapped SOL), or `new` for a fresh SPL Token mint the script
+//                 creates once per run and mints the launcher; given once, it is every token's
 //   --unlock      unlock the token after the launch, by the goal (the script trades until
 //                 it is reached) or by the deadline (the script waits for it); without it,
-//                 the script stops after step 10 and the token stays contained
+//                 or with `none`, the script stops after step 10a and the token stays contained
+//   --pipeline-check  Pipeline's `pipeline-check` binary (built in fixtures/pipeline), run with
+//                 `--fail-on-warn` on each home market while contained and after the unlock
+//                 (bar, "Test layers" 7); without it, steps 10a and 14 say so and check nothing
+//   --conformance-out  a directory to keep each `pipeline-check` report in, as
+//                 <market>-contained.json and <market>-unlocked.json
+//   --record      a JSON file to write every signature and address of the run to, also when
+//                 it stops part way
 //
 // Giving `--goal` and `--deadline` again launches another token after the first, the nth of
-// each flag being the nth token's; `--unlock` is then given for every token or for none. Each
-// token's terms are checked again when its launch starts, so one whose deadline the tokens
-// before it outlasted stops before it sends anything. The rehearsal of the devnet launch
-// gives two: first one unlocked by a short deadline, then one by a small goal
-// (docs/toolchain.md, "Containment hook").
+// each flag being the nth token's; `--unlock` is then given for every token or for none, and
+// `--quote-mint` once for all or once for each. Each token's terms are checked again when its
+// launch starts, so one whose deadline the tokens before it outlasted stops before it sends
+// anything. The devnet launch gives three: first one unlocked by a short deadline, then one by
+// a small goal, both against wrapped SOL, then one quoted in a fresh mint and left contained,
+// whose sells pay Pipeline's fee in the token (HOOK-40, HOOK-41; docs/toolchain.md,
+// "Containment hook").
 //
 // On a local cluster the script airdrops the SOL the launcher needs; on devnet it never does
 // (fund it with devnet-airdrop, docs/toolchain.md).
 
-import { readFileSync } from 'node:fs';
-import { parseArgs } from 'node:util';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+import { parseArgs, promisify } from 'node:util';
 
 import {
     address,
@@ -122,6 +141,9 @@ import { AuthorityType, getSetAuthorityInstruction, resolveExtraAccountMetasForE
 import * as pipeline from '@pipeline-placeholder/sdk';
 import { buildActionInstruction, findAction } from 'strategy-actions';
 
+import { parseTokens, UsageError, type TokenTerms } from './args.ts';
+import { judgeConformance, type ConformanceReport } from './conformance.ts';
+
 import {
     CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED,
     CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED,
@@ -141,7 +163,6 @@ import { termsArg, termsHash } from '../../tax-amm/scripts/terms.ts';
 const TOKEN_2022_PROGRAM_ADDRESS = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
 const WRAPPED_SOL = address('So11111111111111111111111111111111111111112');
 const DEFAULT_ADDRESS = address('11111111111111111111111111111111');
-const U64_MAX = 2n ** 64n - 1n;
 
 // The launch's own choices, in one place: the token and its home market. None of them is a
 // policy value of the hook, whose limits live in its config module and are enforced on
@@ -166,6 +187,17 @@ const HOME_MARKET = {
 // quote mint (1 SOL with wrapped SOL), then a sell of half of what it bought; and the
 // integrator fee of the sell the hook refuses.
 const TRADES = { buyUnits: 1n, integratorFeeBps: 50 } as const;
+// The trade sizes `pipeline-check` runs on the home market, in base units of whichever mint goes
+// in. It sizes its trades from vault balances unless told, and a home market launched
+// single-sided on a virtual quote reserve holds little real quote to pay a large sell from, so
+// it is checked with explicit amounts (docs/spec/tax-amm.md, "Virtual reserve"), the ones the
+// tax AMM's own conformance test gives such a market, each covered by the real quote reserve
+// the launch's own buy leaves.
+const CONFORMANCE_AMOUNTS = [1_000_000n, 100_000_000n, 1_000_000_000n] as const;
+// The fewest decimals a quote mint may have for those sizes: the launch's buy is one whole unit
+// of it, so with fewer the real quote reserve it leaves cannot pay a sell of the largest size.
+// Wrapped SOL's 9 and the fresh mint's 6 both passed on devnet on 2026-11-22.
+const CONFORMANCE_MIN_QUOTE_DECIMALS = 6;
 // How `--unlock` waits for the unlock and sends it. By the goal, the script buys with
 // `TRADES.buyUnits` and sells the same amount of the token back, round after round, and
 // refuses up front a goal that would take more rounds than `maxGoalRounds`, counting only each
@@ -182,6 +214,11 @@ const UNLOCKING = {
     maxDeadlineWaitSecs: 600n,
     unlockerLamports: 2_000_000n,
 } as const;
+// `--quote-mint new`: one fresh SPL Token mint per run, with no freeze authority, whose mint
+// authority is the launcher, who is minted `supply` of it to trade with; every token given
+// `new` is quoted in it (HOOK-41: Pipeline 0.3 takes its fee in the token on such a market).
+const NEW_QUOTE_MINT = { decimals: 6, supply: 1_000_000_000_000n } as const;
+const SPL_MINT_SIZE = 82;
 // What the launch's rents and fees may cost beyond the market's setup and the buy, which the
 // launcher must hold before anything is sent, so a launch never stops halfway for want of SOL.
 const RENT_AND_FEES = 200_000_000n;
@@ -198,6 +235,10 @@ const HOOKED_MINT_SIZE = 165 + 1 + 4 + 64;
 const TRANSFER_HOOK_EXTENSION = 36;
 const TRANSFER_HOOK_INITIALIZE = 0;
 
+// How long the script waits for the RPC to serve a transaction it has seen land.
+const LANDED_TRANSACTION_WAIT_MS = 30_000;
+// How long one run of `pipeline-check` may take before the script stops it.
+const PIPELINE_CHECK_TIMEOUT_MS = 600_000;
 const LOCALNET_URL = 'http://127.0.0.1:8899';
 const DEVNET_URL = 'https://api.devnet.solana.com';
 const GENESIS_HASHES = {
@@ -213,8 +254,11 @@ const { values: options } = parseArgs({
         launcher: { type: 'string' },
         goal: { type: 'string', multiple: true },
         deadline: { type: 'string', multiple: true },
-        'quote-mint': { type: 'string', default: WRAPPED_SOL },
+        'quote-mint': { type: 'string', multiple: true },
         unlock: { type: 'string', multiple: true },
+        'pipeline-check': { type: 'string' },
+        'conformance-out': { type: 'string' },
+        record: { type: 'string' },
     },
     strict: true,
 });
@@ -222,7 +266,7 @@ const { values: options } = parseArgs({
 function usage(message: string): never {
     console.error(`${message}\n`);
     console.error(
-        'Usage: node launch.ts --cluster <localnet|devnet|URL> --launcher <keypair.json> --goal <quote-mint base units> --deadline <ISO 8601 time or Unix seconds> [--unlock <goal|deadline>] [--goal ... --deadline ... [--unlock ...]] [--quote-mint <address>]',
+        'Usage: node launch.ts --cluster <localnet|devnet|URL> --launcher <keypair.json> --goal <quote-mint base units> --deadline <ISO 8601 time or Unix seconds> [--unlock <goal|deadline|none>] [--quote-mint <address|new>] [--goal ... --deadline ... [--unlock ...] [--quote-mint ...]] [--pipeline-check <binary> [--conformance-out <dir>]] [--record <file.json>]',
     );
     process.exit(2);
 }
@@ -240,44 +284,27 @@ function clusterUrl(cluster: string | undefined): { url: string; local: boolean 
     return { url: cluster, local: LOCAL_HOSTS.includes(host) };
 }
 
-/** `--goal`: a whole number of quote-mint base units. */
-function parseGoal(goal: string | undefined): bigint {
-    if (goal === undefined) usage('--goal is required: the tax the home market must collect for the unlock, in quote-mint base units');
-    if (!/^\d+$/.test(goal)) usage(`--goal must be a whole number of quote-mint base units, not "${goal}"`);
-    if (BigInt(goal) > U64_MAX) usage(`--goal must fit in a u64 (at most ${U64_MAX}), not ${goal}`);
-    return BigInt(goal);
-}
-
-/** `--deadline`: Unix seconds, or an ISO 8601 time with its time zone. */
-function parseDeadline(deadline: string | undefined): bigint {
-    if (deadline === undefined) usage('--deadline is required: when the unlock is due whatever the tax collected');
-    if (/^\d+$/.test(deadline)) return BigInt(deadline);
-    if (!/(Z|[+-]\d\d:\d\d)$/.test(deadline)) usage(`--deadline must be Unix seconds or an ISO 8601 time with a time zone, not "${deadline}"`);
-    const ms = Date.parse(deadline);
-    if (Number.isNaN(ms)) usage(`--deadline is not a time: "${deadline}"`);
-    return BigInt(Math.floor(ms / 1000));
-}
-
 const cluster = clusterUrl(options.cluster);
 const launcherPath = options.launcher ?? usage('--launcher is required');
-/** One token's terms: its `--goal`, its `--deadline` and its `--unlock`, if any. */
-type Terms = { unlockGoal: bigint; unlockDeadline: bigint; unlockBy: 'goal' | 'deadline' | undefined };
-const goals = options.goal ?? [];
-const deadlines = options.deadline ?? [];
-const unlocks = options.unlock ?? [];
-if (goals.length === 0) parseGoal(undefined);
-if (deadlines.length > goals.length) usage('give one --goal for each --deadline: each pair launches one token');
-if (unlocks.length > 0 && unlocks.length !== goals.length) usage('give --unlock for every token or for none');
-for (const unlock of unlocks) {
-    if (unlock !== 'goal' && unlock !== 'deadline') usage(`--unlock must be goal or deadline, not "${unlock}"`);
+type Terms = TokenTerms;
+let tokens: Terms[];
+try {
+    tokens = parseTokens({ goal: options.goal, deadline: options.deadline, unlock: options.unlock, quoteMint: options['quote-mint'] });
+} catch (error) {
+    if (error instanceof UsageError) usage(error.message);
+    throw error;
 }
-const tokens: Terms[] = goals.map((goal, i) => ({
-    unlockGoal: parseGoal(goal),
-    unlockDeadline: parseDeadline(deadlines[i]),
-    unlockBy: unlocks[i] as Terms['unlockBy'],
-}));
-const quoteMint = address(options['quote-mint']);
 const onDevnet = !cluster.local;
+// Both paths are resolved against the current directory, as the checks below resolve them, so
+// a bare file name is never looked up on PATH instead.
+const pipelineCheck = options['pipeline-check'] && resolve(options['pipeline-check']);
+const conformanceOut = options['conformance-out'];
+if (conformanceOut && !pipelineCheck) usage('--conformance-out needs --pipeline-check, whose reports it keeps');
+if (pipelineCheck && !existsSync(pipelineCheck)) usage(`--pipeline-check: no file at ${pipelineCheck}`);
+const recordPath = options.record && resolve(options.record);
+// The record is written at the end of a run that spends SOL, so a path it cannot be written to
+// is refused before anything is sent.
+if (recordPath && !existsSync(dirname(recordPath))) usage(`--record: no directory ${dirname(recordPath)} to write ${basename(recordPath)} in`);
 
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
 const retryingTransport = (async (...args: Parameters<typeof baseTransport>) => {
@@ -335,15 +362,35 @@ async function loadKey(path: string): Promise<KeyPairSigner> {
     return createKeyPairSignerFromBytes(new Uint8Array(JSON.parse(readFileSync(path, 'utf8'))));
 }
 
-async function waitFor(label: string, signature: Signature) {
+/** Waits until `signature` has landed, and returns its error, if it failed. */
+async function landed(label: string, signature: Signature) {
     for (let i = 0; ; i++) {
         const { value } = await rpc.getSignatureStatuses([signature]).send();
         const status = value[0];
-        if (status?.err) fail(`${label} failed: ${JSON.stringify(status.err, (_, v) => (typeof v === 'bigint' ? v.toString() : v))} (${explorer('tx', signature)})`);
-        if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return;
+        if (status?.err) return status.err;
+        if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return null;
         if (i > 120) fail(`${label}: not confirmed after 60 s (${explorer('tx', signature)})`);
         await sleep(500);
     }
+}
+
+/**
+ * A landed transaction as the RPC returns it, at `confirmed`. A devnet RPC node can answer
+ * `getSignatureStatuses` before `getTransaction` serves the transaction, so this asks again
+ * for up to `LANDED_TRANSACTION_WAIT_MS` before it gives up.
+ */
+async function landedTransaction(label: string, signature: Signature) {
+    for (let waited = 0; ; waited += 1_000) {
+        const tx = await rpc.getTransaction(signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }).send();
+        if (tx) return tx;
+        if (waited >= LANDED_TRANSACTION_WAIT_MS) fail(`${label}: the RPC did not serve transaction ${signature} after ${LANDED_TRANSACTION_WAIT_MS / 1000} s (${explorer('tx', signature)})`);
+        await sleep(1_000);
+    }
+}
+
+async function waitFor(label: string, signature: Signature) {
+    const err = await landed(label, signature);
+    if (err) fail(`${label} failed: ${JSON.stringify(err, (_, v) => (typeof v === 'bigint' ? v.toString() : v))} (${explorer('tx', signature)})`);
 }
 
 type Blockhash = Awaited<ReturnType<ReturnType<typeof rpc.getLatestBlockhash>['send']>>['value'];
@@ -420,12 +467,26 @@ async function tokenBalance(account: Address): Promise<bigint> {
 type HookAccountsFor = (source: Address, destination: Address, authority: Address) => Promise<AccountMeta[]>;
 
 /**
+ * The side a trade into `outputMint` pays Pipeline's fee on, from the market the router
+ * recorded. Since Pipeline 0.3 it is the output when that is the market's fee mint: on a
+ * home market quoted in wrapped SOL a sell pays the fee in SOL, out of what arrived, and the
+ * token never moves into its fee account; on any other quote mint it is the token, as before.
+ */
+async function routerFeeSide(market: Address, outputMint: Address): Promise<pipeline.FeeSide> {
+    const recorded = await account(market);
+    const decoded = recorded && pipeline.decodeMarket(recorded.data);
+    if (!decoded) fail(`the router has no market at ${market}`);
+    return pipeline.feeSideOf(decoded, outputMint);
+}
+
+/**
  * The router's `swap` of `amount` of mint `input` for mint `output` by `trader`, built with
  * the SDK as a terminal builds it, with the contained token's hook accounts: after the
  * strategy's accounts when it is the output, which the tax AMM moves out of its vault, and as
  * the router's input hook accounts when it is the input, which the router moves into the
- * vault and, for its fee, into the fee account. Quoted at `confirmed`, the commitment the
- * launch confirms at.
+ * vault and, when Pipeline's fee is taken in the token, into the fee account. Its minimum is
+ * what the trader keeps of the quote. Quoted at `confirmed`, the commitment the launch
+ * confirms at.
  */
 async function swapInstruction(
     trader: KeyPairSigner,
@@ -445,6 +506,8 @@ async function swapInstruction(
     const strategyAccounts = await pipeline.resolveAccounts(rpc, view, request, trader.address, simulation);
     const { quote } = await pipeline.quoteStrategy(rpc, view, request, strategyAccounts, trader.address, simulation);
     const buying = output === CONTAINED_INDEX;
+    const feeSide = await routerFeeSide(view.market, view.mints[output]!);
+    const kept = feeSide === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
     // On a buy the tax AMM pays out of its vault, signed by its vault authority.
     const tail = buying
         ? await hookAccounts(view.vaults[output]!, traderOutput, (await findAuthorityPda({ marketState: view.marketState }))[0])
@@ -469,18 +532,20 @@ async function swapInstruction(
             mode: pipeline.TradeMode.ExactIn,
             amountIn: amount,
             amountOut: 0n,
-            minAmountOut: options.minAmountOut ?? quote.amountOut,
+            minAmountOut: options.minAmountOut ?? kept,
             integratorFeeBps: options.integratorFeeBps ?? 0,
             extra: new Uint8Array(),
         },
+        feeSide,
     );
-    return { instruction, quote, traderOutput };
+    return { instruction, quote, kept, feeSide, traderOutput };
 }
 
 /**
  * Swaps through the router with [`swapInstruction`], and stops unless the swap delivered its
- * quote; returns what it delivered, Pipeline's fee and what the hook's `Execute` cost on each
- * hooked transfer, from the transaction's logs.
+ * quote and the trader kept it, less Pipeline's fee when that is taken in the output; returns
+ * what the trader kept, Pipeline's fee and the side it was taken on, and what the hook's
+ * `Execute` cost on each hooked transfer, from the transaction's logs.
  */
 async function trade(
     trader: KeyPairSigner,
@@ -494,29 +559,28 @@ async function trade(
     hooked = true,
 ) {
     const label = `swap ${amount} of ${input === CONTAINED_INDEX ? 'the token' : 'the quote mint'} for ${output === CONTAINED_INDEX ? 'the token' : 'the quote mint'}`;
-    const { instruction, quote, traderOutput } = await swapInstruction(trader, view, input, output, amount, tokenHolder, quoteHolder, hookAccounts);
+    const { instruction, quote, kept, feeSide, traderOutput } = await swapInstruction(trader, view, input, output, amount, tokenHolder, quoteHolder, hookAccounts);
     info(`${label}: quoted ${quote.amountOut}`);
     const before = await tokenBalance(traderOutput);
     const signature = await send(label, trader, [instruction]);
     const received = (await tokenBalance(traderOutput)) - before;
-    const tx = await rpc
-        .getTransaction(signature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-        .send();
-    if (!tx?.meta?.innerInstructions) fail(`transaction ${signature} not found`);
+    const tx = await landedTransaction(label, signature);
+    if (!tx.meta?.innerInstructions) fail(`transaction ${signature} has no inner instructions`);
     const keys = [...tx.transaction.message.accountKeys, ...(tx.meta.loadedAddresses?.writable ?? []), ...(tx.meta.loadedAddresses?.readonly ?? [])];
     const event = pipeline.extractEventsFromInnerInstructions(keys, tx.meta.innerInstructions).find((candidate) => candidate.type === 'Swap');
     if (!event || event.type !== 'Swap') fail(`transaction ${signature} has no swap event`);
-    if (received !== quote.amountOut || event.data.received !== quote.amountOut) {
-        fail(`${label}: received ${received} (event: ${event.data.received}), quoted ${quote.amountOut}`);
+    if (received !== kept || event.data.received !== quote.amountOut) {
+        fail(`${label}: kept ${received} (event: ${event.data.received} arrived), quoted ${quote.amountOut} to keep ${kept}`);
     }
     const hookUnits = hookCompute(tx.meta.logMessages ?? []);
-    // While contained, the hook runs on the vault's transfer of a buy, and on both of a sell's
-    // transfers into the vault and the fee account; after the unlock, never.
-    const expected = hooked ? (output === CONTAINED_INDEX ? 1 : 2) : 0;
+    // While contained, the hook runs on the vault's transfer of a buy, and on a sell's transfer
+    // into the vault and, when Pipeline's fee is taken in the token, its transfer into the fee
+    // account; after the unlock, never.
+    const expected = hooked ? (output === CONTAINED_INDEX ? 1 : feeSide === 'input' ? 2 : 1) : 0;
     if (hookUnits.length !== expected) fail(`${label}: the hook ran ${hookUnits.length} times, not ${expected}`);
     const hook = hooked ? `the hook's Execute took ${hookUnits.join(' and ')} CU` : 'the hook did not run';
-    info(`${label}: received exactly the quote, Pipeline's fee ${event.data.pipelineFee}; ${hook}`);
-    return { received, pipelineFee: event.data.pipelineFee, hookUnits };
+    info(`${label}: the quote arrived and ${received} was kept, Pipeline's fee ${event.data.pipelineFee} in the ${feeSide}; ${hook}`);
+    return { received, pipelineFee: event.data.pipelineFee, feeSide, hookUnits };
 }
 
 /** The compute units each invocation of the hook consumed, in order, from a transaction's logs. */
@@ -554,6 +618,78 @@ async function expectRefused(
     info(`${label}: refused by the hook with ${name} (${code})`);
 }
 
+/**
+ * Sends `instruction` past the preflight simulation, so the refusal lands on chain with a
+ * signature anyone can look up, and stops unless it failed there with the hook's error `name`.
+ */
+async function sendRefused(
+    label: string,
+    feePayer: KeyPairSigner,
+    instruction: Instruction,
+    [name, code]: [string, number] = ['TransferRefused', CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED],
+) {
+    const signed = await signTransactionMessageWithSigners(message(feePayer, [instruction], [], await latestBlockhash()));
+    const signature = getSignatureFromTransaction(signed);
+    await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64', skipPreflight: true }).send();
+    const err = await landed(label, signature);
+    if (!err) fail(`${label} was not refused: it succeeded on chain (${explorer('tx', signature)})`);
+    const logs = (await landedTransaction(label, signature)).meta?.logMessages ?? [];
+    if (!refusedByTheHook(logs, name, code)) fail(`${label} failed on chain, but not by the hook with ${name}: ${show(err)} (${explorer('tx', signature)})\n${logs.join('\n')}`);
+    info(`${label}: refused on chain by the hook with ${name} (${code}): ${explorer('tx', signature)}`);
+    record.push([`${label} (refused by the hook with ${name})`, signature]);
+    return signature;
+}
+
+/**
+ * Runs `pipeline-check --fail-on-warn` on `market` (bar, "Test layers" 7), with the trade
+ * sizes `CONFORMANCE_AMOUNTS` a market on a virtual reserve needs, keeps its report
+ * in `--conformance-out` when given, and stops unless every check passed but
+ * `exact_out_refund`, skipped because the tax AMM refuses exact-out.
+ */
+async function checkConformance(market: Address, when: 'contained' | 'unlocked') {
+    if (!pipelineCheck) {
+        info('not checked: give --pipeline-check <binary> to run Pipeline\'s conformance checker on the home market');
+        return;
+    }
+    // The RPC the launch uses, named `devnet` when it is the public one, as the reports say.
+    const args = ['--url', cluster.url === DEVNET_URL ? 'devnet' : cluster.url, '--market', market, '--amounts', CONFORMANCE_AMOUNTS.join(','), '--fail-on-warn', '--json'];
+    let stdout: string;
+    let exited = 'exited 0';
+    try {
+        ({ stdout } = await promisify(execFile)(pipelineCheck, args, { maxBuffer: 64 * 1024 * 1024, timeout: PIPELINE_CHECK_TIMEOUT_MS }));
+    } catch (error) {
+        // `--fail-on-warn` exits non-zero on a warn or a fail, with the report still printed.
+        const failed = error as { stdout?: string; stderr?: string; message: string; code?: number | string; killed?: boolean };
+        exited = failed.killed ? `was stopped after ${PIPELINE_CHECK_TIMEOUT_MS / 1000} s` : `exited ${failed.code ?? 'abnormally'}`;
+        if (!failed.stdout) fail(`pipeline-check did not run: ${failed.message}\n${failed.stderr ?? ''}`);
+        stdout = failed.stdout;
+    }
+    let report: ConformanceReport;
+    try {
+        report = JSON.parse(stdout) as ConformanceReport;
+        if (typeof report?.market?.address !== 'string' || !Array.isArray(report.checks)) throw new Error('not a pipeline-check-report/1');
+    } catch (error) {
+        fail(`pipeline-check ${exited} without a report on ${market} (${error instanceof Error ? error.message : String(error)}); it printed:\n${stdout.slice(0, 2_000)}`);
+    }
+    if (conformanceOut) {
+        mkdirSync(conformanceOut, { recursive: true });
+        const file = join(conformanceOut, `${market}-${when}.json`);
+        writeFileSync(file, stdout.endsWith('\n') ? stdout : `${stdout}\n`);
+        info(`report: ${file}`);
+    }
+    const verdict = judgeConformance(report, market);
+    if (!verdict.ok) fail(`pipeline-check on the home market ${market} while ${when}:\n${verdict.problems.join('\n')}`);
+    info(`pipeline-check --fail-on-warn: ${verdict.passed} pass, 0 warn, 0 fail, ${verdict.skipped.join(', ')} skipped`);
+    record.push([`pipeline-check, ${when}`, `${verdict.passed} pass, 0 warn, 0 fail, ${verdict.skipped.join(', ')} skipped`]);
+}
+
+/** Writes what the run did to `--record`, also when it stopped part way. */
+function writeRecord(outcome: string) {
+    if (!recordPath) return;
+    writeFileSync(recordPath, `${JSON.stringify({ cluster: onDevnet ? 'devnet' : cluster.url, at: new Date().toISOString(), outcome, record }, null, 2)}\n`);
+    console.log(`Record written to ${recordPath}`);
+}
+
 /** The cluster's clock, as the latest confirmed block's time. */
 async function clusterTime(): Promise<bigint> {
     const time = await rpc.getBlockTime(await rpc.getSlot({ commitment: 'confirmed' }).send()).send();
@@ -567,10 +703,11 @@ async function main() {
     const taxAmm = TAX_AMM_PROGRAM_ADDRESS;
     console.log(`Pipeline router ${pipeline.PIPELINE_PROGRAM_ADDRESS} on ${cluster.url}`);
     console.log(`Containment hook ${hookProgram}, tax AMM ${taxAmm}`);
+    record.push(['containment hook program', hookProgram], ['tax AMM program', taxAmm]);
     console.log(`Launcher ${launcher.address}`);
-    for (const [i, { unlockGoal, unlockDeadline, unlockBy }] of tokens.entries()) {
+    for (const [i, { unlockGoal, unlockDeadline, unlockBy, quoteMint }] of tokens.entries()) {
         console.log(
-            `Token ${i + 1}: unlock goal ${unlockGoal} quote-mint base units, unlock deadline ${new Date(Number(unlockDeadline) * 1000).toISOString()} (${unlockDeadline})${unlockBy ? `, unlocked by the ${unlockBy}` : ''}`,
+            `Token ${i + 1}: quoted in ${quoteMint === 'new' ? 'a fresh SPL Token mint' : quoteMint}, unlock goal ${unlockGoal} quote-mint base units, unlock deadline ${new Date(Number(unlockDeadline) * 1000).toISOString()} (${unlockDeadline})${unlockBy ? `, unlocked by the ${unlockBy}` : ', left contained'}`,
         );
     }
     await checkCluster();
@@ -589,18 +726,41 @@ async function main() {
         fail('the tax AMM is not registered with the router on this cluster; register it first (the tax AMM\'s demo does, docs/toolchain.md)');
     }
     info('the tax AMM is registered with the router');
-    const quote = await account(quoteMint);
-    if (quote?.owner !== TOKEN_PROGRAM_ADDRESS) fail(`the quote mint ${quoteMint} is not an SPL Token mint on this cluster`);
-    // The buy is sized in whole units of the quote mint; a mint's decimals are its byte 44.
-    const buy = TRADES.buyUnits * 10n ** BigInt(quote.data[44]!);
-    const buySpend = pipeline.maxTotalSpend(buy, 0) ?? fail('the buy overflows');
-    const [quoteHolder] = await findAssociatedTokenPda({ owner: launcher.address, mint: quoteMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+    // Each token's quote mint: the address it was given, or the fresh mint of `--quote-mint new`.
+    const newQuoteMint = tokens.some(({ quoteMint }) => quoteMint === 'new') ? await generateKeyPairSigner() : undefined;
+    const quoteOf = tokens.map(({ quoteMint }) => (quoteMint === 'new' ? newQuoteMint!.address : address(quoteMint)));
+    if (newQuoteMint) info(`--quote-mint new: a fresh SPL Token mint ${newQuoteMint.address} with ${NEW_QUOTE_MINT.decimals} decimals, created before the first launch`);
+    // The buy is sized in whole units of each token's quote mint; a mint's decimals are its byte 44.
+    const quotes = new Map<Address, { buy: bigint; buySpend: bigint; quoteHolder: Address }>();
+    for (const quoteMint of new Set(quoteOf)) {
+        let decimals: number = NEW_QUOTE_MINT.decimals;
+        if (quoteMint !== newQuoteMint?.address) {
+            const quote = await account(quoteMint);
+            if (quote?.owner !== TOKEN_PROGRAM_ADDRESS) fail(`the quote mint ${quoteMint} is not an SPL Token mint on this cluster`);
+            decimals = quote.data[44]!;
+        }
+        if (pipelineCheck && decimals < CONFORMANCE_MIN_QUOTE_DECIMALS) {
+            fail(`the quote mint ${quoteMint} has ${decimals} decimals: --pipeline-check's trade sizes, CONFORMANCE_AMOUNTS, need a quote mint of at least ${CONFORMANCE_MIN_QUOTE_DECIMALS}, whose real reserve after the launch's buy covers a sell of the largest`);
+        }
+        const buy = TRADES.buyUnits * 10n ** BigInt(decimals);
+        const [quoteHolder] = await findAssociatedTokenPda({ owner: launcher.address, mint: quoteMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+        quotes.set(quoteMint, { buy, buySpend: pipeline.maxTotalSpend(buy, 0) ?? fail('the buy overflows'), quoteHolder });
+    }
+    const quoteFor = (i: number) => ({ quoteMint: quoteOf[i]!, ...quotes.get(quoteOf[i]!)! });
     // By the goal, the rounds of trades each token takes, counting only each round's buy tax,
     // and what they may cost: both taxes and Pipeline's fees on each round's buy.
-    const buyTax = (buy * BigInt(HOME_MARKET.buyTaxBps)) / 10_000n;
+    // What the launch's own buy and sell may collect, both taxes on the whole buy: a goal at or
+    // below it could be reached before step 11 shows the unlock refused below the goal, or
+    // before the deadline unlocks it, so either `--unlock` refuses it before anything is sent.
     const goalRounds = tokens.map(({ unlockGoal, unlockBy }, i) => {
+        const { buy } = quoteFor(i);
+        const buyTax = (buy * BigInt(HOME_MARKET.buyTaxBps)) / 10_000n;
+        const launchTax = (buy * BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps)) / 10_000n;
         if (unlockBy === 'goal') {
             if (buyTax === 0n) fail(`a buy of ${buy} base units of the quote mint pays no tax, so --unlock goal could never reach the goal; use --unlock deadline`);
+            if (unlockGoal <= launchTax) {
+                fail(`token ${i + 1}: --unlock goal needs a goal above what the launch's own buy and sell may collect, ${launchTax}, so the unlock is first shown refused below it, not ${unlockGoal}`);
+            }
             const rounds = Number((unlockGoal + buyTax - 1n) / buyTax);
             if (rounds > UNLOCKING.maxGoalRounds) {
                 fail(`token ${i + 1}: --goal ${unlockGoal} would take about ${rounds} rounds of trades of ${buy} to collect, more than the ${UNLOCKING.maxGoalRounds} --unlock goal makes; give a smaller goal or use --unlock deadline`);
@@ -608,7 +768,6 @@ async function main() {
             return rounds;
         }
         if (unlockBy === 'deadline') {
-            const launchTax = (buy * BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps)) / 10_000n;
             if (unlockGoal <= launchTax) {
                 fail(`token ${i + 1}: --unlock deadline needs a goal the launch's own buy and sell cannot reach, above ${launchTax}, not ${unlockGoal}`);
             }
@@ -616,23 +775,32 @@ async function main() {
         return 0;
     });
     const roundsCost = goalRounds.map(
-        (rounds) => (BigInt(rounds) * buySpend * (BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps) + UNLOCKING.roundMarginBps)) / 10_000n,
+        (rounds, i) => (BigInt(rounds) * quoteFor(i).buySpend * (BigInt(HOME_MARKET.buyTaxBps + HOME_MARKET.sellTaxBps) + UNLOCKING.roundMarginBps)) / 10_000n,
     );
     for (const [i, rounds] of goalRounds.entries()) {
-        if (rounds > 0) info(`token ${i + 1}, --unlock goal: at most ${rounds} rounds of a buy of ${buy} and a sell back, costing about ${roundsCost[i]} of the quote mint`);
+        if (rounds > 0) info(`token ${i + 1}, --unlock goal: at most ${rounds} rounds of a buy of ${quoteFor(i).buy} and a sell back, costing about ${roundsCost[i]} of the quote mint`);
     }
     // Everything the launches spend is checked before anything is sent: a binding and a seed
     // cannot be undone, so a launch that ran out halfway would leave a market untraded.
-    const quoteNeeded = tokens.reduce((sum, _, i) => sum + buySpend + roundsCost[i]!, 0n);
+    const quoteNeeded = new Map<Address, bigint>();
+    for (const [i] of tokens.entries()) {
+        const { quoteMint, buySpend } = quoteFor(i);
+        quoteNeeded.set(quoteMint, (quoteNeeded.get(quoteMint) ?? 0n) + buySpend + roundsCost[i]!);
+    }
     let solNeeded = tokens.reduce(
         (sum, { unlockBy }) => sum + MAX_CREATOR_LAMPORTS + RENT_AND_FEES + (unlockBy ? UNLOCKING.unlockerLamports : 0n),
-        0n,
+        newQuoteMint ? RENT_AND_FEES : 0n,
     );
-    if (quoteMint === WRAPPED_SOL) {
-        solNeeded += quoteNeeded;
-    } else {
-        const held = (await account(quoteHolder)) ? await tokenBalance(quoteHolder) : 0n;
-        if (held < quoteNeeded) fail(`the launcher's ${quoteMint} account ${quoteHolder} holds ${held}, but the trades need ${quoteNeeded} with Pipeline's fee`);
+    for (const [quoteMint, needed] of quoteNeeded) {
+        if (quoteMint === WRAPPED_SOL) {
+            solNeeded += needed;
+        } else if (quoteMint === newQuoteMint?.address) {
+            if (needed > NEW_QUOTE_MINT.supply) fail(`the trades need ${needed} of the fresh quote mint, more than the ${NEW_QUOTE_MINT.supply} the launcher is minted`);
+        } else {
+            const { quoteHolder } = quotes.get(quoteMint)!;
+            const held = (await account(quoteHolder)) ? await tokenBalance(quoteHolder) : 0n;
+            if (held < needed) fail(`the launcher's ${quoteMint} account ${quoteHolder} holds ${held}, but the trades need ${needed} with Pipeline's fee`);
+        }
     }
     const { value: solHeld } = await rpc.getBalance(launcher.address, { commitment: 'confirmed' }).send();
     if (solHeld < solNeeded) fail(`the launcher holds ${Number(solHeld) / 1e9} SOL, but the launch needs ${Number(solNeeded) / 1e9}`);
@@ -648,19 +816,44 @@ async function main() {
     const startTime = await clusterTime();
     for (const [i, terms] of tokens.entries()) checkTerms(i, terms, startTime);
 
+    if (newQuoteMint) {
+        step('Creating the fresh quote mint of --quote-mint new');
+        const { quoteHolder } = quotes.get(newQuoteMint.address)!;
+        await send(
+            'create the quote mint and mint the launcher its supply',
+            launcher,
+            [
+                getCreateAccountInstruction({
+                    payer: launcher,
+                    newAccount: newQuoteMint,
+                    lamports: await rpc.getMinimumBalanceForRentExemption(BigInt(SPL_MINT_SIZE)).send(),
+                    space: SPL_MINT_SIZE,
+                    programAddress: TOKEN_PROGRAM_ADDRESS,
+                }),
+                getInitializeMint2Instruction({ mint: newQuoteMint.address, decimals: NEW_QUOTE_MINT.decimals, mintAuthority: launcher.address, freezeAuthority: null }),
+                await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: launcher.address, mint: newQuoteMint.address }),
+                getMintToInstruction({ mint: newQuoteMint.address, token: quoteHolder, mintAuthority: launcher, amount: NEW_QUOTE_MINT.supply }),
+            ],
+            [newQuoteMint],
+        );
+        record.push(['quote mint (--quote-mint new)', newQuoteMint.address]);
+        info(`the launcher holds ${NEW_QUOTE_MINT.supply} of it in ${quoteHolder}`);
+    }
+
     for (const [i, terms] of tokens.entries()) {
         if (i > 0) checkTerms(i, terms, await clusterTime());
         stepPrefix = tokens.length > 1 ? `Token ${i + 1}, ` : '';
         if (tokens.length > 1) {
-            record.push([`token ${i + 1}`, `goal ${terms.unlockGoal}, deadline ${terms.unlockDeadline}${terms.unlockBy ? `, unlocked by the ${terms.unlockBy}` : ''}`]);
+            record.push([`token ${i + 1}`, `quoted in ${quoteOf[i]}, goal ${terms.unlockGoal}, deadline ${terms.unlockDeadline}${terms.unlockBy ? `, unlocked by the ${terms.unlockBy}` : ', left contained'}`]);
         }
-        await launchToken(launcher, terms, { buy, buySpend, quoteHolder, init, metadata: metadata.value, goalRounds: goalRounds[i]! });
+        await launchToken(launcher, terms, { ...quoteFor(i), init, metadata: metadata.value, goalRounds: goalRounds[i]! });
     }
 
     stepPrefix = '';
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));
     for (const [label, value] of record) info(`${label.padEnd(width)}  ${value}`);
+    writeRecord('done');
 }
 
 /**
@@ -686,8 +879,9 @@ function checkTerms(i: number, { unlockGoal, unlockDeadline, unlockBy }: Terms, 
     }
 }
 
-/** What every token's launch shares, worked out once before anything is sent. */
+/** What a token's launch is given, worked out once before anything is sent: its quote mint and its buy, and what every launch shares. */
 type Shared = {
+    quoteMint: Address;
     buy: bigint;
     buySpend: bigint;
     quoteHolder: Address;
@@ -700,7 +894,7 @@ type Shared = {
 async function launchToken(
     launcher: KeyPairSigner,
     { unlockGoal, unlockDeadline, unlockBy }: Terms,
-    { buy, buySpend, quoteHolder, init, metadata, goalRounds }: Shared,
+    { quoteMint, buy, buySpend, quoteHolder, init, metadata, goalRounds }: Shared,
 ) {
     const hookProgram = CONTAINMENT_HOOK_PROGRAM_ADDRESS;
     const taxAmm = TAX_AMM_PROGRAM_ADDRESS;
@@ -853,7 +1047,17 @@ async function launchToken(
             }
         }
     }
-    record.push(['mint', mint], ['market', market], ['market state', marketState], ['config', config]);
+    record.push(
+        ['mint', mint],
+        ['market', market],
+        ['market state', marketState],
+        ["the token's vault", vaults[CONTAINED_INDEX]!],
+        ["the token's fee account", feeAccounts[CONTAINED_INDEX]!],
+        ["the quote mint's fee account", feeAccounts[QUOTE_INDEX]!],
+        ['config', config],
+        ['validation account', validation],
+        ['unlock PDA (hook authority)', unlock],
+    );
 
     step('5. Checking the mint and reading the binding back');
     const mintAccount = await account(mint);
@@ -986,35 +1190,48 @@ async function launchToken(
     record.push(['buy', `${buy} of the quote mint bought ${bought.received} of the token, its quote; Execute ${bought.hookUnits.join(' and ')} CU`]);
 
     step('8. Selling half of it back the same way');
-    const feeBefore = await tokenBalance(feeAccounts[CONTAINED_INDEX]!);
+    // Since Pipeline 0.3 the sell pays Pipeline's fee in the market's fee mint when that is
+    // its output (wrapped SOL), and in the token otherwise.
+    const sellFeeIndex = (await routerFeeSide(market, quoteMint)) === 'output' ? QUOTE_INDEX : CONTAINED_INDEX;
+    const feeIn = sellFeeIndex === CONTAINED_INDEX ? 'the token' : 'the quote mint';
+    const feeBefore = await tokenBalance(feeAccounts[sellFeeIndex]!);
     const sold = await trade(launcher, view, CONTAINED_INDEX, QUOTE_INDEX, bought.received / 2n, holder, quoteHolder, hookAccounts);
-    const feeAfter = await tokenBalance(feeAccounts[CONTAINED_INDEX]!);
+    const feeAfter = await tokenBalance(feeAccounts[sellFeeIndex]!);
     if (sold.pipelineFee === 0n || feeAfter - feeBefore !== sold.pipelineFee) {
-        fail(`the fee account grew by ${feeAfter - feeBefore}, but the sell paid Pipeline ${sold.pipelineFee}`);
+        fail(`the fee account for ${feeIn} grew by ${feeAfter - feeBefore}, but the sell paid Pipeline ${sold.pipelineFee}`);
     }
-    info(`Pipeline's fee of ${sold.pipelineFee}, in the token, went into the fee account through the hook`);
-    record.push(['sell', `${bought.received / 2n} of the token sold for ${sold.received}, its quote; fee ${sold.pipelineFee} into the fee account; Execute ${sold.hookUnits.join(' and ')} CU`]);
+    info(`Pipeline's fee of ${sold.pipelineFee}, in ${feeIn}, went into its fee account${sellFeeIndex === CONTAINED_INDEX ? ' through the hook' : ''}`);
+    record.push(['sell', `${bought.received / 2n} of the token sold, ${sold.received} kept; fee ${sold.pipelineFee} in ${feeIn} into its fee account; Execute ${sold.hookUnits.join(' and ')} CU`]);
 
-    step("9. Sweeping Pipeline's fee to its treasury with sweep_fees, with the hook accounts");
+    // The sell's fee account: the token's, swept through the hook with its accounts, or, on a
+    // home market quoted in wrapped SOL, the quote mint's, which has no hook; the token's fee
+    // account then stays empty (Pipeline 0.3).
+    const sweepsToken = sellFeeIndex === CONTAINED_INDEX;
+    step(`9. Sweeping Pipeline's fee to its treasury with sweep_fees${sweepsToken ? ', with the hook accounts' : ''}`);
     const routerConfig = await account(await pipeline.configPda());
     const treasuryOwner = (routerConfig && pipeline.decodeConfig(routerConfig.data)?.treasuryOwner) ?? fail("the router's config cannot be read");
-    const treasury = await pipeline.associatedTokenAddress(treasuryOwner, mint, TOKEN_2022_PROGRAM_ADDRESS);
+    const feeMint = sweepsToken ? mint : quoteMint;
+    const feeTokenProgram = sweepsToken ? TOKEN_2022_PROGRAM_ADDRESS : TOKEN_PROGRAM_ADDRESS;
+    const treasury = await pipeline.associatedTokenAddress(treasuryOwner, feeMint, feeTokenProgram);
     await send("create the treasury's token account", launcher, [
-        await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: treasuryOwner, mint, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS }),
+        await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: treasuryOwner, mint: feeMint, tokenProgram: feeTokenProgram }),
     ]);
-    const owed = await tokenBalance(feeAccounts[CONTAINED_INDEX]!);
+    const owed = await tokenBalance(feeAccounts[sellFeeIndex]!);
     const treasuryBefore = await tokenBalance(treasury);
-    const sweepTail = await hookAccounts(feeAccounts[CONTAINED_INDEX]!, treasury, await pipeline.feeAuthorityPda(market));
-    const sweep = await pipeline.sweepFees({ market, mint, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS, treasuryOwner, hookAccounts: sweepTail });
+    const sweepTail = sweepsToken ? await hookAccounts(feeAccounts[CONTAINED_INDEX]!, treasury, await pipeline.feeAuthorityPda(market)) : [];
+    const sweep = await pipeline.sweepFees({ market, mint: feeMint, tokenProgram: feeTokenProgram, treasuryOwner, hookAccounts: sweepTail });
     await send('sweep_fees', launcher, [sweep]);
     const swept = (await tokenBalance(treasury)) - treasuryBefore;
-    if ((await tokenBalance(feeAccounts[CONTAINED_INDEX]!)) !== 0n || swept !== owed) {
+    if ((await tokenBalance(feeAccounts[sellFeeIndex]!)) !== 0n || swept !== owed) {
         fail(`sweep_fees moved ${swept} of the ${owed} the fee account held`);
     }
-    info(`sweep_fees moved all ${owed} of the token from the fee account to the treasury owner ${treasuryOwner}, through the hook`);
-    record.push(['swept', `${owed} of the token from the fee account to Pipeline's treasury, through the hook`]);
+    if (!sweepsToken && (await tokenBalance(feeAccounts[CONTAINED_INDEX]!)) !== 0n) {
+        fail("the token's fee account holds tokens, though every fee on this market is taken in the quote mint");
+    }
+    info(`sweep_fees moved all ${owed} of ${feeIn} from the fee account to the treasury owner ${treasuryOwner}${sweepsToken ? ', through the hook' : "; the token's fee account stays empty"}`);
+    record.push(['swept', `${owed} of ${feeIn} from the fee account to Pipeline's treasury${sweepsToken ? ', through the hook' : ''}`]);
 
-    step('10. Showing the hook refusing what containment refuses, in simulation');
+    step('10. Showing the hook refusing what containment refuses');
     const stranger = (await generateKeyPairSigner()).address;
     const [strangerAccount] = await findAssociatedTokenPda({ owner: stranger, mint, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS });
     await send("create another wallet's token account", launcher, [
@@ -1025,7 +1242,7 @@ async function launchToken(
         { programAddress: TOKEN_2022_PROGRAM_ADDRESS },
     );
     const transferTail = await hookAccounts(holder, strangerAccount, launcher.address);
-    await expectRefused('a wallet-to-wallet transfer_checked', launcher, {
+    await sendRefused('a wallet-to-wallet transfer_checked', launcher, {
         ...walletToWallet,
         accounts: [...walletToWallet.accounts, ...transferTail],
     });
@@ -1040,12 +1257,19 @@ async function launchToken(
         minAmountOut: 0n,
     });
     await expectRefused(`a sell with an integrator fee of ${TRADES.integratorFeeBps} basis points`, launcher, sellWithFee.instruction);
-    record.push(['refused by the hook', 'a wallet-to-wallet transfer_checked, and a sell with an integrator fee above zero']);
+    record.push(['refused by the hook', 'a wallet-to-wallet transfer_checked, on chain, and a sell with an integrator fee above zero, in simulation']);
+
+    step("10a. Checking the home market with Pipeline's pipeline-check while the token is contained");
+    await checkConformance(market, 'contained');
 
     if (unlockBy) {
         const taxCollected = async () => (await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' })).data.taxCollected;
         if (unlockBy === 'goal') {
             step('11. Trading until the home market has collected the goal in tax');
+            const below = await taxCollected();
+            if (below >= unlockGoal) fail(`the launch's own trades collected ${below}, already the goal ${unlockGoal}, so the unlock could not be shown refused below it; give a larger --goal`);
+            if ((await clusterTime()) >= unlockDeadline) fail('the deadline passed before the unlock could be shown refused below the goal');
+            await sendRefused(`unlock with ${below} of the goal ${unlockGoal} collected`, launcher, unlockInstruction, ['UnlockNotDue', CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE]);
             for (let round = 1; (await taxCollected()) < unlockGoal; round++) {
                 if (round > goalRounds) fail(`the home market collected ${await taxCollected()} of the goal ${unlockGoal} in ${goalRounds} rounds`);
                 if ((await clusterTime()) >= unlockDeadline) fail('the deadline passed while trading, so the unlock would not show the goal');
@@ -1088,10 +1312,7 @@ async function launchToken(
             await sleep(1_000);
         }
         const unlockSignature = await send('unlock', unlocker, [unlockInstruction]);
-        const unlockTx = await rpc
-            .getTransaction(unlockSignature, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-            .send();
-        const unlockLogs = unlockTx?.meta?.logMessages ?? [];
+        const unlockLogs = (await landedTransaction('unlock', unlockSignature)).meta?.logMessages ?? [];
         const reason = unlockBy === 'goal' ? 'Program log: Unlocked by the goal' : 'Program log: Unlocked by the deadline';
         if (!unlockLogs.some((line) => line.startsWith(reason))) fail(`the unlock's logs do not say "${reason}":\n${unlockLogs.join('\n')}`);
         const [unlockUnits] = hookCompute(unlockLogs);
@@ -1127,10 +1348,18 @@ async function launchToken(
             ['transfer after the unlock', '1,000,000 of the token from the launcher to another wallet, without hook accounts'],
             ['swaps after the unlock', `a buy of ${buy / 10n} and a sell of ${freeBuy.received} (for ${freeSell.received}), without hook accounts; the hook never ran`],
         );
+
+        step("14. Checking the home market with Pipeline's pipeline-check after the unlock");
+        await checkConformance(market, 'unlocked');
     }
 }
 
 main().catch((error) => {
     console.error(error instanceof Stopped ? `\nStopped: ${error.message}` : error);
+    try {
+        writeRecord(`stopped: ${error instanceof Error ? error.message : String(error)}`);
+    } catch (writeError) {
+        console.error(`The record could not be written to ${recordPath}: ${writeError}`);
+    }
     process.exit(1);
 });

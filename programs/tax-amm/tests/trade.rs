@@ -57,7 +57,7 @@ fn trade_and_check(env: &mut Env, market: &Market, trades: &[(usize, usize, u64)
     for &(i, o, amount) in trades {
         let quote = env.quote(market, &exact_in(i, o, amount)).unwrap();
         let options = SwapOptions {
-            min_amount_out: quote.amount_out,
+            min_amount_out: env.kept(market, o, quote.amount_out),
             ..SwapOptions::default()
         };
         let meta = env

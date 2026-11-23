@@ -168,7 +168,6 @@ pub fn remove_liquidity_handler<'info>(
     let liquidity_supply;
     let instructions_sysvar;
     let reserve_collateral_mint;
-    let collateral_mint = accounts.collateral_mint.to_account_info();
     let token_program = accounts.token_program.to_account_info();
     let mut kamino = None;
     if !in_kind && removal.ctokens > 0 {
@@ -197,8 +196,7 @@ pub fn remove_liquidity_handler<'info>(
             token_program: &token_program,
             instructions_sysvar: &instructions_sysvar,
         };
-        let lent = crate::config::lent_mint(&market.lent_mint())
-            .ok_or(StrategyError::LentMintNotListed)?;
+        let lent = market.lent_entry()?;
         let (reserve, lending_market) = calls.check(lent)?;
         // While klend redeems nothing, the cTokens' part goes in kind, which hands the LP their
         // cTokens, even where the stored rate values them at nothing, as after a total write-off.
@@ -291,36 +289,17 @@ pub fn remove_liquidity_handler<'info>(
 
     // In kind, pay the cTokens' part as cTokens, into the LP's associated token account.
     if in_kind && removal.ctokens > 0 {
-        require_keys_eq!(
-            accounts.lp_ctoken.key(),
-            get_associated_token_address(&accounts.lp.key(), &accounts.collateral_mint.key()),
-            StrategyError::WrongAccount
-        );
-        // An account with data at the LP's associated token address was created by the
-        // associated token program as the LP's token account for the collateral mint.
-        if accounts.lp_ctoken.data_is_empty() {
-            associated_token::create_idempotent(CpiContext::new(
-                accounts.associated_token_program.key(),
-                associated_token::Create {
-                    payer: accounts.lp.to_account_info(),
-                    associated_token: accounts.lp_ctoken.to_account_info(),
-                    authority: accounts.lp.to_account_info(),
-                    mint: collateral_mint.clone(),
-                    system_program: accounts.system_program.to_account_info(),
-                    token_program: token_program.clone(),
-                },
-            ))?;
-        }
-        tokens::transfer_checked(
-            &token_program,
-            &ctoken_account,
-            &collateral_mint,
-            &accounts.lp_ctoken.to_account_info(),
+        pay_ctokens_in_kind(
+            &accounts.lp,
+            &accounts.lp_ctoken,
+            &accounts.ctoken_account,
+            &accounts.collateral_mint,
             &authority,
-            &[],
+            &accounts.token_program,
+            &accounts.associated_token_program,
+            &accounts.system_program,
             removal.ctokens,
-            accounts.collateral_mint.decimals,
-            &[authority_seeds],
+            authority_seeds,
         )?;
         ctokens_out = removal.ctokens;
     }
@@ -377,4 +356,53 @@ pub fn remove_liquidity_handler<'info>(
         redeemed,
     });
     Ok(())
+}
+
+/// Pays `ctokens` of the market's cTokens to `lp` in kind, into their associated token account for
+/// the collateral mint, which the associated token program creates at the LP's expense only when
+/// it is missing; an account with data at that address was created by it as the LP's token
+/// account for the collateral mint. Signed by the vault authority with `authority_seeds`. Reads no
+/// Kamino account, so it works whatever state Kamino is in.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pay_ctokens_in_kind<'info>(
+    lp: &Signer<'info>,
+    lp_ctoken: &UncheckedAccount<'info>,
+    ctoken_account: &UncheckedAccount<'info>,
+    collateral_mint: &Account<'info, SplMint>,
+    authority: &AccountInfo<'info>,
+    token_program: &Program<'info, Token>,
+    associated_token_program: &Program<'info, AssociatedToken>,
+    system_program: &Program<'info, System>,
+    ctokens: u64,
+    authority_seeds: &[&[u8]],
+) -> Result<()> {
+    require_keys_eq!(
+        lp_ctoken.key(),
+        get_associated_token_address(&lp.key(), &collateral_mint.key()),
+        StrategyError::WrongAccount
+    );
+    if lp_ctoken.data_is_empty() {
+        associated_token::create_idempotent(CpiContext::new(
+            associated_token_program.key(),
+            associated_token::Create {
+                payer: lp.to_account_info(),
+                associated_token: lp_ctoken.to_account_info(),
+                authority: lp.to_account_info(),
+                mint: collateral_mint.to_account_info(),
+                system_program: system_program.to_account_info(),
+                token_program: token_program.to_account_info(),
+            },
+        ))?;
+    }
+    tokens::transfer_checked(
+        &token_program.to_account_info(),
+        &ctoken_account.to_account_info(),
+        &collateral_mint.to_account_info(),
+        &lp_ctoken.to_account_info(),
+        authority,
+        &[],
+        ctokens,
+        collateral_mint.decimals,
+        &[authority_seeds],
+    )
 }

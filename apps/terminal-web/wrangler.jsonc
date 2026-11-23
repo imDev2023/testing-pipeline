@@ -1,0 +1,14 @@
+// Adapted from Top-pad b833a7b, apps/web/wrangler.jsonc; owned here since.
+// `terminal-web` (docs/spec/pipescope-architecture.md, "terminal-web"): the web app on Workers
+// through OpenNext. `pnpm --filter terminal-web preview` builds it and runs it in `wrangler dev`
+// against the local run's API. It is built per environment, since NEXT_PUBLIC_API_URL is baked in
+// at build time; the devnet deployment (`env.devnet`) is added by #192.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "terminal-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-11-20",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "observability": { "enabled": true }
+}

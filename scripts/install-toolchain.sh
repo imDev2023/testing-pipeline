@@ -4,9 +4,10 @@
 # active_release, so other projects keep their own versions. Safe to run again.
 # What it installs and why: docs/toolchain.md.
 #
-#   scripts/install-toolchain.sh [solana] [kani] [verify]    # default: solana and kani
+#   scripts/install-toolchain.sh [solana] [agave] [kani] [verify]    # default: solana and kani
 #
-# `solana` is Rust, cargo-build-sbf, the platform tools and the Agave CLI; `kani` is Rust and
+# `solana` is Rust, cargo-build-sbf, the platform tools and the Agave CLI; `agave` is the Agave
+# CLI alone, for the daily router pin check, which only dumps the router; `kani` is Rust and
 # the Kani model checker for the maths proofs; `verify` is solana-verify, for the Docker
 # verified builds a devnet deploy needs (docs/toolchain.md, "Deploy to devnet"), which CI does
 # not run. CI installs each part in the job that needs it.
@@ -22,8 +23,8 @@ SOLANA_VERIFY_VERSION=0.5.2
 PARTS="${*:-solana kani}"
 for part in $PARTS; do
   case "$part" in
-    solana | kani | verify) ;;
-    *) echo "unknown part: $part (expected solana, kani or verify)" >&2; exit 2 ;;
+    solana | agave | kani | verify) ;;
+    *) echo "unknown part: $part (expected solana, agave, kani or verify)" >&2; exit 2 ;;
   esac
 done
 want() { [[ " $PARTS " == *" $1 "* ]]; }
@@ -61,10 +62,16 @@ mkdir -p "$ROOT"
 
 # cargo-build-sbf relinks rustup's toolchains named *solana*; remember the machine's own
 # `solana` link (used by agave-install's cargo-build-sbf) so it can be put back.
-solana_link_before="$(rustup toolchain list -v | awk '$1 == "solana" { print $NF }')"
+# (Only the `solana` part needs rustup; `agave` alone runs where there is none.)
+solana_link_before=""
+if want solana; then
+  solana_link_before="$(rustup toolchain list -v | awk '$1 == "solana" { print $NF }')"
+fi
 
-echo "== Rust $RUST_VERSION (Pipeline's rust-toolchain.toml)"
-rustup toolchain list | grep -q "^$RUST_VERSION-" || rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt,clippy
+if want solana || want kani || want verify; then
+  echo "== Rust $RUST_VERSION (Pipeline's rust-toolchain.toml)"
+  rustup toolchain list | grep -q "^$RUST_VERSION-" || rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt,clippy
+fi
 
 CBS="$ROOT/cargo-build-sbf-$CARGO_BUILD_SBF_VERSION"
 AGAVE="$ROOT/agave-$AGAVE_VERSION"
@@ -124,6 +131,17 @@ EOF
     chmod +x "$ROOT/shims/cargo-build-sbf"
   fi
 
+  install_agave
+
+  solana_link_after="$(rustup toolchain list -v | awk '$1 == "solana" { print $NF }')"
+  if [ -n "$solana_link_before" ] && [ "$solana_link_after" != "$solana_link_before" ]; then
+    echo "== restoring rustup's solana toolchain link"
+    if [ -n "$solana_link_after" ]; then rustup toolchain uninstall solana; fi
+    rustup toolchain link solana "$solana_link_before"
+  fi
+}
+
+install_agave() {
   echo "== Agave $AGAVE_VERSION CLI ($AGAVE_TARGET)"
   if ! "$AGAVE/bin/solana" --version 2>/dev/null | grep -q "^solana-cli ${AGAVE_VERSION#v} "; then
     download_dir="$(mktemp -d)"
@@ -135,13 +153,6 @@ EOF
     rm -rf "$AGAVE"
     mv "$download_dir/solana-release" "$AGAVE"
     rm -rf "$download_dir"
-  fi
-
-  solana_link_after="$(rustup toolchain list -v | awk '$1 == "solana" { print $NF }')"
-  if [ -n "$solana_link_before" ] && [ "$solana_link_after" != "$solana_link_before" ]; then
-    echo "== restoring rustup's solana toolchain link"
-    if [ -n "$solana_link_after" ]; then rustup toolchain uninstall solana; fi
-    rustup toolchain link solana "$solana_link_before"
   fi
 }
 
@@ -175,7 +186,7 @@ install_verify() {
   fi
 }
 
-if want solana; then install_solana; fi
+if want solana; then install_solana; elif want agave; then install_agave; fi
 if want kani; then install_kani; fi
 if want verify; then install_verify; fi
 
@@ -186,6 +197,8 @@ if want solana; then
   "$AGAVE/bin/solana" --version
   "$AGAVE/bin/solana-test-validator" --version
   echo "Platform tools: $SBF_TOOLS_VERSION"
+elif want agave; then
+  "$AGAVE/bin/solana" --version
 fi
 if want kani; then
   PATH="$KANI/bin:$PATH" cargo kani --version

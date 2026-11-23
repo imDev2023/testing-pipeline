@@ -1,0 +1,58 @@
+.footer {
+  border-top: 1px solid var(--rule);
+  background: var(--sheet);
+  color: var(--ink2);
+}
+
+.inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 24px var(--gutter) 32px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px 64px;
+  justify-content: space-between;
+}
+
+.heading {
+  font-size: 1em;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+
+.voices {
+  flex: 1 1 340px;
+  max-width: 560px;
+}
+
+.voices ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.side {
+  flex: 1 1 300px;
+  max-width: 480px;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.devnet {
+  color: var(--ink);
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+}
+
+.links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-min-height);
+}

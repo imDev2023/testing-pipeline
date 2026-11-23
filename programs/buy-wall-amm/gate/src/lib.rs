@@ -29,11 +29,12 @@ pub mod download;
 pub mod keeper;
 pub mod programs;
 pub mod quotes;
-pub mod record;
-pub mod release;
 pub mod session;
 pub mod snapshot;
-pub mod source;
 pub mod stranding;
 pub mod synthetic;
 pub mod world;
+
+// Shared with the lending AMM's gate (programs/release-gate), under the names this crate has
+// always used for them.
+pub use release_gate::{record, release, source};

@@ -1,0 +1,28 @@
+[package]
+name = "release-gate"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "What every strategy's release gate shares: reading a cluster over read-only JSON-RPC, the records of passing runs the deploy script checks, the release declaration, and reading a failed step's error"
+publish = false
+
+# A host library, never deployed: no `cdylib`, so scripts/workspace-programs.py and
+# scripts/build-programs.sh leave it out. The buy wall AMM's gate (programs/buy-wall-amm/gate)
+# and the lending AMM's (programs/lending-amm/gate) build on it.
+#
+# Every dependency is left out of Kani's builds, as in the gates themselves: `cargo kani
+# --workspace` compiles each member's normal dependencies with Kani's older nightly Rust, which
+# pipeline-check's Solana crates refuse, and this crate has no proofs, so under Kani it compiles
+# to nothing.
+[target.'cfg(not(kani))'.dependencies]
+base64.workspace = true
+pipeline-check.workspace = true
+pipeline-client.workspace = true
+pipeline-strategy-interface.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+solana-account.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

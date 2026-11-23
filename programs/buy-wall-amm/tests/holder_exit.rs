@@ -116,12 +116,15 @@ fn a_holding_beyond_the_price_bound_sells_what_the_curve_can_take() {
     assert_eq!(sold.received, worth - fee);
     assert_eq!(env.state(&market).sqrt_price(), MIN_SQRT_PRICE);
 
+    // Since Pipeline 0.3 the sell pays Pipeline's fee in wrapped SOL, the market's fee mint,
+    // out of what arrived, so the holder keeps every token it did not sell.
+    assert_eq!(sold.fee_mint, common::WSOL);
     // What is left can only sell below the bound, and still counts as an exit.
     let left = env.balance(&pipeline_client::pda::associated_token(
         &holder.pubkey(),
         &market.token_mint,
         &market.token_program,
     ));
-    assert_eq!(left, held - most - sold.pipeline_fee);
+    assert_eq!(left, held - most);
     exit::can_exit(&env, &market, left).unwrap();
 }

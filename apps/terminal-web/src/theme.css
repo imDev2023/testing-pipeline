@@ -1,0 +1,120 @@
+/*
+ * The theme stylesheet (PIPESCOPE-67, PIPESCOPE-68, PIPESCOPE-85): every colour and typeface of
+ * Aviary, as named tokens with their light and dark values, and the two widths at which the pages
+ * change shape (docs/spec/pipescope-screens.md, "Colour and theme" and "Phones and narrow
+ * windows"). No component writes a colour or a typeface of its own; test/theme-guard.test.ts fails
+ * if one does.
+ *
+ * The page follows the device's setting; the footer's control sets `data-theme` on <html> to
+ * "light" or "dark" to override it. Each colour token is written once, as light-dark(light, dark),
+ * and `color-scheme` picks the value.
+ */
+
+/* Archivo, the variable font with its width and weight axes, and Literata, served from Aviary's own
+   origin (src/fonts, cut by scripts/subset-fonts.py), so a page view calls no font service. */
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+  src: url("./fonts/archivo-upright.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Archivo";
+  font-style: italic;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+  src: url("./fonts/archivo-italic.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Literata";
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url("./fonts/literata-upright.woff2") format("woff2");
+}
+
+:root {
+  color-scheme: light dark;
+
+  /* Ink on a pale, cool paper, with one accent, canary yellow. The dark values were chosen for the
+     dark theme, not flipped by rule. */
+  --paper: light-dark(#edf1f1, #0e1920); /* the page */
+  --sheet: light-dark(#f9fbfb, #14222b); /* panels, and the inside of a hollow candle */
+  --wash: light-dark(#e2e8e9, #1c2d37); /* code and pressed controls */
+  --ink: light-dark(#13222c, #e6edef); /* text, outcome shapes and candles */
+  --ink2: light-dark(#465863, #a9b9c1); /* secondary text */
+  --ink3: light-dark(#5d6d77, #8799a3); /* notes */
+  --rule: light-dark(#cfd8db, #24353f); /* hairlines */
+  --rule2: light-dark(#9cadb4, #435863); /* underlines and control borders */
+  --canary: #ffd60a; /* Canary's mark and the trade-box notice, nowhere else */
+  --on-canary: #13222c; /* text on canary yellow */
+  --author: light-dark(#7a2b8c, #dda9ec); /* an author's words, nowhere else */
+
+  /* Archivo for everything Aviary says; Literata for what an AI wrote; the system's monospace for
+     identifiers shown as code (a system font, so it is never fetched). */
+  --font-sans: "Archivo", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Literata", ui-serif, serif;
+  --font-code: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-size: 14px;
+  --text-line: 1.5;
+  --ai-size: 16px;
+  --ai-line: 1.6;
+  /* Headings: Archivo, slightly wider and heavier than the text. */
+  --heading-stretch: 108%;
+  --heading-weight: 650;
+  --text-weight: 400;
+  --strong-weight: 600;
+
+  /* Every field and button is at least this high (44 px at 720 px and narrower). */
+  --control-min-height: 32px;
+  /* The page's horizontal margin. */
+  --gutter: 32px;
+  /* The header: one row on wide screens. */
+  --header-columns: auto 1fr auto;
+  --header-areas: "brand links end";
+
+  /* Tables: rows and columns on wide screens (components/Table.tsx). */
+  --table-display: table;
+  --table-head-display: table-header-group;
+  --table-body-display: table-row-group;
+  --table-row-display: table-row;
+  --table-cell-display: table-cell;
+  --table-label-display: none;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* 1080 px: the width at which the market page becomes one column; its rules arrive with the market
+   page (#118). */
+
+/* 720 px: the width at which tables become labelled blocks, the header becomes three rows, text is
+   15 px and every field and button is at least 44 px high. */
+@media (max-width: 720px) {
+  :root {
+    --text-size: 15px;
+    --control-min-height: 44px;
+    --gutter: 16px;
+    --header-columns: 1fr auto;
+    /* The search box takes a third row, at full width, when it lands (#120). */
+    --header-areas: "brand end" "links links";
+    /* Tables become a list of small blocks, one a row, each value under its column's name. */
+    --table-display: block;
+    --table-head-display: none;
+    --table-body-display: block;
+    --table-row-display: grid;
+    --table-cell-display: grid;
+    --table-label-display: block;
+  }
+}

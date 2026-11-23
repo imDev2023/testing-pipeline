@@ -481,6 +481,16 @@ async function tokenBalance(account: Address): Promise<bigint> {
     return BigInt(value.amount);
 }
 
+/**
+ * The side a trade into `outputMint` pays Pipeline's fee on, from the market the router
+ * recorded (Pipeline 0.3: the output when it is the market's fee mint).
+ */
+async function routerFeeSide(market: Address, outputMint: Address): Promise<pipeline.FeeSide> {
+    const recorded = pipeline.decodeMarket((await accountData(market)) ?? new Uint8Array());
+    if (!recorded) fail(`the router has no market at ${market}`);
+    return pipeline.feeSideOf(recorded, outputMint);
+}
+
 /** The router's swap event in a confirmed transaction. */
 async function swapEvent(signature: Signature) {
     const tx = await rpc
@@ -663,7 +673,9 @@ const show = (value: unknown) => JSON.stringify(value, (_, v) => (typeof v === '
 /**
  * Swaps `amount` of mint `input` for mint `output` through the router with the SDK, with its
  * quote as the minimum, and stops unless the quote is the spec's price and the swap
- * delivered it; then applies the swap to the spec's account of the market.
+ * delivered it; then applies the swap to the spec's account of the market. Since Pipeline
+ * 0.3 a trade into the market's fee mint (wrapped SOL here) pays Pipeline's fee out of what
+ * arrived, so the minimum and the check are on what the trader keeps.
  */
 async function tradeChecked(
     payer: KeyPairSigner,
@@ -702,6 +714,8 @@ async function tradeChecked(
         fail(`${label}: quoted ${quote.amountOut} for ${quote.amountIn}, but the spec prices ${expected.out} for ${amount}`);
     }
     info(`${label}: quoted ${quote.amountOut}, the spec's price, with a tax of ${expected.tax} (${unitsConsumed} CU)`);
+    const feeSide = await routerFeeSide(view.market, view.mints[output]!);
+    const kept = feeSide === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
     const before = await tokenBalance(payerAccounts[output]!);
     const signature = await send(label, payer, [
         await pipeline.swap(
@@ -722,18 +736,20 @@ async function tradeChecked(
                 mode: pipeline.TradeMode.ExactIn,
                 amountIn: amount,
                 amountOut: 0n,
-                minAmountOut: quote.amountOut,
+                minAmountOut: kept,
                 integratorFeeBps: 0,
                 extra: new Uint8Array(),
             },
+            feeSide,
         ),
     ]);
     const received = (await tokenBalance(payerAccounts[output]!)) - before;
     const event = await swapEvent(signature);
-    if (received !== quote.amountOut || event.received !== quote.amountOut || event.netSent !== amount) {
-        fail(`${label}: received ${received} (event: ${event.received} for ${event.netSent}), quoted ${quote.amountOut} for ${amount}`);
+    const feeMint = view.mints[feeSide === 'output' ? output : input]!;
+    if (received !== kept || event.received !== quote.amountOut || event.netSent !== amount || event.feeMint !== feeMint) {
+        fail(`${label}: kept ${received} (event: ${event.received} for ${event.netSent}, fee in ${event.feeMint}), quoted ${quote.amountOut} for ${amount}, to keep ${kept}`);
     }
-    info(`${label}: received exactly the quote, Pipeline's fee ${event.pipelineFee}`);
+    info(`${label}: received exactly the quote, Pipeline's fee ${event.pipelineFee} in the ${feeSide === 'output' ? 'output' : 'input'}, ${received} kept`);
     specSwap(spec, input, output, event.netSent);
 }
 

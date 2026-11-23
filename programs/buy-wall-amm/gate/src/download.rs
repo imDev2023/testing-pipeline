@@ -173,6 +173,12 @@ fn market_record(
         created_at: 0,
         bump: 0,
         fee_authority_bump: 0,
+        // As the router records it for a strategy that declares no fee mint, as the buy wall
+        // AMM does (Pipeline 0.3): wrapped SOL's index if the market trades it, else none.
+        fee_mint_index: mints[..2]
+            .iter()
+            .position(|mint| *mint == client::wallet::NATIVE_MINT)
+            .map_or(client::NO_FEE_MINT, |index| index as u8),
     };
     let mut data = client::account_discriminator("Market").to_vec();
     record.serialize(&mut data).map_err(|e| e.to_string())?;

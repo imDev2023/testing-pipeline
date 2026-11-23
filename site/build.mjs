@@ -51,7 +51,7 @@ function markdown(sections = []) {
         let id = base;
         for (let n = 1; ids.has(id); n++) id = `${base}-${n}`;
         ids.add(id);
-        const decision = text.match(/^([A-Z0-9]+-\d{2}): /)?.[1].toLowerCase();
+        const decision = text.match(/^([A-Z0-9]+-(?:\d{2}|[1-9]\d{2,})): /)?.[1].toLowerCase();
         const alias = decision && !ids.has(decision) ? `<span id="${decision}"></span>` : '';
         if (alias) ids.add(decision);
         if (depth === 2) sections.push({ id, text });

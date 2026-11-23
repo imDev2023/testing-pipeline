@@ -156,6 +156,24 @@ pub struct LiquidityRemoved {
     pub redeemed: u64,
 }
 
+/// An LP left with the lent side alone through `remove_lent_side`, giving up the other side's
+/// part to the LPs who stay (docs/spec/lending-pool.md, "Removing").
+#[event]
+pub struct LentSideRemoved {
+    pub market_state: Pubkey,
+    pub lp: Pubkey,
+    /// The LP shares burned.
+    pub shares: u64,
+    /// The market's share count after the removal, the locked minimum included.
+    pub share_count: u64,
+    /// The buffer's part, paid in the lent mint.
+    pub lent: u64,
+    /// The cTokens' part, paid as cTokens.
+    pub ctokens: u64,
+    /// The other side's part, `R x lp / N`, left in the market for the LPs who stay.
+    pub other_left: u64,
+}
+
 /// An LP moved shares into the market's lock account with `lock_lp`, for good
 /// (docs/spec/lending-pool.md, "Locking").
 #[event]

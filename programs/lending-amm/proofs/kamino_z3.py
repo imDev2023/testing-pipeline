@@ -23,6 +23,12 @@ u64 cToken supply `N` (docs/spec/lending-pool.md, "Valuing the lent side"; docs/
 5. The rate headroom (`with_rate_headroom`) taken off Kamino's limits before a redeem is planned
    is never short of `KAMINO_RATE_HEADROOM_BPS` of them, by less than one unit, and leaves
    between nothing and the whole limit.
+6. The valuation is additive to within one unit, `V(a) + V(b) <= V(a + b) <= V(a) + V(b) + 1`,
+   so splitting cTokens (a redeem, a burn, a removal's part) loses at most one unit of the lent
+   mint to rounding (Book of Knowledge KA-3).
+7. A shortfall within the cTokens' value, `1 <= x <= V(c)`, or any shortfall when they are worth
+   more than a u64 holds, is always burned, by at most the `c` cTokens held, so a quote that
+   accepts it never meets a swap that refuses it (Book of Knowledge KA-5).
 
 Each division is modelled by its quotient and remainder, and each wide product by its 64-bit
 digits (`p = h x 2^64 + l`, `0 <= l < 2^64`), which Z3 proves in seconds where symbolic
@@ -293,6 +299,54 @@ def main():
         ),
         amount_ok,
         headroom_facts,
+    )
+
+    # 6. The valuation is additive to within one unit (Book of Knowledge KA-3): for any parts
+    # a and b of a u64 and any reserve, V(a) + V(b) <= V(a + b) <= V(a) + V(b) + 1, with
+    # V(k) = floor(k x S / (N x 2^60)). The products are fresh variables tied to their factors.
+    a, a_ok = bounded("a", U64_MAX)
+    b, b_ok = bounded("b", U64_MAX)
+    s_any, s_any_ok = bounded("S_any", U128_MAX)
+    pa, pb = Int("Pa"), Int("Pb")
+    v_a, v_a_facts = floor_div("v_a", pa, m)
+    v_b, v_b_facts = floor_div("v_b", pb, m)
+    v_ab, v_ab_facts = floor_div("v_ab", pa + pb, m)
+    ok &= prove(
+        "the valuation is additive to within one unit: splitting cTokens loses at most one unit",
+        And(v_a + v_b <= v_ab, v_ab <= v_a + v_b + 1),
+        a_ok,
+        b_ok,
+        a + b <= U64_MAX,
+        s_any_ok,
+        n_ok,
+        pa == a * s_any,
+        pb == b * s_any,
+        v_a_facts,
+        v_b_facts,
+        v_ab_facts,
+    )
+
+    # 7. A shortfall within the cTokens' value can always be burned (Book of Knowledge KA-5):
+    # for a shortfall 1 <= x <= floor(c x S / (N x 2^60)), over the integers, which also covers
+    # cTokens worth 2^64 or more, refused by `collateral_value` and counted as u64::MAX by
+    # `can_pay_now`, k = ceil(x x N x 2^60 / S) is at most c, so it fits a u64 (the long
+    # division's quotient is not refused, nor the rounding up) and the swap never burns more
+    # than the market holds.
+    owned, owned_facts = floor_div("owned", c * s_total, m)
+    bq, bq_facts = floor_div("bq", x * m, s_total)
+    br = x * m - bq * s_total
+    burn = bq + If(br > 0, 1, 0)
+    ok &= prove(
+        "a shortfall within the cTokens' value is always burned, by at most the cTokens held",
+        And(burn <= c, bq <= U64_MAX, burn <= U64_MAX),
+        x_ok,
+        x >= 1,
+        c_ok,
+        n_ok,
+        s_ok,
+        owned_facts,
+        x <= owned,
+        bq_facts,
     )
 
     if not ok:

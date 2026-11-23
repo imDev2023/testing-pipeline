@@ -18,7 +18,8 @@ pub const MARKET_DISCRIMINATOR: [u8; 8] = [219, 190, 213, 55, 0, 227, 198, 154];
 /// Byte offsets in the router's `Market` account, discriminator included: the strategy
 /// program, the market state, the mint count, four mints, four vaults, whether exact-out is
 /// supported, the creator, the creation time, then the market's bump and its fee
-/// authority's bump.
+/// authority's bump. Pipeline 0.3 appended the market's fee mint index after them, which the
+/// hook does not read; `read_market` asks only for the length up to the fee authority's bump.
 mod offset {
     use super::psi::MAX_MARKET_MINTS;
     pub const STRATEGY: usize = 8;

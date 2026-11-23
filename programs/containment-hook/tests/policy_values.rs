@@ -6,7 +6,7 @@
 //!
 //! The IDL and the client generated from it carry the longest deadline as a published
 //! constant, which `tests/idl.rs` and `pnpm typecheck` keep equal to the program's, so they
-//! are not counted as repeating it.
+//! are not counted as repeating it; nor are the conformance reports, which record runs.
 
 use std::path::{Path, PathBuf};
 
@@ -55,9 +55,13 @@ fn files_containing(needle: &str) -> Vec<String> {
         .collect()
 }
 
-/// The IDL and the TypeScript client, generated from the program.
+/// The IDL and the TypeScript client, generated from the program, and `pipeline-check`'s reports
+/// in `conformance/`, records of runs written by the launch script, which name the strategy each
+/// checked market runs on.
 fn generated(path: &str) -> bool {
-    path == "idl/containment_hook.json" || path.starts_with("scripts/client/")
+    path == "idl/containment_hook.json"
+        || path.starts_with("scripts/client/")
+        || path.starts_with("conformance/")
 }
 
 #[test]

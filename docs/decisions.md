@@ -25,7 +25,7 @@ Every decision is one block in exactly this shape:
 - Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19)
 ```
 
-- **The ID** is a product prefix and a two-digit number.
+- **The ID** is a product prefix and a number of at least two digits.
   The prefixes are `SUITE`, `BAR` (the engineering and security bar), `PIPESCOPE` (Aviary, the terminal), `CANARY`, `EXPLAINER`, `TAX`, `HOOK`, `POOL4` (the buy wall AMM) and `LENDING` (the lending AMM).
   They are identifiers, taken from the spec file names, and like those file names they stay as they are when a public name changes.
   An ID is never renumbered or reused, and a block is never deleted.
@@ -420,11 +420,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-37: Keeper runner: what it records
 
 - Question: Where does the runner record what it did?
-- Answer: In one table, `keeper_runs`, of Aviary's Postgres, written directly from the runner, or in its log when it has no database; a public keeper page in Aviary shows the wallet, today's spend against each cap and every held or parked job.
-- Alternatives: None recorded.
+- Answer: In two tables of Aviary's Postgres, `keeper_runs` (a row per pass) and `keeper_run_jobs` (a row per job it sent, held or parked), written directly from the runner, or in its log when it has no database; a public keeper page in Aviary shows the wallet, today's spend against each cap and every held or parked job.
+- Alternatives: The earlier default, one table `keeper_runs` holding both, which a row per pass and a row per job would have had to share.
 - Specified in: [`docs/spec/keeper-runner.md`, What it records](spec/keeper-runner.md#what-it-records)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
 
 ### SUITE-38: Progress site: where its content comes from
@@ -616,6 +616,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-21 in [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95)
+
+### SUITE-57: Keeper runner: how Aviary knows it is running
+
+- Question: How does the keeper page tell a quiet runner from a stopped one, when the runner records in Postgres only the passes that did something so the database can sleep?
+- Answer: After every pass the runner posts a heartbeat (the pass, its time, when its run started, its `SWEEP_INTERVAL`, its caps and warnings) to `terminal-api`'s `POST /keeper/heartbeat`, signed with the keeper wallet's key; `terminal-api` keeps only heartbeats `KEEPER_WALLET` signed, within two minutes of its clock, at most one of each kind of pass every 30 seconds, in its KV namespace, which never wakes the database; the runner's setting `HEARTBEAT_URL` names where they go, and unset sends none.
+- Alternatives: Judging the runner by due work alone, which cannot flag a stopped runner on a quiet devnet; a heartbeat row in Postgres at most once an hour, with an hour's threshold and about 15 of Neon's 100 free compute-hours a month; the spec as first written, whose page would say the runner looks stopped whenever devnet is quiet; a heartbeat row every sweep, which would keep Neon awake about 90 compute-hours a month.
+- Specified in: [`docs/spec/keeper-runner.md`, How Aviary shows it](spec/keeper-runner.md#how-aviary-shows-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
+
+### SUITE-58: Keeper runner: which passes and jobs are recorded
+
+- Question: Which jobs make a pass worth recording, and where does the runner find Aviary's database?
+- Answer: A job whose transaction landed, whatever it did, with its signature and cost; a job held by a cap, once a UTC day for each cap that holds it and again after it was anything but held; a parked job; whatever ends a recorded hold or park (unparked, any other outcome, or no longer due at all); and the keeper wallet unwrapping its tips; retries run as passes of their own, `retry`; a spend that could not be rebuilt is recorded as unknown, and errors and warnings with their URLs cut to the host. The database is the project's `DATABASE_URL` unless `KEEPER_DATABASE_URL` names another; records are written behind the passes, and a database that cannot be reached logs the pass as the log would hold it, never stopping the runner.
+- Alternatives: Recording only sent jobs, which would leave the fees of refused transactions off the page; recording every hold in every pass, which would keep Neon awake every sweep while a cap is reached; `DATABASE_URL` unset unless `KEEPER_DATABASE_URL` is set, which would leave the owner's runner unrecorded until someone remembered to set it.
+- Specified in: [`docs/spec/keeper-runner.md`, What it records](spec/keeper-runner.md#what-it-records)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
 
 ## Engineering and security bar (BAR)
 
@@ -1038,6 +1058,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: changed 2026-11-20
 - Decided: 2026-11-16 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
+
+### BAR-43: The daily router pin check
+
+- Question: How is an upgrade of Pipeline's devnet router noticed when no PR happens to run the on-chain jobs?
+- Answer: A scheduled workflow, `.github/workflows/router-pin.yml`, runs `scripts/fetch-router.sh` once a day at 06:17 UTC (and on demand); when devnet's router no longer matches `ROUTER_SHA256` the script exits 3, the run fails and it opens an issue titled "Devnet's Pipeline router no longer matches the pin", or comments on the one already open; a failed download fails the run but opens no issue.
+- Alternatives: Waiting for the next PR's on-chain jobs, which let 0.3.0 go unnoticed until a PR failed; a failed scheduled run alone, whose e-mail reaches only whoever last edited the schedule; checking more often, which a router upgraded without notice a few times a month does not need.
+- Specified in: [`docs/toolchain.md`, Fixtures](toolchain.md#fixtures)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Pipeline 0.3: re-pin the router, SDK and pipeline-check, adapt every program and Canary, and check the pin daily](https://github.com/imDev2023/testing-pipeline/issues/194)
+
+### BAR-44: Which mint our strategies take Pipeline's fee in
+
+- Question: Since Pipeline 0.3 lets a strategy declare its market's fee mint in `pipeline_market_info`, which do ours declare?
+- Answer: None: the tax AMM, the buy wall AMM and the lending AMM return a bare `MarketInfo`, so the router's own rule applies, wrapped SOL on every market that trades it (a sell pays Pipeline's 0.25% out of the SOL it brings back) and the input on any other market; each market keeps the fee mint recorded when the router recorded it, and our two devnet demo markets were migrated with wrapped SOL as their fee mint.
+- Alternatives: Declaring the quote mint, so a tax AMM market quoted in USDC also takes the fee in USDC and a contained token never moves into its fee account; declaring the token, which would pay Pipeline in tokens that are hard to sell.
+- Specified in: [`docs/spec/README.md`, Strategy rules](spec/README.md#strategy-rules)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-22 in [Pipeline 0.3: re-pin the router, SDK and pipeline-check, adapt every program and Canary, and check the pin daily](https://github.com/imDev2023/testing-pipeline/issues/194)
+
+### BAR-45: One publishing tool for every program
+
+- Question: How do the programs pin and verify the metadata they publish for a devnet deploy, now that a third program needs the same steps?
+- Answer: With one shared tool, `packages/strategy-publish` for pinning and verifying and `programs/published-check` for the checks each program's `tests/published.rs` runs, each program naming only its folder, its name and its IDL; the tax AMM's and the buy wall AMM's copies moved onto it unchanged in behaviour.
+- Alternatives: A third copy of `publish.ts` and `tests/published.rs` with only the names changed, as the buy wall AMM made of the tax AMM's.
+- Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
 
 ## Aviary, the terminal (PIPESCOPE)
 
@@ -1994,11 +2044,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-96: How a terminal ticket is verified
 
 - Question: What does a terminal build ticket have to show before it counts as done?
-- Answer: Its criteria run on Aviary's devnet deployment against devnet data, every page it touches is checked at 1440, 390 and 360 px wide in the light and the dark theme with Playwright screenshots in the PR, and CI runs the same tests on recorded devnet fixtures with no network.
-- Alternatives: Local runs only; CI against live devnet, which would spend Aviary's RPC credits and fail when devnet does.
+- Answer: Its criteria run on Aviary's local run against devnet data (both Workers in `wrangler dev` on the Docker Postgres, `PIPESCOPE-98`) until the hosted deploy of [#192](https://github.com/imDev2023/testing-pipeline/issues/192) lands and on Aviary's devnet deployment after it, every page it touches is checked at 1440, 390 and 360 px wide in the light and the dark theme with Playwright screenshots in the PR, and CI runs the same tests on recorded devnet fixtures with no network.
+- Alternatives: The earlier default, its criteria run on Aviary's devnet deployment from the first ticket; local runs only, for good; CI against live devnet, which would spend Aviary's RPC credits and fail when devnet does.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Build tickets](spec/pipescope-architecture.md#build-tickets)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
 
 ### PIPESCOPE-97: Where the keeper page lives
@@ -2010,6 +2060,76 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### PIPESCOPE-98: Where Aviary runs for now
+
+- Question: Where does Aviary run and get verified before its hosted deploy?
+- Answer: Locally: `wrangler dev` runs both Workers against the Docker Postgres and devnet from the project's `.env`, with `RPC_URL` on the owner's shared Helius devnet key until Aviary has its own, and the hosted deploy (both Workers on `workers.dev`, Neon through Hyperdrive, Aviary's own Helius key, the secrets check and the root deploy script) moves to [#192](https://github.com/imDev2023/testing-pipeline/issues/192), after the owner's setup in [#110](https://github.com/imDev2023/testing-pipeline/issues/110).
+- Alternatives: Deploying both Workers to `workers.dev` from the scaffold on; Convex as the data layer, not taken because the spec's data layer is Postgres throughout.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Environments](spec/pipescope-architecture.md#environments)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-99: How the cron decides what is due
+
+- Question: How does the every-minute cron's dispatcher know which jobs are due?
+- Answer: From the minute alone: a job runs on each minute whose count since the Unix epoch its interval in whole minutes divides, so deciding what to run never wakes the database, and a job that fails is logged without stopping the others.
+- Alternatives: Recording each job's last run in Postgres, as Top-pad's `job_runs` does, which would wake the database every minute.
+- Specified in: [`docs/spec/pipescope-architecture.md`, `terminal-api`](spec/pipescope-architecture.md#terminal-api)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-100: What a refused read is told
+
+- Question: What counts against the read limit, and what does a reader over it get back?
+- Answer: Every `GET` counts as a read against the `READS` binding, `/health` and unknown paths included, keyed by the reader's IP, and a refused one gets a 429 with `Retry-After` and the sentence "Too many requests from your address. Try again in 60 seconds.", whose wait is `RATE_LIMIT_PERIOD_SECONDS` in `apps/terminal-api/src/config.ts`, which a test keeps equal to every binding's period.
+- Alternatives: Naming the exact time left in the window, which the rate-limiting binding does not report.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-101: Page addresses
+
+- Question: At which addresses do Aviary's pages live?
+- Answer: The feed at `/`, Devnet help at `/devnet`, a market at `/markets/<address>` and a strategy at `/strategies/<address>`, written once in `apps/terminal-web/src/routes.ts`, and an address that is neither gets the "nothing there" page with a 404.
+- Alternatives: None recorded.
+- Specified in: [`docs/spec/pipescope-architecture.md`, `terminal-web`](spec/pipescope-architecture.md#terminal-web)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-102: How CI's tests read devnet
+
+- Question: Where do the terminal's CI tests get devnet's answers, with no network and no RPC key?
+- Answer: The local API reads recorded devnet RPC answers from `tests/terminal-e2e/fixtures/devnet-rpc.json` through a fixture server the Playwright run starts, recorded by `pnpm --filter terminal-e2e record` against live devnet, and a request with no recording fails its test.
+- Alternatives: Playwright intercepting the browser's calls to the API, which would leave the API itself untested.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Build tickets](spec/pipescope-architecture.md#build-tickets)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-103: Where the typefaces come from
+
+- Question: Which font files does Aviary serve from its own origin?
+- Answer: Archivo, upright and italic with its width and weight axes, and Literata, cut from Google Fonts' repository to Latin, general punctuation and the subscript digits that prices count their zeros with, as WOFF2 files in `apps/terminal-web/src/fonts` declared only in `theme.css`.
+- Alternatives: Fontsource's Latin subsets, which leave out the subscript digits; `next/font`, which writes the typeface's name in a component.
+- Specified in: [`docs/spec/pipescope-architecture.md`, `terminal-web`](spec/pipescope-architecture.md#terminal-web)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
+
+### PIPESCOPE-104: What the keeper page shows
+
+- Question: What does the keeper page show, and when does it say the runner looks stopped?
+- Answer: Whether the runner is running, the keeper wallet (`KEEPER_WALLET`, a var of `terminal-api`) with its balance through RPC, today's spend against `DAILY_CAP`, `MAX_TX_COST` and each market's `MARKET_DAILY_CAP`, the last time each kind of pass ran and the last time it did something, the held and parked jobs, the latest 20 jobs with their transactions, and the latest warnings; the runner looks stopped once its last heartbeat is older than its own `SWEEP_INTERVAL` plus 5 minutes (`KEEPER_STOPPED_GRACE_MS`); a database or RPC that does not answer leaves the rest of the page standing.
+- Alternatives: A fixed threshold, which would go wrong as soon as someone set a different `SWEEP_INTERVAL`; a page per product, beside each panel's due jobs.
+- Specified in: [`docs/spec/keeper-runner.md`, How Aviary shows it](spec/keeper-runner.md#how-aviary-shows-it)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
 
 ## Canary checks (CANARY)
 
@@ -2346,11 +2466,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-34: Where `cost` reads Pipeline's fee
 
 - Question: Where does `cost` take Pipeline's fee from, given that the router's config account holds no fee?
-- Answer: From what the router charged in the copy, the `pipeline_fee` of each swap's return data, with the sale's fee (charged in the token) valued at the sale's own price; no fee rate is written in Canary.
-- Alternatives: The fee rate of `pipeline-strategy-interface` (`PIPELINE_FEE_BPS`), which would hide a router that charged differently.
-- Specified in: [the ticket, Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
+- Answer: From what the router charged in the copy, the `pipeline_fee` of each swap's return data, in the mint the router reports it took it in (`fee_mint`, Pipeline 0.3): as charged when that is the money side, as on a sale into wrapped SOL, and valued at the sale's own price (what arrived per token, before any fee taken from it) when it is the token; no fee rate is written in Canary.
+- Alternatives: The earlier default, the sale's fee always charged in the token and valued at the sale's price, which Pipeline 0.3 made wrong on every market that trades wrapped SOL; The fee rate of `pipeline-strategy-interface` (`PIPELINE_FEE_BPS`), which would hide a router that charged differently.
+- Specified in: [`docs/spec/pipescope-canary.md`, Fee honesty](spec/pipescope-canary.md#fee-honesty)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-12 in [Aviary: Canary's binary, with readability, conformance, the exit test over sizes, quote against swap and cost](https://github.com/imDev2023/testing-pipeline/issues/112)
 
 ### CANARY-35: Compute limit of the read-only calls
@@ -3621,8 +3741,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-35: The launch script's rehearsal of the devnet launch
 
 - Question: How does one run of the launch script rehearse the devnet launch, with its two contained tokens and the sweep of Pipeline's fee?
-- Answer: Each `--goal` and `--deadline` pair launches one token, one after another in the same run, with `--unlock` given for every token or for none, and every launch sweeps Pipeline's fee in the token from its fee account to Pipeline's treasury with the router's `sweep_fees` and the hook accounts.
-- Alternatives: Two runs of the script, one per token; a separate rehearsal script, which would repeat the launch's setup.
+- Answer: Each `--goal` and `--deadline` pair launches one token, one after another in the same run, with `--unlock` given for every token or for none, and every launch sweeps Pipeline's fee from the fee account its sell paid into to Pipeline's treasury with the router's `sweep_fees`: the token's, with the hook accounts, on a home market quoted in a mint other than wrapped SOL, and the quote mint's on one quoted in wrapped SOL, whose token fee account Pipeline 0.3 leaves empty (`BAR-44`).
+- Alternatives: The earlier default, always sweeping the fee in the token through the hook, which on a market quoted in wrapped SOL has nothing to sweep since Pipeline 0.3; Two runs of the script, one per token; a separate rehearsal script, which would repeat the launch's setup.
 - Specified in: [the ticket, Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
 - Changes by: spec only
 - Status: default
@@ -3647,6 +3767,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-16 in [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71)
+
+### HOOK-38: How the launch script checks a home market's conformance
+
+- Question: How does the launch script show that a contained token's home market passes Pipeline's conformance checker, while the token is contained and after its unlock?
+- Answer: Given `--pipeline-check`, it runs `pipeline-check --fail-on-warn` on the home market after the launch's refusals and again after the unlock, with the explicit trade sizes `CONFORMANCE_AMOUNTS` (1,000,000, 100,000,000 and 1,000,000,000 base units) that a market launched single-sided on a virtual quote reserve needs, and stops unless every check passed but `exact_out_refund`, skipped.
+- Alternatives: The checker's own sizes, which it takes from vault balances and which ask a large sell of the token that the little real quote reserve cannot pay (`InsufficientLiquidity`, a warn); running the checker by hand between two runs of the script, which would split one token's life over two runs.
+- Specified in: [`docs/toolchain.md`, Containment hook](toolchain.md#containment-hook)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-39: Which refusals the launch script lands on chain
+
+- Question: Which of the hook's refusals does the launch script send past the preflight, so that each lands on chain with a signature, rather than showing it in simulation?
+- Answer: The wallet-to-wallet `transfer_checked` of every token, and, for a token unlocked by its goal, the `unlock` sent while the home market's `tax_collected` is above zero but below the goal; the sell with an integrator fee, the `unlock` right after the seed and the second `unlock` stay in simulation.
+- Alternatives: Every refusal in simulation, which leaves the devnet demo without a signature for what containment refuses; every refusal on chain, which adds failed transactions that show nothing the simulated ones do not.
+- Specified in: [`docs/toolchain.md`, Containment hook](toolchain.md#containment-hook)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-40: The devnet demo's contained tokens and their record
+
+- Question: What terms do the devnet demo's contained tokens get, and where is the run recorded?
+- Answer: One run of the launch script: the first token against wrapped SOL with a goal of 5,000,000,000 lamports and a deadline 240 seconds after the run starts, unlocked by the deadline, the second against wrapped SOL with a goal of 100,000,000 lamports and a deadline a day away, unlocked by the goal, and the third against the devnet SPL Token mint of `HOOK-41`, left contained; every signature and address of the run is in `deployments/devnet-demo-containment-hook.json`, and each `pipeline-check` report in `programs/containment-hook/conformance/devnet/`.
+- Alternatives: A deadline of days for the first token, which would leave the ticket open until it passed; a goal of whole SOL for the second, which would cost the launcher a round of trades for every 0.03 SOL of tax.
+- Specified in: [`docs/toolchain.md`, Containment hook](toolchain.md#containment-hook)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-41: Pipeline's fee in the token on devnet
+
+- Question: Since Pipeline 0.3.0 takes its fee in a market's fee mint, which is wrapped SOL on any market that trades it, how does the devnet demo still show Pipeline's fee in a contained token swept through the hook?
+- Answer: The two contained tokens against wrapped SOL sweep Pipeline's fee in SOL from the market's wrapped-SOL fee account, and a third contained token, quoted in a devnet SPL Token mint of ours, pays the fee on its sells in the token into its fee account through the hook, which `sweep_fees` then moves to Pipeline's treasury with the hook accounts.
+- Alternatives: Sweeping only the wrapped-SOL fee accounts, which never shows the hook passing the fee account; quoting both tokens in an SPL Token mint of ours instead of wrapped SOL, which leaves a home market quoted in wrapped SOL, the launch script's default quote, untried on devnet.
+- Specified in: [`docs/spec/containment-hook.md`, Done means](spec/containment-hook.md#done-means)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
 
 ## Buy wall AMM (POOL4)
 
@@ -4115,11 +4275,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-47: Markets the router has not recorded
 
 - Question: What does the gate do with a market state the router has no Market for, or a market missing a router fee account?
-- Answer: The snapshot copies such a market as if the router had recorded what `pipeline_market_info` gives and saves it marked unregistered, and the replay registers it with the router's `register_existing_market` and `init_fee_account` for both mints, and creates any missing fee account of a recorded market, as anyone may, then checks it like the rest.
-- Alternatives: The earlier behaviour, aborting the whole run, which let anyone block every upgrade with one direct `pipeline_seed_liquidity` call; leaving such markets out of the check, which would not check them at all.
+- Answer: The snapshot copies such a market as if the router had recorded what `pipeline_market_info` gives and saves it marked unregistered, and the replay registers it with the router's `register_existing_market` and `init_fee_account` for both mints, migrates a market the router recorded before Pipeline 0.3's fee mints with `migrate_market`, and creates any missing fee account of a recorded market, as anyone may, then checks it like the rest.
+- Alternatives: The earlier default, without the migration, under which the 0.3 router refuses every trade of a market recorded before fee mints and the gate took it for unrecorded; The earlier behaviour, aborting the whole run, which let anyone block every upgrade with one direct `pipeline_seed_liquidity` call; leaving such markets out of the check, which would not check them at all.
 - Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ### POOL4-48: A transfer hook at the seed
@@ -4277,11 +4437,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-07: Withdraw mode
 
 - Question: What does a market do when Kamino runs short of free liquidity?
-- Answer: It enters withdraw mode when Kamino's free liquidity is below 5 times (`WITHDRAW_MODE_ENTER`) what the market lends or would lend, redeeming all it can and depositing nothing, and leaves it above 10 times (`WITHDRAW_MODE_EXIT`).
-- Alternatives: Doing nothing beyond the buffer and in-swap redeems; a fixed utilisation threshold such as 95%.
+- Answer: It enters withdraw mode when Kamino's free liquidity is below 5 times (`WITHDRAW_MODE_ENTER`) what the market lends or would lend, redeeming all it can and depositing nothing, and leaves it once the free liquidity has stayed above 10 times (`WITHDRAW_MODE_EXIT`) for `WITHDRAW_MODE_EXIT_DELAY_SLOTS` (LENDING-93).
+- Alternatives: The earlier default, it enters withdraw mode when Kamino's free liquidity is below 5 times (`WITHDRAW_MODE_ENTER`) what the market lends or would lend, redeeming all it can and depositing nothing, and leaves it above 10 times (`WITHDRAW_MODE_EXIT`); doing nothing beyond the buffer and in-swap redeems; a fixed utilisation threshold such as 95%.
 - Specified in: [`docs/spec/lending-pool.md`, Constants](spec/lending-pool.md#constants)
 - Changes by: build-time constant
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-08: Highest LP fee
@@ -4327,11 +4487,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-12: Valuing cTokens
 
 - Question: At what rate are the market's cTokens valued?
-- Answer: At the rate stored in Kamino's reserve account, everywhere, with no projection to the current slot.
-- Alternatives: Projecting the rate to the current slot, which would copy Kamino's interest maths into our program.
+- Answer: At the rate stored in Kamino's reserve account, with no projection to the current slot, read only from a reserve refreshed recently enough once the market holds cTokens: in the same slot for adding (LENDING-91), within about an hour for quotes and swaps (LENDING-92), and at any age once the reserve is deprecated, since its rate never moves again.
+- Alternatives: The earlier default, at the rate stored in Kamino's reserve account, everywhere, with no projection to the current slot; projecting the rate to the current slot, which would copy Kamino's interest maths into our program.
 - Specified in: [`docs/spec/lending-pool.md`, The stored rate, everywhere](spec/lending-pool.md#the-stored-rate-everywhere)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-13: Who bears Kamino's losses
@@ -4347,11 +4507,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-14: Checking Kamino's reserve
 
 - Question: What happens if Kamino's reserve account stops matching what the program expects?
-- Answer: Every instruction that reads the reserve checks its address, owner, size, discriminator, lending market and mints first, and refuses rather than misprices; removing liquidity in kind never reads it, so a Kamino change can stop trading but never trap LPs.
-- Alternatives: None recorded.
+- Answer: Every instruction that reads the reserve checks its address, owner, size, discriminator, lending market, mints and version (1, or `u64::MAX` once deprecated) first, and that the lent mint's `LENT_MINTS` entry still names the reserve and collateral mint the market recorded, and refuses rather than misprices; removing liquidity in kind never reads it, so a Kamino change, or an upgrade that edits a row, can stop trading but never trap LPs.
+- Alternatives: The earlier default, every instruction that reads the reserve checks its address, owner, size, discriminator, lending market and mints first, and refuses rather than misprices; removing liquidity in kind never reads it, so a Kamino change can stop trading but never trap LPs.
 - Specified in: [`docs/spec/lending-pool.md`, Checking the reserve before reading it](spec/lending-pool.md#checking-the-reserve-before-reading-it)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-15: Rebalancing
@@ -4377,11 +4537,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-17: When Kamino cannot pay
 
 - Question: Does the program have switches of its own for when Kamino cannot pay?
-- Answer: No: it reads Kamino's state at each call, trading from the buffer alone under emergency mode or a deprecated reserve, skipping deposits when cToken use is blocked, and always letting LPs leave in kind.
-- Alternatives: None recorded.
+- Answer: No: it reads Kamino's state at each call, trading from the buffer alone under the reserve's emergency mode or a deprecated reserve, and under the lending market's emergency mode until the reserve is an hour stale, since klend then refreshes none of its reserves, skipping deposits when cToken use is blocked, and always letting LPs leave in kind.
+- Alternatives: The earlier default, no: it reads Kamino's state at each call, trading from the buffer alone under emergency mode or a deprecated reserve, skipping deposits when cToken use is blocked, and always letting LPs leave in kind.
 - Specified in: [`docs/spec/lending-pool.md`, When Kamino can't pay](spec/lending-pool.md#when-kamino-cant-pay)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-18: Removing liquidity
@@ -5027,21 +5187,21 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-82: The demo market's size and the tests' second depositor
 
 - Question: How large is the demo market, and how do the `devnet` build's tests keep its WSOL reserve out of withdraw mode?
-- Answer: The demo market's lent side stays near 0.4 SOL, so it fits the 5 SOL the devnet wallet keeps free in the WSOL reserve, and the `devnet` build's tests give the dumped reserve a second depositor of their own that keeps 2,500 SOL free.
-- Alternatives: Topping the devnet reserve up for the demo, which would make the devnet ticket's demo depend on a larger second depositor; shrinking every test market to fit 5 SOL.
+- Answer: The demo market's first deposit puts 0.5 SOL on the lent side, as the devnet ticket asks, and its later deposits are small enough that the lent side stays near 0.6 SOL, so it fits the 5 SOL the devnet wallet keeps free in the WSOL reserve, and the `devnet` build's tests give the dumped reserve a second depositor of their own that keeps 2,500 SOL free.
+- Alternatives: The earlier default, a lent side near 0.4 SOL from a first deposit of 0.35 SOL, which the devnet ticket's 0.5 SOL ruled out; topping the devnet reserve up for the demo, which would make the devnet ticket's demo depend on a larger second depositor; shrinking every test market to fit 5 SOL.
 - Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
 
 ### LENDING-83: Rebalance runs alone in its transaction
 
 - Question: How is `rebalance` kept from being sandwiched, with Kamino's free liquidity moved before it and back after it in the same transaction to force a market into or out of withdraw mode?
-- Answer: It refuses with `RebalanceNotAlone` unless called directly, at the transaction's level, beside nothing but compute budget instructions, klend's `refresh_reserve` and other `rebalance` calls, as the instructions sysvar shows.
-- Alternatives: Refusing only klend's own instructions, which another program calling klend would get around; measuring free liquidity over time, which needs state the market does not keep; accepting the sandwich.
+- Answer: It refuses with `RebalanceNotAlone` unless called directly, at the transaction's level, beside nothing but compute budget instructions and klend's `refresh_reserve` or `refresh_reserves_batch`, and once per transaction, as the instructions sysvar shows, since another market's `rebalance` deposits into or redeems from Kamino as klend's own instructions would.
+- Alternatives: The earlier default, it refuses with `RebalanceNotAlone` unless called directly, at the transaction's level, beside nothing but compute budget instructions, klend's `refresh_reserve` and other `rebalance` calls, as the instructions sysvar shows; refusing only klend's own instructions, which another program calling klend would get around; measuring free liquidity over time, which needs state the market does not keep; accepting the sandwich.
 - Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-17
 - Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
 
 ### LENDING-84: Seeding checks the Kamino reserve
@@ -5114,6 +5274,136 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-16 in [Lending AMM: the fuzzer against a moving Kamino, and the proofs completed](https://github.com/imDev2023/testing-pipeline/issues/85)
 
+### LENDING-91: How fresh the reserve must be for adding
+
+- Question: How recently must Kamino's reserve have been refreshed when `add_liquidity` values a market's cTokens at its stored rate?
+- Answer: In the same slot (`ADD_MAX_RESERVE_AGE_SLOTS`, 0), as klend itself asks before stating its exchange rate, once the market holds cTokens; otherwise it refuses with `ReserveStale`, and a depositor puts klend's `refresh_reserve` first in the same transaction.
+- Alternatives: Accepting the stored rate at any age, which let a deposit added before a refresh and removed after it take the LPs' unrefreshed interest, since adding and removing charge no fee; projecting the interest, which would copy Kamino's interest maths; refreshing the reserve by CPI inside `add_liquidity`, which would write-lock the shared reserve and add four oracle accounts to every deposit.
+- Specified in: [`docs/spec/lending-pool.md`, The stored rate, everywhere](spec/lending-pool.md#the-stored-rate-everywhere)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-92: How fresh the reserve must be for quotes and swaps
+
+- Question: How recently must Kamino's reserve have been refreshed when a quote or a swap values a market's cTokens at its stored rate?
+- Answer: Within `TRADE_MAX_RESERVE_AGE_SLOTS` (9,000 slots, about an hour), once the market holds cTokens and the reserve is not deprecated, so no round trip across a refresh pays Pipeline's fee twice; beyond it quotes and swaps refuse with `ReserveStale` until someone puts klend's `refresh_reserve` first.
+- Alternatives: Accepting the stored rate at any age, under which a round trip paid on our devnet reserves left days without a refresh; the same slot, as for adding, which would ask every swap of every integrator to refresh the reserve first and write-lock it.
+- Specified in: [`docs/spec/lending-pool.md`, The stored rate, everywhere](spec/lending-pool.md#the-stored-rate-everywhere)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-93: Withdraw mode waits before it leaves
+
+- Question: How is a market kept from being taken out of withdraw mode by one reading of Kamino's free liquidity, inflated by a deposit and a redeem around `rebalance` in one Jito bundle?
+- Answer: The first `rebalance` that sees the free liquidity above the exit threshold records its slot in `exit_seen_slot`, the first field taken from the market state's reserved space, and stays; the market leaves only at a `rebalance` at least `WITHDRAW_MODE_EXIT_DELAY_SLOTS` (9,000 slots, about an hour) later that sees it so too, and any reading at or below the threshold in between, or any `rebalance` while Kamino redeems nothing, starts the wait again.
+- Alternatives: Leaving at the first reading above the threshold, which a bundle could force at no risk; a deposit-weighted measure over time, which Kamino's reserve does not keep.
+- Specified in: [`docs/spec/lending-pool.md`, Withdraw mode](spec/lending-pool.md#withdraw-mode)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-94: Leaving with the lent side alone
+
+- Question: How does an LP leave when the other mint's freeze authority or transfer hook stops its transfers, which every `remove_liquidity` makes?
+- Answer: With `remove_lent_side`, which burns shares for the buffer's part in the lent mint and the cTokens' part as cTokens, each with its own minimum (`min_lent`, `min_ctokens`), moves nothing of the other mint and reads no Kamino account, and leaves the other side's part in the market for the LPs who stay.
+- Alternatives: A flag on `remove_liquidity`, which would change both of its metadata forms; keeping the other side's part owed to the LP, which would need a record per LP; accepting that such a mint traps the lent side.
+- Specified in: [`docs/spec/lending-pool.md`, Leaving with the lent side alone](spec/lending-pool.md#leaving-with-the-lent-side-alone)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-95: The keeper refreshes reserves and sweeps withdraw mode
+
+- Question: Who keeps the reserves fresh enough to quote, and the readings of a market waiting to leave withdraw mode honest?
+- Answer: Our keeper runner, which refreshes each reserve a lending AMM market lends to whenever its last refresh is more than half of `TRADE_MAX_RESERVE_AGE_SLOTS` old, and whose sweeps every 10 minutes send `rebalance` to a market in withdraw mode whenever its simulation succeeds.
+- Alternatives: Leaving refreshes to traders and Aviary alone, which would leave devnet markets unquotable for days at a time.
+- Specified in: [`docs/spec/lending-pool.md`, When it runs](spec/lending-pool.md#when-it-runs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-96: The local demo run waits out withdraw mode's exit on fast slots
+
+- Question: How does the local demo run show a market leaving withdraw mode, now that leaving takes `WITHDRAW_MODE_EXIT_DELAY_SLOTS`?
+- Answer: Its validator is started with `--ticks-per-slot 8`, about 11 slots a second on the owner's Mac, and the demo waits for the slot the market may leave at, about 14 minutes; on devnet it waits the hour.
+- Alternatives: A shorter delay in the `devnet` build, which would weaken the deployed bytes; skipping the exit in the demo.
+- Specified in: [`docs/toolchain.md`, Local demo run](toolchain.md#local-demo-run)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
+
+### LENDING-97: How the devnet demo shows the lending yield
+
+- Question: How does the devnet demo show that the market earns from Kamino while a borrower holds a loan?
+- Answer: Right after the test borrower borrows, the demo reads the market's lending yield so far, `V + redeemed - deposited` at the stored rate klend's `refresh_reserve` leaves, twice, refreshing the reserve before each read, and stops unless the second read is the higher, reading again for up to a minute while interest is still below a lamport.
+- Alternatives: Reading the yield across the hour of withdraw mode's wait, when the market holds no cTokens and earns nothing; comparing the stored rate alone, which says nothing about the market.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-98: Pipeline's hosted API on a market that reads Kamino
+
+- Question: What does the devnet demo do with Pipeline's hosted API, when a lending AMM market's quotes read Kamino's reserve, an account of another program?
+- Answer: It requires the API to list the demo market, and quotes a buy and a sale within the buffer through it; each quote it gives must equal the program's own on the same state with the same accounts resolved, while a refusal is recorded with the API's answer and does not stop the run.
+- Alternatives: Stopping the run on a refusal, which would make our devnet demo depend on Pipeline's API reading other programs' accounts; skipping the API.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-99: Where the release gates' shared code lives
+
+- Question: Where does the code the buy wall AMM's and the lending AMM's release gates share live?
+- Answer: In one host crate, `programs/release-gate`: the gate records the deploy path trusts, the read-only cluster reads, the release declaration and the reading of a failed step's error, which the buy wall AMM's gate re-exports with its behaviour unchanged.
+- Alternatives: The lending AMM's gate depending on the buy wall AMM's gate crate; a copy of the code in each gate.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-100: How the release gate replays a stale Kamino reserve
+
+- Question: How does the release gate replay a market whose Kamino reserve the cluster left stale, with no live oracle in LiteSVM?
+- Answer: Each replay marks the reserve's saved price as checked at the snapshot's clock and refreshes it with klend's own `refresh_reserve` before anything else, the same in the deployed build's replay and the candidate's, so both compare on identical state.
+- Alternatives: Moving the Pyth account's publish time; copying live oracle accounts, which would differ between the two replays.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-101: What the release gate runs on each market
+
+- Question: What does the lending AMM's release gate run on each market?
+- Answer: Account resolution both ways, quotes both ways at a tenth, a hundredth and a thousandth of the input vault compared with the deployed build's, `pipeline_market_info`, `rebalance` when it is due or the deployed build ran it, a buy and the sale of what it bought, and a sale beyond the buffer that redeems from Kamino, each swap delivering exactly its quote.
+- Alternatives: Adding liquidity and every removal (cash, in kind, the lent side alone) as well, which could be added later.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-102: The release gate's own market
+
+- Question: In what world does the release gate make and trade a market of its own with the candidate?
+- Answer: In one holding only the router, klend, the candidate and the lent mints' Kamino accounts with Kamino's stops cleared and a second depositor of 2,500 SOL in each reserve, where it creates a WSOL-lent market of 10 SOL at 30 basis points and rebalances, trades and sells beyond the buffer, every step counting.
+- Alternatives: Using the cluster's reserve as it is, where a borrower or an emergency switch on devnet could refuse every candidate, an emergency fix included.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-103: How the release gate is shown to catch stranding
+
+- Question: How is the lending AMM's release gate shown to refuse a build that would strand a market?
+- Answer: A test build that swaps two fields of the market state, listed in `programs/lending-amm/gate/test-builds.json` and built from an edited copy of the source by `scripts/broken-builds.py` beside the fuzzer's broken builds, must be refused on a market holding cTokens, one whose `rebalance` succeeds but lends nothing on its own market and where the deployed build sold beyond the buffer, and the fuzzer's `no-sale-beyond-the-buffer` on every market and on the gate's own.
+- Alternatives: A `test-builds` command of the gate's own, as the buy wall AMM's has.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -5155,6 +5445,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-73` to `LENDING-83`: set by the session of [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83) while building, where the spec left the choice open, and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-30`, `POOL4-31`: set by the session of [Buy wall AMM: the inventory cap (the ratchet, the decay credit and the trim)](https://github.com/imDev2023/testing-pipeline/issues/49) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-41` to `POOL4-45`: set by the session of [Buy wall AMM: the release gate and layout fixtures, so no upgrade can strand a market](https://github.com/imDev2023/testing-pipeline/issues/54) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `BAR-43`, `BAR-44`, and the 2026-11-22 changes to `CANARY-34`, `HOOK-35` and `POOL4-47`: set by the session of [Pipeline 0.3: re-pin the router, SDK and pipeline-check, adapt every program and Canary, and check the pin daily](https://github.com/imDev2023/testing-pipeline/issues/194) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-46`, `POOL4-47`, and the changes to `POOL4-41` and `POOL4-44`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix review findings H013, H020 and H033 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `POOL4-51` to `POOL4-53`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to harden the market's clocks (review finding H009), fix review findings H022 and H063 in the handovers and fix review findings H097 and H098 in the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - The 2026-11-18 changes to `POOL4-44`, `POOL4-46` and `POOL4-53`: set by the session of [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55) to fix findings R2G-01 to R2G-03 of the second internal review of the release gate, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
@@ -5167,7 +5458,8 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `BAR-04`, `BAR-29`, `PIPESCOPE-87`: Pipeline's crates are on crates.io and its SDK on npm since 2026-11-10; the terminal uses the published packages, while the bar still pins the on-chain workspace's crates by git `rev` and the programs' demo scripts link a local SDK build from `scripts/fetch-pipeline.sh`; whether they move to the published packages is for the bar's owner.
 - `BAR-40`, `TAX-51`, `TAX-52`: set by the session of [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-54` to `POOL4-56`: set by the session of [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
-- `TAX-54`, `POOL4-54`: `programs/tax-amm/scripts/publish.ts` and `tests/published.rs` were copied for the buy wall AMM with only the program's names changed; the lending AMM's devnet ticket will need a third copy, so the shared part belongs in one helper the three programs call.
 - `SUITE-48`: set by the session of [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186), which read its ticket as every link going to GitHub, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `SUITE-49` to `SUITE-53`: set by the session of [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `SUITE-54` to `SUITE-56`: set by the session of [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
+- `PIPESCOPE-99` to `PIPESCOPE-103`: set by the session of [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted; Devnet help's wallet steps (`apps/terminal-web/src/content/devnet-help.ts`) follow each wallet's help pages of 2026-11-22 and were not tried in the wallets.
+- `BAR-45`, `LENDING-97` to `LENDING-103` and the 2026-11-22 change to `LENDING-82`: set by the session of [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.

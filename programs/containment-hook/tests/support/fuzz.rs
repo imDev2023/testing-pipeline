@@ -643,7 +643,14 @@ impl HookWorld {
             input_hook_accounts: input_hook_accounts.len() as u8,
             extra: vec![],
         };
-        Ok(client::swap(&accounts, &args))
+        // Pipeline's fee on the side the router's record names: since Pipeline 0.3 a sale into
+        // a wrapped SOL quote mint pays it out of the SOL, and the token never reaches its fee
+        // account.
+        Ok(client::swap_with_fee_side(
+            &accounts,
+            &args,
+            env.fee_side(market, output),
+        ))
     }
 
     /// The associated token program's `CreateIdempotent` of `owner`'s account for mint `i`,
@@ -1355,7 +1362,9 @@ fn every_holder_can_sell_into_the_home_market(
         let Ok(quote) = w.tax.quote(w.contained, amount).0 else {
             continue;
         };
-        let sold = w.simulate_sell(seller, amount, quote.amount_out);
+        // The router's minimum is what the seller keeps of the quote that arrives.
+        let kept = w.tax.env.kept(&w.tax.market, w.quote, quote.amount_out);
+        let sold = w.simulate_sell(seller, amount, kept);
         ensure!(
             sold.as_ref() == Ok(&quote.amount_out),
             "{} can't sell {amount} of its {holding} into the home market, quoted {}: {sold:?}",
