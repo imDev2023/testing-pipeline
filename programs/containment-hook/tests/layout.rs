@@ -22,7 +22,8 @@ use tax_amm::TaxMarket;
 fn distinct_market(tax_side: u8) -> TaxMarket {
     let key = |byte: u8| AnchorKey::new_from_array([byte; 32]);
     TaxMarket {
-        version: 0xA1,
+        // The one version the hook reads (a newer one reads as unreadable).
+        version: tax_amm::state::STATE_VERSION,
         status: MarketStatus::Created,
         tax_side,
         virtual_side: 0xA3,

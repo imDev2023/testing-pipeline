@@ -30,10 +30,11 @@ fn keypair_account(env: &mut Env, owner: &Pubkey, mint: &Pubkey, immutable_owner
     if immutable_owner {
         extensions.push(ExtensionType::ImmutableOwner);
     }
-    let space = ExtensionType::try_calculate_account_len::<
-        spl_token_2022_interface::state::Account,
-    >(&extensions)
-    .unwrap();
+    let space =
+        ExtensionType::try_calculate_account_len::<spl_token_2022_interface::state::Account>(
+            &extensions,
+        )
+        .unwrap();
     let mut create = 0u32.to_le_bytes().to_vec();
     create.extend_from_slice(
         &env.svm
@@ -86,7 +87,7 @@ fn set_owner(account: &Pubkey, owner: &Pubkey, new_owner: &Pubkey) -> Instructio
 }
 
 #[test]
-fn sos_account_owner_a_buy_into_an_account_whose_owner_can_change_is_refused() {
+fn sos_h001_a_buy_into_an_account_whose_owner_can_change_is_refused() {
     let mut env = hook_env();
     let launched = launch(&mut env);
     let buyer = trader(&mut env, &launched, 10 * BUY);
@@ -98,14 +99,21 @@ fn sos_account_owner_a_buy_into_an_account_whose_owner_can_change_is_refused() {
     // Without the rule this buy lands, and the account then changes hands with no transfer:
     // `set_owner(&mutable, &buyer, &anyone)` passes Token-2022 without calling the hook.
     assert_hook_refused(
-        swap(&mut env, &launched, &buyer, (QUOTE, CONTAINED), BUY, &into_it),
+        swap(
+            &mut env,
+            &launched,
+            &buyer,
+            (QUOTE, CONTAINED),
+            BUY,
+            &into_it,
+        ),
         HookError::DestinationOwnerCanChange,
     );
     assert_eq!(env.balance(&mutable), 0);
 }
 
 #[test]
-fn sos_account_owner_a_buy_into_an_account_with_an_immutable_owner_passes_and_its_owner_stays() {
+fn sos_h001_a_buy_into_an_account_with_an_immutable_owner_passes_and_its_owner_stays() {
     let mut env = hook_env();
     let launched = launch(&mut env);
     let buyer = trader(&mut env, &launched, 10 * BUY);
@@ -114,19 +122,30 @@ fn sos_account_owner_a_buy_into_an_account_with_an_immutable_owner_passes_and_it
         output_to: Some(immutable),
         ..Swap::default()
     };
-    swap(&mut env, &launched, &buyer, (QUOTE, CONTAINED), BUY, &into_it).unwrap();
+    swap(
+        &mut env,
+        &launched,
+        &buyer,
+        (QUOTE, CONTAINED),
+        BUY,
+        &into_it,
+    )
+    .unwrap();
     let bought = env.balance(&immutable);
     assert!(bought > 0);
     // Token-2022 refuses to hand such an account to another wallet.
     let elsewhere = Pubkey::new_unique();
     assert!(env
-        .send(&[set_owner(&immutable, &buyer.pubkey(), &elsewhere)], &[&buyer])
+        .send(
+            &[set_owner(&immutable, &buyer.pubkey(), &elsewhere)],
+            &[&buyer]
+        )
         .is_err());
     assert_eq!(env.balance(&immutable), bought);
 }
 
 #[test]
-fn sos_account_owner_a_buy_into_an_associated_token_account_still_passes() {
+fn sos_h001_a_buy_into_an_associated_token_account_still_passes() {
     let mut env = hook_env();
     let launched = launch(&mut env);
     let buyer = trader(&mut env, &launched, 10 * BUY);
@@ -143,7 +162,7 @@ fn sos_account_owner_a_buy_into_an_associated_token_account_still_passes() {
 }
 
 #[test]
-fn sos_account_owner_tokens_already_in_an_account_whose_owner_can_change_can_still_be_sold() {
+fn sos_h001_tokens_already_in_an_account_whose_owner_can_change_can_still_be_sold() {
     let mut env = hook_env();
     let launched = launch(&mut env);
     // An account that took tokens before the rule existed, its balance written directly.
@@ -173,8 +192,5 @@ fn sos_account_owner_tokens_already_in_an_account_whose_owner_can_change_can_sti
     let sold: pipeline_client::SwapResult = borsh::from_slice(&meta.return_data.data).unwrap();
     assert!(sold.received > 0);
     // Pipeline's fee on this market is taken in the token, into the fee account.
-    assert_eq!(
-        env.balance(&mutable),
-        held - held / 2 - sold.pipeline_fee
-    );
+    assert_eq!(env.balance(&mutable), held - held / 2 - sold.pipeline_fee);
 }

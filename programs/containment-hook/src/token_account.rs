@@ -22,6 +22,9 @@ const ACCOUNT_TYPE_ACCOUNT: u8 = 2;
 /// Token-2022's number for the transfer hook account extension, whose one-byte value is the
 /// `transferring` flag.
 const TRANSFER_HOOK_ACCOUNT: u16 = 15;
+/// A Token-2022 multisig's length: Token-2022 never reads an account of this length as a
+/// token account, so neither does the hook.
+const MULTISIG_LEN: usize = 355;
 /// Token-2022's number for the immutable owner extension, which has no value: an account
 /// that carries it can never change its owner.
 const IMMUTABLE_OWNER: u16 = 7;
@@ -35,10 +38,12 @@ pub fn is_mid_transfer(account: &AccountInfo, mint: &Pubkey) -> bool {
             .is_ok_and(|data| is_mid_transfer_data(&data, mint))
 }
 
-/// [`is_mid_transfer`] on a Token-2022 account's data: its mint is `mint`, its account type
-/// is a token account's, and its transfer hook account extension holds `transferring` set.
+/// [`is_mid_transfer`] on a Token-2022 account's data: not a multisig's length, its mint is
+/// `mint`, its account type is a token account's, and its transfer hook account extension
+/// holds `transferring` set.
 pub fn is_mid_transfer_data(data: &[u8], mint: &Pubkey) -> bool {
-    data.get(..32) == Some(mint.as_ref())
+    data.len() != MULTISIG_LEN
+        && data.get(..32) == Some(mint.as_ref())
         && data.get(ACCOUNT_LEN) == Some(&ACCOUNT_TYPE_ACCOUNT)
         && mint_rules::find_extension(data, TRANSFER_HOOK_ACCOUNT) == Some(&[1])
 }
@@ -51,10 +56,12 @@ pub fn owner_is_immutable(account: &AccountInfo, mint: &Pubkey) -> bool {
             .is_ok_and(|data| owner_is_immutable_data(&data, mint))
 }
 
-/// [`owner_is_immutable`] on a Token-2022 account's data: its mint is `mint`, its account type
-/// is a token account's, and it carries the immutable owner extension.
+/// [`owner_is_immutable`] on a Token-2022 account's data: not a multisig's length, its mint is
+/// `mint`, its account type is a token account's, and it carries the immutable owner
+/// extension.
 pub fn owner_is_immutable_data(data: &[u8], mint: &Pubkey) -> bool {
-    data.get(..32) == Some(mint.as_ref())
+    data.len() != MULTISIG_LEN
+        && data.get(..32) == Some(mint.as_ref())
         && data.get(ACCOUNT_LEN) == Some(&ACCOUNT_TYPE_ACCOUNT)
         && mint_rules::find_extension(data, IMMUTABLE_OWNER).is_some()
 }

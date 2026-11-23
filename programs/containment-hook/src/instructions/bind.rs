@@ -4,8 +4,9 @@
 //! Signed by the mint's mint authority, so only the launcher can bind and nobody can
 //! front-run them. It creates the config and the validation account, so a second `bind` of
 //! the same mint fails, and no instruction changes the config afterwards. Before writing
-//! anything it checks the mint, the unlock terms and the home market; the vault and the fee
-//! account are read from the router's `Market` and derived, never taken from the caller.
+//! anything it checks the mint, the unlock terms and the home market, which must not have
+//! collected any tax yet; the vault and the fee account are read from the router's `Market`
+//! and derived, never taken from the caller.
 
 use anchor_lang::prelude::*;
 
@@ -55,7 +56,7 @@ pub fn process_bind(ctx: Context<Bind>, unlock_goal: u64, unlock_deadline: i64) 
     let mint = accounts.mint.key();
     check_mint(
         &accounts.mint,
-        &accounts.mint_authority.key(),
+        &accounts.mint_authority,
         &accounts.unlock.key(),
     )?;
 
@@ -96,7 +97,9 @@ pub fn process_bind(ctx: Context<Bind>, unlock_goal: u64, unlock_deadline: i64) 
 /// Checks on the mint (docs/spec/containment-hook.md, "Checks on the mint"): owned by
 /// Token-2022, only the shared allowlist's extensions, no freeze authority, `signer` as its
 /// mint authority, and this program as its transfer hook with `unlock` as hook authority.
-fn check_mint(mint: &UncheckedAccount, signer: &Pubkey, unlock: &Pubkey) -> Result<()> {
+/// A mint authority that is a Token-2022 multisig is refused: its account's address can sign
+/// only through the keypair it was created at, which would bind without its other signers.
+fn check_mint(mint: &UncheckedAccount, signer: &Signer, unlock: &Pubkey) -> Result<()> {
     require_keys_eq!(
         *mint.owner,
         anchor_spl::token_2022::ID,
@@ -120,8 +123,13 @@ fn check_mint(mint: &UncheckedAccount, signer: &Pubkey, unlock: &Pubkey) -> Resu
     // Freezing the home market's vault would trap every holder with nowhere else to sell.
     require!(freeze_authority.is_none(), HookError::FreezeAuthoritySet);
     require!(
-        mint_authority == Some(signer.to_bytes()),
+        mint_authority == Some(signer.key().to_bytes()),
         HookError::NotMintAuthority
+    );
+    require_keys_neq!(
+        *signer.owner,
+        anchor_spl::token_2022::ID,
+        HookError::MintAuthorityIsMultisig
     );
     let hook = transfer_hook.ok_or(HookError::WrongHookProgram)?;
     require!(
@@ -184,11 +192,18 @@ fn check_home_market(
         TAX_AMM_PROGRAM_ID,
         HookError::NotATaxMarketState
     );
-    let tax_side = tax_market::tax_side(&market_state.try_borrow_data()?)
-        .ok_or(HookError::NotATaxMarketState)?;
+    let state = market_state.try_borrow_data()?;
+    let tax_side = tax_market::tax_side(&state).ok_or(HookError::NotATaxMarketState)?;
     // The goal is counted in the quote mint, never in the contained token, whose price the
     // launcher's supply sets.
     require!(tax_side == 1 - contained, HookError::TaxSideNotQuote);
+    // The goal counts the tax collected under containment, from zero at the binding, so a
+    // market that has already collected tax (traded under another hook, say) is refused.
+    require!(
+        tax_market::tax_collected(&state) == Some(0),
+        HookError::MarketAlreadyCollectedTax
+    );
+    drop(state);
 
     let vault = *recorded
         .vaults

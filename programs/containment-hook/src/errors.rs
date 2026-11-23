@@ -53,4 +53,10 @@ pub enum HookError {
     AlreadyUnlocked,
     #[msg("A contained token can go only to an account whose owner can't change")]
     DestinationOwnerCanChange,
+    #[msg(
+        "The home market has already collected tax, so the goal would not count from the binding"
+    )]
+    MarketAlreadyCollectedTax,
+    #[msg("A mint authority that is a Token-2022 multisig can't bind with one signature")]
+    MintAuthorityIsMultisig,
 }

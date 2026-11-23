@@ -17,14 +17,15 @@ fn hook_dir() -> PathBuf {
 }
 
 /// Every source file of the hook (program, tests, IDL, scripts and generated client),
-/// skipping build output and installed packages.
+/// skipping build output, installed packages and hidden folders, such as the review skills'
+/// gitignored working files.
 fn hook_files() -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             let name = path.file_name().unwrap().to_string_lossy().to_string();
             if path.is_dir() {
-                if !["target", "node_modules"].contains(&name.as_str()) {
+                if !["target", "node_modules"].contains(&name.as_str()) && !name.starts_with('.') {
                     walk(&path, out);
                 }
             } else if ["rs", "ts", "json", "toml", "sh"]
