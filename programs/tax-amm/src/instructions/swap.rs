@@ -97,8 +97,16 @@ pub fn swap<'info>(ctx: Context<'info, SwapAccounts<'info>>, request: SwapReques
     let vault_balance = token_balance(&ctx.accounts.input_vault.to_account_info())?;
     let credited = psi::credited_input(vault_balance, recorded, request.amount_sent);
 
-    // The same function as `pipeline_quote`, so quotes and swaps agree.
-    let fill = pricing::fill(market, trade.input_index, trade.output_index, credited)?;
+    // The same function as `pipeline_quote`, so quotes and swaps agree, at the rates in
+    // force in this slot.
+    let slot = Clock::get()?.slot;
+    let fill = pricing::fill(
+        market,
+        slot,
+        trade.input_index,
+        trade.output_index,
+        credited,
+    )?;
     let slots = split_tax(fill.tax, &market.shares, market.burn_share_bps)?;
 
     transfer_checked(
@@ -114,6 +122,7 @@ pub fn swap<'info>(ctx: Context<'info, SwapAccounts<'info>>, request: SwapReques
     )?;
 
     let state = &mut ctx.accounts.market_state;
+    state.apply_due_rates(slot);
     state.reserves[input] = fill.reserve_in;
     state.reserves[output] = fill.reserve_out;
     for (owed, part) in state.owed.iter_mut().zip(slots) {

@@ -47,6 +47,9 @@ fn distinct_market() -> TaxMarket {
         swap_count: u64::from_le_bytes([0xF4; 8]),
         created_slot: u64::from_le_bytes([0xF5; 8]),
         created_at: i64::from_le_bytes([0xF6; 8]),
+        pending_buy_tax_bps: 0xF7F7,
+        pending_sell_tax_bps: 0xF8F8,
+        pending_from_slot: u64::from_le_bytes([0xF9; 8]),
         reserved: [0; RESERVED_LEN],
     }
 }
@@ -123,7 +126,12 @@ fn every_field_sits_at_its_pinned_offset() {
         ("swap_count", 508, vec![0xF4; 8]),
         ("created_slot", 516, vec![0xF5; 8]),
         ("created_at", 524, vec![0xF6; 8]),
-        ("reserved", 532, vec![0; RESERVED_LEN]),
+        // Taken from the reserve in #67, so markets created before read zeros: nothing
+        // pending.
+        ("pending_buy_tax_bps", 532, le16(0xF7F7)),
+        ("pending_sell_tax_bps", 534, le16(0xF8F8)),
+        ("pending_from_slot", 536, vec![0xF9; 8]),
+        ("reserved", 544, vec![0; RESERVED_LEN]),
     ];
     let mut next = 0;
     for (name, offset, expected) in &pinned {
@@ -158,4 +166,92 @@ fn a_created_market_state_has_the_pinned_size_and_its_tax_side_at_the_pinned_off
         let tax_collected = &data[layout::TAX_COLLECTED..layout::TAX_COLLECTED + 16];
         assert_eq!(u128::from_le_bytes(tax_collected.try_into().unwrap()), 0);
     }
+}
+
+/// Writes `version` into a market state's version byte, the one after its discriminator.
+fn set_version(env: &mut Env, market_state: &Pubkey, version: u8) {
+    let mut account = env.svm.get_account(market_state).unwrap();
+    account.data[8] = version;
+    env.svm.set_account(*market_state, account).unwrap();
+}
+
+/// Hardening finding H069 (#67): the version byte was written and never read, so a build
+/// rolled back under markets a newer build had written would read their bytes with the
+/// older layout's meaning. Every instruction now refuses a market state whose version is
+/// newer than the program's own, and accepts its own.
+#[test]
+fn sos_h069_a_market_state_written_by_a_newer_version_is_refused_by_every_instruction() {
+    use common::authority::*;
+    use solana_keypair::Keypair;
+    use solana_signer::Signer;
+    use tax_amm::state::STATE_VERSION;
+    use tax_amm::StrategyError::NewerStateVersion;
+
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN), TOKEN),
+    ];
+    let (authority, seeder) = (Keypair::new(), Keypair::new());
+    env.svm.airdrop(&authority.pubkey(), SOL).unwrap();
+    let params = tax_amm::InitParams {
+        tax_authority: ak(&authority.pubkey()),
+        ..valid_params(&seeder.pubkey())
+    };
+    let newer = STATE_VERSION + 1;
+
+    // The seed of a market created and not yet seeded.
+    let created = env.create_tax_market(mints, &params).unwrap();
+    env.fund(&seeder.pubkey(), &created, [1_000_000_000, 1_000_000_000]);
+    set_version(&mut env, &created.market_state, newer);
+    assert_refused(
+        env.seed(&created, &seeder, [1_000_000_000, 1_000_000_000]),
+        NewerStateVersion,
+    );
+    set_version(&mut env, &created.market_state, STATE_VERSION);
+    env.seed(&created, &seeder, [1_000_000_000, 1_000_000_000])
+        .unwrap();
+
+    // Everything else, on the market now open and traded.
+    let market = created;
+    let trader = env.funded_wallet(&market, 1_000_000_000);
+    env.swap(&market, &trader, (0, 1), 10_000_000).unwrap();
+    let caller = Keypair::new();
+    env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
+    set_version(&mut env, &market.market_state, newer);
+    assert_refused(
+        env.quote(&market, &exact_in(0, 1, 1_000)),
+        NewerStateVersion,
+    );
+    assert_refused(
+        env.market_info_meta(&market.market_state),
+        NewerStateVersion,
+    );
+    assert_refused(env.swap(&market, &trader, (0, 1), 1_000), NewerStateVersion);
+    assert_refused(env.distribute(&market, &caller, 0), NewerStateVersion);
+    let state = market.market_state;
+    let who = authority.pubkey();
+    for action in [
+        set_taxes_instruction(&state, &who, 100, 100),
+        renounce_instruction(&state, &who),
+    ] {
+        assert_refused(env.send_signed(action, &authority), NewerStateVersion);
+    }
+    // Its own version passes again.
+    set_version(&mut env, &market.market_state, STATE_VERSION);
+    env.quote(&market, &exact_in(0, 1, 1_000)).unwrap();
+    env.distribute(&market, &caller, 0).unwrap();
+}
+
+/// Hardening finding H041 (#67): the market state's discriminator was only ever compared
+/// with itself (the IDL's is built from the same code), so renaming the account type would
+/// pass every test while every live market and the containment hook's check of its bytes
+/// stopped matching. It is pinned here as the bytes live markets carry: the first eight of
+/// `sha256("account:TaxMarket")`.
+#[test]
+fn sos_h041_the_market_states_discriminator_is_the_one_live_markets_carry() {
+    assert_eq!(
+        TaxMarket::DISCRIMINATOR,
+        [160, 70, 114, 42, 147, 206, 67, 97]
+    );
 }

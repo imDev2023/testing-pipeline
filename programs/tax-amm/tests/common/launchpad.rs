@@ -169,21 +169,8 @@ impl Env {
     /// escrow and token program per mint, the vault authority and the vaults, then the
     /// transfer-hook accounts both transfers need.
     pub fn seed_liquidity_accounts(&self, launch: &Launch) -> Vec<AccountMeta> {
-        let market_state = launch.market_state();
-        let (authority, vaults) = tax_market_addresses(&market_state, launch.mints);
-        let mut accounts = vec![
-            AccountMeta::new(market_state, false),
-            // A tax market issues no LP shares, so any account will do.
-            AccountMeta::new_readonly(launch.creator.pubkey(), false),
-        ];
-        for i in 0..2 {
-            accounts.push(AccountMeta::new_readonly(launch.mints[i], false));
-            accounts.push(AccountMeta::new(launch.escrows[i], false));
-            accounts.push(AccountMeta::new_readonly(launch.token_programs[i], false));
-        }
-        accounts.push(AccountMeta::new_readonly(authority, false));
-        accounts.push(AccountMeta::new(vaults[0], false));
-        accounts.push(AccountMeta::new(vaults[1], false));
+        let mut accounts = seed_liquidity_own_accounts(launch);
+        let (_, vaults) = tax_market_addresses(&launch.market_state(), launch.mints);
         for (i, vault) in vaults.into_iter().enumerate() {
             accounts.extend(self.hook_accounts(
                 &launch.mints[i],
@@ -354,4 +341,24 @@ pub fn graduation_of(meta: &TransactionMetadata) -> Graduation {
         .decode(encoded)
         .unwrap();
     Graduation::try_from_slice(&bytes).unwrap()
+}
+
+/// [`Env::seed_liquidity_accounts`] without the transfer-hook accounts: the strategy's own.
+pub fn seed_liquidity_own_accounts(launch: &Launch) -> Vec<AccountMeta> {
+    let market_state = launch.market_state();
+    let (authority, vaults) = tax_market_addresses(&market_state, launch.mints);
+    let mut accounts = vec![
+        AccountMeta::new(market_state, false),
+        // A tax market issues no LP shares, so any account will do.
+        AccountMeta::new_readonly(launch.creator.pubkey(), false),
+    ];
+    for i in 0..2 {
+        accounts.push(AccountMeta::new_readonly(launch.mints[i], false));
+        accounts.push(AccountMeta::new(launch.escrows[i], false));
+        accounts.push(AccountMeta::new_readonly(launch.token_programs[i], false));
+    }
+    accounts.push(AccountMeta::new_readonly(authority, false));
+    accounts.push(AccountMeta::new(vaults[0], false));
+    accounts.push(AccountMeta::new(vaults[1], false));
+    accounts
 }

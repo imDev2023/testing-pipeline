@@ -1,7 +1,7 @@
 //! The spec's formulas, written out again here independently of the program, so tests
 //! check the market against docs/spec/tax-amm.md and not against the program's own code:
-//! "Pricing and the tax", "Credited input", "Where the tax goes" and "Counters for the
-//! containment hook".
+//! "Pricing and the tax", "Credited input", "Where the tax goes", "Rates" and "Counters for
+//! the containment hook".
 
 #![allow(dead_code)]
 
@@ -19,6 +19,9 @@ pub struct Model {
     pub tax_side: usize,
     pub buy_tax_bps: u16,
     pub sell_tax_bps: u16,
+    /// The rates `set_taxes` set and the slot they apply from; 0 for none.
+    pub pending: [u16; 2],
+    pub pending_from_slot: u64,
     pub shares: [u16; 4],
     pub burn_share_bps: u16,
     pub virtual_side: usize,
@@ -58,6 +61,8 @@ impl Model {
             tax_side: state.tax_side as usize,
             buy_tax_bps: state.buy_tax_bps,
             sell_tax_bps: state.sell_tax_bps,
+            pending: [state.pending_buy_tax_bps, state.pending_sell_tax_bps],
+            pending_from_slot: state.pending_from_slot,
             shares: state.shares,
             burn_share_bps: state.burn_share_bps,
             virtual_side: state.virtual_side as usize,
@@ -68,6 +73,17 @@ impl Model {
             volume: state.volume,
             swap_count: state.swap_count,
         }
+    }
+
+    /// The market as quotes and swaps see it at `slot`, by "Rates": a change applies from its
+    /// slot on, and is then the market's rates with nothing pending, as a swap leaves it.
+    pub fn at(mut self, slot: u64) -> Model {
+        if self.pending_from_slot != 0 && slot >= self.pending_from_slot {
+            [self.buy_tax_bps, self.sell_tax_bps] = self.pending;
+            self.pending = [0, 0];
+            self.pending_from_slot = 0;
+        }
+        self
     }
 
     /// Checks the market state holds exactly what the model does, to the unit.

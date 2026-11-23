@@ -26,6 +26,20 @@ pub const RENOUNCE_TAX_AUTHORITY: u64 = 20_000;
 /// `create_program_address`.
 pub const BUMP_TRY: u64 = 1_500;
 
+/// The compute creating a market spends searching for a contained mint's unlock PDA beyond
+/// its first bump, to check the mint's hook authority (docs/spec/tax-amm.md, "Mint rules"),
+/// which the ceilings leave out; 0 for a mint whose hook is not the containment hook.
+pub fn unlock_bump_search(env: &super::Env, mint: &pipeline_client::Pubkey) -> u64 {
+    if env.hook_program(mint) != Some(super::containment_hook_id()) {
+        return 0;
+    }
+    let (_, bump) = pipeline_client::Pubkey::find_program_address(
+        &[tax_amm::config::CONTAINMENT_UNLOCK_SEED, mint.as_ref()],
+        &super::containment_hook_id(),
+    );
+    (255 - bump as u64) * BUMP_TRY
+}
+
 /// The compute `distribute` for `slot` will spend searching for the slot wallet's associated
 /// token account beyond its first bump, which the ceilings leave out (docs/spec/tax-amm.md,
 /// "Compute ceilings"), read from the market as it is before the payout. How many bumps
@@ -41,8 +55,13 @@ pub fn distribute_bump_search(env: &super::Env, market: &super::Market, slot: u8
     let wallet = super::slot_wallet(&state, slot);
     let account = pipeline_client::pda::associated_token(&wallet, &mint, &token_program);
     let owed = state.owed.get(slot as usize).copied().unwrap_or(0);
-    let creates =
-        env.svm.get_account(&account).is_none() && slot != tax_amm::state::BURN_SLOT && owed > 0;
+    // Missing as the program judges it: no data, whatever lamports the address holds
+    // (hardening finding T05, #67).
+    let missing = env
+        .svm
+        .get_account(&account)
+        .is_none_or(|existing| existing.data.is_empty());
+    let creates = missing && slot != tax_amm::state::BURN_SLOT && owed > 0;
     let (_, bump) = pipeline_client::Pubkey::find_program_address(
         &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
         &pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,

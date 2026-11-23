@@ -30,10 +30,13 @@ Terms are as in `GLOSSARY.md`: tax market, tax side, buy tax, sell tax, tax auth
 
 | Name | Value | Meaning |
 | --- | --- | --- |
-| `MAX_TAX_BPS` | 1000 (10%) | The highest buy or sell tax any tax market may ever charge, so no tax market can be a honeypot through its tax |
+| `MAX_TAX_BPS` | 1000 (10%) | The highest buy or sell tax any tax market may ever charge, so the tax alone can never stop a holder selling more than dust (the tax rounds up to the next unit, so a sale whose curve output is one unit pays it all as tax, hardening finding H050); what a mint's own authorities and transfer hook can do is the mint rules' to govern (hardening finding H100, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)) |
 | `SUITE_SHARE_BPS` | 1000 (10% of the tax) | The suite share, taken from every tax before the creator's split |
 | `SUITE_TREASURY` | set at build time | The wallet the suite share is paid to; on devnet a wallet whose key is in `~/.config/testing-pipeline/devnet/` |
 | `MAX_RECIPIENTS` | 4 | Tax recipients per market |
+| `RATE_CHANGE_DELAY_SLOTS` | 300 (about two minutes) | How long a change of rates waits before quotes and swaps apply it ("Rates") |
+| `CONTAINMENT_HOOK_ID` | the containment hook's program id, with its unlock seed `CONTAINMENT_UNLOCK_SEED` | The one transfer hook program a market's mint may name, only with the mint's unlock PDA as hook authority ("Mint rules") |
+| `QUOTE_MINTS` | both native SOL mints and the cluster's USDC | The mints that may keep a mint or freeze authority when a market is seeded ("Mint rules"); a mainnet build names mainnet's USDC |
 
 The constants are compiled into the program; changing one is a program upgrade, which ends when the program is frozen.
 
@@ -81,16 +84,23 @@ The constants are compiled into the program; changing one is a program upgrade, 
 | `virtual_reserve` | u64 | 0 for none |
 
 - There is at least one recipient, and the used shares plus `burn_share_bps` sum to exactly 10,000.
+- No recipient is one of the market's own addresses or the programs it runs on: its market state, its vault authority, its vaults, its mints, the tax AMM, the router, the market's signer under the router, SPL Token, Token-2022 or the associated token program (`NotAWallet`).
+  None of them can ever move a token out of its associated token account, so tax paid there would be stuck for good while its payout event read as paid (hardening finding H024, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
 - Each rule refuses with an error of its own (`programs/tax-amm/src/errors.rs`), so Aviary's launch form can say which rule a market breaks; a mint refused for an extension is also logged with Token-2022's number for that extension.
 - `pipeline_init_market` refuses anything that breaks a rule, checks that the market signer is the router's PDA `["market", program, market_state]` and stores it, creates the vaults, and records the creation slot and Unix time.
 - `pipeline_seed_liquidity` takes the same fields in `SeedRequest.data`, with `seeder` ignored because the calling program's PDA is the seeder.
 
 ### Mint rules
 
-- A Token-2022 mint may carry only these mint extensions: transfer hook (any hook program), metadata pointer, token metadata, group pointer, group member pointer, token group and token group member.
+- A Token-2022 mint may carry only these mint extensions: transfer hook, metadata pointer, token metadata, group pointer, group member pointer, token group and token group member.
 - Every other mint extension is refused at creation, including transfer fee, permanent delegate (it could take tokens out of the vaults), confidential transfers, pausable, default account state, non-transferable, mint close authority, interest-bearing, scaled UI amount and permissioned burn, as well as any extension the program doesn't recognise.
-- Mint and freeze authorities are allowed, since USDC has both; Aviary shows them.
-- In Pipeline's trust flags this means a tax market's mints can only ever show `token-2022`, `mint-authority`, `freeze-authority`, `transfer-hook` and `transfer-hook-authority`; a contained token shows the last two until its unlock clears both.
+- A transfer hook is refused at creation unless it is cleared (no hook program and no hook authority, all 64 bytes zero, as a contained token's is after its unlock) or is the containment hook with the mint's unlock PDA (`["unlock", mint]` under the containment hook) as its hook authority.
+  So no hook program but the containment hook ever runs inside a market's transfers, and no hook authority but the containment hook's unlock PDA, which only ever clears the hook, can change one: a hook that refused every sell while buys still landed would lock buyers in (hardening finding H007, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+- When a market is seeded, through the `seed` action or `pipeline_seed_liquidity`, each of its mints must have no mint authority and no freeze authority, unless it is a quote mint: SPL Token's and Token-2022's native SOL mints and the cluster's USDC (Circle's devnet mint, `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`).
+  A mint authority could mint and sell into the curve, taking the real reserve the seed locked; a freeze authority could freeze a vault or any holder (hardening findings H008 and H016, #67).
+  Creation still accepts both, so a contained token can be bound to its home market, which needs its mint authority's signature, and have it revoked before the seed.
+  Token-2022 never sets an authority that is none again, so what the seed checked holds for the market's life.
+- In Pipeline's trust flags this means a tax market's mints can only ever show `token-2022`, `transfer-hook` and `transfer-hook-authority`, and the quote mints' `mint-authority` and `freeze-authority`; a contained token shows `transfer-hook` and `transfer-hook-authority` until its unlock clears both.
 - The trust flags describe strategy programs and mints, not markets, so no flag ever says a market is taxed: the strategy metadata declares it (category `amm`, tag `tax`) and Aviary reads each market's rates, bounds, authority and recipients from its market state.
 
 ### Creating a market
@@ -103,20 +113,28 @@ One transaction, as Pipeline's guide recommends:
 
 A launchpad graduating a token instead calls `pipeline_seed_liquidity`, then the router's `register_existing_market` and `init_fee_account` for each mint, in one transaction.
 
-How big that transaction is, against a transaction's 1,232 bytes without an address lookup table, with the creator as the seeder, measured on 2026-11-12 by [Tax AMM: seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60) (`programs/tax-amm/tests/seed.rs`, as a legacy transaction):
+A contained token's home market is created, then bound with the containment hook's `bind`, signed by the token's mint authority, which is then revoked, and only then seeded: the seed refuses a mint that keeps its mint authority ("Mint rules").
+A contained token can't graduate from a launchpad, since `pipeline_seed_liquidity` creates and seeds in one call, leaving no moment to bind it (`HOOK-14`).
 
-- 1,210 bytes for two SPL Token mints or two Token-2022 mints; the demo script's version 0 transaction is 2 bytes longer, 1,212.
-- 1,242 bytes for one of each, and 1,308 with a hooked mint (Pipeline's `test-hook`, which adds the fewest accounts a hook can); a seeder other than the creator adds 96 bytes.
-- So a market pairing a Token-2022 token with SOL or USDC, and every contained token's home market, needs an address lookup table for its creation transaction, or sends the seed as a second transaction (the market refuses every swap until then); that choice belongs to [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75).
+How big the creation transaction is, against a transaction's 1,232 bytes without an address lookup table, with the creator as the seeder, measured on 2026-11-22 by [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67) (`programs/tax-amm/tests/seed.rs`, as a legacy transaction; on 2026-11-12, before Pipeline 0.2 took the router's config account out of `create_market` and before the seed took the hash of the terms, each was 1 byte longer):
 
-A launchpad's graduation transaction is about as big, measured on 2026-11-12 by [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63) with the stand-in launchpad, paid for by the creator (`programs/tax-amm/tests/seed_liquidity.rs`, as a legacy transaction): 1,212 bytes for two SPL Token mints or two Token-2022 mints, 1,244 for one of each and 1,310 with a hooked mint.
-A real launchpad's own accounts change these numbers, and a pair across token programs or with a hook needs an address lookup table there too.
+- 1,209 bytes for two SPL Token mints or two Token-2022 mints, with the seed's 32-byte hash of the terms ("The seed"); a seeder other than the creator adds 96 bytes.
+- 1,241 bytes for one of each, the same with a mint whose transfer hook is cleared: 9 bytes over.
+- So a market pairing a Token-2022 token with SOL or USDC needs an address lookup table for its creation transaction, or sends the seed as a second transaction, which the hash of the terms makes safe (the market refuses every swap until then); that choice belongs to [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75).
+
+A launchpad's graduation transaction is about as big, measured the same day with the stand-in launchpad, paid for by the creator (`programs/tax-amm/tests/seed_liquidity.rs`, as a legacy transaction): 1,179 bytes for two SPL Token mints or two Token-2022 mints, 1,211 for one of each or with a cleared hook.
+A real launchpad's own accounts change these numbers, and a pair across token programs may need an address lookup table there.
 
 ## Liquidity
 
 ### The seed
 
-- `seed { amount_0: u64, amount_1: u64 }` is a custom action signed by the market's `seeder`, from token accounts the seeder owns, allowed once and only before any swap.
+- `seed { amount_0: u64, amount_1: u64, expected_terms: [u8; 32] }` is a custom action signed by the market's `seeder`, from token accounts the seeder owns, allowed once and only before any swap.
+- `expected_terms` is the hash of the terms the seeder agreed to, and a market whose terms as stored hash otherwise is refused before anything moves (`TermsChanged`), so nobody can lure a seeder into funding a look-alike market whose terms it did not choose, such as one created naming it as seeder with a huge virtual reserve on the other side, which would let one tiny swap take its whole deposit (hardening finding H019, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  - The hash is the SHA-256 of the Borsh encoding of the two mints, the creation parameters as stored (`init_data`'s fields, in their order), the pending buy and sell tax and the slot they apply from (all 0 when nothing is pending, "Rates").
+  - A seeder computes it from the terms it created the market with, or from the market state it was shown; Aviary's launch form, the demo script and the containment hook's launch script compute it with `programs/tax-amm/scripts/terms.ts`, whose test pins the same hashes as the program's tests.
+  - The metadata's `seed` action takes it as a `pubkey` argument, 32 bytes written in base58, since metadata arguments have no fixed-size byte type.
+  - `pipeline_seed_liquidity` needs no hash: its caller passes the creation parameters themselves, in the same call that creates the market.
 - Each side's real amount must be above 0, except the virtual side when `virtual_reserve` is above 0, where it may be 0; that is how a token launches single-sided, with only the token deposited.
 - The market records each side's real reserve from what actually arrived in its vault, and opens for swaps.
 - Until the seed, quotes and swaps are refused (`pipeline-check` reports this as a warning, as it does for any market not yet open).
@@ -130,6 +148,8 @@ A real launchpad's own accounts change these numbers, and a pair across token pr
 
 - There is no instruction that takes liquidity out of a market, and no LP shares, so nobody, the creator and us included, can pull liquidity.
 - Tokens sent to a vault outside a swap or the seed are donations: they are never credited as input, never paid out, and stay in the vault.
+- Locked means that no instruction removes liquidity; it does not mean the seed's value is safe from sellers.
+  Tokens held outside the market when it is seeded (no mint authority survives the seed, "Mint rules") sell into the curve like any others, and on a market with a virtual reserve they can take everything buyers paid in, since the virtual side is priced but never paid out (hardening findings H036, H086, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
 
 ### Virtual reserve
 
@@ -152,7 +172,7 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
 - A quote or swap is refused when `out` is 0, or when the curve would pay out more of `o` than `R_o`.
 - The pricing refuses a rate above `MAX_TAX_BPS` for every trade, before anything is priced, although creation and the tax authority's changes already keep such a rate out of every market state, so no pricing path can apply one.
 - `pipeline_quote` and `pipeline_swap` call the same pricing function, so quotes include the tax and match swaps exactly, which `pipeline-check`'s `quote_matches_swap` verifies.
-- Rates are read at the time of the swap: a rate change applies from the next swap, and a trader's minimum output protects against a change between quote and swap.
+- Rates are read at the time of the swap, at the rates in force in its slot: a rate change applies only from its slot, `RATE_CHANGE_DELAY_SLOTS` after it was set ("Rates"), so it never reaches a swap already signed.
 
 ### Credited input
 
@@ -172,6 +192,15 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
 
 - A buy tax and a sell tax, each in basis points, each between 0 and `MAX_TAX_BPS`.
 - Each side also has a range, `[min, max]`, fixed at creation inside `[0, MAX_TAX_BPS]`; the rate can only ever move inside it.
+- A change of rates waits `RATE_CHANGE_DELAY_SLOTS` (300 slots, about two minutes) before quotes and swaps apply it: a blockhash lasts 150 blocks, at most one a slot, so while fewer than half the slots are skipped no swap signed with a blockhash before a change can land after it; decreases wait too, so the tax authority can't drop its own trades' tax around anyone else's (hardening finding H010, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  Without it the authority could put a change on either side of a victim's swap, in one transaction, and take the victim's whole slippage allowance as tax for recipients it names.
+  - `set_taxes` stores the new rates as the market's pending rates, with the slot they apply from, and emits `TaxesChanged` with that slot.
+  - Quotes and swaps read the clock: from that slot on they apply the pending rates, and the first swap then makes them the market's rates, with nothing pending.
+  - A second change before the first applies replaces it and waits again; rates equal to those in force cancel a pending change; a change that is due but that no swap has applied yet is the market's rates, so a later change never undoes it at once.
+  - Renouncing makes a due change the market's rates and cancels one still pending, so a renounced market's taxes never change again; `TaxAuthorityRenounced` does not say a change was cancelled, which the market state shows.
+  - A durable-nonce transaction, or a multisig proposal executed later, has no lifetime, so the delay does not cover it; its minimum output is its protection (hardening round 2, #67).
+  - Quotes read the cluster's clock, so an off-chain quoter must run them at the cluster's slot, as Canary and the release gate do; one that leaves its clock behind quotes the rates in force before a change that has fallen due.
+  - The pending rates and their slot (0 for none) took 12 of the market state's reserved bytes, at offsets 532, 534 and 536, without moving any field or changing the version byte: markets created before read zeros there, which is no pending change (see "Counters for the containment hook").
 
 ### Tax authority
 
@@ -179,13 +208,14 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
   - `set_taxes { buy_tax_bps, sell_tax_bps }`, each inside its fixed range;
   - `set_recipients { recipient_0..3, share_0..3, burn_share_bps }`, under the same rules as at creation;
   - `renounce_tax_authority`, after which the market's taxes and recipients never change again.
-- Changes take effect immediately.
+- Recipient changes and renouncing take effect at once; a change of rates waits, as "Rates" says.
 - Nobody else can change anything about a market, us included; the program has no admin.
 - Built by [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62) on 2026-11-12, with these rules besides:
   - `set_taxes` and creation share one rate rule, and `set_recipients` and creation share one split rule (`programs/tax-amm/src/params.rs`), so a change can never pass a rule creation would refuse.
   - Renouncing turns the market state's tax authority into the default key, as on a market created without one, and sets the renounced flag, so Aviary can tell the two apart and both refuse every action for good.
   - A refused action says why: `AlreadyRenounced` on a market whose authority renounced, `NoTaxAuthority` on one created without an authority, and `NotTaxAuthority` for any other signer, checked in that order.
-  - `set_recipients` refuses to empty a recipient slot that is still owed tax (`OwedSlotLeftEmpty`), since nobody could then be paid what the slot holds; the slot can be handed to another wallet instead, or paid out first with `distribute`, in the same transaction if need be.
+  - `set_recipients` refuses to empty a recipient slot that is still owed tax (`OwedSlotLeftEmpty`), since nobody could then be paid what the slot holds, and to hand it to another wallet (`OwedSlotRedirected`, "Payout"); it can be paid out first with `distribute`, in the same transaction if need be.
+    Shares may move whatever the slots are owed.
     The burn slot needs no wallet, so the burn share may drop to 0 whatever the burn is owed.
   - `set_recipients` takes the recipients and the shares as arrays of `MAX_RECIPIENTS`, which encode exactly as the metadata's flattened `recipient_0` to `recipient_3` and `share_0` to `share_3`, as the creation parameters do.
   - Each action writes only the market state: no reserve, owed amount, counter, vault balance or value fixed at creation changes (`programs/tax-amm/tests/tax_authority.rs`).
@@ -219,9 +249,10 @@ For a trade from side `i` to side `o`, with real reserves `R_i`, `R_o`, effectiv
     So the metadata describes the instruction as two actions: `distribute` for the tax recipients and the suite share, with the mint read-only, and `burn` for the burn slot, the same instruction (its discriminator named), with the mint writable.
   - Metadata sources can't name a mint by the market's tax side or a wallet held in the market state, so both actions take them as inputs, `tax_mint` and `recipient`, from which they derive the vault and the token account; Aviary's tax panel, the keeper runner and the demo script read them from the market state, and the program refuses any that are not the slot's.
   - `SUITE_TREASURY`, `BURN_SLOT` and `SUITE_SLOT` are published in the IDL beside `MAX_TAX_BPS` and `SUITE_SHARE_BPS`, so the generated client carries the suite share's wallet and the slot numbers, which follow from `MAX_RECIPIENTS`.
-- Owed amounts belong to slots: if the tax authority changes a slot's recipient, what the slot is owed goes to the new recipient, so a recipient leaving should be paid out first (anyone can call `distribute`).
-  So until a slot is paid out, the tax authority decides which wallet receives what it is owed, its own included; a recipient protects what it is owed by calling `distribute`, and Aviary's tax panel shows each slot's owed amount beside its wallet.
-  A recipient slot still owed tax can't be emptied, so every owed amount always has a wallet or the burn to go to (see "Tax authority"); `distribute` therefore pays a recipient slot whatever its share, and burns the burn slot's owed amount whatever the burn share.
+- Owed amounts belong to slots, and a recipient slot still owed tax keeps its wallet until it is paid out: `set_recipients` refuses to empty it or to name another wallet for it (`OwedSlotRedirected`), so what a slot is owed always goes to the wallet that earned it (hardening finding H023, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  The tax authority pays a slot out first with `distribute`, which anyone may call, in the same transaction as the handover, since a swap between the two would book tax to the slot again (round 2, R03); without the rule it could hand every slot to itself and pay them out in one transaction, taking what its recipients had earned.
+  A slot whose wallet can't receive (a frozen or memo-required token account) can't change hands until it can; its share can still be cut to 1 basis point, so it earns next to nothing meanwhile.
+  So every owed amount always has its wallet or the burn to go to (see "Tax authority"); `distribute` therefore pays a recipient slot whatever its share, and burns the burn slot's owed amount whatever the burn share.
 - Owed amounts fit in u64, because together with the real reserve they never exceed the vault's balance.
 - Pipeline's API reports raw vault balances, so tax not yet paid out shows there as liquidity; Aviary reads the real reserves from the market state instead.
 
@@ -237,9 +268,11 @@ The market state keeps these totals, changed only by `pipeline_swap` calls signe
 
 With the creation slot and time, the fixed tax ranges and the tax side, that is everything [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18) might measure an unlock goal by (volume, tax paid, age, or a minimum tax), so the hook can choose without changing the tax AMM.
 The market state starts with an 8-byte account discriminator and a version byte, and these fields sit at fixed offsets that later versions never move, because the hook reads them directly.
+Every instruction refuses a market state whose version byte is newer than the version the running program writes (`NewerStateVersion`), so a build rolled back under markets a newer build wrote never reads them with an older layout's meaning (hardening finding H069, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+The account's size, the tax side's offset and the room left after `tax_collected` are checked against the account's real layout when the program compiles, and `tests/layout.rs` pins every field's offset and the discriminator's eight bytes (H041).
 The build fixes the offsets in the ticket that creates markets, publishes them as constants in the tax AMM's crate and pins them with a test, so the two programs cannot drift apart unnoticed.
 [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) fixed them on 2026-11-12: the market state is 596 bytes, the tax side is the byte at offset 10 and `tax_collected` the little-endian u128 at offset 460, published as `state::layout::TAX_SIDE`, `TAX_COLLECTED` and `LEN` and pinned with every other field's offset by `programs/tax-amm/tests/layout.rs`.
-Besides the fields this file names, the market state holds its status (created; the seed adds open), the vault authority's bump, a flag set when the tax authority renounces, so Aviary can tell a renounced market from one created without an authority, and 64 zero bytes at the end, so a later version can add a field without moving any or reallocating existing markets.
+Besides the fields this file names, the market state holds its status (created; the seed adds open), the vault authority's bump, a flag set when the tax authority renounces, so Aviary can tell a renounced market from one created without an authority, and zero bytes at the end, so a later version can add a field without moving any or reallocating existing markets: 64 in the first build, 52 since the pending rates of "Rates" took 12 in #67.
 Containment hook policy chose `tax_collected`: the unlock reads it, a home market's tax side must be the quote mint, and no minimum tax is needed, because the goal counts tax and not volume (`docs/spec/containment-hook.md`, "Unlock goal").
 
 ## Custom actions and metadata
@@ -274,16 +307,26 @@ Everything here is read from the market state and the strategy metadata, and not
   - it builds the creation transaction of "Creating a market" (`create_market`, `init_fee_account` for each mint, then `seed`), simulated before the wallet signs like every transaction Aviary builds;
   - it refuses, with the reason, a mint the mint rules would refuse and a mint whose transfer hook is the containment hook (`docs/spec/containment-hook.md`, "Launch in v1").
 - **Tax panel**, on a tax market's page:
-  - the tax side, the buy tax and the sell tax, each with its fixed range;
+  - the tax side, the buy tax and the sell tax, each with its fixed range, and a pending change of rates with the slot it applies from and the time left ("Rates");
   - the tax authority, or that the market has none or that it renounced, in which case the rates and the tax recipients can never change;
   - the tax recipients with their shares, the burn share and the suite share;
   - the tax collected so far, and what each slot is owed and not yet paid out, with a button per slot that sends `distribute`;
   - the real reserves and the virtual reserve from the market state, since raw vault balances include tax not yet paid out.
-- The trade box needs nothing of its own: the tax is inside the quote, as `docs/spec/pipescope.md` says of every strategy's own fees, and the panel shows the rates beside it.
+- The trade box takes the tax from the quote, as `docs/spec/pipescope.md` says of every strategy's own fees, and the panel shows the rates beside it.
+  When a pending change falls due within the transaction's lifetime (150 blocks), the trade box sets its minimum output from the worse of the quotes at the rates in force and at the pending rates, never from a pending decrease, and says so: a trade signed late in the delay may land after the change, and an announced decrease can be cancelled before its slot (hardening round 2, #67).
 - The wallet page's offer to unwrap wrapped SOL covers tax recipients paid in SOL.
 
 ## Upgrades and freezing
 
+- Before a new build replaces the one deployed, its release gate reads every tax market on the cluster and quotes each one both ways with the new bytes, at the spec's price and exactly as the deployed build does, so an upgrade strands no market (hardening finding H038, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  It quotes at the cluster's slot when the markets were copied, since a pending rate change decides the rates in force.
+  `scripts/deploy-devnet.sh` runs it on the very bytes it deploys (`programs/tax-amm/scripts/pre-deploy.sh`, `tests/release_gate.rs`) and records what it read in `deployments/release-gate/tax-amm/devnet.json`, and every `cargo test` runs it on the devnet markets copied into `tests/fixtures/release-gate/devnet/`.
+- Every market stores the router's market signer when it is created, and liquidity leaves a market only through swaps that signer signs, so the router is each market's only exit: a router that stopped signing for it, or a frozen build compiled with another router's address, would lock its reserves for good, although `distribute` and the tax authority's actions never need the router (hardening finding H034, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)).
+  So before the program is frozen, the router's address compiled into it (`sos_h001_the_compiled_router_id_is_the_pinned_devnet_router` checks it against `fixtures/pins.env`) must be the live router's on that cluster.
+- An upgrade never lowers `MAX_TAX_BPS`: a market whose rates or ranges sit above a lowered cap would have its swaps or `set_taxes` refused, so the release gate would catch a stored rate above it but not a range (hardening finding H037, [#67](https://github.com/imDev2023/testing-pipeline/issues/67), signed off).
+- A rollback to a build from before the pending rates (#67) ignores a pending change, and its own `set_taxes` writes the rates at once and leaves the pending bytes as they were; a later roll forward then applies that stale pending change at the next swap or `set_taxes`, inside its range and the cap.
+  The upgrade key is trusted with every market already (hardening finding H039, signed off), so this is recorded rather than guarded against.
+  A rollback should come with the authorities re-setting their rates.
 - On devnet the program stays upgradeable, with its upgrade authority in `~/.config/testing-pipeline/devnet/`.
 - It is frozen (upgrade authority removed) before any mainnet deployment, because the containment hook's unlock will trust its counters and the vaults hold locked liquidity.
 - The general upgrade policy is in `docs/spec/README.md`.
@@ -313,10 +356,11 @@ Decided with the owner on 2026-11-10 in [Cut the containment hook and tax AMM bu
 
 The owner's standing rule of 2026-11-10 keeps every decision cheap to change, since each is a default MetalLegBob may change.
 
-- The four values of "Constants" are build-time constants in one config module of the program, and no other file repeats them.
+- The values of "Constants" are build-time constants in one config module of the program, and no other file repeats them.
   `MAX_TAX_BPS`, `SUITE_SHARE_BPS` and `SUITE_TREASURY` are also published in the program's IDL (Anchor's `#[constant]`), so the TypeScript client generated from it carries them for Aviary's launch form and tax panel and the demo script, rather than any of them restating one.
 - The mint extension allowlist of "Mint rules", and the check that applies it, live in one small library crate of the on-chain workspace.
   The tax AMM, the containment hook, the buy wall AMM and the lending AMM all depend on that crate, so there is one list and never a second copy; a product with a stricter rule adds it on top.
+  The tax AMM's own rules on top of it, on the transfer hook at creation and the authorities at the seed, are one module of the program (`src/mint_levers.rs`), reading the values of "Constants".
   The crate is `programs/mint-rules`; it depends on nothing and reads a mint's extension entries itself, the way Token-2022 lays them out, so an extension Token-2022 adds after the crate was written is refused by its number rather than misread.
 - Both are fixed on-chain because traders rely on them, so they can change until a program is frozen and not after.
 - Every other policy value is a creation parameter, chosen per market and held in its market state: the rates, their ranges, the tax authority, the tax recipients and their shares, the burn share and the virtual reserve.
@@ -329,6 +373,7 @@ The owner's standing rule of 2026-11-10 keeps every decision cheap to change, si
 Tests assert the measured cost of each instruction with headroom, never above these ceilings.
 A cost is what the tax AMM's own invocation consumes, its token program calls included, measured on mints without a transfer hook; a hook's cost is the hook's own to bound.
 A cost also leaves out what a bump search spends beyond an address's first bump, which depends on the address and not on the program: 1,500 units for each further bump tried.
+That includes the unlock PDA of a contained mint, which creation and the seed derive to check its hook authority ("Mint rules"): on 2026-11-22 creating a contained mint's market cost 37,930 to 52,930 units over eight mints, up to 4,500 of them beyond the first bump (`programs/tax-amm/tests/compute.rs`).
 That matters for `distribute`, which derives the slot wallet's associated token account for the tax-side mint, and when it creates that account the associated token program derives it twice more, so each bump the wallet's address needs after the first adds 4,500 units to a payout that creates the account and 1,500 to one that does not (measured by [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65), 2026-11-12).
 Half of all wallets need a second bump and one in 128 needs eight, which adds 31,500 units to such a payout, so a caller sizing a payout's compute limit, as the keeper runner does, adds 4,500 units for each bump after the first that the wallet's address needs.
 The other instructions' bump searches (the vaults, the vault authority and a seeded market's state) sit far enough under their ceilings that no address realistically reaches them, so the tests leave those in.
@@ -351,7 +396,7 @@ For the bar's stateful fuzzing layer, beyond its shared three:
 1. Each vault holds at least the market's real reserve of its mint, plus everything owed when it is the tax-side vault; donations only ever add to the surplus.
 2. A swap never lowers the product of the effective reserves, never pays out more of a side than its real reserve, and never changes the virtual reserve.
 3. Every tax is split exactly: the suite share, the tax recipients' parts and the burn add up to the tax, and `tax_collected` always equals what has been paid out or burned plus what is still owed.
-4. No rate ever leaves its range or passes `MAX_TAX_BPS`, and nothing fixed at creation ever changes: the mints, the tax side, the ranges, the seeder and the virtual reserve.
+4. No rate, in force or pending, ever leaves its range or passes `MAX_TAX_BPS`, the rates in force never change within a slot (only a pending change reaching its slot changes them), and nothing fixed at creation ever changes: the mints, the tax side, the ranges, the seeder and the virtual reserve.
 5. After the seed, only router swaps change the real reserves, and only router swaps ever change the counters; `distribute` moves at most what its slot is owed.
 6. The counters never fall.
 7. Once the tax authority has renounced, or on a market created without one, the rates and the tax recipients never change.
@@ -359,7 +404,7 @@ For the bar's stateful fuzzing layer, beyond its shared three:
 How the fuzzer checks them, built by [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) on 2026-11-12 (`programs/tax-amm/tests/fuzz.rs`, the harness in `programs/tax-amm/tests/common/fuzz/`):
 
 - Value is conserved: every token the test wrote into accounts is still held by a known account (the wallets, the vaults, Pipeline's fee accounts and a launchpad's escrows), but for what the burn slot was owed each time it was burned, and each mint's supply fell by exactly those burns.
-- Every holder can exit: every wallet's whole holding of either mint, Pipeline's fee on top, quotes, or is refused for a reason this file gives, as dust (`ZeroOutput`) or because the curve would pay out more than the output side's real reserve (`InsufficientLiquidity`); the second happens only on a market with a virtual reserve, whose virtual side is priced but never paid out, and then the largest sale the real reserve covers must quote.
+- Every holder can exit: every wallet's whole holding of either mint, Pipeline's fee on top, quotes, or is refused for a reason this file gives, as dust (`ZeroOutput`) or because the curve would pay out more than the output side's real reserve (`InsufficientLiquidity`); the second happens only on a market with a virtual reserve, whose virtual side is priced but never paid out, and then the largest sale the real reserve covers must quote unless it is itself dust (hardening finding H036, signed off).
   Every sequence ends with every wallet the test holds the keys of selling all it holds, one after another, and each such sale settles unless this file refuses it.
 - Invariant 1 is checked exactly: each vault holds its real reserve, everything owed if it is the tax-side vault, and every donation to it, no more and no less.
 - Besides the ten, every step must do exactly what this file says: pass or fail with the error it names, and a swap must quote this file's price and leave the market state exactly as its formulas do (`programs/tax-amm/tests/common/model.rs`); and every instruction a step runs must stay under its compute ceiling.
@@ -367,7 +412,7 @@ How the fuzzer checks them, built by [Tax AMM: invariant fuzzing across every in
 ### Maths proofs
 
 The properties the pricing, tax and split maths satisfy for every input, and the tool that establishes each, are listed in [`docs/security/tax-amm/maths-properties.md`](../security/tax-amm/maths-properties.md), chosen with Book of Knowledge as the bar's "Test layers" 2 asks.
-Kani proves what it can in `src/pricing.rs`, `src/split.rs` and `src/params.rs`, Z3 proves the division and rounding claims for every input in `proofs/pricing_z3.py`, and Proptest checks every property on at least 10,000 cases in `tests/maths.rs`.
+Kani proves what it can in `src/pricing.rs`, `src/split.rs` and `src/params.rs`, Z3 proves the division and rounding claims for every input in `proofs/pricing_z3.py`, and Proptest checks every property on at least 10,000 cases in `tests/maths.rs` (the mint walk, against Token-2022's own state code, in `tests/mint_rules.rs`).
 
 ### `pipeline-check` warns
 
