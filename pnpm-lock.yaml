@@ -304,6 +304,9 @@ importers:
       terminal-db:
         specifier: workspace:*
         version: link:../terminal-db
+      terminal-explainer:
+        specifier: workspace:*
+        version: link:../terminal-explainer
     devDependencies:
       '@types/node':
         specifier: 24.19.2

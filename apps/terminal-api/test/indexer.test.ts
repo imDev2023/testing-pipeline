@@ -12,7 +12,7 @@ import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CANDLES, LIVE_ROOM_TRADES_MAX } from "../src/config";
 import { IndexerCore } from "../src/indexerCore";
-import { metadataWeb } from "./fakes";
+import { memoryImages, metadataWeb } from "./fakes";
 
 const fixture = (name: string) => JSON.parse(readFileSync(`${import.meta.dirname}/../../../packages/terminal-indexer/test/fixtures/${name}.json`, "utf8")) as RawTransaction;
 const [registered, created, swap] = ["registered", "marketCreated", "swap"].map(fixture) as [RawTransaction, RawTransaction, RawTransaction];
@@ -35,7 +35,7 @@ afterAll(() => vi.restoreAllMocks());
 /** The core with a spy on its database client: every client it opens is counted, and each is a real one. */
 function core(web = metadataWeb()) {
   const openDb = vi.fn(() => createDb(database.url));
-  return { indexer: new IndexerCore({ rpcUrl: rpc.url, openDb, metadataFetch: web.fetch }), openDb, web };
+  return { indexer: new IndexerCore({ rpcUrl: rpc.url, openDb, webFetch: web.fetch, images: memoryImages() }), openDb, web };
 }
 
 describe("reconciliation of the router", () => {
@@ -72,7 +72,7 @@ describe("reconciliation of the router", () => {
       return { db: client.db, close: () => client.close().then(() => void closed++) };
     });
     rpc.refuse.add("getMultipleAccounts");
-    await expect(new IndexerCore({ rpcUrl: rpc.url, openDb, metadataFetch: metadataWeb().fetch }).reconcile()).rejects.toThrow("getMultipleAccounts");
+    await expect(new IndexerCore({ rpcUrl: rpc.url, openDb, webFetch: metadataWeb().fetch, images: memoryImages() }).reconcile()).rejects.toThrow("getMultipleAccounts");
     expect(openDb).toHaveBeenCalledTimes(1);
     expect(closed).toBe(1);
   });
@@ -109,7 +109,7 @@ describe("reading again what older code could not decode", () => {
       if (raw.transaction.signatures[0] === kept.transaction.signatures[0]) throw new Error("this transaction cannot be read");
       return real(db, raw);
     };
-    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler, metadataFetch: metadataWeb().fetch });
+    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler, webFetch: metadataWeb().fetch, images: memoryImages() });
     expect((await indexer.reconcile()).indexed.counts).toEqual({ strategies: 1, markets: 1 });
   });
 });
@@ -201,7 +201,7 @@ describe("the live path, when part of a batch fails", () => {
       if (raw.transaction.signatures[0] === bad.transaction.signatures[0]) throw new Error("this transaction cannot be read");
       return real(db, raw);
     };
-    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler, metadataFetch: metadataWeb().fetch });
+    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler, webFetch: metadataWeb().fetch, images: memoryImages() });
     await indexer.reconcile();
     rpc.history.push(good, bad);
     const log = vi.spyOn(console, "error").mockImplementation(() => {});

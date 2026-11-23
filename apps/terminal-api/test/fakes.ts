@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Bindings } from "../src/env";
+import type { TokenImageType } from "../src/tokenImageFetch";
 
 /** What a Worker's request handler is given besides its bindings; `waitUntil` work is awaited by `settle`. */
 export function executionContext() {
@@ -92,4 +93,15 @@ export function metadataWeb(documents: Record<string, string> = {}) {
     return body === undefined ? new Response("not found", { status: 404 }) : new Response(body, { headers: { "content-type": "application/json" } });
   };
   return { fetch, asked, documents };
+}
+
+/** An image store in memory (../src/tokenImages's `ImageStore`), with what it was given to keep. */
+export function memoryImages() {
+  const kept = new Map<string, { bytes: ArrayBuffer; type: TokenImageType }>();
+  return {
+    put: async (sha256: string, bytes: Uint8Array, type: TokenImageType) => void kept.set(sha256, { bytes: new Uint8Array(bytes).buffer, type }),
+    get: async (sha256: string) => kept.get(sha256) ?? null,
+    /** The type and size of each image kept. */
+    kept: () => [...kept.values()].map(({ bytes, type }) => ({ type, size: bytes.byteLength })),
+  };
 }

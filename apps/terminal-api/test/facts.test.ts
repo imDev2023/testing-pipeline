@@ -109,7 +109,9 @@ beforeAll(async () => {
       { program: A, deploySlot: 900n, role: "strategy", executableSha256: "22".repeat(32), signature: "upgrade-sig", blockTime: ago(10 * HOUR) },
     ]);
     await db.insert(markets).values([
-      { address: M1, strategyProgram: A, marketState: T4, createdBy: CREATOR, createdAt: ago(HOUR), feeMint: WSOL, supportsExactOut: false },
+      // Two hours old, clear of the last hour: the API floors its clock to whole seconds, so a market
+      // made exactly an hour before this module's clock can still count as within the hour.
+      { address: M1, strategyProgram: A, marketState: T4, createdBy: CREATOR, createdAt: ago(2 * HOUR), feeMint: WSOL, supportsExactOut: false },
       { address: M2, strategyProgram: B, marketState: T4, createdBy: CREATOR, createdAt: ago(48 * HOUR) },
       { address: M3, strategyProgram: C, marketState: T4, createdBy: CREATOR, createdAt: ago(HOUR / 2) },
     ]);
@@ -262,6 +264,7 @@ describe("GET /v1/markets/{market}/facts", () => {
       {
         mint: T1,
         symbol: null,
+        token: null,
         readable: true,
         token_program: "Token-2022",
         decimals: 6,

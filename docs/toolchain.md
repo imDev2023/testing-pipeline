@@ -879,6 +879,11 @@ Its header has the steps: `demo/build-test-strategy.sh` builds the two versions 
 Passed on 2026-11-23: version 2 recorded 55.6 s after its upgrade landed, the router's upgrade 52.4 s after.
 `wrangler dev`'s `workerd` reaches devnet only once LuLu allows its path, which differs in every worktree (`node_modules/.pnpm/@cloudflare+workerd-darwin-64@<version>/node_modules/@cloudflare/workerd-darwin-64/bin/workerd`, unsigned, so LuLu cannot allow it by signature).
 
+### Aviary's token-image check token
+
+No devnet token named an image Aviary could keep on 2026-11-23, so `tests/terminal-e2e/demo/token-image-check.ts` (#120) launched one: a Token-2022 mint whose token metadata names `tests/terminal-e2e/demo/token-image-check/token.json` at a commit of this repository, which names `token.png` beside it, traded in a tax market against wrapped SOL; its addresses and transactions are in `deployments/devnet-demo-token-image.json`.
+The end-to-end tests show its image on the market and search pages, and `--update-uri` moves its URI, since the project's devnet wallet keeps the metadata's update authority.
+
 Passed on 2026-11-22 with Node 24.4.1 (#113): 36 tests, in 1.4 minutes against devnet and 1.2 minutes on the recorded fixtures.
 
 ## Known problems

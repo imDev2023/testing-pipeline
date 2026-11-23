@@ -14,6 +14,8 @@ import { keeperRoutes } from "./keeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
 import { strategyRoutes } from "./strategies";
+import { imageRoutes } from "./tokenImages";
+import { searchRoutes } from "./search";
 
 export type AppEnv = { Bindings: Bindings };
 
@@ -38,6 +40,8 @@ app.get("/health", async (c) => {
 
 app.route("/", feed);
 app.route("/", strategyRoutes);
+app.route("/", imageRoutes);
+app.route("/", searchRoutes);
 
 /**
  * The live rooms (./liveRoom): a page opens a WebSocket here and the Worker hands the upgrade to the

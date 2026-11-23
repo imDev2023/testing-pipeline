@@ -5,8 +5,8 @@
 // program, which stores every call on it, and the ProgramData watch, which records each version of
 // the router and of every strategy, with who can upgrade each (docs/spec/pipescope-architecture.md,
 // Indexer); and the metadata fetcher, run for each strategy whose registration or metadata URI it
-// indexes and every hour, with the hourly read of every mint (Metadata fetcher; ./metadata). The live
-// socket comes with the live rooms (#118).
+// indexes and every hour, with the hourly read of every mint (Metadata fetcher; ./metadata), and the
+// images of the tokens those mints name (./tokenImages). The live socket comes with the live rooms (#118).
 //
 // Neon's free plan has 100 compute-hours a month, so the database must sleep while devnet is quiet
 // (Data): each run asks the chain first and opens Postgres only when there is something new. What
@@ -48,7 +48,8 @@ import { and, eq, inArray, isNull, max, notExists, sql } from "drizzle-orm";
 import { CANDLES, LIVE_ROOM_TRADES_MAX, RPC_WAITS, VERSION_TRANSACTION_LOOKS } from "./config";
 import type { LiveEvent } from "./contract";
 import { fetchStrategiesMetadata } from "./metadata";
-import type { FetchLike } from "./metadataFetch";
+import { fetchTokenImages, type ImageStore } from "./tokenImages";
+import type { FetchLike } from "./webFetch";
 import { marketViews, tradeViews } from "./views";
 
 export const ROUTER = PIPELINE_PROGRAM_ADDRESS;
@@ -120,12 +121,22 @@ export class IndexerCore {
   private runningWatch: Promise<WatchOutcome> | null = null;
   /** Each watched program's facts as last written (its upgrade authority and flags), read from Postgres with the slots. */
   private facts = new Map<string, string>();
+  /**
+   * Whether mints were read since token images were last looked for, so a token metadata URI may be
+   * new; true on a new instance, which looks once for what an earlier one left unfetched.
+   */
+  private imagesDue = true;
+  /** Whether the next look also tries again the URIs that could not be reached: after the hourly read of every mint. */
+  private imagesRetry = false;
+  /** The token-image fetch running now, which a second call waits for. */
+  private imagesRun: Promise<{ fetched: number; kept: number }> | null = null;
 
   /**
-   * `metadataFetch` is the fetch the metadata fetcher uses: the Worker's own, or in the end-to-end
-   * tests one that reads recorded documents; it is never defaulted, so no test fetches the web.
+   * `webFetch` is the fetch the metadata fetcher and the token-image fetcher use: the Worker's own,
+   * or in the end-to-end tests one that reads recorded documents; it is never defaulted, so no test
+   * fetches the web. `images` is where kept token images' bytes go (`TERMINAL_CACHE` in the Worker).
    */
-  constructor(private readonly deps: { rpcUrl: string; openDb: OpenDb; metadataFetch: FetchLike; source?: HistorySource; handler?: TransactionHandler }) {
+  constructor(private readonly deps: { rpcUrl: string; openDb: OpenDb; webFetch: FetchLike; images: ImageStore; source?: HistorySource; handler?: TransactionHandler }) {
     this.source = deps.source ?? historySource(deps.rpcUrl, RPC_WAITS.block);
     this.handle = deps.handler ?? pipelineHandler({ candleSeconds: CANDLES.map((c) => c.seconds) });
     this.blockIndexOf = blockPositions(deps.rpcUrl, RPC_WAITS.block);
@@ -320,7 +331,7 @@ export class IndexerCore {
     return this.inTurn(async () => {
       const due = [...this.unfetched];
       if (!due.length) return { fetched: 0, changed: [] };
-      const outcome = await this.withDb((db) => fetchStrategiesMetadata(db, due, { fetch: this.deps.metadataFetch }));
+      const outcome = await this.withDb((db) => fetchStrategiesMetadata(db, due, { fetch: this.deps.webFetch }));
       for (const program of due) this.unfetched.delete(program);
       return outcome;
     });
@@ -331,16 +342,43 @@ export class IndexerCore {
     return this.inTurn(() =>
       this.withDb(async (db) => {
         const all = (await db.select({ program: strategies.program }).from(strategies)).map((s) => s.program);
-        const outcome = await fetchStrategiesMetadata(db, all, { fetch: this.deps.metadataFetch });
+        const outcome = await fetchStrategiesMetadata(db, all, { fetch: this.deps.webFetch });
         for (const program of all) this.unfetched.delete(program);
         return outcome;
       }),
     );
   }
 
-  /** The hourly read of every mint, for the trust flags of what changed since it was first read; returns how many it read. */
-  refreshMints(): Promise<number> {
-    return this.withDb((db) => refreshMints(db, this.deps.rpcUrl));
+  /** The hourly read of every mint, for the trust flags and names of what changed since it was first read; returns how many it read. */
+  async refreshMints(): Promise<number> {
+    const read = await this.withDb((db) => refreshMints(db, this.deps.rpcUrl));
+    this.imagesDue = true;
+    this.imagesRetry = true;
+    return read;
+  }
+
+  /**
+   * Fetches the image of every token metadata URI not fetched yet (./tokenImages), once mints were
+   * read since the last look, so a run that read none never opens the database for it; after the
+   * hourly read of every mint, it also tries again what could not be reached. The Indexer
+   * runs it after what a run indexed is published, so neither the pages nor the live rooms wait on the
+   * web; if it fails, the next call looks again.
+   */
+  fetchPendingImages(): Promise<{ fetched: number; kept: number }> {
+    this.imagesRun ??= (async () => {
+      if (!this.imagesDue) return { fetched: 0, kept: 0 };
+      const retryUnreachable = this.imagesRetry;
+      this.imagesDue = false;
+      this.imagesRetry = false;
+      try {
+        return await this.withDb((db) => fetchTokenImages(db, this.deps.images, { fetch: this.deps.webFetch, retryUnreachable }));
+      } catch (e) {
+        this.imagesDue = true;
+        this.imagesRetry ||= retryUnreachable;
+        throw e;
+      }
+    })().finally(() => (this.imagesRun = null));
+    return this.imagesRun;
   }
 
   /** Drops candles past their length's retention (`CANDLES`, PIPESCOPE-30); returns how many went. */
@@ -355,8 +393,9 @@ export class IndexerCore {
   private async refresh(db: Db, named: string[]) {
     for (const market of named) this.unread.add(market);
     const due = [...this.unread];
-    await refreshMarkets(db, this.deps.rpcUrl, due);
+    const { mintsRead } = await refreshMarkets(db, this.deps.rpcUrl, due);
     for (const market of due) this.unread.delete(market);
+    if (mintsRead) this.imagesDue = true;
   }
 
   /** Adds what a reconciliation indexed to what the snapshot knows, so a market just indexed never wakes the database again. */

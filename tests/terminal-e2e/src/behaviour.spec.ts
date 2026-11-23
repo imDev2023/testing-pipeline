@@ -115,7 +115,8 @@ test.describe("the feed", () => {
     const first = page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1);
     await first.getByRole("link", { name: `${markets[0]!.strategy.slice(0, 4)}...${markets[0]!.strategy.slice(-4)}` }).click();
     await expect(page).toHaveURL(`/strategies/${markets[0]!.strategy}`);
-    await expect(page.getByRole("heading", { name: "Strategy", exact: true })).toBeVisible();
+    // Its page is headed by the name its valid metadata gives, or "Strategy" without one.
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(markets[0]!.strategy_name ?? "Strategy");
   });
 
   test("loads the markets 50 at a time, and the next 50 on asking", async ({ page }) => {

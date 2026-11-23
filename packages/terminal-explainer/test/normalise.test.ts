@@ -39,7 +39,7 @@ describe("authorText", () => {
 
 describe("normaliseMetadata", () => {
   it("caps the name, description and each label at the rules module's caps", () => {
-    expect(AUTHOR_TEXT_CAPS).toEqual({ name: 64, description: 600, label: 64 });
+    expect(AUTHOR_TEXT_CAPS).toEqual({ name: 64, description: 600, label: 64, symbol: 16 });
     const { document, removed } = normaliseMetadata(valid(hostileMetadata["stuffed-description"]));
     expect([...document.description!].length).toBe(600);
     expect(removed.truncated).toEqual(["description"]);

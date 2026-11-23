@@ -170,7 +170,8 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - Endpoints, as a sketch for the build to settle in the zod contract:
   - strategies, a strategy's versions, and per version its facts, Canary results, verified-build status and explanation;
   - markets, a market's facts, trades and candles, with the feed's filters (liquidity, volume, age and Pipeline's trust flags);
-  - search by name, mint, market address or strategy address, from Postgres;
+  - search by name, mint, market address or strategy address, from Postgres: as built, `GET /v1/search?q=&limit=` (`PIPESCOPE-124`), each group counted in full and served up to `PAGE_LIMITS.search`;
+  - a token image at `GET /images/<hash>`, from KV alone (Data);
   - a wallet's swaps through Pipeline, from our trades, and its balances in mints that trade in Pipeline markets, read through RPC;
   - a quote while the trader types;
   - `POST` prepare for a swap, a custom action and a new market, each returning the unsigned transaction with its simulation's outcome and balance changes;
@@ -247,6 +248,9 @@ What the checks are, how a run copies a market and when runs happen are in [`pip
 - Its outcome is the status Pipeline's SDK gives (`PIPESCOPE-118`): what could not be fetched is `metadata-unreachable`; a document of another content type, not JSON, or refused by the validator is `metadata-invalid`.
   Each outcome is a row of `metadata_snapshots`, a new row only when the URI, the status or the document's hash changes, with the document as validated (for the forms) and its author text as the normaliser leaves it (for the pages and the explainer).
 - The same fetcher, under the same limits apart from the size, fetches the image a mint's on-chain token metadata names, once per URI and again when the URI changes, and keeps it only as [`pipescope-screens.md`](pipescope-screens.md) (Token names and images) allows.
+  As built (`PIPESCOPE-123`): the token metadata URI is fetched once, at most 1 MB; what it serves is the image when its first bytes say PNG, JPEG or WebP, and otherwise, when it is a JSON document of at most 64 KB, the `https:` URL in its `image` is fetched once more under the same limits.
+  Each URI's outcome is one row of `token_images`, shared by every mint that names it, and a kept image's bytes are in `TERMINAL_CACHE` under their SHA-256; a URI that could not be reached is tried again after each hourly read of every mint; only mints that name themselves have their URIs fetched, and never SOL and USDC, since Aviary names those two itself.
+  The indexer fetches after a run that read mints, so a run that read none never opens the database for it.
 - The document is validated with Pipeline's `parse_strategy_metadata` (the TypeScript SDK's port), giving the `metadata-missing`, `metadata-unreachable` or `metadata-invalid` fact, then normalised as `pipescope-explainer.md` says, and stored with its hash.
 - A changed hash is a metadata change: it makes a new explanation key, pending approval.
 - Everything works with no metadata at all, as on devnet today, where all four strategies' metadata links returned 404 on 2026-11-09.

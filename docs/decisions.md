@@ -2351,6 +2351,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
 
+### PIPESCOPE-122: Token names as Aviary keeps them
+
+- Question: Where does a token's name come from, and how is it kept and shown?
+- Answer: From its mint's Token-2022 token metadata extension, or else its Metaplex metadata account, read with the mint and again every hour; its symbol and name go through the author-text normaliser (control, direction and zero-width characters stripped), the symbol capped at 16 characters and the name at 64 (`AUTHOR_TEXT_CAPS` in the explainer's rules module), and a page shows the symbol, or the name when there is no symbol, in the author's style beside the short address.
+- Alternatives: Keeping the names exactly as the chain holds them, which lets a direction override make one token's name read as another's; no cap on the symbol, which lets one author's file set a table row's width.
+- Specified in: [`docs/spec/pipescope-screens.md`, Token names and images](spec/pipescope-screens.md#token-names-and-images)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: token names and images, and search](https://github.com/imDev2023/testing-pipeline/issues/120)
+
+### PIPESCOPE-123: Where a token's image is found
+
+- Question: What does Aviary fetch to find the image a token's metadata names, and how often?
+- Answer: The token metadata URI once, under the metadata fetcher's limits and at most 1 MB: if what it serves is a PNG, JPEG or WebP by its first bytes, that is the image; if it is a JSON document of at most 64 KB, the `https:` URL in its `image` is fetched once more under the same limits; nothing else is fetched; each URI's outcome is kept once, shared by every mint naming it, and a URI is fetched again only when a mint names another, except that one which could not be reached is tried again after each hourly read of every mint, since a host can be down for a moment; only the URIs of mints that name themselves are fetched, and never those of SOL and USDC.
+- Alternatives: Treating the URI only as a document, which misses tokens whose URI is the picture; never trying again after a failed fetch, which loses a token's image for good to one busy moment of its host; following `ipfs:` and `ar:` links through a gateway, which would add a third party.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Metadata fetcher](spec/pipescope-architecture.md#metadata-fetcher)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: token names and images, and search](https://github.com/imDev2023/testing-pipeline/issues/120)
+
+### PIPESCOPE-124: The search endpoint
+
+- Question: How does `terminal-api` answer a search?
+- Answer: `GET /v1/search?q=&limit=`, from Postgres: a query of 1 to 100 characters compared as text and never as a pattern; each group (strategies, markets, mints) counted in full and served up to `limit` (20 by default, at most 100, `PAGE_LIMITS.search`), a whole address typed coming first, then strategies by their market count, markets newest first and mints by their market count; SOL and USDC found by Aviary's names for them, every market a mint trades on named with it, and the three examples shown when nothing is typed kept in the screens' config module and checked by the end-to-end tests to find something on devnet.
+- Alternatives: Searching in the browser over the feed's pages, which misses whatever is not loaded; a cap on the markets listed with a mint, which the spec does not ask for.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: token names and images, and search](https://github.com/imDev2023/testing-pipeline/issues/120)
+
+### PIPESCOPE-125: The marks for SOL and USDC
+
+- Question: What marks do SOL and USDC carry beside the names Aviary gives them?
+- Answer: Marks Aviary draws itself and ships with the app, in the page's ink at the 20 px of a token's image: three slanted bars for SOL and a ringed dollar sign for USDC.
+- Alternatives: Solana's and Circle's own logos, whose green and blue would break the rule that nothing on a page is coloured but the canary yellow and an author's purple.
+- Specified in: [`docs/spec/pipescope-screens.md`, Token names and images](spec/pipescope-screens.md#token-names-and-images)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: token names and images, and search](https://github.com/imDev2023/testing-pipeline/issues/120)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims

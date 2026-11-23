@@ -43,6 +43,13 @@
       "when": 1795462349674,
       "tag": "0005_metadata_facts",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795469195436,
+      "tag": "0006_token_names",
+      "breakpoints": true
     }
   ]
 }

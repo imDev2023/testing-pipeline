@@ -64,7 +64,7 @@ function MarketHead({ market, base, quote }: { market: Market; base: MarketMint;
   return (
     <header className={styles.head}>
       <h1>
-        <MintLabel mint={base.mint} symbol={base.symbol} /> / <MintLabel mint={quote.mint} symbol={quote.symbol} />
+        <MintLabel mint={base.mint} symbol={base.symbol} token={base.token} /> / <MintLabel mint={quote.mint} symbol={quote.symbol} token={quote.token} />
       </h1>
       <SubjectAddress address={market.address} short />
       <dl className={styles.facts}>

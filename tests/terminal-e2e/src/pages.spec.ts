@@ -1,7 +1,7 @@
 // Every page this ticket adds, at 1440, 390 and 360 px in the light and the dark theme
 // (PIPESCOPE-96): it wears the shell, nothing scrolls sideways, it requests nothing from any origin but
 // Aviary's own, fonts included, and its screenshot is saved for the PR.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { postKeeperHeartbeat, seedKeeperRecords } from "./keeper";
 import { screenshot } from "./screenshot";
 import { OWN_ORIGINS } from "./target";
@@ -14,9 +14,14 @@ const STRATEGY = "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6";
 // A strategy whose metadata link does not answer, and a market whose token has a transfer hook and a transfer fee.
 const STRATEGY_UNAVAILABLE = "yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx";
 const MARKET_HOOKED = "8XUe71aQTkUrP8SZfL2Z6PuXgdzYe9szTLEqiExrVyMW";
+// Aviary's token-image check market on devnet (deployments/devnet-demo-token-image.json): its token names an image Aviary keeps.
+const MARKET_TOKEN_IMAGE = "4DZbJgcdZyZUoYxKsN8atmMjTipBQ3zd6Yjzkp2i5HsR";
 // A market no swap has gone through, and one with a single swap, whose lone candle the chart still draws.
 const MARKET_WITHOUT_TRADES = "DH7QCdTHGsjHcsm7SgXYRgdQvX34VT8oMQkFWVoCe3SQ";
 const MARKET_WITH_ONE_TRADE = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
+
+/** A token image has loaded and has a picture: one that failed is complete too, so its width says. */
+const imageLoaded = (img: Locator) => expect.poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
 
 /** The facts panel or section has loaded: each part's heading is there. */
 const factsReady = async (page: Page, parts: string[]) => {
@@ -51,6 +56,15 @@ const PAGES = [
   { name: "market-flipped", path: `/markets/${MARKET}?flip=1&interval=1h`, status: 200, ready: marketReady("chart") },
   { name: "market-hooked", path: `/markets/${MARKET_HOOKED}`, status: 200, ready: async (page: Page) => factsReady(page, ["This market", "Its strategy", "Its mints"]) },
   { name: "market-one-trade", path: `/markets/${MARKET_WITH_ONE_TRADE}`, status: 200, ready: marketReady("chart") },
+  {
+    name: "market-token-image",
+    path: `/markets/${MARKET_TOKEN_IMAGE}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await marketReady("chart")(page);
+      await imageLoaded(page.getByRole("heading", { level: 1 }).locator("img"));
+    },
+  },
   { name: "market-no-trades", path: `/markets/${MARKET_WITHOUT_TRADES}`, status: 200, ready: marketReady("none") },
   {
     name: "strategy",
@@ -73,6 +87,16 @@ const PAGES = [
       await factsReady(page, ["Its program", "Its trust flags", "Instructions beyond Pipeline's own"]);
     },
   },
+  {
+    name: "search",
+    path: "/search?q=e",
+    status: 200,
+    ready: (page: Page) => expect(page.getByRole("region", { name: /^Mints/ }).getByText(/^The first 20 of [\d,]+\./)).toBeVisible(),
+  },
+  { name: "search-market", path: "/search?q=7BctW", status: 200, ready: (page: Page) => expect(page.getByRole("link", { name: "Market 7Bct...5CAK" })).toBeVisible() },
+  { name: "search-token-image", path: "/search?q=image%20check", status: 200, ready: (page: Page) => imageLoaded(page.getByRole("region", { name: /^Mints/ }).locator("img").first()) },
+  { name: "search-nothing-typed", path: "/search", status: 200, ready: (page: Page) => expect(page.getByRole("list", { name: "Examples" })).toBeVisible() },
+  { name: "search-no-match", path: "/search?q=Nothing0Here", status: 200, ready: (page: Page) => expect(page.getByText(/^Nothing registered with Pipeline on devnet matches/)).toBeVisible() },
   { name: "devnet-help", path: "/devnet", status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "Get devnet USDC" })).toBeVisible() },
   { name: "keeper", path: "/keeper", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Latest jobs" }).getByRole("table")).toBeVisible() },
   { name: "nothing-there", path: `/markets/${UNKNOWN_ADDRESS}`, status: 404, ready: (page: Page) => expect(page.getByText(UNKNOWN_ADDRESS)).toBeVisible() },
@@ -102,6 +126,7 @@ for (const { name, path, status, ready } of PAGES) {
     await expect(brand).toHaveAttribute("href", "/");
     await expect(brand).not.toHaveText("");
     await expect(header.getByText("devnet", { exact: true })).toBeVisible();
+    await expect(header.getByRole("searchbox", { name: "Search" })).toBeVisible();
 
     // The footer: the three styles of "Who is speaking", the devnet line, Devnet help and the theme control.
     const footer = page.getByRole("contentinfo");

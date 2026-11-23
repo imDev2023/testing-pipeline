@@ -3,8 +3,8 @@
 // server; `pnpm --filter terminal-e2e record` runs the suite against devnet through it, passing each
 // request on to RPC_URL and recording the answer.
 //
-// It also serves strategies' metadata documents (METADATA_PATH): the API's metadata fetcher reads
-// each URL through it in these tests (terminal-api's `TEST_METADATA_FIXTURES`), and it answers what
+// It also serves strategies' metadata documents and tokens' images (METADATA_PATH): the API's
+// fetchers read each URL through it in these tests (terminal-api's `TEST_METADATA_FIXTURES`), and it answers what
 // was recorded for that URL from fixtures/metadata.json, status, headers and body, redirects and all,
 // so the fetcher's own rules run on them as on the web; recording fetches each from the web once.
 //
@@ -14,6 +14,7 @@
 // transaction through the recorded answers like any other.
 import { readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { TOKEN_IMAGE } from "terminal-api/config";
 import { WebSocketServer, type WebSocket } from "ws";
 
 /** 8812, or E2E_RPC_PORT, beside E2E_API_PORT (./target). */
@@ -24,8 +25,11 @@ export const LIVE_EMIT_PATH = "/__live/emit";
 export const METADATA_PATH = "/__metadata";
 const FIXTURES = `${import.meta.dirname}/../fixtures/devnet-rpc.json`;
 const METADATA_FIXTURES = `${import.meta.dirname}/../fixtures/metadata.json`;
-/** The most of a document's body recorded: past the fetcher's own limit, so a too-large answer stays too large. */
-const METADATA_RECORD_MAX_BYTES = 256 * 1024;
+/**
+ * The most of a document's body recorded: past the fetchers' own limits (64 KB for a document, 1 MB
+ * for a token's image), so a too-large answer stays too large.
+ */
+const METADATA_RECORD_MAX_BYTES = TOKEN_IMAGE.maxBytes + 1;
 /**
  * The answer headers recorded: the type and a redirect's location. Not the length: Node's fetch
  * hands back the body decompressed, beside the length of what was sent compressed, so the body
@@ -35,9 +39,9 @@ const METADATA_HEADERS = ["content-type", "location"];
 
 type RecordedDocument = { status: number; headers: Record<string, string>; body: string };
 
-/** A document as the web answered it, without following a redirect. */
-async function recordDocument(url: string): Promise<RecordedDocument> {
-  const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(20_000), headers: { accept: "application/json" } });
+/** A document as the web answered it, asked for as the API asked (`accept`), without following a redirect. */
+async function recordDocument(url: string, accept: string): Promise<RecordedDocument> {
+  const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(20_000), headers: { accept } });
   const body = Buffer.from(await response.arrayBuffer()).subarray(0, METADATA_RECORD_MAX_BYTES);
   const headers = Object.fromEntries(METADATA_HEADERS.flatMap((h) => (response.headers.has(h) ? [[h, response.headers.get(h)!]] : [])));
   return { status: response.status, headers, body: body.toString("base64") };
@@ -97,7 +101,7 @@ export function serveRpc(options: { upstream?: string } = {}): Promise<Server> {
       let document = documents[url];
       if (!document && options.upstream) {
         try {
-          document = await recordDocument(url);
+          document = await recordDocument(url, req.headers.accept ?? "application/json");
           documents[url] = document;
           writeFileSync(METADATA_FIXTURES, `${JSON.stringify(documents, null, 1)}\n`);
         } catch (e) {

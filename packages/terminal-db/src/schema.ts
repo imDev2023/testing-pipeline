@@ -119,6 +119,38 @@ export const mints = pgTable("mints", {
   flags: text("flags").array(),
   /** The epoch the mint was read in, which picks the transfer fee in force. */
   readEpoch: bigint("read_epoch", { mode: "bigint" }),
+  /**
+   * The token's own name (PIPESCOPE-22), from its Token-2022 token metadata extension or else its
+   * Metaplex metadata account: its symbol and name as the author-text normaliser leaves them (author
+   * text, never Aviary's words), and the URI it names, where its image is looked for. Null when the
+   * mint names none.
+   */
+  symbol: text("symbol"),
+  name: text("name"),
+  tokenUri: text("token_uri"),
+});
+
+/**
+ * What fetching each token metadata URI found (docs/spec/pipescope-architecture.md, Data; PIPESCOPE-82,
+ * PIPESCOPE-88): fetched once per URI, and again only when a mint names another, so mints that share a
+ * URI share its row. A kept image's bytes are in `TERMINAL_CACHE` under their SHA-256, which a page
+ * is given with the mint; KV holds only bytes a re-fetch could replace, so this stays the record.
+ */
+export const tokenImages = pgTable("token_images", {
+  /** The token metadata URI a mint names. */
+  uri: text("uri").primaryKey(),
+  /** `kept`, `missing` (the document names no image), `unreachable` or `refused` (its type or size). */
+  status: text("status").notNull(),
+  /** Why it was unreachable or refused, in the fetcher's terms (`http-status`, `type`, `too-large`...). */
+  reason: text("reason"),
+  /** The image's URL: the URI itself when it serves an image, or the `image` its document names. */
+  imageUrl: text("image_url"),
+  /** The SHA-256 of a kept image's bytes, in hex: its key in KV and its address, `/images/<hash>`. */
+  sha256: text("sha256"),
+  /** The type its first bytes say: `image/png`, `image/jpeg` or `image/webp`. */
+  contentType: text("content_type"),
+  size: integer("size"),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
 });
 
 /**

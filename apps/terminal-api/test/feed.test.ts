@@ -105,8 +105,8 @@ describe("GET /v1/markets", () => {
       base_mint: TOKEN,
       mints: [
         // Read before mints kept their flags: none known yet.
-        { mint: TOKEN, symbol: null, decimals: 6, vault: "2yLyoJtMyVYu7G1uMCr8mJKzVZj53fFHrJ8Fzb5iT6st", liquidity: "774943493703585", flags: null },
-        { mint: WSOL, symbol: "SOL", decimals: 9, vault: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2", liquidity: "31000000000", flags: null },
+        { mint: TOKEN, symbol: null, token: null, decimals: 6, vault: "2yLyoJtMyVYu7G1uMCr8mJKzVZj53fFHrJ8Fzb5iT6st", liquidity: "774943493703585", flags: null },
+        { mint: WSOL, symbol: "SOL", token: null, decimals: 9, vault: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2", liquidity: "31000000000", flags: null },
       ],
       // The swap fixture is from 2026-11-22, more than a day before CI may run it.
       stats_24h: expect.objectContaining({ volume_quote: expect.stringMatching(/^\d+$/), trades: expect.any(Number) }),

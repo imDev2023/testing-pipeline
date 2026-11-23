@@ -4,7 +4,7 @@
 // PIPESCOPE-16): under the line that says what it is, the parts of Aviary's own reading, "This
 // market", "Its strategy" and "Its mints", each worded as Pipeline's SDK words its trust flags. No
 // score and no verdict. "What Canary saw" joins as its first part with Canary on the pages (#125).
-import { useCallback } from "react";
+import { Fragment, useCallback } from "react";
 import { MarketFacts as MarketFactsAnswer, type MintFacts } from "terminal-api/contract";
 import { getFromApi } from "@/api";
 import { BRAND } from "@/brand";
@@ -14,6 +14,7 @@ import { FlagFacts } from "../Flags";
 import { Panel } from "../Panel";
 import { TokenAmount } from "../MarketsTable";
 import { MintLabel } from "../MintLabel";
+import { AuthorText } from "../Voice";
 import { FactList, FactPart } from "./Facts";
 import styles from "./Facts.module.css";
 import { StrategyFactList } from "./StrategyFactList";
@@ -49,7 +50,7 @@ export function MarketFacts({ market }: { market: string }) {
                       value: (
                         <span className={styles.lines}>
                           {m.mints.map((x) => (
-                            <TokenAmount key={x.mint} raw={x.liquidity} decimals={x.decimals} mint={x.mint} symbol={x.symbol} />
+                            <TokenAmount key={x.mint} raw={x.liquidity} decimals={x.decimals} mint={x.mint} symbol={x.symbol} token={x.token} />
                           ))}
                         </span>
                       ),
@@ -61,7 +62,7 @@ export function MarketFacts({ market }: { market: string }) {
                           "No trades"
                         ) : (
                           <>
-                            {plural(m.stats_24h.trades, "trade", "trades")}; volume <TokenAmount raw={m.stats_24h.volume_quote} decimals={quote.decimals} mint={quote.mint} symbol={quote.symbol} />
+                            {plural(m.stats_24h.trades, "trade", "trades")}; volume <TokenAmount raw={m.stats_24h.volume_quote} decimals={quote.decimals} mint={quote.mint} symbol={quote.symbol} token={quote.token} />
                           </>
                         ),
                     },
@@ -95,12 +96,29 @@ function MintFactList({ mint }: { mint: MintFacts }) {
   return (
     <div className={styles.mint}>
       <h4 className={styles.mintTitle}>
-        <MintLabel mint={mint.mint} symbol={mint.symbol} />
+        <MintLabel mint={mint.mint} symbol={mint.symbol} token={mint.token} />
       </h4>
       <FactList
         label={`Mint ${mint.mint}`}
         facts={[
-          mint.symbol ? { name: "Named by", value: `${BRAND.name}. It names SOL and USDC itself, and no other token.` } : { name: "Name", value: "None: shown by its address" },
+          mint.symbol
+            ? { name: "Named by", value: `${BRAND.name}. It names SOL and USDC itself, and no other token.` }
+            : mint.token
+              ? {
+                  name: "Name",
+                  value: (
+                    <>
+                      {[mint.token.symbol, mint.token.name].filter((n): n is string => !!n).map((n, i) => (
+                        <Fragment key={i}>
+                          {i > 0 && ", "}
+                          <AuthorText>{n}</AuthorText>
+                        </Fragment>
+                      ))}
+                      <span className={styles.sub}>From the mint&apos;s own metadata: its author&apos;s claim, which {BRAND.name} does not check. Check the mint address.</span>
+                    </>
+                  ),
+                }
+              : { name: "Name", value: "None: shown by its address" },
           {
             name: "Mint",
             value: (
