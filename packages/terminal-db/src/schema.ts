@@ -147,6 +147,109 @@ export const trades = pgTable(
 );
 
 /**
+ * Each version of each program the indexer watches (docs/spec/pipescope-architecture.md, Indexer,
+ * "ProgramData watch"): a strategy's versions, which Canary checks attach to, and the router's. A
+ * version is the program as of one deploy, keyed by the slot its ProgramData account was last
+ * written in. The version seen by the watch has its executable's hash (`executable_sha256`, as
+ * Pipeline's SDK and solana-verify compute it) and its instruction list; one found only in the
+ * ProgramData account's history (`backfilled`), whose bytes are gone, has neither.
+ */
+export const programVersions = pgTable(
+  "program_versions",
+  {
+    program: text("program").notNull(),
+    deploySlot: bigint("deploy_slot", { mode: "bigint" }).notNull(),
+    /** `strategy` or `router`. */
+    role: text("role").notNull(),
+    executableSha256: text("executable_sha256"),
+    /** The deploy or upgrade transaction, once found in the ProgramData account's history. */
+    signature: text("signature"),
+    blockTime: timestamp("block_time", { withTimezone: true }),
+    seenAt: timestamp("seen_at", { withTimezone: true }).defaultNow().notNull(),
+    backfilled: boolean("backfilled").notNull().default(false),
+    /** A router upgrade the watch saw happen: Canary re-runs every market, and the event decoder may need newer code. */
+    flagged: boolean("flagged").notNull().default(false),
+    /** Whether its bytes name instructions as Anchor compiles them; null until its bytes are read. */
+    anchor: boolean("anchor"),
+    /**
+     * The ProgramData slot the watch last saw while this version was in force: past `deploySlot`
+     * once an extension moved it, so a new instance of the indexer knows that slot is no new version.
+     */
+    programDataSlot: bigint("program_data_slot", { mode: "bigint" }),
+  },
+  (t) => [primaryKey({ columns: [t.program, t.deploySlot] })],
+);
+
+/** A strategy version's instruction list (PIPESCOPE-92): every instruction found in its bytes, Pipeline's six included. */
+export const strategyInstructions = pgTable(
+  "strategy_instructions",
+  {
+    program: text("program").notNull(),
+    deploySlot: bigint("deploy_slot", { mode: "bigint" }).notNull(),
+    /** Where its name appears among the others in the bytes, so the list keeps the program's order. */
+    position: smallint("position").notNull(),
+    name: text("name").notNull(),
+    /** Anchor's discriminator, sha256("global:<name>")[..8], in hex. */
+    discriminator: text("discriminator").notNull(),
+    /** One of Pipeline's six, which Canary leaves out by name. */
+    pipeline: boolean("pipeline").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.program, t.deploySlot, t.name] })],
+);
+
+/**
+ * Every instruction the indexer sees on a strategy program (Indexer, "Strategy-program calls"),
+ * from a successful transaction, at the top level or inside another program's: custom actions,
+ * bypass swaps and the router's own calls. `signers` are the transaction's signers among its
+ * accounts, which is who called it; `invokedBy` the program that called it, or null at the top.
+ */
+export const strategyCalls = pgTable(
+  "strategy_calls",
+  {
+    signature: text("signature").notNull(),
+    /** The top-level instruction it is, or is inside. */
+    instructionIndex: smallint("instruction_index").notNull(),
+    /** Its place among that instruction's inner instructions, or -1 for the top-level one itself. */
+    innerIndex: smallint("inner_index").notNull(),
+    program: text("program").notNull(),
+    /** Its first eight bytes in hex, or null when it has fewer. */
+    discriminator: text("discriminator"),
+    signers: text("signers").array().notNull(),
+    invokedBy: text("invoked_by"),
+    slot: bigint("slot", { mode: "bigint" }).notNull(),
+    blockIndex: integer("block_index"),
+    blockTime: timestamp("block_time", { withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.signature, t.instructionIndex, t.innerIndex] }), index("strategy_calls_program").on(t.program, t.discriminator)],
+);
+
+/**
+ * What the indexer saw happen, for whoever acts on it (Indexer, "Events for what follows"): a new
+ * strategy, a new market, a new strategy version and a router upgrade, each written once, in the
+ * order seen. Canary's runs and the Telegram bot's queue each read on from their own cursor in
+ * `outbox_cursors` (`readOutbox`, `ackOutbox`).
+ */
+export const outboxEvents = pgTable("outbox_events", {
+  id: bigint("id", { mode: "bigint" }).primaryKey().generatedAlwaysAsIdentity(),
+  /** What makes the event one event, so the same thing seen twice (by an event and a snapshot, say) is written once. */
+  key: text("key").notNull().unique(),
+  /** `strategy_registered`, `market_created`, `strategy_version` or `router_upgraded`. */
+  kind: text("kind").notNull(),
+  /** The strategy program, the market, or the router. */
+  subject: text("subject").notNull(),
+  slot: bigint("slot", { mode: "bigint" }),
+  payload: jsonb("payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** How far each reader of the outbox has acted: the id of the last event it is done with. */
+export const outboxCursors = pgTable("outbox_cursors", {
+  consumer: text("consumer").primaryKey(),
+  lastId: bigint("last_id", { mode: "bigint" }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
  * The keeper runner's passes (docs/spec/keeper-runner.md, "What it records"; SUITE-37): one row per
  * pass that sent, held or parked something, written by the runner from the owner's Mac in one
  * transaction with its jobs. Amounts are in lamports.

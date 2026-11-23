@@ -1,31 +1,22 @@
 // The feed's read endpoints (docs/spec/pipescope-architecture.md, API; the zod contract in
-// ./contract): strategies, markets newest first and paged, a market, its trades and a trader's
-// swaps, all from Postgres, where the indexer keeps them.
+// ./contract): strategies, markets newest first and paged (all, or one strategy's), a market, its
+// trades and a trader's swaps, all from Postgres, where the indexer keeps them.
 import { and, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { createDb, marketMints, markets, mints, strategies, trades, type Db } from "terminal-db";
+import { marketMints, markets, mints, strategies, trades, type Db } from "terminal-db";
 import { AVIARY_MINT_NAMES, PAGE_LIMITS, VOLUME_WINDOW_SECONDS } from "./config";
 import { Market, MarketsPage, Strategy, StrategiesList, TradesPage, type Trade } from "./contract";
-import type { AppEnv } from "./index";
+import { dbOf, requestDb, type DbEnv } from "./requestDb";
 import { marketPair, tradePair } from "./pairs";
 
-type FeedEnv = AppEnv & { Variables: { db: () => Db } };
+type FeedEnv = DbEnv;
 
 export const feed = new Hono<FeedEnv>();
 
-/** A database client for the request, opened on first use and closed once the handler is done with it. */
-feed.use(async (c, next) => {
-  let client: ReturnType<typeof createDb> | null = null;
-  c.set("db", () => (client ??= createDb(c.env.HYPERDRIVE.connectionString)).db);
-  try {
-    await next();
-  } finally {
-    if (client) c.executionCtx.waitUntil((client as ReturnType<typeof createDb>).close());
-  }
-});
+feed.use(requestDb);
 
-const db = (c: Context<FeedEnv>): Db => c.var.db();
+const db = dbOf;
 
 /** The `limit` asked for, or the default; above the most served, a 400 that says what the most is. */
 function limitOf(c: Context<FeedEnv>, { default: fallback, max }: { default: number; max: number }): number {
@@ -46,7 +37,7 @@ function cursorOf(c: Context<FeedEnv>, pattern: RegExp): string[] | null {
   return match.slice(1);
 }
 
-const notFound = (what: string) => new HTTPException(404, { message: `Aviary knows no ${what} at this address.` });
+export const notFound = (what: string) => new HTTPException(404, { message: `Aviary knows no ${what} at this address.` });
 
 // ---- Strategies ----
 
@@ -139,11 +130,13 @@ async function marketViews(database: Db, rows: MarketRow[]): Promise<Market[]> {
 feed.get("/v1/markets", async (c) => {
   const limit = limitOf(c, PAGE_LIMITS.markets);
   const cursor = cursorOf(c, /^(\d+)_([1-9A-HJ-NP-Za-km-z]{32,44})$/);
+  const strategy = c.req.query("strategy");
   const database = db(c);
+  const ofStrategy: SQL | undefined = strategy === undefined ? undefined : eq(markets.strategyProgram, strategy);
   const after: SQL | undefined = cursor ? sql`(${markets.createdAt}, ${markets.address}) < (${new Date(Number(cursor[0])).toISOString()}::timestamptz, ${cursor[1]})` : undefined;
   const [rows, [{ total } = { total: 0 }]] = await Promise.all([
-    database.select().from(markets).where(after).orderBy(desc(markets.createdAt), desc(markets.address)).limit(limit + 1),
-    database.select({ total: sql<number>`count(*)::int` }).from(markets),
+    database.select().from(markets).where(and(ofStrategy, after)).orderBy(desc(markets.createdAt), desc(markets.address)).limit(limit + 1),
+    database.select({ total: sql<number>`count(*)::int` }).from(markets).where(ofStrategy),
   ]);
   const page = rows.slice(0, limit);
   const last = page.at(-1);

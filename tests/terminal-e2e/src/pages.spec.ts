@@ -16,7 +16,16 @@ const PAGES = [
   { name: "feed", path: "/", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1)).toBeVisible() },
   { name: "feed-strategies", path: "/?tab=strategies", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Strategies" }).getByRole("row").nth(1)).toBeVisible() },
   { name: "market", path: `/markets/${MARKET}`, status: 200, ready: (page: Page) => expect(page.getByRole("link", { name: "Explorer" })).toBeVisible() },
-  { name: "strategy", path: `/strategies/${STRATEGY}`, status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "Strategy", exact: true })).toBeVisible() },
+  {
+    name: "strategy",
+    path: `/strategies/${STRATEGY}`,
+    status: 200,
+    ready: async (page: Page) => {
+      // A body row: on a phone the table's head is not a row, so the last row is one either way.
+      await expect(page.getByRole("region", { name: /^Its markets/ }).getByRole("row").last()).toBeVisible();
+      await expect(page.getByRole("region", { name: /^Version history/ }).getByRole("row").last()).toBeVisible();
+    },
+  },
   { name: "devnet-help", path: "/devnet", status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "Get devnet USDC" })).toBeVisible() },
   { name: "keeper", path: "/keeper", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Latest jobs" }).getByRole("table")).toBeVisible() },
   { name: "nothing-there", path: `/markets/${UNKNOWN_ADDRESS}`, status: 404, ready: (page: Page) => expect(page.getByText(UNKNOWN_ADDRESS)).toBeVisible() },

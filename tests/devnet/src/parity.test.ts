@@ -39,6 +39,20 @@ type HostedTrade = {
   integrator_fee: string;
 };
 
+/**
+ * How many reads of the local API run at once. The local run has no Hyperdrive in front of Postgres,
+ * so each request opens a connection of its own, and one request per market at once (devnet holds
+ * well over a hundred) runs the Docker Postgres out of its 100 connections.
+ */
+const LOCAL_READS_AT_ONCE = 8;
+
+/** `read` of every item, at most LOCAL_READS_AT_ONCE at a time, in the items' order. */
+async function inBatches<T, R>(items: T[], read: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += LOCAL_READS_AT_ONCE) out.push(...(await Promise.all(items.slice(i, i + LOCAL_READS_AT_ONCE).map(read))));
+  return out;
+}
+
 /** The hosted API, kept under its read limit of 20 requests a second. */
 async function hosted<T>(path: string): Promise<T> {
   for (let attempt = 0; ; attempt++) {
@@ -119,7 +133,7 @@ describe.skipIf(!ready)("parity with Pipeline's hosted devnet API", () => {
       if (!more || !last) break;
       cursor = { signature: last.transaction.signatures[0]!, slot: last.slot, blockIndex: last.transactionIndex ?? null };
     }
-    const ours = (await Promise.all((await api.markets()).map((m) => api.trades({ market: m.address })))).flat().filter((t) => t.slot <= cutoff);
+    const ours = (await inBatches(await api.markets(), (m) => api.trades({ market: m.address }))).flat().filter((t) => t.slot <= cutoff);
     expect(onChain.length).toBeGreaterThan(0);
     for (const gap of HOSTED_API_GAPS) expect(onChain.some((s) => s.signature === gap.signature && s.market === gap.market), gap.signature).toBe(true);
     expect(sorted(ours.map(({ signature, market, net_sent, received }) => ({ signature, market, net_sent, received })))).toEqual(sorted(onChain));

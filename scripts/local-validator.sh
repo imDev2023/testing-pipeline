@@ -32,6 +32,9 @@
 # ~/.config/testing-pipeline/devnet/upgrade-authority.json); only its public key is read.
 # SKIP_PROGRAMS, workspace programs to leave out (space-separated, such as "tax-amm"), so a
 # rehearsal of scripts/deploy-devnet.sh can deploy one as it would be deployed on devnet.
+# ROUTER_UPGRADE_AUTHORITY, a keypair whose public key may upgrade the router on this validator
+# (default: none, frozen as on devnet for anyone but its author), for a local run that upgrades it,
+# such as Aviary's strategy-versions demo (tests/terminal-e2e/demo/strategy-versions.ts).
 # Runs in the foreground until stopped; RPC on http://127.0.0.1:8899. Starts from an empty
 # ledger every time. Needs the toolchain (source scripts/toolchain-env.sh).
 set -euo pipefail
@@ -61,11 +64,15 @@ if [ "$(shasum -a 256 "$ROUTER_SO" | awk '{print $1}')" != "$ROUTER_SHA256" ]; t
   exit 1
 fi
 AUTHORITY="$(solana-keygen pubkey "$UPGRADE_AUTHORITY")"
+ROUTER_AUTHORITY=none
+if [ -n "${ROUTER_UPGRADE_AUTHORITY:-}" ]; then
+  ROUTER_AUTHORITY="$(solana-keygen pubkey "$ROUTER_UPGRADE_AUTHORITY")"
+fi
 
 args=(
   --reset --ledger "$LEDGER"
   --deactivate-feature "$SIMD_0268"
-  --upgradeable-program "$ROUTER_PROGRAM" "$ROUTER_SO" none
+  --upgradeable-program "$ROUTER_PROGRAM" "$ROUTER_SO" "$ROUTER_AUTHORITY"
   --account "$ROUTER_CONFIG" "$ROUTER_CONFIG_JSON"
 )
 while IFS= read -r member; do

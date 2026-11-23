@@ -13,5 +13,5 @@
         "allowImportingTsExtensions": true,
         "types": ["node"]
     },
-    "include": ["src", "playwright.config.ts"]
+    "include": ["src", "demo", "playwright.config.ts"]
 }

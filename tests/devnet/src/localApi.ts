@@ -7,7 +7,7 @@ import { mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MarketsPage, StrategiesList, TradesPage, type Market, type Strategy, type Trade } from "terminal-api/contract";
+import { MarketsPage, RouterVersions, StrategiesList, StrategyInstructions, StrategyVersions, TradesPage, type Market, type Strategy, type Trade } from "terminal-api/contract";
 import { createTestDatabase } from "terminal-db/testing";
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), "../../../apps/terminal-api");
@@ -24,7 +24,35 @@ export async function until<T>(what: string, check: () => Promise<T | null | und
   }
 }
 
-type IndexerStatus = { reconciledAt: string | null; lastError: string | null; cursor: { slot: number } | null };
+/**
+ * Which jobs a cron fired now runs depends on the minute it fires in (terminal-api's dispatcher), and
+ * `wrangler dev` fires it at the real time, so a test waits for a minute on which the jobs it needs
+ * are due. These say which minutes, by the minutes since the epoch.
+ */
+export const oneMinuteJobsOnly = (minute: number) => minute % 5 !== 0;
+/** Every job of up to ten minutes: the reconciliations, the registry snapshot and the watch. */
+export const everyTenMinuteJob = (minute: number) => minute % 10 === 0;
+
+/** Waits until a minute that `wanted` accepts has begun, with enough of it left to fire the cron in it. */
+async function minuteWhere(wanted: (minute: number) => boolean): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    if (wanted(Math.floor(now / 60_000)) && now % 60_000 < 45_000) return;
+    await sleep(60_000 - (now % 60_000) + 250);
+  }
+}
+
+type IndexerStatus = {
+  reconciledAt: string | null;
+  snapshotAt: string | null;
+  strategiesReconciledAt: string | null;
+  watchedAt: string | null;
+  lastError: string | null;
+  cursor: { slot: number } | null;
+};
+
+/** The indexer's jobs a test waits for, by the status field each sets when it has run. */
+type JobRun = "reconciledAt" | "snapshotAt" | "strategiesReconciledAt" | "watchedAt";
 
 export class LocalApi {
   readonly url: string;
@@ -73,18 +101,39 @@ export class LocalApi {
 
   /** Fires the every-minute cron, as Cloudflare would, and waits until the indexer has reconciled since. */
   async reconcile(): Promise<IndexerStatus> {
+    return this.runJobs({ minute: oneMinuteJobsOnly, wait: ["reconciledAt"] });
+  }
+
+  /**
+   * Fires the every-minute cron in the first minute `minute` accepts, so the jobs due then run, and
+   * waits until each job in `wait` has run since; a job that fails meanwhile fails the wait.
+   */
+  async runJobs({ minute, wait }: { minute: (minute: number) => boolean; wait: JobRun[] }): Promise<IndexerStatus> {
+    await minuteWhere(minute);
     const before = Date.now();
     const fired = await fetch(`${this.url}/__scheduled?cron=${encodeURIComponent("* * * * *")}`);
     if (!fired.ok) throw new Error(`the cron was refused: ${fired.status}`);
     return until(
-      "the indexer to reconcile",
+      `the indexer's ${wait.join(", ")}`,
       async () => {
         const status = (await (await fetch(`${this.url}/v1/indexer`)).json()) as IndexerStatus;
         if (status.lastError && Date.parse(status.lastError.slice(0, 24)) >= before) throw new Error(status.lastError);
-        return status.reconciledAt && Date.parse(status.reconciledAt) >= before ? status : null;
+        return wait.every((job) => status[job] && Date.parse(status[job]) >= before) ? status : null;
       },
-      240_000,
+      600_000,
     );
+  }
+
+  async versions(program: string): Promise<StrategyVersions["versions"]> {
+    return StrategyVersions.parse(await this.get(`/v1/strategies/${program}/versions`)).versions;
+  }
+
+  async instructions(program: string): Promise<StrategyInstructions> {
+    return StrategyInstructions.parse(await this.get(`/v1/strategies/${program}/instructions`));
+  }
+
+  async router(): Promise<RouterVersions> {
+    return RouterVersions.parse(await this.get("/v1/router"));
   }
 
   private async get(path: string): Promise<unknown> {

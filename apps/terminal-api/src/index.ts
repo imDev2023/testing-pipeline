@@ -12,6 +12,7 @@ import { feed } from "./feed";
 import { health } from "./health";
 import { keeperRoutes } from "./keeper";
 import { limitReads } from "./rateLimits";
+import { strategyRoutes } from "./strategies";
 
 export type AppEnv = { Bindings: Bindings };
 
@@ -35,6 +36,7 @@ app.get("/health", async (c) => {
 });
 
 app.route("/", feed);
+app.route("/", strategyRoutes);
 
 /** How the indexer stands: its version, its cursor and when each job last ran (./indexer). */
 app.get("/v1/indexer", async (c) => c.json(await indexer(c.env).status()));
@@ -52,7 +54,9 @@ export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
   const version = env.CF_VERSION_METADATA.id;
   return {
     reconcileRouter: async () => void (await indexer(env).reconcile(version)),
+    reconcileStrategies: async () => void (await indexer(env).reconcileStrategies(version)),
     registrySnapshot: async () => void (await indexer(env).snapshot(version)),
+    programDataWatch: async () => void (await indexer(env).watchPrograms(version)),
   };
 }
 

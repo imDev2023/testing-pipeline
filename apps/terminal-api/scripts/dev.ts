@@ -5,7 +5,8 @@
 // command line, where `ps` would show it.
 import { spawn } from "node:child_process";
 
-export const API_PORT = 8811;
+/** 8811, or TERMINAL_API_PORT, so a second worktree's local run (another session's tests) can stand beside the first. */
+export const API_PORT = Number(process.env.TERMINAL_API_PORT ?? 8811);
 
 const missing = ["RPC_URL", "DATABASE_URL"].filter((name) => !process.env[name]);
 if (missing.length) {

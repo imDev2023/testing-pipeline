@@ -3,7 +3,7 @@
 // indexed is an event the indexer missed, and is indexed from the account itself.
 import { ACCOUNT_DISCRIMINATORS, decodeMarket, decodeStrategy, marketFeeMint, marketMints as mintsOf, PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { getBase58Decoder } from "@solana/kit";
-import { marketMints, markets, strategies, type Db } from "terminal-db";
+import { appendOutbox, lockOutbox, marketMints, markets, strategies, type Db } from "terminal-db";
 import { rpcCall } from "./rpc";
 
 export type RegisteredStrategy = { program: string; metadataUri: string; registeredAt: Date };
@@ -54,18 +54,22 @@ export async function readRegistry(rpcUrl: string): Promise<Registry> {
   return registry;
 }
 
-/** Indexes each strategy and market of the registry not indexed yet, from its account, and names what was added. */
+/** Indexes each strategy and market of the registry not indexed yet, from its account, writes each to the outbox, and names what was added. */
 export async function indexRegistry(db: Db, registry: Registry): Promise<{ strategies: string[]; markets: string[] }> {
   return db.transaction(async (tx) => {
+    await lockOutbox(tx as unknown as Db);
     const added = { strategies: [] as string[], markets: [] as string[] };
     for (const s of registry.strategies) {
       const [row] = await tx.insert(strategies).values(s).onConflictDoNothing().returning({ program: strategies.program });
-      if (row) added.strategies.push(row.program);
+      if (!row) continue;
+      await appendOutbox(tx as unknown as Db, { kind: "strategy_registered", subject: row.program, slot: null, payload: { metadataUri: s.metadataUri } });
+      added.strategies.push(row.program);
     }
     for (const { mints, ...m } of registry.markets) {
       const [row] = await tx.insert(markets).values(m).onConflictDoNothing().returning({ address: markets.address });
       if (!row) continue;
       await tx.insert(marketMints).values(mints.map((x, position) => ({ market: m.address, position, mint: x.mint, vault: x.vault }))).onConflictDoNothing();
+      await appendOutbox(tx as unknown as Db, { kind: "market_created", subject: row.address, slot: null, payload: { strategy: m.strategyProgram } });
       added.markets.push(row.address);
     }
     return added;

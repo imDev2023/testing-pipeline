@@ -5,7 +5,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 
-export const RPC_PORT = 8812;
+/** 8812, or E2E_RPC_PORT, beside E2E_API_PORT (./target). */
+export const RPC_PORT = Number(process.env.E2E_RPC_PORT ?? 8812);
 const FIXTURES = `${import.meta.dirname}/../fixtures/devnet-rpc.json`;
 
 /** A request's key: its method and parameters, which is all a recorded answer depends on. */
