@@ -28,8 +28,12 @@ export function Age({ iso }: { iso: string }) {
   );
 }
 
-/** The markets, newest first as given; `strategyColumn` false leaves out the strategy each belongs to, on that strategy's own page. */
-export function MarketsTable({ markets, strategyColumn = true }: { markets: Market[]; strategyColumn?: boolean }) {
+/**
+ * The markets, newest first as given; `strategyColumn` false leaves out the strategy each belongs
+ * to, on that strategy's own page, and `rowClass` adds a class to a row, as the feed marks a market
+ * that has just arrived live.
+ */
+export function MarketsTable({ markets, strategyColumn = true, rowClass }: { markets: Market[]; strategyColumn?: boolean; rowClass?: (market: Market) => string | undefined }) {
   return (
     <div className={table.scroll}>
       <table className={table.table}>
@@ -51,7 +55,7 @@ export function MarketsTable({ markets, strategyColumn = true }: { markets: Mark
             const base = m.mints.find((x) => x.mint === m.base_mint)!;
             const quote = m.mints.find((x) => x.mint === m.quote_mint)!;
             return (
-              <tr key={m.address} className={table.row}>
+              <tr key={m.address} className={[table.row, rowClass?.(m)].filter(Boolean).join(" ")}>
                 <td className={table.main}>
                   <Link href={ROUTES.market(m.address)} className={table.rowLink}>
                     <MintLabel mint={base.mint} symbol={base.symbol} /> / <MintLabel mint={quote.mint} symbol={quote.symbol} />

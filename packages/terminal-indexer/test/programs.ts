@@ -4,6 +4,8 @@
 import { BPF_LOADER_UPGRADEABLE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { address, getAddressDecoder, getAddressEncoder, getBase58Decoder } from "@solana/kit";
 import type { RawTransaction } from "../src/decode";
+import { historySource } from "../src/history";
+import type { ProgramReader } from "../src/versions";
 import type { FakeAccount } from "./fakeRpc";
 
 const base58 = getBase58Decoder();
@@ -11,6 +13,12 @@ const AUTHORITY = "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2";
 const SYSTEM = "11111111111111111111111111111111";
 const RENT = "SysvarRent111111111111111111111111111111111";
 const CLOCK = "SysvarC1ock11111111111111111111111111111111";
+
+/** How long the tests' history source waits for a block the RPC has not served: briefly. */
+const TEST_BLOCK_WAITS = { waitMs: 2_000, firstRetryMs: 100, maxRetryMs: 400 };
+
+/** Where the tests read versions from: the RPC at `rpcUrl`, and a history source on it. */
+export const programReader = (rpcUrl: string): ProgramReader => ({ rpcUrl, source: historySource(rpcUrl, TEST_BLOCK_WAITS) });
 
 /** A distinct, valid address for the i-th test program. */
 export async function programAddress(i: number): Promise<string> {

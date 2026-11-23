@@ -8,7 +8,11 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { appendOutbox, lockOutbox, programVersions, strategyInstructions, type Db } from "terminal-db";
 import { instructionList } from "./instructions";
+import type { HistorySource } from "./history";
 import { deployHistory, programDataHistory, readExecutable } from "./programs";
+
+/** Where versions are read from: the RPC, for accounts, and the indexer's history source, for ProgramData accounts' transactions. */
+export type ProgramReader = { rpcUrl: string; source: HistorySource };
 
 export type ProgramRole = "strategy" | "router";
 
@@ -42,11 +46,11 @@ export type RecordedVersion = {
  * history holds. Safe to call again for the same version: it fills in what it lacked (a
  * transaction served late) and writes nothing twice. Null when the account is no longer ProgramData.
  */
-export async function recordVersion(db: Db, rpcUrl: string, { program, role, programData, previousSlot }: VersionToRecord): Promise<RecordedVersion | null> {
+export async function recordVersion(db: Db, { rpcUrl, source }: ProgramReader, { program, role, programData, previousSlot }: VersionToRecord): Promise<RecordedVersion | null> {
   const executable = await readExecutable(rpcUrl, programData);
   if (!executable) return null;
   const { executableSha256, code, deploySlot: programDataSlot } = executable;
-  const writes = await programDataHistory(rpcUrl, programData);
+  const writes = await programDataHistory(source, programData);
   const deploys = writes.filter((w) => w.kind === "deploy");
   // The version in force is the code of the latest deploy at or before the ProgramData slot: an
   // extension since moved the slot and kept the code. A deploy in the slot itself wins over an
@@ -112,8 +116,8 @@ export async function recordVersion(db: Db, rpcUrl: string, { program, role, pro
  * Looks again for a recorded version's deploy transaction that the RPC had not served when the
  * version was recorded, without reading the program's bytes again; says whether it is found.
  */
-export async function signVersion(db: Db, rpcUrl: string, { program, programData, deploySlot }: { program: string; programData: string; deploySlot: bigint }): Promise<boolean> {
-  const own = (await deployHistory(rpcUrl, programData)).find((d) => d.deploySlot === deploySlot);
+export async function signVersion(db: Db, source: HistorySource, { program, programData, deploySlot }: { program: string; programData: string; deploySlot: bigint }): Promise<boolean> {
+  const own = (await deployHistory(source, programData)).find((d) => d.deploySlot === deploySlot);
   if (!own) return false;
   await db
     .update(programVersions)

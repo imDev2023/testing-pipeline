@@ -9,7 +9,7 @@ import { createDb } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { combineHandlers, indexTransactions, pipelineHandler, recordVersion, strategyCallsHandler, type RawTransaction } from "terminal-indexer";
 import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
-import { programDataAccount, upgradeTransaction } from "terminal-indexer/testing/programs";
+import { programDataAccount, programReader, upgradeTransaction } from "terminal-indexer/testing/programs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarketsPage, RouterVersions, StrategyInstructions, StrategyVersions, type ApiError } from "../src/contract";
 import { app } from "../src/index";
@@ -63,16 +63,16 @@ beforeAll(async () => {
     const strategyData = await programDataPda(address(STRATEGY));
     rpc.history.push(upgradeTransaction({ kind: "deploy", program: STRATEGY, programData: strategyData, slot: 525_100_000, signature: "strategy-deploy" }));
     rpc.accounts.set(strategyData, programDataAccount(525_100_000n, v1));
-    await recordVersion(db, rpc.url, { program: STRATEGY, role: "strategy", programData: strategyData, previousSlot: null });
+    await recordVersion(db, programReader(rpc.url), { program: STRATEGY, role: "strategy", programData: strategyData, previousSlot: null });
     rpc.history.push(upgradeTransaction({ kind: "upgrade", program: STRATEGY, programData: strategyData, slot: 525_400_000, signature: "strategy-upgrade" }));
     rpc.accounts.set(strategyData, programDataAccount(525_400_000n, v2));
-    await recordVersion(db, rpc.url, { program: STRATEGY, role: "strategy", programData: strategyData, previousSlot: 525_100_000n });
+    await recordVersion(db, programReader(rpc.url), { program: STRATEGY, role: "strategy", programData: strategyData, previousSlot: 525_100_000n });
     const routerData = await programDataPda(address(PIPELINE_PROGRAM_ADDRESS));
     rpc.accounts.set(routerData, programDataAccount(525_000_000n, routerBytes));
-    await recordVersion(db, rpc.url, { program: PIPELINE_PROGRAM_ADDRESS, role: "router", programData: routerData, previousSlot: null });
+    await recordVersion(db, programReader(rpc.url), { program: PIPELINE_PROGRAM_ADDRESS, role: "router", programData: routerData, previousSlot: null });
     rpc.history.push(upgradeTransaction({ kind: "upgrade", program: PIPELINE_PROGRAM_ADDRESS, programData: routerData, slot: 525_600_000, signature: "router-upgrade" }));
     rpc.accounts.set(routerData, programDataAccount(525_600_000n, routerBytes));
-    await recordVersion(db, rpc.url, { program: PIPELINE_PROGRAM_ADDRESS, role: "router", programData: routerData, previousSlot: 525_000_000n });
+    await recordVersion(db, programReader(rpc.url), { program: PIPELINE_PROGRAM_ADDRESS, role: "router", programData: routerData, previousSlot: 525_000_000n });
   } finally {
     await close();
   }

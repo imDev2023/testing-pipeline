@@ -8,7 +8,7 @@ import { address, getAddressEncoder, getBase58Decoder } from "@solana/kit";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { deployHistory, readDeploySlots, readExecutable, type RawTransaction } from "../src/index";
 import { fakeRpc, type FakeRpc } from "./fakeRpc";
-import { programAddress, programDataAccount, upgradeTransaction } from "./programs";
+import { programAddress, programDataAccount, programReader, upgradeTransaction } from "./programs";
 
 let rpc: FakeRpc;
 beforeEach(async () => {
@@ -67,7 +67,7 @@ describe("deployHistory", () => {
     const extend = upgradeTransaction({ kind: "extend", program, programData, slot: 425, signature: "extend" });
     const upgrade = upgradeTransaction({ kind: "upgrade", program, programData, slot: 430, signature: "upgrade" });
     rpc.history.push(deploy, failed, authority, extend, upgrade);
-    expect(await deployHistory(rpc.url, programData)).toEqual([
+    expect(await deployHistory(programReader(rpc.url).source, programData)).toEqual([
       { deploySlot: 400n, signature: "deploy", blockTime: new Date(400_000) },
       { deploySlot: 430n, signature: "upgrade", blockTime: new Date(430_000) },
     ]);

@@ -2,11 +2,16 @@
 // Pipeline's hosted devnet API is a test oracle, never a source. `terminal-api` backfills the
 // router's history under `wrangler dev` on a throwaway database; then its markets and strategies
 // must be the hosted API's, its trades the router's history, and for every market its trades the
-// hosted API's, as the project's devnet wallet's swaps must be. The hosted API indexes finalized
-// transactions only, so both sides are compared up to the slot both have reached.
+// hosted API's, as the project's devnet wallet's swaps must be; and every market's candles at each
+// length the hosted API serves must be its candles for the same base and quote, and a rebuild of every
+// candle from the trades must equal the candles folded as they were indexed. The hosted API indexes
+// finalized transactions only, so trades are compared up to the slot both have reached, and candles
+// once both hold the router's whole history.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Trade } from "terminal-api/contract";
-import { decodeRouterEvents, heliusSource, type RawTransaction } from "terminal-indexer";
+import { CANDLES } from "terminal-api/config";
+import type { Candle, Trade } from "terminal-api/contract";
+import { createDb, trades as tradesTable } from "terminal-db";
+import { decodeRouterEvents, heliusSource, rebuildCandles, writtenCandles, type RawTransaction } from "terminal-indexer";
 import { rpcUrl } from "./devnet";
 import { LocalApi } from "./localApi";
 
@@ -38,20 +43,6 @@ type HostedTrade = {
   integrator: string | null;
   integrator_fee: string;
 };
-
-/**
- * How many reads of the local API run at once. The local run has no Hyperdrive in front of Postgres,
- * so each request opens a connection of its own, and one request per market at once (devnet holds
- * well over a hundred) runs the Docker Postgres out of its 100 connections.
- */
-const LOCAL_READS_AT_ONCE = 8;
-
-/** `read` of every item, at most LOCAL_READS_AT_ONCE at a time, in the items' order. */
-async function inBatches<T, R>(items: T[], read: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = [];
-  for (let i = 0; i < items.length; i += LOCAL_READS_AT_ONCE) out.push(...(await Promise.all(items.slice(i, i + LOCAL_READS_AT_ONCE).map(read))));
-  return out;
-}
 
 /** The hosted API, kept under its read limit of 20 requests a second. */
 async function hosted<T>(path: string): Promise<T> {
@@ -133,7 +124,12 @@ describe.skipIf(!ready)("parity with Pipeline's hosted devnet API", () => {
       if (!more || !last) break;
       cursor = { signature: last.transaction.signatures[0]!, slot: last.slot, blockIndex: last.transactionIndex ?? null };
     }
-    const ours = (await inBatches(await api.markets(), (m) => api.trades({ market: m.address }))).flat().filter((t) => t.slot <= cutoff);
+    // A few markets at a time: each request opens its own database connection under `wrangler dev`, and
+    // the Docker Postgres takes 100, fewer than devnet's markets.
+    const ours: Trade[] = [];
+    const all = await api.markets();
+    for (let i = 0; i < all.length; i += 8) ours.push(...(await Promise.all(all.slice(i, i + 8).map((m) => api.trades({ market: m.address })))).flat());
+    ours.splice(0, ours.length, ...ours.filter((t) => t.slot <= cutoff));
     expect(onChain.length).toBeGreaterThan(0);
     for (const gap of HOSTED_API_GAPS) expect(onChain.some((s) => s.signature === gap.signature && s.market === gap.market), gap.signature).toBe(true);
     expect(sorted(ours.map(({ signature, market, net_sent, received }) => ({ signature, market, net_sent, received })))).toEqual(sorted(onChain));
@@ -157,5 +153,123 @@ describe.skipIf(!ready)("parity with Pipeline's hosted devnet API", () => {
     expect(ours.length).toBeGreaterThan(0);
     expect(sorted(ours.filter((t) => t.slot <= cutoff).map(fields))).toEqual(sorted(theirs.filter((t) => t.slot <= cutoff).map(fields)));
     console.log(`the project's devnet wallet: ${ours.length} swaps, equal to the hosted API's`);
+  });
+});
+
+/** The candle lengths the hosted API serves, by its names, which are the API's too. */
+const HOSTED_INTERVALS = { "1m": 60, "5m": 300, "15m": 900, "1h": 3_600, "4h": 14_400, "1d": 86_400 } as const;
+/** The most intervals one hosted candles request may span. */
+const HOSTED_RANGE = 5_000;
+
+type HostedCandle = { start: string; open: string; high: string; low: string; close: string; volume: string; trades: number };
+
+/**
+ * A positive decimal string rounded half up to `places` decimal places, without trailing zeros. The
+ * hosted API writes each price to a precision of its own, as Postgres's numeric division chooses it
+ * (24 decimal places for one price, 27 for another, seen on devnet on 2026-11-23); ours are written
+ * to PRICE_SIGNIFICANT_DIGITS, so ours rounded to the places of its value must equal it exactly.
+ */
+function roundTo(value: string, places: number): string {
+  const [whole = "0", fraction = ""] = value.split(".");
+  if (fraction.length <= places) return trimmed(value);
+  const digits = BigInt(whole + fraction.slice(0, places)) + (Number(fraction[places]) >= 5 ? 1n : 0n);
+  if (places === 0) return digits.toString();
+  const text = digits.toString().padStart(places + 1, "0");
+  return trimmed(`${text.slice(0, -places)}.${text.slice(-places)}`);
+}
+const placesOf = (value: string) => value.split(".")[1]?.length ?? 0;
+const trimmed = (value: string) => (value.includes(".") ? value.replace(/0+$/, "").replace(/\.$/, "") : value);
+/** An integer amount in a mint's smallest units, written in tokens. */
+const tokens = (raw: string, decimals: number) => trimmed(decimals ? `${raw.padStart(decimals + 1, "0").slice(0, -decimals)}.${raw.padStart(decimals + 1, "0").slice(-decimals)}` : raw);
+
+describe.skipIf(!ready)("candles", () => {
+  const api = new LocalApi(8830);
+  beforeAll(async () => {
+    await api.start();
+    // Both sides hold the router's whole history: ours reconciled until a run finds nothing newer, and
+    // the hosted API's finalized index past our newest transaction.
+    let cursor = (await api.reconcile()).cursor!;
+    for (;;) {
+      const deadline = Date.now() + 120_000;
+      while ((await hosted<{ last_indexed_slot: number }>("/health")).last_indexed_slot < cursor.slot) {
+        if (Date.now() > deadline) throw new Error(`the hosted API had not indexed slot ${cursor.slot} after two minutes`);
+        await new Promise((done) => setTimeout(done, 2_000));
+      }
+      const again = (await api.reconcile()).cursor!;
+      if (again.slot === cursor.slot) break;
+      cursor = again;
+    }
+  });
+  afterAll(() => api.dispose());
+
+  it("for every market with trades, equal the hosted API's at 1 m, 5 m, 15 m, 1 h, 4 h and 1 d for the same base and quote (PIPESCOPE-93)", async () => {
+    const markets = (await api.markets()).filter((m) => m.mints.length === 2);
+    let comparedMarkets = 0;
+    let comparedCandles = 0;
+    for (const market of markets) {
+      const marketTrades = await api.trades({ market: market.address });
+      if (!marketTrades.length) continue;
+      comparedMarkets++;
+      // The hosted API never indexed a gap's swap, so the candles holding it are left out, and only those.
+      const gapTimes = HOSTED_API_GAPS.filter((g) => g.market === market.address).map((g) => Date.parse(marketTrades.find((t) => t.signature === g.signature)!.block_time!) / 1000);
+      const decimals = (mint: string) => market.mints.find((m) => m.mint === mint)!.decimals!;
+      for (const [interval, seconds] of Object.entries(HOSTED_INTERVALS)) {
+        const ours = await api.candles(market.address, interval);
+        const pair = `base=${ours.base_mint}&quote=${ours.quote_mint}`;
+        const theirs = new Map<number, HostedCandle>();
+        const first = Date.parse(ours.candles[0]!.start) / 1000;
+        const now = Math.floor(Date.now() / 1000);
+        for (let from = first; from <= now; from += HOSTED_RANGE * seconds) {
+          const to = Math.min(from + (HOSTED_RANGE - 1) * seconds, now);
+          const page = await hosted<{ base: string; candles: HostedCandle[] }>(`/v1/markets/${market.address}/candles?interval=${interval}&${pair}&from=${from}&to=${to}`);
+          expect(page.base).toBe(ours.base_mint);
+          for (const c of page.candles) theirs.set(Date.parse(c.start) / 1000, c);
+        }
+        const held = (start: number) => gapTimes.some((t) => t >= start && t < start + seconds);
+        const view = (c: Candle) => {
+          const start = Date.parse(c.start) / 1000;
+          // Each price to the places the hosted API wrote the same candle's with.
+          const places = (key: "open" | "high" | "low" | "close") => placesOf(theirs.get(start)?.[key] ?? c[key]);
+          return {
+            start,
+            open: roundTo(c.open, places("open")),
+            high: roundTo(c.high, places("high")),
+            low: roundTo(c.low, places("low")),
+            close: roundTo(c.close, places("close")),
+            volume: tokens(c.volume_quote, decimals(ours.quote_mint)),
+            trades: c.trades,
+          };
+        };
+        const hostedView = ([start, c]: [number, HostedCandle]) => ({ start, open: trimmed(c.open), high: trimmed(c.high), low: trimmed(c.low), close: trimmed(c.close), volume: trimmed(c.volume), trades: c.trades });
+        expect(ours.candles.map(view).filter((c) => !held(c.start)), `${market.address} ${interval}`).toEqual([...theirs].sort(([a], [b]) => a - b).map(hostedView).filter((c) => !held(c.start)));
+        comparedCandles += ours.candles.length;
+      }
+    }
+    expect(comparedMarkets).toBeGreaterThan(0);
+    console.log(`${comparedMarkets} markets with trades: ${comparedCandles} candles at six lengths, equal to the hosted API's`);
+  });
+
+  it("rebuilt from the trades alone equal the candles folded as each swap was indexed, for every market, pair and length", async () => {
+    const { db, close } = createDb(api.databaseUrl);
+    try {
+      const pairs = await db.selectDistinct({ market: tradesTable.market, input: tradesTable.inputMint, output: tradesTable.outputMint }).from(tradesTable);
+      const seen = new Set<string>();
+      let compared = 0;
+      for (const { market, input, output } of pairs) {
+        const key = [market, ...[input, output].sort()].join(":");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        for (const { seconds, keepDays } of CANDLES) {
+          // 1 s and 15 s candles past their retention may already be pruned by the daily job; the rest are kept forever.
+          const kept = (c: { start: number }) => keepDays === null || c.start >= Date.now() / 1000 - keepDays * 86_400 + 3_600;
+          const written = (await writtenCandles(db, market, [input, output], seconds)).filter(kept);
+          expect((await rebuildCandles(db, market, [input, output], seconds)).filter(kept), `${key} ${seconds}s`).toEqual(written);
+          compared += written.length;
+        }
+      }
+      console.log(`${seen.size} market pairs: ${compared} candles rebuilt from trades, equal to those folded live`);
+    } finally {
+      await close();
+    }
   });
 });

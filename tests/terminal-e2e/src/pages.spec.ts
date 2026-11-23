@@ -11,11 +11,30 @@ const UNKNOWN_ADDRESS = "6efYq3Jt7k2bQxW9pLm4nR8sV1uZcA5dHgE2oTiwdnYp";
 // A market and a strategy of devnet's, both in the recorded fixtures: the buy wall AMM's demo market and its strategy.
 const MARKET = "7BctWoaSumdxkMBCXxMum59NV5CZJBvC33SCrcGa5CAK";
 const STRATEGY = "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6";
+// A market no swap has gone through, and one with a single swap, whose lone candle the chart still draws.
+const MARKET_WITHOUT_TRADES = "DH7QCdTHGsjHcsm7SgXYRgdQvX34VT8oMQkFWVoCe3SQ";
+const MARKET_WITH_ONE_TRADE = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
+
+/** A market page is ready once its chart, or the panel that stands in for it, and its trades have loaded. */
+const marketReady = (chart: "chart" | "none") => async (page: Page) => {
+  await expect(page.getByRole("link", { name: "Explorer" }).first()).toBeVisible();
+  const trades = page.getByRole("region", { name: "Trades" });
+  if (chart === "chart") {
+    await expect(page.getByText(/^Built from Pipeline's swap events on this market: [\d,]+ swaps? so far\./)).toBeVisible();
+    await expect(trades.getByRole("table")).toBeVisible();
+  } else {
+    await expect(page.getByText("No swap has gone through Pipeline on this market yet, so there is no price to chart.")).toBeVisible();
+    await expect(trades.getByText("No swap has gone through Pipeline on this market yet.")).toBeVisible();
+  }
+};
 
 const PAGES = [
   { name: "feed", path: "/", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1)).toBeVisible() },
   { name: "feed-strategies", path: "/?tab=strategies", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Strategies" }).getByRole("row").nth(1)).toBeVisible() },
-  { name: "market", path: `/markets/${MARKET}`, status: 200, ready: (page: Page) => expect(page.getByRole("link", { name: "Explorer" })).toBeVisible() },
+  { name: "market", path: `/markets/${MARKET}`, status: 200, ready: marketReady("chart") },
+  { name: "market-flipped", path: `/markets/${MARKET}?flip=1&interval=1h`, status: 200, ready: marketReady("chart") },
+  { name: "market-one-trade", path: `/markets/${MARKET_WITH_ONE_TRADE}`, status: 200, ready: marketReady("chart") },
+  { name: "market-no-trades", path: `/markets/${MARKET_WITHOUT_TRADES}`, status: 200, ready: marketReady("none") },
   {
     name: "strategy",
     path: `/strategies/${STRATEGY}`,

@@ -7,7 +7,7 @@
 import { BPF_LOADER_UPGRADEABLE_PROGRAM_ADDRESS, PROGRAMDATA_METADATA_LEN, programDataPda } from "@pipeline-sol/sdk";
 import { address, getBase58Encoder } from "@solana/kit";
 import { accountKeysOf, type CompiledInstruction, type RawTransaction } from "./decode";
-import { historySource, type Cursor } from "./history";
+import type { Cursor, HistorySource } from "./history";
 import { rpcCall } from "./rpc";
 
 /** The most accounts one `getMultipleAccounts` reads. */
@@ -112,8 +112,7 @@ export function programDataWriteOf(raw: RawTransaction, programData: string): Pr
 }
 
 /** Every write of a program's ProgramData slot, oldest first, from the account's whole history, which holds only the loader's transactions and is short. */
-export async function programDataHistory(rpcUrl: string, programData: string): Promise<ProgramDataWrite[]> {
-  const source = historySource(rpcUrl);
+export async function programDataHistory(source: HistorySource, programData: string): Promise<ProgramDataWrite[]> {
   const found: ProgramDataWrite[] = [];
   let cursor: Cursor | null = null;
   for (;;) {
@@ -128,6 +127,6 @@ export async function programDataHistory(rpcUrl: string, programData: string): P
 }
 
 /** Every deploy and upgrade of a program, oldest first: its versions. */
-export async function deployHistory(rpcUrl: string, programData: string): Promise<Deploy[]> {
-  return (await programDataHistory(rpcUrl, programData)).filter((w) => w.kind === "deploy").map(({ kind: _, ...deploy }) => deploy);
+export async function deployHistory(source: HistorySource, programData: string): Promise<Deploy[]> {
+  return (await programDataHistory(source, programData)).filter((w) => w.kind === "deploy").map(({ kind: _, ...deploy }) => deploy);
 }

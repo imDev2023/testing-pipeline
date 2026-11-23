@@ -10,7 +10,7 @@ import { createTestDatabase } from "terminal-db/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { recordVersion } from "../src/index";
 import { fakeRpc, type FakeRpc } from "./fakeRpc";
-import { programAddress, programDataAccount, upgradeTransaction } from "./programs";
+import { programAddress, programDataAccount, programReader, upgradeTransaction } from "./programs";
 
 const disc = (snake: string) => createHash("sha256").update(`global:${snake}`).digest().subarray(0, 8);
 const text = (s: string) => new TextEncoder().encode(s);
@@ -50,7 +50,7 @@ describe("recordVersion", () => {
       upgradeTransaction({ kind: "upgrade", program: strategy, programData, slot: 430, signature: "upgrade-sig" }),
     );
 
-    const outcome = await recordVersion(client.db, rpc.url, { program: strategy, role: "strategy", programData, previousSlot: null });
+    const outcome = await recordVersion(client.db, programReader(rpc.url), { program: strategy, role: "strategy", programData, previousSlot: null });
     expect(outcome).toEqual({ deploySlot: 430n, programDataSlot: 430n, signed: true, event: false, settled: true });
     expect((await versions(strategy)).map((v) => [v.deploySlot, v.backfilled, v.executableSha256, v.signature, v.blockTime?.toISOString(), v.anchor, v.flagged])).toEqual([
       [400n, true, null, "deploy-sig", new Date(400_000).toISOString(), null, false],
@@ -74,7 +74,7 @@ describe("recordVersion", () => {
       upgradeTransaction({ kind: "upgrade", program: strategy, programData, slot: 470, signature: "newest-sig" }),
     );
 
-    expect(await recordVersion(client.db, rpc.url, { program: strategy, role: "strategy", programData, previousSlot: 430n })).toMatchObject({ deploySlot: 470n, signed: true, event: true });
+    expect(await recordVersion(client.db, programReader(rpc.url), { program: strategy, role: "strategy", programData, previousSlot: 430n })).toMatchObject({ deploySlot: 470n, signed: true, event: true });
     expect((await versions(strategy)).map((v) => [v.deploySlot, v.backfilled, v.signature, v.executableSha256 === null])).toEqual([
       [400n, true, "deploy-sig", true],
       [430n, false, "upgrade-sig", false],
@@ -92,17 +92,17 @@ describe("recordVersion", () => {
     const bytes = code(["Deposit", "deposit"]);
     rpc.accounts.set(programData, programDataAccount(1_000n, bytes));
     rpc.history.push(upgradeTransaction({ kind: "deploy", program: extended, programData, slot: 1_000, signature: "first-deploy" }));
-    await recordVersion(client.db, rpc.url, { program: extended, role: "strategy", programData, previousSlot: null });
+    await recordVersion(client.db, programReader(rpc.url), { program: extended, role: "strategy", programData, previousSlot: null });
 
     // The deploy tool makes room first, and the watch can read the slot between the two.
     rpc.accounts.set(programData, programDataAccount(1_040n, bytes));
     rpc.history.push(upgradeTransaction({ kind: "extend", program: extended, programData, slot: 1_040, signature: "extend-sig" }));
-    expect(await recordVersion(client.db, rpc.url, { program: extended, role: "strategy", programData, previousSlot: 1_000n })).toMatchObject({ deploySlot: 1_000n, signed: true, event: false });
+    expect(await recordVersion(client.db, programReader(rpc.url), { program: extended, role: "strategy", programData, previousSlot: 1_000n })).toMatchObject({ deploySlot: 1_000n, signed: true, event: false });
     expect((await versions(extended)).map((v) => v.deploySlot)).toEqual([1_000n]);
 
     rpc.accounts.set(programData, programDataAccount(1_060n, code(["Deposit", "deposit"], ["Withdraw", "withdraw"])));
     rpc.history.push(upgradeTransaction({ kind: "upgrade", program: extended, programData, slot: 1_060, signature: "real-upgrade" }));
-    expect(await recordVersion(client.db, rpc.url, { program: extended, role: "strategy", programData, previousSlot: 1_000n })).toMatchObject({ deploySlot: 1_060n, signed: true, event: true });
+    expect(await recordVersion(client.db, programReader(rpc.url), { program: extended, role: "strategy", programData, previousSlot: 1_000n })).toMatchObject({ deploySlot: 1_060n, signed: true, event: true });
     expect((await versions(extended)).map((v) => [v.deploySlot, v.signature])).toEqual([
       [1_000n, "first-deploy"],
       [1_060n, "real-upgrade"],
@@ -114,13 +114,13 @@ describe("recordVersion", () => {
     const programData = await programDataPda(address(both));
     rpc.accounts.set(programData, programDataAccount(2_000n, code(["Deposit", "deposit"])));
     rpc.history.push(upgradeTransaction({ kind: "deploy", program: both, programData, slot: 2_000, signature: "deploy-2000" }));
-    await recordVersion(client.db, rpc.url, { program: both, role: "strategy", programData, previousSlot: null });
+    await recordVersion(client.db, programReader(rpc.url), { program: both, role: "strategy", programData, previousSlot: null });
     rpc.accounts.set(programData, programDataAccount(2_050n, code(["Deposit", "deposit"], ["Withdraw", "withdraw"])));
     rpc.history.push(
       upgradeTransaction({ kind: "extend", program: both, programData, slot: 2_050, signature: "extend-2050", blockIndex: 0 }),
       upgradeTransaction({ kind: "upgrade", program: both, programData, slot: 2_050, signature: "upgrade-2050", blockIndex: 1 }),
     );
-    expect(await recordVersion(client.db, rpc.url, { program: both, role: "strategy", programData, previousSlot: 2_000n })).toMatchObject({ deploySlot: 2_050n, signed: true, event: true, settled: true });
+    expect(await recordVersion(client.db, programReader(rpc.url), { program: both, role: "strategy", programData, previousSlot: 2_000n })).toMatchObject({ deploySlot: 2_050n, signed: true, event: true, settled: true });
     expect((await versions(both)).map((v) => [v.deploySlot, v.signature])).toEqual([
       [2_000n, "deploy-2000"],
       [2_050n, "upgrade-2050"],
@@ -133,9 +133,9 @@ describe("recordVersion", () => {
     const bytes = code(["Deposit", "deposit"]);
     rpc.accounts.set(programData, programDataAccount(3_000n, bytes));
     rpc.history.push(upgradeTransaction({ kind: "deploy", program: lagging, programData, slot: 3_000, signature: "deploy-3000" }));
-    await recordVersion(client.db, rpc.url, { program: lagging, role: "strategy", programData, previousSlot: null });
+    await recordVersion(client.db, programReader(rpc.url), { program: lagging, role: "strategy", programData, previousSlot: null });
     rpc.accounts.set(programData, programDataAccount(3_040n, bytes));
-    expect(await recordVersion(client.db, rpc.url, { program: lagging, role: "strategy", programData, previousSlot: 3_000n })).toMatchObject({ deploySlot: 3_000n, event: false, settled: false });
+    expect(await recordVersion(client.db, programReader(rpc.url), { program: lagging, role: "strategy", programData, previousSlot: 3_000n })).toMatchObject({ deploySlot: 3_000n, event: false, settled: false });
     expect((await versions(lagging)).map((v) => v.deploySlot)).toEqual([3_000n]);
     expect(await readOutbox(client.db, "lagging")).not.toContainEqual(expect.objectContaining({ subject: lagging }));
   });
@@ -144,9 +144,9 @@ describe("recordVersion", () => {
     const other = await programAddress(12);
     const programData = await programDataPda(address(other));
     rpc.accounts.set(programData, programDataAccount(900n, code(["Deposit", "deposit"])));
-    expect(await recordVersion(client.db, rpc.url, { program: other, role: "strategy", programData, previousSlot: 800n })).toMatchObject({ deploySlot: 900n, signed: false, event: true });
+    expect(await recordVersion(client.db, programReader(rpc.url), { program: other, role: "strategy", programData, previousSlot: 800n })).toMatchObject({ deploySlot: 900n, signed: false, event: true });
     rpc.history.push(upgradeTransaction({ kind: "upgrade", program: other, programData, slot: 900, signature: "late-sig" }));
-    expect(await recordVersion(client.db, rpc.url, { program: other, role: "strategy", programData, previousSlot: 800n })).toMatchObject({ deploySlot: 900n, signed: true, event: false });
+    expect(await recordVersion(client.db, programReader(rpc.url), { program: other, role: "strategy", programData, previousSlot: 800n })).toMatchObject({ deploySlot: 900n, signed: true, event: false });
     expect((await versions(other)).map((v) => v.signature)).toEqual(["late-sig"]);
   });
 
@@ -154,10 +154,10 @@ describe("recordVersion", () => {
     const programData = await programDataPda(address(router));
     const bytes = Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 9, 9]);
     rpc.accounts.set(programData, programDataAccount(600n, bytes));
-    await recordVersion(client.db, rpc.url, { program: router, role: "router", programData, previousSlot: null });
+    await recordVersion(client.db, programReader(rpc.url), { program: router, role: "router", programData, previousSlot: null });
     rpc.accounts.set(programData, programDataAccount(650n, bytes));
     rpc.history.push(upgradeTransaction({ kind: "upgrade", program: router, programData, slot: 650, signature: "router-upgrade" }));
-    expect(await recordVersion(client.db, rpc.url, { program: router, role: "router", programData, previousSlot: 600n })).toMatchObject({ deploySlot: 650n, signed: true, event: true });
+    expect(await recordVersion(client.db, programReader(rpc.url), { program: router, role: "router", programData, previousSlot: 600n })).toMatchObject({ deploySlot: 650n, signed: true, event: true });
     expect((await versions(router)).map((v) => [v.deploySlot, v.role, v.flagged, v.anchor, v.executableSha256])).toEqual([
       [600n, "router", false, null, sha(bytes)],
       [650n, "router", true, null, sha(bytes)],

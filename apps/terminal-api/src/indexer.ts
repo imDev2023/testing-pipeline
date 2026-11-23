@@ -2,13 +2,16 @@
 // owned here since, without Heat's graduated pools, Bundle Radar and keeper starts.
 //
 // The indexer as one Durable Object (docs/spec/pipescope-architecture.md, Indexer). The every-minute
-// cron's dispatcher calls it with the jobs ./config makes due; its work is ./indexerCore. It keeps
-// nothing in its own storage yet: the live socket and its alarm come with the live rooms (#118).
+// cron's dispatcher calls it with the jobs ./config makes due; its work is ./indexerCore. Its live
+// source, a `logsSubscribe` socket held only while a live room has a viewer, is ./liveSocket, whose
+// state and alarm live in this object's storage, the only thing it keeps there (Data); what it
+// indexes is published to the rooms with a viewer (./liveRoom).
 import { DurableObject } from "cloudflare:workers";
 import { createDb } from "terminal-db";
-import { RpcError } from "terminal-indexer";
+import { logsSubscribeRequest, parseLogsMessage, RpcError, type IndexResult } from "terminal-indexer";
 import type { Bindings } from "./env";
-import { IndexerCore } from "./indexerCore";
+import { IndexerCore, ROUTER } from "./indexerCore";
+import { LiveSocket, type LiveSocketState, type LiveStatus } from "./liveSocket";
 
 /** `GET /v1/indexer`: how the indexer stands, with no secret in it. */
 export type IndexerStatus = {
@@ -24,7 +27,12 @@ export type IndexerStatus = {
   watchedAt: string | null;
   /** What last failed, by job and kind of error; its detail stays in the logs, since it can name the database's host. */
   lastError: string | null;
+  /** The live socket: whether it is open, the rooms with a viewer keeping it so, when it closes, and when and why it last opened or closed. */
+  live: { open: boolean; rooms: string[]; closesAt: string | null; changedAt: string | null; reason: string | null };
 };
+
+const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
+const LIVE_STATE = "live";
 
 export class Indexer extends DurableObject<Bindings> {
   private core: IndexerCore | null = null;
@@ -34,9 +42,96 @@ export class Indexer extends DurableObject<Bindings> {
   private watchedAt: string | null = null;
   private lastError: string | null = null;
 
+  private queue: string[] = [];
+  private draining: Promise<void> | null = null;
+
   private indexer(): IndexerCore {
     this.core ??= new IndexerCore({ rpcUrl: this.env.RPC_URL, openDb: () => createDb(this.env.HYPERDRIVE.connectionString) });
     return this.core;
+  }
+
+  private readonly live = new LiveSocket({
+    now: () => Date.now(),
+    load: () => this.ctx.storage.get<LiveSocketState>(LIVE_STATE),
+    save: (state) => this.ctx.storage.put(LIVE_STATE, state),
+    setAlarm: (at) => this.ctx.storage.setAlarm(at),
+    clearAlarm: () => this.ctx.storage.deleteAlarm(),
+    // The router; strategy programs join with strategy versions (#117).
+    accounts: () => [ROUTER],
+    connect: (accounts, on) => this.openSocket(accounts, on),
+    reconcile: async () => void (await this.reconcile()),
+    transactions: (signatures) => this.reported(signatures),
+    viewersIn: (room) => this.env.LIVE_ROOMS.get(this.env.LIVE_ROOMS.idFromName(room)).viewers(),
+    log: (line) => console.log(line),
+  });
+
+  /** A live room's first viewer arrived (./liveRoom): the socket opens. */
+  async arrived(room: string): Promise<void> {
+    await this.live.arrived(room);
+  }
+
+  /** A live room's last viewer left: once none has one, the socket closes after the grace. */
+  async left(room: string): Promise<void> {
+    await this.live.left(room);
+  }
+
+  /** The socket's alarm (./liveSocket). */
+  async alarm(): Promise<void> {
+    await this.live.alarm();
+  }
+
+  /** The RPC's WebSocket, a `logsSubscribe` on each account, reporting each successful transaction. */
+  private async openSocket(accounts: string[], on: { transaction: (signature: string) => void; dropped: () => void }): Promise<{ close: () => void }> {
+    const response = await fetch(this.env.RPC_URL, { headers: { upgrade: "websocket" } });
+    const socket = response.webSocket;
+    // The RPC's URL carries its key, so only the status is named.
+    if (!socket) throw new Error(`the RPC answered ${response.status} to a WebSocket upgrade`);
+    socket.accept();
+    socket.addEventListener("message", (event) => {
+      const message = parseLogsMessage(typeof event.data === "string" ? event.data : "");
+      if (message.kind === "transaction" && !message.failed) on.transaction(message.signature);
+      else if (message.kind === "refused") {
+        // A socket without its subscription reports nothing: closed and counted as dropped, so the alarm opens it again.
+        this.failed("subscribing on the live socket", new Error(message.error));
+        socket.close(1011, "subscription refused");
+        on.dropped();
+      }
+    });
+    socket.addEventListener("close", () => on.dropped());
+    socket.addEventListener("error", () => on.dropped());
+    accounts.forEach((account, i) => socket.send(logsSubscribeRequest(i + 1, account)));
+    return { close: () => socket.close(1000, "no viewer") };
+  }
+
+  /** Transactions the socket reported, indexed in turn as each is served, and published. */
+  private reported(signatures: string[]) {
+    this.queue.push(...signatures);
+    this.draining ??= this.drain().finally(() => (this.draining = null));
+  }
+
+  private async drain() {
+    while (this.queue.length) {
+      const batch = this.queue.splice(0, this.queue.length);
+      try {
+        await this.publish(await this.indexer().indexSignatures(batch));
+      } catch (e) {
+        this.failed("indexing what the live socket reported", e);
+      }
+    }
+  }
+
+  /** Sends what was indexed to the rooms with a viewer; with none, nothing is read or sent. */
+  private async publish(indexed: IndexResult) {
+    const { rooms } = await this.live.status();
+    if (!rooms.length) return;
+    const events = await this.indexer().events(indexed, rooms);
+    await Promise.all(
+      [...events].map(([room, batch]) =>
+        this.env.LIVE_ROOMS.get(this.env.LIVE_ROOMS.idFromName(room))
+          .publish(batch)
+          .catch((e: unknown) => console.error(`publishing to ${room} failed`, e)),
+      ),
+    );
   }
 
   /**
@@ -53,8 +148,10 @@ export class Indexer extends DurableObject<Bindings> {
   async reconcile(version?: string): Promise<IndexerStatus> {
     this.checkVersion(version);
     try {
-      await this.indexer().reconcile();
+      const { indexed } = await this.indexer().reconcile();
       this.reconciledAt = new Date().toISOString();
+      // What reconciliation found reaches the pages too: the socket's misses, and every trade while it is closed.
+      await this.publish(indexed).catch((e: unknown) => this.failed("publishing what reconciliation indexed", e));
     } catch (e) {
       this.failed("reconciling the router", e);
       throw e;
@@ -101,8 +198,20 @@ export class Indexer extends DurableObject<Bindings> {
     return this.status();
   }
 
-  status(): IndexerStatus {
+  /** Drops candles past their retention, once a day. */
+  async prune(version?: string): Promise<number> {
+    this.checkVersion(version);
+    try {
+      return await this.indexer().prune();
+    } catch (e) {
+      this.failed("dropping candles past their retention", e);
+      throw e;
+    }
+  }
+
+  async status(): Promise<IndexerStatus> {
     const cursor = this.core?.position() ?? null;
+    const live: LiveStatus = await this.live.status();
     return {
       version: this.env.CF_VERSION_METADATA?.id ?? null,
       cursor: cursor && { signature: cursor.signature, slot: cursor.slot },
@@ -111,6 +220,7 @@ export class Indexer extends DurableObject<Bindings> {
       strategiesReconciledAt: this.strategiesReconciledAt,
       watchedAt: this.watchedAt,
       lastError: this.lastError,
+      live: { open: live.open, rooms: live.rooms, closesAt: iso(live.closesAt), changedAt: iso(live.changedAt), reason: live.reason },
     };
   }
 

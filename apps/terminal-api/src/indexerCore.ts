@@ -13,31 +13,49 @@
 import { PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import type { Db } from "terminal-db";
 import {
+  blockPositions,
   combineHandlers,
   deployHistory,
   historySource,
+  IndexBatchError,
+  indexTransactions,
   indexRegistry,
   readDeploySlots,
   recordVersion,
   signVersion,
   strategyCallsHandler,
   pipelineHandler,
+  pruneCandles,
   readCursor,
   readRegistry,
   reconcileAccount,
   refreshMarkets,
   reindexUnknown,
+  servedTransaction,
   addResult,
+  emptyResult,
   type Cursor,
   type HistorySource,
   type IndexResult,
   type TransactionHandler,
 } from "terminal-indexer";
-import { markets, programVersions, strategies } from "terminal-db";
-import { eq, isNull, max, sql } from "drizzle-orm";
-import { VERSION_TRANSACTION_LOOKS } from "./config";
+import { indexedTransactions, markets, programVersions, strategies, trades } from "terminal-db";
+import { eq, inArray, isNull, max, sql } from "drizzle-orm";
+import { CANDLES, LIVE_ROOM_TRADES_MAX, RPC_WAITS, VERSION_TRANSACTION_LOOKS } from "./config";
+import type { LiveEvent } from "./contract";
+import { marketViews, tradeViews } from "./views";
 
 export const ROUTER = PIPELINE_PROGRAM_ADDRESS;
+
+/** How many values one `in (...)` list holds, well inside Postgres's 65,535 parameters a query. */
+const IN_LIST_MAX = 1_000;
+
+/** Reads the rows for `values` a list at a time, so a long backlog never passes Postgres's parameter limit. */
+async function chunked<T>(values: string[], read: (part: string[]) => Promise<T[]>): Promise<T[]> {
+  const rows: T[] = [];
+  for (let i = 0; i < values.length; i += IN_LIST_MAX) rows.push(...(await read(values.slice(i, i + IN_LIST_MAX))));
+  return rows;
+}
 
 /** A short-lived database client: opened for one run and closed after it. */
 export type OpenDb = () => { db: Db; close: () => Promise<void> };
@@ -58,6 +76,8 @@ export type WatchOutcome = { quiet: boolean; recorded: string[]; upgraded: strin
 export class IndexerCore {
   private readonly source: HistorySource;
   private readonly handle: TransactionHandler;
+  /** A transaction's place in its block, its blocks kept for the live path. */
+  private readonly blockIndexOf: (slot: number, signature: string) => Promise<number>;
   /** The router's cursor, once read; undefined until the first run of this instance reads it. */
   private cursor: Cursor | null | undefined = undefined;
   /** Whether this instance has made its first run, which also reads every unread market and re-indexes what older code could not decode. */
@@ -87,8 +107,9 @@ export class IndexerCore {
   private runningWatch: Promise<WatchOutcome> | null = null;
 
   constructor(private readonly deps: { rpcUrl: string; openDb: OpenDb; source?: HistorySource; handler?: TransactionHandler }) {
-    this.source = deps.source ?? historySource(deps.rpcUrl);
-    this.handle = deps.handler ?? pipelineHandler();
+    this.source = deps.source ?? historySource(deps.rpcUrl, RPC_WAITS.block);
+    this.handle = deps.handler ?? pipelineHandler({ candleSeconds: CANDLES.map((c) => c.seconds) });
+    this.blockIndexOf = blockPositions(deps.rpcUrl, RPC_WAITS.block);
   }
 
   /** Where reconciliation of the router stands, once this instance knows. */
@@ -104,11 +125,11 @@ export class IndexerCore {
 
   private async reconcileOnce(): Promise<ReconcileOutcome> {
     if (this.cursor && this.started && this.unread.size === 0 && !(await this.source.hasAfter(ROUTER, this.cursor))) {
-      return { quiet: true, indexed: { counts: {}, markets: [] }, cursor: this.cursor };
+      return { quiet: true, indexed: emptyResult(), cursor: this.cursor };
     }
     return this.withDb(async (db) => {
       try {
-        const indexed: IndexResult = { counts: {}, markets: [] };
+        const indexed = emptyResult();
         if (!this.started) {
           // Once per instance, so after each deploy or restart: every market Postgres holds as never
           // read is read with this run's, and what older code could not decode is read again. A
@@ -159,6 +180,86 @@ export class IndexerCore {
   }
 
   /**
+   * The live path: transactions the socket reported, each fetched once the RPC serves it, with its
+   * place in its block, and indexed; one already indexed is not asked for again. A transaction not
+   * served in time is left to reconciliation, which never passes it by.
+   */
+  async indexSignatures(signatures: string[]): Promise<IndexResult> {
+    const wanted = [...new Set(signatures)];
+    if (!wanted.length) return emptyResult();
+    return this.withDb(async (db) => {
+      const known = new Set(
+        (await chunked(wanted, (part) => db.select({ signature: indexedTransactions.signature }).from(indexedTransactions).where(inArray(indexedTransactions.signature, part)))).map((r) => r.signature),
+      );
+      const indexed = emptyResult();
+      // Each on its own: one that cannot be served or indexed never loses the others, which are
+      // committed already and which reconciliation would not report again.
+      for (const signature of wanted) {
+        if (known.has(signature)) continue;
+        try {
+          const raw = await servedTransaction(this.deps.rpcUrl, signature, { ...RPC_WAITS.transaction, blockIndexOf: this.blockIndexOf });
+          if (!raw) {
+            console.warn(`transaction ${signature} was not served in time; reconciliation will index it`);
+            continue;
+          }
+          addResult(indexed, await indexTransactions(db, this.handle, [raw]));
+        } catch (e) {
+          if (e instanceof IndexBatchError) addResult(indexed, e.result);
+          console.error(`indexing ${signature} from the live socket failed; reconciliation will index it`, e);
+        }
+      }
+      try {
+        await this.refresh(db, indexed.markets);
+      } catch (e) {
+        // They stay unread for the next run; what was indexed is still handed on.
+        console.error("reading the markets the live socket touched failed; the next run reads them", e);
+      }
+      this.learn(indexed);
+      return indexed;
+    });
+  }
+
+  /**
+   * What an indexing run means to the live rooms that have a viewer (`rooms`, by name): each new swap
+   * for its market's room, and each market it touched, new or changed, for the feed's room and its
+   * own. The database is read only when such a room exists.
+   */
+  async events(indexed: IndexResult, rooms: readonly string[]): Promise<Map<string, LiveEvent[]>> {
+    const watched = new Set(rooms);
+    const feed = watched.has("feed");
+    const touched = indexed.markets.filter((m) => feed || watched.has(`market:${m}`));
+    const events = new Map<string, LiveEvent[]>();
+    if (!touched.length) return events;
+    const add = (room: string, event: LiveEvent) => events.set(room, [...(events.get(room) ?? []), event]);
+    return this.withDb(async (db) => {
+      const keys = new Set(indexed.trades.map((t) => `${t.signature}:${t.eventIndex}`));
+      const signatures = [...new Set(indexed.trades.map((t) => t.signature))];
+      const tradeRows = (await chunked(signatures, (part) => db.select().from(trades).where(inArray(trades.signature, part)))).filter(
+        (t) => keys.has(`${t.signature}:${t.eventIndex}`) && watched.has(`market:${t.market}`),
+      );
+      tradeRows.sort((x, y) => Number(x.slot - y.slot) || (x.blockIndex ?? -1) - (y.blockIndex ?? -1) || x.eventIndex - y.eventIndex);
+      // A room is sent its new swaps, or told to resync when there are more than it is sent at once.
+      const byMarket = new Map<string, typeof tradeRows>();
+      for (const t of tradeRows) byMarket.set(t.market, [...(byMarket.get(t.market) ?? []), t]);
+      for (const [market, rows] of byMarket) {
+        if (rows.length > LIVE_ROOM_TRADES_MAX) add(`market:${market}`, { type: "resync" });
+        else for (const trade of await tradeViews(db, rows)) add(`market:${market}`, { type: "trade", trade });
+      }
+      const marketRows = await chunked(touched, (part) => db.select().from(markets).where(inArray(markets.address, part)));
+      for (const market of await marketViews(db, marketRows)) {
+        if (watched.has(`market:${market.address}`)) add(`market:${market.address}`, { type: "market", market });
+        if (feed) add("feed", { type: "market", market });
+      }
+      return events;
+    });
+  }
+
+  /** Drops candles past their length's retention (`CANDLES`, PIPESCOPE-30); returns how many went. */
+  prune(now?: number): Promise<number> {
+    return this.withDb((db) => pruneCandles(db, CANDLES, now));
+  }
+
+  /**
    * Reads the accounts of the markets named and of every market still unread; if the read fails,
    * they all stay unread for the next run.
    */
@@ -204,7 +305,7 @@ export class IndexerCore {
       const cursor = this.strategyCursors.get(program);
       if (cursor === undefined || (await this.hasNew(program, cursor))) due.push(program);
     }
-    const indexed: IndexResult = { counts: {}, markets: [] };
+    const indexed = emptyResult();
     if (!due.length) return { quiet: true, indexed };
     const handle = combineHandlers(this.handle, strategyCallsHandler((program) => watched.has(program)));
     return this.withDb(async (db) => {
@@ -269,7 +370,7 @@ export class IndexerCore {
     // Upgrades whose transaction was not served yet: asked of the chain first, written only once found.
     const signed: { program: string; programData: string; deploySlot: bigint }[] = [];
     for (const [program, u] of this.unsigned) {
-      if ((await deployHistory(this.deps.rpcUrl, u.programData)).some((d) => d.deploySlot === u.deploySlot)) signed.push({ program, ...u });
+      if ((await deployHistory(this.source, u.programData)).some((d) => d.deploySlot === u.deploySlot)) signed.push({ program, ...u });
       else if (++u.looks >= VERSION_TRANSACTION_LOOKS) this.unsigned.delete(program);
     }
 
@@ -281,7 +382,7 @@ export class IndexerCore {
         const role = program === ROUTER ? "router" : "strategy";
         const previousSlot = this.versionSlots.get(program) ?? null;
         try {
-          const recorded = await recordVersion(db, this.deps.rpcUrl, { program, role, programData, previousSlot });
+          const recorded = await recordVersion(db, { rpcUrl: this.deps.rpcUrl, source: this.source }, { program, role, programData, previousSlot });
           // Not settled (the slot's transaction not served, the code unchanged): asked again on the next watch.
           if (recorded && !recorded.settled) continue;
           known.set(program, seenSlot);
@@ -302,7 +403,7 @@ export class IndexerCore {
         }
       }
       for (const s of signed) {
-        if (await signVersion(db, this.deps.rpcUrl, s)) this.unsigned.delete(s.program);
+        if (await signVersion(db, this.source, s)) this.unsigned.delete(s.program);
       }
       outcome.quiet = outcome.recorded.length === 0;
       if (failed.length) throw new AggregateError(failed.map((f) => f.error), `recording versions of ${failed.map((f) => f.program).join(", ")} failed`);

@@ -72,7 +72,7 @@ describe("strategyCallsHandler", () => {
   it("stores a custom action called straight on the strategy, and names the market whose state it touched to be read again", async () => {
     await indexTransactions(client.db, pipelineHandler(), [registered, created]);
     const result = await indexTransactions(client.db, handler(), [customAction("custom-1", MARKET_STATE)]);
-    expect(result).toEqual({ counts: { strategyCalls: 1 }, markets: [MARKET] });
+    expect(result).toEqual({ counts: { strategyCalls: 1 }, markets: [MARKET], trades: [] });
     expect(await calls()).toEqual([
       expect.objectContaining({ signature: "custom-1", instructionIndex: 0, innerIndex: -1, discriminator: disc("distribute"), signers: [CREATOR], invokedBy: null, slot: 525_300_000n, blockIndex: 3, blockTime: new Date(1_795_500_000_000) }),
     ]);

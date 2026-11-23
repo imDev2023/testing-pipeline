@@ -115,16 +115,16 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - **ProgramData watch** every minute: one `getMultipleAccounts` with a 45-byte `dataSlice` per 100 programs reads each strategy's and the router's last-deploy slot.
   A changed slot on a strategy is a new strategy version: it is recorded, a Canary run of all its markets starts, a verified build is requested if a source lead exists, and the strategy's markets are re-read.
   A changed slot on the router is recorded and flagged, and starts a Canary run of every market, since a router upgrade can change event layouts; events the decoder does not know are kept and indexed again by newer code.
-  A version is the code of one deploy or upgrade (the loader's `DeployWithMaxDataLen` or `Upgrade`, at the top level or through a multisig), keyed by that transaction's slot; an `ExtendProgram`, which a deploy tool sends just before an upgrade to make room, moves the ProgramData slot and keeps the code, so it is no new version, and a deploy in the same slot as an extension wins over it; while the RPC has not served the transaction that moved the slot and the code is the version's before, nothing is recorded and the next watch asks again, since an extension and an upgrade to the same bytes look alike until then (`PIPESCOPE-107`).
+  A version is the code of one deploy or upgrade (the loader's `DeployWithMaxDataLen` or `Upgrade`, at the top level or through a multisig), keyed by that transaction's slot; an `ExtendProgram`, which a deploy tool sends just before an upgrade to make room, moves the ProgramData slot and keeps the code, so it is no new version, and a deploy in the same slot as an extension wins over it; while the RPC has not served the transaction that moved the slot and the code is the version's before, nothing is recorded and the next watch asks again, since an extension and an upgrade to the same bytes look alike until then (`PIPESCOPE-113`).
   The ProgramData slot last seen is kept with the version in force, so a new instance of the indexer does not take an extension for a change; a version recorded before its transaction is served is looked for again on each watch, at most `VERSION_TRANSACTION_LOOKS` times.
   A program seen for the first time has its version in force recorded with its bytes, and its earlier versions backfilled from the deploys in its ProgramData account's history, without bytes, since those are gone; a first sight is no upgrade and starts nothing.
 - **New markets**: each `MarketCreated`, and each market the registry snapshot finds, starts that market's Canary runs on the schedule of [`pipescope-canary.md`](pipescope-canary.md), When Canary runs.
 - **Strategy-program calls**: every instruction the indexer sees on a strategy program is stored with its caller, which Canary's `custom_instructions` result reads as who has called each instruction.
-  An instruction's callers are the transaction's signers among its accounts, and the program that invoked it is kept beside them; a failed transaction changed nothing and stores no call (`PIPESCOPE-108`).
+  An instruction's callers are the transaction's signers among its accounts, and the program that invoked it is kept beside them; a failed transaction changed nothing and stores no call (`PIPESCOPE-114`).
   Calls are counted by discriminator over the strategy program's whole history, so an instruction keeps its count across versions.
 - **Instruction lists**: when a strategy version is recorded, `terminal-api` reads its program's bytes once and stores the instructions compiled into it, as [`pipescope-canary.md`](pipescope-canary.md) (Custom instructions are listed, not called) defines them; the facts panel, the forms' instruction check, the explainer's F items and Canary's snapshot all read that one list (`PIPESCOPE-92`).
-  A name is every prefix of the letters and digits after "Instruction: ", since the next string in the bytes can begin with any letter (devnet's outside builder compiles in "SetMetadatafactory"), and the longest whose discriminator is in the code is kept; a discriminator counts side by side, or split over two instruction slots as a 64-bit immediate, as `match` arms compile it (`PIPESCOPE-109`).
-- **Events for what follows**: a new strategy, a new market, a new strategy version and a router upgrade are each written once to one outbox table, `outbox_events`, in the order seen, keyed so the same thing seen twice (by its event and by the snapshot) is one event; Canary's runs and the Telegram bot's queue each read on from a cursor of their own in `outbox_cursors` (`readOutbox`, `ackOutbox` in `packages/terminal-db`), so a reader that fails reads the event again (`PIPESCOPE-110`).
+  A name is every prefix of the letters and digits after "Instruction: ", since the next string in the bytes can begin with any letter (devnet's outside builder compiles in "SetMetadatafactory"), and the longest whose discriminator is in the code is kept; a discriminator counts side by side, or split over two instruction slots as a 64-bit immediate, as `match` arms compile it (`PIPESCOPE-115`).
+- **Events for what follows**: a new strategy, a new market, a new strategy version and a router upgrade are each written once to one outbox table, `outbox_events`, in the order seen, keyed so the same thing seen twice (by its event and by the snapshot) is one event; Canary's runs and the Telegram bot's queue each read on from a cursor of their own in `outbox_cursors` (`readOutbox`, `ackOutbox` in `packages/terminal-db`), so a reader that fails reads the event again (`PIPESCOPE-116`).
 - **Market accounts**: after each event or custom action that touches a market, its market state and vaults are re-read; there are no account subscriptions.
 - **Mints**: when a market brings a mint not yet seen, its mint account and on-chain token metadata are read once and stored, for the facts (Pipeline's trust flags) and for symbols and images, which `pipescope.md` treats as untrusted.
 - **Unknown or failed decodes** are kept with the transaction, and re-indexing transactions first indexed by older code is Top-pad's `reindexTransactions`.
@@ -144,13 +144,20 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - Each trade is folded into its candle at every length the config module lists as it is indexed, by trade order (slot, in-block position, event index) rather than arrival, the same fold a rebuild makes (Top-pad's `candles.ts`); any candle can be rebuilt from trades.
 - Candles are kept per market and mint pair, since a market has two to four mints; a trade's price is `received / net_sent` for its pair (Pipeline's integrator guide); which mint of a pair is shown as the quote is for Aviary's v1 scope and screens.
 - Lengths and retention as Top-pad's, kept in the config module (`PIPESCOPE-30`): 1 s, 15 s, 1 m, 5 m, 15 m, 1 h, 4 h and 1 d; 1 s candles kept 7 days, 15 s candles 30 days, coarser ones and all trades forever.
+  Candles past their retention are dropped once a day, so the database wakes for it rarely (`PIPESCOPE-109`).
+- A swap's candle is the one its block's time falls in, which is where Pipeline's hosted API places it and can be a second later than the event's own clock; the event's clock serves only a block whose time is unknown (`PIPESCOPE-108`).
+- Prices are kept exactly: each open, high, low and close is the reduced fraction of the two amounts of the swap that set it, the pair's mints kept in address order, so a candle reads exactly either way round and at any decimals (`PIPESCOPE-107`).
+- `GET /v1/markets/{market}/candles?interval=&base=&quote=&limit=&from=` serves a length's newest candles, oldest first, 1,000 unless asked for up to 5,000 (`PAGE_LIMITS`), for the pair named by `base` and `quote` or the market's own, each price written to 36 significant digits (`PRICE_SIGNIFICANT_DIGITS`) and each series with `trade_count`, every swap of the pair it is built from (`PIPESCOPE-107`).
 - The API returns `quote_mint` and `base_mint` with every market, candle series and trade, from the quote mint order in the config module ([`pipescope-screens.md`](pipescope-screens.md), Price direction).
 
 ### Live rooms
 
 - One `LiveRoom` Durable Object per market and one for the feed, holding hibernatable browser WebSockets, so they cost no duration while idle; the indexer publishes each decoded trade, new market and new strategy version to its room, and rooms batch at the interval in the config module, 100 ms (`PIPESCOPE-31`).
-- A reconnecting browser resyncs from its last slot through the API.
-- The rooms tell the indexer when the first viewer arrives and when the last one leaves, which opens and closes its socket.
+- A browser opens `/v1/live/markets/{market}` or `/v1/live/feed`; a market's room is sent each new swap as the API's trade, and the feed's room and the market's own each market new or changed (its vaults, its last 24 hours) as the API's market, so a page puts each in place by its key and shows it once (`PIPESCOPE-110`).
+  The indexer publishes what the live path and reconciliation index, and only to rooms with a viewer, so with none it reads and sends nothing; a room due more than 100 new swaps at once (`LIVE_ROOM_TRADES_MAX`, as after a long backlog) is told to resync instead.
+- A browser resyncs through the API from its last slot each time it joins a room, the first time included: `GET /v1/markets/{market}/trades?after=` answers only the trades newer than the newest it shows, and when they fill a page, that page replaces the list (`PIPESCOPE-110`).
+- The rooms tell the indexer as each viewer arrives and when the last one leaves, which opens and closes its socket (a room the indexer did not hear of, as during a deploy, is counted at its next viewer); while it is open, its alarm also asks each room with a viewer how many it holds, so a room whose browsers left unseen never keeps the socket open (`PIPESCOPE-110`).
+- `GET /v1/indexer` shows the socket's state, the rooms keeping it open and when it closes, from the indexer's storage, which also records when and why it last opened or closed; the indexer logs each.
 
 ## API
 
@@ -263,14 +270,16 @@ Each is a named constant; the pages and the Telegram bot read what they show fro
 | Registry snapshot, ProgramData watch | every 10 minutes, every minute | `PIPESCOPE-28` |
 | Socket: reopen alarm, close after the last viewer | 15 s, 3 minutes | `PIPESCOPE-27`, `PIPESCOPE-28` |
 | Candle lengths and retention | as [Candles](#candles) | `PIPESCOPE-30` |
+| Candle pruning | once a day | `PIPESCOPE-109` |
+| Candle prices written to; candles a request is served, by default and at most | 36 significant digits; 1,000 and 5,000 | `PIPESCOPE-107` |
 | Live-room batching | 100 ms | `PIPESCOPE-31` |
 | Fast path: confirmation poll | every 300 ms | `PIPESCOPE-33` |
 | Metadata fetcher limits and re-fetch interval | as [Metadata fetcher](#metadata-fetcher), every hour | `PIPESCOPE-36` |
 | Quote mint order | wrapped SOL, then the cluster's USDC, then the later mint of the pair | `PIPESCOPE-74` |
 | Token image types and size | PNG, JPEG or WebP, at most 1 MB | `PIPESCOPE-82` |
 | Canary's schedule | as [`pipescope-canary.md`](pipescope-canary.md), When Canary runs | `CANARY-22`, `CANARY-23` |
-| ProgramData watch: looks for a version's transaction the RPC had not served | 30 | `PIPESCOPE-107` |
-| Signers listed with each of a strategy's instructions, most calls first | 100 | `PIPESCOPE-108` |
+| ProgramData watch: looks for a version's transaction the RPC had not served | 30 | `PIPESCOPE-113` |
+| Signers listed with each of a strategy's instructions, most calls first | 100 | `PIPESCOPE-114` |
 | Public caches | up to 60 s stale | `PIPESCOPE-32` |
 | Keeper page: "looks stopped" after the runner's `SWEEP_INTERVAL` plus, and the latest jobs shown | 5 minutes, 20 | `PIPESCOPE-104` |
 | Keeper heartbeats: largest clock difference, fewest seconds between two of one kind | 2 minutes, 30 s | `SUITE-57` |

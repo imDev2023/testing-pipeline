@@ -158,9 +158,66 @@ export const Trade = z.object({
 });
 export type Trade = z.infer<typeof Trade>;
 
-/** Trades, newest first; `next` is the `before` of the following page, or null after the last. */
+/**
+ * Trades, newest first; `next` is the `before` of the following page, or null after the last. Asked
+ * with `after` (a reconnecting page's resync), it holds only trades newer than that cursor, the
+ * newest of them; `next` is then null when they all fit, or else the `before` of the older ones
+ * still between the page and the cursor.
+ */
 export const TradesPage = z.object({ trades: z.array(Trade), next: z.string().nullable() });
 export type TradesPage = z.infer<typeof TradesPage>;
+
+/**
+ * What a live room sends a browser (docs/spec/pipescope-architecture.md, Live rooms): a swap just
+ * indexed, to a market's room; a market new or changed (its liquidity, its last 24 hours), to the
+ * feed's room and the market's own. A page puts each in place by its key, so one that arrives twice,
+ * or again in a resync through the API, is shown once.
+ */
+export const LiveEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("trade"), trade: Trade }),
+  z.object({ type: z.literal("market"), market: Market }),
+  /** More new swaps than a room is sent at once landed (LIVE_ROOM_TRADES_MAX): the page catches up through the API, as after a reconnection. */
+  z.object({ type: z.literal("resync") }),
+]);
+export type LiveEvent = z.infer<typeof LiveEvent>;
+
+/** One message of a live room: the events gathered over its batching interval (PIPESCOPE-31). */
+export const LiveMessage = z.object({ events: z.array(LiveEvent) });
+export type LiveMessage = z.infer<typeof LiveMessage>;
+
+/** A price: an amount of the quote mint for one of the base mint, after both mints' decimals, as a decimal string. */
+const Price = z.string().regex(/^\d+(\.\d+)?$/);
+
+/** One candle: its start, its first, highest, lowest and last price, what its swaps moved of each mint, and how many there were. */
+export const Candle = z.object({
+  start: Time,
+  open: Price,
+  high: Price,
+  low: Price,
+  close: Price,
+  /** In the base and quote mints' smallest units. */
+  volume_base: Amount,
+  volume_quote: Amount,
+  trades: z.number().int(),
+});
+export type Candle = z.infer<typeof Candle>;
+
+/**
+ * `GET /v1/markets/{market}/candles?interval=&base=&quote=&limit=&from=`: a market's candles of one
+ * length for a pair, oldest first, only those with swaps. The pair is the one asked for by `base` and
+ * `quote`, or the market's own by the quote mint order (PIPESCOPE-74).
+ */
+export const Candles = z.object({
+  market: Address,
+  interval: z.string(),
+  seconds: z.number().int(),
+  base_mint: Address,
+  quote_mint: Address,
+  /** Every swap of the pair on this market that the candles are built from, all time. */
+  trade_count: z.number().int(),
+  candles: z.array(Candle),
+});
+export type Candles = z.infer<typeof Candles>;
 /**
  * The keeper runner's passes (docs/spec/keeper-runner.md, "Triggers"): `start` and `once` run every
  * job, the others their own; `retry` re-runs a failed job, or one refused for a later slot.

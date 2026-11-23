@@ -52,6 +52,8 @@ export default defineConfig({
       })),
     ),
     { name: "behaviour", testMatch: /behaviour\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
+    // Live updates: swaps landed on devnet, or announced on the fixture socket (src/live.ts).
+    { name: "live", testMatch: /live\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
     { name: "api", testMatch: /api\.spec\.ts/ },
   ],
   webServer: [

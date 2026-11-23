@@ -849,7 +849,7 @@ Before the tests, `src/global-setup.ts` fires the cron and waits for the indexer
 ### Aviary's devnet tests
 
 `tests/devnet` holds the indexer's restart test and the parity checks against Pipeline's hosted devnet API (`docs/spec/pipescope-architecture.md`, Indexer).
-Each starts its own `terminal-api` under `wrangler dev`, on a throwaway database made on `TEST_DATABASE_URL` and on ports 8822 and 8824, so it never meets a local run already up; the restart test spends a little devnet SOL in fees from the project's devnet wallet.
+Each starts its own `terminal-api` under `wrangler dev`, on a throwaway database made on `TEST_DATABASE_URL` and on a port of its own from 8822 up (the candle checks on 8830), so it never meets a local run already up, and refuses to start on a port another process holds; the restart test spends a little devnet SOL in fees from the project's devnet wallet.
 
 ```sh
 direnv exec "<main checkout>" pnpm --filter terminal-devnet devnet

@@ -10,8 +10,8 @@ import { getBase58Encoder } from "@solana/kit";
 import { and, eq, inArray } from "drizzle-orm";
 import { markets, strategyCalls, type Db } from "terminal-db";
 import { accountKeysOf, type CompiledInstruction, type RawTransaction } from "./decode";
-import type { IndexResult, TransactionHandler } from "./handler";
-import { addResult } from "./result";
+import type { TransactionHandler } from "./handler";
+import { addResult, emptyResult } from "./result";
 
 const base58 = getBase58Encoder();
 const hex = (bytes: ArrayLike<number>) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -57,7 +57,7 @@ function everyInstruction(raw: RawTransaction, keys: string[]): Call[] {
  */
 export function strategyCallsHandler(isStrategy: (program: string) => boolean): TransactionHandler {
   return async (db, raw) => {
-    const result: IndexResult = { counts: {}, markets: [] };
+    const result = emptyResult();
     if (raw.meta === null || raw.meta.err !== null) return result;
     const keys = accountKeysOf(raw);
     const signerCount = raw.transaction.message.header?.numRequiredSignatures ?? 1;
@@ -100,7 +100,7 @@ export function strategyCallsHandler(isStrategy: (program: string) => boolean): 
 /** One handler that runs each of `handlers` on every transaction, in order, and adds up what they wrote. */
 export function combineHandlers(...handlers: TransactionHandler[]): TransactionHandler {
   return async (db: Db, raw) => {
-    const result: IndexResult = { counts: {}, markets: [] };
+    const result = emptyResult();
     for (const handle of handlers) addResult(result, await handle(db, raw));
     return result;
   };
