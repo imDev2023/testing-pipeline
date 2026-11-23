@@ -3,7 +3,7 @@
 The Canary checks' binary: it copies one Pipeline market into LiteSVM and trades it the way a trader would, then writes one Canary result per check.
 What the checks are and why is [`docs/spec/pipescope-canary.md`](../../docs/spec/pipescope-canary.md); where the binary runs is [`docs/spec/pipescope-architecture.md`](../../docs/spec/pipescope-architecture.md), "Canary runner".
 
-This crate runs `readable`, `conformance`, the exit test (`exit_sizes`, `exit_hold`, `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred` and `exit_queue`), `quote_matches_swap` and `cost`, and the control checks `direct_call`, `token_authorities`, `transaction_accounts`, `contained_mint` and `custom_instructions`: all sixteen of `CANARY-15`.
+This crate runs `readable`, `conformance`, the exit test (`exit_sizes`, `exit_hold`, `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred` and `exit_queue`), `quote_matches_swap` and `cost`, and the control checks `direct_call`, `token_authorities`, `transaction_accounts`, `contained_mint`, `outside_supply` and `custom_instructions`: all seventeen of `CANARY-15`.
 Every trade of every check passes the transfer-hook accounts its mints need, resolved as `pipeline-check` resolves them.
 
 ## Run it
@@ -44,10 +44,13 @@ The seed is chosen at random once per run and every wallet of the run comes from
 - `src/swap.rs`: the one swap function behind the licence seam (`CANARY-26`) and its two implementations: `ThroughRouter`, the router's own bytes, and `DirectToStrategy`, the input's transfer, the strategy's `pipeline_swap` signed by the market PDA, Pipeline's Apache-2.0 settlement code and the fee, taken from the output on a trade into the market's fee mint and from the input otherwise (Pipeline 0.3), in the router's order (`CANARY-45`); `config::SWAP_PATH` is the one place a run's path is chosen, and `tests/swap_paths.rs` shows every check gives the same result on both.
 - `src/hooks.rs`: the transfer-hook accounts of every trade, with `pipeline-check`'s resolver: the input mint's as the router's `input_hook_accounts`, the output mint's after the strategy's own accounts.
 - `src/trader.rs`: a trade prepared without being sent (accounts resolved, quoted, hook accounts found), which every leg sends and the control checks use around their own calls.
+- `src/token_account.rs`: the token accounts the run writes for its wallets, `pipeline-check`'s with, for a Token-2022 mint, the immutable owner extension every associated token account carries, which the containment hook requires of a contained token's destination (`HOOK-47`).
 - `src/trade.rs`: a trader's legs: resolve the strategy's accounts in the current state, quote with `pipeline-quoter` holding only what an integrator holds, swap, compare.
 - `src/sizes.rs`: the money side and the sizes; `src/bands.rs`: the pass and fail bands.
 - `src/clock.rs`: the clock positions, waits forward and the launch clock back, moving slot, epoch and Unix time together at the rates in `config.rs`.
 - `src/checks/`: each check as a measurement in the copy and a judgement that is a pure function of it.
+  `conformance.rs` counts `pipeline-check`'s `quote_matches_swap`, `exact_out_refund` and `round_trip` as known on a contained token's home market when they fail only with error 6023, because `pipeline-check`'s own traders lack that extension; known until Pipeline's checker writes it.
+  Since `pipeline-check`'s failure text does not name the program, its `probe_hook` first shows, in a fresh copy, that the mint's hook config names this market and that a buy into an account like `pipeline-check`'s is refused with 6023 by the containment hook itself.
   `exits.rs` holds what the checks over time and across wallets share: the reference amount they trade (the reference size, or its stand-in from `exit_sizes`), the swaps they commit for `quote_matches_swap`, and `could_not_sell_back`, which every exit record carries in its numbers (`CANARY-21`, `CANARY-38`); `timed.rs` judges the three checks over time against the present.
 - `src/failure.rs`: how a failure is named; `src/record.rs`: the records and the roll-up.
 - `src/http.rs`: the endpoint; `src/main.rs`: the command.
@@ -56,14 +59,14 @@ Pipeline's crates come from crates.io at exact versions in `../Cargo.toml` (`PIP
 
 ## Test it
 
-The tests build a small cluster in LiteSVM from devnet's router, checked against the hash in `fixtures/pins.env`, Pipeline's Apache-2.0 `test-strategy-cp`, `test-strategy-evil`, `test-hook` and `test-hook-refill` (on Token-2022 mints; the hook also stands in for our containment hook, deployed at its program id), and Canary's own fixture strategy (`tests/fixtures/strategy`: a constant-product market that can pay one insider more or less, tax buys by the time since its creation, or close two days after it), then copy markets out of it exactly as Canary copies them from devnet.
+The tests build a small cluster in LiteSVM from devnet's router, checked against the hash in `fixtures/pins.env`, Pipeline's Apache-2.0 `test-strategy-cp`, `test-strategy-evil`, `test-hook` and `test-hook-refill` (on Token-2022 mints; the hook also stands in for our containment hook, deployed at its program id), our real containment hook from `programs/` (`tests/contained_home_market.rs`, a contained token's home market), and Canary's own fixture strategy (`tests/fixtures/strategy`: a constant-product market that can pay one insider more or less, tax buys by the time since its creation, close two days after it, or price its quote side with a 30 SOL virtual reserve), then copy markets out of it exactly as Canary copies them from devnet.
 From the repo root:
 
 ```sh
 source scripts/toolchain-env.sh
 scripts/fetch-router.sh              # fixtures/router/pipeline.so
 scripts/fetch-pipeline.sh programs   # fixtures/pipeline/programs/target/deploy/*.so
-crates/canary/tests/fixtures/build.sh   # Canary's own fixture programs
+crates/canary/tests/fixtures/build.sh   # Canary's own fixture programs and the containment hook
 cd crates
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings

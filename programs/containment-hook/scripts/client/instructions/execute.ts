@@ -129,7 +129,10 @@ export type ExecuteInput<
   source: TAccountSource;
   /** The mint. */
   mint: TAccountMint;
-  /** The destination token account. */
+  /**
+   * The destination token account: its address is compared with the allowed accounts, and
+   * any other destination is checked to be a Token-2022 account whose owner can never change.
+   */
   destination: TAccountDestination;
   /** The source's owner or delegate. */
   owner: TAccountOwner;
@@ -275,7 +278,10 @@ export type ParsedExecuteInstruction<
     source: TAccountMetas[0];
     /** The mint. */
     mint: TAccountMetas[1];
-    /** The destination token account. */
+    /**
+     * The destination token account: its address is compared with the allowed accounts, and
+     * any other destination is checked to be a Token-2022 account whose owner can never change.
+     */
     destination: TAccountMetas[2];
     /** The source's owner or delegate. */
     owner: TAccountMetas[3];

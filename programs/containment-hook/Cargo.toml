@@ -1,6 +1,6 @@
 [package]
 name = "containment-hook"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -48,7 +48,8 @@ pipeline-client.workspace = true
 pipeline-events.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
-# The shared test support's hash of a market's terms, which the tax AMM's seed checks.
+# The shared test support's hash of a market's terms, which the tax AMM's seed checks, and
+# the release gate's report, which names each build by its executable hash.
 sha2.workspace = true
 solana-account.workspace = true
 solana-clock.workspace = true

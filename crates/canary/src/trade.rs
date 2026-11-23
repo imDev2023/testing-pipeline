@@ -5,7 +5,6 @@
 
 use borsh::BorshDeserialize;
 use litesvm::LiteSVM;
-use pipeline_check::write_token_account;
 use pipeline_client::{AccountMeta, FeeSide, Instruction, Pubkey};
 use pipeline_quoter::{QuoteRequest, Quoter};
 use pipeline_strategy_interface::{self as psi, discriminator, fees, TradeMode};
@@ -17,6 +16,7 @@ use crate::config::QUOTE_COMPUTE_LIMIT;
 use crate::failure::{Failure, FailureClass, Stage};
 use crate::market::{fund_lamports, program_elf, token_amount, Market, Session};
 use crate::swap::{compute_limit, SwapPath, SwapReceipt, SwapRequest};
+use crate::token_account::write_token_account;
 
 /// A quote in the trader's terms, as `pipeline-quoter` gives it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

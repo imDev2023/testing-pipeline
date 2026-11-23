@@ -64,6 +64,8 @@ What came back clean is evidence too:
 - Before every swap the run resolves the strategy's accounts in the current state and takes a quote with `pipeline-quoter` holding only what an integrator would hold; the swap is then compared with that quote.
 - Each scenario starts from a fresh copy of the snapshot unless it says otherwise, so one scenario never changes another's starting state.
 - Wallets are new random keys on every run.
+- Each wallet's token accounts are what its associated token accounts hold on a real cluster: for a Token-2022 mint, the immutable owner extension and then the extensions the mint requires.
+  `pipeline-check`'s writer adds only the latter, and the containment hook delivers a contained token only into its home market's vault and fee account or into an account whose owner can never change (`HOOK-47`), so Canary writes the extension itself.
 - Transfer-hook accounts are resolved as `pipeline-check` resolves them; the prototype skipped this because no devnet mint has a hook.
 
 ### The money side and sizes
@@ -126,6 +128,14 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | `readable` | Calls `pipeline_market_info`, resolves accounts and quotes the smallest size in every direction | The strategy's current version cannot read the market's state: a **stranded market** | A direction resolves and then crashes or runs out of compute | The version reads the market; a market that reads but refuses every trade passes here and its trading checks are "not run" with the strategy's own error |
 | `conformance` | Runs `pipeline-check` on the copy and keeps its whole report | `pipeline-check` reports fail | It reports warn | It reports pass |
 
+- On a contained mint's home market, `pipeline-check`'s `quote_matches_swap`, `exact_out_refund` and `round_trip` are known, not counted, when every failure they report is error 6023, the hook's `DestinationOwnerCanChange`.
+  `pipeline-check`'s own traders lack the immutable owner extension, so the hook refuses to deliver the token to them; the record says so, lists them in `canary_known` and keeps the whole report, known until Pipeline's checker writes the immutable owner extension (`HOOK-47`).
+  A known check that also fails for any other reason counts as usual.
+- `pipeline-check`'s failure text names the error number but not the program that raised it, and 6023 is other programs' number too (the buy wall AMM's `ExactOutNotSupported`, the tax AMM's `AlreadySeeded`, the router's `SetupPayerMisused`).
+  So the rule needs Canary's own evidence for every contained mint of the market: the hook's config `["config", mint]` names this market as the mint's home, and Canary's buy of the mint into an account written as `pipeline-check` writes it, without the immutable owner extension, fails with 6023 raised by the containment hook program itself.
+  Without that evidence the failures count; the record lists the evidence in `canary_hook_probe`.
+- With the known checks left out, `pipeline-check`'s `min_out_enforced`, `compute` and `dust_and_zero` still pass, but they measure only swaps that went through, so on such a market they covered only the sell direction; the reason says so and lists them in `canary_known_partial`.
+
 ### Exit test
 
 | Id | What it does | Fail | Warn | Pass |
@@ -168,7 +178,15 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | `token_authorities` | For each of the market's mints, acts as each authority that exists and then trades again (see below) | Never: it depends on an authority acting | An authority exists and its action took from the market or stopped or emptied a trade; the figure is reported | No mint has such an authority |
 | `transaction_accounts` | Lists accounts the strategy asks for that describe the transaction, not the market: the Instructions, SlotHashes and RecentBlockhashes sysvars | Never | The strategy asks for one, so it could tell a simulated trade from a real one and Canary's results may not hold | It asks for none |
 | `contained_mint` | For a mint with a transfer hook, reads the hook program, whether it can still be upgraded, and the hook's authority, as [`containment-hook.md`](containment-hook.md) recognises a contained token | Never | The hook is not our containment hook with the mint's unlock PDA as its authority, or the hook program can still be upgraded | The hook is our containment hook, its authority is the mint's unlock PDA and the hook program is frozen; "not run" when no mint has a hook, and when a mint's transfer hook extension has both its program and its authority unset, as a contained token's has after its unlock |
+| `outside_supply` | After the ordinary buy, quotes a sale of all the supply held outside the market's pool (each token's supply less the market's vault of it) and finds the part the market cannot buy back, the rest once the largest sale that quotes is taken out; then quotes a sale of that part first, or of the largest part of it that quotes | Never: the supply's holder has to sell | The market cannot buy back all of it, and the part it cannot, sold first, takes the outside-supply threshold or more of the quote vault: "Supply held outside the pool could be sold into the real quote buyers paid in", with the amounts | No supply is outside the pool, the market can buy all of it back, or the part it cannot takes less than the threshold |
 | `custom_instructions` | Lists every instruction in the strategy's code beyond Pipeline's six, each with how often it has been called and by which signers | Noted only | Noted only | Noted only |
+
+- `outside_supply` applies the same rule to every market, ours or anyone's (`CANARY-47`, `HOOK-50`).
+  A market whose quote is all real buys back every token outside its pool, and so does a market on a virtual reserve seeded with the whole supply, since selling back every bought token returns its pool to where it started; what is left over is supply that never came out of the pool, on a market that never pays out more than its real quote, which is how a virtual reserve works.
+  The containment launch's default, a fifth of the supply outside the pool on a 30 SOL virtual quote reserve, warns: sold first, that fifth takes all but dust of an ordinary buyer's quote.
+  A quote that pays out more than the market's quote vault really holds counts as refused, since its swap could not pay it, so a strategy whose quote on a virtual reserve is not capped at the real reserve is judged by the largest sale it can really pay, as one that caps it is.
+  The check still reads quotes, not swaps: a strategy whose quote stays within the real reserve but whose swap pays out differently is `quote_matches_swap`'s to find.
+  The largest sale that quotes is found by halving the refused amount up to 20 times, to about a millionth of it.
 
 What `token_authorities` does with each authority, when the authority is a wallet:
 
@@ -285,13 +303,14 @@ A change to any of them changes the `harness` version that every Canary result c
 | Token authorities acting | mint 100 times the vault's holding; a transfer fee of 100% with no maximum, two epochs on | `CANARY-17` |
 | Compute limits used to class a failure | 200,000 units for a quote, 1,400,000 for a swap | `CANARY-14` |
 | Snapshot rounds before checks are "not run" | 4 | `CANARY-25` |
+| Outside-supply threshold, and the search for the largest sale that quotes | 1 point of the quote vault; 20 halvings | `CANARY-47` |
 
 - The sections above explain each value where it is used; when one changes, the constant, this table, that section and the decision's block change in one PR.
 - The schedule is not here: see [When Canary runs](#when-canary-runs).
 
 ## Built on
 
-- Pipeline's Apache-2.0 crates, from crates.io at exact versions (0.3.0, with `pipeline-strategy-interface` 0.1.1, since 2026-11-22, published 2026-11-21 at Pipeline's `48a6b5f`, for the router with fee mints; 0.2.0 from 2026-11-19, published 2026-11-18 at `e9fbf1a`, for the router without a pause; first 0.1.0, published 2026-11-10 at `5ac3121`; see [`pipescope-architecture.md`](pipescope-architecture.md#pipelines-packages)): `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
+- Pipeline's Apache-2.0 crates, from crates.io at exact versions (0.3.0, with `pipeline-strategy-interface` 0.1.1, since 2026-11-22, published 2026-11-21 at Pipeline's `48a6b5f`, for the router with fee mints; 0.2.0 from 2026-11-19, published 2026-11-18 at `e9fbf1a`, for the router without a pause; first 0.1.0, published 2026-11-10 at `5ac3121`; see [`pipescope-architecture.md`](pipescope-architecture.md#pipelines-packages)): `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing, to which Canary adds the immutable owner extension), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
 - The router's program is loaded from the cluster's own bytes, never built or copied into this repo; `pipeline-check` does the same.
 - Every trade in the checks goes through one swap function, so the architecture's licence seam holds: on devnet it calls the router, and it can be replaced by a direct call to the strategy plus Pipeline's Apache-2.0 settlement code if running the router's bytes in production is not allowed.
   The direct implementation refuses what the router's own rules refuse a trader (an account that is not a token account of its mint, a swap that lowers the trader's output balance, and every refusal of the settlement code, named in that code's words), takes Pipeline's fee on the side the market's record names (since Pipeline 0.3, out of what arrived on a trade into the market's fee mint, with the settlement code's `settle_fee_on_output`), undoes the swap on any refusal, and is chosen in one place, Canary's config module; the strategy then runs one call level higher than under the router, the one difference (`CANARY-45`).

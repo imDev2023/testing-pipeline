@@ -2,9 +2,13 @@
 //! refuses"): anyone may create one, on the tax AMM or on another strategy, since neither
 //! knows about containment, but the hook refuses every transfer that would fund it (a seed,
 //! a deposit, a sell into it, a transfer into its vault) and every transfer that would pay
-//! out of it, so it can never trade the token. The one way the token reaches its vault is
-//! as a gift: a home-market buy may deliver to any account, a vault included, and what lands
-//! there can only be sold back into the home market.
+//! out of it, so it can never trade the token. A home-market buy cannot deliver into its
+//! vault either, since a strategy creates its vaults without the immutable owner extension
+//! (`HOOK-47`), and a balance that reached one before that rule could still not be traded.
+//!
+//! The one exception the hook cannot see ("What the hook cannot see", H013): a market on
+//! another strategy that names the home vault as its own takes sells, since they land in the
+//! home vault, and pays for them out of its own reserve; what it buys is stranded there.
 
 mod support;
 
@@ -143,7 +147,7 @@ fn paying_out_of_a_market_on_another_strategy_is_refused() {
 }
 
 #[test]
-fn a_buy_delivered_into_a_second_markets_vault_is_a_gift_that_market_cannot_trade() {
+fn a_buy_delivered_into_a_second_markets_vault_is_refused_and_a_balance_there_is_never_traded() {
     let mut env = hook_env();
     let launched = launch(&mut env);
     let (market, _) = second_tax_market(&mut env, &launched);
@@ -152,20 +156,24 @@ fn a_buy_delivered_into_a_second_markets_vault_is_a_gift_that_market_cannot_trad
         output_to: Some(market.vaults[CONTAINED]),
         ..Swap::default()
     };
-    // The hook sees a transfer out of the home vault, which it allows.
-    swap(
-        &mut env,
-        &launched,
-        &buyer,
-        (QUOTE, CONTAINED),
-        SOL,
-        &into_its_vault,
-    )
-    .unwrap();
-    let gift = env.balance(&market.vaults[CONTAINED]);
-    assert!(gift > 0);
+    // A transfer out of the home vault, but into an account whose owner could change.
+    assert_hook_refused(
+        swap(
+            &mut env,
+            &launched,
+            &buyer,
+            (QUOTE, CONTAINED),
+            SOL,
+            &into_its_vault,
+        ),
+        HookError::DestinationOwnerCanChange,
+    );
+    assert_eq!(env.balance(&market.vaults[CONTAINED]), 0);
 
-    // Even open, with the gift as its reserve, the second market can trade it with nobody.
+    // A balance that reached the vault before the rule, written here, and the market opened
+    // with it as its reserve: the second market can still trade it with nobody.
+    let gift = AMOUNT;
+    set_balance(&mut env, &market.vaults[CONTAINED], gift);
     let mut state = env.tax_market(&market.market_state);
     state.status = MarketStatus::Open;
     state.reserves = [gift, AMOUNT];
@@ -193,6 +201,144 @@ fn a_buy_delivered_into_a_second_markets_vault_is_a_gift_that_market_cannot_trad
         );
     }
     assert_eq!(env.balance(&market.vaults[CONTAINED]), gift);
+}
+
+/// Hardening finding H013 of #74: the router records whatever vaults a strategy declares,
+/// so a market on Pipeline's hostile test strategy names the home vault as its vault for the
+/// contained token. A sell into it passes the hook, since it lands in the home vault, and
+/// the strategy pays for it out of its own reserve, untaxed and uncounted toward the goal.
+/// What it bought is stranded: the home market's reserves and counters never see it, a
+/// later home sell is priced from the reserves alone, and the foreign market can never pay
+/// it back out, having no right to sign for the home vault.
+#[test]
+fn sos_h013_a_market_naming_the_home_vault_as_its_own_strands_what_it_buys() {
+    let mut env = hook_env();
+    let launched = launch(&mut env);
+    let home_vault = launched.market.vaults[CONTAINED];
+    let seller = trader(&mut env, &launched, 10 * SOL);
+    buy(&mut env, &launched, &seller, SOL);
+    let held = env.balance(&contained_account(&launched, &seller.pubkey()));
+
+    // The foreign market: the contained token against a mint of its own, the home vault
+    // declared as its vault for the token, Pipeline's fee taken in its other mint.
+    let evil = evil_strategy_id();
+    register_test_strategy(&mut env, &evil, "test_strategy_evil");
+    let other = env.create_mint(&TOKEN);
+    let state =
+        Pubkey::find_program_address(&[b"evil", launched.mint.as_ref(), other.as_ref()], &evil).0;
+    let its_vault = env.write_token_account(&other, &TOKEN, &state, u64::MAX / 4);
+    /// The hostile strategy's `info_mode` declaring its second mint the market's fee mint.
+    const INFO_DECLARES_MINT_B: u8 = 8;
+    let admin = env.admin.pubkey();
+    let create = pipeline_client::create_market(&pipeline_client::CreateMarket {
+        creator: admin,
+        strategy_program: evil,
+        market_state: state,
+        market_state_signs: false,
+        init_data: vec![INFO_DECLARES_MINT_B],
+        max_creator_lamports: SOL,
+        strategy_accounts: vec![
+            AccountMeta::new_readonly(launched.mint, false),
+            AccountMeta::new_readonly(other, false),
+            AccountMeta::new(home_vault, false),
+            AccountMeta::new(its_vault, false),
+        ],
+    });
+    let market = pipeline_client::pda::market(&evil, &state);
+    let fees = pipeline_client::init_fee_account(&admin, &market, &other, &TOKEN);
+    env.send(&[create, fees], &[]).unwrap();
+    let recorded = env.router_market(&market);
+    assert_eq!(
+        recorded.vaults[0], home_vault,
+        "the router recorded the home vault"
+    );
+
+    let seller_other = env.write_token_account(&other, &TOKEN, &seller.pubkey(), 0);
+    let foreign_swap = |input: usize, amount: u64, hook_accounts| {
+        let mints = [launched.mint, other];
+        let programs = [TOKEN_2022, TOKEN];
+        let accounts_of = [contained_account(&launched, &seller.pubkey()), seller_other];
+        let output = 1 - input;
+        let accounts = pipeline_client::SwapAccounts {
+            trader: seller.pubkey(),
+            strategy_program: evil,
+            market_state: state,
+            trader_input: accounts_of[input],
+            trader_output: accounts_of[output],
+            input_vault: [home_vault, its_vault][input],
+            input_mint: mints[input],
+            output_mint: mints[output],
+            input_token_program: programs[input],
+            output_token_program: programs[output],
+            integrator_fee_account: None,
+            // The strategy pays out of its first account, the output's vault.
+            strategy_accounts: vec![AccountMeta::new([home_vault, its_vault][output], false)],
+            input_hook_accounts: hook_accounts,
+        };
+        let args = pipeline_client::SwapArgs {
+            mode: pipeline_client::TradeMode::ExactIn,
+            amount_in: amount,
+            amount_out: 0,
+            min_amount_out: 0,
+            integrator_fee_bps: 0,
+            input_hook_accounts: 0,
+            // The hostile strategy's honest behaviour: it pays one for one.
+            extra: vec![0],
+        };
+        let side = if output == 1 {
+            pipeline_client::FeeSide::Output
+        } else {
+            pipeline_client::FeeSide::Input
+        };
+        pipeline_client::swap_with_fee_side(&accounts, &args, side)
+    };
+
+    // A sell into the foreign market passes the hook and lands in the home vault.
+    let sold = held / 2;
+    let before = env.tax_market(&launched.market.market_state);
+    let vault_before = env.balance(&home_vault);
+    let foreign_sell = foreign_swap(CONTAINED, sold, hook_tail(&launched.mint));
+    env.send(&[foreign_sell], &[&seller]).unwrap();
+    assert_eq!(
+        env.balance(&contained_account(&launched, &seller.pubkey())),
+        held - sold
+    );
+    assert_eq!(env.balance(&home_vault), vault_before + sold);
+    let paid = env.balance(&seller_other);
+    assert!(paid > 0 && paid <= sold, "paid {paid} for {sold}");
+    // Untaxed and uncounted: the home market saw nothing.
+    let after = env.tax_market(&launched.market.market_state);
+    assert_eq!(after.reserves, before.reserves);
+    assert_eq!(after.tax_collected, before.tax_collected);
+    assert_eq!(
+        env.balance(&home_vault) - after.reserves[CONTAINED],
+        vault_before - before.reserves[CONTAINED] + sold,
+        "what it bought sits in the home vault beyond the reserve"
+    );
+
+    // Stranded: a later home sell is priced from the reserves alone and leaves the surplus.
+    let surplus = env.balance(&home_vault) - after.reserves[CONTAINED];
+    let rest = held - sold;
+    let quoted = env
+        .quote(&launched.market, &exact_in(CONTAINED, QUOTE, rest / 2))
+        .unwrap()
+        .amount_out;
+    let home_sell = sell(&mut env, &launched, &seller, rest / 2);
+    assert_eq!(home_sell.received, quoted);
+    let state = env.tax_market(&launched.market.market_state);
+    assert_eq!(
+        env.balance(&home_vault) - state.reserves[CONTAINED],
+        surplus
+    );
+
+    // And the foreign market can never pay it back out of the home vault.
+    let buy_back = foreign_swap(QUOTE, 1_000, vec![]);
+    env.write_token_account(&other, &TOKEN, &seller.pubkey(), 1_000_000);
+    assert!(env.send(&[buy_back], &[&seller]).is_err());
+    assert_eq!(
+        env.balance(&home_vault) - state.reserves[CONTAINED],
+        surplus
+    );
 }
 
 /// Writes a token account's balance.
