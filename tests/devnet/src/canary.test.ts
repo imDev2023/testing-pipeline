@@ -15,9 +15,11 @@
 //
 // Needs Docker, and spends a little devnet SOL from the project's wallet on the new market.
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createKeyPairSignerFromBytes, createSolanaRpc, getBase58Decoder, signBytes, type KeyPairSigner } from "@solana/kit";
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { CanaryResults, CanarySchedule, canaryRerunMessage } from "terminal-api/contract";
 import { canaryRunMarkets, canaryRuns, createDb, programVersions } from "terminal-db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -36,7 +38,13 @@ let db: ReturnType<typeof createDb>;
 let wallet: KeyPairSigner;
 let stopCron = () => {};
 
-const log = (line: string) => console.log(`${new Date().toISOString().slice(11, 19)} ${line}`);
+/** Where each line also goes, so a run's figures can be read while it runs and kept for the PR. */
+const REPORT = process.env.CANARY_DEVNET_REPORT ?? join(tmpdir(), "canary-devnet.log");
+const log = (line: string) => {
+  const stamped = `${new Date().toISOString().slice(11, 19)} ${line}`;
+  console.log(stamped);
+  appendFileSync(REPORT, `${stamped}\n`);
+};
 const getJson = async (path: string) => {
   const response = await fetch(`${api.url}${path}`);
   if (!response.ok) throw new Error(`GET ${path} answered ${response.status}`);
@@ -122,7 +130,7 @@ afterAll(async () => {
 describe.skipIf(!ready)("Canary on devnet, in its container", () => {
   it("runs every devnet market after the first backfill, then sweeps them all, measuring the sweep", async () => {
     const markets = await api.markets();
-    log(`${markets.length} markets indexed`);
+    log(`report: ${REPORT}; ${markets.length} markets indexed`);
     await until(
       "a first run of every market",
       async () => {
@@ -145,10 +153,12 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
     const sweepRuns = await until(
       "the sweep's runs to end",
       async () => {
-        const rows = await db.db.select().from(canaryRuns).where(sql`${canaryRuns.startedAt} >= ${sweepStart}`);
+        // Every run that finished since the sweep began, those started just before it included.
+        const open = await db.db.select({ id: canaryRuns.id }).from(canaryRuns).where(isNull(canaryRuns.finishedAt));
+        const rows = await db.db.select().from(canaryRuns).where(sql`${canaryRuns.finishedAt} >= ${sweepStart}`);
         const done = new Set((await db.db.select({ market: canaryRunMarkets.market }).from(canaryRunMarkets).where(inArray(canaryRunMarkets.runId, rows.length ? rows.map((r) => r.id) : [0n]))).map((r) => r.market));
-        log(`sweep: ${done.size} of ${markets.length} markets done`);
-        return rows.length > 0 && rows.every((r) => r.finishedAt) && done.size >= markets.length && rows;
+        log(`sweep: ${done.size} of ${markets.length} markets done, ${open.length} runs open`);
+        return open.length === 0 && done.size >= markets.length && rows;
       },
       60 * MINUTE,
     );
