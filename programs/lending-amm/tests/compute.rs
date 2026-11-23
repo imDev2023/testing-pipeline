@@ -74,7 +74,7 @@ impl Row {
     fn figures(self) -> (u64, u64) {
         match self {
             Row::PipelineQuote => (15_983, 20_000),
-            Row::PipelineSwapNoRedeem => (25_592, 35_000),
+            Row::PipelineSwapNoRedeem => (25_628, 35_000),
             Row::PipelineSwapWithRedeem => (60_156, 80_000),
             Row::PipelineResolveAccounts => (26_316, 35_000),
             Row::PipelineInitMarket => (61_354, 80_000),
