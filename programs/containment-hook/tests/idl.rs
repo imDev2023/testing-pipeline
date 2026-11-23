@@ -157,15 +157,51 @@ fn its_config_and_errors_are_the_programs() {
     assert_eq!(account["name"], "Config");
     assert_eq!(bytes(&account["discriminator"]), Config::DISCRIMINATOR);
 
-    // Errors are numbered from 6000 in the enum's order, the last being `AlreadyUnlocked`.
+    // Errors are numbered from 6000 in the enum's order, every one pinned by name, since
+    // Aviary and integrators show them by number and new ones only ever go at the end
+    // (hardening finding H077 of #74).
     let errors = idl["errors"].as_array().unwrap();
+    let names: Vec<&str> = errors
+        .iter()
+        .map(|error| error["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "TransferRefused",
+            "MintNotToken2022",
+            "NotAMint",
+            "MintExtensionNotAllowed",
+            "FreezeAuthoritySet",
+            "NotMintAuthority",
+            "WrongHookProgram",
+            "WrongHookAuthority",
+            "ZeroGoal",
+            "DeadlineNotInFuture",
+            "DeadlineTooFar",
+            "NotARouterMarket",
+            "MarketNotAtItsAddress",
+            "NotATaxMarket",
+            "MarketDoesNotHoldMint",
+            "WrongMarketState",
+            "NotATaxMarketState",
+            "TaxSideNotQuote",
+            "NotTransferring",
+            "WrongConfig",
+            "WrongValidationAccount",
+            "UnlockNotDue",
+            "AlreadyUnlocked",
+            "DestinationOwnerCanChange",
+            "MarketAlreadyCollectedTax",
+            "MintAuthorityIsMultisig",
+        ]
+    );
     for (i, error) in errors.iter().enumerate() {
         assert_eq!(error["code"].as_u64().unwrap(), 6_000 + i as u64);
     }
     let last = errors.last().unwrap();
-    assert_eq!(last["name"], "AlreadyUnlocked");
     assert_eq!(
         last["code"].as_u64().unwrap() as u32,
-        anchor_lang::error::ERROR_CODE_OFFSET + HookError::AlreadyUnlocked as u32
+        anchor_lang::error::ERROR_CODE_OFFSET + HookError::MintAuthorityIsMultisig as u32
     );
 }

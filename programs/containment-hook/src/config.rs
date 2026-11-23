@@ -24,7 +24,9 @@ pub const TAX_AMM_PROGRAM_ID: Pubkey = tax_amm::ID;
 // `name` is the program's public name, which lives only here, since the hook is not a
 // strategy and has no metadata (docs/spec/README.md, "Names"). The contact is this repo's
 // private vulnerability reporting page, never a personal address. Internal reviews are
-// never presented as audits, so `auditors` stays "None".
+// never presented as audits, so `auditors` stays "None". `source_release` is the crate's
+// version, which each release raises (tests/security_txt.rs keeps the two equal): 0.1.0, the
+// first devnet deploy, had none; 0.1.1, the hardening of #74, adds it.
 //
 // The macro joins its values with `concat!`, so they must be string literals.
 #[cfg(not(feature = "no-entrypoint"))]
@@ -35,5 +37,6 @@ solana_security_txt::security_txt! {
     policy: "https://github.com/imDev2023/testing-pipeline/security/policy",
     preferred_languages: "en",
     source_code: "https://github.com/imDev2023/testing-pipeline",
+    source_release: "0.1.1",
     auditors: "None"
 }

@@ -2,7 +2,7 @@
   "address": "aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv",
   "metadata": {
     "name": "containment_hook",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "spec": "0.1.0",
     "description": "A Token-2022 transfer hook that keeps a token in its one home market until it unlocks",
     "repository": "https://github.com/imDev2023/testing-pipeline"
@@ -196,7 +196,8 @@
         {
           "name": "destination",
           "docs": [
-            "The destination token account."
+            "The destination token account.",
+            "is checked to be a Token-2022 account of the mint whose owner can never change."
           ]
         },
         {
@@ -445,6 +446,21 @@
       "code": 6022,
       "name": "AlreadyUnlocked",
       "msg": "The token is already unlocked"
+    },
+    {
+      "code": 6023,
+      "name": "DestinationOwnerCanChange",
+      "msg": "A contained token can go only to an account whose owner can't change"
+    },
+    {
+      "code": 6024,
+      "name": "MarketAlreadyCollectedTax",
+      "msg": "The home market has already collected tax, so the goal would not count from the binding"
+    },
+    {
+      "code": 6025,
+      "name": "MintAuthorityIsMultisig",
+      "msg": "A mint authority that is a Token-2022 multisig can't bind with one signature"
     }
   ],
   "types": [
