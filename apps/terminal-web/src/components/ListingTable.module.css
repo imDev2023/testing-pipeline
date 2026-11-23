@@ -48,6 +48,8 @@
 
 .row td {
   display: var(--table-cell-display);
+  /* As blocks, a cell is a grid: its label and lines sit at its top, never spread over its height. */
+  align-content: start;
   padding: var(--listing-cell-padding);
   vertical-align: top;
 }
