@@ -590,7 +590,7 @@ Exact-out checks are skipped by design and need no reason.
 
 ## Devnet
 
-- The program is `Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG`, deployed on 2026-11-22 from a verified build of `25a209c` (executable hash `34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c`, `deployments/devnet.json`) and registered with Pipeline's router.
+- The program is `Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG`, deployed on 2026-11-22 from a verified build of `25a209c` (executable hash `34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c`) and registered with Pipeline's router, then upgraded on 2026-11-23 to release 0.1.1, a verified build of `e8d0221` (`7502dd6ff76a870edafc231693f9b6c92d0159ae6b9a80bf986a3fce34b31b29`) that changes no behaviour, after the release gate passed it against every live market (`deployments/devnet.json`, `deployments/release-gate/lending-amm/devnet.json`).
 - Its demo market is router market `AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu` (market state `9M5mzsto7Wvj9tBNzAGwyFd84ASSFUh4kuPALhunkMJs`), a fresh test token with no authorities against lent WSOL at 30 basis points, walked through the whole product by the demo ([`LENDING-36`](../decisions.md#lending-36-devnet-demo-market)); two earlier runs that stopped part way left two more live markets, router markets `GmsiCAQRJSFMYmdJrYGhkUapgaxEsCYta2mNETSgNUtq` and `5kH9btnjERok6J9vUiKLVVvairUNnuicuWYKXNCMi1dc`, which every later release gate run covers (`deployments/devnet-demo-lending-amm.json`).
 
 - Our own Kamino lending market, owned by a key in `~/.config/testing-pipeline/devnet/`, with a WSOL reserve and a reserve for our own test USDC mint (6 decimals, mint authority in the same folder), since Circle's devnet USDC cannot be minted freely.

@@ -1,13 +1,13 @@
 {
   "schema": "pipeline-check-report/1",
   "checker_version": "0.3.0",
-  "generated_at": 1795438096,
+  "generated_at": 1795443650,
   "source": {
     "kind": "rpc",
     "cluster": "devnet",
     "genesis_hash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
-    "slot": 525435621,
-    "unix_timestamp": 1795438095
+    "slot": 525458727,
+    "unix_timestamp": 1795443649
   },
   "router": {
     "program_id": "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34",
@@ -20,10 +20,10 @@
   "strategy": {
     "program_id": "Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG",
     "loader": "bpf-loader-upgradeable",
-    "executable_sha256": "34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c",
-    "executable_len": 464409,
+    "executable_sha256": "7502dd6ff76a870edafc231693f9b6c92d0159ae6b9a80bf986a3fce34b31b29",
+    "executable_len": 464665,
     "upgrade_authority": "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe",
-    "deploy_slot": 525242911
+    "deploy_slot": 525457447
   },
   "strategy_metadata_uri": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/lending-amm/metadata.json",
   "market": {
