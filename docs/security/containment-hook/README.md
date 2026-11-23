@@ -114,7 +114,12 @@ The fixes also changed [`HOOK-01`](../../decisions.md#hook-01-transfers-while-co
 
 ## Devnet
 
-DEPLOY(session)
+Release 0.1.1, a verified build of `af01f5b` (this hardening's code on `main`), replaced the deployed build of `77b6ddc` on devnet on 2026-11-23, in slot 525,494,322 (signature `38w9XQ6P...`), executable hash `53626e3ddea4d6650951e5308aa9cff117e738a4abde67e2ac04145caa6fc584`, which `solana-verify get-program-hash -u devnet` matched; every hook test, 166 of them, had passed on those exact bytes first.
+The release gate ran on those bytes inside `scripts/deploy-devnet.sh` before the upgrade: it served all six configs then on devnet, traded and unlocked by the goal and by the deadline each of the three still contained in LiteSVM, and refused a second unlock of the three unlocked (`deployments/release-gate/containment-hook/devnet.json`).
+Then, on devnet, with the new build (`deployments/devnet-demo-containment-hook-0.1.1.json`):
+
+- Tokens contained by the earlier build still trade and unlock: `5iEQzUi2...` unlocked by its deadline, `FvsouVQ3...` traded and unlocked by its goal (109,265,663 of 100,000,000 collected), and demo token 3 traded, paying Pipeline's fee in the token into its fee account through the hook; its mint authority was revoked (answer 8a).
+- The launch script launched a new contained token, bought and sold it, swept Pipeline's fee, had a wallet transfer refused on chain and a sell with an integrator fee and a buy into an account whose owner can change refused, ran `pipeline-check` (11 pass, the two known failures of `HOOK-47`), unlocked it by its deadline and ran `pipeline-check` again (13 pass); a second new token was bought and sold and, traded with `contained.ts`, unlocked by its goal.
 
 ## The owner's sign-offs
 
