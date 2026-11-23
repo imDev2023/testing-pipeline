@@ -378,6 +378,14 @@ The hook went to devnet on 2026-11-22.
 - **A refused transaction the RPC had not served yet.** A first run stopped at the second token's refused `unlock`: the refusal had landed with the hook's error, but devnet's RPC answered `getTransaction` with nothing just after confirming it.
   The script now asks again for up to 30 seconds (`LANDED_TRANSACTION_WAIT_MS`).
 
+Release 0.1.1, the hardening of [#74](https://github.com/imDev2023/testing-pipeline/issues/74), replaced it on 2026-11-23 (`docs/security/containment-hook/README.md`, "Devnet", has the whole record):
+
+- **Deploy.** `scripts/deploy-devnet.sh containment-hook` from a clean checkout of `af01f5b` on `main`, after `--build-only --out` and all 166 hook tests on those bytes, ran the hook's release gate first (`programs/containment-hook/scripts/pre-deploy.sh`: all six configs on devnet served, `deployments/release-gate/containment-hook/devnet.json`), then upgraded the program over TPU in slot 525,494,322, signature `38w9XQ6PTGKEYCDTVMFWeBskFUV21L3kUiXbeCv4QQM2DNJbwarUNsJ9677r3hGohLvhJhRS7aKykbrdPp7Y8aps`, executable hash `53626e3ddea4d6650951e5308aa9cff117e738a4abde67e2ac04145caa6fc584` (216,336 bytes); no deploy buffer was left behind.
+- **Tokens contained before it.** With `contained.ts`, `5iEQzUi2...` unlocked by its deadline (13,821 units), `FvsouVQ3...` traded and unlocked by its goal (14,173 units), and demo token 3 traded, its sell paying Pipeline's fee in the token through the hook (`Execute` 5,611 and 5,614 units); demo token 3's mint authority was revoked with `spl-token authorize ... mint --disable`.
+- **Launch.** The same three-token run as above, with `--pipeline-check`: its first token went the whole way (`pipeline-check` 11 pass with `quote_matches_swap` and `round_trip` failing as known for the checker's own accounts, `HOOK-47`, then 13 pass after its unlock by the deadline, 13,821 units), and its second was bought and sold before the run stopped on a sell whose wrapped SOL balance another transaction on the shared devnet wallet moved; `contained.ts` then traded that token to its goal and unlocked it (14,173 units).
+  Every signature is in `deployments/devnet-demo-containment-hook-0.1.1.json`, and the reports of the first token's market are in `programs/containment-hook/conformance/devnet/`.
+- **Two runs before it stopped early**, each leaving its first token contained, which `contained.ts` unlocked by its deadline: one because LuLu kept the freshly rebuilt `pipeline-check` off the network until the owner allowed it, one on a dropped connection, which the scripts now retry like a rate limit (`chain.ts`, `isTransientRpcError`).
+
 ### CI
 
 `.github/workflows/ci.yml`, on every pull request and every push to `main`:
