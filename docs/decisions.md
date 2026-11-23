@@ -3321,11 +3321,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-01: Transfers while contained
 
 - Question: Where may a contained token move?
-- Answer: Only into or out of its home market's vault or that market's Pipeline fee account; every wallet-to-wallet transfer is refused, including between a holder's own wallets and to a CEX deposit address.
-- Alternatives: Wallet-to-wallet transfers between keypair wallets signed by their owner.
+- Answer: Only into or out of its home market's vault or that market's Pipeline fee account, and into no account outside those two whose owner can change (`HOOK-47`); every wallet-to-wallet transfer is refused, including between a holder's own wallets and to a CEX deposit address.
+- Alternatives: The earlier default, only into or out of its home market's vault or that market's Pipeline fee account; every wallet-to-wallet transfer is refused, including between a holder's own wallets and to a CEX deposit address (changed by the owner's answer 1a on #74 on 2026-11-23); wallet-to-wallet transfers between keypair wallets signed by their owner.
 - Specified in: [`docs/spec/containment-hook.md`, The allow rule](spec/containment-hook.md#the-allow-rule)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
 
 ### HOOK-02: Integrator fees on sells
@@ -3421,11 +3421,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-11: What the unlock does
 
 - Question: What does unlocking change on the mint?
-- Answer: It clears both the transfer hook program and the hook authority, so the token becomes an ordinary Token-2022 token, and records the unlock time in a config that is never closed.
-- Alternatives: None recorded.
+- Answer: It clears both the transfer hook program and the hook authority, so the token becomes an ordinary Token-2022 token, tradable everywhere that accepts it (a mint with any of the group extensions still needs Meteora's approval for a permissionless DAMM v2 pool, and Aviary warns on it), and records the unlock time in a config that is never closed.
+- Alternatives: The earlier default, it clears both the transfer hook program and the hook authority, so the token becomes an ordinary Token-2022 token, and records the unlock time in a config that is never closed (changed by the owner's answer 6a on #74 on 2026-11-23).
 - Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
 
 ### HOOK-12: Mint rules at binding
@@ -3481,21 +3481,21 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-17: In Aviary
 
 - Question: What does Aviary show for a contained token?
-- Answer: A panel on the home market's page (that the token is contained, the tax collected against the goal, the deadline), an Unlock button once the unlock is due, and the one-line rule in the trade box before a buy, built into Aviary since the hook has no strategy metadata.
-- Alternatives: None recorded.
+- Answer: A panel on the home market's page (that the token is contained, the tax collected against the goal, the deadline, who receives the tax and whether its authority is live, the supply outside the pool, a warning on weak terms, what containment cannot see, and for a mint with group extensions that some venues may not accept it after the unlock), an Unlock button once the unlock is due, and the one-line rule in the trade box before a buy, built into Aviary since the hook has no strategy metadata.
+- Alternatives: The earlier default, a panel on the home market's page (that the token is contained, the tax collected against the goal, the deadline), an Unlock button once the unlock is due, and the one-line rule in the trade box before a buy, built into Aviary since the hook has no strategy metadata (changed by the owner's answers 2a, 4a, 5a and 6a on #74 on 2026-11-23).
 - Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
 
 ### HOOK-18: Invariants
 
 - Question: Which invariants does the hook's fuzzing check?
-- Answer: Five beyond the shared three: no transfer between two accounts outside the home vault and the fee account, refusal when a hook account is missing or substituted, an unchanging config, `unlock` succeeding exactly when due, and every holder still able to exit through the home market.
-- Alternatives: None recorded.
+- Answer: Five beyond the shared three: no transfer between two accounts outside the home vault and the fee account, and no delivery outside them into an account whose owner can change, refusal when a hook account is missing or substituted, an unchanging config, `unlock` succeeding exactly when due, and every holder still able to exit through the home market.
+- Alternatives: The earlier default, five beyond the shared three: no transfer between two accounts outside the home vault and the fee account, refusal when a hook account is missing or substituted, an unchanging config, `unlock` succeeding exactly when due, and every holder still able to exit through the home market (changed by the hardening of #74 on 2026-11-23 for `HOOK-47`).
 - Specified in: [`docs/spec/containment-hook.md`, Invariants](spec/containment-hook.md#invariants)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
 
 ### HOOK-19: Framework
@@ -3773,6 +3773,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Question: What must a redeploy of the hook prove for tokens contained before it?
 - Answer: The config's version 1 layout never changes while any token is bound, and no build replaces the deployed hook until its release gate, run by `scripts/deploy-devnet.sh` on the very bytes it deploys, has decoded every config on the cluster with the new build, traded and refused a wallet transfer for each token still contained, and unlocked it at its deadline.
 - Alternatives: Reallocating a versioned config before it grows, which every instruction would then have to handle; trusting the tests on fresh configs, which cannot see a layout change that breaks only configs written by the deployed build.
+- Specified in: [`docs/spec/containment-hook.md`, Upgrade policy](spec/containment-hook.md#upgrade-policy)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-47: Destinations whose owner can change
+
+- Question: Since Token-2022 lets an account's owner hand the whole account to another wallet with no transfer and no hook call, how does the hook keep a contained token in its home market?
+- Answer: `Execute` refuses a destination other than the home vault and the fee account unless it carries the immutable owner extension, as every associated token account of Token-2022 does (`DestinationOwnerCanChange`); sells and sources are untouched, so every holder can still exit; Pipeline's `pipeline-check` fakes its traders' accounts without the extension, so its `quote_matches_swap` and `round_trip` are known failures on contained markets until its checker writes it.
+- Alternatives: Also accepting a destination at the associated token address of the owner its data names, which accepts the same accounts on chain and exists only to keep `pipeline-check` passing, at a bump search's cost; keeping the location-only rule and disclosing the escape; a rule on sources, which an owner change, moving no tokens, would never meet.
+- Specified in: [`docs/spec/containment-hook.md`, The allow rule](spec/containment-hook.md#the-allow-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-48: What containment polices
+
+- Question: Does containment also refuse holders that are programs or smart wallets, whose control can change hands without a transfer?
+- Answer: No: containment polices token movements, not who controls a key, so a Squads vault, a program's account or a wrapper issuing receipts is disclosed in the spec and on Aviary's panel rather than refused; every unit in such a structure came in by a taxed buy and leaves only by a taxed sell.
+- Alternatives: Refusing a destination whose owner is off the ed25519 curve, about 160 units, which closes every trustless program-held structure but refuses smart-wallet users, DAO and program treasuries and aggregator routes into program-owned accounts.
+- Specified in: [`docs/spec/containment-hook.md`, What the hook cannot see](spec/containment-hook.md#what-the-hook-cannot-see)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-49: What the unlock goal promises
+
+- Question: Since whoever receives the tax can reach the goal for a fraction of it, atomically, what does the goal promise?
+- Answer: That a third party pays at least the goal to force the unlock (102% to 125% of it); the launcher as sole recipient pays `1 - 0.9a + f(2 - t)/t` of it (12.38% at 10% and 10% on wrapped SOL, 16.12% at the launch default), possibly in one transaction, which the spec states with its numbers and Aviary's panel shows by naming the recipients, the launcher's share, whether the tax authority is live and any pending rate change.
+- Alternatives: `bind` refusing a home market whose tax authority is live, which stops rate changes after the binding but not the wash; counting only tax paid by non-recipients, which a recipient evades from another wallet; a goal seen in an earlier slot, which needs new config state (`HOOK-46`).
+- Specified in: [`docs/spec/containment-hook.md`, Unlock goal](spec/containment-hook.md#unlock-goal)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-50: Supply held outside the pool
+
+- Question: What protects buyers from a launcher selling supply held outside the home market's pool into the real quote they paid in?
+- Answer: Disclosure: Canary's `outside_supply` warn and Aviary's panel show it, and the launch script's defaults keep less of the supply outside the pool; the drain is a virtual reserve's property, possible on any AMM.
+- Alternatives: The tax AMM's seed requiring a contained mint's whole supply in the vault, so a launcher gets an allocation only by buying it.
+- Specified in: [`docs/spec/containment-hook.md`, Canary checks](spec/containment-hook.md#canary-checks)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-51: The mainnet freeze gate
+
+- Question: How is `HOOK-15`'s freeze enforced, given one key upgrades both the hook and the tax AMM?
+- Answer: Both programs are frozen together in one transaction, and every contained mint's hook fields are checked before and after (its program the hook and its authority its unlock PDA, or both cleared); a script does the check and the freeze and refuses unless both end with no upgrade authority, and on devnet it runs as a check only.
+- Alternatives: Recording the rule now and building the script in the mainnet ticket.
 - Specified in: [`docs/spec/containment-hook.md`, Upgrade policy](spec/containment-hook.md#upgrade-policy)
 - Changes by: spec only
 - Status: default
