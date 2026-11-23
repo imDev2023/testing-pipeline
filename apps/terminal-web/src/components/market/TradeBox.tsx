@@ -11,13 +11,13 @@
 import { useSignAndSendTransaction } from "@solana/react";
 import type { UiWalletAccount } from "@wallet-standard/react";
 import { getBase58Decoder, getBase64Encoder } from "@solana/kit";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Balances, Fees, PreparedSwap, Quote, TradeReport, type Failure, type Market, type Trade } from "terminal-api/contract";
 import { ApiFailure, getFromApi, postToApi } from "@/api";
 import { BRAND } from "@/brand";
 import { DEFAULT_SLIPPAGE_PERCENT, EXPLORER, FAILED_SIMULATION_LOG_LINES, PREPARED_SWAP_MAX_AGE_MS, QUOTE_PAUSE_MS, SLIPPAGE_CHOICES_PERCENT } from "@/config";
 import { formatInteger, formatTokenAmount, shortAddress } from "@/format";
-import { formatBps, parseAmount, parseSlippage, tradeButton, useItAll, writeAmount } from "@/trade";
+import { formatBps, parseAmount, parseSlippage, tradeButton, balanceToUse, writeAmount } from "@/trade";
 import { MintLabel } from "../MintLabel";
 import { useWallet, type SolanaChain } from "../wallet/WalletProvider";
 import styles from "./TradeBox.module.css";
@@ -59,7 +59,8 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
   const [typed, setTyped] = useState("");
   const [slippageChoice, setSlippageChoice] = useState<number | "other">(DEFAULT_SLIPPAGE_PERCENT);
   const [slippageTyped, setSlippageTyped] = useState("");
-  const [quote, setQuote] = useState<QuoteState>({ status: "idle" });
+  /** The answer to the latest quote asked, under the key of what was asked; any other key is still loading. */
+  const [quoteFor, setQuoteFor] = useState<{ key: string; state: QuoteState } | null>(null);
   const [review, setReview] = useState<Review | null>(null);
   const [fees, setFees] = useState<Fees | null>(null);
   const [balances, setBalances] = useState<Record<string, bigint> | null>(null);
@@ -91,23 +92,19 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
   }, [trader, market.mints, balancesAsked]);
 
   // A quote 350 ms after the last keystroke; an answer to an earlier amount is thrown away.
-  const asked = useRef(0);
   const value = amount.kind === "amount" ? amount.value : null;
+  const quoteKey = value === null ? null : `${market.address}:${pay}:${receive}:${value}:${trader ?? ""}`;
+  const quote: QuoteState = quoteKey === null ? { status: "idle" } : quoteFor?.key === quoteKey ? quoteFor.state : { status: "loading" };
   useEffect(() => {
-    const ask = ++asked.current;
-    if (value === null) {
-      setQuote({ status: "idle" });
-      return;
-    }
-    setQuote({ status: "loading" });
+    if (quoteKey === null || value === null) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       const query = new URLSearchParams({ market: market.address, input_mint: pay, output_mint: receive, amount: String(value), ...(trader ? { trader } : {}) });
       getFromApi(`/v1/quote?${query}`, Quote, { signal: controller.signal }).then(
-        (answer) => ask === asked.current && setQuote({ status: "ready", quote: answer }),
+        (answer) => setQuoteFor({ key: quoteKey, state: { status: "ready", quote: answer } }),
         (e: unknown) => {
-          if (ask !== asked.current || controller.signal.aborted) return;
-          setQuote(e instanceof ApiFailure && e.failure ? { status: "refused", failure: e.failure, logs: e.logs } : { status: "failed", message: failureOf(e) });
+          if (controller.signal.aborted) return;
+          setQuoteFor({ key: quoteKey, state: e instanceof ApiFailure && e.failure ? { status: "refused", failure: e.failure, logs: e.logs } : { status: "failed", message: failureOf(e) } });
         },
       );
     }, QUOTE_PAUSE_MS);
@@ -115,7 +112,7 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
       clearTimeout(timer);
       controller.abort();
     };
-  }, [market.address, pay, receive, value, trader]);
+  }, [quoteKey, market.address, pay, receive, value, trader]);
 
   // Changing the amount, a mint or the slippage leaves the review and asks for a new quote.
   const leaveReview = () => setReview(null);
@@ -215,7 +212,7 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
                 className={styles.linkButton}
                 onClick={() => {
                   leaveReview();
-                  setTyped(writeAmount(useItAll(balance, { isSol: pay === WSOL }), payDecimals));
+                  setTyped(writeAmount(balanceToUse(balance, { isSol: pay === WSOL }), payDecimals));
                 }}
               >
                 Use it all
@@ -237,7 +234,15 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
         </span>
         <div className={styles.field}>
           <output className={styles.amount} aria-labelledby={`${ids}-receive-label`} aria-live="polite">
-            {quote.status === "ready" && receiveDecimals !== null ? formatTokenAmount(BigInt(quote.quote.expected_out), receiveDecimals) : quote.status === "loading" ? "…" : "0"}
+            {quote.status === "ready" && receiveDecimals !== null ? (
+              formatTokenAmount(BigInt(quote.quote.expected_out), receiveDecimals)
+            ) : quote.status === "loading" ? (
+              "…"
+            ) : quote.status === "idle" ? (
+              "0"
+            ) : (
+              <span className={styles.noQuote}>no quote</span>
+            )}
           </output>
           <MintSelect id={`${ids}-receive-mint`} label="Mint to receive" value={receive} market={market} onChange={chooseReceive} />
         </div>

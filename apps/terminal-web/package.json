@@ -11,7 +11,8 @@
         "build": "next build",
         "typecheck": "next typegen && tsc -p .",
         "test": "vitest run",
-        "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview --port 3111"
+        "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview --port 3111",
+        "check:no-test-wallet": "node scripts/check-no-test-wallet.ts"
     },
     "dependencies": {
         "@solana/kit": "8.6.0",

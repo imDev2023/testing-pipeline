@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBps, parseAmount, parseSlippage, tradeButton, useItAll, writeAmount } from "../src/trade";
+import { formatBps, parseAmount, parseSlippage, tradeButton, balanceToUse, writeAmount } from "../src/trade";
 
 describe("the amount typed (docs/spec/pipescope-screens.md, The amount typed)", () => {
   it("is read into the mint's base units exactly, with no rounding through floating point", () => {
@@ -32,12 +32,12 @@ describe("the amount typed (docs/spec/pipescope-screens.md, The amount typed)", 
 
 describe("Use it all", () => {
   it("keeps 0.01 SOL back for network fees and rent when paying in SOL", () => {
-    expect(useItAll(1_000_000_000n, { isSol: true })).toBe(990_000_000n);
-    expect(useItAll(5_000_000n, { isSol: true })).toBe(0n);
+    expect(balanceToUse(1_000_000_000n, { isSol: true })).toBe(990_000_000n);
+    expect(balanceToUse(5_000_000n, { isSol: true })).toBe(0n);
   });
 
   it("uses every unit of any other token", () => {
-    expect(useItAll(86_063_877_914n, { isSol: false })).toBe(86_063_877_914n);
+    expect(balanceToUse(86_063_877_914n, { isSol: false })).toBe(86_063_877_914n);
   });
 });
 

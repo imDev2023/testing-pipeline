@@ -40,11 +40,17 @@ const SWAP = Buffer.from(ROUTER_INSTRUCTION_DISCRIMINATORS.swap).toString("hex")
 /** The router's `swap` instruction of a base64 wire transaction: its accounts by address and flags, and its data. */
 function routerInstruction(base64: string) {
   const tx = getTransactionDecoder().decode(getBase64Encoder().encode(base64));
-  const message = getCompiledTransactionMessageDecoder().decode(tx.messageBytes);
+  // Both builders make legacy transactions, whose compiled message has these parts.
+  type Compiled = {
+    staticAccounts: string[];
+    header: { numSignerAccounts: number; numReadonlySignerAccounts: number; numReadonlyNonSignerAccounts: number };
+    instructions: { programAddressIndex: number; accountIndices?: number[]; data?: Uint8Array }[];
+  };
+  const message = getCompiledTransactionMessageDecoder().decode(tx.messageBytes) as unknown as Compiled;
   const keys = message.staticAccounts;
   const { numSignerAccounts, numReadonlySignerAccounts, numReadonlyNonSignerAccounts } = message.header;
   const writable = (i: number) => (i < numSignerAccounts ? i < numSignerAccounts - numReadonlySignerAccounts : i < keys.length - numReadonlyNonSignerAccounts);
-  const routerIndex = keys.indexOf(ROUTER as never);
+  const routerIndex = keys.indexOf(ROUTER);
   const ix = message.instructions.find((i) => i.programAddressIndex === routerIndex && Buffer.from(i.data ?? []).toString("hex").startsWith(SWAP));
   if (!ix) throw new Error("no router swap instruction in the transaction");
   return {
@@ -107,7 +113,8 @@ describe.runIf(ready)("the trading path matches Pipeline's hosted API (PIPESCOPE
     const sol = sim.changes.find((ch) => ch.mint === null)!;
     const rent = sim.new_accounts.reduce((n, a) => n + BigInt(a.rent), 0n);
     expect(BigInt(sol.before) - BigInt(sol.after)).toBe(100_000_000n + BigInt(sim.network_fee) + rent);
-    expect(sim.new_accounts.map((a) => a.mint)).toEqual([TOKEN]);
+    // The only account it may create and keep is the trader's for the token, on their first buy of it.
+    expect(sim.new_accounts.every((a) => a.mint === TOKEN)).toBe(true);
     const theirs = await hosted<{ transaction: string }>("/v1/swap-transaction", {
       method: "POST",
       headers: { "content-type": "application/json" },

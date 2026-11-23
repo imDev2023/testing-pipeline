@@ -31,7 +31,7 @@ export function writeAmount(value: bigint, decimals: number): string {
 }
 
 /** "Use it all": the whole balance, but for SOL the configured amount kept back for network fees and rent. */
-export function useItAll(balance: bigint, { isSol }: { isSol: boolean }): bigint {
+export function balanceToUse(balance: bigint, { isSol }: { isSol: boolean }): bigint {
   if (!isSol) return balance;
   const keep = BigInt(Math.round(SOL_KEPT_BACK * 10 ** SOL_DECIMALS));
   return balance > keep ? balance - keep : 0n;

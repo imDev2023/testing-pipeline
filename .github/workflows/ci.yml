@@ -339,6 +339,8 @@ jobs:
         run: pnpm --filter terminal-e2e exec playwright install --with-deps chromium
       - name: Playwright on the local run, at 1440, 390 and 360 px in both themes
         run: pnpm terminal:e2e
+      - name: The production build, which Playwright built, carries no test wallet (PIPESCOPE-94)
+        run: pnpm --filter terminal-web check:no-test-wallet
       - name: Keep the screenshots and any failure's trace
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

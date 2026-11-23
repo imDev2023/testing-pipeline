@@ -50,7 +50,7 @@
   padding: 0 12px;
   font-size: 1.3em;
   font-weight: var(--strong-weight);
-  background: var(--paper);
+  background: var(--sheet);
   border: 1px solid var(--rule2);
   border-radius: 4px;
   display: flex;
@@ -63,6 +63,12 @@
 output.amount {
   background: transparent;
   border-color: var(--rule);
+}
+
+.noQuote {
+  color: var(--ink3);
+  font-weight: var(--text-weight);
+  font-size: 0.8em;
 }
 
 .mint {
@@ -284,8 +290,6 @@ output.amount {
 .logs pre {
   margin: 6px 0 0;
   padding: 8px;
-  max-height: 220px;
-  overflow: auto;
   background: var(--wash);
   border-radius: 4px;
   font-family: var(--font-code);

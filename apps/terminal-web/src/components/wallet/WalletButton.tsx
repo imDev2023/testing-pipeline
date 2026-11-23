@@ -41,7 +41,8 @@ export function WalletButton() {
     return (
       <div className={styles.wrap} ref={root}>
         <button type="button" className={styles.button} onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu" title={wallet ? `Connected with ${wallet.name}` : undefined}>
-          {/* A wallet's own icon is its author's picture, drawn at a fixed size. */}
+          {/* A wallet's own icon is its author's picture, drawn at a fixed size; it is a data URI the wallet registers, so there is nothing to optimise. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           {wallet?.icon && <img src={wallet.icon} alt="" width={18} height={18} className={styles.icon} />}
           <code>{shortAddress(account.address)}</code>
         </button>
@@ -100,6 +101,7 @@ export function WalletButton() {
                   });
                 }}
               >
+                {/* eslint-disable-next-line @next/next/no-img-element -- a data URI the wallet registers */}
                 <img src={w.icon} alt="" width={20} height={20} className={styles.icon} />
                 {w.name}
               </button>

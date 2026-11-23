@@ -5,16 +5,12 @@
 // Nothing here sends a transaction, so it runs on the recorded fixtures in CI as on devnet; the swaps
 // themselves are src/trade-devnet.spec.ts.
 import { expect, test, type Page } from "@playwright/test";
-import { Balances } from "terminal-api/contract";
+import { Balances, PreparedSwap, Quote } from "terminal-api/contract";
+import { formatTokenAmount } from "../../../apps/terminal-web/src/format";
+import { CP_MARKET, CP_TOKEN, REFUSING_MARKET, WSOL } from "./markets";
 import { API } from "./target";
 import { connectTestWallet, installTestWallet, TEST_TRADER, type TestWallet } from "./wallet";
 
-/** Pipeline's example constant-product market of SOL and a plain token (docs/DEVNET.md in Pipeline's repo). */
-export const CP_MARKET = "3nWkYTqgJCcMV4S4DMrF77ZF27KA58nQSyZnNiPTZabe";
-const CP_TOKEN = "6DsWfiJk2zcHAgYjsMZYULGrVgzeedtnKbdy76vReMyp";
-/** A curve market whose own rules refuse every trade: its strategy answers `WrongStatus`. */
-const REFUSING_MARKET = "Bna6AxcMszMtNkdzpXWLSYBHp1g7pZnREt2QJfdBkyDY";
-const WSOL = "So11111111111111111111111111111111111111112";
 
 const box = (page: Page) => page.getByRole("region", { name: "Swap" });
 const costs = (page: Page) => page.getByRole("region", { name: "What this swap costs" });
@@ -33,6 +29,13 @@ async function openMarket(page: Page, market: string, wallet: "connect" | "none"
     await expect(page.getByRole("banner").getByRole("button", { name: /E69P\.\.\.JnAW/ })).toBeVisible();
   }
   return testWallet;
+}
+
+/** The API's own quote for a buy of `lamports` on the example market, as the box writes its amounts: the pool moves as devnet trades, so the box is checked against it. */
+async function apiQuote(lamports: bigint) {
+  const quote = Quote.parse(await (await fetch(`${API}/v1/quote?market=${CP_MARKET}&input_mint=${WSOL}&output_mint=${CP_TOKEN}&amount=${lamports}`)).json());
+  const tokens = (raw: bigint) => `${formatTokenAmount(raw, 6)} 6DsW...eMyp`;
+  return { expected: tokens(BigInt(quote.expected_out)), minimum: (bps: number) => tokens((BigInt(quote.expected_out) * BigInt(10_000 - bps)) / 10_000n) };
 }
 
 async function typeAmount(page: Page, amount: string) {
@@ -59,11 +62,12 @@ test.describe("the trade box", () => {
     await expect(row(breakdown, "Aviary fee, 0.5%")).toHaveText("0.0004963 SOL");
     await expect(row(breakdown, "The strategy's own fees and taxes")).toHaveText("included in the quote");
     await expect(row(breakdown, "Leaves your wallet")).toHaveText("0.1 SOL");
-    await expect(row(breakdown, "Expected output")).toContainText("86,060");
-    await expect(row(breakdown, "Minimum received, after 1% slippage")).toContainText("85,200");
+    const quoted = await apiQuote(100_000_000n);
+    await expect(row(breakdown, "Expected output")).toHaveText(quoted.expected);
+    await expect(row(breakdown, "Minimum received, after 1% slippage")).toHaveText(quoted.minimum(100));
     // The minimum follows the slippage chosen.
     await box(page).getByRole("button", { name: "3%" }).click();
-    await expect(row(breakdown, "Minimum received, after 3% slippage")).toContainText("83,480");
+    await expect(row(breakdown, "Minimum received, after 3% slippage")).toHaveText(quoted.minimum(300));
     await box(page).getByPlaceholder("Other").fill("60");
     await expect(box(page).getByText("Slippage is at most 50%.")).toBeVisible();
   });
@@ -97,13 +101,17 @@ test.describe("the trade box", () => {
   test("reviews the swap by simulating it exactly as it would be signed, and a declined signature returns to the review with nothing changed", async ({ page }) => {
     const wallet = await openMarket(page, CP_MARKET, "connect");
     await typeAmount(page, "0.1");
+    const preparing = page.waitForResponse((r) => r.url().endsWith("/v1/swaps/prepare"));
     await box(page).getByRole("button", { name: "Review swap" }).click();
+    const prepared = PreparedSwap.parse(await (await preparing).json());
     const review = page.getByRole("region", { name: "Review this swap" });
     await expect(review.getByText(/^The simulation went through\. It used [\d,]+ compute units\. This is what signing would change in your wallet:$/)).toBeVisible();
     await expect(row(review, "Leaves")).toHaveText("0.1 SOL");
-    await expect(row(review, "Arrives, expected")).toContainText("86,060");
+    await expect(row(review, "Arrives, expected")).toHaveText((await apiQuote(100_000_000n)).expected);
     await expect(row(review, "Network fee")).toHaveText("0.000005 SOL");
-    await expect(row(review, "Rent for a new token account")).toHaveText(/^0\.00\d+ SOL$/);
+    // Rent shows only when the swap creates a token account the wallet keeps: its first buy of the token.
+    if (prepared.simulation.new_accounts.length) await expect(row(review, "Rent for a new token account")).toHaveText(/^0\.00\d+ SOL$/);
+    else await expect(review.getByText(/^Rent for/)).toHaveCount(0);
     await expect(review.getByText("Signed in your own wallet. Aviary never holds your keys.")).toBeVisible();
     const sign = review.getByRole("button", { name: "Sign in wallet" });
     await expect(sign).toBeEnabled();

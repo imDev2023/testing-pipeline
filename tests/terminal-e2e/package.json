@@ -9,7 +9,8 @@
     "scripts": {
         "typecheck": "tsc -p .",
         "e2e": "playwright test",
-        "record": "E2E_RPC=record playwright test"
+        "record": "E2E_RPC=record playwright test",
+        "swaps:devnet": "E2E_SWAPS=1 E2E_RPC=devnet playwright test --project swaps"
     },
     "devDependencies": {
         "@playwright/test": "1.65.1",
