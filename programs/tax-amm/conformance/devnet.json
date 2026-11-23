@@ -1,46 +1,47 @@
 {
   "schema": "pipeline-check-report/1",
-  "checker_version": "0.2.0",
-  "generated_at": 1795142482,
+  "checker_version": "0.3.0",
+  "generated_at": 1795445943,
   "source": {
     "kind": "rpc",
     "cluster": "devnet",
     "genesis_hash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
-    "slot": 524205084,
-    "unix_timestamp": 1795142481
+    "slot": 525468285,
+    "unix_timestamp": 1795445942
   },
   "router": {
     "program_id": "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34",
     "loader": "bpf-loader-upgradeable",
-    "executable_sha256": "98d3d0377da8e70f9d4e69add25294bb9aab752d1ca1683b0a5bf74bd512c0f5",
-    "executable_len": 387305,
+    "executable_sha256": "4500c2939465439279caa0555123b44b81c63293a35ff36a1932a7cf51c49803",
+    "executable_len": 445321,
     "upgrade_authority": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ",
-    "deploy_slot": 523772247
+    "deploy_slot": 524761925
   },
   "strategy": {
     "program_id": "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t",
     "loader": "bpf-loader-upgradeable",
-    "executable_sha256": "a48b5e5962290aafe35ced955d0a8a8d6cb5cb63bd0be435fc87935d6c05db59",
-    "executable_len": 341505,
+    "executable_sha256": "7891f0a9e5e63b61571765a8823541d4c7fa9da573f98bed81cf1966225666ad",
+    "executable_len": 353521,
     "upgrade_authority": "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe",
-    "deploy_slot": 524204276
+    "deploy_slot": 525467612
   },
-  "strategy_metadata_uri": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json",
+  "strategy_metadata_uri": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/410f4b39aba52151a86e2673211133279061b564/programs/tax-amm/metadata.json",
   "market": {
-    "address": "C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w",
-    "market_state": "FJ1PJovxT4Njfn3fkufxcKeCF8XtsPRAFLKadZZYXgDB",
+    "address": "4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c",
+    "market_state": "DaSqZGNqHppoXFHg3HzcUJ9vVTsG7PbRCdc3UE8PLaMQ",
     "supports_exact_out": false,
+    "fee_mint": "So11111111111111111111111111111111111111112",
     "mints": [
       {
-        "address": "4gqiCkoxxD72nbXGc7XtxQx4UjBHD3KiJyXpMvEZ6u8c",
+        "address": "4KA1vmioSNTyGu2fsH1vaUQDMa3cC5jYDdGaRLUcHJdo",
         "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
         "decimals": 6,
-        "mint_authority": "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt",
+        "mint_authority": null,
         "freeze_authority": null,
         "extensions": [],
-        "vault": "DMEb3pZy6kpTyWkuFEksmkDPU12SuFz75YAaDecrepj4",
+        "vault": "9tHubEwYHEgBYiYAkHazu1hu2s4HCaaUFo9tKtCy4nS4",
         "vault_balance": 92157702826,
-        "fee_account": "5DkbLB7SdC1H7rSHB68FRCFeCHZXmiEGj1pdXEoDKm5t",
+        "fee_account": "FYuELfMYTCnwuppXAsZW9fJdQVaDUDPdoKRRKDmPNuqe",
         "fee_account_exists": true
       },
       {
@@ -50,9 +51,9 @@
         "mint_authority": null,
         "freeze_authority": null,
         "extensions": [],
-        "vault": "39bfFBoosHt5m7TTzd8T5aqqQyhTwLt3qynazwuSdxNW",
+        "vault": "BqkmSCXXBro7c9mB7pyKU8q6uLkZXgdwCgiYMwwBxw38",
         "vault_balance": 542548246,
-        "fee_account": "AaF4JrDiuAcw6hb4mxMYhKVfxv8NCUAup6M4qqqqS65y",
+        "fee_account": "8JgJCoTqxdNg55C9z1i1wfaBjLgjQfiBf7QQLvAngiDy",
         "fee_account_exists": true
       }
     ]
@@ -87,13 +88,13 @@
       "message": "The strategy reports the same mints, vaults and exact-out support the router recorded.",
       "details": {
         "reported_mints": [
-          "4gqiCkoxxD72nbXGc7XtxQx4UjBHD3KiJyXpMvEZ6u8c",
+          "4KA1vmioSNTyGu2fsH1vaUQDMa3cC5jYDdGaRLUcHJdo",
           "So11111111111111111111111111111111111111112"
         ],
         "reported_supports_exact_out": false,
         "reported_vaults": [
-          "DMEb3pZy6kpTyWkuFEksmkDPU12SuFz75YAaDecrepj4",
-          "39bfFBoosHt5m7TTzd8T5aqqQyhTwLt3qynazwuSdxNW"
+          "9tHubEwYHEgBYiYAkHazu1hu2s4HCaaUFo9tKtCy4nS4",
+          "BqkmSCXXBro7c9mB7pyKU8q6uLkZXgdwCgiYMwwBxw38"
         ]
       }
     },
@@ -116,7 +117,7 @@
       "details": {
         "mints": [
           {
-            "address": "4gqiCkoxxD72nbXGc7XtxQx4UjBHD3KiJyXpMvEZ6u8c",
+            "address": "4KA1vmioSNTyGu2fsH1vaUQDMa3cC5jYDdGaRLUcHJdo",
             "extensions": [],
             "transfer_hook_program": null
           },
@@ -138,11 +139,11 @@
           {
             "accounts": [
               {
-                "address": "39bfFBoosHt5m7TTzd8T5aqqQyhTwLt3qynazwuSdxNW",
+                "address": "BqkmSCXXBro7c9mB7pyKU8q6uLkZXgdwCgiYMwwBxw38",
                 "writable": true
               },
               {
-                "address": "HJAV2fHnjP7tGukvU9vkqvhjJvCQb9kvU3UK1jwv3nez",
+                "address": "FZasckWtodhh5vXd4jo2i3Ghcn4mBLhoeTqXEfnwEzht",
                 "writable": false
               }
             ],
@@ -153,11 +154,11 @@
           {
             "accounts": [
               {
-                "address": "DMEb3pZy6kpTyWkuFEksmkDPU12SuFz75YAaDecrepj4",
+                "address": "9tHubEwYHEgBYiYAkHazu1hu2s4HCaaUFo9tKtCy4nS4",
                 "writable": true
               },
               {
-                "address": "HJAV2fHnjP7tGukvU9vkqvhjJvCQb9kvU3UK1jwv3nez",
+                "address": "FZasckWtodhh5vXd4jo2i3Ghcn4mBLhoeTqXEfnwEzht",
                 "writable": false
               }
             ],
@@ -223,9 +224,9 @@
       "id": "quotes",
       "title": "Quotes in every direction and size",
       "status": "pass",
-      "message": "All 6 quotes succeeded through pipeline-quoter using only the resolved accounts (up to 5745 compute units each).",
+      "message": "All 6 quotes succeeded through pipeline-quoter using only the resolved accounts (up to 5974 compute units each).",
       "details": {
-        "max_quote_compute_units": 5745,
+        "max_quote_compute_units": 5974,
         "quote_compute_limit": 200000,
         "quotes": [
           {
@@ -245,12 +246,12 @@
             "mode": "ExactIn",
             "quote": {
               "amount_in": 921577,
-              "amount_out": 5153,
-              "compute_units": 5738,
+              "amount_out": 5140,
+              "compute_units": 5965,
               "net_sent": 921577,
-              "pipeline_fee": 2304,
+              "pipeline_fee": 13,
               "strategy_amount_out": 5153,
-              "total_spend": 923881
+              "total_spend": 921577
             },
             "size": "small"
           },
@@ -262,12 +263,12 @@
             "mode": "ExactIn",
             "quote": {
               "amount_in": 92157702,
-              "amount_out": 514905,
-              "compute_units": 5738,
+              "amount_out": 513617,
+              "compute_units": 5965,
               "net_sent": 92157702,
-              "pipeline_fee": 230395,
+              "pipeline_fee": 1288,
               "strategy_amount_out": 514905,
-              "total_spend": 92388097
+              "total_spend": 92157702
             },
             "size": "medium"
           },
@@ -279,12 +280,12 @@
             "mode": "ExactIn",
             "quote": {
               "amount_in": 4607885141,
-              "amount_out": 24543848,
-              "compute_units": 5738,
+              "amount_out": 24482488,
+              "compute_units": 5965,
               "net_sent": 4607885141,
-              "pipeline_fee": 11519713,
+              "pipeline_fee": 61360,
               "strategy_amount_out": 24543848,
-              "total_spend": 4619404854
+              "total_spend": 4607885141
             },
             "size": "large"
           },
@@ -306,7 +307,7 @@
             "quote": {
               "amount_in": 5425,
               "amount_out": 893799,
-              "compute_units": 5745,
+              "compute_units": 5974,
               "net_sent": 5425,
               "pipeline_fee": 14,
               "strategy_amount_out": 893799,
@@ -323,7 +324,7 @@
             "quote": {
               "amount_in": 542548,
               "amount_out": 89306209,
-              "compute_units": 5745,
+              "compute_units": 5974,
               "net_sent": 542548,
               "pipeline_fee": 1357,
               "strategy_amount_out": 89306209,
@@ -340,7 +341,7 @@
             "quote": {
               "amount_in": 27127412,
               "amount_out": 4262897888,
-              "compute_units": 5745,
+              "compute_units": 5974,
               "net_sent": 27127412,
               "pipeline_fee": 67819,
               "strategy_amount_out": 4262897888,
@@ -361,47 +362,55 @@
         "swaps": [
           {
             "case": "mint 0→1 exact-in 921577 (small)",
-            "compute_units": 42036,
+            "compute_units": 38440,
             "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
             "matched": true,
             "net_sent": 921577,
-            "pipeline_fee": 2304,
+            "pipeline_fee": 13,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
             "quoted_net_sent": 921577,
-            "quoted_out": 5153,
-            "quoted_pipeline_fee": 2304,
+            "quoted_out": 5140,
+            "quoted_pipeline_fee": 13,
             "received": 5153
           },
           {
             "case": "mint 0→1 exact-in 92157702 (medium)",
-            "compute_units": 42036,
+            "compute_units": 38440,
             "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
             "matched": true,
             "net_sent": 92157702,
-            "pipeline_fee": 230395,
+            "pipeline_fee": 1288,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
             "quoted_net_sent": 92157702,
-            "quoted_out": 514905,
-            "quoted_pipeline_fee": 230395,
+            "quoted_out": 513617,
+            "quoted_pipeline_fee": 1288,
             "received": 514905
           },
           {
             "case": "mint 0→1 exact-in 4607885141 (large)",
-            "compute_units": 42036,
+            "compute_units": 38440,
             "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
             "matched": true,
             "net_sent": 4607885141,
-            "pipeline_fee": 11519713,
+            "pipeline_fee": 61360,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
             "quoted_net_sent": 4607885141,
-            "quoted_out": 24543848,
-            "quoted_pipeline_fee": 11519713,
+            "quoted_out": 24482488,
+            "quoted_pipeline_fee": 61360,
             "received": 24543848
           },
           {
             "case": "mint 1→0 exact-in 5425 (small)",
-            "compute_units": 37593,
+            "compute_units": 37911,
             "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
             "matched": true,
             "net_sent": 5425,
             "pipeline_fee": 14,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
             "quoted_net_sent": 5425,
             "quoted_out": 893799,
             "quoted_pipeline_fee": 14,
@@ -409,11 +418,13 @@
           },
           {
             "case": "mint 1→0 exact-in 542548 (medium)",
-            "compute_units": 37593,
+            "compute_units": 37911,
             "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
             "matched": true,
             "net_sent": 542548,
             "pipeline_fee": 1357,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
             "quoted_net_sent": 542548,
             "quoted_out": 89306209,
             "quoted_pipeline_fee": 1357,
@@ -421,11 +432,13 @@
           },
           {
             "case": "mint 1→0 exact-in 27127412 (large)",
-            "compute_units": 37593,
+            "compute_units": 37911,
             "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
             "matched": true,
             "net_sent": 27127412,
             "pipeline_fee": 67819,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
             "quoted_net_sent": 27127412,
             "quoted_out": 4262897888,
             "quoted_pipeline_fee": 67819,
@@ -444,7 +457,7 @@
           {
             "case": "mint 0→1 exact-in 92157702 (medium)",
             "error": "InstructionError(1, Custom(6020)): Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x1784",
-            "min_amount_out": 514906,
+            "min_amount_out": 513618,
             "refused_by": "router",
             "rejected": true
           },
@@ -474,12 +487,12 @@
       "id": "compute",
       "title": "Compute units of a router swap",
       "status": "pass",
-      "message": "Router swaps used 37593–42036 compute units, of which the strategy used up to 13889.",
+      "message": "Router swaps used 37911–38440 compute units, of which the strategy used up to 14223.",
       "details": {
         "limit": 1400000,
-        "max_strategy_units": 13889,
-        "max_swap_units": 42036,
-        "min_swap_units": 37593,
+        "max_strategy_units": 14223,
+        "max_swap_units": 38440,
+        "min_swap_units": 37911,
         "warn_above": 200000
       }
     },
@@ -499,17 +512,17 @@
         "trips": [
           {
             "error": null,
-            "got_back": 84718005,
-            "intermediate": 514905,
-            "pipeline_fees": 231680,
+            "got_back": 84506324,
+            "intermediate": 513617,
+            "pipeline_fees": 2569,
             "put_in": 92157702,
             "route": "0→1→0"
           },
           {
             "error": null,
-            "got_back": 498711,
+            "got_back": 498706,
             "intermediate": 89306209,
-            "pipeline_fees": 224066,
+            "pipeline_fees": 2607,
             "put_in": 542548,
             "route": "1→0→1"
           }

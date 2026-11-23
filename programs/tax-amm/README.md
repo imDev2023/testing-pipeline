@@ -29,15 +29,15 @@ Each block in the register says what else was weighed, the one place the value l
 
 ## On devnet
 
-Deployed and registered with Pipeline's router on devnet on 2026-11-20.
+Deployed and registered with Pipeline's router on devnet on 2026-11-20, and upgraded on 2026-11-23 to the hardened build of [the hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67) ([`docs/security/tax-amm/`](../../docs/security/tax-amm/README.md); not an audit).
 
 | | |
 | --- | --- |
 | Program | `J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t` ([TAX-29](../../docs/decisions.md#tax-29-program-id)) |
-| Verified build | executable hash `a48b5e5962290aafe35ced955d0a8a8d6cb5cb63bd0be435fc87935d6c05db59`, the `solana-verify` Docker build of `274038e` on `main`, recorded in [`deployments/devnet.json`](../../deployments/devnet.json) ([BAR-20](../../docs/decisions.md#bar-20-verified-builds-of-our-programs), [BAR-42](../../docs/decisions.md#bar-42-how-a-program-is-deployed-to-devnet)) |
+| Verified build | executable hash `7891f0a9e5e63b61571765a8823541d4c7fa9da573f98bed81cf1966225666ad`, the `solana-verify` Docker build of `410f4b3` on `main` (the first deploy, `274038e`, is in the record's history), recorded in [`deployments/devnet.json`](../../deployments/devnet.json) ([BAR-20](../../docs/decisions.md#bar-20-verified-builds-of-our-programs), [BAR-42](../../docs/decisions.md#bar-42-how-a-program-is-deployed-to-devnet)) |
 | Upgrade authority | `Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe`, the project's one devnet upgrade authority ([BAR-23](../../docs/decisions.md#bar-23-upgrade-authority-on-devnet)) |
-| Demo market | `C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w`: a demo token against wrapped SOL, taxed in wrapped SOL, 3% buy and 5% sell, two tax recipients, a tax authority ([TAX-53](../../docs/decisions.md#tax-53-the-devnet-demo-market)); its registration, creation, trades and payouts, with every signature, are in [`deployments/devnet-demo-tax-amm.json`](../../deployments/devnet-demo-tax-amm.json) |
-| Conformance | [`conformance/devnet.json`](conformance/devnet.json), `pipeline-check` 0.2.0 on the demo market: 13 pass, 0 warn, 0 fail, `exact_out_refund` skipped |
+| Demo market | `4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c`, created by the demo after the upgrade (the first, `C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w`, still trades on the new build): a demo token against wrapped SOL, taxed in wrapped SOL, 3% buy and 5% sell, two tax recipients, a tax authority ([TAX-53](../../docs/decisions.md#tax-53-the-devnet-demo-market)); its registration, creation, trades and payouts, with every signature, are in [`deployments/devnet-demo-tax-amm.json`](../../deployments/devnet-demo-tax-amm.json) |
+| Conformance | [`conformance/devnet.json`](conformance/devnet.json), `pipeline-check` 0.3.0 (Pipeline `48a6b5f`) on the demo market: 13 pass, 0 warn, 0 fail, `exact_out_refund` skipped |
 
 It stays upgradeable on devnet under one project upgrade authority, and Aviary shows it as upgradeable by a single key, like anyone else's strategy.
 It was deployed while this repo was still private ([BAR-21](../../docs/decisions.md#bar-21-published-source-and-licence)); since the repo went public on 2026-11-20, its metadata and every link in it resolve at commits on `main` ([TAX-54](../../docs/decisions.md#tax-54-links-that-stay-at-commits-on-main)).
@@ -45,11 +45,11 @@ It was deployed while this repo was still private ([BAR-21](../../docs/decisions
 To check the deploy yourself, with `solana-verify` 0.5.2 or later and Docker, rebuild the commit as the deploy did, from an export of it and with the image it pinned, and compare the two hashes:
 
 ```sh
-mkdir -p /tmp/tax-amm-274038e
-git archive 274038e programs | tar -x -C /tmp/tax-amm-274038e
-solana-verify build /tmp/tax-amm-274038e/programs --library-name tax_amm --arch v3 \
+mkdir -p /tmp/tax-amm-410f4b3
+git archive 410f4b3 programs | tar -x -C /tmp/tax-amm-410f4b3
+solana-verify build /tmp/tax-amm-410f4b3/programs --library-name tax_amm --arch v3 \
   --base-image solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd
-solana-verify get-executable-hash /tmp/tax-amm-274038e/programs/target/deploy/tax_amm.so
+solana-verify get-executable-hash /tmp/tax-amm-410f4b3/programs/target/deploy/tax_amm.so
 solana-verify get-program-hash -u devnet J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t
 ```
 
