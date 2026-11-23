@@ -11,7 +11,7 @@
 import { useSignAndSendTransaction } from "@solana/react";
 import type { UiWalletAccount } from "@wallet-standard/react";
 import { getBase58Decoder, getBase64Encoder } from "@solana/kit";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Balances, Fees, PreparedSwap, Quote, TradeReport, type Failure, type Market, type Trade } from "terminal-api/contract";
 import { ApiFailure, getFromApi, postToApi } from "@/api";
 import { BRAND } from "@/brand";
@@ -57,13 +57,16 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
   const [pay, setPay] = useState(market.quote_mint);
   const [receive, setReceive] = useState(market.base_mint);
   const [typed, setTyped] = useState("");
-  const [slippageChoice, setSlippageChoice] = useState<number | "other">(DEFAULT_SLIPPAGE_PERCENT);
+  const [slippagePreset, setSlippagePreset] = useState<number>(DEFAULT_SLIPPAGE_PERCENT);
   const [slippageTyped, setSlippageTyped] = useState("");
+  // Another value is chosen once something is typed in its box; with the box empty, the preset holds.
+  const slippageChoice: number | "other" = slippageTyped.trim() === "" ? slippagePreset : "other";
   /** The answer to the latest quote asked, under the key of what was asked; any other key is still loading. */
   const [quoteFor, setQuoteFor] = useState<{ key: string; state: QuoteState } | null>(null);
   const [review, setReview] = useState<Review | null>(null);
   const [fees, setFees] = useState<Fees | null>(null);
-  const [balances, setBalances] = useState<Record<string, bigint> | null>(null);
+  /** The balances read, under the wallet they were read for: another wallet's are never shown. */
+  const [balancesFor, setBalancesFor] = useState<{ trader: string; balances: Record<string, bigint> } | null>(null);
   const [balancesAsked, setBalancesAsked] = useState(0);
 
   const payDecimals = decimalsOf(pay);
@@ -85,8 +88,8 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
     if (!trader) return;
     const controller = new AbortController();
     getFromApi(`/v1/traders/${trader}/balances?mints=${market.mints.map((m) => m.mint).join(",")}`, Balances, { signal: controller.signal }).then(
-      (answer) => setBalances(Object.fromEntries(answer.balances.map((b) => [b.mint, BigInt(b.amount)]))),
-      () => !controller.signal.aborted && setBalances(null),
+      (answer) => setBalancesFor({ trader, balances: Object.fromEntries(answer.balances.map((b) => [b.mint, BigInt(b.amount)])) }),
+      () => !controller.signal.aborted && setBalancesFor(null),
     );
     return () => controller.abort();
   }, [trader, market.mints, balancesAsked]);
@@ -114,8 +117,14 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
     };
   }, [quoteKey, market.address, pay, receive, value, trader]);
 
-  // Changing the amount, a mint or the slippage leaves the review and asks for a new quote.
-  const leaveReview = () => setReview(null);
+  // Changing the amount, a mint or the slippage leaves the review and asks for a new quote. Each
+  // review is one generation: an answer for an earlier one (a build still on its way when the trader
+  // changed the amount) is thrown away, so only the swap on screen can be signed.
+  const generation = useRef(0);
+  const leaveReview = () => {
+    generation.current++;
+    setReview(null);
+  };
   const choosePay = (mint: string) => {
     leaveReview();
     if (mint === receive) setReceive(pay);
@@ -137,17 +146,25 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
     setTyped("");
   };
 
-  const button = tradeButton({ connected: Boolean(account), amount: amount.kind, quote: quote.status === "loading" ? "loading" : quote.status === "ready" ? "ready" : "none", noticeUnticked: false });
+  const button = tradeButton({
+    connected: Boolean(account),
+    amount: amount.kind,
+    quote: quote.status === "loading" ? "loading" : quote.status === "ready" ? "ready" : "none",
+    noticeUnticked: false,
+    slippageReason: slippage.kind === "invalid" ? slippage.reason : null,
+  });
 
   const build = useCallback(
     async (rebuilt: boolean) => {
       if (!trader || value === null || slippageBps === null) return;
+      const mine = ++generation.current;
       setReview({ status: "building", rebuilt });
       try {
         const prepared = await postToApi("/v1/swaps/prepare", { market: market.address, input_mint: pay, output_mint: receive, amount: String(value), slippage_bps: slippageBps, trader }, PreparedSwap);
+        if (mine !== generation.current) return;
         setReview(prepared.simulation.ok && prepared.transaction ? { status: "ready", prepared, at: Date.now(), rebuilt, walletNote: null } : { status: "failed", prepared });
       } catch (e) {
-        setReview({ status: "error", message: failureOf(e) });
+        if (mine === generation.current) setReview({ status: "error", message: failureOf(e) });
       }
     },
     [trader, value, slippageBps, market.address, pay, receive],
@@ -155,13 +172,15 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
 
   const settle = useCallback(
     async (prepared: PreparedSwap, signature: string) => {
+      const mine = generation.current;
       setReview({ status: "sent", prepared, signature });
       try {
         const report = await postToApi("/v1/trades", { signature, market: market.address }, TradeReport);
+        // The trade happened whatever the trader did since: it joins Trades either way.
         onTraded(report.trades);
-        setReview({ status: "confirmed", prepared, signature, slot: report.slot });
+        if (mine === generation.current) setReview({ status: "confirmed", prepared, signature, slot: report.slot });
       } catch (e) {
-        setReview({ status: "unsettled", prepared, signature, message: failureOf(e), failure: e instanceof ApiFailure ? e.failure : null });
+        if (mine === generation.current) setReview({ status: "unsettled", prepared, signature, message: failureOf(e), failure: e instanceof ApiFailure ? e.failure : null });
       }
       setBalancesAsked((n) => n + 1);
     },
@@ -169,7 +188,7 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
   );
 
   const symbolOfPay = label(pay);
-  const balance = balances?.[pay] ?? null;
+  const balance = (balancesFor && balancesFor.trader === trader ? balancesFor.balances[pay] : undefined) ?? null;
   const showsBreakdown = review === null;
 
   return (
@@ -271,7 +290,8 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
               aria-pressed={slippageChoice === choice}
               onClick={() => {
                 leaveReview();
-                setSlippageChoice(choice);
+                setSlippagePreset(choice);
+                setSlippageTyped("");
               }}
             >
               {choice}%
@@ -285,17 +305,15 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
               placeholder="Other"
               value={slippageTyped}
               data-chosen={slippageChoice === "other" || undefined}
-              onFocus={() => setSlippageChoice("other")}
               onChange={(e) => {
                 leaveReview();
-                setSlippageChoice("other");
                 setSlippageTyped(e.target.value);
               }}
             />
             <span aria-hidden="true">%</span>
           </label>
         </div>
-        {slippage.kind === "invalid" && slippageChoice === "other" && slippageTyped !== "" && (
+        {slippage.kind === "invalid" && (
           <p className={styles.under} role="alert">
             {slippage.reason}
           </p>
@@ -545,6 +563,12 @@ function Changes({ prepared, market }: { prepared: PreparedSwap; market: Market 
           <div>
             <dt>{sim.new_accounts.length === 1 ? "Rent for a new token account" : `Rent for ${sim.new_accounts.length} new token accounts`}</dt>
             <dd>{formatTokenAmount(rent, SOL_DECIMALS)} SOL</dd>
+          </div>
+        )}
+        {BigInt(sim.market_rent) > 0n && (
+          <div>
+            <dt>Rent for the market&apos;s fee account, which this swap creates</dt>
+            <dd>{formatTokenAmount(BigInt(sim.market_rent), SOL_DECIMALS)} SOL</dd>
           </div>
         )}
       </dl>

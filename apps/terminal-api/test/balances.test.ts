@@ -61,3 +61,18 @@ describe("GET /v1/traders/{trader}/balances (the trade box's balance under each 
     expect(response.status).toBe(400);
   });
 });
+
+describe("addresses the trading endpoints are given", () => {
+  it("are refused with a 400 when they are base58 but not 32 bytes, before the RPC is asked", async () => {
+    const env = bindings({ databaseUrl: "postgres://unused@127.0.0.1:1/unused", rpcUrl: "http://127.0.0.1:1/" });
+    const { ctx } = executionContext();
+    const bogus = "z".repeat(44);
+    const quote = await app.request(`/v1/quote?market=${bogus}&input_mint=${WSOL}&output_mint=${TOKEN}&amount=1`, { headers: { "cf-connecting-ip": "192.0.2.10" } }, env, ctx);
+    expect(quote.status).toBe(400);
+    expect(await quote.json()).toEqual({ error: "market is an address." });
+    const badAmount = await app.request(`/v1/quote?market=${TRADER}&input_mint=${WSOL}&output_mint=${TOKEN}&amount=abc`, { headers: { "cf-connecting-ip": "192.0.2.10" } }, env, ctx);
+    expect(badAmount.status).toBe(400);
+    const balances = await app.request(`/v1/traders/${TRADER}/balances?mints=${bogus}`, { headers: { "cf-connecting-ip": "192.0.2.10" } }, env, ctx);
+    expect(balances.status).toBe(400);
+  });
+});

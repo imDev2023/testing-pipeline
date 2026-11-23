@@ -42,7 +42,8 @@ const between = (text: string, start: string, end: string): string | null => {
   return to < 0 ? null : text.slice(from + start.length, to);
 };
 
-const short = (address: string) => `${address.slice(0, 4)}...${address.slice(-4)}`;
+/** A program as a sentence names it: its short address, or "A program" when no log line named it. */
+const programWords = (address: string | null) => (address ? `Program ${address.slice(0, 4)}...${address.slice(-4)}` : "A program");
 const quoted = (name: string, message: string | null) => (message ? `${name}, "${message}"` : name);
 
 export function decodeFailure(error: unknown, logs: readonly string[], { strategy }: { strategy: string }): Failure {
@@ -87,7 +88,10 @@ export function decodeFailure(error: unknown, logs: readonly string[], { strateg
   const words = named.name ? quoted(named.name, named.message) : number !== null ? `error ${number}` : reason || raw;
 
   if (outOfCompute) return { ...named, class: "out_of_compute", sentence: "It ran out of compute before it finished." };
-  if (crashed) return { ...named, class: "crash", sentence: `The ${program === strategy ? "strategy" : `program ${short(program ?? "unknown")}`} crashed instead of answering: ${(panic ?? reason).replace(/\.$/, "")}.` };
+  if (crashed) {
+    const who = program === strategy ? "The strategy" : programWords(program);
+    return { ...named, class: "crash", sentence: `${who} crashed instead of answering: ${(panic ?? reason ?? raw).replace(/\.$/, "")}.` };
+  }
   if (program === strategy && number !== null && CANNOT_READ.has(number)) return { ...named, class: "cannot_read_state", sentence: `The strategy cannot read this market's state: ${words}.` };
   if (program === strategy) return { ...named, class: "strategy_refused", sentence: `The strategy refused it: ${words}.` };
   if (program === PIPELINE_PROGRAM_ADDRESS) return { ...named, class: "router_refused", sentence: `Pipeline's router refused it: ${words}.` };
@@ -99,5 +103,5 @@ export function decodeFailure(error: unknown, logs: readonly string[], { strateg
   if (program === SYSTEM_PROGRAM_ADDRESS && (code === 1 || logs.some((l) => l.includes("insufficient lamports")))) {
     return { ...named, class: "too_little", sentence: TOO_LITTLE };
   }
-  return { ...named, class: "other_refused", sentence: `Program ${short(program ?? "unknown")} refused it: ${words.replace(/\.$/, "")}.` };
+  return { ...named, class: "other_refused", sentence: `${programWords(program)} refused it: ${words.replace(/\.$/, "")}.` };
 }

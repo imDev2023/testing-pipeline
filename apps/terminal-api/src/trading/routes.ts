@@ -1,7 +1,7 @@
 // The trading path's endpoints (docs/spec/pipescope-architecture.md, Trading path): the fees, a
 // quote while the trader types, a swap prepared and simulated, and a trade's signature (the fast
 // path). Quotes, prepares and signatures count together against the TRADES limit (PIPESCOPE-90).
-import { address, createSolanaRpc } from "@solana/kit";
+import { address, createSolanaRpc, isAddress } from "@solana/kit";
 import { eq } from "drizzle-orm";
 import type { Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -19,7 +19,6 @@ import { readTradeMarket } from "./market";
 import { prepareSwap } from "./prepare";
 import { quoteTyped, Refused } from "./quote";
 
-const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const AMOUNT = /^\d{1,20}$/;
 const U64_MAX = (1n << 64n) - 1n;
 
@@ -29,8 +28,9 @@ function amountOf(raw: string | undefined): bigint {
   return BigInt(raw);
 }
 
+/** A query parameter or body field that must be an address: 32 bytes in base58, which Kit checks. */
 function addressOf(raw: string | undefined, name: string): string {
-  if (!raw || !ADDRESS.test(raw)) throw new HTTPException(400, { message: `${name} is an address.` });
+  if (!raw || !isAddress(raw)) throw new HTTPException(400, { message: `${name} is an address.` });
   return raw;
 }
 
@@ -54,17 +54,16 @@ export function tradingRoutes(app: Hono<AppEnv>) {
   });
 
   app.get("/v1/quote", limitTrades, async (c) => {
+    // Every parameter is checked before the RPC is asked anything.
     const market = addressOf(c.req.query("market"), "market");
-    const trader = c.req.query("trader");
+    const inputMint = addressOf(c.req.query("input_mint"), "input_mint");
+    const outputMint = addressOf(c.req.query("output_mint"), "output_mint");
+    const typed = amountOf(c.req.query("amount"));
+    const traderQuery = c.req.query("trader");
+    const trader = traderQuery ? address(addressOf(traderQuery, "trader")) : null;
     const rpc = createSolanaRpc(c.env.RPC_URL);
     try {
-      const { quote } = await quoteTyped(rpc, c.env.INTEGRATOR_FEE, {
-        market: await readTradeMarket(rpc, market),
-        inputMint: addressOf(c.req.query("input_mint"), "input_mint"),
-        outputMint: addressOf(c.req.query("output_mint"), "output_mint"),
-        typed: amountOf(c.req.query("amount")),
-        trader: trader ? address(addressOf(trader, "trader")) : null,
-      });
+      const { quote } = await quoteTyped(rpc, c.env.INTEGRATOR_FEE, { market: await readTradeMarket(rpc, market), inputMint, outputMint, typed, trader });
       return c.json(Quote.parse(quote));
     } catch (e) {
       if (e instanceof Refused) return refused(c, e);
@@ -74,13 +73,15 @@ export function tradingRoutes(app: Hono<AppEnv>) {
 
   app.post("/v1/swaps/prepare", limitTrades, async (c) => {
     const request = await bodyOf(c, PrepareSwapRequest);
+    for (const [name, value] of [["market", request.market], ["input_mint", request.input_mint], ["output_mint", request.output_mint], ["trader", request.trader]] as const) addressOf(value, name);
+    const typed = amountOf(request.amount);
     const rpc = createSolanaRpc(c.env.RPC_URL);
     try {
       const prepared = await prepareSwap(rpc, c.env.INTEGRATOR_FEE, {
         market: await readTradeMarket(rpc, request.market),
         inputMint: request.input_mint,
         outputMint: request.output_mint,
-        typed: amountOf(request.amount),
+        typed,
         slippageBps: request.slippage_bps,
         trader: address(request.trader),
       });
@@ -93,18 +94,24 @@ export function tradingRoutes(app: Hono<AppEnv>) {
 
   app.post("/v1/trades", limitTrades, async (c) => {
     const { signature, market } = await bodyOf(c, TradeSignature);
-    const { db, close } = createDb(c.env.HYPERDRIVE.connectionString);
+    // The database is opened only around its reads, never held while the chain is waited on.
+    const withDb = async <T>(read: (db: ReturnType<typeof createDb>["db"]) => Promise<T>): Promise<T> => {
+      const { db, close } = createDb(c.env.HYPERDRIVE.connectionString);
+      try {
+        return await read(db);
+      } finally {
+        c.executionCtx.waitUntil(close());
+      }
+    };
     try {
-      const [known] = market ? await db.select({ strategy: markets.strategyProgram }).from(markets).where(eq(markets.address, market)) : [];
+      const [known] = market ? await withDb((db) => db.select({ strategy: markets.strategyProgram }).from(markets).where(eq(markets.address, market))) : [];
       const raw = await awaitTrade(c.env.RPC_URL, signature, { strategy: known?.strategy ?? null });
       // The indexer writes it with its place in its block and tells the market's room.
       c.executionCtx.waitUntil(indexer(c.env).fastPath([signature]).catch((e: unknown) => console.error(`handing ${signature} to the indexer failed; reconciliation will index it`, e)));
-      return c.json(TradeReport.parse({ signature, slot: raw.slot, trades: await tradeViews(db, provisionalTrades(raw)) }));
+      return c.json(TradeReport.parse({ signature, slot: raw.slot, trades: await withDb((db) => tradeViews(db, provisionalTrades(raw))) }));
     } catch (e) {
       if (e instanceof Refused) return refused(c, e);
       throw e;
-    } finally {
-      c.executionCtx.waitUntil(close());
     }
   });
 }

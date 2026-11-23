@@ -66,7 +66,7 @@ describe("a rate in basis points", () => {
 });
 
 describe("the trade box's button (docs/spec/pipescope-screens.md, Trade box)", () => {
-  const ready = { connected: true, amount: "amount" as const, quote: "ready" as const, noticeUnticked: false };
+  const ready = { connected: true, amount: "amount" as const, quote: "ready" as const, noticeUnticked: false, slippageReason: null };
 
   it("reads, in turn, Connect wallet, Enter an amount, Getting a quote, and Review swap", () => {
     expect(tradeButton({ ...ready, connected: false })).toEqual({ label: "Connect wallet", action: "connect", reason: null });
@@ -79,5 +79,6 @@ describe("the trade box's button (docs/spec/pipescope-screens.md, Trade box)", (
     expect(tradeButton({ ...ready, noticeUnticked: true })).toEqual({ label: "Review swap", action: null, reason: "Tick the box above to say you have read it." });
     expect(tradeButton({ ...ready, quote: "none" })).toEqual({ label: "Review swap", action: null, reason: "There is no quote to build a swap from." });
     expect(tradeButton({ ...ready, amount: "invalid" })).toEqual({ label: "Review swap", action: null, reason: "There is no quote to build a swap from." });
+    expect(tradeButton({ ...ready, slippageReason: "Slippage is at most 50%." })).toEqual({ label: "Review swap", action: null, reason: "Slippage is at most 50%." });
   });
 });

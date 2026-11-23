@@ -60,16 +60,19 @@ export type ButtonInput = {
   quote: "loading" | "ready" | "none";
   /** The exit-test notice is shown and its box not yet ticked. */
   noticeUnticked: boolean;
+  /** Why the slippage typed cannot be used, or null when it can. */
+  slippageReason: string | null;
 };
 
 export type ButtonState = { label: string; action: "connect" | "review" | null; reason: string | null };
 
 /** What the button reads and does, and why it is off when the trader can act on that. */
-export function tradeButton({ connected, amount, quote, noticeUnticked }: ButtonInput): ButtonState {
+export function tradeButton({ connected, amount, quote, noticeUnticked, slippageReason }: ButtonInput): ButtonState {
   if (!connected) return { label: "Connect wallet", action: "connect", reason: null };
   if (amount === "empty") return { label: "Enter an amount", action: null, reason: null };
   if (amount === "amount" && quote === "loading") return { label: "Getting a quote", action: null, reason: null };
   if (amount !== "amount" || quote !== "ready") return { label: "Review swap", action: null, reason: "There is no quote to build a swap from." };
+  if (slippageReason) return { label: "Review swap", action: null, reason: slippageReason };
   if (noticeUnticked) return { label: "Review swap", action: null, reason: "Tick the box above to say you have read it." };
   return { label: "Review swap", action: "review", reason: null };
 }

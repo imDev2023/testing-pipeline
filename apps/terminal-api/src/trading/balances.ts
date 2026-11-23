@@ -1,9 +1,9 @@
 // What a wallet holds in a market's mints, read through RPC (docs/spec/pipescope-architecture.md, API:
 // balances "read through RPC"), for the balance the trade box shows under the mint paid. Wrapped SOL
 // is answered with the wallet's plain SOL, since a swap paying in it wraps SOL for the trader.
-import { NATIVE_MINT_ADDRESS } from "@pipeline-sol/sdk";
+import { MAX_MARKET_MINTS, NATIVE_MINT_ADDRESS } from "@pipeline-sol/sdk";
 import { findAssociatedTokenPda } from "@solana-program/token";
-import { address, getBase64Encoder, type Address, type Rpc, type SolanaRpcApi } from "@solana/kit";
+import { address, getBase64Encoder, isAddress, type Address, type Rpc, type SolanaRpcApi } from "@solana/kit";
 import type { Balances } from "../contract";
 
 const base64 = getBase64Encoder();
@@ -29,6 +29,7 @@ export async function readBalances(rpc: Rpc<SolanaRpcApi>, trader: Address, mint
 
 export const parseMints = (raw: string | undefined): Address[] | null => {
   const list = (raw ?? "").split(",").filter(Boolean);
-  if (!list.length || list.length > 4 || !list.every((m) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(m))) return null;
+  // At most a market's mints, each a real address.
+  if (!list.length || list.length > MAX_MARKET_MINTS || !list.every((m) => isAddress(m))) return null;
   return list.map((m) => address(m));
 };

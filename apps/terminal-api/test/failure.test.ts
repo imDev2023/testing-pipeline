@@ -5,6 +5,12 @@ const STRATEGY = "yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx";
 const ROUTER = "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34";
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
+describe("a failure no log line names", () => {
+  it("names no made-up program", () => {
+    expect(decodeFailure({ InstructionError: [0, { Custom: 6000 }] }, [], { strategy: STRATEGY }).sentence).toBe("A program refused it: error 6000.");
+  });
+});
+
 describe("a failure decoded from a simulation's error and logs (docs/spec/pipescope-screens.md, Review and sign)", () => {
   it("names a strategy's refusal by its Anchor error, with the raw error beneath", () => {
     const failure = decodeFailure({ InstructionError: [3, { Custom: 6004 }] }, [

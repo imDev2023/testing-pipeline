@@ -129,6 +129,40 @@ test.describe("the trade box", () => {
     await expect(costs(page)).toBeVisible();
   });
 
+  test("keeps the preset while the Other slippage box is empty, and says why the button is off when the slippage typed cannot be used", async ({ page }) => {
+    await openMarket(page, CP_MARKET, "connect");
+    await typeAmount(page, "0.1");
+    await box(page).getByPlaceholder("Other").click();
+    await box(page).getByLabel("You pay, fees included").click();
+    await expect(box(page).getByRole("button", { name: "1%" })).toHaveAttribute("aria-pressed", "true");
+    await expect(box(page).getByRole("button", { name: "Review swap" })).toBeEnabled();
+    await box(page).getByPlaceholder("Other").fill("60");
+    await expect(box(page).getByRole("button", { name: "Review swap" })).toBeDisabled();
+    await expect(box(page).getByText("Slippage is at most 50%.")).toHaveCount(2);
+    await box(page).getByPlaceholder("Other").fill("");
+    await expect(box(page).getByRole("button", { name: "Review swap" })).toBeEnabled();
+  });
+
+  test("never brings back a swap built for an amount the trader has since changed", async ({ page }) => {
+    await openMarket(page, CP_MARKET, "connect");
+    await typeAmount(page, "0.1");
+    // The build is held until the amount has changed, as a slow RPC would hold it.
+    let release: () => void = () => {};
+    const held = new Promise<void>((done) => (release = done));
+    await page.route("**/v1/swaps/prepare", async (route) => {
+      await held;
+      await route.continue();
+    });
+    await box(page).getByRole("button", { name: "Review swap" }).click();
+    await expect(page.getByRole("region", { name: "Review this swap" }).getByText("Building the swap and simulating it, exactly as it would be signed.")).toBeVisible();
+    await typeAmount(page, "0.2");
+    release();
+    await page.waitForResponse((r) => r.url().endsWith("/v1/swaps/prepare"));
+    await page.waitForTimeout(500);
+    await expect(page.getByRole("region", { name: "Review this swap" })).toBeHidden();
+    await expect(row(costs(page), "Leaves your wallet")).toHaveText("0.2 SOL");
+  });
+
   test("tells a wallet holding too little so, decoded with its log lines, and keeps Sign in wallet off", async ({ page }) => {
     const wallet = await openMarket(page, CP_MARKET, "connect");
     await typeAmount(page, "500");

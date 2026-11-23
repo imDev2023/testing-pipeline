@@ -64,8 +64,8 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
   const signer = createNoopSigner(trader);
 
   // What the wallet holds before, and whether the market's fee account exists, in one read.
-  const watched: [Address, Address, Address] = [trader, traderInput, traderOutput];
-  const before = (await rpc.getMultipleAccounts([...watched, feeAccount], { encoding: "base64", commitment: COMMITMENT }).send()).value;
+  const watched = [trader, traderInput, traderOutput, feeAccount] as const;
+  const before = (await rpc.getMultipleAccounts([...watched], { encoding: "base64", commitment: COMMITMENT }).send()).value;
   const feeAccountMissing = before[3] === null;
 
   const instructions: Instruction[] = [
@@ -116,7 +116,7 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
   const simulation = await simulate(rpc, wire, compiled.messageBytes, {
     strategy: market.view.strategyProgram,
     watched,
-    before: before.slice(0, 3),
+    before,
     mints: [null, inputMint.address, outputMint.address],
     paysSol,
     receivesSol,
@@ -131,19 +131,63 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
   return { quote, slippage_bps: input.slippageBps, min_amount_out: String(minAmountOut), transaction: simulation.ok ? wire : null, simulation };
 }
 
+type Held = { lamports: bigint; data: readonly [string, string] } | null;
+
+export type Measured = Pick<Simulation, "changes" | "new_accounts" | "market_rent" | "paid" | "received">;
+
+/**
+ * What a passed simulation says the swap takes from the wallet and gives it, from the accounts read
+ * before and simulated after: the wallet, its input and output token accounts, and the market's fee
+ * account for the mint Pipeline's fee is taken in. SOL is the wallet's own balance, less the network
+ * fee, the rent of the token accounts the swap creates and keeps (the wallet's, and the market's fee
+ * account, which its first swap in that mint pays for), and what closing a wrapped-SOL account the
+ * wallet already held hands back, which is the wallet's own SOL and no part of the swap.
+ */
+export function measure(input: {
+  watched: readonly [string, string, string, string];
+  mints: readonly [null, string, string];
+  before: readonly Held[];
+  after: readonly Held[];
+  networkFee: bigint;
+  paysSol: boolean;
+  receivesSol: boolean;
+}): Measured {
+  const was = (i: number): Held => input.before[i] ?? null;
+  const now = (i: number): Held => input.after[i] ?? null;
+  const created: Simulation["new_accounts"] = [];
+  const changes: BalanceChange[] = [{ mint: null, account: input.watched[0], before: String(was(0)?.lamports ?? 0n), after: String(now(0)?.lamports ?? 0n) }];
+  let handedBack = 0n;
+  for (const i of [1, 2] as const) {
+    // A temporary account (the wrapped SOL, created and closed in the same transaction) changed nothing that stays.
+    if (!was(i) && !now(i)) continue;
+    if (!was(i)) created.push({ account: input.watched[i], mint: input.mints[i], rent: String(now(i)!.lamports) });
+    if (was(i) && !now(i)) handedBack += was(i)!.lamports;
+    changes.push({ mint: input.mints[i], account: input.watched[i], before: String(tokenAmount(was(i)?.data)), after: String(tokenAmount(now(i)?.data)) });
+  }
+  const marketRent = !was(3) && now(3) ? now(3)!.lamports : 0n;
+  const keptRent = created.reduce((n, a) => n + BigInt(a.rent), 0n);
+  const swapSol = (now(0)?.lamports ?? 0n) - (was(0)?.lamports ?? 0n) + input.networkFee + keptRent + marketRent - handedBack;
+  const tokenChange = (i: 1 | 2) => tokenAmount(now(i)?.data) - tokenAmount(was(i)?.data);
+  return {
+    changes,
+    new_accounts: created,
+    market_rent: String(marketRent),
+    paid: String(input.paysSol ? -swapSol : -tokenChange(1)),
+    received: String(input.receivesSol ? swapSol : tokenChange(2)),
+  };
+}
+
 type Watch = {
   strategy: string;
-  /** The wallet, then its input and output token accounts. */
-  watched: [Address, Address, Address];
-  before: ({ lamports: bigint; data: readonly [string, string] } | null)[];
-  /** Each watched account's mint: null for the wallet's SOL. */
-  mints: [null, Address, Address];
+  /** The wallet, its input and output token accounts, and the market's fee account for the fee mint. */
+  watched: readonly [Address, Address, Address, Address];
+  before: readonly Held[];
+  /** Each watched token account's mint: null for the wallet's SOL. */
+  mints: readonly [null, Address, Address];
   /** Whether the input or the output is SOL, wrapped and unwrapped in the transaction, so the wallet's SOL shows it. */
   paysSol: boolean;
   receivesSol: boolean;
 };
-
-type Held = { lamports: bigint; data: readonly [string, string] } | null;
 
 async function simulate(rpc: Rpc<SolanaRpcApi>, wire: Base64EncodedWireTransaction, messageBytes: ReadonlyUint8Array, watch: Watch): Promise<Simulation> {
   const message = getBase64Decoder().decode(messageBytes) as TransactionMessageBytesBase64;
@@ -154,7 +198,7 @@ async function simulate(rpc: Rpc<SolanaRpcApi>, wire: Base64EncodedWireTransacti
         sigVerify: false,
         replaceRecentBlockhash: true,
         commitment: COMMITMENT,
-        accounts: { addresses: watch.watched, encoding: "base64" },
+        accounts: { addresses: [...watch.watched], encoding: "base64" },
       })
       .send(),
     rpc.getFeeForMessage(message, { commitment: COMMITMENT }).send(),
@@ -163,24 +207,10 @@ async function simulate(rpc: Rpc<SolanaRpcApi>, wire: Base64EncodedWireTransacti
   const networkFee = fee.value ?? 0n;
   const units = value.unitsConsumed === undefined ? null : Number(value.unitsConsumed);
   if (value.err !== null) {
-    return { ok: false, failure: decodeFailure(value.err, logs, { strategy: watch.strategy }), logs, compute_units: units, changes: [], network_fee: String(networkFee), new_accounts: [], paid: null, received: null };
+    return { ok: false, failure: decodeFailure(value.err, logs, { strategy: watch.strategy }), logs, compute_units: units, changes: [], network_fee: String(networkFee), new_accounts: [], market_rent: "0", paid: null, received: null };
   }
   // A closed account comes back holding no lamports: it is gone.
   const after: Held[] = (value.accounts ?? []).map((a) => (a && a.lamports > 0n ? { lamports: a.lamports, data: a.data as readonly [string, string] } : null));
-  const was = (i: number): Held => watch.before[i] ?? null;
-  const now = (i: number): Held => after[i] ?? null;
-  const created: Simulation["new_accounts"] = [];
-  const changes: BalanceChange[] = [{ mint: null, account: watch.watched[0], before: String(was(0)?.lamports ?? 0n), after: String(now(0)?.lamports ?? 0n) }];
-  for (const i of [1, 2] as const) {
-    // A temporary account (the wrapped SOL, created and closed in the same transaction) changed nothing that stays.
-    if (!was(i) && !now(i)) continue;
-    if (!was(i)) created.push({ account: watch.watched[i], mint: watch.mints[i], rent: String(now(i)!.lamports) });
-    changes.push({ mint: watch.mints[i], account: watch.watched[i], before: String(tokenAmount(was(i)?.data)), after: String(tokenAmount(now(i)?.data)) });
-  }
-  // What the swap itself took and gave: SOL is the wallet's own balance, less the network fee and the rent of accounts it keeps.
-  const solChange = (now(0)?.lamports ?? 0n) - (was(0)?.lamports ?? 0n) + networkFee + created.reduce((n, a) => n + BigInt(a.rent), 0n);
-  const tokenChange = (i: 1 | 2) => tokenAmount(now(i)?.data) - tokenAmount(was(i)?.data);
-  const paid = watch.paysSol ? -solChange : -tokenChange(1);
-  const received = watch.receivesSol ? solChange : tokenChange(2);
-  return { ok: true, failure: null, logs, compute_units: units, changes, network_fee: String(networkFee), new_accounts: created, paid: String(paid), received: String(received) };
+  const measured = measure({ watched: watch.watched, mints: watch.mints, before: watch.before, after, networkFee, paysSol: watch.paysSol, receivesSol: watch.receivesSol });
+  return { ok: true, failure: null, logs, compute_units: units, network_fee: String(networkFee), ...measured };
 }

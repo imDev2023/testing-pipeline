@@ -414,8 +414,8 @@ export const PrepareSwapRequest = z
     input_mint: Address,
     output_mint: Address,
     amount: Amount,
-    /** The slippage accepted, in basis points, up to 50% (the screens' config module's highest). */
-    slippage_bps: z.number().int().min(0).max(5_000),
+    /** The slippage accepted, in basis points, below 100%; the highest a page offers is its own (the screens' config module). */
+    slippage_bps: z.number().int().min(0).max(9_999),
     trader: Address,
   })
   .strict();
@@ -437,6 +437,8 @@ export const Simulation = z.object({
   network_fee: Amount,
   /** Token accounts the transaction creates for the wallet and keeps, with the rent each holds. */
   new_accounts: z.array(z.object({ account: Address, mint: Address, rent: Amount })),
+  /** The rent of the market's fee account for the fee mint, which the swap creates and pays for when it does not exist yet; 0 otherwise. */
+  market_rent: Amount,
   /** What the swap takes from the wallet in the mint paid, and gives in the mint received, measured in the simulation; null when it failed. */
   paid: Amount.nullable(),
   received: Amount.nullable(),
