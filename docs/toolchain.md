@@ -785,6 +785,7 @@ The first upgrade, to release 0.1.1 from `main` at `e8d0221`, went through the r
 - `pipeline-check --fail-on-warn` on the demo market first refused every quote with `ReserveStale`: nothing had refreshed our WSOL reserve for about 22,000 slots since the demo, beyond the 9,000 a quote allows (`LENDING-92`), which the keeper runner's `rebalance` job will keep from happening ([#96](https://github.com/imDev2023/testing-pipeline/issues/96)).
   `npm run cli -- refresh` in `scripts/kamino-devnet` refreshed both reserves, and it then reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped on build `7502dd6f…`, at its default sizes (`programs/lending-amm/conformance/devnet.json`) and with the edge amounts above.
 - Pipeline's hosted API showed the strategy with the new code hash (`/v1/strategies/Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG`), and `demo.ts --hosted-api` passed again, the API quoting the market exactly as before the upgrade.
+- The metadata was then pinned with `node publish.ts pin --report-commit 2c2478984daa359551ba5f43a148c018080c64cf`: the source and IDL at the deployed `e8d0221`, the report and the README at `2c24789`, which recorded the upgrade, with the report's SHA-256; once merged, `demo.ts --register-only` points the router at the metadata commit's copy and `node publish.ts verify` checks everything published.
 
 ## Local validator
 
