@@ -19,7 +19,24 @@
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   // KEEPER_WALLET: the keeper runner's wallet, whose page /keeper is and whose signed heartbeats are
   // kept (docs/spec/keeper-runner.md, "The keeper wallet").
-  "vars": { "CLUSTER": "devnet", "KEEPER_WALLET": "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2" },
+  //
+  // INTEGRATOR_FEE (PIPESCOPE-10 to PIPESCOPE-13): the integrator fee's rate in basis points, the fee
+  // wallet Aviary knows only by address (its key is never on a server), and that wallet's token
+  // account for each fee mint, wrapped SOL and the cluster's USDC, whose keys are the fee mints. A
+  // swap paying in any other mint carries no integrator fee. Changing any of them is a configuration
+  // deploy: the API returns the rate it built each swap with, so the pages never write it.
+  "vars": {
+    "CLUSTER": "devnet",
+    "KEEPER_WALLET": "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
+    "INTEGRATOR_FEE": {
+      "bps": 50,
+      "wallet": "9QyvxvMQQcDhRJG8qbrSL7KaXtfoMnfX37ny6XFRL3Eg",
+      "accounts": {
+        "So11111111111111111111111111111111111111112": "2aCTxPmrJvo9b99kfnR2yk7k647oFb1m5nMWkWmAvThn",
+        "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU": "6DEijYZbuMg7nQSvYD6KzFuB6jytvCGGmSbtarErySwC"
+      }
+    }
+  },
   // RPC_URL is the one secret here (PIPESCOPE-37): the Helius devnet URL, which carries the key.
   // `wrangler dev` reads it from the environment, which direnv fills from the project's .env.
   "secrets": { "required": ["RPC_URL"] },

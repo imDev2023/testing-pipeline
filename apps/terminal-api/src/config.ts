@@ -89,6 +89,11 @@ export const ROOM_ANNOUNCE_RETRY_MS = SECOND;
 
 /** How often the trade fast path asks whether a signature has confirmed (PIPESCOPE-33). */
 export const FAST_PATH_CONFIRMATION_POLL_MS = 300;
+/**
+ * How long the fast path waits for a signature to confirm before it answers that it has not yet: a
+ * transaction's blockhash lasts about a minute, after which it can no longer land.
+ */
+export const FAST_PATH_WAIT_MS = 60 * SECOND;
 
 /** The metadata fetcher's limits (PIPESCOPE-36). */
 export const METADATA_FETCH = {

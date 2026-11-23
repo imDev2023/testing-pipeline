@@ -18,6 +18,8 @@
     },
     "dependencies": {
         "@pipeline-sol/sdk": "catalog:",
+        "@solana-program/system": "0.16.0",
+        "@solana-program/token": "0.18.0",
         "@solana/kit": "8.6.0",
         "drizzle-orm": "0.45.4",
         "hono": "4.13.20",

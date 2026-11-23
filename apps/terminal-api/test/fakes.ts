@@ -38,6 +38,14 @@ export function bindings(overrides: Partial<Bindings> & { databaseUrl: string; r
     INDEXER: {} as Bindings["INDEXER"],
     LIVE_ROOMS: {} as Bindings["LIVE_ROOMS"],
     KEEPER_WALLET: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
+    INTEGRATOR_FEE: {
+      bps: 50,
+      wallet: "9QyvxvMQQcDhRJG8qbrSL7KaXtfoMnfX37ny6XFRL3Eg",
+      accounts: {
+        So11111111111111111111111111111111111111112: "2aCTxPmrJvo9b99kfnR2yk7k647oFb1m5nMWkWmAvThn",
+        "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU": "6DEijYZbuMg7nQSvYD6KzFuB6jytvCGGmSbtarErySwC",
+      },
+    },
     ...rest,
   };
 }

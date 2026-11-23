@@ -69,6 +69,15 @@ export class Indexer extends DurableObject<Bindings> {
     await this.live.left(room);
   }
 
+  /**
+   * The trade fast path's hand-off (./trading/fastPath): a signature a page sent and the API read back,
+   * indexed as the live socket's are, and sent to the rooms with a viewer, so the page's provisional
+   * row is replaced by the trade with its place in its block.
+   */
+  async fastPath(signatures: string[]): Promise<void> {
+    this.reported(signatures);
+  }
+
   /** The socket's alarm (./liveSocket). */
   async alarm(): Promise<void> {
     await this.live.alarm();

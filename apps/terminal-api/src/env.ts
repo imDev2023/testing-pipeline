@@ -28,4 +28,12 @@ export type Bindings = {
   LIVE_ROOMS: DurableObjectNamespace<LiveRoom>;
   /** The keeper runner's wallet (docs/spec/keeper-runner.md, "The keeper wallet"): the keeper page shows it, and only its signed heartbeats are kept. */
   KEEPER_WALLET: string;
+  /**
+   * The integrator fee (PIPESCOPE-10 to PIPESCOPE-13): its rate in basis points, the fee wallet Aviary
+   * knows only by address, and that wallet's token account for each fee mint, whose keys are the fee
+   * mints. A var per environment, so it changes by a configuration deploy (./trading/fees reads it).
+   */
+  INTEGRATOR_FEE: IntegratorFeeVar;
 };
+
+export type IntegratorFeeVar = { bps: number; wallet: string; accounts: Record<string, string> };
