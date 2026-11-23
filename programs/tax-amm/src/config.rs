@@ -44,8 +44,8 @@ pub const CONTAINMENT_UNLOCK_SEED: &[u8] = b"unlock";
 
 /// The quote mints, which may keep a mint or a freeze authority when a market is seeded:
 /// both native SOL mints, whose authorities are none anyway, and the cluster's USDC, Circle's
-/// devnet mint. Nothing switches it by cluster: a mainnet build must replace it with mainnet's
-/// (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) before it is frozen, a mainnet checklist
+/// devnet mint. Nothing switches it by cluster: a mainnet build must replace it with Circle's
+/// mainnet USDC mint before it is frozen, a mainnet checklist
 /// item beside `SUITE_TREASURY` (hardening finding H071, signed off), or it would refuse every
 /// USDC market at the seed.
 /// Every other mint must have neither when its market is seeded, so nobody can mint into the
