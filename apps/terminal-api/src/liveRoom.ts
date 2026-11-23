@@ -3,8 +3,8 @@
 // one for the feed. Browsers hold hibernatable WebSockets on a room, so a quiet room costs no
 // duration; the indexer publishes its events to the rooms with a viewer, and a room sends what
 // arrived in one message every LIVE_ROOM_BATCH_MS (./roomCore). A browser that reconnects resyncs
-// through the API from the last trade it saw. The room tells the indexer when its first viewer
-// arrives and its last one leaves, which opens and closes the indexer's socket (PIPESCOPE-27).
+// through the API from the last trade it saw. The room tells the indexer as each viewer arrives and
+// when its last one leaves, which opens and closes the indexer's socket (PIPESCOPE-27).
 import { DurableObject } from "cloudflare:workers";
 import type { LiveEvent } from "./contract";
 import type { Bindings } from "./env";

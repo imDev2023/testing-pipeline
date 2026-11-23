@@ -84,7 +84,12 @@ export class Indexer extends DurableObject<Bindings> {
     socket.addEventListener("message", (event) => {
       const message = parseLogsMessage(typeof event.data === "string" ? event.data : "");
       if (message.kind === "transaction" && !message.failed) on.transaction(message.signature);
-      else if (message.kind === "refused") this.failed("subscribing on the live socket", new Error(message.error));
+      else if (message.kind === "refused") {
+        // A socket without its subscription reports nothing: closed and counted as dropped, so the alarm opens it again.
+        this.failed("subscribing on the live socket", new Error(message.error));
+        socket.close(1011, "subscription refused");
+        on.dropped();
+      }
     });
     socket.addEventListener("close", () => on.dropped());
     socket.addEventListener("error", () => on.dropped());

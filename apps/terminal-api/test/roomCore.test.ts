@@ -2,7 +2,7 @@
 // for it are gathered for LIVE_ROOM_BATCH_MS and sent to every browser in one message, and the room
 // tells the indexer when its first viewer arrives and its last one leaves.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LIVE_ROOM_BATCH_MS } from "../src/config";
+import { LIVE_ROOM_BATCH_MS, ROOM_ANNOUNCE_RETRY_MS } from "../src/config";
 import { LiveMessage, type LiveEvent } from "../src/contract";
 import { RoomCore, type RoomSocket } from "../src/roomCore";
 
@@ -69,16 +69,33 @@ describe("a live room", () => {
     expect(a.received).toHaveLength(2);
   });
 
-  it("tells the indexer when its first viewer arrives and when its last one leaves, and not between", async () => {
+  it("tells the indexer of each viewer that joins, and when its last one leaves", async () => {
     const { connect, disconnect, told } = room();
     const a = await connect();
     const b = await connect();
     await disconnect(a);
-    expect(told).toEqual(["arrived"]);
+    expect(told).toEqual(["arrived", "arrived"]);
     await disconnect(b);
-    expect(told).toEqual(["arrived", "left"]);
-    await connect();
-    expect(told).toEqual(["arrived", "left", "arrived"]);
+    expect(told).toEqual(["arrived", "arrived", "left"]);
+  });
+
+  it("tries again when the indexer could not be told a viewer arrived, as during a deploy", async () => {
+    let refusals = 2;
+    const told: string[] = [];
+    const sockets: RoomSocket[] = [];
+    const core = new RoomCore({
+      sockets: () => sockets,
+      arrived: async () => {
+        if (refusals-- > 0) throw new Error("the indexer was reset");
+        told.push("arrived");
+      },
+      left: async () => {},
+    });
+    sockets.push({ send: () => {} });
+    const joined = core.joined();
+    await vi.advanceTimersByTimeAsync(ROOM_ANNOUNCE_RETRY_MS * 3);
+    await joined;
+    expect(told).toEqual(["arrived"]);
   });
 
   it("keeps sending to the others when one browser's socket fails as the batch goes out", async () => {

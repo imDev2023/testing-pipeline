@@ -6,6 +6,9 @@ import { createDb, indexerCursors, trades, type Db } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { heliusSource, pipelineHandler, reconcileAccount, rpcSource, type RawTransaction } from "../src/index";
+
+/** Short waits for a block not served yet, so a test of a missing block fails fast. */
+const WAITS = { waitMs: 2_000, firstRetryMs: 100, maxRetryMs: 400 };
 import { fakeRpc, type FakeRpc } from "./fakeRpc";
 
 const ROUTER = "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34";
@@ -34,7 +37,7 @@ const cursorRow = async () => (await client.db.select().from(indexerCursors))[0]
 
 for (const [name, source] of [
   ["Helius's getTransactionsForAddress", () => heliusSource(rpc.url)],
-  ["getSignaturesForAddress and getTransaction", () => rpcSource(rpc.url)],
+  ["getSignaturesForAddress and getTransaction", () => rpcSource(rpc.url, WAITS)],
 ] as const) {
   describe(`reconciliation through ${name}`, () => {
     it("indexes the whole history from no cursor, oldest first, and leaves the cursor at the newest transaction", async () => {
@@ -68,12 +71,12 @@ describe("a transaction listed before it is served", () => {
   it("stops reconciliation there, so the cursor never passes it, and is indexed on the next run", async () => {
     rpc.history.push(swap);
     rpc.unserved.add(sig(created));
-    const first = await reconcileAccount(client.db, rpcSource(rpc.url), pipelineHandler(), ROUTER);
+    const first = await reconcileAccount(client.db, rpcSource(rpc.url, WAITS), pipelineHandler(), ROUTER);
     expect(first.complete).toBe(false);
     expect(first.cursor?.signature).toBe(sig(failed));
     expect(await client.db.select().from(trades)).toEqual([]);
     rpc.unserved.clear();
-    const second = await reconcileAccount(client.db, rpcSource(rpc.url), pipelineHandler(), ROUTER);
+    const second = await reconcileAccount(client.db, rpcSource(rpc.url, WAITS), pipelineHandler(), ROUTER);
     expect(second).toMatchObject({ complete: true, result: { counts: { markets: 1, trades: 1 } } });
     expect((await client.db.select({ s: trades.signature }).from(trades).orderBy(asc(trades.slot))).map((r) => r.s)).toEqual([sig(swap)]);
   });

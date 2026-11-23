@@ -3,7 +3,9 @@
 // `logsSubscribe` per watched program over the RPC's own URL, and what each message says; and a
 // reported transaction asked for until the RPC serves it.
 import { afterEach, describe, expect, it } from "vitest";
-import { logsSubscribeRequest, parseLogsMessage, servedTransaction, webSocketUrlOf } from "../src/index";
+import { blockPositions, logsSubscribeRequest, parseLogsMessage, servedTransaction, webSocketUrlOf } from "../src/index";
+
+const WAITS = { waitMs: 2_000, firstRetryMs: 100, maxRetryMs: 400 };
 import { fakeRpc, type FakeRpc } from "./fakeRpc";
 import { swapTransaction, WSOL, SWAP_TOKEN } from "./swaps";
 
@@ -41,7 +43,7 @@ describe("a reported transaction", () => {
     rpc = await fakeRpc([raw]);
     rpc.unserved.add(raw.transaction.signatures[0]!);
     setTimeout(() => rpc!.unserved.clear(), 400);
-    const served = await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { waitMs: 5_000, everyMs: 100 });
+    const served = await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { waitMs: 5_000, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) });
     expect(served).toEqual(raw);
     expect(rpc.requests.filter((r) => r.method === "getTransaction").length).toBeGreaterThan(1);
   });
@@ -49,6 +51,6 @@ describe("a reported transaction", () => {
   it("is left to reconciliation when the RPC has not served it in time", async () => {
     rpc = await fakeRpc([raw]);
     rpc.unserved.add(raw.transaction.signatures[0]!);
-    expect(await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { waitMs: 300, everyMs: 100 })).toBeNull();
+    expect(await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { waitMs: 300, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) })).toBeNull();
   });
 });

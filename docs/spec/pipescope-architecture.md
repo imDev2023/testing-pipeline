@@ -147,9 +147,9 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 
 - One `LiveRoom` Durable Object per market and one for the feed, holding hibernatable browser WebSockets, so they cost no duration while idle; the indexer publishes each decoded trade, new market and new strategy version to its room, and rooms batch at the interval in the config module, 100 ms (`PIPESCOPE-31`).
 - A browser opens `/v1/live/markets/{market}` or `/v1/live/feed`; a market's room is sent each new swap as the API's trade, and the feed's room and the market's own each market new or changed (its vaults, its last 24 hours) as the API's market, so a page puts each in place by its key and shows it once (`PIPESCOPE-110`).
-  The indexer publishes what the live path and reconciliation index, and only to rooms with a viewer, so with none it reads and sends nothing.
+  The indexer publishes what the live path and reconciliation index, and only to rooms with a viewer, so with none it reads and sends nothing; a room due more than 100 new swaps at once (`LIVE_ROOM_TRADES_MAX`, as after a long backlog) is told to resync instead.
 - A browser resyncs through the API from its last slot each time it joins a room, the first time included: `GET /v1/markets/{market}/trades?after=` answers only the trades newer than the newest it shows, and when they fill a page, that page replaces the list (`PIPESCOPE-110`).
-- The rooms tell the indexer when the first viewer arrives and when the last one leaves, which opens and closes its socket; while it is open, its alarm also asks each room with a viewer how many it holds, so a room whose browsers left unseen never keeps the socket open (`PIPESCOPE-110`).
+- The rooms tell the indexer as each viewer arrives and when the last one leaves, which opens and closes its socket (a room the indexer did not hear of, as during a deploy, is counted at its next viewer); while it is open, its alarm also asks each room with a viewer how many it holds, so a room whose browsers left unseen never keeps the socket open (`PIPESCOPE-110`).
 - `GET /v1/indexer` shows the socket's state, the rooms keeping it open and when it closes, from the indexer's storage, which also records when and why it last opened or closed; the indexer logs each.
 
 ## API

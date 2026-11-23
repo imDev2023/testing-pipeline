@@ -6,7 +6,6 @@
 // decoded, with its place in its block. These are the RPC calls and messages that source is made of;
 // the API's `Indexer` Durable Object holds the socket, and only while someone watches.
 import type { RawTransaction } from "./decode";
-import { blockPositions } from "./history";
 import { rpcCall } from "./rpc";
 
 /** The WebSocket endpoint of an HTTP RPC endpoint: the same URL, key and all, over wss. */
@@ -49,14 +48,14 @@ const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
 /**
  * A reported transaction, asked for every `everyMs` until the RPC serves it, for up to `waitMs` (a
- * node reports a transaction before it serves it: Helius serves a confirmed one 1.5 to 2 s after its
- * block, devnet, 2026-10-29), with its place in its block from `getBlock`. Null when it was not
- * served in time, which leaves it to reconciliation.
+ * node reports a transaction before it serves it; the API's config module, `RPC_WAITS.transaction`),
+ * with its place in its block from `blockIndexOf`. Null when it was not served in time, which leaves
+ * it to reconciliation.
  */
 export async function servedTransaction(
   rpcUrl: string,
   signature: string,
-  { waitMs = 8_000, everyMs = 300, blockIndexOf = blockPositions(rpcUrl) }: { waitMs?: number; everyMs?: number; blockIndexOf?: (slot: number, signature: string) => Promise<number> } = {},
+  { waitMs, everyMs, blockIndexOf }: { waitMs: number; everyMs: number; blockIndexOf: (slot: number, signature: string) => Promise<number> },
 ): Promise<RawTransaction | null> {
   const until = Date.now() + waitMs;
   for (;;) {

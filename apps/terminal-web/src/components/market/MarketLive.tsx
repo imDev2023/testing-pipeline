@@ -70,26 +70,41 @@ export function MarketLive({ market }: { market: Market }) {
     return () => controller.abort();
   }, [candlesPath, candleAttempt, setCandles]);
 
-  /** Reads the forming candle again (and any after it), at most once per LIVE_CANDLE_REFRESH_MS while trades land. */
+  /**
+   * Reads the forming candle again (and any after it), at most once per LIVE_CANDLE_REFRESH_MS while
+   * trades land. A read belongs to the length and pair it was asked for: when the reader picks
+   * another length or flips the pair, a pending read is dropped and an answer still on its way is
+   * thrown away, so one series is never mixed into another.
+   */
+  const showing = useRef(candlesPath);
   const refreshing = useRef<{ timer: ReturnType<typeof setTimeout> | null; last: number }>({ timer: null, last: 0 });
+  useEffect(() => {
+    showing.current = candlesPath;
+    const state = refreshing.current;
+    return () => {
+      clearTimeout(state.timer ?? undefined);
+      state.timer = null;
+    };
+  }, [candlesPath]);
   const refreshCandles = useCallback(() => {
     const state = refreshing.current;
     if (state.timer) return;
+    const path = candlesPath;
     const run = async () => {
       state.timer = null;
       state.last = Date.now();
       const from = shownCandles.current.at(-1)?.start;
       try {
-        const answer = await getFromApi(`${candlesPath}${from ? `&from=${Date.parse(from) / 1000}` : ""}`, Candles);
+        const answer = await getFromApi(`${path}${from ? `&from=${Date.parse(from) / 1000}` : ""}`, Candles);
+        if (showing.current !== path) return;
         shownCandles.current = mergeCandles(shownCandles.current, answer.candles);
-        setCandles({ status: "loaded", data: { candles: shownCandles.current, tradeCount: answer.trade_count } });
+        setCandlesFor({ path, state: { status: "loaded", data: { candles: shownCandles.current, tradeCount: answer.trade_count } } });
       } catch {
         // The next trade, or the next visit, reads it again.
       }
     };
     state.timer = setTimeout(run, Math.max(0, state.last + LIVE_CANDLE_REFRESH_MS - Date.now()));
-  }, [candlesPath, setCandles]);
-  useEffect(() => () => clearTimeout(refreshing.current.timer ?? undefined), []);
+  }, [candlesPath]);
 
   // ---- Trades ----
   const tradesPath = `/v1/markets/${market.address}/trades`;
@@ -198,6 +213,8 @@ export function MarketLive({ market }: { market: Market }) {
 
   useLiveRoom(LIVE_ROOMS.market(market.address), {
     onEvents: (events: LiveEvent[]) => {
+      // More swaps landed at once than a room is sent: caught up through the API, as after a reconnection.
+      if (events.some((e) => e.type === "resync")) return void resync();
       const arriving = events.flatMap((e) => (e.type === "trade" && e.trade.market === market.address ? [e.trade] : []));
       if (!arriving.length) return;
       arrive(arriving);

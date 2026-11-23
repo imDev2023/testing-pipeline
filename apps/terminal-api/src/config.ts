@@ -38,6 +38,24 @@ export const SOCKET_REOPEN_ALARM_MS = 15 * SECOND;
 export const SOCKET_CLOSE_AFTER_LAST_VIEWER_MS = 3 * MINUTE;
 
 /**
+ * How long the indexer waits for what the RPC has not served yet (Top-pad's measured waits): a
+ * transaction the live socket reported, asked for every `everyMs` for up to `waitMs` before it is
+ * left to reconciliation (Helius serves a confirmed one 1.5 to 2 s after its block); and a block,
+ * for a transaction's place in it, asked for again after waits doubling from `firstRetryMs` to
+ * `maxRetryMs`, for up to `waitMs`.
+ */
+export const RPC_WAITS = {
+  transaction: { waitMs: 8 * SECOND, everyMs: 300 },
+  block: { waitMs: 8 * SECOND, firstRetryMs: 500, maxRetryMs: 2 * SECOND },
+} as const;
+
+/**
+ * The most new swaps a live room is sent in one publish (PIPESCOPE-110): past it, as after a long
+ * backlog, the room is told to resync through the API instead, which pages what it missed.
+ */
+export const LIVE_ROOM_TRADES_MAX = 100;
+
+/**
  * Candle lengths, each with the name the API's `interval` takes, and how long each is kept, in days;
  * `null` keeps it forever (PIPESCOPE-30). Trades are kept forever.
  */
@@ -62,6 +80,12 @@ export const PRICE_SIGNIFICANT_DIGITS = 36;
 
 /** How long a live room gathers events before it sends them (PIPESCOPE-31). */
 export const LIVE_ROOM_BATCH_MS = 100;
+
+/**
+ * A live room that could not tell the indexer a viewer arrived (the indexer resetting for a deploy,
+ * say) tries again after this wait, and after twice it, before leaving it to the next viewer.
+ */
+export const ROOM_ANNOUNCE_RETRY_MS = SECOND;
 
 /** How often the trade fast path asks whether a signature has confirmed (PIPESCOPE-33). */
 export const FAST_PATH_CONFIRMATION_POLL_MS = 300;

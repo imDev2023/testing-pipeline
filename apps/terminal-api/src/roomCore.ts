@@ -2,9 +2,9 @@
 // (docs/spec/pipescope-architecture.md, Live rooms; PIPESCOPE-31), kept apart from the `LiveRoom`
 // Durable Object (./liveRoom), which holds the browsers' hibernatable sockets, so it runs and is
 // tested in Node: the indexer's events gathered for LIVE_ROOM_BATCH_MS and sent in one message, and
-// the indexer told when the room's first viewer arrives and its last one leaves, which opens and
-// closes its socket (PIPESCOPE-27).
-import { LIVE_ROOM_BATCH_MS } from "./config";
+// the indexer told as viewers arrive and when the last one leaves, which opens and closes its socket
+// (PIPESCOPE-27).
+import { LIVE_ROOM_BATCH_MS, ROOM_ANNOUNCE_RETRY_MS } from "./config";
 import type { LiveEvent, LiveMessage } from "./contract";
 
 /** The header the Worker names the room with as it hands the room a browser's upgrade. */
@@ -29,9 +29,20 @@ export class RoomCore {
 
   constructor(private readonly deps: RoomDeps) {}
 
-  /** A browser joined: when it is the only one, the indexer hears of it. */
+  /**
+   * A browser joined: the indexer hears of it each time, which costs it nothing when it already
+   * counts the room, so a room it never heard of (an announcement lost in a deploy) is counted at the
+   * next join; a refused announcement is tried twice more, after ROOM_ANNOUNCE_RETRY_MS and twice it.
+   */
   async joined(): Promise<void> {
-    if (this.deps.sockets().length === 1) await this.deps.arrived();
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.deps.arrived();
+      } catch (e) {
+        if (attempt === 2) throw e;
+        await new Promise((done) => setTimeout(done, ROOM_ANNOUNCE_RETRY_MS * 2 ** attempt));
+      }
+    }
   }
 
   /** A browser left: when none is left, the indexer hears of it. */

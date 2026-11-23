@@ -111,8 +111,9 @@ export type Trade = z.infer<typeof Trade>;
 
 /**
  * Trades, newest first; `next` is the `before` of the following page, or null after the last. Asked
- * with `after` (a reconnecting page's resync), it holds only trades newer than that cursor, and
- * `next` is null unless more newer trades lie past the page.
+ * with `after` (a reconnecting page's resync), it holds only trades newer than that cursor, the
+ * newest of them; `next` is then null when they all fit, or else the `before` of the older ones
+ * still between the page and the cursor.
  */
 export const TradesPage = z.object({ trades: z.array(Trade), next: z.string().nullable() });
 export type TradesPage = z.infer<typeof TradesPage>;
@@ -123,7 +124,12 @@ export type TradesPage = z.infer<typeof TradesPage>;
  * feed's room and the market's own. A page puts each in place by its key, so one that arrives twice,
  * or again in a resync through the API, is shown once.
  */
-export const LiveEvent = z.discriminatedUnion("type", [z.object({ type: z.literal("trade"), trade: Trade }), z.object({ type: z.literal("market"), market: Market })]);
+export const LiveEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("trade"), trade: Trade }),
+  z.object({ type: z.literal("market"), market: Market }),
+  /** More new swaps than a room is sent at once landed (LIVE_ROOM_TRADES_MAX): the page catches up through the API, as after a reconnection. */
+  z.object({ type: z.literal("resync") }),
+]);
 export type LiveEvent = z.infer<typeof LiveEvent>;
 
 /** One message of a live room: the events gathered over its batching interval (PIPESCOPE-31). */

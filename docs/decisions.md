@@ -2184,7 +2184,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-110: What live rooms send, and how a page resyncs
 
 - Question: What does a live room send a page, and how does a page catch up on what it missed?
-- Answer: A market's room is sent each new swap as the API's trade and the feed's room each market new or changed as the API's market, only while the room has a viewer; a page resyncs each time it joins, the first time included, through `trades?after=` from the newest trade it shows; and the indexer's alarm asks each room how many viewers it holds, so a room whose browsers left unseen never keeps the socket open.
+- Answer: A market's room is sent each new swap as the API's trade, or told to resync past 100 at once (`LIVE_ROOM_TRADES_MAX`), and the feed's room each market new or changed as the API's market, only while the room has a viewer; a page resyncs each time it joins, the first time included, through `trades?after=` from the newest trade it shows; a room tells the indexer of each viewer that joins, so one it missed is counted at the next; and the indexer's alarm asks each room how many viewers it holds, so a room whose browsers left unseen never keeps the socket open.
 - Alternatives: Events that only name what changed, each sending every page back to the API for it; resyncing only after a reconnection, which misses what lands between a page's first read and its room.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Live rooms](spec/pipescope-architecture.md#live-rooms)
 - Changes by: spec only

@@ -31,8 +31,8 @@ export type SwapSpec = {
   trader?: string;
 };
 
-/** A unique 87-character base58 signature for `id`. */
-export const signatureFor = (id: number) => `${fixture.transaction.signatures[0]!.slice(0, 77)}${String(id).padStart(10, "1").replaceAll("0", "z")}`;
+/** A unique 87-character base58 signature for `id`: its digits (0 written as A, since base58 has no 0) after a padding of z. */
+export const signatureFor = (id: number) => `${fixture.transaction.signatures[0]!.slice(0, 77)}${String(id).replaceAll("0", "A").padStart(10, "z")}`;
 
 /** A successful router transaction holding one swap, as `getTransactionsForAddress` serves it. */
 export function swapTransaction(spec: SwapSpec): RawTransaction {

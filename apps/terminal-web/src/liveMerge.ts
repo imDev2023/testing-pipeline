@@ -2,7 +2,7 @@
 // Live rooms): every trade shown once, newest first, whatever order and however often it arrives,
 // and a candle replaced by its newer self. The API says which mint a pair is quoted in; this reads a
 // trade for the pair a page shows, turned round when the reader flips it.
-import type { Candle, Trade } from "terminal-api/contract";
+import type { Candle, Market, Trade } from "terminal-api/contract";
 
 /** A trade's identity: its transaction and its place among the transaction's events. */
 const idOf = (t: Trade) => `${t.signature}:${t.event_index}`;
@@ -51,4 +51,20 @@ export function readTrade(trade: Trade, pair: { base: string; quote: string }, d
   const side = trade.input_mint === pair.quote ? "Buy" : "Sell";
   const [quote, base] = side === "Buy" ? [paid.amount, received.amount] : [received.amount, paid.amount];
   return { side, paid, received, price: quote === null || base === null || base === 0 ? null : quote / base };
+}
+
+/** Newest first, as the feed lists markets: by when they were created, then by address. */
+const newestMarketFirst = (a: Market, b: Market) => b.created_at.localeCompare(a.created_at) || b.address.localeCompare(a.address);
+
+/**
+ * Markets from the feed's room or a resync, put in place: one already shown is updated where it is,
+ * one newer than every market shown is new and returned in `added`, newest first, for the top, and
+ * any other (an older market not loaded yet, which a swap touched) is left for its own page to load.
+ */
+export function placeMarkets(shown: readonly Market[], arriving: readonly Market[]): { markets: Market[]; added: Market[] } {
+  const byAddress = new Map(arriving.map((m) => [m.address, m]));
+  const known = new Set(shown.map((m) => m.address));
+  const newest = shown[0];
+  const added = arriving.filter((m) => !known.has(m.address) && (!newest || newestMarketFirst(m, newest) < 0)).sort(newestMarketFirst);
+  return { markets: shown.map((m) => byAddress.get(m.address) ?? m), added: [...new Map(added.map((m) => [m.address, m])).values()] };
 }

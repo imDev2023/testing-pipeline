@@ -62,7 +62,7 @@ const SIGNATURE_PAGE = 1000;
 const FETCH_BATCH = 8;
 
 /** The standard RPC methods, for an RPC without Helius's: signatures listed newest first, then each transaction fetched, its place in the block from `getBlock`. */
-export function rpcSource(rpcUrl: string, blockIndexOf = blockPositions(rpcUrl)): HistorySource {
+export function rpcSource(rpcUrl: string, blockWaits: BlockWaits, blockIndexOf = blockPositions(rpcUrl, blockWaits)): HistorySource {
   const listAfter = async (account: string, cursor: Cursor | null) => {
     const listed: { signature: string; slot: number }[] = [];
     let before: string | undefined;
@@ -106,7 +106,7 @@ export function rpcSource(rpcUrl: string, blockIndexOf = blockPositions(rpcUrl))
  * Helius's source while the key gets `getTransactionsForAddress`, and the standard one from the
  * first time the RPC says it has no such method.
  */
-export function historySource(rpcUrl: string): HistorySource {
+export function historySource(rpcUrl: string, blockWaits: BlockWaits): HistorySource {
   const helius = heliusSource(rpcUrl);
   let standard: HistorySource | null = null;
   const pick = async <T>(call: (s: HistorySource) => Promise<T>): Promise<T> => {
@@ -116,7 +116,7 @@ export function historySource(rpcUrl: string): HistorySource {
     } catch (e) {
       if (!(e instanceof RpcError) || !e.methodMissing) throw e;
       console.warn("the RPC does not serve getTransactionsForAddress; reading history with getSignaturesForAddress and getTransaction");
-      standard = rpcSource(rpcUrl);
+      standard = rpcSource(rpcUrl, blockWaits);
       return call(standard);
     }
   };
@@ -129,7 +129,7 @@ export function historySource(rpcUrl: string): HistorySource {
  * not served yet (as just after the live socket reports a transaction) is asked for again for up to
  * `waitMs`; a signature missing from its block is an error.
  */
-export function blockPositions(rpcUrl: string, { cacheSlots = 64, waitMs = 8_000 } = {}) {
+export function blockPositions(rpcUrl: string, { cacheSlots = 64, waitMs, firstRetryMs, maxRetryMs }: BlockWaits & { cacheSlots?: number }) {
   const blocks = new Map<number, Promise<string[]>>();
   const fetchBlock = async (slot: number): Promise<string[]> => {
     const until = Date.now() + waitMs;
@@ -144,7 +144,7 @@ export function blockPositions(rpcUrl: string, { cacheSlots = 64, waitMs = 8_000
         if (Date.now() >= until) throw e;
       }
       if (Date.now() >= until) throw new Error(`block ${slot} was not served within ${waitMs} ms`);
-      await new Promise((done) => setTimeout(done, Math.min(500 * 2 ** attempt, 2_000)));
+      await new Promise((done) => setTimeout(done, Math.min(firstRetryMs * 2 ** attempt, maxRetryMs)));
     }
   };
   return async function blockIndexOf(slot: number, signature: string): Promise<number> {
@@ -160,6 +160,9 @@ export function blockPositions(rpcUrl: string, { cacheSlots = 64, waitMs = 8_000
     return index;
   };
 }
+
+/** How long a block not served yet is asked for again (the API's config module, `RPC_WAITS.block`). */
+export type BlockWaits = { waitMs: number; firstRetryMs: number; maxRetryMs: number };
 
 /** The account's cursor as Postgres holds it, or null before its first reconciliation. */
 export async function readCursor(db: Db, account: string): Promise<Cursor | null> {

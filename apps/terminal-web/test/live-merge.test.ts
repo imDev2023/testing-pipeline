@@ -2,9 +2,9 @@
 // (docs/spec/pipescope-architecture.md, Live rooms): every trade shown once, newest first, whatever
 // order and however often it arrives; a candle replaced by its newer self; a trade read as a buy or a
 // sell of the base mint on show, at its price in the quote mint.
-import type { Candle, Trade } from "terminal-api/contract";
+import type { Candle, Market, Trade } from "terminal-api/contract";
 import { describe, expect, it } from "vitest";
-import { afterCursor, mergeCandles, mergeTrades, readTrade } from "../src/liveMerge";
+import { afterCursor, mergeCandles, mergeTrades, placeMarkets, readTrade } from "../src/liveMerge";
 
 const SOL = "So11111111111111111111111111111111111111112";
 const TOKEN = "4gqiCkoxxD72nbXGc7XtxQx4UjBHD3KiJyXpMvEZ6u8c";
@@ -78,5 +78,25 @@ describe("merging candles", () => {
       ["12:15", "3", 2],
       ["12:30", "4", 1],
     ]);
+  });
+});
+
+describe("placing markets on the feed", () => {
+  const market = (address: string, created_at: string, trades = 0) => ({ address, created_at, stats_24h: { trades } }) as unknown as Market;
+  const shown = [market("B", "2026-11-23T12:00:00.000Z"), market("A", "2026-11-22T12:00:00.000Z")];
+
+  it("updates a market shown in place and adds a newer one at the top", () => {
+    const { markets, added } = placeMarkets(shown, [market("A", "2026-11-22T12:00:00.000Z", 5), market("C", "2026-11-23T13:00:00.000Z")]);
+    expect(added.map((m) => m.address)).toEqual(["C"]);
+    expect(markets.map((m) => [m.address, m.stats_24h.trades])).toEqual([
+      ["B", 0],
+      ["A", 5],
+    ]);
+  });
+
+  it("leaves out an older market not loaded yet, which a swap touched, so it never jumps to the top", () => {
+    const { markets, added } = placeMarkets(shown, [market("Z", "2026-11-20T12:00:00.000Z", 1)]);
+    expect(added).toEqual([]);
+    expect(markets).toEqual(shown);
   });
 });

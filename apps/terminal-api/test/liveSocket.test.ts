@@ -142,6 +142,17 @@ describe("when the last viewer leaves", () => {
 });
 
 describe("the 15-second alarm", () => {
+  it("is never put off by viewers arriving, so a dropped socket is reopened on time however often pages join", async () => {
+    await join("market:A");
+    const due = h.world.alarm;
+    for (let i = 0; i < 5; i++) {
+      h.world.now += 5_000;
+      await join(`market:${i}`);
+      expect(h.world.alarm).toBe(due);
+    }
+  });
+
+
   it("reopens a dropped socket and reconciles the moment it opens", async () => {
     await join("market:A");
     h.open()[0]!.drop();

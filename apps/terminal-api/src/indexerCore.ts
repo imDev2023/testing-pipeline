@@ -14,6 +14,7 @@ import type { Db } from "terminal-db";
 import {
   blockPositions,
   historySource,
+  IndexBatchError,
   indexTransactions,
   indexRegistry,
   pipelineHandler,
@@ -33,11 +34,21 @@ import {
 } from "terminal-indexer";
 import { indexedTransactions, markets, strategies, trades } from "terminal-db";
 import { inArray, isNull } from "drizzle-orm";
-import { CANDLES } from "./config";
+import { CANDLES, LIVE_ROOM_TRADES_MAX, RPC_WAITS } from "./config";
 import type { LiveEvent } from "./contract";
 import { marketViews, tradeViews } from "./views";
 
 export const ROUTER = PIPELINE_PROGRAM_ADDRESS;
+
+/** How many values one `in (...)` list holds, well inside Postgres's 65,535 parameters a query. */
+const IN_LIST_MAX = 1_000;
+
+/** Reads the rows for `values` a list at a time, so a long backlog never passes Postgres's parameter limit. */
+async function chunked<T>(values: string[], read: (part: string[]) => Promise<T[]>): Promise<T[]> {
+  const rows: T[] = [];
+  for (let i = 0; i < values.length; i += IN_LIST_MAX) rows.push(...(await read(values.slice(i, i + IN_LIST_MAX))));
+  return rows;
+}
 
 /** A short-lived database client: opened for one run and closed after it. */
 export type OpenDb = () => { db: Db; close: () => Promise<void> };
@@ -68,9 +79,9 @@ export class IndexerCore {
   private unread = new Set<string>();
 
   constructor(private readonly deps: { rpcUrl: string; openDb: OpenDb; source?: HistorySource; handler?: TransactionHandler }) {
-    this.source = deps.source ?? historySource(deps.rpcUrl);
+    this.source = deps.source ?? historySource(deps.rpcUrl, RPC_WAITS.block);
     this.handle = deps.handler ?? pipelineHandler({ candleSeconds: CANDLES.map((c) => c.seconds) });
-    this.blockIndexOf = blockPositions(deps.rpcUrl);
+    this.blockIndexOf = blockPositions(deps.rpcUrl, RPC_WAITS.block);
   }
 
   /** Where reconciliation of the router stands, once this instance knows. */
@@ -148,18 +159,32 @@ export class IndexerCore {
     const wanted = [...new Set(signatures)];
     if (!wanted.length) return emptyResult();
     return this.withDb(async (db) => {
-      const known = new Set((await db.select({ signature: indexedTransactions.signature }).from(indexedTransactions).where(inArray(indexedTransactions.signature, wanted))).map((r) => r.signature));
+      const known = new Set(
+        (await chunked(wanted, (part) => db.select({ signature: indexedTransactions.signature }).from(indexedTransactions).where(inArray(indexedTransactions.signature, part)))).map((r) => r.signature),
+      );
       const indexed = emptyResult();
+      // Each on its own: one that cannot be served or indexed never loses the others, which are
+      // committed already and which reconciliation would not report again.
       for (const signature of wanted) {
         if (known.has(signature)) continue;
-        const raw = await servedTransaction(this.deps.rpcUrl, signature, { blockIndexOf: this.blockIndexOf });
-        if (!raw) {
-          console.warn(`transaction ${signature} was not served in time; reconciliation will index it`);
-          continue;
+        try {
+          const raw = await servedTransaction(this.deps.rpcUrl, signature, { ...RPC_WAITS.transaction, blockIndexOf: this.blockIndexOf });
+          if (!raw) {
+            console.warn(`transaction ${signature} was not served in time; reconciliation will index it`);
+            continue;
+          }
+          addResult(indexed, await indexTransactions(db, this.handle, [raw]));
+        } catch (e) {
+          if (e instanceof IndexBatchError) addResult(indexed, e.result);
+          console.error(`indexing ${signature} from the live socket failed; reconciliation will index it`, e);
         }
-        addResult(indexed, await indexTransactions(db, this.handle, [raw]));
       }
-      await this.refresh(db, indexed.markets);
+      try {
+        await this.refresh(db, indexed.markets);
+      } catch (e) {
+        // They stay unread for the next run; what was indexed is still handed on.
+        console.error("reading the markets the live socket touched failed; the next run reads them", e);
+      }
       this.learn(indexed);
       return indexed;
     });
@@ -179,12 +204,19 @@ export class IndexerCore {
     const add = (room: string, event: LiveEvent) => events.set(room, [...(events.get(room) ?? []), event]);
     return this.withDb(async (db) => {
       const keys = new Set(indexed.trades.map((t) => `${t.signature}:${t.eventIndex}`));
-      const tradeRows = keys.size
-        ? (await db.select().from(trades).where(inArray(trades.signature, indexed.trades.map((t) => t.signature)))).filter((t) => keys.has(`${t.signature}:${t.eventIndex}`) && watched.has(`market:${t.market}`))
-        : [];
+      const signatures = [...new Set(indexed.trades.map((t) => t.signature))];
+      const tradeRows = (await chunked(signatures, (part) => db.select().from(trades).where(inArray(trades.signature, part)))).filter(
+        (t) => keys.has(`${t.signature}:${t.eventIndex}`) && watched.has(`market:${t.market}`),
+      );
       tradeRows.sort((x, y) => Number(x.slot - y.slot) || (x.blockIndex ?? -1) - (y.blockIndex ?? -1) || x.eventIndex - y.eventIndex);
-      for (const trade of await tradeViews(db, tradeRows)) add(`market:${trade.market}`, { type: "trade", trade });
-      const marketRows = await db.select().from(markets).where(inArray(markets.address, touched));
+      // A room is sent its new swaps, or told to resync when there are more than it is sent at once.
+      const byMarket = new Map<string, typeof tradeRows>();
+      for (const t of tradeRows) byMarket.set(t.market, [...(byMarket.get(t.market) ?? []), t]);
+      for (const [market, rows] of byMarket) {
+        if (rows.length > LIVE_ROOM_TRADES_MAX) add(`market:${market}`, { type: "resync" });
+        else for (const trade of await tradeViews(db, rows)) add(`market:${market}`, { type: "trade", trade });
+      }
+      const marketRows = await chunked(touched, (part) => db.select().from(markets).where(inArray(markets.address, part)));
       for (const market of await marketViews(db, marketRows)) {
         if (watched.has(`market:${market.address}`)) add(`market:${market.address}`, { type: "market", market });
         if (feed) add("feed", { type: "market", market });

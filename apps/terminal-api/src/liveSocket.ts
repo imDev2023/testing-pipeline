@@ -66,14 +66,22 @@ export class LiveSocket {
     await this.deps.setAlarm(Math.min(this.deps.now() + SOCKET_REOPEN_ALARM_MS, closesAt ?? Infinity));
   }
 
-  /** A room's first viewer arrived: the socket opens, or stays open past a pending close. */
+  /**
+   * A viewer arrived in a room: the socket opens, or stays open past a pending close. A room says so
+   * for each viewer, so the alarm is set only when this changes what it is for, and many viewers
+   * arriving never put it off.
+   */
   async arrived(room: string): Promise<void> {
     const state = await this.loaded();
-    if (!state.rooms.includes(room)) state.rooms = [...state.rooms, room].sort();
+    const closing = state.closesAt !== null;
+    const known = state.rooms.includes(room);
+    if (!known) state.rooms = [...state.rooms, room].sort();
     state.closesAt = null;
-    await this.save();
-    if (!this.socket) await this.open(`a viewer in ${room}`);
-    await this.schedule();
+    if (!known || closing) await this.save();
+    if (!this.socket) {
+      await this.open(`a viewer in ${room}`);
+      await this.schedule();
+    } else if (closing) await this.schedule();
   }
 
   /** A room's last viewer left: once no room has one, the socket closes after the grace. */

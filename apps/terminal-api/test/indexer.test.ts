@@ -10,7 +10,7 @@ import { createTestDatabase } from "terminal-db/testing";
 import { DECODER_VERSION, indexTransactions, pipelineHandler, type RawTransaction, type TransactionHandler } from "terminal-indexer";
 import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CANDLES } from "../src/config";
+import { CANDLES, LIVE_ROOM_TRADES_MAX } from "../src/config";
 import { IndexerCore } from "../src/indexerCore";
 
 const fixture = (name: string) => JSON.parse(readFileSync(`${import.meta.dirname}/../../../packages/terminal-indexer/test/fixtures/${name}.json`, "utf8")) as RawTransaction;
@@ -187,5 +187,41 @@ describe("the live path", () => {
     openDb.mockClear();
     expect((await indexer.events(indexed, [])).size).toBe(0);
     expect(openDb).not.toHaveBeenCalled();
+  });
+});
+
+describe("the live path, when part of a batch fails", () => {
+  it("still hands on what it indexed when another reported transaction cannot be indexed", async () => {
+    const { swapTransaction, SWAP_TOKEN, WSOL } = await import("terminal-indexer/swaps");
+    const good = swapTransaction({ id: 1, slot: 525_139_990, blockIndex: 0, at: 1_795_367_000, input: WSOL, output: SWAP_TOKEN, netSent: 5n, received: 7n });
+    const bad = swapTransaction({ id: 2, slot: 525_139_991, blockIndex: 0, at: 1_795_367_001, input: WSOL, output: SWAP_TOKEN, netSent: 5n, received: 7n });
+    const real = pipelineHandler();
+    const handler: TransactionHandler = async (db, raw) => {
+      if (raw.transaction.signatures[0] === bad.transaction.signatures[0]) throw new Error("this transaction cannot be read");
+      return real(db, raw);
+    };
+    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler });
+    await indexer.reconcile();
+    rpc.history.push(good, bad);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const indexed = await indexer.indexSignatures([good.transaction.signatures[0]!, bad.transaction.signatures[0]!]);
+    log.mockRestore();
+    expect(indexed.trades).toEqual([{ signature: good.transaction.signatures[0], eventIndex: 0 }]);
+  });
+});
+
+describe("events after a large backlog", () => {
+  it("tell a market's room to resync through the API rather than send it more swaps than LIVE_ROOM_TRADES_MAX", async () => {
+    const { swapTransaction, SWAP_MARKET, SWAP_TOKEN, WSOL } = await import("terminal-indexer/swaps");
+    const { indexer } = core();
+    await indexer.reconcile();
+    for (let id = 1; id <= LIVE_ROOM_TRADES_MAX + 1; id++) {
+      rpc.history.push(swapTransaction({ id, slot: 525_140_000 + id, blockIndex: 0, at: 1_795_367_000 + id, input: WSOL, output: SWAP_TOKEN, netSent: 5n, received: 7n }));
+    }
+    const { indexed } = await indexer.reconcile();
+    expect(indexed.trades).toHaveLength(LIVE_ROOM_TRADES_MAX + 1);
+    const events = await indexer.events(indexed, ["feed", `market:${SWAP_MARKET}`]);
+    expect(events.get(`market:${SWAP_MARKET}`)!.map((e) => e.type)).toEqual(["resync", "market"]);
+    expect(events.get("feed")!.map((e) => e.type)).toEqual(["market"]);
   });
 });
