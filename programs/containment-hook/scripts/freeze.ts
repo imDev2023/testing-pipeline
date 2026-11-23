@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { AccountRole, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, type Address, type Instruction } from '@solana/kit';
 import { findAssociatedTokenPda, TOKEN_2022_PROGRAM_ADDRESS } from '@solana-program/token-2022';
 
-import { findConfigPda, findExtraAccountMetasPda, findUnlockPda, type Config } from './client/index.ts';
+import { findConfigPda, findExtraAccountMetasPda, findUnlockPda, MAX_UNLOCK_DEADLINE_SECS, type Config } from './client/index.ts';
 
 /** The address Token-2022 stores for an unset transfer hook program or authority. */
 export const UNSET = '11111111111111111111111111111111';
@@ -97,11 +97,9 @@ export function freezeInstruction(programData: Address, currentAuthority: Addres
 
 /** The config version the gate reads (programs/containment-hook/src/state.rs, CONFIG_VERSION). */
 export const CONFIG_VERSION = 1;
-/**
- * The longest a binding may wait for its deadline, in seconds: programs/containment-hook/src/config.rs,
- * MAX_UNLOCK_DEADLINE_SECS (90 days), pinned by freeze.test.ts against that file.
- */
-export const MAX_UNLOCK_DEADLINE_SECS = 7_776_000n;
+// The longest a binding may wait for its deadline comes from the generated client, which the
+// hook publishes in its IDL, so the value lives once, in the program's config module.
+export { MAX_UNLOCK_DEADLINE_SECS };
 /** Pipeline's router. */
 export const ROUTER_PROGRAM = 'PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34' as Address;
 

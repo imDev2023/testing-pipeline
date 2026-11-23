@@ -39,7 +39,8 @@ import {
 const HOOK = 'aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv';
 const UNLOCK_PDA = 'CaDvbcDT6Aw8mXwK6ZcFPdh2UJwxJ1GGEawd2cubRL2c';
 const WALLET = 'Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe';
-const OTHER_PROGRAM = 'J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t';
+// Any program other than the hook: SPL Token.
+const OTHER_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
 const judge = (mintHook: Parameters<typeof judgeMint>[0]['mintHook'], unlockedAt: bigint | null) => judgeMint({ hook: HOOK, unlockPda: UNLOCK_PDA, mintHook, unlockedAt });
 const refused = (verdict: ReturnType<typeof judgeMint>, reason: RegExp) => {
@@ -117,7 +118,8 @@ test('the freeze instruction is the loader SetAuthority with no new authority', 
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const FIXTURE = join(here, '../tests/fixtures/release-gate/devnet');
-const TAX_AMM = 'J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t';
+// The tax AMM's id, written once in the workspace: read from the devnet deploy record.
+const TAX_AMM = JSON.parse(readFileSync(join(here, '../../../deployments/devnet.json'), 'utf8')).programs['tax-amm'].programId as string;
 
 function fixtureAccount(address: string): { owner: string; data: Uint8Array } {
     const record = JSON.parse(readFileSync(join(FIXTURE, `${address}.json`), 'utf8'));
@@ -157,13 +159,6 @@ test('the validation data is the hook VALIDATION_DATA, as devnet holds it', asyn
     const { chain } = await fixtureCase();
     assert.deepEqual([...chain.validationData!], [...VALIDATION_DATA]);
     assert.equal(VALIDATION_DATA.length, 51);
-});
-
-test('MAX_UNLOCK_DEADLINE_SECS is the hook config.rs value', () => {
-    const source = readFileSync(join(here, '../src/config.rs'), 'utf8');
-    const expression = /pub const MAX_UNLOCK_DEADLINE_SECS: i64 = ([0-9 *]+);/.exec(source)![1]!;
-    const value = expression.split('*').reduce((product, factor) => product * BigInt(factor.trim()), 1n);
-    assert.equal(MAX_UNLOCK_DEADLINE_SECS, value);
 });
 
 const changed = async (change: (c: ConfigFields, chain: ConfigChain) => void, problem: RegExp) => {
