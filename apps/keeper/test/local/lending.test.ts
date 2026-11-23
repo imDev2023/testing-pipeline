@@ -5,8 +5,10 @@
 // closed; `WithinBand` from a rival keeper's rebalance skipped with no transaction sent; and a
 // reserve refreshed once half of TRADE_MAX_RESERVE_AGE_SLOTS has passed.
 //
-// Start the validator with fast slots (`--ticks-per-slot 8`), since the last test waits about
-// 4,500 slots, and register the lending AMM first with its demo's `--register-only`.
+// Register the lending AMM first with its demo's `--register-only`. The last test waits about
+// 4,500 slots, so it runs only on a validator with fast slots (`--ticks-per-slot 8`, about 11 a
+// second) and skips itself on one at the usual pace; run it on its own validator, since fast
+// slots put the block time ahead of the wall clock, which the buy wall's `settle` test reads.
 
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
@@ -166,7 +168,14 @@ test("WithinBand, after a rival keeper's rebalance, is skipped in simulation wit
     assertAtTarget((await bufferShareBps(market)).bps, "after the rival's rebalance");
 });
 
-test('a reserve a market lends to is refreshed once its last refresh is more than half of TRADE_MAX_RESERVE_AGE_SLOTS old', { timeout: 20 * 60_000 }, async () => {
+test('a reserve a market lends to is refreshed once its last refresh is more than half of TRADE_MAX_RESERVE_AGE_SLOTS old', { timeout: 20 * 60_000 }, async (t) => {
+    const first = await rpc.getSlot({ commitment: 'confirmed' }).send();
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    const perSecond = Number((await rpc.getSlot({ commitment: 'confirmed' }).send()) - first) / 5;
+    if (Number(REFRESH_AFTER_SLOTS) / perSecond > 12 * 60) {
+        t.skip(`${perSecond} slots a second would take more than 12 minutes to age the reserve: start the validator with --ticks-per-slot 8`);
+        return;
+    }
     const owner = await wallet(10n);
     const market = await createLentMarket(owner);
     await rebalanceNow(market, owner);

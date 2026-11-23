@@ -43,10 +43,12 @@ export type SignedTransaction = {
 };
 
 /**
- * How a transaction ended, simulated or landed: the program's custom error code if it refused
- * with one, and the index of the instruction that failed, if one did.
+ * How a transaction ended, simulated or landed: the custom error code if an instruction refused
+ * with one, the index of the transaction's instruction that failed, and the program that raised
+ * the code, which for a failure inside a cross-program call is the called program, not the
+ * transaction's instruction's.
  */
-export type Result = { failed: boolean; customError: number | null; failedInstruction: number | null; error: string | null; logs: string[] };
+export type Result = { failed: boolean; customError: number | null; failedInstruction: number | null; refusedBy: Address | null; error: string | null; logs: string[] };
 
 export type Simulation = Result & {
     /** The fee payer's balance after the simulated transaction, its fee taken. */
@@ -94,7 +96,9 @@ export interface Chain {
 }
 
 const COMMITMENT = 'confirmed' as const;
-const BATCH = 100;
+/** The most accounts one `getMultipleAccounts` reads. */
+export const ACCOUNTS_PER_REQUEST = 100;
+const BATCH = ACCOUNTS_PER_REQUEST;
 /** How often a send's status is polled, and the longest a reconnect waits. */
 const POLL_MS = 500;
 const MAX_RECONNECT_MS = 60_000;
@@ -106,6 +110,18 @@ function customErrorOf(error: unknown): number | null {
     return custom === undefined ? null : Number(custom);
 }
 
+/**
+ * The program that raised a custom error: the first "Program <id> failed: custom program error"
+ * line, since the innermost program fails first and each caller then repeats its code.
+ */
+function refusedByOf(logs: readonly string[] | null | undefined): Address | null {
+    for (const line of logs ?? []) {
+        const found = /^Program (\w{32,44}) failed: custom program error/.exec(line);
+        if (found) return found[1] as Address;
+    }
+    return null;
+}
+
 /** The index of the instruction a transaction error names, if it names one. */
 function failedInstructionOf(error: unknown): number | null {
     const index = (error as { InstructionError?: [unknown, unknown] } | null)?.InstructionError?.[0];
@@ -115,10 +131,10 @@ function failedInstructionOf(error: unknown): number | null {
 const show = (value: unknown) => JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
 
 /** The error, with the log line that names it (such as "Error: Account is frozen") when there is one. */
-function resultOf(error: unknown, logs: readonly string[] | null | undefined): Result {
+export function resultOf(error: unknown, logs: readonly string[] | null | undefined): Result {
     const failed = error !== null && error !== undefined;
     const said = [...(logs ?? [])].reverse().find((line) => /error/i.test(line) && !/ failed: custom program error/.test(line));
-    return { failed, customError: customErrorOf(error), failedInstruction: failedInstructionOf(error), error: failed ? `${show(error)}${said ? `: ${said}` : ''}` : null, logs: [...(logs ?? [])] };
+    return { failed, customError: customErrorOf(error), failedInstruction: failedInstructionOf(error), refusedBy: failed ? refusedByOf(logs) : null, error: failed ? `${show(error)}${said ? `: ${said}` : ''}` : null, logs: [...(logs ?? [])] };
 }
 
 /** Wraps an RPC call, so a transport failure is told apart from a job's failure. */

@@ -640,7 +640,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-59: Keeper runner: accounts a due rule reads beyond the market
 
 - Question: How does a due rule that depends on more than its market's state, as the lending AMM's withdraw mode depends on Kamino's reserve, read what it needs while staying a pure function in `packages/keeper-jobs`?
-- Answer: The product's entry names those accounts (`watches`), the runner reads them with the market in the same `getMultipleAccounts`, every pass and again just before a job is sent, and hands them to the entry's `decode`, so a due rule sees one moment of the chain; the lending AMM's entry watches the market's reserve, its lending market and the clock sysvar, and a market whose watched accounts are missing has nothing due.
+- Answer: The product's entry names those accounts (`watches`), the runner reads them with the market in the same `getMultipleAccounts` (requests of at most 100 accounts never split a market from its watched ones), every pass and again just before a job is sent, and hands them to the entry's `decode`, so a due rule sees one moment of the chain; the lending AMM's entry watches the market's reserve, its lending market and the clock sysvar, and a market whose watched accounts are missing has nothing due.
 - Alternatives: Always due in withdraw mode with the simulation deciding, which would show Aviary's button on every market in withdraw mode; each entry reading the chain itself in its due rule, which would make the rule no longer pure and read the chain once per job.
 - Specified in: [`docs/spec/keeper-runner.md`, One definition of due](spec/keeper-runner.md#one-definition-of-due)
 - Changes by: spec only
@@ -650,7 +650,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-60: Keeper runner: when the lending AMM's `rebalance` is due
 
 - Question: Exactly when is the lending AMM's `rebalance` due, so the runner sends it and Aviary shows its button?
-- Answer: Whenever the program would succeed: the rule is the program's own (`decide_with_exit_delay` with the band, `MIN_REBALANCE`, what Kamino can pay with its rate headroom, withdraw mode's thresholds and its exit delay) written again in TypeScript on the market and the reserve at their stored state, with `WithinBand`, `BelowMinRebalance`, `KaminoStopped` and `KaminoDepositsBlocked` taken as nothing to do when a simulation still refuses; `MIN_REBALANCE` per reserve and `KAMINO_RATE_HEADROOM_BPS`, which the program does not export, are repeated in the entry and checked against `config.rs` by its tests.
+- Answer: Whenever the program would act: the rule is the program's own (`decide_with_exit_delay` with the band, `MIN_REBALANCE`, what Kamino can pay with its rate headroom, withdraw mode's thresholds and its exit delay) written again in TypeScript on the market and the reserve at their stored state, with `WithinBand`, `BelowMinRebalance`, `KaminoStopped` and `KaminoDepositsBlocked` taken as nothing to do when a simulation still refuses; `MIN_REBALANCE` per reserve and `KAMINO_RATE_HEADROOM_BPS`, which the program does not export, are repeated in the entry and checked against `config.rs` by its tests; what the program does not model either, such as klend's deposit limit (finding H035, signed off), is left to the simulation, where klend's refusal is a failure, retried and then parked until the market changes.
 - Alternatives: Due whenever the buffer is outside its band or the market is in withdraw mode, leaving the rest to the simulation, which would keep a button up on markets with nothing the program would do; exporting the per-reserve values in the program's IDL, which waits for the lending AMM's next release.
 - Specified in: [`docs/spec/keeper-runner.md`, The jobs](spec/keeper-runner.md#the-jobs)
 - Changes by: spec only
@@ -670,8 +670,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-62: Keeper runner: whose refusal codes count
 
 - Question: When a job's transaction holds another program's instruction too, as the lending AMM's `rebalance` holds klend's `refresh_reserve`, which refusal codes may mean "nothing to do" or "try again in a later slot"?
-- Answer: Only those of the product's own program, told by the instruction the transaction error names; the same number from any other program (klend's errors share the 6,000 range with ours) is a failure, retried and parked like any other.
-- Alternatives: Reading the code whichever instruction failed, so a klend error that shared a number with `WithinBand` would be skipped silently instead of retried and parked.
+- Answer: Only those the product's own program raised, told by the first "failed: custom program error" line of the logs (the innermost failing program), or without logs by the instruction the transaction error names; the same number from klend inside the product's own call to it, or from any other program (klend's errors share the 6,000 range with ours) is a failure, retried and parked like any other.
+- Alternatives: Reading the code whichever program raised it, or by the failing instruction alone, which takes klend's code inside the product's own call for the product's, so a klend error that shared a number with `WithinBand` would be skipped silently instead of retried and parked.
 - Specified in: [`docs/spec/keeper-runner.md`, One definition of due](spec/keeper-runner.md#one-definition-of-due)
 - Changes by: spec only
 - Status: default

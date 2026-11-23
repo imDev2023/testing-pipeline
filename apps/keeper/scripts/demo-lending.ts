@@ -10,8 +10,8 @@
 //
 // The payer holds the demo token and a wrapped-SOL account since the demo market's creation. It
 // reads and sends through KEEPER_RPC_URL, or Alchemy's devnet endpoint from ALCHEMY_API_KEY, and
-// waits for a `rebalance` paid for by the keeper wallet (KEEPER_WALLET, by default the published
-// keeper address).
+// waits for a `rebalance` paid for by the keeper wallet (`--keeper <address>`, by default the
+// published keeper address).
 
 import { readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -42,13 +42,13 @@ import { LENDING_AMM_PROGRAM_ADDRESS, parseRebalancedEvent, REBALANCED_EVENT_DIS
 
 import { loadSettings } from '../src/settings.ts';
 
-const { values } = parseArgs({ options: { payer: { type: 'string' }, buy: { type: 'string' }, sell: { type: 'string' }, share: { type: 'boolean', default: false }, wait: { type: 'string', default: '120' } } });
+const { values } = parseArgs({ options: { payer: { type: 'string' }, buy: { type: 'string' }, sell: { type: 'string' }, share: { type: 'boolean', default: false }, wait: { type: 'string', default: '120' }, keeper: { type: 'string', default: '8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2' } } });
 const record = JSON.parse(readFileSync(new URL('../../../deployments/devnet-demo-lending-amm.json', import.meta.url), 'utf8')) as { record: [string, string][] };
 const named = (label: string) => address(record.record.find(([name]) => name === label)![1]);
 const market = named('demo market');
 const marketState = named('demo market state');
 const rpc = createSolanaRpc(loadSettings({ ...process.env, KEEPER_KEYPAIR: 'unused' }).rpcUrl);
-const KEEPER_WALLET = address(process.env.KEEPER_WALLET ?? '8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2');
+const KEEPER_WALLET = address(values.keeper!);
 const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
 const commitment = 'confirmed' as const;
 

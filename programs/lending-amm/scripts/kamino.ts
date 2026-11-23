@@ -106,12 +106,13 @@ function oracle(data: Uint8Array, offset: number): Address | null {
 export function decodeReserve(data: Uint8Array): ReserveView | string {
     if (data.length !== RESERVE_SIZE) return `${data.length} bytes, not a reserve's ${RESERVE_SIZE}`;
     if (!RESERVE_DISCRIMINATOR.every((byte, i) => data[i] === byte)) return "not a reserve's discriminator";
+    // klend's order: the sum first, which fails beyond 128 bits whatever the subtractions after it
+    // would leave, then each subtraction; a failure is kept as 2^128, which nobody can value.
+    const sum = (u64(data, OFFSETS.totalAvailableAmount) << 60n) + u128(data, OFFSETS.borrowedAmountSf);
     const supply =
-        (u64(data, OFFSETS.totalAvailableAmount) << 60n) +
-        u128(data, OFFSETS.borrowedAmountSf) -
-        u128(data, OFFSETS.accumulatedProtocolFeesSf) -
-        u128(data, OFFSETS.accumulatedReferrerFeesSf) -
-        u128(data, OFFSETS.pendingReferrerFeesSf);
+        sum >= 1n << 128n
+            ? 1n << 128n
+            : sum - u128(data, OFFSETS.accumulatedProtocolFeesSf) - u128(data, OFFSETS.accumulatedReferrerFeesSf) - u128(data, OFFSETS.pendingReferrerFeesSf);
     const cap = OFFSETS.withdrawalCap;
     return {
         version: u64(data, OFFSETS.version),

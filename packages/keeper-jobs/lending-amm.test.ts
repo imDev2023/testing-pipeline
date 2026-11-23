@@ -318,6 +318,24 @@ describe('rebalance: what it reads and builds', () => {
     });
 });
 
+describe('a deprecated reserve', () => {
+    test('rebalance only forgets a wait to leave, without a refresh, and the reserve is never refreshed', async () => {
+        const deprecated = (data: Watched) => {
+            const copy = new Map(data);
+            const reserve = copy.get(RESERVE)!.slice();
+            setU64(reserve, 8, (1n << 64n) - 1n);
+            copy.set(RESERVE, reserve);
+            return copy;
+        };
+        const waiting = lendingAmm.decode(marketBytes({ buffer: 10n * SOL, ctokens: 1n, withdrawMode: true, exitSeenSlot: 5n }), deprecated(watched({ reserve: { free: PLENTY, lastUpdateSlot: 0n } })));
+        assert.equal(rebalance.due(waiting).length, 1);
+        const payer = await generateKeyPairSigner();
+        const instructions = await rebalance.build({ rpc: {} as Rpc<GetAccountInfoApi>, marketState: MARKET_STATE, state: waiting, unit: { job: 'rebalance', key: 'rebalance' }, payer });
+        assert.deepEqual(instructions.map((instruction) => instruction.programAddress), [LENDING_AMM_PROGRAM_ADDRESS]);
+        assert.deepEqual(refreshReserve.due(waiting), []);
+    });
+});
+
 describe('refresh_reserve', () => {
     const holding = { buffer: 2n * SOL, ctokens: 8n * SOL };
     const aged = (age: bigint, extra: Partial<Chain> = {}) => refreshReserve.due(state(holding, { reserve: { free: PLENTY, lastUpdateSlot: SLOT - age }, ...extra }));

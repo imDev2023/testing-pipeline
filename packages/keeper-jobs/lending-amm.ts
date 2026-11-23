@@ -308,6 +308,12 @@ function kaminoOf(market: LendingMarket): KaminoView & { lendingMarket: Address 
     return { ...market.kamino, lendingMarket: market.lendingMarket };
 }
 
+/**
+ * Whether klend would refresh the reserve: not while the lending market's emergency mode is on,
+ * and not once a write-off has deprecated it.
+ */
+const refreshable = (kamino: KaminoView) => !kamino.lendingMarketEmergency && kamino.reserve.version === RESERVE_VERSION;
+
 const REBALANCE = 'rebalance';
 const REFRESH_RESERVE = 'refresh_reserve';
 
@@ -341,8 +347,10 @@ const rebalance: KeeperJob<LendingMarket> = {
             tokenProgram: TOKEN_PROGRAM_ADDRESS,
             klendProgram: KLEND_PROGRAM,
         });
-        // klend refuses the refresh while the lending market's emergency mode is on (finding R2F-02).
-        return kamino.lendingMarketEmergency ? [instruction] : [refreshReserveInstruction(state.reserve, kamino.lendingMarket, kamino.reserve), instruction];
+        // klend refuses the refresh while the lending market's emergency mode is on (finding R2F-02),
+        // and a deprecated reserve is never brought up to date again; a call while Kamino redeems
+        // nothing only forgets a wait to leave withdraw mode, which reads no rate.
+        return refreshable(kamino) && !redeemsStopped(kamino) ? [refreshReserveInstruction(state.reserve, kamino.lendingMarket, kamino.reserve), instruction] : [instruction];
     },
 
     refusals: {
@@ -361,7 +369,7 @@ const refreshReserve: KeeperJob<LendingMarket> = {
 
     due(market) {
         const { kamino } = market;
-        if (!market.open || market.ctokens === 0n || !kamino || market.lendingMarket === null || kamino.lendingMarketEmergency) return [];
+        if (!market.open || market.ctokens === 0n || !kamino || market.lendingMarket === null || !refreshable(kamino)) return [];
         const age = kamino.slot > kamino.reserve.lastUpdateSlot ? kamino.slot - kamino.reserve.lastUpdateSlot : 0n;
         return age > REFRESH_AFTER_SLOTS ? [{ job: REFRESH_RESERVE, key: REFRESH_RESERVE, owed: age }] : [];
     },

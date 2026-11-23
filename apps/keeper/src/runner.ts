@@ -21,7 +21,7 @@ import { findAssociatedTokenPda, getCloseAccountInstruction, getTokenDecoder, TO
 import { outcomeOf, products as allProducts, type AnyKeeperProduct, type JobUnit, type KeeperJob, type Pass } from 'keeper-jobs';
 import { KEEPER_WARNING_MAX_LENGTH, KEEPER_WARNINGS_MAX } from 'terminal-api/contract';
 
-import { ChainError, type Chain, type LandedTransaction, type Result, type SignedTransaction } from './chain.ts';
+import { ACCOUNTS_PER_REQUEST, ChainError, type AccountData, type Chain, type LandedTransaction, type Result, type SignedTransaction } from './chain.ts';
 import type { Clock, Timer } from './clock.ts';
 import type { Heartbeat } from './heartbeat.ts';
 import type { Logger } from './log.ts';
@@ -260,12 +260,21 @@ export class Runner {
      */
     private async refresh(addresses: readonly Address[]) {
         const watchesOf = (market: Market) => market.product.watches?.(market.data) ?? [];
-        const wanted = new Set<Address>(addresses);
+        // Requests of at most ACCOUNTS_PER_REQUEST accounts, each market with its watched ones, so
+        // no market is read at one slot and its reserve or clock at another (SUITE-59).
+        const requests: Set<Address>[] = [new Set()];
         for (const account of addresses) {
             const market = this.markets.get(account);
-            if (market) for (const watched of watchesOf(market)) wanted.add(watched);
+            const group = [account, ...(market ? watchesOf(market) : [])];
+            let request = requests.at(-1)!;
+            if (request.size > 0 && new Set([...request, ...group]).size > ACCOUNTS_PER_REQUEST) requests.push((request = new Set()));
+            for (const wanted of group) request.add(wanted);
         }
-        const found = await this.chain.accounts([...wanted]);
+        const found = new Map<Address, AccountData | null>();
+        for (const request of requests) {
+            if (request.size === 0) continue;
+            for (const [key, value] of await this.chain.accounts([...request])) found.set(key, value);
+        }
         for (const account of addresses) {
             const current = found.get(account);
             const market = this.markets.get(account);
@@ -495,13 +504,16 @@ export class Runner {
     }
 
     /**
-     * The result with its custom error code kept only if the product's own program refused: the
-     * same number from another program in the transaction (klend's, the token program's) is a
-     * failure like any other, never a "nothing to do" or "try again in a later slot".
+     * The result with its custom error code kept only if the product's own program raised it:
+     * the same number from another program (klend's, a token program's), whether its own
+     * instruction in the transaction or a call the product's program made to it, is a failure like
+     * any other, never a "nothing to do" or "try again in a later slot" (SUITE-62). The program
+     * that raised it is read from the logs, and without them from the instruction that failed.
      */
     private ownRefusal<T extends Result>(market: Market, instructions: readonly Instruction[], result: T): T {
-        if (result.customError === null || result.failedInstruction === null) return result;
-        return instructions[result.failedInstruction]?.programAddress === market.product.programAddress ? result : { ...result, customError: null };
+        if (result.customError === null) return result;
+        const raisedBy = result.refusedBy ?? (result.failedInstruction === null ? null : (instructions[result.failedInstruction]?.programAddress ?? null));
+        return raisedBy === market.product.programAddress ? result : { ...result, customError: null };
     }
 
     private async send(market: Market, job: AnyJob, unit: JobUnit, key: string, instructions: readonly Instruction[], transaction: SignedTransaction, estimate: bigint, summary: PassSummary) {

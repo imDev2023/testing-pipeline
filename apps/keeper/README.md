@@ -128,7 +128,7 @@ The runner's own tests run against a local validator running devnet's router, th
 source scripts/toolchain-env.sh
 bash programs/lending-amm/scripts/fetch-klend.sh devnet
 bash programs/lending-amm/scripts/fetch-accounts.sh
-scripts/local-validator.sh --ticks-per-slot 8   # in another shell; fast slots for the reserve's refresh test
+scripts/local-validator.sh          # in another shell
 (cd programs/tax-amm/scripts && pnpm demo --cluster localnet \
   --payer ~/.config/testing-pipeline/devnet/wallet.json \
   --upgrade-authority ~/.config/testing-pipeline/devnet/upgrade-authority.json)
@@ -145,5 +145,6 @@ They show a job sent when due and only then, a market owing nothing sending noth
 For the buy wall AMM they show the wall placed from the runner's own socket after the swap that makes it due, its tip landing in the keeper wallet's wrapped-SOL account, which the same transaction creates, the tips unwrapped once that account holds more than `TIP_UNWRAP_AT` and not at exactly it, `settle` never twice within `SETTLE_INTERVAL` on a market even across a restart, and the daily pass paying the rewards and sweeping fee slots 0 and 2 but never slot 1, with a payout into a missing account worth less than its rent left waiting at no cost.
 For the lending AMM they show `rebalance` sent from the runner's own socket within a minute of a swap that pushes the buffer out of its band, a deposit after a buy and a redeem after a sale beyond the buffer, each leaving the buffer at its target; a sweep catching a market that left its band while the socket was closed, both ways; a rival keeper's rebalance between the runner's read and its simulation leaving only a `WithinBand` refusal, skipped with no transaction sent; and the reserve refreshed once its last refresh is more than 4,500 slots old, and not before.
 Each test makes its own markets and sees only those, so the tests can share one validator.
+The lending AMM's reserve-refresh test waits about 4,500 slots, so it skips itself on a validator at the usual pace; run it on a validator of its own started with `--ticks-per-slot 8` (`node --test --test-name-pattern refreshed test/local/lending.test.ts`), not with the rest, since fast slots put the block time ahead of the wall clock and the buy wall's `settle` test reads when it last ran from block times.
 
 On devnet, `node apps/keeper/scripts/demo-lending.ts --payer ~/.config/testing-pipeline/devnet/wallet.json --buy <lamports>` (or `--sell <token units>`) trades the lending AMM's demo market out of its band and prints the swap, the runner's `rebalance` and the buffer's share before, after the swap and after the rebalance.
