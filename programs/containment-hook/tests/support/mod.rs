@@ -160,6 +160,8 @@ pub struct BindArgs {
     pub mint: Pubkey,
     pub market: Pubkey,
     pub market_state: Pubkey,
+    /// The market's other mint, whose transfer hook and authorities `bind` checks.
+    pub quote_mint: Pubkey,
     pub unlock_goal: u64,
     pub unlock_deadline: i64,
     /// Accounts after `bind`'s own, which it must ignore.
@@ -171,12 +173,18 @@ impl BindArgs {
     /// goal [`GOAL`] and a deadline 30 days away.
     pub fn new(env: &Env, mint: Pubkey, market: &Market) -> Self {
         let admin = env.admin.pubkey();
+        let quote_mint = if market.mints[0] == mint {
+            market.mints[1]
+        } else {
+            market.mints[0]
+        };
         BindArgs {
             mint_authority: admin,
             payer: admin,
             mint,
             market: market.market,
             market_state: market.market_state,
+            quote_mint,
             unlock_goal: GOAL,
             unlock_deadline: now(env) + 30 * DAY,
             extra: vec![],
@@ -200,6 +208,7 @@ pub fn bind_instruction(args: &BindArgs) -> Instruction {
         AccountMeta::new_readonly(unlock_pda(&args.mint), false),
         AccountMeta::new_readonly(args.market, false),
         AccountMeta::new_readonly(args.market_state, false),
+        AccountMeta::new_readonly(args.quote_mint, false),
         AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
     ];
     accounts.extend(args.extra.iter().cloned());

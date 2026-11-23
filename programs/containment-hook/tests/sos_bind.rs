@@ -138,3 +138,116 @@ fn sos_h008_a_multisig_mint_authority_signed_by_its_creation_key_is_refused() {
     );
     assert!(env.svm.get_account(&config_pda(&mint)).is_none());
 }
+
+/// A contained mint and a home market for it quoted in `quote`, an existing mint of
+/// `quote_program`, with the tax on the quote.
+fn market_quoted_in(env: &mut Env, quote: Pubkey, quote_program: Pubkey) -> (Pubkey, Market) {
+    let mint = contained_mint(env);
+    let params = quote_taxed_params(&Pubkey::new_unique(), QUOTE as u8);
+    let market = env
+        .create_tax_market([(mint, TOKEN_2022), (quote, quote_program)], &params)
+        .unwrap();
+    (mint, market)
+}
+
+/// H014, H030, H051 (answer 3a): a quote mint whose issuer could freeze the home market's quote
+/// vault, or mint into it, could stop every sell and trap every holder until the deadline, so
+/// `bind` refuses one unless it is on the tax AMM's quote list.
+#[test]
+fn sos_h014_a_quote_mint_with_a_freeze_or_mint_authority_is_refused() {
+    for options in [
+        MintOptions {
+            freeze_authority: true,
+            ..MintOptions::default()
+        },
+        MintOptions {
+            mint_authority: true,
+            ..MintOptions::default()
+        },
+    ] {
+        let mut env = hook_env();
+        let quote = env.create_mint_with(&TOKEN, options);
+        let (mint, market) = market_quoted_in(&mut env, quote, TOKEN);
+        assert_hook_refused(
+            bind(&mut env, mint, &market),
+            HookError::QuoteMintHasAuthority,
+        );
+        assert!(env.svm.get_account(&config_pda(&mint)).is_none());
+    }
+}
+
+/// H014, H051 (answer 3a): a quote mint with a live transfer hook, any program's, ours included,
+/// could refuse every sell's payout, so `bind` refuses it; a hook cleared for good is allowed.
+#[test]
+fn sos_h014_a_quote_mint_with_a_transfer_hook_is_refused_and_a_cleared_one_passes() {
+    let mut env = hook_env();
+    // Another contained mint, its hook this program's with its unlock PDA as authority.
+    let hooked_quote = contained_mint(&mut env);
+    let (mint, market) = market_quoted_in(&mut env, hooked_quote, TOKEN_2022);
+    assert_hook_refused(bind(&mut env, mint, &market), HookError::QuoteMintHooked);
+
+    // A hook cleared for good, as an unlock leaves one: set, then both fields cleared.
+    let cleared_quote = env.create_mint_with(
+        &TOKEN_2022,
+        MintOptions {
+            transfer_hook: Some(Pubkey::new_unique()),
+            ..MintOptions::default()
+        },
+    );
+    let admin = env.admin.pubkey();
+    let clear_program = spl_token_2022_interface::extension::transfer_hook::instruction::update(
+        &TOKEN_2022,
+        &cleared_quote,
+        &admin,
+        &[],
+        None,
+    )
+    .unwrap();
+    let clear_authority = spl_token_2022_interface::instruction::set_authority(
+        &TOKEN_2022,
+        &cleared_quote,
+        None,
+        spl_token_2022_interface::instruction::AuthorityType::TransferHookProgramId,
+        &admin,
+        &[],
+    )
+    .unwrap();
+    env.send(&[clear_program, clear_authority], &[]).unwrap();
+    let (mint, market) = market_quoted_in(&mut env, cleared_quote, TOKEN_2022);
+    bind(&mut env, mint, &market).unwrap();
+}
+
+/// Answer 3a: a mint on the tax AMM's quote list (both native SOL mints and the cluster's USDC)
+/// may keep its authorities, as USDC's issuer does, the one list the tax AMM's seed reads too.
+#[test]
+fn sos_h014_a_quote_list_mint_may_keep_its_authorities() {
+    let mut env = hook_env();
+    let usdc = ck(&tax_amm::config::QUOTE_MINTS[2]);
+    let with_authorities = env.create_mint_with(
+        &TOKEN,
+        MintOptions {
+            mint_authority: true,
+            freeze_authority: true,
+            ..MintOptions::default()
+        },
+    );
+    let mut account = env.svm.get_account(&with_authorities).unwrap();
+    account.rent_epoch = 0;
+    env.svm.set_account(usdc, account).unwrap();
+    let (mint, market) = market_quoted_in(&mut env, usdc, TOKEN);
+    bind(&mut env, mint, &market).unwrap();
+}
+
+/// Answer 3a: the quote mint `bind` checks is the market's own other mint, never one the caller
+/// picks.
+#[test]
+fn sos_h014_a_quote_mint_other_than_the_markets_is_refused() {
+    let mut env = hook_env();
+    let (mint, market) = contained_market(&mut env);
+    let mut args = BindArgs::new(&env, mint, &market);
+    args.quote_mint = env.create_mint(&TOKEN);
+    assert_hook_refused(
+        send_bind(&mut env, &args, &[]),
+        HookError::QuoteMintNotTheMarkets,
+    );
+}

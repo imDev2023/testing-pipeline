@@ -59,4 +59,10 @@ pub enum HookError {
     MarketAlreadyCollectedTax,
     #[msg("A mint authority that is a Token-2022 multisig can't bind with one signature")]
     MintAuthorityIsMultisig,
+    #[msg("The quote mint passed is not the home market's other mint")]
+    QuoteMintNotTheMarkets,
+    #[msg("The home market's quote mint has a live transfer hook")]
+    QuoteMintHooked,
+    #[msg("The home market's quote mint keeps a mint or freeze authority and is not on the quote list")]
+    QuoteMintHasAuthority,
 }

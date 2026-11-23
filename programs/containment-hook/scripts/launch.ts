@@ -1016,6 +1016,8 @@ async function launchToken(
         mint,
         market,
         marketState,
+        // The market's other mint, whose hook and authorities `bind` checks (HOOK-52).
+        quoteMint,
         unlockGoal,
         unlockDeadline,
     });

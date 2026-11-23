@@ -67,6 +67,12 @@ export const CONTAINMENT_HOOK_ERROR__DESTINATION_OWNER_CAN_CHANGE = 0x1787; // 6
 export const CONTAINMENT_HOOK_ERROR__MARKET_ALREADY_COLLECTED_TAX = 0x1788; // 6024
 /** MintAuthorityIsMultisig: A mint authority that is a Token-2022 multisig can't bind with one signature */
 export const CONTAINMENT_HOOK_ERROR__MINT_AUTHORITY_IS_MULTISIG = 0x1789; // 6025
+/** QuoteMintNotTheMarkets: The quote mint passed is not the home market's other mint */
+export const CONTAINMENT_HOOK_ERROR__QUOTE_MINT_NOT_THE_MARKETS = 0x178a; // 6026
+/** QuoteMintHooked: The home market's quote mint has a live transfer hook */
+export const CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HOOKED = 0x178b; // 6027
+/** QuoteMintHasAuthority: The home market's quote mint keeps a mint or freeze authority and is not on the quote list */
+export const CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HAS_AUTHORITY = 0x178c; // 6028
 
 export type ContainmentHookError =
   | typeof CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED
@@ -86,6 +92,9 @@ export type ContainmentHookError =
   | typeof CONTAINMENT_HOOK_ERROR__NOT_A_TAX_MARKET_STATE
   | typeof CONTAINMENT_HOOK_ERROR__NOT_MINT_AUTHORITY
   | typeof CONTAINMENT_HOOK_ERROR__NOT_TRANSFERRING
+  | typeof CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HAS_AUTHORITY
+  | typeof CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HOOKED
+  | typeof CONTAINMENT_HOOK_ERROR__QUOTE_MINT_NOT_THE_MARKETS
   | typeof CONTAINMENT_HOOK_ERROR__TAX_SIDE_NOT_QUOTE
   | typeof CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED
   | typeof CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE
@@ -117,6 +126,9 @@ if (process.env["NODE_ENV"] !== "production") {
     [CONTAINMENT_HOOK_ERROR__NOT_A_TAX_MARKET_STATE]: `The market state is not a tax AMM market state`,
     [CONTAINMENT_HOOK_ERROR__NOT_MINT_AUTHORITY]: `The signer is not the mint's mint authority`,
     [CONTAINMENT_HOOK_ERROR__NOT_TRANSFERRING]: `Execute runs only inside a Token-2022 transfer of this mint`,
+    [CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HAS_AUTHORITY]: `The home market's quote mint keeps a mint or freeze authority and is not on the quote list`,
+    [CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HOOKED]: `The home market's quote mint has a live transfer hook`,
+    [CONTAINMENT_HOOK_ERROR__QUOTE_MINT_NOT_THE_MARKETS]: `The quote mint passed is not the home market's other mint`,
     [CONTAINMENT_HOOK_ERROR__TAX_SIDE_NOT_QUOTE]: `The home market's tax must be taken in the quote mint`,
     [CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED]: `A contained token can't be transferred there`,
     [CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE]: `The unlock is not due: the goal is not reached and the deadline has not passed`,

@@ -4,8 +4,8 @@
 //! Signed by the mint's mint authority, so only the launcher can bind and nobody can
 //! front-run them. It creates the config and the validation account, so a second `bind` of
 //! the same mint fails, and no instruction changes the config afterwards. Before writing
-//! anything it checks the mint, the unlock terms and the home market, which must not have
-//! collected any tax yet; the vault and the fee account are read from the router's `Market`
+//! anything it checks the mint, the unlock terms, the home market, which must not have
+//! collected any tax yet, and its quote mint; the vault and the fee account are read from the router's `Market`
 //! and derived, never taken from the caller.
 
 use anchor_lang::prelude::*;
@@ -48,6 +48,9 @@ pub struct Bind<'info> {
     /// The tax AMM market state the `Market` records.
     /// CHECK: every check on it is the handler's.
     pub market_state: UncheckedAccount<'info>,
+    /// The home market's other mint, which its tax and the unlock goal are counted in.
+    /// CHECK: the handler checks it is the market's other mint, then its hook and authorities.
+    pub quote_mint: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -70,6 +73,7 @@ pub fn process_bind(ctx: Context<Bind>, unlock_goal: u64, unlock_deadline: i64) 
     )?;
 
     let home = check_home_market(&accounts.market, &accounts.market_state, &mint)?;
+    check_quote_mint(&accounts.quote_mint, &home.quote_mint)?;
 
     ctx.accounts
         .extra_account_metas
@@ -140,6 +144,32 @@ fn check_mint(mint: &UncheckedAccount, signer: &Signer, unlock: &Pubkey) -> Resu
         hook.authority == Some(unlock.to_bytes()),
         HookError::WrongHookAuthority
     );
+    Ok(())
+}
+
+/// Checks on the quote mint (docs/spec/containment-hook.md, "Checks on the home market";
+/// `HOOK-52`): the home market's other mint, with no live transfer hook (any program's, this
+/// one's included), and, unless it is on the tax AMM's quote list, no mint or freeze authority,
+/// by the tax AMM's own rule, so its issuer can neither refuse nor freeze the payouts every
+/// holder's exit depends on.
+fn check_quote_mint(quote: &UncheckedAccount, market_quote: &Pubkey) -> Result<()> {
+    require_keys_eq!(
+        quote.key(),
+        *market_quote,
+        HookError::QuoteMintNotTheMarkets
+    );
+    let data = quote.try_borrow_data()?;
+    mint_rules::check_mint(&quote.owner.to_bytes(), &data)
+        .map_err(|_| error!(HookError::NotAMint))?;
+    let facts = read_mint(&data).ok_or(HookError::NotAMint)?;
+    if let Some(hook) = facts.transfer_hook {
+        require!(
+            hook.program.is_none() && hook.authority.is_none(),
+            HookError::QuoteMintHooked
+        );
+    }
+    tax_amm::mint_levers::check_authorities(market_quote, &data)
+        .map_err(|_| error!(HookError::QuoteMintHasAuthority))?;
     Ok(())
 }
 

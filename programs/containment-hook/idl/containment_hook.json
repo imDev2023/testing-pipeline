@@ -149,6 +149,12 @@
           ]
         },
         {
+          "name": "quote_mint",
+          "docs": [
+            "The home market's other mint, which its tax and the unlock goal are counted in."
+          ]
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -461,6 +467,21 @@
       "code": 6025,
       "name": "MintAuthorityIsMultisig",
       "msg": "A mint authority that is a Token-2022 multisig can't bind with one signature"
+    },
+    {
+      "code": 6026,
+      "name": "QuoteMintNotTheMarkets",
+      "msg": "The quote mint passed is not the home market's other mint"
+    },
+    {
+      "code": 6027,
+      "name": "QuoteMintHooked",
+      "msg": "The home market's quote mint has a live transfer hook"
+    },
+    {
+      "code": 6028,
+      "name": "QuoteMintHasAuthority",
+      "msg": "The home market's quote mint keeps a mint or freeze authority and is not on the quote list"
     }
   ],
   "types": [

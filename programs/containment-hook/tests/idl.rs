@@ -194,6 +194,9 @@ fn its_config_and_errors_are_the_programs() {
             "DestinationOwnerCanChange",
             "MarketAlreadyCollectedTax",
             "MintAuthorityIsMultisig",
+            "QuoteMintNotTheMarkets",
+            "QuoteMintHooked",
+            "QuoteMintHasAuthority",
         ]
     );
     for (i, error) in errors.iter().enumerate() {
@@ -202,6 +205,6 @@ fn its_config_and_errors_are_the_programs() {
     let last = errors.last().unwrap();
     assert_eq!(
         last["code"].as_u64().unwrap() as u32,
-        anchor_lang::error::ERROR_CODE_OFFSET + HookError::MintAuthorityIsMultisig as u32
+        anchor_lang::error::ERROR_CODE_OFFSET + HookError::QuoteMintHasAuthority as u32
     );
 }

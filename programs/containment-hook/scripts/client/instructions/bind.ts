@@ -70,6 +70,7 @@ export type BindInstruction<
   TAccountUnlock extends string | AccountMeta<string> = string,
   TAccountMarket extends string | AccountMeta<string> = string,
   TAccountMarketState extends string | AccountMeta<string> = string,
+  TAccountQuoteMint extends string | AccountMeta<string> = string,
   TAccountSystemProgram extends string | AccountMeta<string> =
     "11111111111111111111111111111111",
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
@@ -103,6 +104,9 @@ export type BindInstruction<
       TAccountMarketState extends string
         ? ReadonlyAccount<TAccountMarketState>
         : TAccountMarketState,
+      TAccountQuoteMint extends string
+        ? ReadonlyAccount<TAccountQuoteMint>
+        : TAccountQuoteMint,
       TAccountSystemProgram extends string
         ? ReadonlyAccount<TAccountSystemProgram>
         : TAccountSystemProgram,
@@ -160,6 +164,7 @@ export type BindAsyncInput<
   TAccountUnlock extends InstructionAccountInput = InstructionAccountInput,
   TAccountMarket extends InstructionAccountInput = InstructionAccountInput,
   TAccountMarketState extends InstructionAccountInput = InstructionAccountInput,
+  TAccountQuoteMint extends InstructionAccountInput = InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
@@ -179,6 +184,8 @@ export type BindAsyncInput<
   market: TAccountMarket;
   /** The tax AMM market state the `Market` records. */
   marketState: TAccountMarketState;
+  /** The home market's other mint, which its tax and the unlock goal are counted in. */
+  quoteMint: TAccountQuoteMint;
   systemProgram?: TAccountSystemProgram;
   unlockGoal: BindInstructionDataArgs["unlockGoal"];
   unlockDeadline: BindInstructionDataArgs["unlockDeadline"];
@@ -193,6 +200,7 @@ export async function getBindInstructionAsync<
   TAccountUnlock extends InstructionAccountInput,
   TAccountMarket extends InstructionAccountInput,
   TAccountMarketState extends InstructionAccountInput,
+  TAccountQuoteMint extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof CONTAINMENT_HOOK_PROGRAM_ADDRESS,
 >(
@@ -205,6 +213,7 @@ export async function getBindInstructionAsync<
     TAccountUnlock,
     TAccountMarket,
     TAccountMarketState,
+    TAccountQuoteMint,
     TAccountSystemProgram
   >,
   config?: {
@@ -246,6 +255,10 @@ export async function getBindInstructionAsync<
       InstructionAccountInputAddress<TAccountMarketState>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountQuoteMint,
+      InstructionAccountInputAddress<TAccountQuoteMint>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -281,6 +294,11 @@ export async function getBindInstructionAsync<
     market: { value: input.market ?? null, isSigner: false, isWritable: false },
     marketState: {
       value: input.marketState ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
+    quoteMint: {
+      value: input.quoteMint ?? null,
       isSigner: false,
       isWritable: false,
     },
@@ -347,6 +365,7 @@ export async function getBindInstructionAsync<
       getAccountMeta("unlock", accounts.unlock),
       getAccountMeta("market", accounts.market),
       getAccountMeta("marketState", accounts.marketState),
+      getAccountMeta("quoteMint", accounts.quoteMint),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
     data: getBindInstructionDataEncoder().encode(
@@ -388,6 +407,10 @@ export async function getBindInstructionAsync<
       InstructionAccountInputAddress<TAccountMarketState>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountQuoteMint,
+      InstructionAccountInputAddress<TAccountQuoteMint>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -404,6 +427,7 @@ export type BindInput<
   TAccountUnlock extends InstructionAccountInput = InstructionAccountInput,
   TAccountMarket extends InstructionAccountInput = InstructionAccountInput,
   TAccountMarketState extends InstructionAccountInput = InstructionAccountInput,
+  TAccountQuoteMint extends InstructionAccountInput = InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
@@ -423,6 +447,8 @@ export type BindInput<
   market: TAccountMarket;
   /** The tax AMM market state the `Market` records. */
   marketState: TAccountMarketState;
+  /** The home market's other mint, which its tax and the unlock goal are counted in. */
+  quoteMint: TAccountQuoteMint;
   systemProgram?: TAccountSystemProgram;
   unlockGoal: BindInstructionDataArgs["unlockGoal"];
   unlockDeadline: BindInstructionDataArgs["unlockDeadline"];
@@ -437,6 +463,7 @@ export function getBindInstruction<
   TAccountUnlock extends InstructionAccountInput,
   TAccountMarket extends InstructionAccountInput,
   TAccountMarketState extends InstructionAccountInput,
+  TAccountQuoteMint extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof CONTAINMENT_HOOK_PROGRAM_ADDRESS,
 >(
@@ -449,6 +476,7 @@ export function getBindInstruction<
     TAccountUnlock,
     TAccountMarket,
     TAccountMarketState,
+    TAccountQuoteMint,
     TAccountSystemProgram
   >,
   config?: {
@@ -489,6 +517,10 @@ export function getBindInstruction<
     InstructionAccountInputAddress<TAccountMarketState>
   >,
   ResolvedInstructionAccountMeta<
+    TAccountQuoteMint,
+    InstructionAccountInputAddress<TAccountQuoteMint>
+  >,
+  ResolvedInstructionAccountMeta<
     TAccountSystemProgram,
     InstructionAccountInputAddress<TAccountSystemProgram>
   >
@@ -526,6 +558,11 @@ export function getBindInstruction<
       isSigner: false,
       isWritable: false,
     },
+    quoteMint: {
+      value: input.quoteMint ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
     systemProgram: {
       value: input.systemProgram ?? null,
       isSigner: false,
@@ -556,6 +593,7 @@ export function getBindInstruction<
       getAccountMeta("unlock", accounts.unlock),
       getAccountMeta("market", accounts.market),
       getAccountMeta("marketState", accounts.marketState),
+      getAccountMeta("quoteMint", accounts.quoteMint),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
     data: getBindInstructionDataEncoder().encode(
@@ -597,6 +635,10 @@ export function getBindInstruction<
       InstructionAccountInputAddress<TAccountMarketState>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountQuoteMint,
+      InstructionAccountInputAddress<TAccountQuoteMint>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -625,7 +667,9 @@ export type ParsedBindInstruction<
     market: TAccountMetas[6];
     /** The tax AMM market state the `Market` records. */
     marketState: TAccountMetas[7];
-    systemProgram: TAccountMetas[8];
+    /** The home market's other mint, which its tax and the unlock goal are counted in. */
+    quoteMint: TAccountMetas[8];
+    systemProgram: TAccountMetas[9];
   };
   data: BindInstructionData;
 };
@@ -638,12 +682,12 @@ export function parseBindInstruction<
     InstructionWithAccounts<TAccountMetas> &
     InstructionWithData<ReadonlyUint8Array>,
 ): ParsedBindInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 9) {
+  if (instruction.accounts.length < 10) {
     throw new SolanaError(
       SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
       {
         actualAccountMetas: instruction.accounts.length,
-        expectedAccountMetas: 9,
+        expectedAccountMetas: 10,
       },
     );
   }
@@ -664,6 +708,7 @@ export function parseBindInstruction<
       unlock: getNextAccount(),
       market: getNextAccount(),
       marketState: getNextAccount(),
+      quoteMint: getNextAccount(),
       systemProgram: getNextAccount(),
     },
     data: getBindInstructionDataDecoder().decode(instruction.data),
