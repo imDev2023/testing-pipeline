@@ -346,4 +346,51 @@ mod proofs {
             assert_eq!(result, Err(TermsRefusal::ZeroGoal));
         }
     }
+
+    /// Book of Knowledge TM-4 (#74): over every input, more tax or a later clock never takes
+    /// back an unlock that was due, and an unlock due by the deadline stays due whatever
+    /// becomes of the counter, readable or not; the Proptest `a_due_unlock_stays_due` samples
+    /// the same statement.
+    #[kani::proof]
+    fn a_due_unlock_stays_due_for_every_input() {
+        let tax: Option<u128> = kani::any();
+        let more_tax: u128 = kani::any();
+        let goal: u64 = kani::any();
+        let now: i64 = kani::any();
+        let later: i64 = kani::any();
+        let deadline: i64 = kani::any();
+        if unlock_due(tax, goal, now, deadline).is_some() {
+            let tax2 = tax.map(|tax| tax.saturating_add(more_tax));
+            assert!(unlock_due(tax2, goal, now.max(later), deadline).is_some());
+        }
+        if now >= deadline {
+            assert!(unlock_due(None, goal, now, deadline).is_some());
+            assert!(unlock_due(tax, goal, now.max(later), deadline).is_some());
+        }
+    }
+
+    /// Book of Knowledge TM-5 (#74): every binding the terms accept is unlockable by anyone
+    /// from `MAX_UNLOCK_DEADLINE_SECS` after the binding on, whatever the home market's
+    /// counter, readable or not (docs/spec/containment-hook.md, "Unlock deadline": the
+    /// deadline caps how long holders can be stuck when the home market stops working).
+    #[kani::proof]
+    fn every_bound_token_is_unlockable_by_the_longest_deadline() {
+        let now: i64 = kani::any();
+        let goal: u64 = kani::any();
+        let deadline: i64 = kani::any();
+        let wait: i64 = kani::any();
+        let tax: Option<u128> = kani::any();
+        kani::assume(check_terms(now, goal, deadline).is_ok());
+        kani::assume(wait >= 0);
+        let Some(later) = now
+            .checked_add(MAX_UNLOCK_DEADLINE_SECS)
+            .and_then(|at| at.checked_add(wait))
+        else {
+            return;
+        };
+        assert!(unlock_due(tax, goal, later, deadline).is_some());
+        // And never before the binding's own second: accepted terms are not due at once by
+        // the deadline.
+        assert!(unlock_due(Some(0), goal, now, deadline).is_none());
+    }
 }

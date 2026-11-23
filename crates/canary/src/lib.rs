@@ -24,6 +24,7 @@ pub mod run;
 pub mod sizes;
 pub mod source;
 pub mod swap;
+pub mod token_account;
 pub mod trade;
 pub mod trader;
 pub mod wallets;

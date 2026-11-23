@@ -17,14 +17,15 @@ fn hook_dir() -> PathBuf {
 }
 
 /// Every source file of the hook (program, tests, IDL, scripts and generated client),
-/// skipping build output and installed packages.
+/// skipping build output, installed packages and hidden folders, such as the review skills'
+/// gitignored working files.
 fn hook_files() -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             let name = path.file_name().unwrap().to_string_lossy().to_string();
             if path.is_dir() {
-                if !["target", "node_modules"].contains(&name.as_str()) {
+                if !["target", "node_modules"].contains(&name.as_str()) && !name.starts_with('.') {
                     walk(&path, out);
                 }
             } else if ["rs", "ts", "json", "toml", "sh"]
@@ -55,13 +56,15 @@ fn files_containing(needle: &str) -> Vec<String> {
         .collect()
 }
 
-/// The IDL and the TypeScript client, generated from the program, and `pipeline-check`'s reports
+/// The IDL and the TypeScript client, generated from the program, `pipeline-check`'s reports
 /// in `conformance/`, records of runs written by the launch script, which name the strategy each
-/// checked market runs on.
+/// checked market runs on, and the release gate's copies of accounts in `tests/fixtures/`, which
+/// name the program that owns each market state.
 fn generated(path: &str) -> bool {
     path == "idl/containment_hook.json"
         || path.starts_with("scripts/client/")
         || path.starts_with("conformance/")
+        || path.starts_with("tests/fixtures/")
 }
 
 #[test]

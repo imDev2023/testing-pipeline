@@ -29,8 +29,13 @@
 //  10. show the hook refusing a wallet-to-wallet `transfer_checked`, sent past the preflight
 //      so the refusal lands on chain with a signature, and, in simulation, a sell that carries
 //      an integrator fee above zero;
-//  10a. with `--pipeline-check`, run Pipeline's conformance checker on the home market while
-//      the token is contained, and stop unless every check passed but `exact_out_refund`.
+//  10a. with `--pipeline-check`, show in simulation the hook refusing a router buy of the
+//      token into a fresh token account without the immutable owner extension, as the checker
+//      writes its own traders' accounts, then run Pipeline's conformance checker on the home
+//      market while the token is contained, and stop unless every check passed but
+//      `exact_out_refund`, and the two that buy into the checker's own accounts, which must
+//      fail with error 6023, accepted as the hook's refusal only on that evidence (HOOK-47,
+//      R2T-10).
 //
 // With `--unlock`, it goes on to unlock the token (docs/spec/containment-hook.md, "Unlock"):
 //
@@ -137,7 +142,14 @@ import {
     getTransferCheckedInstruction,
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
-import { AuthorityType, getSetAuthorityInstruction, resolveExtraAccountMetasForExecute } from '@solana-program/token-2022';
+import {
+    AuthorityType,
+    getCloseAccountInstruction,
+    getInitializeAccount3Instruction,
+    getSetAuthorityInstruction,
+    getTokenSize,
+    resolveExtraAccountMetasForExecute,
+} from '@solana-program/token-2022';
 import * as pipeline from '@pipeline-placeholder/sdk';
 import { buildActionInstruction, findAction } from 'strategy-actions';
 
@@ -146,6 +158,7 @@ import { judgeConformance, type ConformanceReport } from './conformance.ts';
 
 import {
     CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED,
+    CONTAINMENT_HOOK_ERROR__DESTINATION_OWNER_CAN_CHANGE,
     CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED,
     CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE,
     CONTAINMENT_HOOK_PROGRAM_ADDRESS,
@@ -180,8 +193,9 @@ const HOME_MARKET = {
     burnShareBps: 0,
     // Prices the token against a virtual quote reserve until real quote liquidity arrives.
     virtualReserve: 30_000_000_000n,
-    // The seed: this much of the token, and no quote mint, which the virtual reserve prices.
-    seed: [800_000_000_000_000n, 0n],
+    // The seed: the whole supply, so the launcher holds none outside the pool to sell into the
+    // real quote buyers pay in (HOOK-50); and no quote mint, which the virtual reserve prices.
+    seed: [TOKEN.supply, 0n],
 } as const;
 // The trades the launch makes after the seed: a buy spending this many whole units of the
 // quote mint (1 SOL with wrapped SOL), then a sell of half of what it bought; and the
@@ -643,12 +657,47 @@ async function sendRefused(
 }
 
 /**
+ * The evidence `judgeConformance` needs before it accepts the known failures on a contained
+ * market (R2T-10), since the checker's failure text names error 6023 but not the program that
+ * raised it, and 6023 is other programs' number too: a router buy of the token, simulated, into
+ * a fresh keypair Token-2022 account written as `pipeline-check` writes its traders' (the
+ * transfer hook account extension the mint requires, no immutable owner). Returns whether the
+ * logs show the containment hook failing with `DestinationOwnerCanChange`. The account is
+ * created for the simulation, which cannot run on an account that does not exist, and closed
+ * after it, so the launcher gets its rent back.
+ */
+async function showHookRefusal(trader: KeyPairSigner, view: pipeline.MarketView, quoteHolder: Address, hookAccounts: HookAccountsFor): Promise<boolean> {
+    const account = await generateKeyPairSigner();
+    const space = getTokenSize([{ __kind: 'TransferHookAccount', transferring: false }]);
+    const rent = await rpc.getMinimumBalanceForRentExemption(BigInt(space), { commitment: 'confirmed' }).send();
+    await send("create a token account without the immutable owner extension, as pipeline-check writes its traders'", trader, [
+        getCreateAccountInstruction({ payer: trader, newAccount: account, lamports: rent, space, programAddress: TOKEN_2022_PROGRAM_ADDRESS }),
+        getInitializeAccount3Instruction({ account: account.address, mint: view.mints[CONTAINED_INDEX]!, owner: trader.address }),
+    ]);
+    // The smallest size pipeline-check itself buys with.
+    const { instruction } = await swapInstruction(trader, view, QUOTE_INDEX, CONTAINED_INDEX, CONFORMANCE_AMOUNTS[0], account.address, quoteHolder, hookAccounts);
+    const { err, logs } = await simulate(trader, instruction);
+    await send('close that token account', trader, [getCloseAccountInstruction({ account: account.address, destination: trader.address, owner: trader })]);
+    const shown = err !== null && refusedByTheHook(logs, 'DestinationOwnerCanChange', CONTAINMENT_HOOK_ERROR__DESTINATION_OWNER_CAN_CHANGE);
+    if (shown) {
+        info(`a buy into ${account.address}, an account without the immutable owner extension: refused by the hook with DestinationOwnerCanChange (${CONTAINMENT_HOOK_ERROR__DESTINATION_OWNER_CAN_CHANGE}), in simulation`);
+        record.push(['a buy into an account like pipeline-check\'s', 'refused by the hook with DestinationOwnerCanChange, in simulation']);
+    } else {
+        info(`a buy into ${account.address}, an account without the immutable owner extension, was not refused by the hook with DestinationOwnerCanChange: ${show(err)}\n${logs.join('\n')}`);
+    }
+    return shown;
+}
+
+/**
  * Runs `pipeline-check --fail-on-warn` on `market` (bar, "Test layers" 7), with the trade
  * sizes `CONFORMANCE_AMOUNTS` a market on a virtual reserve needs, keeps its report
  * in `--conformance-out` when given, and stops unless every check passed but
- * `exact_out_refund`, skipped because the tax AMM refuses exact-out.
+ * `exact_out_refund`, skipped because the tax AMM refuses exact-out, and while the token is
+ * contained the two checks that buy into the checker's own accounts, which must fail and only
+ * for the hook's refusal (`HOOK-47`), accepted as the hook's only when `hookRefusalShown`
+ * ([`showHookRefusal`]).
  */
-async function checkConformance(market: Address, when: 'contained' | 'unlocked') {
+async function checkConformance(market: Address, when: 'contained' | 'unlocked', hookRefusalShown = false) {
     if (!pipelineCheck) {
         info('not checked: give --pipeline-check <binary> to run Pipeline\'s conformance checker on the home market');
         return;
@@ -679,10 +728,11 @@ async function checkConformance(market: Address, when: 'contained' | 'unlocked')
         writeFileSync(file, stdout.endsWith('\n') ? stdout : `${stdout}\n`);
         info(`report: ${file}`);
     }
-    const verdict = judgeConformance(report, market);
+    const verdict = judgeConformance(report, market, { contained: when === 'contained', hookRefusalShown });
     if (!verdict.ok) fail(`pipeline-check on the home market ${market} while ${when}:\n${verdict.problems.join('\n')}`);
-    info(`pipeline-check --fail-on-warn: ${verdict.passed} pass, 0 warn, 0 fail, ${verdict.skipped.join(', ')} skipped`);
-    record.push([`pipeline-check, ${when}`, `${verdict.passed} pass, 0 warn, 0 fail, ${verdict.skipped.join(', ')} skipped`]);
+    const known = verdict.known?.length ? `, ${verdict.known.join(' and ')} failing as known for the checker's own accounts (HOOK-47)` : '';
+    info(`pipeline-check --fail-on-warn: ${verdict.passed} pass, ${verdict.skipped.join(', ')} skipped${known}`);
+    record.push([`pipeline-check, ${when}`, `${verdict.passed} pass, ${verdict.skipped.join(', ')} skipped${known}`]);
 }
 
 /** Writes what the run did to `--record`, also when it stopped part way. */
@@ -1016,6 +1066,8 @@ async function launchToken(
         mint,
         market,
         marketState,
+        // The market's other mint, whose hook and authorities `bind` checks (HOOK-52).
+        quoteMint,
         unlockGoal,
         unlockDeadline,
     });
@@ -1266,7 +1318,9 @@ async function launchToken(
     record.push(['refused by the hook', 'a wallet-to-wallet transfer_checked, on chain, and a sell with an integrator fee above zero, in simulation']);
 
     step("10a. Checking the home market with Pipeline's pipeline-check while the token is contained");
-    await checkConformance(market, 'contained');
+    // The evidence that the checker's known failures are the hook's refusal (R2T-10).
+    const hookRefusalShown = pipelineCheck ? await showHookRefusal(launcher, view, quoteHolder, hookAccounts) : false;
+    await checkConformance(market, 'contained', hookRefusalShown);
 
     if (unlockBy) {
         const taxCollected = async () => (await fetchTaxMarket(rpc, marketState, { commitment: 'confirmed' })).data.taxCollected;
