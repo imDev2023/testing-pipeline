@@ -117,6 +117,19 @@ export type Trade = z.infer<typeof Trade>;
 export const TradesPage = z.object({ trades: z.array(Trade), next: z.string().nullable() });
 export type TradesPage = z.infer<typeof TradesPage>;
 
+/**
+ * What a live room sends a browser (docs/spec/pipescope-architecture.md, Live rooms): a swap just
+ * indexed, to a market's room; a market new or changed (its liquidity, its last 24 hours), to the
+ * feed's room and the market's own. A page puts each in place by its key, so one that arrives twice,
+ * or again in a resync through the API, is shown once.
+ */
+export const LiveEvent = z.discriminatedUnion("type", [z.object({ type: z.literal("trade"), trade: Trade }), z.object({ type: z.literal("market"), market: Market })]);
+export type LiveEvent = z.infer<typeof LiveEvent>;
+
+/** One message of a live room: the events gathered over its batching interval (PIPESCOPE-31). */
+export const LiveMessage = z.object({ events: z.array(LiveEvent) });
+export type LiveMessage = z.infer<typeof LiveMessage>;
+
 /** A price: an amount of the quote mint for one of the base mint, after both mints' decimals, as a decimal string. */
 const Price = z.string().regex(/^\d+(\.\d+)?$/);
 

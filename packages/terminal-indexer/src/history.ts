@@ -9,7 +9,7 @@
 import { eq, sql } from "drizzle-orm";
 import { indexerCursors, type Db } from "terminal-db";
 import type { RawTransaction } from "./decode";
-import { addResult } from "./result";
+import { addResult, emptyResult } from "./result";
 import type { IndexResult, TransactionHandler } from "./handler";
 import { RpcError, rpcCall } from "./rpc";
 
@@ -125,20 +125,32 @@ export function historySource(rpcUrl: string): HistorySource {
 
 /**
  * A transaction's place in its block, read with `getBlock` (signatures only) and the blocks kept
- * for a while, since a busy minute puts several of the router's transactions in one block.
+ * for a while, since a busy minute puts several of the router's transactions in one block. A block
+ * not served yet (as just after the live socket reports a transaction) is asked for again for up to
+ * `waitMs`; a signature missing from its block is an error.
  */
-export function blockPositions(rpcUrl: string, { cacheSlots = 64 } = {}) {
+export function blockPositions(rpcUrl: string, { cacheSlots = 64, waitMs = 8_000 } = {}) {
   const blocks = new Map<number, Promise<string[]>>();
+  const fetchBlock = async (slot: number): Promise<string[]> => {
+    const until = Date.now() + waitMs;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const block = await rpcCall<{ signatures: string[] } | null>(rpcUrl, "getBlock", [
+          slot,
+          { transactionDetails: "signatures", rewards: false, commitment: COMMITMENT, maxSupportedTransactionVersion: 0 },
+        ]);
+        if (block) return block.signatures;
+      } catch (e) {
+        if (Date.now() >= until) throw e;
+      }
+      if (Date.now() >= until) throw new Error(`block ${slot} was not served within ${waitMs} ms`);
+      await new Promise((done) => setTimeout(done, Math.min(500 * 2 ** attempt, 2_000)));
+    }
+  };
   return async function blockIndexOf(slot: number, signature: string): Promise<number> {
     let block = blocks.get(slot);
     if (!block) {
-      block = rpcCall<{ signatures: string[] } | null>(rpcUrl, "getBlock", [
-        slot,
-        { transactionDetails: "signatures", rewards: false, commitment: COMMITMENT, maxSupportedTransactionVersion: 0 },
-      ]).then((b) => {
-        if (!b) throw new Error(`block ${slot} was not served`);
-        return b.signatures;
-      });
+      block = fetchBlock(slot);
       blocks.set(slot, block);
       block.catch(() => blocks.delete(slot));
       while (blocks.size > cacheSlots) blocks.delete(blocks.keys().next().value!);
@@ -174,7 +186,7 @@ export async function reconcileAccount(
   { cursor: known, limit = Infinity }: { cursor?: Cursor | null; limit?: number } = {},
 ): Promise<{ result: IndexResult; cursor: Cursor | null; complete: boolean }> {
   let cursor = known === undefined ? await readCursor(db, account) : known;
-  const result: IndexResult = { counts: {}, markets: [] };
+  const result = emptyResult();
   let seen = 0;
   for (;;) {
     const { transactions, more } = await source.after(account, cursor, Math.min(RECONCILE_PAGE, limit - seen));

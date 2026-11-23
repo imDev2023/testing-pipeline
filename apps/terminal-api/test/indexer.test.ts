@@ -150,3 +150,42 @@ describe("candles", () => {
     expect((await reader.db.select({ seconds: candles.seconds }).from(candles)).map((c) => c.seconds)).not.toContain(1);
   });
 });
+
+describe("the live path", () => {
+  it("indexes a transaction the socket reported, once the RPC serves it, with its place in its block", async () => {
+    const { indexer } = core();
+    await indexer.reconcile();
+    rpc.history.push(swap);
+    rpc.unserved.add(swap.transaction.signatures[0]!);
+    setTimeout(() => rpc.unserved.clear(), 300);
+    const indexed = await indexer.indexSignatures([swap.transaction.signatures[0]!]);
+    expect(indexed.trades).toEqual([{ signature: swap.transaction.signatures[0], eventIndex: 0 }]);
+    expect(await reader.db.select({ blockIndex: trades.blockIndex }).from(trades)).toEqual([{ blockIndex: swap.transactionIndex }]);
+  });
+
+  it("asks the RPC for nothing the database already holds", async () => {
+    rpc.history.push(swap);
+    const { indexer } = core();
+    await indexer.reconcile();
+    rpc.requests.length = 0;
+    expect((await indexer.indexSignatures([swap.transaction.signatures[0]!])).trades).toEqual([]);
+    expect(rpc.requests.filter((r) => r.method === "getTransaction")).toEqual([]);
+  });
+
+  it("turns what it indexed into events for the rooms with a viewer: the swap for its market's room, the market for the feed's", async () => {
+    const { indexer, openDb } = core();
+    await indexer.reconcile();
+    rpc.history.push(swap);
+    const indexed = await indexer.indexSignatures([swap.transaction.signatures[0]!]);
+    const market = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
+    const events = await indexer.events(indexed, ["feed", `market:${market}`, "market:SomeOtherMarket11111111111111111111111111"]);
+    expect([...events.keys()].sort()).toEqual(["feed", `market:${market}`]);
+    expect(events.get(`market:${market}`)!.map((e) => e.type)).toEqual(["trade", "market"]);
+    expect(events.get(`market:${market}`)![0]).toMatchObject({ type: "trade", trade: { signature: swap.transaction.signatures[0], side: "buy", market } });
+    expect(events.get("feed")).toEqual([{ type: "market", market: expect.objectContaining({ address: market, stats_24h: expect.anything() }) }]);
+
+    openDb.mockClear();
+    expect((await indexer.events(indexed, [])).size).toBe(0);
+    expect(openDb).not.toHaveBeenCalled();
+  });
+});

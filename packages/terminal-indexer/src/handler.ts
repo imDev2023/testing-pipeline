@@ -5,10 +5,17 @@
 import { sql } from "drizzle-orm";
 import { indexedTransactions, marketMints, markets, strategies, trades, type Db } from "terminal-db";
 import { foldTrade } from "./candles";
+import { emptyResult } from "./result";
 import { DECODER_VERSION, decodeRouterEvents, type EventDecoder, type RawTransaction } from "./decode";
 
-/** What indexing wrote, counted by kind, and the markets whose accounts are to be read again because an event touched them. */
-export type IndexResult = { counts: Record<string, number>; markets: string[] };
+/** A trade by its key: its transaction and its place among the transaction's events. */
+export type TradeKey = { signature: string; eventIndex: number };
+
+/**
+ * What indexing wrote, counted by kind; the markets whose accounts are to be read again because an
+ * event touched them; and the trades written now, for the live rooms.
+ */
+export type IndexResult = { counts: Record<string, number>; markets: string[]; trades: TradeKey[] };
 
 /** Indexes one transaction. Idempotent: a transaction already indexed writes nothing. */
 export type TransactionHandler = (db: Db, tx: RawTransaction) => Promise<IndexResult>;
@@ -27,7 +34,7 @@ export function pipelineHandler({
   candleSeconds = [],
 }: { decode?: EventDecoder; decoderVersion?: number; candleSeconds?: readonly number[] } = {}): TransactionHandler {
   return async (db, raw) => {
-    const result: IndexResult = { counts: {}, markets: [] };
+    const result = emptyResult();
     // A failed transaction changed nothing on chain, so it has no rows.
     if (raw.meta === null || raw.meta.err !== null) return result;
     const signature = raw.transaction.signatures[0]!;
@@ -110,6 +117,7 @@ export function pipelineHandler({
               .returning({ signature: trades.signature });
             // Only a trade written now is folded, so a swap indexed again never adds to a candle twice.
             if (written) {
+              result.trades.push({ signature, eventIndex });
               await foldTrade(
                 tx as unknown as Db,
                 { market: s.market, inputMint: s.inputMint, outputMint: s.outputMint, netSent: s.netSent, received: s.received, at: Number(s.unixTimestamp), slot, blockIndex, eventIndex },

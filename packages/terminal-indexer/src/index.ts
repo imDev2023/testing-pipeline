@@ -5,13 +5,14 @@ import { and, asc, eq, gt, lt } from "drizzle-orm";
 import { indexedTransactions, type Db } from "terminal-db";
 import { DECODER_VERSION, type RawTransaction } from "./decode";
 import type { IndexResult, TransactionHandler } from "./handler";
-import { addResult } from "./result";
+import { addResult, emptyResult } from "./result";
 
 export * from "./accounts";
 export * from "./candles";
 export * from "./decode";
 export * from "./handler";
 export * from "./history";
+export * from "./live";
 export * from "./registry";
 export * from "./result";
 export * from "./rpc";
@@ -31,7 +32,7 @@ export class IndexBatchError extends Error {
  * batch goes on, and `IndexBatchError` names what failed at the end.
  */
 export async function indexTransactions(db: Db, handle: TransactionHandler, txs: RawTransaction[]): Promise<IndexResult> {
-  const result: IndexResult = { counts: {}, markets: [] };
+  const result = emptyResult();
   const failed: { signature: string; error: string }[] = [];
   for (const tx of txs) {
     try {
@@ -67,7 +68,7 @@ const REINDEX_BATCH = 100;
  * `decoderVersion` could not fully decode, oldest first.
  */
 export async function reindexUnknown(db: Db, handle: TransactionHandler, decoderVersion = DECODER_VERSION): Promise<IndexResult> {
-  const result: IndexResult = { counts: {}, markets: [] };
+  const result = emptyResult();
   for (;;) {
     const kept = await db
       .select({ raw: indexedTransactions.raw })
