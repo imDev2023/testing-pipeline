@@ -49,6 +49,12 @@ fn immutable_owner_bytes(mint: &Pubkey, value_len: usize) -> Vec<u8> {
 #[test]
 fn sos_r2_02_only_an_empty_immutable_owner_entry_counts() {
     let mint = Pubkey::new_unique();
-    assert!(owner_is_immutable_data(&immutable_owner_bytes(&mint, 0), &mint));
-    assert!(!owner_is_immutable_data(&immutable_owner_bytes(&mint, 1), &mint));
+    assert!(owner_is_immutable_data(
+        &immutable_owner_bytes(&mint, 0),
+        &mint
+    ));
+    assert!(!owner_is_immutable_data(
+        &immutable_owner_bytes(&mint, 1),
+        &mint
+    ));
 }
