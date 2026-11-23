@@ -37,6 +37,9 @@ Every value below is a default that can change, and each lives in exactly one pl
 | SOL kept back when the trader uses their whole balance | 0.01 SOL | Screens' config module |
 | Candle lengths on the chart | 1 m, 5 m, 15 m, 1 h, 4 h and 1 d | Screens' config module |
 | Candle length a chart opens at | 15 m | Screens' config module |
+| Room the chart gives each candle | 16 px | Screens' config module |
+| Shortest gap between two reads of the forming candle while trades land | 1 s | Screens' config module |
+| Longest wait before a dropped live room is joined again | 15 s | Screens' config module |
 | Trades shown before "Show earlier trades" | 40 | Screens' config module |
 | Rows of the feed loaded at a time | 50 | Screens' config module |
 | Feed filter, liquidity | at least 0.1, 1 or 10 SOL | Screens' config module |
@@ -216,7 +219,7 @@ The lower band is the explanation and the strategy's forms on the left, and the 
 - Under the chart, one line gives the candle under the pointer, or the latest: its start, open, high, low and close, and how many trades it holds.
 - A note says where the chart comes from: "Built from Pipeline's swap events on this market: 5 swaps so far. Prices are in the market's own mints; there are no dollar prices on devnet."
 - A market with no trades shows a short panel and no empty grid: "No swap has gone through Pipeline on this market yet, so there is no price to chart. The trade box gives a live quote from the strategy itself."
-- A market with one trade still shows its one candle, at a readable size.
+- A market with one trade still shows its one candle, at a readable size: the chart gives each candle 16 px whatever its width, the newest at the right, and a reader scrolls back for older ones (`PIPESCOPE-112`).
 
 ### Trade box
 
@@ -425,6 +428,7 @@ Each of these is specified above or in another file, and none was seen running, 
 
 - Live updates: new rows arriving on the feed and on Trades, and a candle that moves as trades land.
   New rows are added at the top, the row under the pointer never moves, and nothing flashes for a reader who has asked for reduced motion.
+  As built (`PIPESCOPE-111`): while the pointer or the keyboard focus is on the table, new rows wait behind a "Show 2 new trades" button beside the table's heading and join the top as soon as it leaves; a row already shown is updated in place; a new row is washed for a moment only for a reader who allows motion; the forming candle is read again from the API at most once a second; and a dropped room is joined again after a wait that doubles from a second up to 15 s.
 - A real wallet: connecting, the wallet's own prompt, a declined signature, and a wallet set to another cluster.
 - The steps after signing: sent, confirmed, and the trade appearing.
 - A form from valid metadata, simulated and signed, and the create form end to end.

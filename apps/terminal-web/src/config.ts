@@ -29,11 +29,11 @@ export const SOL_KEPT_BACK = 0.01;
  */
 export const CHART_INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 export const CHART_OPENS_AT = "15m";
-/** The room a chart gives each candle, in pixels, whatever its width, so a lone candle is drawn at a readable size. */
+/** The room a chart gives each candle, in pixels, whatever its width, so a lone candle is drawn at a readable size (PIPESCOPE-112). */
 export const CHART_CANDLE_SPACING_PX = 16;
 
 /**
- * Live updates (docs/spec/pipescope-architecture.md, Live rooms): the longest wait before a dropped
+ * Live updates (docs/spec/pipescope-architecture.md, Live rooms; PIPESCOPE-111): the longest wait before a dropped
  * live room is joined again (each try waits twice the last, from a second), and the shortest gap
  * between two reads of the forming candle while trades land.
  */

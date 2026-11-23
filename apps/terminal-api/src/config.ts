@@ -27,7 +27,7 @@ export const JOB_INTERVAL_MINUTES = {
   verifiedBuilds: 1,
   /** Re-fetching every strategy's metadata, since the document behind an unchanged URI can change. */
   metadataRefetch: 60,
-  /** Dropping candles past their length's retention (`CANDLES`), once a day, so the database wakes for it rarely (PIPESCOPE-107). */
+  /** Dropping candles past their length's retention (`CANDLES`), once a day, so the database wakes for it rarely (PIPESCOPE-109). */
   pruneCandles: 24 * 60,
 } as const;
 
@@ -55,7 +55,8 @@ export const CANDLES: readonly { interval: string; seconds: number; keepDays: nu
 /**
  * How many significant digits the API writes a price to (PIPESCOPE-107): candles keep each price
  * exactly, so this is only how finely it is written out, well past what any page shows and past the
- * 24 decimal places Pipeline's hosted API writes, so a parity check compares them exactly.
+ * precision Pipeline's hosted API writes (about 19 significant digits), so a parity check rounds ours
+ * to each of its values and compares them exactly.
  */
 export const PRICE_SIGNIFICANT_DIGITS = 36;
 
