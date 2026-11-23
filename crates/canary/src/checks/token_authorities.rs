@@ -27,7 +27,6 @@
 //! - "Not run" when the market refuses every trade, or every authority is a program's.
 
 use litesvm::LiteSVM;
-use pipeline_check::write_token_account;
 use pipeline_client::{Instruction, Pubkey};
 use pipeline_strategy_interface::{fees, BPS_DENOMINATOR};
 use serde::Serialize;
@@ -47,6 +46,7 @@ use crate::failure::{Failure, Stage};
 use crate::market::{fund_lamports, token_amount, MintFacts, Session};
 use crate::record::{Outcome, Verdict};
 use crate::swap::SwapPath;
+use crate::token_account::write_token_account;
 use crate::trade::{Leg, RoundTrip};
 
 /// A token authority's power.

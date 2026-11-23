@@ -10,11 +10,12 @@
 //! source scripts/toolchain-env.sh
 //! scripts/fetch-router.sh              # fixtures/router/pipeline.so
 //! scripts/fetch-pipeline.sh programs   # fixtures/pipeline/programs/target/deploy/*.so
-//! crates/canary/tests/fixtures/build.sh   # Canary's own fixture programs
+//! crates/canary/tests/fixtures/build.sh   # Canary's own fixture programs and the containment hook
 //! ```
 
 #![allow(dead_code)]
 
+pub mod containment;
 pub mod rows;
 pub mod token2022;
 #[allow(unused_imports)]

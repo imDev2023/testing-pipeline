@@ -64,6 +64,8 @@ What came back clean is evidence too:
 - Before every swap the run resolves the strategy's accounts in the current state and takes a quote with `pipeline-quoter` holding only what an integrator would hold; the swap is then compared with that quote.
 - Each scenario starts from a fresh copy of the snapshot unless it says otherwise, so one scenario never changes another's starting state.
 - Wallets are new random keys on every run.
+- Each wallet's token accounts are what its associated token accounts hold on a real cluster: for a Token-2022 mint, the immutable owner extension and then the extensions the mint requires.
+  `pipeline-check`'s writer adds only the latter, and the containment hook delivers a contained token only into its home market's vault and fee account or into an account whose owner can never change (`HOOK-47`), so Canary writes the extension itself.
 - Transfer-hook accounts are resolved as `pipeline-check` resolves them; the prototype skipped this because no devnet mint has a hook.
 
 ### The money side and sizes
@@ -125,6 +127,10 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | --- | --- | --- | --- | --- |
 | `readable` | Calls `pipeline_market_info`, resolves accounts and quotes the smallest size in every direction | The strategy's current version cannot read the market's state: a **stranded market** | A direction resolves and then crashes or runs out of compute | The version reads the market; a market that reads but refuses every trade passes here and its trading checks are "not run" with the strategy's own error |
 | `conformance` | Runs `pipeline-check` on the copy and keeps its whole report | `pipeline-check` reports fail | It reports warn | It reports pass |
+
+- On a market with a mint our containment hook contains, `pipeline-check`'s `quote_matches_swap`, `exact_out_refund` and `round_trip` are known, not counted, when every failure they report is the hook's `DestinationOwnerCanChange` (6023).
+  `pipeline-check`'s own traders lack the immutable owner extension, so the hook refuses to deliver the token to them; the record says so, lists them in `canary_known` and keeps the whole report, known until Pipeline's checker writes the immutable owner extension (`HOOK-47`).
+  A known check that also fails for any other reason counts as usual.
 
 ### Exit test
 
@@ -291,7 +297,7 @@ A change to any of them changes the `harness` version that every Canary result c
 
 ## Built on
 
-- Pipeline's Apache-2.0 crates, from crates.io at exact versions (0.3.0, with `pipeline-strategy-interface` 0.1.1, since 2026-11-22, published 2026-11-21 at Pipeline's `48a6b5f`, for the router with fee mints; 0.2.0 from 2026-11-19, published 2026-11-18 at `e9fbf1a`, for the router without a pause; first 0.1.0, published 2026-11-10 at `5ac3121`; see [`pipescope-architecture.md`](pipescope-architecture.md#pipelines-packages)): `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
+- Pipeline's Apache-2.0 crates, from crates.io at exact versions (0.3.0, with `pipeline-strategy-interface` 0.1.1, since 2026-11-22, published 2026-11-21 at Pipeline's `48a6b5f`, for the router with fee mints; 0.2.0 from 2026-11-19, published 2026-11-18 at `e9fbf1a`, for the router without a pause; first 0.1.0, published 2026-11-10 at `5ac3121`; see [`pipescope-architecture.md`](pipescope-architecture.md#pipelines-packages)): `pipeline-check` (the cloner, the read-only RPC source, the conformance checks, token-account writing, to which Canary adds the immutable owner extension), `pipeline-quoter` (quotes), `pipeline-client` (swap and fee-account instructions, decoders, trust facts) and `pipeline-strategy-interface` (fee maths, request types).
 - The router's program is loaded from the cluster's own bytes, never built or copied into this repo; `pipeline-check` does the same.
 - Every trade in the checks goes through one swap function, so the architecture's licence seam holds: on devnet it calls the router, and it can be replaced by a direct call to the strategy plus Pipeline's Apache-2.0 settlement code if running the router's bytes in production is not allowed.
   The direct implementation refuses what the router's own rules refuse a trader (an account that is not a token account of its mint, a swap that lowers the trader's output balance, and every refusal of the settlement code, named in that code's words), takes Pipeline's fee on the side the market's record names (since Pipeline 0.3, out of what arrived on a trade into the market's fee mint, with the settlement code's `settle_fee_on_output`), undoes the swap on any refusal, and is chosen in one place, Canary's config module; the strategy then runs one call level higher than under the router, the one difference (`CANARY-45`).

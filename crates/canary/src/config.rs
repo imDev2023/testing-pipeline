@@ -154,6 +154,11 @@ pub const CONTAINMENT_HOOK_PROGRAM: pipeline_client::Pubkey =
     pipeline_client::pubkey!("aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv");
 /// The seed of a contained mint's unlock PDA, `["unlock", mint]`, its hook authority.
 pub const CONTAINMENT_HOOK_UNLOCK_SEED: &[u8] = b"unlock";
+/// The hook's `DestinationOwnerCanChange` error number (`HOOK-47`): a contained token sent
+/// to an account, other than the home market's vault and fee account, that lacks the
+/// immutable owner extension. `conformance` counts `pipeline-check`'s trades refused with it
+/// as known, since `pipeline-check`'s own traders lack the extension.
+pub const CONTAINMENT_HOOK_DESTINATION_OWNER_CAN_CHANGE: u32 = 6023;
 
 // ---------------------------------------------------------------------------------------
 // The licence seam (`CANARY-26`)
