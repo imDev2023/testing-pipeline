@@ -19,7 +19,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createKeyPairSignerFromBytes, createSolanaRpc, getBase58Decoder, signBytes, type KeyPairSigner } from "@solana/kit";
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { CanaryResults, CanarySchedule, canaryRerunMessage } from "terminal-api/contract";
 import { canaryRunMarkets, canaryRuns, createDb, programVersions } from "terminal-db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -45,6 +45,21 @@ const log = (line: string) => {
   console.log(stamped);
   appendFileSync(REPORT, `${stamped}\n`);
 };
+/** `until`, writing each error of the check to the report, where LocalApi's `until` passes over it. */
+const wait = <T,>(what: string, check: () => Promise<T | null | undefined | false>, ms: number) =>
+  until(
+    what,
+    async () => {
+      try {
+        return await check();
+      } catch (e) {
+        log(`${what}: ${e instanceof Error ? e.message : String(e)}`);
+        throw e;
+      }
+    },
+    ms,
+  );
+
 const getJson = async (path: string) => {
   const response = await fetch(`${api.url}${path}`);
   if (!response.ok) throw new Error(`GET ${path} answered ${response.status}`);
@@ -131,7 +146,7 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
   it("runs every devnet market after the first backfill, then sweeps them all, measuring the sweep", async () => {
     const markets = await api.markets();
     log(`report: ${REPORT}; ${markets.length} markets indexed`);
-    await until(
+    await wait(
       "a first run of every market",
       async () => {
         const [row] = await db.db.select({ n: sql<number>`count(distinct ${canaryRunMarkets.market})::int` }).from(canaryRunMarkets);
@@ -144,18 +159,18 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
     log(`first pass: ${JSON.stringify(await passFigures(firstRuns))}`);
 
     // The container goes to sleep, then a sweep starts it again: every market of every strategy.
-    await until("the container to sleep", async () => !containerRunning(), 10 * MINUTE);
+    await wait("the container to sleep", async () => !containerRunning(), 10 * MINUTE);
     const meter = awakeMeter();
     const sweepStart = new Date();
     for (const strategy of new Set(markets.map((m) => m.strategy))) await rerun({ strategy });
     // A market that a run due at the time still holds is left to that run (CANARY-22's later runs,
     // say), so the sweep is every run started since it began, once none is left open or due.
-    const sweepRuns = await until(
+    const sweepRuns = await wait(
       "the sweep's runs to end",
       async () => {
         // Every run that finished since the sweep began, those started just before it included.
         const open = await db.db.select({ id: canaryRuns.id }).from(canaryRuns).where(isNull(canaryRuns.finishedAt));
-        const rows = await db.db.select().from(canaryRuns).where(sql`${canaryRuns.finishedAt} >= ${sweepStart}`);
+        const rows = await db.db.select().from(canaryRuns).where(gte(canaryRuns.finishedAt, sweepStart));
         const done = new Set((await db.db.select({ market: canaryRunMarkets.market }).from(canaryRunMarkets).where(inArray(canaryRunMarkets.runId, rows.length ? rows.map((r) => r.id) : [0n]))).map((r) => r.market));
         log(`sweep: ${done.size} of ${markets.length} markets done, ${open.length} runs open`);
         return open.length === 0 && done.size >= markets.length && rows;
@@ -163,7 +178,7 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
       60 * MINUTE,
     );
     const runsEnded = Date.now();
-    await until("the container to sleep after the sweep", async () => !meter.running(), 10 * MINUTE);
+    await wait("the container to sleep after the sweep", async () => !meter.running(), 10 * MINUTE);
     meter.stop();
     const figures = await passFigures(sweepRuns.map((r) => r.id));
     const awakeHours = meter.awakeMs() / 3_600_000;
@@ -206,7 +221,7 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
   it("runs the container with no network and no RPC key: a request from inside it fails", async () => {
     const [market] = await api.markets();
     await rerun({ market: market!.address });
-    const id = await until("the container to run", async () => execFileSync("docker", ["ps", "--format", "{{.ID}} {{.Image}}"], { encoding: "utf8" }).split("\n").find((l) => l.split(" ")[1]?.startsWith(IMAGE))?.split(" ")[0], 5 * MINUTE);
+    const id = await wait("the container to run", async () => execFileSync("docker", ["ps", "--format", "{{.ID}} {{.Image}}"], { encoding: "utf8" }).split("\n").find((l) => l.split(" ")[1]?.startsWith(IMAGE))?.split(" ")[0], 5 * MINUTE);
     const attempt = (url: string) => {
       try {
         const out = execFileSync("docker", ["exec", id, "/usr/local/bin/canary", "snapshot", "--url", url, "--market", market!.address], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 3 * MINUTE });
@@ -230,7 +245,7 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
     const { market, signatures } = await createCpMarket(devnet, wallet, DEVNET_CP);
     const created = Date.now();
     log(`market ${market} created on devnet: ${signatures.join(", ")}`);
-    const first = await until(`${market}'s first results`, async () => {
+    const first = await wait(`${market}'s first results`, async () => {
       const results = CanaryResults.parse(await getJson(`/v1/markets/${market}/canary`).catch(() => ({ market, version: { program: DEVNET_CP, deploy_slot: 0, executable_sha256: null, current: true }, results: [], could_not_sell_back: [] })));
       return results.results.length > 0 && results;
     }, 10 * MINUTE);
@@ -242,7 +257,7 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
     log(`scheduled: ${JSON.stringify(schedule.runs)}`);
     expect(own).toEqual(expect.arrayContaining([10 * MINUTE, 60 * MINUTE, 24 * 60 * MINUTE]));
 
-    const second = await until(
+    const second = await wait(
       "the run 10 minutes on",
       async () => {
         const [row] = await db.db
