@@ -61,14 +61,29 @@ export const CONTAINMENT_HOOK_ERROR__WRONG_VALIDATION_ACCOUNT = 0x1784; // 6020
 export const CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE = 0x1785; // 6021
 /** AlreadyUnlocked: The token is already unlocked */
 export const CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED = 0x1786; // 6022
+/** DestinationOwnerCanChange: A contained token can go only to an account whose owner can't change */
+export const CONTAINMENT_HOOK_ERROR__DESTINATION_OWNER_CAN_CHANGE = 0x1787; // 6023
+/** MarketAlreadyCollectedTax: The home market has already collected tax, so the goal would not count from the binding */
+export const CONTAINMENT_HOOK_ERROR__MARKET_ALREADY_COLLECTED_TAX = 0x1788; // 6024
+/** MintAuthorityIsMultisig: A mint authority that is a Token-2022 multisig can't bind with one signature */
+export const CONTAINMENT_HOOK_ERROR__MINT_AUTHORITY_IS_MULTISIG = 0x1789; // 6025
+/** QuoteMintNotTheMarkets: The quote mint passed is not the home market's other mint */
+export const CONTAINMENT_HOOK_ERROR__QUOTE_MINT_NOT_THE_MARKETS = 0x178a; // 6026
+/** QuoteMintHooked: The home market's quote mint has a live transfer hook */
+export const CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HOOKED = 0x178b; // 6027
+/** QuoteMintHasAuthority: The home market's quote mint keeps a mint or freeze authority and is not on the quote list */
+export const CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HAS_AUTHORITY = 0x178c; // 6028
 
 export type ContainmentHookError =
   | typeof CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED
   | typeof CONTAINMENT_HOOK_ERROR__DEADLINE_NOT_IN_FUTURE
   | typeof CONTAINMENT_HOOK_ERROR__DEADLINE_TOO_FAR
+  | typeof CONTAINMENT_HOOK_ERROR__DESTINATION_OWNER_CAN_CHANGE
   | typeof CONTAINMENT_HOOK_ERROR__FREEZE_AUTHORITY_SET
+  | typeof CONTAINMENT_HOOK_ERROR__MARKET_ALREADY_COLLECTED_TAX
   | typeof CONTAINMENT_HOOK_ERROR__MARKET_DOES_NOT_HOLD_MINT
   | typeof CONTAINMENT_HOOK_ERROR__MARKET_NOT_AT_ITS_ADDRESS
+  | typeof CONTAINMENT_HOOK_ERROR__MINT_AUTHORITY_IS_MULTISIG
   | typeof CONTAINMENT_HOOK_ERROR__MINT_EXTENSION_NOT_ALLOWED
   | typeof CONTAINMENT_HOOK_ERROR__MINT_NOT_TOKEN2022
   | typeof CONTAINMENT_HOOK_ERROR__NOT_A_MINT
@@ -77,6 +92,9 @@ export type ContainmentHookError =
   | typeof CONTAINMENT_HOOK_ERROR__NOT_A_TAX_MARKET_STATE
   | typeof CONTAINMENT_HOOK_ERROR__NOT_MINT_AUTHORITY
   | typeof CONTAINMENT_HOOK_ERROR__NOT_TRANSFERRING
+  | typeof CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HAS_AUTHORITY
+  | typeof CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HOOKED
+  | typeof CONTAINMENT_HOOK_ERROR__QUOTE_MINT_NOT_THE_MARKETS
   | typeof CONTAINMENT_HOOK_ERROR__TAX_SIDE_NOT_QUOTE
   | typeof CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED
   | typeof CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE
@@ -94,9 +112,12 @@ if (process.env["NODE_ENV"] !== "production") {
     [CONTAINMENT_HOOK_ERROR__ALREADY_UNLOCKED]: `The token is already unlocked`,
     [CONTAINMENT_HOOK_ERROR__DEADLINE_NOT_IN_FUTURE]: `The unlock deadline must be later than now`,
     [CONTAINMENT_HOOK_ERROR__DEADLINE_TOO_FAR]: `The unlock deadline may be at most MAX_UNLOCK_DEADLINE_SECS after the binding`,
+    [CONTAINMENT_HOOK_ERROR__DESTINATION_OWNER_CAN_CHANGE]: `A contained token can go only to an account whose owner can't change`,
     [CONTAINMENT_HOOK_ERROR__FREEZE_AUTHORITY_SET]: `A contained mint must have no freeze authority`,
+    [CONTAINMENT_HOOK_ERROR__MARKET_ALREADY_COLLECTED_TAX]: `The home market has already collected tax, so the goal would not count from the binding`,
     [CONTAINMENT_HOOK_ERROR__MARKET_DOES_NOT_HOLD_MINT]: `The home market must trade the mint against one quote mint`,
     [CONTAINMENT_HOOK_ERROR__MARKET_NOT_AT_ITS_ADDRESS]: `The Market account is not at its router PDA`,
+    [CONTAINMENT_HOOK_ERROR__MINT_AUTHORITY_IS_MULTISIG]: `A mint authority that is a Token-2022 multisig can't bind with one signature`,
     [CONTAINMENT_HOOK_ERROR__MINT_EXTENSION_NOT_ALLOWED]: `The mint carries an extension the mint rules refuse`,
     [CONTAINMENT_HOOK_ERROR__MINT_NOT_TOKEN2022]: `The mint is not owned by Token-2022`,
     [CONTAINMENT_HOOK_ERROR__NOT_A_MINT]: `The account is not an initialized mint`,
@@ -105,6 +126,9 @@ if (process.env["NODE_ENV"] !== "production") {
     [CONTAINMENT_HOOK_ERROR__NOT_A_TAX_MARKET_STATE]: `The market state is not a tax AMM market state`,
     [CONTAINMENT_HOOK_ERROR__NOT_MINT_AUTHORITY]: `The signer is not the mint's mint authority`,
     [CONTAINMENT_HOOK_ERROR__NOT_TRANSFERRING]: `Execute runs only inside a Token-2022 transfer of this mint`,
+    [CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HAS_AUTHORITY]: `The home market's quote mint keeps a mint or freeze authority and is not on the quote list`,
+    [CONTAINMENT_HOOK_ERROR__QUOTE_MINT_HOOKED]: `The home market's quote mint has a live transfer hook`,
+    [CONTAINMENT_HOOK_ERROR__QUOTE_MINT_NOT_THE_MARKETS]: `The quote mint passed is not the home market's other mint`,
     [CONTAINMENT_HOOK_ERROR__TAX_SIDE_NOT_QUOTE]: `The home market's tax must be taken in the quote mint`,
     [CONTAINMENT_HOOK_ERROR__TRANSFER_REFUSED]: `A contained token can't be transferred there`,
     [CONTAINMENT_HOOK_ERROR__UNLOCK_NOT_DUE]: `The unlock is not due: the goal is not reached and the deadline has not passed`,

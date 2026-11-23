@@ -144,7 +144,8 @@ fn distribute_pays_the_tax_out_of_a_home_market() {
 }
 
 #[test]
-fn a_buy_may_deliver_to_any_account_which_can_then_only_sell_back_into_the_home_market() {
+fn a_buy_may_deliver_to_another_wallets_associated_account_which_can_then_only_sell_back_into_the_home_market(
+) {
     let mut env = hook_env();
     let launched = launch(&mut env);
     let trader = trader(&mut env, &launched, 10 * BUY);

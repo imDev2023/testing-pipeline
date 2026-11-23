@@ -173,13 +173,14 @@ fn mid_transfer_copy(env: &mut Env, account: &Pubkey, owner: &Pubkey) -> Pubkey 
 }
 
 /// The offset of the `transferring` flag in a Token-2022 token account's data: the value of
-/// its transfer hook account extension (type 15), in the entries after the account type.
+/// its transfer hook account extension, in the entries after the account type, with the
+/// layout constants the shared mint-rules crate publishes.
 fn transferring_flag(data: &[u8]) -> usize {
-    let mut at = 166;
+    let mut at = mint_rules::ACCOUNT_LEN + 1;
     loop {
         let kind = u16::from_le_bytes([data[at], data[at + 1]]);
         let len = u16::from_le_bytes([data[at + 2], data[at + 3]]) as usize;
-        if kind == 15 {
+        if kind == mint_rules::account_extension::TRANSFER_HOOK_ACCOUNT {
             assert_eq!(len, 1);
             return at + 4;
         }

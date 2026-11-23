@@ -7,7 +7,9 @@
 //! contained token: the contained mint at either index, created with this hook as its
 //! transfer hook and its unlock PDA as hook authority, and bound before the seed with an
 //! unlock goal and deadline of the shape's choosing; the quote mint, which the tax is taken
-//! in, SPL Token, Token-2022, Token-2022 with `test-hook`, or native SOL. Around the market: a
+//! in, SPL Token, Token-2022, Token-2022 with a cleared transfer hook, or wrapped SOL, so
+//! Pipeline's fee on a sell is paid in the token into the fee account on every quote but
+//! wrapped SOL, where it comes out of the SOL (Pipeline 0.3). Around the market: a
 //! second token account of the contained mint for each trader and the stranger (a holder's
 //! own accounts), another tax market for the token that nobody can fund, Pipeline's treasury's
 //! account for it, and copies of the config and the validation account at other addresses.
@@ -17,22 +19,31 @@
 //! vault, clock jumps, a bypass); `transfer_checked` from any holder's account to any account
 //! (another wallet, the holder's own other account, the other market's vault, the treasury,
 //! the home vault, the fee account), with the hook accounts whole, left out or substituted;
-//! buys and sells through the router with the hook accounts left out or substituted; a sell
-//! paying an integrator fee; `sweep_fees`; `bind` again, by the launcher or anyone; `unlock`
-//! by anyone with any market state; `Execute` called directly; and the clock set around the
-//! unlock deadline. Every sequence ends as the tax AMM's do, with every wallet selling all it
-//! holds.
+//! buys and sells through Pipeline 0.3's `route`, one hop through the home market, judged by
+//! the tax AMM's invariants as its swaps are; buys and sells through `swap` or `route` with
+//! the hook accounts left out or substituted; buys delivering into a holder's second account,
+//! made at a keypair without the immutable owner extension; a holder's
+//! `SetAuthority(AccountOwner)` on its associated token account; a sell paying an integrator
+//! fee; `sweep_fees`; `bind` again, by the launcher or anyone; `unlock` by anyone with any
+//! market state; `Execute` called directly; and the clock set around the unlock deadline.
+//! Every sequence ends as the tax AMM's do, with every wallet selling all it holds.
 //!
 //! **Invariants**, after every step: the tax AMM's, the bar's three first, each lifted; then
-//! the hook's five in the spec's order ([`INVARIANTS`]); then two checks the bar adds: each
-//! hook step's outcome is the spec's, and every invocation of the hook stays under its
-//! compute ceiling (`support/ceilings.rs`).
+//! the hook's five in the spec's order ([`INVARIANTS`]); then the three its hardening added
+//! (#74, [`HARDENING_INVARIANTS`]): every account the hook owns sits at its PDA, a contained
+//! balance rests only in an account whose owner can never change, and a sale pays Pipeline's
+//! fee on the side the router records; then two checks the bar adds: each hook step's outcome
+//! is the spec's, and every invocation of the hook stays under its compute ceiling
+//! (`support/ceilings.rs`).
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 
-use anchor_lang::AccountDeserialize;
+use anchor_lang::{AccountDeserialize, Discriminator};
 use containment_hook::mint::TransferHook;
+use containment_hook::state::{
+    CONFIG_SEED, EXECUTE_DISCRIMINATOR, EXTRA_ACCOUNT_METAS_SEED, VALIDATION_DATA,
+};
 use containment_hook::Config;
 use pipeline_client::interface::fees::amount_for_budget;
 use pipeline_client::{self as client, pda, AccountMeta, Instruction, Pubkey};
@@ -171,13 +182,29 @@ pub enum HookStep {
         size: Size,
         tail: Tail,
     },
-    /// A buy or a sell through the router whose hook accounts are left out or substituted.
+    /// A buy or a sell through the router whose hook accounts are left out or substituted,
+    /// sent as a `swap`, or as a one-hop `route` when `route`.
     TailedSwap {
         wallet: u8,
         buy: bool,
         size: Size,
         tail: Tail,
+        route: bool,
     },
+    /// A buy through the router with the whole hook tail, sent as a `swap` or as a one-hop
+    /// `route`, delivering the token into one of the second token accounts, by index (modulo
+    /// how many there are): accounts made at a keypair without the immutable owner extension,
+    /// whose owner can change (hardening finding H092 of #74).
+    BuyIntoOwnAccount {
+        wallet: u8,
+        account: u8,
+        size: Size,
+        route: bool,
+    },
+    /// A holder hands its associated token account for the token to another signer, by
+    /// index, with Token-2022's `SetAuthority(AccountOwner)`, which moves no tokens and calls
+    /// no hook (hardening findings H001 and H092 of #74).
+    SetOwner { wallet: u8, to: u8 },
     /// A sell through the router paying an integrator fee, which the router pays in the
     /// token into the integrator's account.
     IntegratorSell { wallet: u8, size: Size, bps: u16 },
@@ -202,6 +229,8 @@ pub enum HookAction {
         to_inside: bool,
     },
     TailedSwap,
+    BuyIntoOwnAccount,
+    SetOwner,
     IntegratorSell,
     SweepFees,
     Bind,
@@ -264,6 +293,8 @@ impl HookResult {
             HookAction::Transfer { to_inside: true } => "transfer into the home market",
             HookAction::Transfer { to_inside: false } => "transfer to an outside account",
             HookAction::TailedSwap => "swap with hook accounts left out or substituted",
+            HookAction::BuyIntoOwnAccount => "buy into an account whose owner can change",
+            HookAction::SetOwner => "SetAuthority(AccountOwner) on a holder's account",
             HookAction::IntegratorSell => "sell with an integrator fee",
             HookAction::SweepFees => "sweep_fees",
             HookAction::Bind => "bind again",
@@ -309,6 +340,36 @@ pub struct HookSnapshot {
     /// the fee account first.
     pub balances: Vec<u64>,
     pub clock: i64,
+    /// Every Token-2022 account of the contained mint in the VM, whether the world knows it
+    /// or not, by address.
+    pub token_accounts: BTreeMap<Pubkey, TokenAccount>,
+    /// Every account the hook program owns in the VM, with its data.
+    pub hook_owned: Vec<(Pubkey, Vec<u8>)>,
+}
+
+/// A Token-2022 account of the contained mint, as Token-2022 reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TokenAccount {
+    pub owner: Pubkey,
+    pub amount: u64,
+    /// Whether it carries the immutable owner extension, so that its owner can never change.
+    pub owner_fixed: bool,
+}
+
+impl TokenAccount {
+    /// The account `data` holds if it is a Token-2022 token account of `mint`, read with
+    /// Token-2022's own interface rather than the hook's reader, which it checks.
+    fn of(data: &[u8], mint: &Pubkey) -> Option<TokenAccount> {
+        use spl_token_2022_interface::extension::immutable_owner::ImmutableOwner;
+        use spl_token_2022_interface::extension::{BaseStateWithExtensions, StateWithExtensions};
+        let state =
+            StateWithExtensions::<spl_token_2022_interface::state::Account>::unpack(data).ok()?;
+        (state.base.mint == *mint).then(|| TokenAccount {
+            owner: state.base.owner,
+            amount: state.base.amount,
+            owner_fixed: state.get_extension::<ImmutableOwner>().is_ok(),
+        })
+    }
 }
 
 impl HookSnapshot {
@@ -414,6 +475,20 @@ impl Surroundings for Containment<'_> {
 
 fn read_only(key: Pubkey) -> AccountMeta {
     AccountMeta::new_readonly(key, false)
+}
+
+/// How [`HookWorld::router_swap`] departs from a plain exact-in `swap` into the trader's
+/// own associated token account.
+#[derive(Clone, Copy, Debug, Default)]
+struct Via {
+    /// The integrator's fee account and fee.
+    integrator: Option<(Pubkey, u16)>,
+    /// What the trader keeps of the output, at least.
+    min_amount_out: u64,
+    /// The output account, in place of the trader's associated token account.
+    output_to: Option<Pubkey>,
+    /// Sent as a one-hop `route` (Pipeline 0.3) rather than a `swap`.
+    route: bool,
 }
 
 impl HookWorld {
@@ -588,22 +663,28 @@ impl HookWorld {
     /// The router's exact-in swap of `amount` of mint `input` by `owner` from their
     /// associated token accounts, with `tail` as the contained token's hook accounts (after
     /// the strategy's accounts on a buy, as the router's input hook accounts on a sell), the
-    /// quote mint's resolved as a terminal resolves them, and an integrator fee if given.
+    /// quote mint's resolved as a terminal resolves them, and what `via` adds.
     fn router_swap(
         &self,
         owner: &Pubkey,
         input: usize,
         amount: u64,
         tail: Vec<AccountMeta>,
-        integrator: Option<(Pubkey, u16)>,
-        min_amount_out: u64,
+        via: Via,
     ) -> Result<Instruction, String> {
+        let Via {
+            integrator,
+            min_amount_out,
+            output_to,
+            route,
+        } = via;
         let env = &self.tax.env;
         let market = &self.tax.market;
         let output = 1 - input;
         let account =
             |i: usize| pda::associated_token(owner, &market.mints[i], &market.token_programs[i]);
-        let (trader_input, trader_output) = (account(input), account(output));
+        let trader_input = account(input);
+        let trader_output = output_to.unwrap_or_else(|| account(output));
         let mut strategy_accounts =
             env.resolve_accounts(market, &exact_in(input, output, amount))?;
         let quote_mint = market.mints[self.quote];
@@ -646,11 +727,23 @@ impl HookWorld {
         // Pipeline's fee on the side the router's record names: since Pipeline 0.3 a sale into
         // a wrapped SOL quote mint pays it out of the SOL, and the token never reaches its fee
         // account.
-        Ok(client::swap_with_fee_side(
-            &accounts,
-            &args,
-            env.fee_side(market, output),
-        ))
+        let fee_side = env.fee_side(market, output);
+        if route {
+            let hop = client::RouteHopSpec {
+                accounts,
+                fee_side,
+                extra: vec![],
+            };
+            return Ok(client::route(
+                owner,
+                integrator.map(|(account, _)| account),
+                &[hop],
+                amount,
+                min_amount_out,
+                integrator.map_or(0, |(_, bps)| bps),
+            ));
+        }
+        Ok(client::swap_with_fee_side(&accounts, &args, fee_side))
     }
 
     /// The associated token program's `CreateIdempotent` of `owner`'s account for mint `i`,
@@ -678,8 +771,10 @@ impl HookWorld {
             self.contained,
             amount,
             self.tail(Tail::Complete),
-            None,
-            min_amount_out,
+            Via {
+                min_amount_out,
+                ..Via::default()
+            },
         )?;
         let create = self.create_account(&seller.pubkey(), self.quote);
         let env = &self.tax.env;
@@ -700,8 +795,20 @@ impl HookWorld {
     }
 
     fn snapshot(&self) -> HookSnapshot {
+        use solana_account::ReadableAccount;
         let env = &self.tax.env;
         let data = |address: &Pubkey| env.svm.get_account(address).expect("account").data;
+        let (mut token_accounts, mut hook_owned) = (BTreeMap::new(), vec![]);
+        for (address, account) in &env.svm.accounts_db().inner {
+            if *account.owner() == TOKEN_2022 {
+                if let Some(token) = TokenAccount::of(account.data(), &self.mint) {
+                    token_accounts.insert(*address, token);
+                }
+            } else if *account.owner() == hook_id() {
+                hook_owned.push((*address, account.data().to_vec()));
+            }
+        }
+        hook_owned.sort();
         HookSnapshot {
             tax: TaxAmm::snapshot(&self.tax),
             config: data(&self.config),
@@ -713,14 +820,20 @@ impl HookWorld {
                 .map(|account| env.balance_or_zero(account))
                 .collect(),
             clock: now(env),
+            token_accounts,
+            hook_owned,
         }
     }
 
     fn apply(&mut self, step: &HookStep) -> HookOutcome {
         let outcome = match *step {
             HookStep::Tax(ref step) => {
+                let contained = self.contained_now();
                 let tax = TaxAmm::apply(&mut self.tax, step);
                 let hook_costs = executes(&tax.logs);
+                if let Some(label) = self.sell_label(contained, &tax) {
+                    *self.tally.entry(label.into()).or_default() += 1;
+                }
                 HookOutcome {
                     tax,
                     hook: None,
@@ -732,16 +845,25 @@ impl HookWorld {
                 buy,
                 size,
                 tail,
+                route,
             } if !self.contained_now() => {
                 // Once the token is unlocked, integrators stop passing hook accounts: the
                 // swap without them is the tax AMM's own (docs/spec/containment-hook.md,
                 // "After the unlock"), and a tail left in is ignored.
                 let _ = tail;
-                let input = if buy { self.quote } else { self.contained };
-                let step = tax::Step::Swap {
-                    wallet,
-                    input: input as u8,
-                    size,
+                let input = (if buy { self.quote } else { self.contained }) as u8;
+                let step = if route {
+                    tax::Step::Route {
+                        wallet,
+                        input,
+                        size,
+                    }
+                } else {
+                    tax::Step::Swap {
+                        wallet,
+                        input,
+                        size,
+                    }
                 };
                 let tax = TaxAmm::apply(&mut self.tax, &step);
                 HookOutcome {
@@ -772,6 +894,24 @@ impl HookWorld {
         outcome
     }
 
+    /// For the run's tally, so a run that never reached one fails: how a router sale of the
+    /// contained token that settled while it was contained paid Pipeline's fee.
+    fn sell_label(&self, contained: bool, outcome: &tax::Outcome) -> Option<&'static str> {
+        let tax::Action::Swap { input, route, .. } = outcome.action else {
+            return None;
+        };
+        if !contained || !outcome.swapped() || input != self.contained {
+            return None;
+        }
+        let fee_side = self.tax.env.fee_side(&self.tax.market, self.quote);
+        Some(match (fee_side, route) {
+            (client::FeeSide::Input, false) => SELL_FEE_IN_THE_TOKEN,
+            (client::FeeSide::Input, true) => ROUTED_SELL_FEE_IN_THE_TOKEN,
+            (client::FeeSide::Output, false) => SELL_FEE_IN_WRAPPED_SOL,
+            (client::FeeSide::Output, true) => ROUTED_SELL_FEE_IN_WRAPPED_SOL,
+        })
+    }
+
     /// A step of the hook's own, with the logs of the transaction it sent.
     fn hook_step(&mut self, step: &HookStep) -> (HookResult, Vec<String>) {
         let contained = self.contained_now();
@@ -779,7 +919,7 @@ impl HookWorld {
             |action, expected, sent: &Result<litesvm::types::TransactionMetadata, String>| {
                 let result = match sent {
                     Ok(_) => Ok(()),
-                    Err(failure) => Err(tax::refusal_by(failure, &super::hook_id())),
+                    Err(failure) => Err(refusal(failure)),
                 };
                 let logs = sent.as_ref().map(|m| m.logs.clone()).unwrap_or_default();
                 (HookResult::of(action, expected, result), logs)
@@ -843,6 +983,7 @@ impl HookWorld {
                 buy,
                 size,
                 tail,
+                route,
             } => {
                 let trader = self.signer(wallet);
                 let input = if buy { self.quote } else { self.contained };
@@ -853,8 +994,12 @@ impl HookWorld {
                 if amount == 0 {
                     return (HookResult::skip(), vec![]);
                 }
+                let via = Via {
+                    route,
+                    ..Via::default()
+                };
                 let sent = self
-                    .router_swap(&trader.pubkey(), input, amount, self.tail(tail), None, 0)
+                    .router_swap(&trader.pubkey(), input, amount, self.tail(tail), via)
                     .and_then(|swap| {
                         let create = self.create_account(&trader.pubkey(), 1 - input);
                         self.tax.env.send_meta(&[create, swap], &[&trader])
@@ -862,6 +1007,73 @@ impl HookWorld {
                 let (mut result, logs) = outcome(HookAction::TailedSwap, Expected::Refused, &sent);
                 result.broken_tail = true;
                 (result, logs)
+            }
+            HookStep::BuyIntoOwnAccount {
+                wallet,
+                account,
+                size,
+                route,
+            } => {
+                // Once the token is unlocked a buy may deliver anywhere, and the tax AMM's
+                // model of the market would not see a buy sent here.
+                if !contained {
+                    return (HookResult::skip(), vec![]);
+                }
+                let trader = self.signer(wallet);
+                let budget = amount_for_budget(self.tax.holding(&trader.pubkey(), self.quote), 0);
+                let state = self.tax.state();
+                let reserve = (state.reserves[self.quote] as u128).max(1_000_000);
+                let amount = TaxWorld::sized(size, reserve, budget);
+                if amount == 0 {
+                    return (HookResult::skip(), vec![]);
+                }
+                let destination = self.own_accounts[account as usize % self.own_accounts.len()];
+                // A buy the tax AMM would settle pays out into an account whose owner can
+                // change, which the hook refuses; any other is refused anyway.
+                let expected = match self.tax.quote(self.quote, amount).0 {
+                    Ok(_) => Expected::RefusedWith("DestinationOwnerCanChange"),
+                    Err(_) => Expected::Refused,
+                };
+                let via = Via {
+                    output_to: Some(destination),
+                    route,
+                    ..Via::default()
+                };
+                let sent = self
+                    .router_swap(
+                        &trader.pubkey(),
+                        self.quote,
+                        amount,
+                        self.tail(Tail::Complete),
+                        via,
+                    )
+                    .and_then(|swap| self.tax.env.send_meta(&[swap], &[&trader]));
+                outcome(HookAction::BuyIntoOwnAccount, expected, &sent)
+            }
+            HookStep::SetOwner { wallet, to } => {
+                use spl_token_2022_interface::instruction::{set_authority, AuthorityType};
+                let holder = self.signer(wallet);
+                let account = self.ata(&holder.pubkey());
+                if self.tax.env.svm.get_account(&account).is_none() {
+                    return (HookResult::skip(), vec![]);
+                }
+                let instruction = set_authority(
+                    &TOKEN_2022,
+                    &account,
+                    Some(&self.signer(to).pubkey()),
+                    AuthorityType::AccountOwner,
+                    &holder.pubkey(),
+                    &[],
+                )
+                .unwrap();
+                let sent = self.tax.env.send_meta(&[instruction], &[&holder]);
+                // Every associated token account carries the immutable owner extension,
+                // contained or not.
+                outcome(
+                    HookAction::SetOwner,
+                    Expected::RefusedWith("ImmutableOwner"),
+                    &sent,
+                )
             }
             HookStep::IntegratorSell { wallet, size, bps } => {
                 if !contained {
@@ -893,8 +1105,10 @@ impl HookWorld {
                         self.contained,
                         amount,
                         self.tail(Tail::Complete),
-                        Some((integrator, bps)),
-                        0,
+                        Via {
+                            integrator: Some((integrator, bps)),
+                            ..Via::default()
+                        },
                     )
                     .and_then(|swap| {
                         let create = self.create_account(&trader.pubkey(), self.quote);
@@ -999,6 +1213,31 @@ impl HookWorld {
     }
 }
 
+/// The tally's labels for router sales of the contained token that settled while it was
+/// contained, by how they paid Pipeline's fee (docs/spec/containment-hook.md, "What this
+/// allows"), each through `swap` or a one-hop `route`.
+pub const SELL_FEE_IN_THE_TOKEN: &str = "sell: Pipeline's fee in the token, into the fee account";
+pub const ROUTED_SELL_FEE_IN_THE_TOKEN: &str =
+    "sell through route: Pipeline's fee in the token, into the fee account";
+pub const SELL_FEE_IN_WRAPPED_SOL: &str = "sell: Pipeline's fee in wrapped SOL";
+pub const ROUTED_SELL_FEE_IN_WRAPPED_SOL: &str =
+    "sell through route: Pipeline's fee in wrapped SOL";
+
+/// The name of the error that refused a hook step: the hook's, by [`tax::refusal_by`];
+/// Token-2022's, by its `TokenError`; otherwise the whole failure.
+fn refusal(failure: &str) -> String {
+    let named = tax::refusal_by(failure, &super::hook_id());
+    if named != failure {
+        return named;
+    }
+    let prefix = format!("Program {TOKEN_2022} failed: custom program error: 0x");
+    failure
+        .lines()
+        .find_map(|line| u32::from_str_radix(line.strip_prefix(&prefix)?.trim(), 16).ok())
+        .and_then(|code| spl_token_2022_interface::error::TokenError::try_from(code).ok())
+        .map_or(named, |error| format!("{error:?}"))
+}
+
 /// The compute of each `Execute` in a transaction's logs.
 fn executes(logs: &[String]) -> Vec<(&'static str, u64)> {
     hook_compute(logs)
@@ -1093,8 +1332,13 @@ impl Product for ContainmentHook {
             14 => TaxAmm::steps().prop_map(HookStep::Tax),
             6 => (wallet(), prop::bool::weighted(0.2), to(), size(), tail())
                 .prop_map(|(from, own, to, size, tail)| HookStep::Transfer { from, own, to, size, tail }),
-            2 => (wallet(), any::<bool>(), size(), broken_tail())
-                .prop_map(|(wallet, buy, size, tail)| HookStep::TailedSwap { wallet, buy, size, tail }),
+            3 => (wallet(), 0..2u8, size())
+                .prop_map(|(wallet, input, size)| HookStep::Tax(tax::Step::Route { wallet, input, size })),
+            2 => (wallet(), any::<bool>(), size(), broken_tail(), any::<bool>())
+                .prop_map(|(wallet, buy, size, tail, route)| HookStep::TailedSwap { wallet, buy, size, tail, route }),
+            1 => (wallet(), any::<u8>(), size(), any::<bool>())
+                .prop_map(|(wallet, account, size, route)| HookStep::BuyIntoOwnAccount { wallet, account, size, route }),
+            1 => (wallet(), any::<u8>()).prop_map(|(wallet, to)| HookStep::SetOwner { wallet, to }),
             1 => (wallet(), size(), 1..=100u16)
                 .prop_map(|(wallet, size, bps)| HookStep::IntegratorSell { wallet, size, bps }),
             1 => tail().prop_map(|tail| HookStep::SweepFees { tail }),
@@ -1151,8 +1395,17 @@ impl Product for ContainmentHook {
     }
 }
 
-/// The tax AMM's invariants lifted, the bar's three first; the hook's five; then each hook
-/// step's outcome and the hook's compute ceilings.
+/// The checks the hardening of #74 added after the hook's five ([`INVARIANTS`]), in the
+/// order they run.
+pub const HARDENING_INVARIANTS: [&str; 3] = [
+    "every_hook_owned_account_sits_at_its_pda",
+    "contained_balances_rest_only_where_the_owner_is_fixed",
+    "a_sell_pays_pipelines_fee_on_the_side_the_router_records",
+];
+
+/// The tax AMM's invariants lifted, the bar's three first; the hook's five; the three of
+/// the hardening of #74 ([`HARDENING_INVARIANTS`]); then each hook step's outcome and the
+/// hook's compute ceilings.
 pub fn invariants() -> Vec<Invariant<ContainmentHook>> {
     let mut all: Vec<Invariant<ContainmentHook>> = tax::invariants()
         .into_iter()
@@ -1170,6 +1423,18 @@ pub fn invariants() -> Vec<Invariant<ContainmentHook>> {
             unlock_passes_exactly_when_due_and_clears_the_hook,
         ),
         Invariant::new(INVARIANTS[4], every_holder_can_sell_into_the_home_market),
+        Invariant::new(
+            HARDENING_INVARIANTS[0],
+            every_hook_owned_account_sits_at_its_pda,
+        ),
+        Invariant::new(
+            HARDENING_INVARIANTS[1],
+            contained_balances_rest_only_where_the_owner_is_fixed,
+        ),
+        Invariant::new(
+            HARDENING_INVARIANTS[2],
+            a_sell_pays_pipelines_fee_on_the_side_the_router_records,
+        ),
         Invariant::new("each_hook_step_is_the_specs", each_hook_step_is_the_specs),
         Invariant::new(
             "hook_compute_stays_under_its_ceilings",
@@ -1372,6 +1637,160 @@ fn every_holder_can_sell_into_the_home_market(
             quote.amount_out
         );
     }
+    Ok(())
+}
+
+// A config and the validation account can never be read as each other's kind: the
+// validation account starts with `Execute`'s discriminator (BOK proposal HA-1, #74).
+const _: () = {
+    let (config, execute) = (Config::DISCRIMINATOR, &EXECUTE_DISCRIMINATOR);
+    let mut same = config.len() == execute.len();
+    let mut i = 0;
+    while same && i < config.len() {
+        same = config[i] == execute[i];
+        i += 1;
+    }
+    assert!(!same, "a config's discriminator is Execute's");
+};
+
+/// Hardening finding H007 of #74, the Book of Knowledge's proposal HA-1: every account the
+/// hook program owns sits at its PDA for its mint, with the canonical bump the config
+/// records. A config sits at `["config", config.mint]`; a validation account holds exactly
+/// the validation data and sits at `["extra-account-metas", mint]` for a mint that has a
+/// config. It is the premise that makes the hook's owner, discriminator and mint checks
+/// enough, and what an instruction added later (a migration, a close and re-create) would
+/// put at risk. The two copies the world planted at other addresses, to be substituted in
+/// transfers, are the harness's, not the hook's, and are passed over.
+fn every_hook_owned_account_sits_at_its_pda(
+    c: &Checked<'_, ContainmentHook>,
+) -> Result<(), String> {
+    let w = c.world;
+    let planted = [w.config_copy, w.validation_copy];
+    let owned = c
+        .after
+        .hook_owned
+        .iter()
+        .filter(|(address, _)| !planted.contains(address));
+    let (configs, others): (Vec<_>, Vec<_>) =
+        owned.partition(|(_, data)| data.starts_with(Config::DISCRIMINATOR));
+    let mut mints = vec![];
+    for (address, data) in configs {
+        let config = Config::try_deserialize(&mut data.as_slice())
+            .map_err(|e| format!("the hook owns {address}, a config that does not decode: {e}"))?;
+        let mint = ck(&config.mint);
+        let pda = |seed: &[u8]| Pubkey::find_program_address(&[seed, mint.as_ref()], &hook_id());
+        let (at, bump) = pda(CONFIG_SEED);
+        ensure!(
+            *address == at && config.config_bump == bump,
+            "the config of {mint} sits at {address} with bump {}, its PDA is {at} with bump {bump}",
+            config.config_bump
+        );
+        let (_, validation_bump) = pda(EXTRA_ACCOUNT_METAS_SEED);
+        ensure!(
+            config.extra_account_metas_bump == validation_bump,
+            "the config of {mint} records the validation account's bump {}, the canonical one is {validation_bump}",
+            config.extra_account_metas_bump
+        );
+        mints.push(mint);
+    }
+    for (address, data) in others {
+        ensure!(
+            data.as_slice() == VALIDATION_DATA,
+            "the hook owns {address}, which holds neither a config nor the validation data"
+        );
+        ensure!(
+            mints.iter().any(|mint| validation_pda(mint) == *address),
+            "the hook owns a validation account at {address}, the PDA of no bound mint"
+        );
+    }
+    Ok(())
+}
+
+/// Spec invariant 1's second half, hardening finding H092 of #74: while the token is
+/// contained, every account outside the home vault and the fee account that holds it, known
+/// to the world or not, carries the immutable owner extension, so no `SetAuthority` can
+/// hand a balance to another wallet without a transfer; and no account holding it changes
+/// owner. Balances in accounts whose owner can change from before the rule ("What the hook
+/// cannot see", H002) would be exempt, but the fuzzer writes every balance into an
+/// associated token account, so it has none: the check runs on the world as built too.
+fn contained_balances_rest_only_where_the_owner_is_fixed(
+    c: &Checked<'_, ContainmentHook>,
+) -> Result<(), String> {
+    let w = c.world;
+    let inside = [w.tax.market.vaults[w.contained], w.home_fees()];
+    if c.after.contained() {
+        for (address, account) in &c.after.token_accounts {
+            ensure!(
+                inside.contains(address) || account.amount == 0 || account.owner_fixed,
+                "{address} holds {} of the contained token, and its owner {} can change",
+                account.amount,
+                account.owner
+            );
+        }
+    }
+    if c.before.contained() {
+        for (address, before) in &c.before.token_accounts {
+            let Some(after) = c.after.token_accounts.get(address) else {
+                continue;
+            };
+            ensure!(
+                after.owner == before.owner || (before.amount == 0 && after.amount == 0),
+                "{address}, holding {} of the contained token, changed owner from {} to {}",
+                before.amount.max(after.amount),
+                before.owner,
+                after.owner
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The Book of Knowledge's proposal ST-6 of #74 (docs/spec/containment-hook.md, "What this
+/// allows"): while the token is contained, every router sale of it, through `swap` or a
+/// one-hop `route`, that the tax AMM settles settles, and pays Pipeline's fee on the side the
+/// router's record of the home market names. On a market quoted in a mint other than wrapped
+/// SOL the fee is in the token, on top, into the fee account through the hook, which runs
+/// twice; on one quoted in wrapped SOL it comes out of the SOL, the fee account never moves,
+/// and the hook runs once.
+fn a_sell_pays_pipelines_fee_on_the_side_the_router_records(
+    c: &Checked<'_, ContainmentHook>,
+) -> Result<(), String> {
+    let w = c.world;
+    let (tax::Action::Swap { input, .. }, Some(swap)) = (c.outcome.tax.action, &c.outcome.tax.swap)
+    else {
+        return Ok(());
+    };
+    if !c.before.contained() || input != w.contained {
+        return Ok(());
+    }
+    let result = match &swap.swap {
+        Ok(result) => result,
+        Err(failure) => {
+            ensure!(
+                c.outcome.tax.expected.is_err(),
+                "a sale the tax AMM settles was refused: {}",
+                failure.lines().next().unwrap_or_default()
+            );
+            return Ok(());
+        }
+    };
+    let fees = c.after.balances[1] as i128 - c.before.balances[1] as i128;
+    let hook_runs = c
+        .outcome
+        .hook_costs
+        .iter()
+        .filter(|(name, _)| *name == "execute")
+        .count();
+    let (fee_mint, paid_in, runs) = match w.tax.env.fee_side(&w.tax.market, w.quote) {
+        client::FeeSide::Input => (w.mint, result.pipeline_fee as i128, 2),
+        client::FeeSide::Output => (w.tax.market.mints[w.quote], 0, 1),
+    };
+    ensure!(
+        result.fee_mint == fee_mint && fees == paid_in && hook_runs == runs,
+        "a sale paid Pipeline's fee of {} in {} and the fee account moved by {fees}, with the hook run {hook_runs} times, where the router's record gives {fee_mint}, {paid_in} and {runs}",
+        result.pipeline_fee,
+        result.fee_mint
+    );
     Ok(())
 }
 

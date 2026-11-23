@@ -55,6 +55,8 @@ fn the_built_program_embeds_its_security_txt() {
         "https://github.com/imDev2023/testing-pipeline/security/policy"
     );
     assert_eq!(field("auditors"), "None");
+    // The crate's version, which each release raises (hardening finding H074 of #74).
+    assert_eq!(field("source_release"), env!("CARGO_PKG_VERSION"));
 }
 
 #[test]

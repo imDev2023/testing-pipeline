@@ -126,3 +126,46 @@ pub fn fee_account(
         ),
     )
 }
+
+/// Book of Knowledge BR-2 (#74): `read_market`, the only parser of the router's account in
+/// `bind`, never panics on any bytes up to Pipeline 0.3's `Market` length, refuses anything
+/// shorter than the fields it reads or without the discriminator, and every `RouterMarket` it
+/// returns trades at most four mints, which `mints()` lists exactly.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// Pipeline 0.3's `Market` length: the fields the hook reads, then `fee_mint_index`.
+    const MARKET_LEN_0_3: usize = offset::LEN + 1;
+
+    /// The unwind covers the 32-byte key copies and comparisons.
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn read_market_never_panics_and_bounds_the_mint_count() {
+        let bytes: [u8; MARKET_LEN_0_3] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= MARKET_LEN_0_3);
+        let data = &bytes[..len];
+        match read_market(data) {
+            Some(market) => {
+                assert!(len >= offset::LEN);
+                assert!(data[..8] == MARKET_DISCRIMINATOR);
+                assert!(market.mint_count as usize <= psi::MAX_MARKET_MINTS);
+                assert!(market.mints().len() == market.mint_count as usize);
+                assert!(market.mint_count == data[offset::MINT_COUNT]);
+                assert!(market.bump == data[offset::BUMP]);
+                assert!(market.fee_authority_bump == data[offset::FEE_AUTHORITY_BUMP]);
+                assert!(
+                    market.strategy.to_bytes()[..] == data[offset::STRATEGY..offset::STRATEGY + 32]
+                );
+            }
+            None => {
+                assert!(
+                    len < offset::LEN
+                        || data[..8] != MARKET_DISCRIMINATOR
+                        || data[offset::MINT_COUNT] as usize > psi::MAX_MARKET_MINTS
+                );
+            }
+        }
+    }
+}
