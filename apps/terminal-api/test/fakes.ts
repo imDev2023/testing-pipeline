@@ -35,6 +35,7 @@ export function bindings(overrides: Partial<Bindings> & { databaseUrl: string; r
     TRADES: rateLimiter(60),
     REPORTS: rateLimiter(10),
     TERMINAL_CACHE: {} as KVNamespace,
+    INDEXER: {} as Bindings["INDEXER"],
     KEEPER_WALLET: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
     ...rest,
   };

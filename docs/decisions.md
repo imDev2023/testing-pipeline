@@ -2131,6 +2131,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
 
+### PIPESCOPE-105: How the API pages its lists
+
+- Question: How do the markets list and the trade lists page, and how much may one page hold?
+- Answer: Newest first, each page ending with a `next` cursor the following page passes as `before`, with at most 200 markets or 1,000 trades a page and the pages asking for the screens' 50 feed rows and 40 trades, as `PAGE_LIMITS` in `terminal-api`'s config module.
+- Alternatives: Offset paging, which repeats or skips a row whenever a new market or trade arrives between two pages; the hosted API's `before_slot`, which splits the trades of one slot across two pages.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: index the router's history into Postgres, with the feed's two tables](https://github.com/imDev2023/testing-pipeline/issues/116)
+
+### PIPESCOPE-106: A market's 24 hours on the feed
+
+- Question: What do a market's trade count and volume in the last 24 hours count on a market of three or four mints?
+- Answer: The count takes every trade in the last 24 hours by the event's own clock, and the volume adds the quote mint's side of each trade that has the quote mint on one side, since no other trade carries an amount of it.
+- Alternatives: Counting only the trades of the default pair, which would hide the other pairs' trades from the count.
+- Specified in: [`docs/spec/pipescope-screens.md`, Feed](spec/pipescope-screens.md#feed)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: index the router's history into Postgres, with the feed's two tables](https://github.com/imDev2023/testing-pipeline/issues/116)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims

@@ -8,6 +8,7 @@ import type { JobName } from "./config";
 import type { ApiError } from "./contract";
 import { runDueJobs, type Job } from "./dispatcher";
 import type { Bindings } from "./env";
+import { feed } from "./feed";
 import { health } from "./health";
 import { keeperRoutes } from "./keeper";
 import { limitReads } from "./rateLimits";
@@ -33,14 +34,26 @@ app.get("/health", async (c) => {
   return c.json(body, body.ok ? 200 : 503);
 });
 
+app.route("/", feed);
+
+/** How the indexer stands: its version, its cursor and when each job last ran (./indexer). */
+app.get("/v1/indexer", async (c) => c.json(await indexer(c.env).status()));
+
+/** The one indexer, by name, so every caller reaches the same instance. */
+export const indexer = (env: Bindings) => env.INDEXER.get(env.INDEXER.idFromName("router"));
 keeperRoutes(app);
 
 /**
- * The jobs that have been built, by name. Empty until the indexer's ticket (#116) adds the first;
- * each later ticket adds its own, and ./config says how often each runs.
+ * The jobs that have been built, by name; each later ticket adds its own, and ./config says how
+ * often each runs. Each passes the Worker's version, so an indexer still running older code resets
+ * itself (./indexer).
  */
-export function jobs(_env: Bindings): Partial<Record<JobName, Job>> {
-  return {};
+export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
+  const version = env.CF_VERSION_METADATA.id;
+  return {
+    reconcileRouter: async () => void (await indexer(env).reconcile(version)),
+    registrySnapshot: async () => void (await indexer(env).snapshot(version)),
+  };
 }
 
 export default {
