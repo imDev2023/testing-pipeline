@@ -72,6 +72,9 @@ importers:
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
+      lending-amm-scripts:
+        specifier: workspace:*
+        version: link:../../programs/lending-amm/scripts
       strategy-actions:
         specifier: workspace:*
         version: link:../../packages/strategy-actions
@@ -185,6 +188,9 @@ importers:
       buy-wall-amm-scripts:
         specifier: workspace:*
         version: link:../../programs/buy-wall-amm/scripts
+      lending-amm-scripts:
+        specifier: workspace:*
+        version: link:../../programs/lending-amm/scripts
       tax-amm-scripts:
         specifier: workspace:*
         version: link:../../programs/tax-amm/scripts
@@ -461,6 +467,9 @@ importers:
 
   tests/terminal-e2e:
     devDependencies:
+      '@pipeline-sol/sdk':
+        specifier: 'catalog:'
+        version: 0.3.0(typescript@6.0.3)
       '@playwright/test':
         specifier: 1.65.1
         version: 1.65.1

@@ -33,6 +33,12 @@ export const JOB_INTERVAL_MINUTES = {
 
 export type JobName = keyof typeof JOB_INTERVAL_MINUTES;
 
+/**
+ * How many ProgramData watches look again for a strategy version's deploy transaction the RPC had
+ * not served when the version was recorded, before leaving it without one (PIPESCOPE-113).
+ */
+export const VERSION_TRANSACTION_LOOKS = 30;
+
 /** The indexer's live socket (PIPESCOPE-27, PIPESCOPE-28): reopened by this alarm while open, closed this long after the last viewer leaves. */
 export const SOCKET_REOPEN_ALARM_MS = 15 * SECOND;
 export const SOCKET_CLOSE_AFTER_LAST_VIEWER_MS = 3 * MINUTE;
@@ -132,6 +138,9 @@ export const PAGE_LIMITS = {
   /** The newest candles of one length a chart is given, and the most asked for at once (PIPESCOPE-107). */
   candles: { default: 1000, max: 5000 },
 } as const;
+
+/** The most signers an instruction lists in `GET /v1/strategies/{program}/instructions`, most calls first; the answer counts them all. */
+export const INSTRUCTION_SIGNERS_SHOWN = 100;
 
 /** How stale a public cache may be (PIPESCOPE-32). */
 export const PUBLIC_CACHE_MAX_AGE_SECONDS = 60;

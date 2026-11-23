@@ -48,6 +48,55 @@ export type Strategy = z.infer<typeof Strategy>;
 export const StrategiesList = z.object({ strategies: z.array(Strategy) });
 export type StrategiesList = z.infer<typeof StrategiesList>;
 
+/** One version of a program: the program as of one deploy, keyed by the slot of that deploy (docs/spec/pipescope-architecture.md, Indexer, "ProgramData watch"). */
+const ProgramVersionFields = {
+  deploy_slot: z.number().int(),
+  /** The executable's SHA-256 as Pipeline's SDK and `solana-verify get-program-hash` compute it; null for a version found only in the history, whose bytes are gone. */
+  executable_sha256: z.string().nullable(),
+  /** The deploy or upgrade transaction; null until found in the ProgramData account's history. */
+  signature: z.string().nullable(),
+  /** When that transaction landed. */
+  deployed_at: Time.nullable(),
+  /** When Aviary recorded the version. */
+  seen_at: Time,
+  /** Found in the ProgramData account's history rather than seen by the watch, so its bytes were never read. */
+  backfilled: z.boolean(),
+  /** The version in force now. */
+  current: z.boolean(),
+};
+
+/** A strategy's versions, newest first (`GET /v1/strategies/{program}/versions`). Canary checks attach to versions, not to strategies. */
+export const StrategyVersion = z.object(ProgramVersionFields);
+export type StrategyVersion = z.infer<typeof StrategyVersion>;
+export const StrategyVersions = z.object({ program: Address, versions: z.array(StrategyVersion) });
+export type StrategyVersions = z.infer<typeof StrategyVersions>;
+
+/** The router's versions, newest first (`GET /v1/router`); an upgrade the watch saw happen is flagged, since it can change event layouts. */
+export const RouterVersion = z.object({ ...ProgramVersionFields, flagged: z.boolean() });
+export type RouterVersion = z.infer<typeof RouterVersion>;
+export const RouterVersions = z.object({ program: Address, versions: z.array(RouterVersion) });
+export type RouterVersions = z.infer<typeof RouterVersions>;
+
+/**
+ * The instructions compiled into a strategy's current version (`GET /v1/strategies/{program}/instructions`;
+ * PIPESCOPE-92, CANARY-18), Pipeline's six marked as Pipeline's, each with how often it has been
+ * called and by which signers, from the indexer's history of the strategy program. `anchor` is false
+ * when the program names no instruction as Anchor compiles them ("none found"), and null, with
+ * `deploy_slot`, before any version is recorded.
+ */
+export const StrategyInstruction = z.object({
+  name: z.string(),
+  discriminator: z.string().regex(/^[0-9a-f]{16}$/),
+  pipeline: z.boolean(),
+  calls: z.number().int(),
+  /** The signers that called it, most calls first, at most INSTRUCTION_SIGNERS_SHOWN. */
+  signers: z.array(z.object({ address: Address, calls: z.number().int() })),
+  signers_total: z.number().int(),
+});
+export type StrategyInstruction = z.infer<typeof StrategyInstruction>;
+export const StrategyInstructions = z.object({ program: Address, deploy_slot: z.number().int().nullable(), anchor: z.boolean().nullable(), instructions: z.array(StrategyInstruction) });
+export type StrategyInstructions = z.infer<typeof StrategyInstructions>;
+
 /** One of a market's mints, in the market's own order, with what its vault holds. */
 export const MarketMint = z.object({
   mint: Address,

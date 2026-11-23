@@ -13,6 +13,7 @@ import { health } from "./health";
 import { keeperRoutes } from "./keeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
+import { strategyRoutes } from "./strategies";
 
 export type AppEnv = { Bindings: Bindings };
 
@@ -36,6 +37,7 @@ app.get("/health", async (c) => {
 });
 
 app.route("/", feed);
+app.route("/", strategyRoutes);
 
 /**
  * The live rooms (./liveRoom): a page opens a WebSocket here and the Worker hands the upgrade to the
@@ -71,7 +73,9 @@ export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
   const version = env.CF_VERSION_METADATA.id;
   return {
     reconcileRouter: async () => void (await indexer(env).reconcile(version)),
+    reconcileStrategies: async () => void (await indexer(env).reconcileStrategies(version)),
     registrySnapshot: async () => void (await indexer(env).snapshot(version)),
+    programDataWatch: async () => void (await indexer(env).watchPrograms(version)),
     pruneCandles: async () => void (await indexer(env).prune(version)),
   };
 }

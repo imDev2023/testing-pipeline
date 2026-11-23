@@ -1,0 +1,41 @@
+/* A strategy's page below its head: one column of sections, each a heading over its box. */
+.page {
+  display: grid;
+  gap: 28px;
+}
+
+.section {
+  display: grid;
+  gap: 12px;
+}
+
+.title {
+  font-size: 1.05em;
+}
+
+.count {
+  font-weight: var(--text-weight);
+  color: var(--ink3);
+}
+
+.note {
+  color: var(--ink3);
+}
+
+.failed {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.more {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+/* The note under a version's date: the current one in the body's ink, an earlier one quieter. */
+.current {
+  display: block;
+  color: var(--ink2);
+}

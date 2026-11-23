@@ -856,7 +856,9 @@ pnpm terminal:dev:web                # terminal-web built through OpenNext and r
 `pnpm terminal:e2e` runs Playwright (`tests/terminal-e2e`) on the local run: it starts both Workers unless they are already up, checks every page at 1440, 390 and 360 px in the light and the dark theme, and saves each page's screenshot to `tests/terminal-e2e/screenshots/<width>-<theme>/` for the PR.
 `E2E_RPC` says where the API's RPC goes: `devnet` (the default outside CI) uses `RPC_URL`; `fixtures` (CI's) replays `tests/terminal-e2e/fixtures/devnet-rpc.json` with no network; `record` (`pnpm --filter terminal-e2e record`) runs against devnet and records every answer into that file (`PIPESCOPE-102`).
 The first run needs `pnpm --filter terminal-e2e exec playwright install chromium`.
-Before the tests, `src/global-setup.ts` fires the cron and waits for the indexer's first run, which backfills the router's whole history into the database, so the feed has devnet's markets to show; on the recorded fixtures that history is the one recorded, so a run on an empty database draws the same pages.
+A second worktree runs the suite beside a local run already up by naming other ports: `E2E_API_PORT`, `E2E_WEB_PORT` and `E2E_RPC_PORT` (8811, 3111 and 8812 by default), with `DATABASE_URL` on a database of its own on the Docker Postgres, so one worktree's migrations never meet another's; `scripts/dev.ts` takes its port from `TERMINAL_API_PORT` the same way.
+Before the tests, `src/global-setup.ts` fires the cron and waits for the indexer's first run, which backfills the router's whole history into the database and records every strategy's versions, so the pages have devnet's markets and strategies to show; on the recorded fixtures that history is the one recorded, so a run on an empty database draws the same pages.
+`wrangler dev` fires the cron at the real time and ignores a time passed to `/__scheduled`, so the setup waits for a minute on which only the one-minute jobs are due, and every run asks the RPC the same questions.
 
 ### Aviary's devnet tests
 
@@ -867,7 +869,14 @@ Each starts its own `terminal-api` under `wrangler dev`, on a throwaway database
 direnv exec "<main checkout>" pnpm --filter terminal-devnet devnet
 ```
 
+`src/strategy-versions.test.ts` (#117) checks the strategies' instruction lists against the Canary spec's 34 names, each version against the hosted API's slot and hash, and the sniper-tax strategy's callers against its history read through RPC; it waits up to ten minutes for a minute on which every job is due, on port 8826.
 They read devnet, so they never run in CI.
+
+### Aviary's strategy-versions demo
+
+`tests/terminal-e2e/demo/strategy-versions.ts` (#117) deploys Pipeline's `test-strategy-cp` on a local validator running devnet's router, registers it, upgrades it, and checks that the next minute's ProgramData watch records the new version with its slot and hash, that the outbox holds its event and that the strategy page shows both versions; then it upgrades the router and checks it is recorded and flagged.
+Its header has the steps: `demo/build-test-strategy.sh` builds the two versions from a copy of Pipeline's clone at a fresh local address, `scripts/local-validator.sh` loads the router upgradeable by the demo's own key when `ROUTER_UPGRADE_AUTHORITY` names it, and the demo fires the API's cron each minute as Cloudflare would.
+Passed on 2026-11-23: version 2 recorded 55.6 s after its upgrade landed, the router's upgrade 52.4 s after.
 `wrangler dev`'s `workerd` reaches devnet only once LuLu allows its path, which differs in every worktree (`node_modules/.pnpm/@cloudflare+workerd-darwin-64@<version>/node_modules/@cloudflare/workerd-darwin-64/bin/workerd`, unsigned, so LuLu cannot allow it by signature).
 
 Passed on 2026-11-22 with Node 24.4.1 (#113): 36 tests, in 1.4 minutes against devnet and 1.2 minutes on the recorded fixtures.

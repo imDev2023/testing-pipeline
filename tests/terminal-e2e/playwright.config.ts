@@ -13,7 +13,7 @@
 // Every page test runs at 1440, 390 and 360 px wide in the light and the dark theme, and saves a
 // screenshot of each page to screenshots/<width>-<theme>/.
 import { defineConfig, devices } from "@playwright/test";
-import { API, RPC_MODE, WEB } from "./src/target";
+import { API, API_PORT, RPC_MODE, WEB, WEB_PORT } from "./src/target";
 import { TEST_KEEPER_WALLET } from "./src/keeper";
 import { RPC_PORT } from "./src/rpc";
 
@@ -72,7 +72,7 @@ export default defineConfig({
       // The keeper page's wallet is the tests' own, whose heartbeats they can sign (src/keeper.ts).
       command: `node scripts/dev.ts --var KEEPER_WALLET:${TEST_KEEPER_WALLET}`,
       cwd: "../../apps/terminal-api",
-      env: { RPC_URL: rpcUrl, DATABASE_URL },
+      env: { RPC_URL: rpcUrl, DATABASE_URL, TERMINAL_API_PORT: String(API_PORT) },
       url: `${API}/health`,
       // A running local API reads whatever RPC it was started with, so only a devnet run may reuse one.
       reuseExistingServer: !process.env.CI && RPC_MODE === "devnet",
@@ -80,7 +80,7 @@ export default defineConfig({
       stdout: "ignore",
     },
     {
-      command: "pnpm preview",
+      command: `pnpm exec opennextjs-cloudflare build && pnpm exec opennextjs-cloudflare preview --port ${WEB_PORT}`,
       cwd: "../../apps/terminal-web",
       env: { NEXT_PUBLIC_API_URL: API },
       url: WEB,

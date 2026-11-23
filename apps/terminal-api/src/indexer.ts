@@ -21,6 +21,10 @@ export type IndexerStatus = {
   cursor: { signature: string; slot: number } | null;
   reconciledAt: string | null;
   snapshotAt: string | null;
+  /** When every strategy program was last reconciled. */
+  strategiesReconciledAt: string | null;
+  /** When the ProgramData watch last ran. */
+  watchedAt: string | null;
   /** What last failed, by job and kind of error; its detail stays in the logs, since it can name the database's host. */
   lastError: string | null;
   /** The live socket: whether it is open, the rooms with a viewer keeping it so, when it closes, and when and why it last opened or closed. */
@@ -34,6 +38,8 @@ export class Indexer extends DurableObject<Bindings> {
   private core: IndexerCore | null = null;
   private reconciledAt: string | null = null;
   private snapshotAt: string | null = null;
+  private strategiesReconciledAt: string | null = null;
+  private watchedAt: string | null = null;
   private lastError: string | null = null;
 
   private queue: string[] = [];
@@ -166,6 +172,32 @@ export class Indexer extends DurableObject<Bindings> {
     return this.status();
   }
 
+  /** Reconciles every strategy program from its own cursor, storing every call on it. */
+  async reconcileStrategies(version?: string): Promise<IndexerStatus> {
+    this.checkVersion(version);
+    try {
+      await this.indexer().reconcileStrategies();
+      this.strategiesReconciledAt = new Date().toISOString();
+    } catch (e) {
+      this.failed("reconciling the strategy programs", e);
+      throw e;
+    }
+    return this.status();
+  }
+
+  /** The ProgramData watch: a new version of the router or of a strategy is recorded. */
+  async watchPrograms(version?: string): Promise<IndexerStatus> {
+    this.checkVersion(version);
+    try {
+      await this.indexer().watchPrograms();
+      this.watchedAt = new Date().toISOString();
+    } catch (e) {
+      this.failed("watching the programs' deploys", e);
+      throw e;
+    }
+    return this.status();
+  }
+
   /** Drops candles past their retention, once a day. */
   async prune(version?: string): Promise<number> {
     this.checkVersion(version);
@@ -185,6 +217,8 @@ export class Indexer extends DurableObject<Bindings> {
       cursor: cursor && { signature: cursor.signature, slot: cursor.slot },
       reconciledAt: this.reconciledAt,
       snapshotAt: this.snapshotAt,
+      strategiesReconciledAt: this.strategiesReconciledAt,
+      watchedAt: this.watchedAt,
       lastError: this.lastError,
       live: { open: live.open, rooms: live.rooms, closesAt: iso(live.closesAt), changedAt: iso(live.changedAt), reason: live.reason },
     };
@@ -192,7 +226,7 @@ export class Indexer extends DurableObject<Bindings> {
 
   private failed(what: string, e: unknown) {
     // RPC errors never quote the URL (terminal-indexer's rpc.ts); others are named by kind only.
-    const detail = e instanceof RpcError ? e.message : e instanceof Error ? e.name : typeof e;
+    const detail = e instanceof RpcError ? e.message : e instanceof AggregateError ? `${e.errors.length} programs failed (${e.errors.map((x) => (x instanceof RpcError ? x.message : x instanceof Error ? x.name : typeof x)).join("; ")})` : e instanceof Error ? e.name : typeof e;
     this.lastError = `${new Date().toISOString()} ${what}: ${detail}`;
     console.error(`the indexer failed ${what}`, e);
   }

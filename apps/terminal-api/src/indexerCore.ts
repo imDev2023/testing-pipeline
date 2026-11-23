@@ -1,9 +1,10 @@
 // Adapted from Top-pad b833a7b, apps/api/src/indexer.ts (`reconcile`, asking the chain first);
 // owned here since. The indexer's work, kept apart from the `Indexer` Durable Object (./indexer) so
 // it runs and is tested in Node: the router's reconciliation from its cursor, the backfill of its
-// whole history on the first run, and the registry snapshot (docs/spec/pipescope-architecture.md,
-// Indexer). The live socket comes with the live rooms (#118), the strategy programs and the
-// ProgramData watch with strategy versions (#117).
+// whole history on the first run, the registry snapshot, the reconciliation of every strategy
+// program, which stores every call on it, and the ProgramData watch, which records each version of
+// the router and of every strategy (docs/spec/pipescope-architecture.md, Indexer). The live socket
+// comes with the live rooms (#118).
 //
 // Neon's free plan has 100 compute-hours a month, so the database must sleep while devnet is quiet
 // (Data): each run asks the chain first and opens Postgres only when there is something new. What
@@ -13,10 +14,16 @@ import { PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import type { Db } from "terminal-db";
 import {
   blockPositions,
+  combineHandlers,
+  deployHistory,
   historySource,
   IndexBatchError,
   indexTransactions,
   indexRegistry,
+  readDeploySlots,
+  recordVersion,
+  signVersion,
+  strategyCallsHandler,
   pipelineHandler,
   pruneCandles,
   readCursor,
@@ -32,9 +39,9 @@ import {
   type IndexResult,
   type TransactionHandler,
 } from "terminal-indexer";
-import { indexedTransactions, markets, strategies, trades } from "terminal-db";
-import { inArray, isNull } from "drizzle-orm";
-import { CANDLES, LIVE_ROOM_TRADES_MAX, RPC_WAITS } from "./config";
+import { indexedTransactions, markets, programVersions, strategies, trades } from "terminal-db";
+import { eq, inArray, isNull, max, sql } from "drizzle-orm";
+import { CANDLES, LIVE_ROOM_TRADES_MAX, RPC_WAITS, VERSION_TRANSACTION_LOOKS } from "./config";
 import type { LiveEvent } from "./contract";
 import { marketViews, tradeViews } from "./views";
 
@@ -60,6 +67,12 @@ export type ReconcileOutcome = {
   cursor: Cursor | null;
 };
 
+/** What a run of a job that may find nothing did: `quiet` when there was nothing new, so nothing was written. */
+export type StrategiesOutcome = { quiet: boolean; indexed: IndexResult };
+
+/** What a ProgramData watch did: the programs whose version it recorded, and those of them it saw upgraded. */
+export type WatchOutcome = { quiet: boolean; recorded: string[]; upgraded: string[] };
+
 export class IndexerCore {
   private readonly source: HistorySource;
   private readonly handle: TransactionHandler;
@@ -77,6 +90,21 @@ export class IndexerCore {
    * cursor has already moved past the event, so nothing else would name them again.
    */
   private unread = new Set<string>();
+  /** The strategy programs watched, read from Postgres once and again whenever a strategy is indexed; null until then. */
+  private watched: Set<string> | null = null;
+  /** Each strategy program's reconciliation cursor, once this instance knows it (null: it has no history yet). */
+  private strategyCursors = new Map<string, Cursor | null>();
+  /**
+   * Each watched program's ProgramData slot as last seen, which the watch compares, and the slot of
+   * its version in force, which an extension of the program moves the first away from. Both are
+   * read from Postgres once per instance: the ProgramData slot last seen, kept on the version.
+   */
+  private deploySlots: Map<string, bigint> | null = null;
+  private versionSlots = new Map<string, bigint>();
+  /** Versions recorded before the RPC served their transaction, looked for again on each watch. */
+  private unsigned = new Map<string, { programData: string; deploySlot: bigint; looks: number }>();
+  private runningStrategies: Promise<StrategiesOutcome> | null = null;
+  private runningWatch: Promise<WatchOutcome> | null = null;
 
   constructor(private readonly deps: { rpcUrl: string; openDb: OpenDb; source?: HistorySource; handler?: TransactionHandler }) {
     this.source = deps.source ?? historySource(deps.rpcUrl, RPC_WAITS.block);
@@ -142,6 +170,7 @@ export class IndexerCore {
     return this.withDb(async (db) => {
       const added = await indexRegistry(db, registry);
       await this.refresh(db, added.markets);
+      if (added.strategies.length) this.watched = null;
       this.known = {
         strategies: new Set((await db.select({ program: strategies.program }).from(strategies)).map((s) => s.program)),
         markets: new Set((await db.select({ address: markets.address }).from(markets)).map((m) => m.address)),
@@ -244,7 +273,142 @@ export class IndexerCore {
   /** Adds what a reconciliation indexed to what the snapshot knows, so a market just indexed never wakes the database again. */
   private learn(indexed: IndexResult) {
     for (const market of indexed.markets) this.known?.markets.add(market);
-    if (indexed.counts.strategies) this.known = null;
+    if (indexed.counts.strategies) {
+      this.known = null;
+      this.watched = null;
+    }
+  }
+
+  /** The strategy programs watched, read from Postgres when this instance does not know them. */
+  private async watchedStrategies(db?: Db): Promise<Set<string>> {
+    if (this.watched) return this.watched;
+    const read = async (d: Db) => new Set((await d.select({ program: strategies.program }).from(strategies)).map((s) => s.program));
+    this.watched = db ? await read(db) : await this.withDb(read);
+    return this.watched;
+  }
+
+  /**
+   * Reconciles every watched strategy program from its own cursor, so custom actions, bypass swaps
+   * and every other call on it are stored (and any router event in them indexed); the first run of
+   * each backfills its whole history. It asks the chain first, one small request a program, and
+   * opens Postgres only when one has something new. One program that fails never stops the others.
+   */
+  reconcileStrategies(): Promise<StrategiesOutcome> {
+    this.runningStrategies ??= this.reconcileStrategiesOnce().finally(() => (this.runningStrategies = null));
+    return this.runningStrategies;
+  }
+
+  private async reconcileStrategiesOnce(): Promise<StrategiesOutcome> {
+    const watched = new Set(await this.watchedStrategies());
+    const due: string[] = [];
+    for (const program of [...watched].sort()) {
+      const cursor = this.strategyCursors.get(program);
+      if (cursor === undefined || (await this.hasNew(program, cursor))) due.push(program);
+    }
+    const indexed = emptyResult();
+    if (!due.length) return { quiet: true, indexed };
+    const handle = combineHandlers(this.handle, strategyCallsHandler((program) => watched.has(program)));
+    return this.withDb(async (db) => {
+      const failed: { program: string; error: unknown }[] = [];
+      for (const program of due) {
+        try {
+          const known = this.strategyCursors.get(program);
+          const { result, cursor } = await reconcileAccount(db, this.source, handle, program, { cursor: known ?? (await readCursor(db, program)) });
+          this.strategyCursors.set(program, cursor);
+          addResult(indexed, result);
+        } catch (error) {
+          // Where it stopped is in Postgres; the next run reads it from there.
+          this.strategyCursors.delete(program);
+          failed.push({ program, error });
+        }
+      }
+      await this.refresh(db, indexed.markets);
+      this.learn(indexed);
+      if (failed.length) throw new AggregateError(failed.map((f) => f.error), `reconciling ${failed.map((f) => f.program).join(", ")} failed`);
+      return { quiet: false, indexed };
+    });
+  }
+
+  /** Whether the program has a transaction after its cursor; with none yet, whether it has any. */
+  private async hasNew(program: string, cursor: Cursor | null): Promise<boolean> {
+    return cursor ? this.source.hasAfter(program, cursor) : (await this.source.after(program, null, 1)).transactions.length > 0;
+  }
+
+  /**
+   * The ProgramData watch: the router's and every watched strategy's last-deploy slot, in one
+   * `getMultipleAccounts` per 100 programs. A program seen for the first time has its version in
+   * force recorded and its earlier ones backfilled; a changed slot is an upgrade, recorded with its
+   * event in the outbox (flagged, for the router), and an upgraded strategy's markets are read again.
+   * Postgres is opened only when a slot changed or an upgrade's transaction turns up late.
+   */
+  watchPrograms(): Promise<WatchOutcome> {
+    this.runningWatch ??= this.watchOnce().finally(() => (this.runningWatch = null));
+    return this.runningWatch;
+  }
+
+  private async watchOnce(): Promise<WatchOutcome> {
+    if (!this.watched || !this.deploySlots) {
+      await this.withDb(async (db) => {
+        await this.watchedStrategies(db);
+        const newest = await db
+          .select({
+            program: programVersions.program,
+            version: max(programVersions.deploySlot),
+            seen: sql<string>`max(coalesce(${programVersions.programDataSlot}, ${programVersions.deploySlot}))::text`,
+          })
+          .from(programVersions)
+          .groupBy(programVersions.program);
+        this.deploySlots = new Map(newest.map((r) => [r.program, BigInt(r.seen)]));
+        this.versionSlots = new Map(newest.map((r) => [r.program, r.version!]));
+      });
+    }
+    const known = this.deploySlots!;
+    const strategyPrograms = this.watched!;
+    const slots = await readDeploySlots(this.deps.rpcUrl, [ROUTER, ...strategyPrograms]);
+    const changed = [...slots].flatMap(([program, s]) => (s && known.get(program) !== s.deploySlot ? [{ program, programData: s.programData, seenSlot: s.deploySlot }] : []));
+
+    // Upgrades whose transaction was not served yet: asked of the chain first, written only once found.
+    const signed: { program: string; programData: string; deploySlot: bigint }[] = [];
+    for (const [program, u] of this.unsigned) {
+      if ((await deployHistory(this.source, u.programData)).some((d) => d.deploySlot === u.deploySlot)) signed.push({ program, ...u });
+      else if (++u.looks >= VERSION_TRANSACTION_LOOKS) this.unsigned.delete(program);
+    }
+
+    const outcome: WatchOutcome = { quiet: true, recorded: [], upgraded: [] };
+    if (!changed.length && !signed.length) return outcome;
+    return this.withDb(async (db) => {
+      const failed: { program: string; error: unknown }[] = [];
+      for (const { program, programData, seenSlot } of changed) {
+        const role = program === ROUTER ? "router" : "strategy";
+        const previousSlot = this.versionSlots.get(program) ?? null;
+        try {
+          const recorded = await recordVersion(db, { rpcUrl: this.deps.rpcUrl, source: this.source }, { program, role, programData, previousSlot });
+          // Not settled (the slot's transaction not served, the code unchanged): asked again on the next watch.
+          if (recorded && !recorded.settled) continue;
+          known.set(program, seenSlot);
+          // An extension moved the slot and kept the code: no version to record.
+          if (!recorded || recorded.deploySlot === previousSlot) continue;
+          this.versionSlots.set(program, recorded.deploySlot);
+          outcome.recorded.push(program);
+          if (!recorded.signed) this.unsigned.set(program, { programData, deploySlot: recorded.deploySlot, looks: 0 });
+          else this.unsigned.delete(program);
+          if (previousSlot === null) continue;
+          outcome.upgraded.push(program);
+          if (role === "strategy") {
+            const own = await db.select({ address: markets.address }).from(markets).where(eq(markets.strategyProgram, program));
+            await this.refresh(db, own.map((m) => m.address));
+          }
+        } catch (error) {
+          failed.push({ program, error });
+        }
+      }
+      for (const s of signed) {
+        if (await signVersion(db, this.source, s)) this.unsigned.delete(s.program);
+      }
+      outcome.quiet = outcome.recorded.length === 0;
+      if (failed.length) throw new AggregateError(failed.map((f) => f.error), `recording versions of ${failed.map((f) => f.program).join(", ")} failed`);
+      return outcome;
+    });
   }
 
   private async withDb<T>(work: (db: Db) => Promise<T>): Promise<T> {
