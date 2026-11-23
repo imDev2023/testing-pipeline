@@ -8,7 +8,7 @@ import { HTTPException } from "hono/http-exception";
 import { decodeRouterEvents, rpcCall, type RawTransaction } from "terminal-indexer";
 import type { trades } from "terminal-db";
 import { FAST_PATH_CONFIRMATION_POLL_MS, FAST_PATH_WAIT_MS, RPC_WAITS } from "../config";
-import { decodeFailure } from "./failure";
+import { continued, decodeFailure } from "./failure";
 import { Refused } from "./quote";
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -44,7 +44,7 @@ export async function awaitTrade(
       const raw = await readBack(rpcUrl, signature);
       if (status.err !== null || raw.meta?.err) {
         const failure = decodeFailure(status.err ?? raw.meta?.err, raw.meta?.logMessages ?? [], { strategy: strategy ?? "" });
-        throw new Refused({ ...failure, sentence: `The swap failed on chain: ${failure.sentence}` }, raw.meta?.logMessages ?? []);
+        throw new Refused({ ...failure, sentence: `The swap failed on chain: ${continued(failure.sentence)}` }, raw.meta?.logMessages ?? []);
       }
       return raw;
     }

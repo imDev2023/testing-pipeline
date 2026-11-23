@@ -2,7 +2,7 @@
 // The Playwright test wallet (PIPESCOPE-94): a Wallet Standard wallet registered in the page under test
 // before any app code runs, so the page sees an ordinary installed Solana wallet. It exists only in
 // this test suite and is injected by Playwright, so no build of the web app ever contains it (the
-// production build is checked for it, src/build.spec.ts). The key stays in Node and signs through an
+// production build is checked for it by apps/terminal-web/scripts/check-no-test-wallet.ts). The key stays in Node and signs through an
 // exposed function, so a test decides per request whether the "user" approves or declines.
 //
 // The key is the devnet test trader's, ~/.config/testing-pipeline/devnet/e2e-trader.json, and only

@@ -93,7 +93,7 @@ describe("the trade fast path, POST /v1/trades (PIPESCOPE-33)", () => {
       const response = await app.request("/v1/trades", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "192.0.2.5" }, body: JSON.stringify({ signature: SIGNATURE }) }, env, ctx);
       await settle();
       expect(response.status).toBe(422);
-      expect(Refusal.parse(await response.json())).toMatchObject({ error: "The swap failed on chain: Your wallet holds too little for this swap.", failure: { class: "too_little" }, logs: failed.meta.logMessages });
+      expect(Refusal.parse(await response.json())).toMatchObject({ error: "The swap failed on chain: your wallet holds too little for this swap.", failure: { class: "too_little" }, logs: failed.meta.logMessages });
     } finally {
       await chain.close();
     }

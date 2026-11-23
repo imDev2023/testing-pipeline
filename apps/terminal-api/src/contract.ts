@@ -361,7 +361,7 @@ export type Fees = z.infer<typeof Fees>;
  * the program that raised it, and the raw error to show beneath.
  */
 export const Failure = z.object({
-  class: z.enum(["too_little", "strategy_refused", "router_refused", "token_program_refused", "other_refused", "cannot_read_state", "crash", "out_of_compute", "unavailable"]),
+  class: z.enum(["too_little", "strategy_refused", "router_refused", "token_program_refused", "other_refused", "cannot_read_state", "crash", "out_of_compute", "unavailable", "too_large"]),
   sentence: z.string(),
   name: z.string().nullable(),
   number: z.number().int().nullable(),

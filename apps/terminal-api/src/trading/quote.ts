@@ -74,7 +74,15 @@ export async function quoteTyped(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFeeV
       },
     };
   } catch (e) {
-    if (e instanceof SimulationError) throw new Refused(decodeFailure(e.err, e.logs, { strategy: market.view.strategyProgram }), e.logs);
+    if (e instanceof SimulationError) {
+      const failure = decodeFailure(e.err, e.logs, { strategy: market.view.strategyProgram });
+      // The fee wallet pays for a quote's simulation, so a fee payer that cannot pay is Aviary's, never the trader's.
+      if (failure.class === "too_little" && failure.program === null) {
+        console.error("the fee wallet cannot pay for quotes' simulations: fund it", failure.raw);
+        throw new Refused({ ...failure, class: "unavailable", sentence: "Aviary cannot quote right now: the wallet that pays for its quotes' simulations holds too little SOL. Try again later." }, e.logs);
+      }
+      throw new Refused(failure, e.logs);
+    }
     throw e;
   }
 }

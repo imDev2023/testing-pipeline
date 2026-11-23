@@ -17,23 +17,38 @@ const bytesOf = (data: readonly [string, string]) => new Uint8Array(base64.encod
 const DECIMALS_OFFSET = 44;
 /** Token-2022 lays extensions after the 165 bytes of an account, its account type, then type-length-value entries. */
 const EXTENSIONS_START = 166;
-const TRANSFER_HOOK = 14;
+/**
+ * The Token-2022 extensions that make a mint other than plain (PIPESCOPE-120): a transfer moves less
+ * than was sent, or needs accounts Aviary does not resolve yet, or may be refused outright. A quote
+ * and its review promise exactly what leaves the wallet and what arrives, so such a mint gets none.
+ */
+const NOT_PLAIN: ReadonlyMap<number, string> = new Map([
+  [1, "a transfer fee, so less arrives than is sent"],
+  [9, "no transfers at all"],
+  [14, "a transfer hook, whose accounts Aviary does not resolve yet"],
+  [26, "a pause switch that can refuse every transfer"],
+]);
 
-/** Whether a Token-2022 mint carries the transfer-hook extension. */
-export function hasTransferHook(data: Uint8Array): boolean {
+/** The Token-2022 extension types a mint carries, read from its type-length-value entries. */
+export function extensionTypes(data: Uint8Array): number[] {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const types: number[] = [];
   for (let at = EXTENSIONS_START; at + 4 <= data.length; ) {
-    const type = view.getUint16(at, true);
-    const length = view.getUint16(at + 2, true);
-    if (type === TRANSFER_HOOK) return true;
-    at += 4 + length;
+    types.push(view.getUint16(at, true));
+    at += 4 + view.getUint16(at + 2, true);
   }
-  return false;
+  return types;
+}
+
+/** Why a mint is not plain, or null when it is. */
+export function notPlain(data: Uint8Array): string | null {
+  const found = extensionTypes(data).find((type) => NOT_PLAIN.has(type));
+  return found === undefined ? null : NOT_PLAIN.get(found)!;
 }
 
 const notTradable = (message: string) => new HTTPException(422, { message });
 
-/** Reads `market` and its mints; refuses a market that is no market, a mint not read, and a mint with a transfer hook (#122). */
+/** Reads `market` and its mints; refuses a market that is no market, a mint not read, and a mint that is not plain (PIPESCOPE-120). */
 export async function readTradeMarket(rpc: Rpc<SolanaRpcApi>, marketAddress: string): Promise<TradeMarket> {
   const at = address(marketAddress);
   const [account] = (await rpc.getMultipleAccounts([at], { encoding: "base64", commitment: "confirmed" }).send()).value;
@@ -45,9 +60,8 @@ export async function readTradeMarket(rpc: Rpc<SolanaRpcApi>, marketAddress: str
     const held = accounts[i];
     if (!held || (held.owner !== TOKEN_PROGRAM_ADDRESS && held.owner !== TOKEN_2022_PROGRAM_ADDRESS)) throw notTradable(`This market's mint ${mint} could not be read as a token, so it cannot be traded.`);
     const data = bytesOf(held.data);
-    if (held.owner === TOKEN_2022_PROGRAM_ADDRESS && hasTransferHook(data)) {
-      throw notTradable(`This market's mint ${mint} has a transfer hook, whose accounts Aviary does not resolve yet, so it quotes and builds no swap of it.`);
-    }
+    const why = held.owner === TOKEN_2022_PROGRAM_ADDRESS ? notPlain(data) : null;
+    if (why) throw notTradable(`This market's mint ${mint} has ${why}, so Aviary quotes and builds no swap of it.`);
     return { address: mint, tokenProgram: held.owner, decimals: data[DECIMALS_OFFSET]! };
   });
   return { address: at, market, view: marketViewFromMarket(at, market, mints.map((m) => m.tokenProgram)), mints };

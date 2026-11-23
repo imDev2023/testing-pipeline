@@ -7,12 +7,14 @@
 // in and out is plain SOL. That exact transaction is then simulated with the trader as fee payer,
 // signature checks off and the blockhash replaced, and returned with its outcome, compute units and
 // what it would change in the wallet. Nothing here signs anything: Aviary holds no keys.
-import { feeAccountPda, initFeeAccount, NATIVE_MINT_ADDRESS, swap, TradeMode, TOKEN_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
+import { decodeMarketLookupTable, feeAccountPda, initFeeAccount, lookupTableRecordPda, NATIVE_MINT_ADDRESS, swap, TradeMode, TOKEN_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { getTransferSolInstruction } from "@solana-program/system";
 import { findAssociatedTokenPda, getCloseAccountInstruction, getCreateAssociatedTokenIdempotentInstruction, getSyncNativeInstruction } from "@solana-program/token";
 import {
   appendTransactionMessageInstructions,
   compileTransaction,
+  compressTransactionMessageUsingAddressLookupTables,
+  getAddressDecoder,
   createNoopSigner,
   createTransactionMessage,
   getBase64Decoder,
@@ -23,6 +25,7 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
   type Address,
   type Base64EncodedWireTransaction,
+  type Blockhash,
   type Instruction,
   type ReadonlyUint8Array,
   type Rpc,
@@ -34,7 +37,7 @@ import type { IntegratorFeeVar } from "../env";
 import { minimumReceived } from "./amounts";
 import { decodeFailure } from "./failure";
 import type { TradeMarket } from "./market";
-import { COMMITMENT, quoteTyped } from "./quote";
+import { COMMITMENT, quoteTyped, Refused } from "./quote";
 
 const base64 = getBase64Encoder();
 /** A token account's amount: a u64 after its mint and owner. */
@@ -103,17 +106,16 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
   // SOL in and out is plain SOL: the wrapped-SOL account is closed back into the wallet.
   if (paysSol || receivesSol) instructions.push(getCloseAccountInstruction({ account: paysSol ? traderInput : traderOutput, destination: trader, owner: signer }));
 
-  const { value: blockhash } = await rpc.getLatestBlockhash({ commitment: COMMITMENT }).send();
-  const compiled = compileTransaction(
-    pipe(
-      createTransactionMessage({ version: "legacy" }),
-      (m) => setTransactionMessageFeePayerSigner(signer, m),
-      (m) => setTransactionMessageLifetimeUsingBlockhash(blockhash, m),
-      (m) => appendTransactionMessageInstructions(instructions, m),
-    ),
-  );
-  const wire = getBase64EncodedWireTransaction(compiled);
-  const simulation = await simulate(rpc, wire, compiled.messageBytes, {
+  const [{ value: lifetime }, table] = await Promise.all([rpc.getLatestBlockhash({ commitment: COMMITMENT }).send(), marketLookupTable(rpc, market.address)]);
+  let fitted: Fitted;
+  try {
+    fitted = fitTransaction(instructions, trader, lifetime, table);
+  } catch (e) {
+    if (e instanceof TooLarge) throw new Refused({ class: "too_large", sentence: e.message, name: null, number: null, message: null, program: null, raw: e.message });
+    throw e;
+  }
+  const { wire, messageBytes } = fitted;
+  const simulation = await simulate(rpc, wire, messageBytes, {
     strategy: market.view.strategyProgram,
     watched,
     before,
@@ -129,6 +131,71 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
     if (short) simulation.failure = { ...simulation.failure, class: "too_little", sentence: "Your wallet holds too little for this swap." };
   }
   return { quote, slippage_bps: input.slippageBps, min_amount_out: String(minAmountOut), transaction: simulation.ok ? wire : null, simulation };
+}
+
+/** The most bytes one transaction may be on the wire. */
+const TRANSACTION_MAX_BYTES = 1232;
+
+/** A swap that does not fit in one transaction. */
+export class TooLarge extends Error {}
+
+export type LookupTable = { address: Address; addresses: readonly Address[] };
+type Fitted = { wire: Base64EncodedWireTransaction; messageBytes: ReadonlyUint8Array; version: "legacy" | 0 };
+
+/**
+ * The swap as one transaction, paid by the trader: a legacy transaction when it fits, as Pipeline's own
+ * builder makes it, else a version 0 one shortened by the market's recorded address lookup table
+ * (Pipeline 0.3's `record_lookup_table`); a swap that fits neither way is refused.
+ */
+export function fitTransaction(instructions: readonly Instruction[], trader: Address, lifetime: { blockhash: Blockhash; lastValidBlockHeight: bigint }, table: LookupTable | null): Fitted {
+  const signer = createNoopSigner(trader);
+  const legacyMessage = () =>
+    pipe(
+      createTransactionMessage({ version: "legacy" }),
+      (m) => setTransactionMessageFeePayerSigner(signer, m),
+      (m) => setTransactionMessageLifetimeUsingBlockhash(lifetime, m),
+      (m) => appendTransactionMessageInstructions(instructions, m),
+    );
+  const versionedMessage = () =>
+    pipe(
+      createTransactionMessage({ version: 0 }),
+      (m) => setTransactionMessageFeePayerSigner(signer, m),
+      (m) => setTransactionMessageLifetimeUsingBlockhash(lifetime, m),
+      (m) => appendTransactionMessageInstructions(instructions, m),
+    );
+  const fits = (compiled: ReturnType<typeof compileTransaction>) => base64.encode(getBase64EncodedWireTransaction(compiled)).length <= TRANSACTION_MAX_BYTES;
+  // Too many accounts can fail to compile at all; that is too large as well.
+  const attempt = (make: () => ReturnType<typeof compileTransaction>) => {
+    try {
+      const compiled = make();
+      return fits(compiled) ? compiled : null;
+    } catch {
+      return null;
+    }
+  };
+  const legacy = attempt(() => compileTransaction(legacyMessage()));
+  if (legacy) return { wire: getBase64EncodedWireTransaction(legacy), messageBytes: legacy.messageBytes, version: "legacy" };
+  if (!table) throw new TooLarge("This swap needs more accounts than one transaction can carry, and its market has recorded no address lookup table to shorten it.");
+  const shortened = attempt(() => compileTransaction(compressTransactionMessageUsingAddressLookupTables(versionedMessage(), { [table.address]: [...table.addresses] })));
+  if (shortened) return { wire: getBase64EncodedWireTransaction(shortened), messageBytes: shortened.messageBytes, version: 0 };
+  throw new TooLarge("This swap needs more accounts than one transaction can carry, even with its market's address lookup table.");
+}
+
+/** An address lookup table's addresses follow its 56-byte header, 32 bytes each. */
+const LOOKUP_TABLE_HEADER = 56;
+
+/** The market's recorded address lookup table and its addresses, or null when it has none. */
+async function marketLookupTable(rpc: Rpc<SolanaRpcApi>, market: Address): Promise<LookupTable | null> {
+  const [record] = (await rpc.getMultipleAccounts([await lookupTableRecordPda(market)], { encoding: "base64", commitment: COMMITMENT }).send()).value;
+  const decoded = record ? decodeMarketLookupTable(new Uint8Array(base64.encode(record.data[0]))) : null;
+  if (!decoded) return null;
+  const [tableAccount] = (await rpc.getMultipleAccounts([decoded.table], { encoding: "base64", commitment: COMMITMENT }).send()).value;
+  if (!tableAccount) return null;
+  const bytes = new Uint8Array(base64.encode(tableAccount.data[0]));
+  const decoder = getAddressDecoder();
+  const addresses: Address[] = [];
+  for (let at = LOOKUP_TABLE_HEADER; at + 32 <= bytes.length; at += 32) addresses.push(decoder.decode(bytes.subarray(at, at + 32)));
+  return { address: decoded.table, addresses };
 }
 
 type Held = { lamports: bigint; data: readonly [string, string] } | null;
@@ -191,7 +258,9 @@ type Watch = {
 
 async function simulate(rpc: Rpc<SolanaRpcApi>, wire: Base64EncodedWireTransaction, messageBytes: ReadonlyUint8Array, watch: Watch): Promise<Simulation> {
   const message = getBase64Decoder().decode(messageBytes) as TransactionMessageBytesBase64;
-  const [{ value }, fee] = await Promise.all([
+  let answers;
+  try {
+    answers = await Promise.all([
     rpc
       .simulateTransaction(wire, {
         encoding: "base64",
@@ -203,6 +272,12 @@ async function simulate(rpc: Rpc<SolanaRpcApi>, wire: Base64EncodedWireTransacti
       .send(),
     rpc.getFeeForMessage(message, { commitment: COMMITMENT }).send(),
   ]);
+  } catch (e) {
+    // The RPC refused the simulation itself (the transaction malformed, or the RPC unavailable): told plainly, never with its URL.
+    const raw = (e instanceof Error ? e.message : String(e)).replace(/https?:\/\/\S+/g, "the RPC");
+    throw new Refused({ class: "unavailable", sentence: "The swap could not be simulated, so there is nothing to sign. Try again in a moment.", name: null, number: null, message: null, program: null, raw });
+  }
+  const [{ value }, fee] = answers;
   const logs = [...(value.logs ?? [])];
   const networkFee = fee.value ?? 0n;
   const units = value.unitsConsumed === undefined ? null : Number(value.unitsConsumed);

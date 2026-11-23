@@ -2331,6 +2331,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
 
+### PIPESCOPE-120: Which mints the trade box quotes
+
+- Question: Which mints does the trade box quote and build swaps of?
+- Answer: Plain mints only: a Token-2022 mint with a transfer fee, a transfer hook, no transfers or a pause switch gets no quote, since the box promises exactly what leaves the wallet and what arrives; hooked mints come with their own ticket.
+- Alternatives: Quoting every mint and letting the simulation show what really moves, which leaves the breakdown's numbers wrong for transfer-fee mints.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims

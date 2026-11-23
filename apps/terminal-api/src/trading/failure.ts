@@ -46,6 +46,9 @@ const between = (text: string, start: string, end: string): string | null => {
 const programWords = (address: string | null) => (address ? `Program ${address.slice(0, 4)}...${address.slice(-4)}` : "A program");
 const quoted = (name: string, message: string | null) => (message ? `${name}, "${message}"` : name);
 
+/** A decoded sentence continued after a colon: "The swap failed on chain: the strategy refused it: ...". */
+export const continued = (sentence: string) => (/^(The|It|Your) /.test(sentence) ? sentence[0]!.toLowerCase() + sentence.slice(1) : sentence);
+
 export function decodeFailure(error: unknown, logs: readonly string[], { strategy }: { strategy: string }): Failure {
   // Kit's RPC reads every number in an error as a bigint, which JSON has no word for.
   const raw = typeof error === "string" ? error : JSON.stringify(error, (_, v: unknown) => (typeof v === "bigint" ? Number(v) : v));
@@ -90,7 +93,7 @@ export function decodeFailure(error: unknown, logs: readonly string[], { strateg
   if (outOfCompute) return { ...named, class: "out_of_compute", sentence: "It ran out of compute before it finished." };
   if (crashed) {
     const who = program === strategy ? "The strategy" : programWords(program);
-    return { ...named, class: "crash", sentence: `${who} crashed instead of answering: ${(panic ?? reason ?? raw).replace(/\.$/, "")}.` };
+    return { ...named, class: "crash", sentence: `${who} crashed instead of answering: ${(panic || reason || raw).replace(/\.$/, "")}.` };
   }
   if (program === strategy && number !== null && CANNOT_READ.has(number)) return { ...named, class: "cannot_read_state", sentence: `The strategy cannot read this market's state: ${words}.` };
   if (program === strategy) return { ...named, class: "strategy_refused", sentence: `The strategy refused it: ${words}.` };

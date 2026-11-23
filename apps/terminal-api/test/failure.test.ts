@@ -94,3 +94,9 @@ describe("a failure decoded from a simulation's error and logs (docs/spec/pipesc
     expect(failure.sentence).toBe("Program ATok...8knL refused it: invalid account data for instruction.");
   });
 });
+
+describe("a crash no log line explains", () => {
+  it("falls back to the raw error rather than ending the sentence empty", () => {
+    expect(decodeFailure({ InstructionError: [3, "ProgramFailedToComplete"] }, [], { strategy: STRATEGY }).sentence).toBe('A program crashed instead of answering: {"InstructionError":[3,"ProgramFailedToComplete"]}.');
+  });
+});

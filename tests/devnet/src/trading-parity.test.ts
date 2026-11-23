@@ -60,7 +60,7 @@ function routerInstruction(base64: string) {
 }
 
 describe.runIf(ready)("the trading path matches Pipeline's hosted API (PIPESCOPE-93)", () => {
-  const api = new LocalApi(8834);
+  const api = new LocalApi(8846);
   beforeAll(() => api.start());
   afterAll(() => api.dispose());
 

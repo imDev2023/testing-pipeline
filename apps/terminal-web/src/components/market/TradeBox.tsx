@@ -63,8 +63,19 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
   const slippageChoice: number | "other" = slippageTyped.trim() === "" ? slippagePreset : "other";
   /** The answer to the latest quote asked, under the key of what was asked; any other key is still loading. */
   const [quoteFor, setQuoteFor] = useState<{ key: string; state: QuoteState } | null>(null);
-  const [review, setReview] = useState<Review | null>(null);
+  const [reviewState, setReviewState] = useState<{ trader: string | null; review: Review } | null>(null);
   const [fees, setFees] = useState<Fees | null>(null);
+  const trader = account?.address ?? null;
+  const review: Review | null = reviewState && reviewState.trader === trader ? reviewState.review : null;
+  const setReview = useCallback(
+    (next: Review | null | ((current: Review | null) => Review | null)) =>
+      setReviewState((current) => {
+        const before = current && current.trader === trader ? current.review : null;
+        const value = typeof next === "function" ? next(before) : next;
+        return value === null ? null : { trader, review: value };
+      }),
+    [trader],
+  );
   /** The balances read, under the wallet they were read for: another wallet's are never shown. */
   const [balancesFor, setBalancesFor] = useState<{ trader: string; balances: Record<string, bigint> } | null>(null);
   const [balancesAsked, setBalancesAsked] = useState(0);
@@ -83,7 +94,6 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
   }, []);
 
   // The connected wallet's balance in each of the market's mints, again after each swap.
-  const trader = account?.address ?? null;
   useEffect(() => {
     if (!trader) return;
     const controller = new AbortController();
@@ -125,6 +135,12 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
     generation.current++;
     setReview(null);
   };
+  // A review is built for one wallet and shown only to it, so another wallet is never asked to sign
+  // the first one's swap; a build still on its way for the first wallet is thrown away.
+  useEffect(() => {
+    generation.current++;
+  }, [trader]);
+
   const choosePay = (mint: string) => {
     leaveReview();
     if (mint === receive) setReceive(pay);
@@ -167,7 +183,7 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
         if (mine === generation.current) setReview({ status: "error", message: failureOf(e) });
       }
     },
-    [trader, value, slippageBps, market.address, pay, receive],
+    [trader, value, slippageBps, market.address, pay, receive, setReview],
   );
 
   const settle = useCallback(
@@ -184,7 +200,7 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
       }
       setBalancesAsked((n) => n + 1);
     },
-    [market.address, onTraded],
+    [market.address, onTraded, setReview],
   );
 
   const symbolOfPay = label(pay);
