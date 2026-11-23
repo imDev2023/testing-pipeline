@@ -34,7 +34,6 @@ use tax_amm::config::MAX_RECIPIENTS;
 use tax_amm::events::MarketCreated;
 use tax_amm::{InitParams, StrategyError, TaxMarket};
 
-pub use pipeline_check::write_token_account;
 pub use pipeline_client::interface::{QuoteResult, ResolveRequest, ResolveResult, TradeRequest};
 
 pub const SOL: u64 = 1_000_000_000;
@@ -1461,4 +1460,82 @@ pub fn create_token_account_idempotent(
             AccountMeta::new_readonly(*token_program, false),
         ],
     )
+}
+
+/// Writes `owner`'s associated token account for `mint` holding `amount` straight into the VM,
+/// as `pipeline_check::write_token_account` does, but for a Token-2022 mint with the immutable
+/// owner extension too, as every real Token-2022 associated token account has it (the
+/// associated token program initialises it before `InitializeAccount3`). The containment hook
+/// refuses to deliver a contained token into an account without it (`HOOK-47`), so an account
+/// written without it would make the tests see a refusal no real holder meets. Canary's own
+/// writer (`crates/canary/src/token_account.rs`) does the same in its own workspace.
+pub fn write_token_account(
+    svm: &mut LiteSVM,
+    mint: &Pubkey,
+    token_program: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+) -> Result<Pubkey, String> {
+    use spl_token_2022_interface::extension::account_len::{
+        try_calculate_account_len_from_mint_data, try_for_each_required_init_account_extension,
+    };
+    use spl_token_2022_interface::extension::{
+        BaseStateWithExtensions, BaseStateWithExtensionsMut, ExtensionType, PodStateWithExtensions,
+        StateWithExtensions, StateWithExtensionsMut,
+    };
+    use spl_token_2022_interface::pod::PodMint;
+    use spl_token_2022_interface::state::Account as TokenAccount;
+
+    let address = pipeline_check::write_token_account(svm, mint, token_program, owner, amount)?;
+    if *token_program != TOKEN_2022 {
+        return Ok(address);
+    }
+    fn text(e: impl std::fmt::Display) -> String {
+        e.to_string()
+    }
+    let written = svm
+        .get_account(&address)
+        .ok_or("token account not written")?;
+    let mint_data = svm.get_account(mint).ok_or("mint does not exist")?.data;
+    let len =
+        try_calculate_account_len_from_mint_data(&mint_data, &[ExtensionType::ImmutableOwner])
+            .map_err(text)?;
+    let mut required = vec![];
+    let pod = PodStateWithExtensions::<PodMint>::unpack(&mint_data).map_err(text)?;
+    try_for_each_required_init_account_extension(pod.get_tlv_data(), |extension| {
+        required.push(extension);
+        Ok(())
+    })
+    .map_err(text)?;
+    let base = StateWithExtensions::<TokenAccount>::unpack(&written.data)
+        .map_err(text)?
+        .base;
+    let mut data = vec![0u8; len];
+    let mut state =
+        StateWithExtensionsMut::<TokenAccount>::unpack_uninitialized(&mut data).map_err(text)?;
+    state
+        .init_account_extension_from_type(ExtensionType::ImmutableOwner)
+        .map_err(text)?;
+    for extension in required {
+        state
+            .init_account_extension_from_type(extension)
+            .map_err(text)?;
+    }
+    state.base = base;
+    state.pack_base();
+    state.init_account_type().map_err(text)?;
+    let lamports = written.lamports - svm.minimum_balance_for_rent_exemption(written.data.len())
+        + svm.minimum_balance_for_rent_exemption(len);
+    svm.set_account(
+        address,
+        solana_account::Account {
+            lamports,
+            data,
+            owner: *token_program,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(address)
 }

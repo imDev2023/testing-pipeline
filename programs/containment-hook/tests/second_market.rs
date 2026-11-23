@@ -2,9 +2,9 @@
 //! refuses"): anyone may create one, on the tax AMM or on another strategy, since neither
 //! knows about containment, but the hook refuses every transfer that would fund it (a seed,
 //! a deposit, a sell into it, a transfer into its vault) and every transfer that would pay
-//! out of it, so it can never trade the token. The one way the token reaches its vault is
-//! as a gift: a home-market buy may deliver to any account, a vault included, and what lands
-//! there can only be sold back into the home market.
+//! out of it, so it can never trade the token. A home-market buy cannot deliver into its
+//! vault either, since a strategy creates its vaults without the immutable owner extension
+//! (`HOOK-47`), and a balance that reached one before that rule could still not be traded.
 
 mod support;
 
@@ -143,7 +143,7 @@ fn paying_out_of_a_market_on_another_strategy_is_refused() {
 }
 
 #[test]
-fn a_buy_delivered_into_a_second_markets_vault_is_a_gift_that_market_cannot_trade() {
+fn a_buy_delivered_into_a_second_markets_vault_is_refused_and_a_balance_there_is_never_traded() {
     let mut env = hook_env();
     let launched = launch(&mut env);
     let (market, _) = second_tax_market(&mut env, &launched);
@@ -152,20 +152,24 @@ fn a_buy_delivered_into_a_second_markets_vault_is_a_gift_that_market_cannot_trad
         output_to: Some(market.vaults[CONTAINED]),
         ..Swap::default()
     };
-    // The hook sees a transfer out of the home vault, which it allows.
-    swap(
-        &mut env,
-        &launched,
-        &buyer,
-        (QUOTE, CONTAINED),
-        SOL,
-        &into_its_vault,
-    )
-    .unwrap();
-    let gift = env.balance(&market.vaults[CONTAINED]);
-    assert!(gift > 0);
+    // A transfer out of the home vault, but into an account whose owner could change.
+    assert_hook_refused(
+        swap(
+            &mut env,
+            &launched,
+            &buyer,
+            (QUOTE, CONTAINED),
+            SOL,
+            &into_its_vault,
+        ),
+        HookError::DestinationOwnerCanChange,
+    );
+    assert_eq!(env.balance(&market.vaults[CONTAINED]), 0);
 
-    // Even open, with the gift as its reserve, the second market can trade it with nobody.
+    // A balance that reached the vault before the rule, written here, and the market opened
+    // with it as its reserve: the second market can still trade it with nobody.
+    let gift = AMOUNT;
+    set_balance(&mut env, &market.vaults[CONTAINED], gift);
     let mut state = env.tax_market(&market.market_state);
     state.status = MarketStatus::Open;
     state.reserves = [gift, AMOUNT];

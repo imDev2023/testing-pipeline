@@ -1919,7 +1919,10 @@ fn sos_h002_balances_whose_owner_can_change_are_classified() {
     let launched = launch(&mut env);
     let wallet = Keypair::new().pubkey();
     let keypair_account = second_token_account(&mut env, &wallet, &launched.mint);
-    mint_to(&mut env, &launched.mint, &keypair_account, 7).unwrap();
+    // Seven tokens in it, written directly: the launch has revoked the mint authority.
+    edit_account(&mut env, &keypair_account, |account| {
+        account.data[64..72].copy_from_slice(&7u64.to_le_bytes());
+    });
     let empty_keypair_account =
         second_token_account(&mut env, &Keypair::new().pubkey(), &launched.mint);
     let fees = fee_account(&launched.market, &launched.mint);

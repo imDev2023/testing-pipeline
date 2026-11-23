@@ -11,12 +11,49 @@ use pipeline_check::{check_market, CheckOptions, Status};
 use pipeline_client::Pubkey;
 use tax_amm::InitParams;
 
+/// The checks whose buys go into `pipeline-check`'s own trader accounts, which it writes
+/// without the immutable owner extension every real Token-2022 associated token account has:
+/// on a market with a contained mint the containment hook refuses those buys
+/// (`DestinationOwnerCanChange`, `HOOK-47`), so these fail there until Pipeline's checker
+/// writes the extension.
+const KNOWN_ON_CONTAINED: [&str; 2] = ["quote_matches_swap", "round_trip"];
+
 fn check(env: &Env, market: &Market, options: &CheckOptions, what: &str) {
+    check_with_known(env, market, options, what, &[]);
+}
+
+/// [`check`] on a market with a contained mint: the [`KNOWN_ON_CONTAINED`] checks must fail,
+/// and only with the containment hook's `DestinationOwnerCanChange` (its error 6023).
+fn check_contained(env: &Env, market: &Market, options: &CheckOptions, what: &str) {
+    check_with_known(env, market, options, what, &KNOWN_ON_CONTAINED);
+}
+
+fn check_with_known(
+    env: &Env,
+    market: &Market,
+    options: &CheckOptions,
+    what: &str,
+    known: &[&str],
+) {
     let report = check_market(&env.svm, market.market, options);
     println!("{what}:\n{}", report.to_text());
+    for id in known {
+        let check = report.checks.iter().find(|check| check.id == *id).unwrap();
+        assert!(
+            matches!(check.status, Status::Fail | Status::Warn),
+            "{what}: {id} passed, so Pipeline's checker may now write the immutable owner \
+             extension and HOOK-47's known failures can go"
+        );
+        assert!(
+            check.message.contains("Custom(6023)"),
+            "{what}: {id} failed for another reason: {}",
+            check.message
+        );
+    }
     let worse: Vec<String> = report
         .checks
         .iter()
+        .filter(|check| !known.contains(&check.id.as_str()))
         .filter(|check| matches!(check.status, Status::Fail | Status::Warn))
         .map(|check| format!("{} ({:?}): {}", check.id, check.status, check.message))
         .collect();
@@ -30,7 +67,7 @@ fn check(env: &Env, market: &Market, options: &CheckOptions, what: &str) {
     for check in report
         .checks
         .iter()
-        .filter(|check| check.id != "exact_out_refund")
+        .filter(|check| check.id != "exact_out_refund" && !known.contains(&check.id.as_str()))
     {
         assert_eq!(check.status, Status::Pass, "{what}: {}", check.id);
     }
@@ -88,7 +125,7 @@ fn a_seeded_market_with_a_contained_mint_passes_every_check() {
     // market.
     let mut env = Env::new();
     let market = env.contained_market(1, [100_000_000_000, 200_000_000_000]);
-    check(
+    check_contained(
         &env,
         &market,
         &CheckOptions::default(),
