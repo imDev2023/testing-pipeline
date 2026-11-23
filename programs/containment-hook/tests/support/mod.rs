@@ -65,17 +65,6 @@ pub fn cp_strategy_id() -> Pubkey {
         .unwrap()
 }
 
-fn cp_strategy_so() -> Vec<u8> {
-    let path =
-        crate_dir().join("../../fixtures/pipeline/programs/target/deploy/test_strategy_cp.so");
-    std::fs::read(&path).unwrap_or_else(|e| {
-        panic!(
-            "{}: {e}. Run `scripts/fetch-pipeline.sh` first.",
-            path.display()
-        )
-    })
-}
-
 pub fn config_pda(mint: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[b"config", mint.as_ref()], &hook_id()).0
 }
@@ -256,14 +245,29 @@ pub fn assert_hook_refused<T: std::fmt::Debug>(result: Result<T, String>, error:
     }
 }
 
-/// Registers Pipeline's constant-product test strategy and creates a market of it trading
-/// `mints` (each with its token program), with its fee accounts: a router market on another
-/// strategy than the tax AMM.
-pub fn cp_market(env: &mut Env, mints: [(Pubkey, Pubkey); 2]) -> Market {
-    let cp = cp_strategy_id();
-    env.svm.add_program(cp, &cp_strategy_so()).unwrap();
+/// Pipeline's hostile test strategy, whose markets record whatever vaults their creator
+/// names, at the address of the keypair `scripts/fetch-pipeline.sh` builds it with.
+pub fn evil_strategy_id() -> Pubkey {
+    "DB9tGhQjp8VgK7mLWPmQD2pzQavPzrAU6sTtSC9v8SXD"
+        .parse()
+        .unwrap()
+}
+
+/// Loads one of Pipeline's test strategies at `id` from its compiled `name.so`, makes the
+/// admin its upgrade authority and registers it with the router.
+pub fn register_test_strategy(env: &mut Env, id: &Pubkey, name: &str) {
+    let path = crate_dir().join(format!(
+        "../../fixtures/pipeline/programs/target/deploy/{name}.so"
+    ));
+    let so = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}. Run `scripts/fetch-pipeline.sh` first.",
+            path.display()
+        )
+    });
+    env.svm.add_program(*id, &so).unwrap();
     let admin = env.admin.pubkey();
-    let program_data = pda::program_data(&cp);
+    let program_data = pda::program_data(id);
     let mut account = env.svm.get_account(&program_data).expect("program data");
     account.data[12] = 1;
     account.data[13..45].copy_from_slice(admin.as_ref());
@@ -278,12 +282,21 @@ pub fn cp_market(env: &mut Env, mints: [(Pubkey, Pubkey); 2]) -> Market {
     let register = client::register_strategy(
         &admin,
         &admin,
-        &cp,
+        id,
         &config.listing_fee_recipient,
         "https://example.com/metadata.json",
         config.listing_fee_lamports,
     );
     env.send(&[register], &[]).unwrap();
+}
+
+/// Registers Pipeline's constant-product test strategy and creates a market of it trading
+/// `mints` (each with its token program), with its fee accounts: a router market on another
+/// strategy than the tax AMM.
+pub fn cp_market(env: &mut Env, mints: [(Pubkey, Pubkey); 2]) -> Market {
+    let cp = cp_strategy_id();
+    register_test_strategy(env, &cp, "test_strategy_cp");
+    let admin = env.admin.pubkey();
 
     let fee_bps: u16 = 30;
     let mint_keys = [mints[0].0, mints[1].0];
