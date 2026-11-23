@@ -1,12 +1,40 @@
-// The freeze gate's decisions (HOOK-51): which contained mints it accepts before and after the
-// freeze, and how it reads the BPF upgradeable loader's accounts.
+// The freeze gate's decisions (HOOK-51; Round 2 findings R2T-07 to R2T-09 and R2-B of #74):
+// which contained mints and configs it accepts before and after the freeze, how it reads the BPF
+// upgradeable loader's accounts, and which recorded mints must still have their configs.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { getAddressEncoder, type Address } from '@solana/kit';
 
-import { BPF_UPGRADEABLE_LOADER, freezeInstruction, judgeMint, programDataAddressOf, UNSET, upgradeAuthorityOf } from './freeze.ts';
+import { findExtraAccountMetasPda, getConfigDecoder } from './client/index.ts';
+import {
+    BPF_UPGRADEABLE_LOADER,
+    chainFacts,
+    configFields,
+    deploySlotOf,
+    executableHash,
+    freezeInstruction,
+    judgeConfig,
+    judgeMint,
+    judgePrograms,
+    MAX_UNLOCK_DEADLINE_SECS,
+    mintsOfDemoRecord,
+    mintsOfGateReport,
+    mintsOfSnapshot,
+    missingRecorded,
+    programDataAddressOf,
+    recordedMints,
+    UNSET,
+    upgradeAuthorityOf,
+    VALIDATION_DATA,
+    type ConfigChain,
+    type ConfigFields,
+} from './freeze.ts';
 
 const HOOK = 'aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv';
 const UNLOCK_PDA = 'CaDvbcDT6Aw8mXwK6ZcFPdh2UJwxJ1GGEawd2cubRL2c';
@@ -82,4 +110,157 @@ test('the freeze instruction is the loader SetAuthority with no new authority', 
         instruction.accounts!.map(({ address }) => address),
         [WALLET, HOOK],
     );
+});
+
+// R2T-07: what each config says, judged against the chain (judgeConfig), on a real devnet config
+// from the release gate's committed fixture and on that config with each field changed.
+
+const here = fileURLToPath(new URL('.', import.meta.url));
+const FIXTURE = join(here, '../tests/fixtures/release-gate/devnet');
+const TAX_AMM = 'J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t';
+
+function fixtureAccount(address: string): { owner: string; data: Uint8Array } {
+    const record = JSON.parse(readFileSync(join(FIXTURE, `${address}.json`), 'utf8'));
+    return { owner: record.account.owner, data: new Uint8Array(Buffer.from(record.account.data[0], 'base64')) };
+}
+
+/** The fixture's first still-contained config, decoded, with the chain facts the gate reads for it. */
+async function fixtureCase(): Promise<{ config: ConfigFields; chain: ConfigChain }> {
+    const configs = readdirSync(FIXTURE)
+        .filter((name) => name.endsWith('.json'))
+        .map((name) => JSON.parse(readFileSync(join(FIXTURE, name), 'utf8')))
+        .filter((record) => record.account?.owner === HOOK && record.account.space === 237)
+        .map((record) => new Uint8Array(Buffer.from(record.account.data[0], 'base64')))
+        .map((data) => configFields(getConfigDecoder().decode(data)))
+        .filter((config) => config.unlockedAt === null);
+    const config = configs[0]!;
+    const market = fixtureAccount(config.market);
+    const state = fixtureAccount(config.marketState);
+    const validation = (await findExtraAccountMetasPda({ mint: config.mint as Address }, { programAddress: HOOK as Address }))[0];
+    const chain = await chainFacts({
+        hook: HOOK as Address,
+        taxAmm: TAX_AMM as Address,
+        mint: config.mint as Address,
+        market: { owner: market.owner, data: market.data },
+        marketStateOwner: state.owner,
+        validationData: fixtureAccount(validation).data,
+    });
+    return { config, chain };
+}
+
+test('a real devnet config agrees with the chain', async () => {
+    const { config, chain } = await fixtureCase();
+    assert.deepEqual(judgeConfig(config, chain), []);
+});
+
+test('the validation data is the hook VALIDATION_DATA, as devnet holds it', async () => {
+    const { chain } = await fixtureCase();
+    assert.deepEqual([...chain.validationData!], [...VALIDATION_DATA]);
+    assert.equal(VALIDATION_DATA.length, 51);
+});
+
+test('MAX_UNLOCK_DEADLINE_SECS is the hook config.rs value', () => {
+    const source = readFileSync(join(here, '../src/config.rs'), 'utf8');
+    const expression = /pub const MAX_UNLOCK_DEADLINE_SECS: i64 = ([0-9 *]+);/.exec(source)![1]!;
+    const value = expression.split('*').reduce((product, factor) => product * BigInt(factor.trim()), 1n);
+    assert.equal(MAX_UNLOCK_DEADLINE_SECS, value);
+});
+
+const changed = async (change: (c: ConfigFields, chain: ConfigChain) => void, problem: RegExp) => {
+    const { config, chain } = await fixtureCase();
+    change(config, chain);
+    const problems = judgeConfig(config, chain);
+    assert.ok(problems.some((p) => problem.test(p)), `expected ${problem} in ${JSON.stringify(problems)}`);
+};
+
+test('a config whose fee account is not the market fee account is refused', () => changed((c) => (c.feeAccount = WALLET), /fee account .* not the market's fee account/));
+test('a config whose vault is not the market vault is refused', () => changed((c) => (c.vault = WALLET), /vault .* not the vault the Market records/));
+test('a config whose market state is not the Market one is refused', () => changed((c) => (c.marketState = WALLET), /market state .* not the one the Market records/));
+test('a config whose quote mint is not the market other mint is refused', () => changed((c) => (c.quoteMint = WALLET), /quote mint .* not the Market's other mint/));
+test('a config whose market does not trade its mint is refused', () => changed((c) => (c.mint = WALLET), /does not trade the mint/));
+test('a market not owned by the router is refused', () => changed((_, chain) => (chain.marketOwner = WALLET), /not owned by the router/));
+test('a market that is not a router Market is refused', () => changed((_, chain) => (chain.market = null), /not a router Market/));
+test('a market off its PDA is refused', () => changed((_, chain) => (chain.marketPda = WALLET), /not at its PDA/));
+test('a market on another strategy than the tax AMM is refused (R2T-08)', () => changed((_, chain) => (chain.taxAmm = WALLET), /runs on .* not the tax AMM/));
+test('a market state not owned by the tax AMM is refused (R2T-08)', () => changed((_, chain) => (chain.marketStateOwner = WALLET), /market state is owned by .* not the tax AMM/));
+test('a zero goal is refused', () => changed((c) => (c.unlockGoal = 0n), /unlock goal is 0/));
+test('a deadline past 90 days after the binding is refused', () => changed((c) => (c.unlockDeadline = c.boundAt + MAX_UNLOCK_DEADLINE_SECS + 1n), /deadline .* more than MAX_UNLOCK_DEADLINE_SECS/));
+test('a deadline at or before the binding is refused', () => changed((c) => (c.unlockDeadline = c.boundAt), /deadline .* not after the binding/));
+test('a deadline exactly 90 days after the binding passes', async () => {
+    const { config, chain } = await fixtureCase();
+    config.unlockDeadline = config.boundAt + MAX_UNLOCK_DEADLINE_SECS;
+    assert.deepEqual(judgeConfig(config, chain), []);
+});
+test('an unlock time before the binding is refused', () => changed((c) => (c.unlockedAt = c.boundAt - 1n), /unlocked at .* before the binding/));
+test('a config of another version is refused', () => changed((c) => (c.version = 2), /version 2/));
+test('a non-canonical bump is refused', async () => {
+    await changed((c) => (c.configBump = (c.configBump + 1) % 256), /config bump/);
+    await changed((c) => (c.extraAccountMetasBump = (c.extraAccountMetasBump + 1) % 256), /validation account bump/);
+    await changed((c) => (c.unlockBump = (c.unlockBump + 1) % 256), /unlock bump/);
+});
+test('a validation account other than the canonical list is refused', async () => {
+    await changed((_, chain) => (chain.validationData = Uint8Array.from(VALIDATION_DATA, (b, i) => (i === 50 ? 1 : b))), /validation account's data is not the hook's VALIDATION_DATA/);
+    await changed((_, chain) => (chain.validationData = null), /no validation account/);
+});
+
+// R2T-08: the executable hash and the deploy slot read from a program data account.
+
+test('the executable hash is the SHA-256 of the program after the header, trailing zeros trimmed', () => {
+    const header = loaderAccount(3, new Uint8Array([...new Uint8Array(8).fill(9), 1, ...bytes(WALLET)]));
+    assert.equal(header.length, 45);
+    const programData = new Uint8Array([...header, ...new TextEncoder().encode('abc'), 0, 0, 0, 0]);
+    // printf abc | shasum -a 256
+    assert.equal(executableHash(programData), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    assert.equal(deploySlotOf(programData), 0x0909090909090909n);
+    assert.throws(() => executableHash(loaderAccount(2, bytes(WALLET))), /not an upgradeable loader ProgramData account/);
+});
+
+// R2T-09: the two programs are frozen together or not at all.
+
+test('judgePrograms accepts both upgradeable or both frozen, and refuses a half-frozen pair', () => {
+    const programs = (hook: string | null, taxAmm: string | null) => [
+        { name: 'containment hook', authority: hook },
+        { name: 'tax AMM', authority: taxAmm },
+    ];
+    assert.deepEqual(judgePrograms(programs(WALLET, WALLET)), { ok: true, frozen: false });
+    assert.deepEqual(judgePrograms(programs(null, null)), { ok: true, frozen: true });
+    const half = judgePrograms(programs(null, WALLET));
+    assert.equal(half.ok, false);
+    assert.match((half as { reason: string }).reason, /the containment hook is frozen but the tax AMM is still upgradeable/);
+    const otherHalf = judgePrograms(programs(WALLET, null));
+    assert.match((otherHalf as { reason: string }).reason, /the tax AMM is frozen but the containment hook is still upgradeable/);
+});
+
+// R2-B: every contained mint ever recorded still has its config.
+
+test('recorded mints are gathered from every record and named by where they came from', () => {
+    const recorded = recordedMints([
+        { source: 'a.json', mints: [WALLET, HOOK] },
+        { source: 'b.json', mints: [WALLET] },
+    ]);
+    assert.deepEqual(recorded.get(WALLET), ['a.json', 'b.json']);
+    assert.deepEqual(recorded.get(HOOK), ['a.json']);
+});
+
+test('a recorded mint with no config in the census is refused, naming it and its records', () => {
+    const recorded = recordedMints([{ source: 'deployments/devnet-demo-containment-hook.json', mints: [WALLET, HOOK] }]);
+    assert.deepEqual(missingRecorded(recorded, new Set([HOOK])), [
+        `mint ${WALLET}, recorded in deployments/devnet-demo-containment-hook.json, has no config in the census`,
+    ]);
+    assert.deepEqual(missingRecorded(recorded, new Set([HOOK, WALLET])), []);
+    // Zero configs while records list contained tokens is a refusal per mint.
+    assert.equal(missingRecorded(recorded, new Set()).length, 2);
+});
+
+test('the records give their mints: the demo record, a release gate report and the fixture', () => {
+    assert.deepEqual(mintsOfDemoRecord({ record: [['mint', WALLET], ['market', HOOK], ['token 1', 'x'], ['mint', OTHER_PROGRAM]] }), [WALLET, OTHER_PROGRAM]);
+    assert.deepEqual(mintsOfGateReport({ configs: [{ mint: WALLET }, { mint: null }, { mint: HOOK }] }), [WALLET, HOOK]);
+    const fixtureMints = mintsOfSnapshot(
+        readdirSync(FIXTURE).filter((name) => name.endsWith('.json')).map((name) => JSON.parse(readFileSync(join(FIXTURE, name), 'utf8'))),
+        HOOK,
+    );
+    assert.equal(fixtureMints.length, 6);
+    const demo = mintsOfDemoRecord(JSON.parse(readFileSync(join(here, '../../../deployments/devnet-demo-containment-hook.json'), 'utf8')));
+    assert.equal(demo.length, 3);
+    for (const mint of demo) assert.ok(fixtureMints.includes(mint), `${mint} is in the fixture`);
 });
