@@ -12,6 +12,7 @@ import { checkLayout, formatChecks } from "./layout-check.ts";
 import { supplySecondDepositor, takeBack } from "./parties.ts";
 import { CTOKEN_HOLDER, DEVNET, RESERVES, RESERVE_KEYS, TEST_BORROWER, type ReserveKey } from "./policy.ts";
 import { prove } from "./prove.ts";
+import { refreshReserves } from "./refresh.ts";
 import { setup } from "./setup.ts";
 import { statusReport, units } from "./status.ts";
 
@@ -36,6 +37,7 @@ Commands:
   borrow [--amount N]            the test borrower borrows WSOL against test USDC (default ${units(TEST_BORROWER.borrow, 9)} SOL)
   repay                          the test borrower repays its WSOL debt in full
   emergency on|off [--market]    the market owner sets the WSOL reserve's (or the whole market's) emergency mode
+  refresh [--reserve R]          anyone (the devnet wallet pays) refreshes each reserve's stored rate (default: both)
   prove                          run every check of the ticket in one go and print signatures and SOL spent
 
   R is wsol or usdc; N is in whole tokens (SOL or test USDC), for example 0.5.
@@ -120,6 +122,11 @@ async function main() {
       if (!signature) console.log(`Emergency mode is already ${argument}`);
       break;
     }
+    case "refresh":
+      for (const r of await refreshReserves(ctx, values.reserve ? [reserve()] : RESERVE_KEYS)) {
+        console.log(`${RESERVES[r.key].label} reserve refreshed in slot ${r.slot}`);
+      }
+      break;
     case "prove":
       await prove(ctx);
       break;

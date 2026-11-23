@@ -764,6 +764,16 @@ The lending AMM went to devnet this way on 2026-11-22 and 2026-11-23:
 - **Conformance.** `pipeline-check --url devnet --market AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu --fail-on-warn` reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped, at its default sizes (`programs/lending-amm/conformance/devnet.json`) and with `--amounts 131473535384,134801897064`, sales paying out 99% and 101% of the buffer, resolving up to 11 strategy accounts and using up to 99,225 compute units; `--list-markets` listed the market.
 - A `pipeline-check` built at a new path waited on LuLu until the owner allowed it ("Known problems").
 
+The first upgrade, to release 0.1.1 from `main` at `e8d0221`, went through the release gate on 2026-11-23:
+
+- `deploy-devnet.sh lending-amm --build-only` built it in 155 seconds, executable hash `7502dd6ff76a870edafc231693f9b6c92d0159ae6b9a80bf986a3fce34b31b29`, and `pre-deploy.sh` on that build refused it: `REFUSED: no passing release gate run for build 7502dd6f…`.
+- All 264 lending AMM and gate tests passed on those bytes.
+- `lending-gate run --cluster devnet` replayed all three live markets, the demo market and the two the stopped runs left, with the deployed `34f2e33c…` as the baseline and the candidate, and a market of its own: 49 steps passed, every quote equal to the deployed build's (on the demo market a buy of 5,886,771 lamports at 10,379,899,096 and a sale of 5,309,366,395 at 2,905,586), and on each market a buy, a sell and a sale beyond the buffer delivered exactly their quotes.
+- `deploy-devnet.sh lending-amm` then found that pass against the deployed `34f2e33c…` covering every market, upgraded the program in slot 525,457,447, signature `3hCee6tGQ6nEkWfcMWCNo9xoqDdEzbjFjh66v9wgzcuuNAvKfaDkB22zRs92LXpH2YcSk4ZnueDEaMYBRVhwfQwy`, and checked the hash on chain, which `solana-verify get-program-hash -u devnet` gave too; no deploy buffer was left.
+- `pipeline-check --fail-on-warn` on the demo market first refused every quote with `ReserveStale`: nothing had refreshed our WSOL reserve for about 22,000 slots since the demo, beyond the 9,000 a quote allows (`LENDING-92`), which the keeper runner's `rebalance` job will keep from happening ([#96](https://github.com/imDev2023/testing-pipeline/issues/96)).
+  `npm run cli -- refresh` in `scripts/kamino-devnet` refreshed both reserves, and it then reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped on build `7502dd6f…`, at its default sizes (`programs/lending-amm/conformance/devnet.json`) and with the edge amounts above.
+- `demo.ts --hosted-api` passed again: the hosted API showed the strategy with the new code hash and quoted the market exactly as before the upgrade.
+
 ## Local validator
 
 Pipeline's `docs/DEVNET.md` gives the command, adapted here to this project's wallet (the programs' upgrade authority, so the script initialises the router's config and registers the example strategy itself) and a ledger outside the clone:

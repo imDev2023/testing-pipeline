@@ -40,6 +40,7 @@ import {
   WITHDRAW_MODE_EXIT,
   WSOL_MINT,
 } from "../src/policy.ts";
+import { refreshReserves } from "../src/refresh.ts";
 import { setup } from "../src/setup.ts";
 import { startLocalValidator, type LocalValidator } from "./local-validator.ts";
 
@@ -240,5 +241,19 @@ describe("reading the reserves back", () => {
       assert.ok(report.text.includes(label), label);
     }
     await repayAll(ctx);
+  });
+});
+
+describe("refreshing the reserves", () => {
+  test("anyone refreshes each reserve, which brings its last update to the refresh's slot and accrues its interest", async () => {
+    const before = await Promise.all(RESERVE_KEYS.map((key) => readReserve(ctx, key)));
+    const refreshed = await refreshReserves(ctx, RESERVE_KEYS);
+    assert.deepEqual(refreshed.map((r) => r.key), RESERVE_KEYS);
+    for (const [i, key] of RESERVE_KEYS.entries()) {
+      const after = await readReserve(ctx, key);
+      assert.ok(after.lastUpdateSlot > before[i]!.lastUpdateSlot, `${key}: last update ${after.lastUpdateSlot}`);
+      assert.equal(after.lastUpdateSlot, refreshed[i]!.slot, key);
+      assert.ok(totalSupplySf(after) >= totalSupplySf(before[i]!), key);
+    }
   });
 });

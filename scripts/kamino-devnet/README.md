@@ -35,6 +35,7 @@ npm run cli -- help
 | `borrow [--amount N]` | test borrower | Opens an obligation on test USDC if needed and borrows WSOL (3.5 SOL by default) |
 | `repay` | test borrower | Repays the WSOL debt in full |
 | `emergency on\|off [--market]` | market owner | Sets the WSOL reserve's emergency mode, or the whole market's |
+| `refresh [--reserve wsol\|usdc]` | anyone | klend's `refresh_reserve` for each reserve, which a lending AMM market's quotes need within `TRADE_MAX_RESERVE_AGE_SLOTS` of; the keeper runner keeps it so once it runs `rebalance` |
 | `prove` | all | Every check of the ticket in one run, ending with the signatures and the devnet SOL spent and locked |
 
 Amounts are in whole tokens (`--amount 0.5`).
