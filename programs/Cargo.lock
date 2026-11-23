@@ -2186,6 +2186,7 @@ dependencies = [
 name = "mint-rules"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "spl-token-2022-interface 3.1.2",
 ]
 

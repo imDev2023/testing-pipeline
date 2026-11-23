@@ -165,3 +165,89 @@ impl<'a> Iterator for ExtensionEntries<'a> {
         Some(Ok((extension_type, value)))
     }
 }
+
+/// Book of Knowledge TLV-1 (#74): the type-length-value walk never panics, and every value
+/// it finds lies inside the account, right after its own entry's header. Proven for every
+/// tail of up to 12 bytes after a mint's account type, which holds up to three entries (each
+/// at least 4 bytes), so the walk's loop runs at most four times. The Proptest version in
+/// `tests/bok_tlv.rs` covers long and structured tails.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    const TAIL: usize = 12;
+
+    /// A Token-2022 mint's first 166 bytes, the base and padding zeroed but for
+    /// `is_initialized`, then the account type, followed by `len` symbolic bytes.
+    fn account(
+        tail: &[u8; TAIL],
+        len: usize,
+        account_type: u8,
+    ) -> ([u8; ACCOUNT_LEN + 1 + TAIL], usize) {
+        let mut data = [0u8; ACCOUNT_LEN + 1 + TAIL];
+        data[IS_INITIALIZED] = 1;
+        data[ACCOUNT_LEN] = account_type;
+        data[ACCOUNT_LEN + 1..].copy_from_slice(tail);
+        (data, ACCOUNT_LEN + 1 + len)
+    }
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn find_extension_never_panics_and_finds_values_after_their_header() {
+        let tail: [u8; TAIL] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= TAIL);
+        let account_type: u8 = kani::any();
+        let (bytes, total) = account(&tail, len, account_type);
+        let data = &bytes[..total];
+        let wanted: u16 = kani::any();
+        if let Some(value) = find_extension(data, wanted) {
+            let start = value.as_ptr() as usize - data.as_ptr() as usize;
+            assert!(wanted != UNINITIALIZED);
+            assert!(start >= ACCOUNT_LEN + 1 + 4);
+            assert!(start + value.len() <= data.len());
+            assert!(data[start - 4..start - 2] == wanted.to_le_bytes());
+            assert!(data[start - 2..start] == (value.len() as u16).to_le_bytes());
+        }
+    }
+
+    /// The entry check `check_mint` ends with accepts a tail only if no entry the walk can
+    /// reach is outside the allowlist: `find_extension` then finds no refused type in it.
+    /// The unwind covers the allowlist's seven entries.
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn check_extensions_accepts_only_allowed_entries() {
+        let tail: [u8; TAIL] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= TAIL);
+        let (bytes, total) = account(&tail, len, ACCOUNT_TYPE_MINT);
+        let data = &bytes[..total];
+        let wanted: u16 = kani::any();
+        kani::assume(!ALLOWED_MINT_EXTENSIONS.contains(&wanted));
+        if check_extensions(&data[ACCOUNT_LEN + 1..]).is_ok() {
+            assert!(find_extension(data, wanted).is_none());
+        }
+    }
+
+    /// `check_mint` whole: never panics, and accepts an extended mint only with its account
+    /// type and allowed entries. Its 83-byte padding loop needs an unwind of 84 for every
+    /// loop, which did not finish in 10 minutes (2026-11-22), so it is in the full tier.
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(84)]
+    fn check_mint_never_panics_and_accepts_only_allowed_entries() {
+        let tail: [u8; TAIL] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= TAIL);
+        let account_type: u8 = kani::any();
+        let (bytes, total) = account(&tail, len, account_type);
+        let data = &bytes[..total];
+        if check_mint(&TOKEN_2022_PROGRAM_ID, data).is_ok() {
+            assert!(account_type == ACCOUNT_TYPE_MINT);
+            for wanted in [1u16, 3, 12, 15, 16, 24, 25, 26, 27, u16::MAX] {
+                assert!(find_extension(data, wanted).is_none());
+            }
+        }
+        assert!(check_mint(&TOKEN_PROGRAM_ID, data).is_err());
+    }
+}
