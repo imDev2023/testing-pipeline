@@ -1,10 +1,11 @@
-//! Records of passing gate runs against a cluster, which the deploy script checks before it
-//! deploys (docs/spec/pool4-for-solana.md, "A release gate").
+//! Records of passing gate runs against a cluster, which a program's pre-deploy check asks
+//! before the deploy script deploys (docs/spec/pool4-for-solana.md and
+//! docs/spec/lending-pool.md, "A release gate").
 //!
 //! Records are kept per cluster, in `<dir>/<cluster>.json` (`devnet.json`), or
 //! `local-<genesis hash prefix>.json` for a local validator, as a JSON list, newest last.
-//! The repo keeps devnet's in `deployments/release-gate/buy-wall-amm/`, where a local
-//! validator's are ignored by git.
+//! The repo keeps devnet's in `deployments/release-gate/<program>/` (`buy-wall-amm`,
+//! `lending-amm`), where a local validator's are ignored by git.
 //!
 //! A record counts for a deploy only if it was made against the same cluster, for the same
 //! build, against the build deployed there now, and covering every market there now: an

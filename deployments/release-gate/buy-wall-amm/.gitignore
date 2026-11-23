@@ -1,3 +1,3 @@
-# Passing release gate runs against local validators (programs/buy-wall-amm/gate/src/record.rs);
+# Passing release gate runs against local validators (programs/release-gate/src/record.rs);
 # devnet's records, devnet.json, are kept.
 local-*.json
