@@ -31,12 +31,18 @@ dir="${TAX_AMM_GATE_DIR:-$(mktemp -d)}"
 mkdir -p "$dir"
 snapshot=(python3 -I "$ROOT/programs/tax-amm/scripts/gate_snapshot.py" --url "$url" --program "$program" --out "$dir")
 deployed=""
-if solana program show --url "$url" "$program" >/dev/null 2>&1; then
+# Only an account the cluster says is missing counts as not deployed: any other failure, such as
+# an RPC timeout (which the CLI also reports as AccountNotFound, with "error sending request"),
+# stops the gate rather than letting it skip the comparison with the deployed build.
+if shown="$(solana program show --url "$url" "$program" 2>&1)"; then
   "${snapshot[@]}" --deployed
   deployed="$dir/deployed.so"
-else
+elif grep -q "^Error: Unable to find the account $program\$" <<<"$shown"; then
   echo "pre-deploy.sh: $program is not deployed on $url yet, so the gate checks the new build alone"
   "${snapshot[@]}"
+else
+  echo "pre-deploy.sh: can't tell whether $program is deployed on $url: $shown" >&2
+  exit 1
 fi
 
 report="$dir/release-gate.json"

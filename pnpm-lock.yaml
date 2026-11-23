@@ -54,6 +54,9 @@ importers:
       '@solana-program/system':
         specifier: 0.16.0
         version: 0.16.0(@solana/kit@8.6.0(typescript@7.0.2))
+      '@solana-program/token-2022':
+        specifier: 0.20.0
+        version: 0.20.0(@solana/kit@8.6.0(typescript@7.0.2))(@solana/sysvars@8.6.0(typescript@7.0.2))
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2

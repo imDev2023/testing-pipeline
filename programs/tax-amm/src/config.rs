@@ -44,7 +44,10 @@ pub const CONTAINMENT_UNLOCK_SEED: &[u8] = b"unlock";
 
 /// The quote mints, which may keep a mint or a freeze authority when a market is seeded:
 /// both native SOL mints, whose authorities are none anyway, and the cluster's USDC, Circle's
-/// devnet mint (a mainnet build names mainnet's, `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`).
+/// devnet mint. Nothing switches it by cluster: a mainnet build must replace it with mainnet's
+/// (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) before it is frozen, a mainnet checklist
+/// item beside `SUITE_TREASURY` (hardening finding H071, signed off), or it would refuse every
+/// USDC market at the seed.
 /// Every other mint must have neither when its market is seeded, so nobody can mint into the
 /// curve or freeze a vault (docs/spec/tax-amm.md, "Mint rules"; hardening findings H008 and
 /// H016, #67).
@@ -54,12 +57,13 @@ pub const QUOTE_MINTS: [Pubkey; 3] = [
     pubkey!("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"),
 ];
 
-/// How many slots after `set_taxes` its new rates apply: 300 slots, about two minutes, longer
-/// than any transaction's lifetime (a blockhash lasts 150 blocks), so no rate change can
-/// reach a swap already signed, as the tax authority could otherwise put a change on either
-/// side of a victim's swap and take its slippage allowance as tax (docs/spec/tax-amm.md,
-/// "Rates"; hardening finding H010, #67). Decreases wait too. Published in the IDL
-/// (`#[constant]`), for Aviary's tax panel.
+/// How many slots after `set_taxes` its new rates apply: 300 slots, about two minutes. A
+/// blockhash lasts 150 blocks and a slot holds at most one, so while fewer than half the
+/// slots are skipped no swap signed with a blockhash before a change can land after it: the
+/// tax authority can't put a change on either side of a victim's swap and take its slippage
+/// allowance as tax (docs/spec/tax-amm.md, "Rates"; hardening finding H010, #67). A
+/// durable-nonce transaction has no lifetime, so only its minimum output protects it.
+/// Decreases wait too. Published in the IDL (`#[constant]`), for Aviary's tax panel.
 #[constant]
 pub const RATE_CHANGE_DELAY_SLOTS: u64 = 300;
 
@@ -74,8 +78,9 @@ pub const MAX_RECIPIENTS: usize = 4;
 const _: () = assert!(MAX_TAX_BPS < 10_000);
 const _: () = assert!(SUITE_SHARE_BPS <= 10_000);
 const _: () = assert!(MAX_RECIPIENTS >= 1 && MAX_RECIPIENTS + 2 <= u8::MAX as usize);
-// A blockhash lasts 150 blocks, at most one a slot, so a delay of 150 slots or fewer could
-// still reach a signed swap.
+// A blockhash lasts 150 blocks, which take at least 150 slots, so a delay of 150 slots or fewer
+// could reach a swap signed before the change even with no slot skipped; 300 leaves room for
+// half the slots to be skipped.
 const _: () = assert!(RATE_CHANGE_DELAY_SLOTS > 150);
 
 // The `security.txt` every program of ours embeds (docs/spec/README.md, "Verified builds").

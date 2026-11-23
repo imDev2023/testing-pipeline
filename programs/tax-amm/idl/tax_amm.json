@@ -1865,12 +1865,13 @@
     {
       "name": "RATE_CHANGE_DELAY_SLOTS",
       "docs": [
-        "How many slots after `set_taxes` its new rates apply: 300 slots, about two minutes, longer",
-        "than any transaction's lifetime (a blockhash lasts 150 blocks), so no rate change can",
-        "reach a swap already signed, as the tax authority could otherwise put a change on either",
-        "side of a victim's swap and take its slippage allowance as tax (docs/spec/tax-amm.md,",
-        "\"Rates\"; hardening finding H010, #67). Decreases wait too. Published in the IDL",
-        "(`#[constant]`), for Aviary's tax panel."
+        "How many slots after `set_taxes` its new rates apply: 300 slots, about two minutes. A",
+        "blockhash lasts 150 blocks and a slot holds at most one, so while fewer than half the",
+        "slots are skipped no swap signed with a blockhash before a change can land after it: the",
+        "tax authority can't put a change on either side of a victim's swap and take its slippage",
+        "allowance as tax (docs/spec/tax-amm.md, \"Rates\"; hardening finding H010, #67). A",
+        "durable-nonce transaction has no lifetime, so only its minimum output protects it.",
+        "Decreases wait too. Published in the IDL (`#[constant]`), for Aviary's tax panel."
       ],
       "type": "u64",
       "value": "300"

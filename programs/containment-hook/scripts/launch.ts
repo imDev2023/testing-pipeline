@@ -214,9 +214,11 @@ const UNLOCKING = {
     maxDeadlineWaitSecs: 600n,
     unlockerLamports: 2_000_000n,
 } as const;
-// `--quote-mint new`: one fresh SPL Token mint per run, with no freeze authority, whose mint
-// authority is the launcher, who is minted `supply` of it to trade with; every token given
-// `new` is quoted in it (HOOK-41: Pipeline 0.3 takes its fee in the token on such a market).
+// `--quote-mint new`: one fresh SPL Token mint per run, with no freeze authority, whose whole
+// `supply` is minted to the launcher to trade with and whose mint authority is then revoked,
+// since a tax market's seed refuses a mint that keeps one unless it is a quote mint (TAX-16,
+// TAX-58); every token given `new` is quoted in it (HOOK-41: Pipeline 0.3 takes its fee in
+// the token on such a market).
 const NEW_QUOTE_MINT = { decimals: 6, supply: 1_000_000_000_000n } as const;
 const SPL_MINT_SIZE = 82;
 // What the launch's rents and fees may cost beyond the market's setup and the buy, which the
@@ -820,7 +822,7 @@ async function main() {
         step('Creating the fresh quote mint of --quote-mint new');
         const { quoteHolder } = quotes.get(newQuoteMint.address)!;
         await send(
-            'create the quote mint and mint the launcher its supply',
+            'create the quote mint, mint the launcher its supply and revoke its mint authority',
             launcher,
             [
                 getCreateAccountInstruction({
@@ -833,6 +835,10 @@ async function main() {
                 getInitializeMint2Instruction({ mint: newQuoteMint.address, decimals: NEW_QUOTE_MINT.decimals, mintAuthority: launcher.address, freezeAuthority: null }),
                 await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: launcher, owner: launcher.address, mint: newQuoteMint.address }),
                 getMintToInstruction({ mint: newQuoteMint.address, token: quoteHolder, mintAuthority: launcher, amount: NEW_QUOTE_MINT.supply }),
+                getSetAuthorityInstruction(
+                    { owned: newQuoteMint.address, owner: launcher, authorityType: AuthorityType.MintTokens, newAuthority: null },
+                    { programAddress: TOKEN_PROGRAM_ADDRESS },
+                ),
             ],
             [newQuoteMint],
         );
