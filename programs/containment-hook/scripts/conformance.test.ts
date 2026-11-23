@@ -54,3 +54,41 @@ test('a report with no checks, or with exact_out_refund run, is refused', () => 
         problems: ['exact_out_refund was not skipped'],
     });
 });
+
+// While a token is contained, pipeline-check's own traders' accounts lack the immutable owner
+// extension every real associated token account has, so the hook refuses their buys and two
+// checks fail with its DestinationOwnerCanChange (6023) until Pipeline's checker writes the
+// extension (HOOK-47); after the unlock the hook no longer runs and every check must pass.
+const refused = (id: string) => ({
+    ...report,
+    checks: report.checks.map((check: { id: string }) =>
+        check.id === id ? { ...check, status: 'fail', message: `InstructionError(1, Custom(6023)): the hook refused ${id}` } : check,
+    ),
+});
+const bothRefused = { ...refused('quote_matches_swap'), checks: refused('quote_matches_swap').checks.map((check: { id: string }) => (check.id === 'round_trip' ? refused('round_trip').checks.find((c: { id: string }) => c.id === 'round_trip') : check)) };
+
+test("on a contained market, the checker's two known failures pass when they fail for the hook's refusal", () => {
+    const passed = bothRefused.checks.filter((check: { status: string }) => check.status === 'pass').length;
+    assert.deepEqual(judgeConformance(bothRefused, market, { contained: true }), {
+        ok: true,
+        passed,
+        skipped: ['exact_out_refund'],
+        known: ['quote_matches_swap', 'round_trip'],
+    });
+});
+
+test('on a contained market, a known check failing for another reason, or passing, is refused', () => {
+    const other = { ...bothRefused, checks: bothRefused.checks.map((check: { id: string; message?: string }) => (check.id === 'round_trip' ? { ...check, message: 'something else' } : check)) };
+    assert.deepEqual(judgeConformance(other, market, { contained: true }), {
+        ok: false,
+        problems: ['round_trip failed for another reason than the hook refusing the checker\'s own account (HOOK-47): something else'],
+    });
+    assert.deepEqual(judgeConformance(refused('quote_matches_swap'), market, { contained: true }), {
+        ok: false,
+        problems: ['round_trip is pass: pipeline-check may now write the immutable owner extension, so HOOK-47\'s known failures can go'],
+    });
+});
+
+test('after the unlock, the known failures are failures again', () => {
+    assert.equal(judgeConformance(bothRefused, market, { contained: false }).ok, false);
+});

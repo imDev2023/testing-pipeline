@@ -30,7 +30,9 @@
 //      so the refusal lands on chain with a signature, and, in simulation, a sell that carries
 //      an integrator fee above zero;
 //  10a. with `--pipeline-check`, run Pipeline's conformance checker on the home market while
-//      the token is contained, and stop unless every check passed but `exact_out_refund`.
+//      the token is contained, and stop unless every check passed but `exact_out_refund`, and
+//      the two that buy into the checker's own accounts, which must fail for the hook's
+//      refusal (HOOK-47).
 //
 // With `--unlock`, it goes on to unlock the token (docs/spec/containment-hook.md, "Unlock"):
 //
@@ -180,8 +182,9 @@ const HOME_MARKET = {
     burnShareBps: 0,
     // Prices the token against a virtual quote reserve until real quote liquidity arrives.
     virtualReserve: 30_000_000_000n,
-    // The seed: this much of the token, and no quote mint, which the virtual reserve prices.
-    seed: [800_000_000_000_000n, 0n],
+    // The seed: the whole supply, so the launcher holds none outside the pool to sell into the
+    // real quote buyers pay in (HOOK-50); and no quote mint, which the virtual reserve prices.
+    seed: [TOKEN.supply, 0n],
 } as const;
 // The trades the launch makes after the seed: a buy spending this many whole units of the
 // quote mint (1 SOL with wrapped SOL), then a sell of half of what it bought; and the
@@ -646,7 +649,9 @@ async function sendRefused(
  * Runs `pipeline-check --fail-on-warn` on `market` (bar, "Test layers" 7), with the trade
  * sizes `CONFORMANCE_AMOUNTS` a market on a virtual reserve needs, keeps its report
  * in `--conformance-out` when given, and stops unless every check passed but
- * `exact_out_refund`, skipped because the tax AMM refuses exact-out.
+ * `exact_out_refund`, skipped because the tax AMM refuses exact-out, and while the token is
+ * contained the two checks that buy into the checker's own accounts, which must fail and only
+ * for the hook's refusal (`HOOK-47`).
  */
 async function checkConformance(market: Address, when: 'contained' | 'unlocked') {
     if (!pipelineCheck) {
@@ -679,10 +684,11 @@ async function checkConformance(market: Address, when: 'contained' | 'unlocked')
         writeFileSync(file, stdout.endsWith('\n') ? stdout : `${stdout}\n`);
         info(`report: ${file}`);
     }
-    const verdict = judgeConformance(report, market);
+    const verdict = judgeConformance(report, market, { contained: when === 'contained' });
     if (!verdict.ok) fail(`pipeline-check on the home market ${market} while ${when}:\n${verdict.problems.join('\n')}`);
-    info(`pipeline-check --fail-on-warn: ${verdict.passed} pass, 0 warn, 0 fail, ${verdict.skipped.join(', ')} skipped`);
-    record.push([`pipeline-check, ${when}`, `${verdict.passed} pass, 0 warn, 0 fail, ${verdict.skipped.join(', ')} skipped`]);
+    const known = verdict.known?.length ? `, ${verdict.known.join(' and ')} failing as known for the checker's own accounts (HOOK-47)` : '';
+    info(`pipeline-check --fail-on-warn: ${verdict.passed} pass, ${verdict.skipped.join(', ')} skipped${known}`);
+    record.push([`pipeline-check, ${when}`, `${verdict.passed} pass, ${verdict.skipped.join(', ')} skipped${known}`]);
 }
 
 /** Writes what the run did to `--record`, also when it stopped part way. */
