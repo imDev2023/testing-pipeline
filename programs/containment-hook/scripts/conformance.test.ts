@@ -59,13 +59,19 @@ test('a report with no checks, or with exact_out_refund run, is refused', () => 
 // extension every real associated token account has, so the hook refuses their buys and two
 // checks fail with its DestinationOwnerCanChange (6023) until Pipeline's checker writes the
 // extension (HOOK-47); after the unlock the hook no longer runs and every check must pass.
-const refused = (id: string) => ({
+const refusal = 'InstructionError(1, Custom(6023)): the hook refused the checker\'s account';
+function failingDetails(id: string, errors: string[]) {
+    return id === 'quote_matches_swap'
+        ? { swaps: errors.map((error) => ({ case: 'a buy', matched: false, error })).concat([{ case: 'a sell', matched: true, error: null } as never]) }
+        : { trips: errors.map((error) => ({ route: '1→0→1', error })).concat([{ route: '0→1→0', error: null } as never]) };
+}
+const refusedWith = (errors: Record<string, string[]>) => ({
     ...report,
     checks: report.checks.map((check: { id: string }) =>
-        check.id === id ? { ...check, status: 'fail', message: `InstructionError(1, Custom(6023)): the hook refused ${id}` } : check,
+        check.id in errors ? { ...check, status: 'fail', message: `${check.id}: ${errors[check.id]![0]}`, details: failingDetails(check.id, errors[check.id]!) } : check,
     ),
 });
-const bothRefused = { ...refused('quote_matches_swap'), checks: refused('quote_matches_swap').checks.map((check: { id: string }) => (check.id === 'round_trip' ? refused('round_trip').checks.find((c: { id: string }) => c.id === 'round_trip') : check)) };
+const bothRefused = refusedWith({ quote_matches_swap: [refusal], round_trip: [refusal] });
 
 test("on a contained market, the checker's two known failures pass when they fail for the hook's refusal", () => {
     const passed = bothRefused.checks.filter((check: { status: string }) => check.status === 'pass').length;
@@ -78,12 +84,13 @@ test("on a contained market, the checker's two known failures pass when they fai
 });
 
 test('on a contained market, a known check failing for another reason, or passing, is refused', () => {
-    const other = { ...bothRefused, checks: bothRefused.checks.map((check: { id: string; message?: string }) => (check.id === 'round_trip' ? { ...check, message: 'something else' } : check)) };
-    assert.deepEqual(judgeConformance(other, market, { contained: true }), {
-        ok: false,
-        problems: ['round_trip failed for another reason than the hook refusing the checker\'s own account (HOOK-47): something else'],
-    });
-    assert.deepEqual(judgeConformance(refused('quote_matches_swap'), market, { contained: true }), {
+    // A second swap failing for another reason, behind a first one the hook refused.
+    const hidden = refusedWith({ quote_matches_swap: [refusal], round_trip: [refusal, 'InstructionError(0, Custom(6002))'] });
+    const verdict = judgeConformance(hidden, market, { contained: true });
+    assert.equal(verdict.ok, false);
+    assert.match((verdict as { problems: string[] }).problems[0]!, /^round_trip failed for another reason .*Custom\(6002\)/);
+    const onlyOne = refusedWith({ quote_matches_swap: [refusal] });
+    assert.deepEqual(judgeConformance(onlyOne, market, { contained: true }), {
         ok: false,
         problems: ['round_trip is pass: pipeline-check may now write the immutable owner extension, so HOOK-47\'s known failures can go'],
     });

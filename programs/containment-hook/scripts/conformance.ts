@@ -4,7 +4,7 @@
 /** The parts of a `pipeline-check-report/1` the launch script reads. */
 export type ConformanceReport = {
     market: { address: string };
-    checks: { id: string; status: string; message?: string }[];
+    checks: { id: string; status: string; message?: string; details?: Record<string, unknown> }[];
 };
 
 export type ConformanceVerdict = { ok: true; passed: number; skipped: string[]; known?: string[] } | { ok: false; problems: string[] };
@@ -39,8 +39,9 @@ export function judgeConformance(report: ConformanceReport, market: string, { co
         if (known.includes(check.id)) {
             if (check.status === 'pass') {
                 problems.push(`${check.id} is pass: pipeline-check may now write the immutable owner extension, so HOOK-47's known failures can go`);
-            } else if (!(check.message ?? '').includes(HOOK_REFUSAL)) {
-                problems.push(`${check.id} failed for another reason than the hook refusing the checker's own account (HOOK-47): ${check.message ?? ''}`);
+            } else {
+                const other = otherFailure(check);
+                if (other !== undefined) problems.push(`${check.id} failed for another reason than the hook refusing the checker's own account (HOOK-47): ${other}`);
             }
         } else if (check.id === SKIPPED ? check.status !== 'skip' && check.status !== 'pass' : check.status !== 'pass') {
             problems.push(`${check.id} is ${check.status}: ${check.message ?? ''}`);
@@ -49,4 +50,22 @@ export function judgeConformance(report: ConformanceReport, market: string, { co
     if (report.checks.find((check) => check.id === SKIPPED)?.status !== 'skip') problems.push(`${SKIPPED} was not skipped`);
     if (problems.length > 0) return { ok: false, problems };
     return contained ? { ok: true, passed, skipped: [SKIPPED], known } : { ok: true, passed, skipped: [SKIPPED] };
+}
+
+/**
+ * The first failure of a known check that is not the hook's refusal, or `undefined` when every
+ * swap of `quote_matches_swap` that did not match, and every trip of `round_trip` that errored,
+ * failed with it: its message names only the first, so a real mismatch could hide behind it.
+ */
+function otherFailure(check: ConformanceReport['checks'][number]): string | undefined {
+    const [rows, failed] =
+        check.id === 'quote_matches_swap'
+            ? (['swaps', (row: { matched?: boolean }) => row.matched === false] as const)
+            : (['trips', (row: { error?: unknown }) => row.error != null] as const);
+    const list = check.details?.[rows];
+    if (!Array.isArray(list)) return `no ${rows} in its details`;
+    const failures = (list as { matched?: boolean; error?: unknown }[]).filter(failed);
+    if (failures.length === 0) return 'no failed swap in its details';
+    const other = failures.find((row) => !String(row.error ?? '').includes(HOOK_REFUSAL));
+    return other === undefined ? undefined : JSON.stringify(other);
 }

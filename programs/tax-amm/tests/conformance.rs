@@ -44,11 +44,9 @@ fn check_with_known(
             "{what}: {id} passed, so Pipeline's checker may now write the immutable owner \
              extension and HOOK-47's known failures can go"
         );
-        assert!(
-            check.message.contains("Custom(6023)"),
-            "{what}: {id} failed for another reason: {}",
-            check.message
-        );
+        if let Err(reason) = known_failure_is_the_hooks(check) {
+            panic!("{what}: {reason}");
+        }
     }
     let worse: Vec<String> = report
         .checks

@@ -26,9 +26,13 @@ fn a_home_market_passes_every_check_but_the_two_the_checkers_own_accounts_fail()
     let launched = launch(&mut env);
     let report = check_market(&env.svm, launched.market.market, &CheckOptions::default());
     println!("{}", report.to_text());
-    let refusal = format!(
-        "Custom({})",
-        anchor_lang::error::ERROR_CODE_OFFSET + HookError::DestinationOwnerCanChange as u32
+    // The refusal the shared helper looks for is this hook's error.
+    assert_eq!(
+        HOOK_REFUSAL,
+        format!(
+            "Custom({})",
+            anchor_lang::error::ERROR_CODE_OFFSET + HookError::DestinationOwnerCanChange as u32
+        )
     );
     for id in KNOWN_FAILURES {
         let check = report
@@ -41,11 +45,9 @@ fn a_home_market_passes_every_check_but_the_two_the_checkers_own_accounts_fail()
             "{id} passed: Pipeline's checker may now write the immutable owner extension, so \
              HOOK-47's known failures can go"
         );
-        assert!(
-            check.message.contains(&refusal),
-            "{id} failed for another reason: {}",
-            check.message
-        );
+        if let Err(reason) = known_failure_is_the_hooks(check) {
+            panic!("{reason}");
+        }
     }
     assert_eq!(report.status("exact_out_refund"), Some(Status::Skip));
     for check in report
