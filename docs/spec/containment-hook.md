@@ -416,3 +416,17 @@ By [Containment hook: deploy on devnet and launch a contained token](https://git
 - On a home market quoted in wrapped SOL, a sell ran the hook once, into the vault, since Pipeline's fee came out of the SOL it bought back.
 - `unlock` cost 13,819 units by the deadline and 14,171 by the goal, about 950 more than on a local validator, still under its 30,000 ceiling.
 - Every signature and address of the run is in `deployments/devnet-demo-containment-hook.json`, and `pipeline-check` 0.3.0's reports, 13 pass, 0 warn, 0 fail on each home market while contained and after the unlock, are in `programs/containment-hook/conformance/devnet/`.
+
+By [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) on 2026-11-23, in LiteSVM against devnet's router bytes, with the hardening's fixes (the owner rule, the quote mint check, the zero counter, the version check and the multisig refusal):
+
+| Instruction | Cost (CU) | Ceiling | Before the hardening |
+| --- | --- | --- | --- |
+| `Execute`, out of the vault on a buy | 5,676 | 10,000 | 5,578 |
+| `Execute`, into the vault on a sell | 5,611 | 10,000 | 5,602 |
+| `Execute`, into the fee account on a sell | 5,614 | 10,000 | 5,603 |
+| `bind`, less its bump searches beyond the first bumps | 21,434 | 60,000 | 20,916 |
+| `unlock` by the deadline | 12,914 | 30,000 | 12,912 |
+| `unlock` by the goal | 13,214 | 30,000 | 13,212 |
+
+- The owner rule costs a buy about 100 units, one walk of the destination's extension entries; a sell, whose destination is the vault, does not walk it.
+- `bind` reads the quote mint too, about 500 units.
