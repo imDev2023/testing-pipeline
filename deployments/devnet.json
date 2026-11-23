@@ -45,13 +45,25 @@
     },
     "tax-amm": {
       "programId": "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t",
-      "executableHash": "a48b5e5962290aafe35ced955d0a8a8d6cb5cb63bd0be435fc87935d6c05db59",
-      "commit": "274038e11e3ac7226a51d4d5c7553f49d6190d4b",
+      "executableHash": "7891f0a9e5e63b61571765a8823541d4c7fa9da573f98bed81cf1966225666ad",
+      "commit": "410f4b39aba52151a86e2673211133279061b564",
       "dockerImage": "solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd",
       "upgradeAuthority": "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe",
       "deployedBy": "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt",
-      "slot": 524204276,
-      "deployedAt": "2026-11-20T02:38:17Z"
+      "slot": 525467612,
+      "deployedAt": "2026-11-23T14:56:22Z",
+      "history": [
+        {
+          "programId": "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t",
+          "executableHash": "a48b5e5962290aafe35ced955d0a8a8d6cb5cb63bd0be435fc87935d6c05db59",
+          "commit": "274038e11e3ac7226a51d4d5c7553f49d6190d4b",
+          "dockerImage": "solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd",
+          "upgradeAuthority": "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe",
+          "deployedBy": "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt",
+          "slot": 524204276,
+          "deployedAt": "2026-11-20T02:38:17Z"
+        }
+      ]
     }
   }
 }
