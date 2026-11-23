@@ -1059,6 +1059,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-22 in [Pipeline 0.3: re-pin the router, SDK and pipeline-check, adapt every program and Canary, and check the pin daily](https://github.com/imDev2023/testing-pipeline/issues/194)
 
+### BAR-45: Dependency advisories
+
+- Question: How do we hear of a known vulnerability in a Rust crate our programs, tests or Canary depend on?
+- Answer: A workflow of its own runs `cargo audit` on `programs/Cargo.lock` and `crates/Cargo.lock` when either changes, every day and on demand, failing on any vulnerability and only reporting unmaintained crates, which come through Solana's and LiteSVM's own dependencies.
+- Alternatives: A step in `ci.yml`, which would check only when on-chain code changed and never on a quiet day; `cargo deny` with a licence and source policy as well, more than this finding asked for; failing on unmaintained crates, which would fail every run on crates we do not choose.
+- Specified in: [`docs/toolchain.md`, CI](toolchain.md#ci)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
 ## Aviary, the terminal (PIPESCOPE)
 
 ### PIPESCOPE-01: What the first version is
@@ -3641,11 +3651,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-34: The deadline without the market state
 
 - Question: Does an unlock by the deadline still need the home market's state to be readable?
-- Answer: No: a market state at the recorded address that can no longer be read as the tax AMM's (another owner, another size or discriminator, or closed) counts as the goal not reached, so the deadline still unlocks; before the deadline such a market state is refused with `NotATaxMarketState`.
-- Alternatives: Refusing every unlock whose market state cannot be read, which would trap holders for good if a tax AMM upgrade changed the account, the case the deadline exists for.
+- Answer: No: a market state at the recorded address that can no longer be read as the tax AMM's (another owner, another size, discriminator or version, or closed) counts as the goal not reached, so the deadline still unlocks; before the deadline such a market state is refused with `NotATaxMarketState`.
+- Alternatives: The earlier default, the same without the version (`HOOK-43` added it on 2026-11-23); refusing every unlock whose market state cannot be read, which would trap holders for good if a tax AMM upgrade changed the account, the case the deadline exists for.
 - Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
 
 ### HOOK-35: The launch script's rehearsal of the devnet launch
@@ -3717,6 +3727,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-42: The goal counts from the binding
+
+- Question: May `bind` bind a home market that has already collected tax?
+- Answer: No: `bind` refuses a market state whose tax collected is above zero (`MarketAlreadyCollectedTax`), so the unlock goal counts only tax collected under containment; a launch binds before its seed, when nothing can have traded, so this refuses only a market that traded before its token was pointed at the hook.
+- Alternatives: Recording the counter at binding as a baseline, which needs a new field in the config, whose layout is frozen (`HOOK-46`); requiring the market not yet seeded as well, which adds a dependency on another tax AMM offset for no further protection, since an unseeded market has collected nothing.
+- Specified in: [`docs/spec/containment-hook.md`, Checks on the home market](spec/containment-hook.md#checks-on-the-home-market)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-43: Which market state versions the hook reads
+
+- Question: How does the hook read a home market state written by a later version of the tax AMM?
+- Answer: As unreadable: the hook reads a market state only at version 1, the one it was built against, so `bind` refuses a newer one and `unlock` leaves it to the deadline; a tax AMM build that changes its version fails the hook's own build until the hook is reviewed against it.
+- Alternatives: Reading any version, which a later tax AMM build that kept the account's size but moved the counter would turn into a forged early unlock; refusing every unlock of such a market, which would trap holders for good, the case the deadline exists for (`HOOK-34`).
+- Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-44: A multisig mint authority
+
+- Question: May a mint whose mint authority is a Token-2022 multisig be bound?
+- Answer: No: `bind` checks one signer, and a multisig account's address can sign only through the keypair it was created at, which would bind the mint without the multisig's other signers, so `bind` refuses a mint authority owned by Token-2022 (`MintAuthorityIsMultisig`); a launcher binds first and may move the authority to a multisig afterwards, until the seed revokes it.
+- Alternatives: Accepting the multisig's signers in the remaining accounts and checking M of N, more code on a path each token takes once.
+- Specified in: [`docs/spec/containment-hook.md`, Binding (`bind`)](spec/containment-hook.md#binding-bind)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-45: `Execute`'s own address checks
+
+- Question: Since Token-2022 passes the validation account and the config at their derived addresses, does `Execute` still check that each sits at its PDA?
+- Answer: Yes, both behind one helper: each check costs about 1,500 units and `Execute` stays near 5,700 of its 10,000, and the hook, frozen before mainnet, keeps no identity check that rests on the caller; the helper keeps the two from drifting apart.
+- Alternatives: Dropping both, keeping the owner, discriminator and stored-mint checks, about 3,000 units less per hooked transfer; the review's mutation run found every substitution through a real transfer refused either way.
+- Specified in: [`docs/spec/containment-hook.md`, The allow rule](spec/containment-hook.md#the-allow-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-46: The frozen config layout and the hook's release gate
+
+- Question: What must a redeploy of the hook prove for tokens contained before it?
+- Answer: The config's version 1 layout never changes while any token is bound, and no build replaces the deployed hook until its release gate, run by `scripts/deploy-devnet.sh` on the very bytes it deploys, has decoded every config on the cluster with the new build, traded and refused a wallet transfer for each token still contained, and unlocked it at its deadline.
+- Alternatives: Reallocating a versioned config before it grows, which every instruction would then have to handle; trusting the tests on fresh configs, which cannot see a layout change that breaks only configs written by the deployed build.
+- Specified in: [`docs/spec/containment-hook.md`, Upgrade policy](spec/containment-hook.md#upgrade-policy)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
 
 ## Buy wall AMM (POOL4)
 
@@ -5274,6 +5334,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-86`: since Pipeline 0.2 dropped the config account from `register_existing_market`, a hooked token's graduation fits a legacy transaction when its shares are locked (1,222 bytes) but not when they go to a wallet (1,254); `lending-pool.md` has the new figures, and the decision's own figures (1,287) are the lending AMM session's to update.
 - `BAR-42`, `TAX-53`, `TAX-54`: set by the session of [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `HOOK-42` to `HOOK-46`, `BAR-45`: set by the session of [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) from its internal adversarial review and listed for the owner on that ticket as the session's own decisions, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `HOOK-35` to `HOOK-37`: set by the session of [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.

@@ -380,6 +380,10 @@ The hook went to devnet on 2026-11-22.
 `scripts/github-settings.sh` makes it required, through a repository ruleset that admins may bypass (so a history rewrite can still be force-pushed), and switches on private vulnerability reporting, which every program's `security.txt` names as its contact.
 Both settings need the repository public on GitHub Free; `scripts/make-repo-public.sh` ran it when the repository went public on 2026-11-20, and both are on.
 
+`.github/workflows/advisories.yml` checks both lock files, `programs/Cargo.lock` and `crates/Cargo.lock`, against the RustSec advisory database with `cargo audit` (0.22.0), when either changes, every day at 06:41 UTC and on demand (`BAR-45`, hardening finding H075 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
+It fails on any vulnerability and only reports unmaintained crates, which come through Solana's and LiteSVM's own dependencies.
+Its first run found `url` 2.5.8 (RUSTSEC-2026-0592), reached through `pipeline-client` in the tests and in Canary, and both lock files moved to 2.5.9; no program's bytes contain `url`.
+
 The first run, on [the PR that added CI](https://github.com/imDev2023/testing-pipeline/pull/102) on 2026-11-12, took 9 minutes from cold caches: `rust` 9 minutes (2 minutes 13 seconds of it compiling cargo-build-sbf, then the SBF build in 44 seconds, clippy in 64 seconds and the test build in 49 seconds), `kani` 3 minutes with Kani's install, `typescript` 28 seconds, and `changes`, `no keypairs` and `gate` a few seconds each.
 
 ### CI on the owner's iMac

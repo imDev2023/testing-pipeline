@@ -38,6 +38,7 @@ The config is never closed, so it stays as the record of the token's containment
 ## Binding (`bind`)
 
 - Signed by the mint's mint authority, which is how the hook knows the caller is the launcher; nobody else can bind a mint, so binding cannot be front-run.
+  A mint authority that is a Token-2022 multisig is refused (`MintAuthorityIsMultisig`, `HOOK-44`): `bind` checks one signer, and a multisig account's address can sign only through the keypair it was created at, which would bind without the multisig's other signers; a launcher binds first and may move the authority afterwards.
 - Creates the config and the validation account; it fails if the config already exists, which makes binding write-once.
 - No instruction changes the config afterwards: not the launcher, not us.
 - Arguments: the unlock goal (greater than zero, in quote-mint base units, a `u64`) and the unlock deadline (a Unix timestamp strictly later than the binding's clock and at most the longest deadline after it, `MAX_UNLOCK_DEADLINE_SECS` in "Where its policy values live"; a deadline exactly that far away is allowed).
@@ -69,7 +70,8 @@ One home market per token: several would split the liquidity that containment ex
 The hook's `Execute` fails closed: it refuses the transfer unless all of these hold.
 
 - The validation account and the config are present and at their PDAs for this mint, and the mint is the one Token-2022 is transferring.
-- The source token account has Token-2022's `transferring` flag set, so nobody can call `Execute` directly.
+  Token-2022 already passes both at their derived addresses; the hook checks them again, behind one helper, so that no identity check it makes rests on the caller (`HOOK-45`).
+- The source token account has Token-2022's `transferring` flag set, so a direct call of `Execute` reads as no transfer; nothing relies on what such a call returns, since `Execute` writes nothing, and an account of a multisig's length is never read as a token account (hardening finding H034 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
 - The source or the destination is one of the two allowed accounts: the home market's vault for the token, or the market's fee account for the token.
 
 It makes no CPI: on a direct buy it runs at the fourth of the five call levels the runtime allows (router, strategy, Token-2022, hook), so a program that wraps the router puts it at the fifth, and a CPI of its own would leave no room for that wrapper (hardening finding H046 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74); the deeper calls of SIMD-0268 are not active on devnet).
@@ -236,6 +238,11 @@ As for the tax AMM (`docs/spec/tax-amm.md`, "Where its policy values live"), und
 - On devnet the hook stays upgradeable under the project upgrade-authority key, as the bar says.
 - It is frozen (upgrade authority removed) before any mainnet use, rather than the bar's default of a multisig with a timelock: the hook's whole promise is that nobody can change the rules, and a key that can upgrade it could block every contained token's transfers at once.
 - The cost is that a bug found after freezing cannot be fixed; the mainnet launch effort, out of scope here, audits the hook before freezing it.
+- The config's version 1 layout is frozen while any token is bound (`HOOK-46`, hardening finding H011 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)): `unlock` writes the config back, so an upgrade that grew it by even one byte would keep trading working but make every bound token's `unlock` fail, its deadline included.
+  New state goes in a new account; `tests/release_gate.rs` pins the layout byte for byte.
+- No upgrade replaces the deployed hook until its release gate passes: `programs/containment-hook/scripts/pre-deploy.sh`, which `scripts/deploy-devnet.sh` runs on the very bytes it is about to deploy, copies every config on the cluster with its mint, home market, vaults and fee accounts (`scripts/gate_snapshot.py`), and with the new build, in LiteSVM, decodes each config, and for each token still contained buys into a fresh associated token account, sells, has a wallet-to-wallet transfer refused, and unlocks it at its deadline; each token already unlocked must refuse a second `unlock`.
+  It also refuses a build whose compiled tax AMM id is not the one `deployments/devnet.json` records, and on devnet keeps what it read in `deployments/release-gate/containment-hook/devnet.json`.
+  Every `cargo test` runs the same gate on the devnet configs copied on 2026-11-23 (`tests/fixtures/release-gate/devnet/`).
 
 ### Compute ceilings
 
