@@ -20,9 +20,11 @@
 //!    to another wallet with `SetAuthority(AccountOwner)`, which moves no tokens and calls no
 //!    hook, so the token would leave the home market without a transfer.
 //!
-//! It makes no CPI, because on a buy it already runs at the last call level the runtime
-//! allows (router, strategy, Token-2022, hook), and it never searches for a bump. Minting
-//! never calls a hook, so a launcher can mint the supply before and after binding.
+//! It makes no CPI: on a direct buy it runs at the fourth of the runtime's five call levels
+//! (router, strategy, Token-2022, hook), so one program wrapping the router still fits. It
+//! never searches for a bump, and it writes nothing, so nothing relies on what a direct call
+//! of it returns. Minting never calls a hook, so a launcher can mint the supply before and
+//! after binding.
 
 use anchor_lang::prelude::*;
 
@@ -79,39 +81,52 @@ pub fn process_execute(ctx: Context<Execute>, _amount: u64) -> Result<()> {
     Ok(())
 }
 
-/// The mint's config, refused unless it is owned by this program, decodes as a config, names
-/// `mint`, and sits at `["config", mint]` with the bump it stores.
+/// The mint's config, refused unless it decodes as a config, names `mint`, and is owned by
+/// this program at `["config", mint]` with the bump it stores.
 fn read_config(account: &UncheckedAccount, mint: &Pubkey) -> Result<Config> {
-    require_keys_eq!(*account.owner, crate::ID, HookError::WrongConfig);
     let config = Config::try_deserialize(&mut &account.try_borrow_data()?[..])
         .map_err(|_| error!(HookError::WrongConfig))?;
     require_keys_eq!(config.mint, *mint, HookError::WrongConfig);
-    let address = Pubkey::create_program_address(
-        &[CONFIG_SEED, mint.as_ref(), &[config.config_bump]],
-        &crate::ID,
-    )
-    .map_err(|_| error!(HookError::WrongConfig))?;
-    require_keys_eq!(address, account.key(), HookError::WrongConfig);
+    require_mint_pda(
+        account,
+        CONFIG_SEED,
+        mint,
+        config.config_bump,
+        HookError::WrongConfig,
+    )?;
     Ok(config)
 }
 
-/// Refuses a validation account unless it is owned by this program and sits at
+/// Refuses a validation account unless it is owned by this program at
 /// `["extra-account-metas", mint]` with the bump the config stores.
 fn check_validation_account(
     account: &UncheckedAccount,
     mint: &Pubkey,
     config: &Config,
 ) -> Result<()> {
-    require_keys_eq!(*account.owner, crate::ID, HookError::WrongValidationAccount);
-    let address = Pubkey::create_program_address(
-        &[
-            EXTRA_ACCOUNT_METAS_SEED,
-            mint.as_ref(),
-            &[config.extra_account_metas_bump],
-        ],
-        &crate::ID,
+    require_mint_pda(
+        account,
+        EXTRA_ACCOUNT_METAS_SEED,
+        mint,
+        config.extra_account_metas_bump,
+        HookError::WrongValidationAccount,
     )
-    .map_err(|_| error!(HookError::WrongValidationAccount))?;
-    require_keys_eq!(address, account.key(), HookError::WrongValidationAccount);
+}
+
+/// Refuses `account`, with `error`, unless it is owned by this program and sits at its PDA
+/// `[seed, mint]` with `bump`: the one check every account `bind` created for a mint passes.
+/// Token-2022 itself passes these accounts at their derived addresses; the hook checks them
+/// again so that no identity check it makes rests on the caller (`HOOK-45`).
+fn require_mint_pda(
+    account: &UncheckedAccount,
+    seed: &[u8],
+    mint: &Pubkey,
+    bump: u8,
+    error: HookError,
+) -> Result<()> {
+    require_keys_eq!(*account.owner, crate::ID, error);
+    let address = Pubkey::create_program_address(&[seed, mint.as_ref(), &[bump]], &crate::ID)
+        .map_err(|_| error!(error))?;
+    require_keys_eq!(address, account.key(), error);
     Ok(())
 }

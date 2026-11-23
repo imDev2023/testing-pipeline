@@ -56,13 +56,15 @@ fn files_containing(needle: &str) -> Vec<String> {
         .collect()
 }
 
-/// The IDL and the TypeScript client, generated from the program, and `pipeline-check`'s reports
+/// The IDL and the TypeScript client, generated from the program, `pipeline-check`'s reports
 /// in `conformance/`, records of runs written by the launch script, which name the strategy each
-/// checked market runs on.
+/// checked market runs on, and the release gate's copies of accounts in `tests/fixtures/`, which
+/// name the program that owns each market state.
 fn generated(path: &str) -> bool {
     path == "idl/containment_hook.json"
         || path.starts_with("scripts/client/")
         || path.starts_with("conformance/")
+        || path.starts_with("tests/fixtures/")
 }
 
 #[test]

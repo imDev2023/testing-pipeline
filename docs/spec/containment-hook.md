@@ -57,7 +57,9 @@ The config is never closed, so it stays as the record of the token's containment
 - The `Market` account is owned by Pipeline's router and sits at its PDA `["market", strategy, market_state]`.
 - Its strategy is the tax AMM, whose program id is fixed in the hook at build time.
 - One of its two mints is the contained mint; the other is the quote mint.
-- The market state passed in is the one the `Market` records, owned by the tax AMM, and its tax side is the quote mint's index, so its tax collected is counted in the quote mint.
+- The market state passed in is the one the `Market` records, owned by the tax AMM, at the one market state version the hook reads, and its tax side is the quote mint's index, so its tax collected is counted in the quote mint.
+- Its tax collected is zero, so the unlock goal counts only tax collected under containment, from the binding on; a market that already traded, under another hook or none, is refused with `MarketAlreadyCollectedTax` (hardening finding H020 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74), `HOOK-42`).
+  A launch binds before its seed, when nothing can have traded, so this refuses only a market that traded before its token was pointed at this hook.
 - `bind` reads the token's vault from `Market.vaults` and derives the fee account (the Token-2022 associated token account of the router PDA `["fees", market]` for the contained mint), rather than taking either from the caller.
 
 One home market per token: several would split the liquidity that containment exists to concentrate, and summing tax in different quote mints would need a price on chain.
@@ -70,7 +72,7 @@ The hook's `Execute` fails closed: it refuses the transfer unless all of these h
 - The source token account has Token-2022's `transferring` flag set, so nobody can call `Execute` directly.
 - The source or the destination is one of the two allowed accounts: the home market's vault for the token, or the market's fee account for the token.
 
-It makes no CPI, because on a buy it already runs at the last call level the runtime allows (router, strategy, Token-2022, hook).
+It makes no CPI: on a direct buy it runs at the fourth of the five call levels the runtime allows (router, strategy, Token-2022, hook), so a program that wraps the router puts it at the fifth, and a CPI of its own would leave no room for that wrapper (hardening finding H046 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74); the deeper calls of SIMD-0268 are not active on devnet).
 The allowed sets are the same for sources and destinations, and neither allowed account is controlled by a wallet: the vault is moved only by the tax AMM and the fee account only by the router's `sweep_fees`.
 
 ### What this allows
@@ -102,6 +104,7 @@ This includes another market's vault: a buy can deliver into it, since the hook 
   - the home market's `tax_collected`, read from the tax AMM market state recorded at binding (owner and address checked), is at least the unlock goal;
   - the clock's Unix timestamp is at or past the unlock deadline.
 - Past the deadline the unlock does not need the market state: one that can no longer be read as the tax AMM's, after an upgrade changed it or the account was closed, counts as the goal not reached, and the deadline still unlocks, since it exists for a home market that stopped working (see "Unlock deadline").
+  A market state of a version other than the one the hook reads counts the same way, so a later tax AMM build that kept the account's size but moved what the hook reads can never be misread as a goal reached; a tax AMM build that changes its version fails the hook's own build until the hook is reviewed against it (hardening finding H009 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74), `HOOK-43`).
   Before the deadline such a market state is refused, and its address is always checked against the one recorded at binding.
 - Signed by the unlock PDA, it calls Token-2022's `TransferHookInstruction::Update` with no program id, then `SetAuthority(TransferHookProgramId, None)`, and records the unlock time in the config.
 - Both fields must be cleared: Meteora's DAMM v2 and DLMM accept a mint with the transfer hook extension permissionlessly only when the hook program and the hook authority are both unset.
@@ -172,9 +175,9 @@ The hook is not a strategy and has no strategy metadata, so its panel and its on
 
 ## Depends on
 
-- The tax AMM (`docs/spec/tax-amm.md`): `tax_collected` and the tax side at fixed offsets that later versions never move, vaults at PDAs `["vault", market_state, mint]`, bypass refused, liquidity locked, tax paid out of the vault only, and the program frozen before mainnet because the unlock trusts its counter.
+- The tax AMM (`docs/spec/tax-amm.md`): `tax_collected` and the tax side at fixed offsets that later versions never move, its market state's version at 1 (a newer version reads as unreadable, see "Unlock"), vaults at PDAs `["vault", market_state, mint]`, bypass refused, liquidity locked, tax paid out of the vault only, and the program frozen before mainnet because the unlock trusts its counter.
 - `docs/spec/README.md`, the engineering and security bar every program of ours meets; "Building it" below adds what it asks of each product's file.
-- Pipeline's router: the fee account's derivation belongs to the router, which is upgradeable on devnet; if an upgrade changed it, sells of contained tokens would fail until their deadline.
+- Pipeline's router: the fee account's derivation belongs to the router, which is upgradeable on devnet; if an upgrade changed it, sells of contained tokens whose home market takes Pipeline's fee in the token (a quote other than wrapped SOL) would fail until their deadline, and so would `sweep_fees` of the token; on a market quoted in wrapped SOL a sell never moves the token into its fee account (hardening finding H070 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
 
 ## Ruled out
 
