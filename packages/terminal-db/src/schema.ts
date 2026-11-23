@@ -147,6 +147,43 @@ export const trades = pgTable(
 );
 
 /**
+ * Candles (docs/spec/pipescope-architecture.md, Candles; PIPESCOPE-30), one per market, mint pair,
+ * length and start, folded from trades as they are indexed. A pair's mints are kept in address order
+ * (`mint_a` < `mint_b`), whichever of them a page quotes in. A price is an amount of `mint_a` for an
+ * amount of `mint_b` in their smallest units, kept exactly as a reduced fraction of the swap that set
+ * it, so a candle reads exactly either way round and at any decimals; the open and close are the
+ * candle's first and last swaps by trade order (`open_key`, `close_key`).
+ */
+export const candles = pgTable(
+  "candles",
+  {
+    market: text("market").notNull(),
+    mintA: text("mint_a").notNull(),
+    mintB: text("mint_b").notNull(),
+    /** The candle's length in seconds. */
+    seconds: integer("seconds").notNull(),
+    /** Its start, in Unix seconds: a multiple of its length. */
+    start: bigint("start", { mode: "bigint" }).notNull(),
+    openA: amount("open_a").notNull(),
+    openB: amount("open_b").notNull(),
+    highA: amount("high_a").notNull(),
+    highB: amount("high_b").notNull(),
+    lowA: amount("low_a").notNull(),
+    lowB: amount("low_b").notNull(),
+    closeA: amount("close_a").notNull(),
+    closeB: amount("close_b").notNull(),
+    /** The trade order (slot, place in the block, event index) of the first and last swaps folded in. */
+    openKey: text("open_key").notNull(),
+    closeKey: text("close_key").notNull(),
+    /** What the candle's swaps moved of each mint, in its smallest units; a sum of u64s can pass 20 digits. */
+    volumeA: numeric("volume_a", { precision: 40, scale: 0 }).notNull(),
+    volumeB: numeric("volume_b", { precision: 40, scale: 0 }).notNull(),
+    trades: integer("trades").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.market, t.mintA, t.mintB, t.seconds, t.start] }), index("candles_retention").on(t.seconds, t.start)],
+);
+
+/**
  * The keeper runner's passes (docs/spec/keeper-runner.md, "What it records"; SUITE-37): one row per
  * pass that sent, held or parked something, written by the runner from the owner's Mac in one
  * transaction with its jobs. Amounts are in lamports.

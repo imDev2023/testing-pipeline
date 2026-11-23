@@ -1,7 +1,7 @@
 // Adapted from Top-pad b833a7b, apps/api/src/index.ts; owned here since.
 // The API (Hono with the zod contract in ./contract) and the every-minute cron. Kept apart from
 // ./worker, the Worker's entry, so the tests, which run in Node, load this alone.
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import type { JobName } from "./config";
@@ -11,6 +11,7 @@ import type { Bindings } from "./env";
 import { feed } from "./feed";
 import { health } from "./health";
 import { keeperRoutes } from "./keeper";
+import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
 
 export type AppEnv = { Bindings: Bindings };
@@ -36,6 +37,24 @@ app.get("/health", async (c) => {
 
 app.route("/", feed);
 
+/**
+ * The live rooms (./liveRoom): a page opens a WebSocket here and the Worker hands the upgrade to the
+ * room, named, so a room woken from hibernation knows which it is.
+ */
+const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const joinRoom = (c: Context<AppEnv>, room: string) => {
+  if (c.req.header("upgrade")?.toLowerCase() !== "websocket") return c.json<ApiError>({ error: "A live room is a WebSocket: open it with an upgrade." }, 426);
+  const request = new Request(c.req.raw);
+  request.headers.set(ROOM_HEADER, room);
+  return c.env.LIVE_ROOMS.get(c.env.LIVE_ROOMS.idFromName(room)).fetch(request);
+};
+app.get("/v1/live/feed", (c) => joinRoom(c, roomOf.feed));
+app.get("/v1/live/markets/:market", (c) => {
+  const market = c.req.param("market");
+  if (!ADDRESS.test(market)) return c.json<ApiError>({ error: "This is not a market's address." }, 400);
+  return joinRoom(c, roomOf.market(market));
+});
+
 /** How the indexer stands: its version, its cursor and when each job last ran (./indexer). */
 app.get("/v1/indexer", async (c) => c.json(await indexer(c.env).status()));
 
@@ -53,6 +72,7 @@ export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
   return {
     reconcileRouter: async () => void (await indexer(env).reconcile(version)),
     registrySnapshot: async () => void (await indexer(env).snapshot(version)),
+    pruneCandles: async () => void (await indexer(env).prune(version)),
   };
 }
 

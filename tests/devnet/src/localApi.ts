@@ -7,7 +7,7 @@ import { mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MarketsPage, StrategiesList, TradesPage, type Market, type Strategy, type Trade } from "terminal-api/contract";
+import { Candles, MarketsPage, StrategiesList, TradesPage, type Market, type Strategy, type Trade } from "terminal-api/contract";
 import { createTestDatabase } from "terminal-db/testing";
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), "../../../apps/terminal-api");
@@ -40,6 +40,8 @@ export class LocalApi {
   /** Starts `wrangler dev`, on a fresh database the first time and the same one after. */
   async start(): Promise<void> {
     if (!process.env.RPC_URL) throw new Error("RPC_URL is not set: run with the project's .env loaded.");
+    // Another session's API on this port would answer in this one's place, with other code and another database.
+    if (await fetch(`${this.url}/health`).then(() => true, () => false)) throw new Error(`port ${this.port} is already in use: another process answers there, so this test would not be reading its own API`);
     this.database ??= await createTestDatabase();
     const log = openSync(this.log, "a");
     this.process = spawn(
@@ -102,6 +104,17 @@ export class LocalApi {
       before = page.next;
     } while (before);
     return all;
+  }
+
+  /** The throwaway database this API writes, once started. */
+  get databaseUrl(): string {
+    if (!this.database) throw new Error("the API has not started");
+    return this.database.url;
+  }
+
+  /** A market's candles of one length, for its own pair or the one named, every one the API keeps. */
+  async candles(market: string, interval: string, pair?: { base: string; quote: string }): Promise<Candles> {
+    return Candles.parse(await this.get(`/v1/markets/${market}/candles?interval=${interval}&limit=5000${pair ? `&base=${pair.base}&quote=${pair.quote}` : ""}`));
   }
 
   async strategies(): Promise<Strategy[]> {

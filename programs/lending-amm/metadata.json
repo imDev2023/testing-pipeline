@@ -9,14 +9,15 @@
         "cpmm"
     ],
     "links": {
-        "source": "https://github.com/imDev2023/testing-pipeline/tree/main/programs/lending-amm",
-        "idl": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/lending-amm/idl/lending_amm.json",
-        "docs": "https://github.com/imDev2023/testing-pipeline/blob/main/programs/lending-amm/README.md",
+        "source": "https://github.com/imDev2023/testing-pipeline/tree/e8d0221eb1764e9d91ac88a4fbb5640ad6e886e4/programs/lending-amm",
+        "idl": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/e8d0221eb1764e9d91ac88a4fbb5640ad6e886e4/programs/lending-amm/idl/lending_amm.json",
+        "docs": "https://github.com/imDev2023/testing-pipeline/blob/2c2478984daa359551ba5f43a148c018080c64cf/programs/lending-amm/README.md",
         "github": "https://github.com/imDev2023/testing-pipeline"
     },
     "source": {
         "repository": "https://github.com/imDev2023/testing-pipeline",
-        "path": "programs/lending-amm"
+        "path": "programs/lending-amm",
+        "commit": "e8d0221eb1764e9d91ac88a4fbb5640ad6e886e4"
     },
     "init": {
         "description": "Creates a market for a token and a lent mint. There is one market per pair, lent side and LP fee, at a PDA of all three. Add the router's init_fee_account for each mint and the market's add_liquidity, which makes the first deposit and sets the price, in the same transaction.",
@@ -807,5 +808,9 @@
         "contact": "https://github.com/imDev2023/testing-pipeline/security/advisories/new",
         "policy": "https://github.com/imDev2023/testing-pipeline/security/policy",
         "audits": []
+    },
+    "conformance": {
+        "report": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/2c2478984daa359551ba5f43a148c018080c64cf/programs/lending-amm/conformance/devnet.json",
+        "sha256": "565a6d20be624569e8434d5f2c96aac4c9eef395ebc3e3e4bdf5bf5f92c15068"
     }
 }

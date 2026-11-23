@@ -5,11 +5,12 @@
 import { readFileSync } from "node:fs";
 import { encodeAccount, getStrategyCodec, PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { address } from "@solana/kit";
-import { createDb, markets, strategies, trades } from "terminal-db";
+import { candles, createDb, markets, strategies, trades } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { DECODER_VERSION, indexTransactions, pipelineHandler, type RawTransaction, type TransactionHandler } from "terminal-indexer";
 import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CANDLES, LIVE_ROOM_TRADES_MAX } from "../src/config";
 import { IndexerCore } from "../src/indexerCore";
 
 const fixture = (name: string) => JSON.parse(readFileSync(`${import.meta.dirname}/../../../packages/terminal-indexer/test/fixtures/${name}.json`, "utf8")) as RawTransaction;
@@ -128,5 +129,99 @@ describe("the registry snapshot", () => {
     rpc.accounts.set("StrategyPdaB", { owner: PIPELINE_PROGRAM_ADDRESS, data: strategyAccount("BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6") });
     expect(await indexer.snapshot()).toEqual({ strategies: ["BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6"], markets: [] });
     expect(openDb).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("candles", () => {
+  it("are folded from each swap reconciliation indexes, at every length the config module lists", async () => {
+    rpc.history.push(swap);
+    await core().indexer.reconcile();
+    const lengths = (await reader.db.select({ seconds: candles.seconds }).from(candles)).map((c) => c.seconds).sort((a, b) => a - b);
+    expect(lengths).toEqual(CANDLES.map((c) => c.seconds));
+  });
+
+  it("past their retention are dropped by the daily prune, which leaves the rest", async () => {
+    rpc.history.push(swap);
+    const { indexer } = core();
+    await indexer.reconcile();
+    // The swap is from 2026-11-22; a week and a day later its 1 s candle has gone and the rest stay.
+    const deleted = await indexer.prune(swap.blockTime! + 8 * 86_400);
+    expect(deleted).toBe(1);
+    expect((await reader.db.select({ seconds: candles.seconds }).from(candles)).map((c) => c.seconds)).not.toContain(1);
+  });
+});
+
+describe("the live path", () => {
+  it("indexes a transaction the socket reported, once the RPC serves it, with its place in its block", async () => {
+    const { indexer } = core();
+    await indexer.reconcile();
+    rpc.history.push(swap);
+    rpc.unserved.add(swap.transaction.signatures[0]!);
+    setTimeout(() => rpc.unserved.clear(), 300);
+    const indexed = await indexer.indexSignatures([swap.transaction.signatures[0]!]);
+    expect(indexed.trades).toEqual([{ signature: swap.transaction.signatures[0], eventIndex: 0 }]);
+    expect(await reader.db.select({ blockIndex: trades.blockIndex }).from(trades)).toEqual([{ blockIndex: swap.transactionIndex }]);
+  });
+
+  it("asks the RPC for nothing the database already holds", async () => {
+    rpc.history.push(swap);
+    const { indexer } = core();
+    await indexer.reconcile();
+    rpc.requests.length = 0;
+    expect((await indexer.indexSignatures([swap.transaction.signatures[0]!])).trades).toEqual([]);
+    expect(rpc.requests.filter((r) => r.method === "getTransaction")).toEqual([]);
+  });
+
+  it("turns what it indexed into events for the rooms with a viewer: the swap for its market's room, the market for the feed's", async () => {
+    const { indexer, openDb } = core();
+    await indexer.reconcile();
+    rpc.history.push(swap);
+    const indexed = await indexer.indexSignatures([swap.transaction.signatures[0]!]);
+    const market = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
+    const events = await indexer.events(indexed, ["feed", `market:${market}`, "market:SomeOtherMarket11111111111111111111111111"]);
+    expect([...events.keys()].sort()).toEqual(["feed", `market:${market}`]);
+    expect(events.get(`market:${market}`)!.map((e) => e.type)).toEqual(["trade", "market"]);
+    expect(events.get(`market:${market}`)![0]).toMatchObject({ type: "trade", trade: { signature: swap.transaction.signatures[0], side: "buy", market } });
+    expect(events.get("feed")).toEqual([{ type: "market", market: expect.objectContaining({ address: market, stats_24h: expect.anything() }) }]);
+
+    openDb.mockClear();
+    expect((await indexer.events(indexed, [])).size).toBe(0);
+    expect(openDb).not.toHaveBeenCalled();
+  });
+});
+
+describe("the live path, when part of a batch fails", () => {
+  it("still hands on what it indexed when another reported transaction cannot be indexed", async () => {
+    const { swapTransaction, SWAP_TOKEN, WSOL } = await import("terminal-indexer/swaps");
+    const good = swapTransaction({ id: 1, slot: 525_139_990, blockIndex: 0, at: 1_795_367_000, input: WSOL, output: SWAP_TOKEN, netSent: 5n, received: 7n });
+    const bad = swapTransaction({ id: 2, slot: 525_139_991, blockIndex: 0, at: 1_795_367_001, input: WSOL, output: SWAP_TOKEN, netSent: 5n, received: 7n });
+    const real = pipelineHandler();
+    const handler: TransactionHandler = async (db, raw) => {
+      if (raw.transaction.signatures[0] === bad.transaction.signatures[0]) throw new Error("this transaction cannot be read");
+      return real(db, raw);
+    };
+    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler });
+    await indexer.reconcile();
+    rpc.history.push(good, bad);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const indexed = await indexer.indexSignatures([good.transaction.signatures[0]!, bad.transaction.signatures[0]!]);
+    log.mockRestore();
+    expect(indexed.trades).toEqual([{ signature: good.transaction.signatures[0], eventIndex: 0 }]);
+  });
+});
+
+describe("events after a large backlog", () => {
+  it("tell a market's room to resync through the API rather than send it more swaps than LIVE_ROOM_TRADES_MAX", async () => {
+    const { swapTransaction, SWAP_MARKET, SWAP_TOKEN, WSOL } = await import("terminal-indexer/swaps");
+    const { indexer } = core();
+    await indexer.reconcile();
+    for (let id = 1; id <= LIVE_ROOM_TRADES_MAX + 1; id++) {
+      rpc.history.push(swapTransaction({ id, slot: 525_140_000 + id, blockIndex: 0, at: 1_795_367_000 + id, input: WSOL, output: SWAP_TOKEN, netSent: 5n, received: 7n }));
+    }
+    const { indexed } = await indexer.reconcile();
+    expect(indexed.trades).toHaveLength(LIVE_ROOM_TRADES_MAX + 1);
+    const events = await indexer.events(indexed, ["feed", `market:${SWAP_MARKET}`]);
+    expect(events.get(`market:${SWAP_MARKET}`)!.map((e) => e.type)).toEqual(["resync", "market"]);
+    expect(events.get("feed")!.map((e) => e.type)).toEqual(["market"]);
   });
 });

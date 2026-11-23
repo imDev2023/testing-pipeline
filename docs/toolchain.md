@@ -782,6 +782,17 @@ The lending AMM went to devnet this way on 2026-11-22 and 2026-11-23:
 - **Conformance.** `pipeline-check --url devnet --market AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu --fail-on-warn` reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped, at its default sizes (`programs/lending-amm/conformance/devnet.json`) and with `--amounts 131473535384,134801897064`, sales paying out 99% and 101% of the buffer, resolving up to 11 strategy accounts and using up to 99,225 compute units; `--list-markets` listed the market.
 - A `pipeline-check` built at a new path waited on LuLu until the owner allowed it ("Known problems").
 
+The first upgrade, to release 0.1.1 from `main` at `e8d0221`, went through the release gate on 2026-11-23:
+
+- `deploy-devnet.sh lending-amm --build-only` built it in 155 seconds, executable hash `7502dd6ff76a870edafc231693f9b6c92d0159ae6b9a80bf986a3fce34b31b29`, and `pre-deploy.sh` on that build refused it: `REFUSED: no passing release gate run for build 7502dd6f…`.
+- All 264 lending AMM and gate tests passed on those bytes.
+- `lending-gate run --cluster devnet` replayed all three live markets, the demo market and the two the stopped runs left, with the deployed `34f2e33c…` as the baseline and the candidate, and a market of its own: 49 steps passed, every quote on the three live markets equal to the deployed build's (on the demo market a buy of 5,886,771 lamports at 10,379,899,096 and a sale of 5,309,366,395 at 2,905,586), and on each market a buy, a sell and a sale beyond the buffer delivered exactly their quotes.
+- `deploy-devnet.sh lending-amm` then found that pass against the deployed `34f2e33c…` covering every market, upgraded the program in slot 525,457,447, signature `3hCee6tGQ6nEkWfcMWCNo9xoqDdEzbjFjh66v9wgzcuuNAvKfaDkB22zRs92LXpH2YcSk4ZnueDEaMYBRVhwfQwy`, and checked the hash on chain, which `solana-verify get-program-hash -u devnet` gave too; no deploy buffer was left.
+- `pipeline-check --fail-on-warn` on the demo market first refused every quote with `ReserveStale`: nothing had refreshed our WSOL reserve for about 22,000 slots since the demo, beyond the 9,000 a quote allows (`LENDING-92`), which the keeper runner's `rebalance` job will keep from happening ([#96](https://github.com/imDev2023/testing-pipeline/issues/96)).
+  `npm run cli -- refresh` in `scripts/kamino-devnet` refreshed both reserves, and it then reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped on build `7502dd6f…`, at its default sizes (`programs/lending-amm/conformance/devnet.json`) and with the edge amounts above.
+- Pipeline's hosted API showed the strategy with the new code hash (`/v1/strategies/Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG`), and `demo.ts --hosted-api` passed again, the API quoting the market exactly as before the upgrade.
+- The metadata was then pinned with `node publish.ts pin --report-commit 2c2478984daa359551ba5f43a148c018080c64cf`: the source and IDL at the deployed `e8d0221`, the report and the README at `2c24789`, which recorded the upgrade, with the report's SHA-256; once merged, `demo.ts --register-only` points the router at the metadata commit's copy and `node publish.ts verify` checks everything published.
+
 ## Local validator
 
 Pipeline's `docs/DEVNET.md` gives the command, adapted here to this project's wallet (the programs' upgrade authority, so the script initialises the router's config and registers the example strategy itself) and a ledger outside the clone:
@@ -842,7 +853,7 @@ Before the tests, `src/global-setup.ts` fires the cron and waits for the indexer
 ### Aviary's devnet tests
 
 `tests/devnet` holds the indexer's restart test and the parity checks against Pipeline's hosted devnet API (`docs/spec/pipescope-architecture.md`, Indexer).
-Each starts its own `terminal-api` under `wrangler dev`, on a throwaway database made on `TEST_DATABASE_URL` and on ports 8822 and 8824, so it never meets a local run already up; the restart test spends a little devnet SOL in fees from the project's devnet wallet.
+Each starts its own `terminal-api` under `wrangler dev`, on a throwaway database made on `TEST_DATABASE_URL` and on a port of its own from 8822 up (the candle checks on 8830), so it never meets a local run already up, and refuses to start on a port another process holds; the restart test spends a little devnet SOL in fees from the project's devnet wallet.
 
 ```sh
 direnv exec "<main checkout>" pnpm --filter terminal-devnet devnet
