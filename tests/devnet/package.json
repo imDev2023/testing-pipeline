@@ -12,9 +12,11 @@
     },
     "devDependencies": {
         "@pipeline-sol/sdk": "catalog:",
+        "@solana-program/system": "0.16.0",
         "@solana-program/token": "0.18.0",
         "@solana/kit": "8.6.0",
         "@types/node": "24.19.2",
+        "drizzle-orm": "0.45.4",
         "terminal-api": "workspace:*",
         "terminal-db": "workspace:*",
         "terminal-indexer": "workspace:*",
@@ -22,6 +24,7 @@
         "vitest": "5.1.1"
     },
     "exports": {
-        "./devnet": "./src/devnet.ts"
+        "./devnet": "./src/devnet.ts",
+        "./cpMarket": "./src/cpMarket.ts"
     }
 }

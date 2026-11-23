@@ -1,6 +1,8 @@
 // Adapted from Top-pad b833a7b, apps/api/src/env.ts; owned here since.
 // The bindings `wrangler.jsonc` gives `terminal-api`. Per-environment values (the cluster, the rate
 // limits) live there; policy values the code uses live in ./config.
+import type { CanaryContainer } from "./canaryContainer";
+import type { CanaryRun } from "./canaryRun";
 import type { Indexer } from "./indexer";
 import type { LiveRoom } from "./liveRoom";
 
@@ -28,4 +30,10 @@ export type Bindings = {
   LIVE_ROOMS: DurableObjectNamespace<LiveRoom>;
   /** The keeper runner's wallet (docs/spec/keeper-runner.md, "The keeper wallet"): the keeper page shows it, and only its signed heartbeats are kept. */
   KEEPER_WALLET: string;
+  /** Canary's runs, one per strategy version, by `<program>:<deploy slot>` (docs/spec/pipescope-architecture.md, "Canary runner"). */
+  CANARY_RUNS: DurableObjectNamespace<CanaryRun>;
+  /** Canary's one container, by the name `canary`. */
+  CANARY_CONTAINER: DurableObjectNamespace<CanaryContainer>;
+  /** The operator wallet, whose signed requests alone re-run Canary (`pnpm canary:rerun`). */
+  CANARY_OPERATOR: string;
 };

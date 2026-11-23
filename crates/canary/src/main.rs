@@ -139,12 +139,33 @@ fn serve(listen: SocketAddr) -> Result<(), String> {
             .map_err(|e| format!("cannot listen on {listen}: {e}"))?;
         eprintln!("canary: serving POST /run on http://{listen}");
         axum::serve(listener, canary::http::router())
-            .with_graceful_shutdown(async {
-                let _ = tokio::signal::ctrl_c().await;
-            })
+            .with_graceful_shutdown(stopped())
             .await
             .map_err(|e| e.to_string())
     })
+}
+
+/// Ctrl-C locally, or the SIGTERM a container runtime sends before it stops the container.
+async fn stopped() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 fn main() -> ExitCode {

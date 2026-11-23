@@ -358,3 +358,83 @@ export const keeperRunJobs = pgTable(
   },
   (table) => [index("keeper_run_jobs_run").on(table.runId), index("keeper_run_jobs_unit").on(table.market, table.job, table.slot, table.at.desc())],
 );
+
+/**
+ * Canary's runs (docs/spec/pipescope-architecture.md, "Canary runner"; #124): each run of one
+ * strategy version on some or all of its markets, started by one trigger (CANARY-22, CANARY-23):
+ * `market_created` (with its delay: at once, then 10 minutes, 1 hour and 1 day on),
+ * `strategy_version`, `router_upgraded`, `sweep` or `rerun`. The `CanaryRun` Durable Object of the
+ * version writes it when the run starts and when its last market is done.
+ */
+export const canaryRuns = pgTable(
+  "canary_runs",
+  {
+    id: bigint("id", { mode: "bigint" }).primaryKey().generatedAlwaysAsIdentity(),
+    program: text("program").notNull(),
+    deploySlot: bigint("deploy_slot", { mode: "bigint" }).notNull(),
+    trigger: text("trigger").notNull(),
+    /** How long after its trigger the run was due, in milliseconds: a new market's later runs. */
+    delayMs: bigint("delay_ms", { mode: "number" }).notNull().default(0),
+    /** The markets it covers. */
+    markets: integer("markets").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("canary_runs_version").on(t.program, t.deploySlot, t.startedAt.desc())],
+);
+
+/**
+ * Each market of a run, once it is done: how many snapshot rounds it took, the RPC requests its
+ * snapshot cost, the time it spent in the container and the notes the binary wrote; or, for a
+ * market Aviary could not run (an RPC or the container failing past the retries), the error.
+ */
+export const canaryRunMarkets = pgTable(
+  "canary_run_markets",
+  {
+    runId: bigint("run_id", { mode: "bigint" })
+      .notNull()
+      .references(() => canaryRuns.id, { onDelete: "cascade" }),
+    market: text("market").notNull(),
+    /** done or failed. */
+    status: text("status").notNull(),
+    rounds: smallint("rounds"),
+    rpcRequests: integer("rpc_requests"),
+    containerMs: integer("container_ms"),
+    notes: jsonb("notes").$type<string[]>(),
+    error: text("error"),
+    finishedAt: timestamp("finished_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.market] })],
+);
+
+/**
+ * Canary results (docs/spec/pipescope-canary.md, "Records"; CANARY-20): one per check, market,
+ * strategy version and run slot, as the binary wrote it (`record`). Only the latest of each check
+ * per market and version (`latest`) and every earlier one whose outcome differed from the one after
+ * it are kept. The version is the indexer's (`program_versions`), keyed by its deploy slot.
+ */
+export const canaryResults = pgTable(
+  "canary_results",
+  {
+    /** The binary's stable id: the check, the market, the version's deploy slot and the run's slot. */
+    id: text("id").primaryKey(),
+    runId: bigint("run_id", { mode: "bigint" })
+      .notNull()
+      .references(() => canaryRuns.id),
+    program: text("program").notNull(),
+    deploySlot: bigint("deploy_slot", { mode: "bigint" }).notNull(),
+    market: text("market").notNull(),
+    check: text("check").notNull(),
+    /** pass, warn, fail, not run or noted. */
+    outcome: text("outcome").notNull(),
+    harness: text("harness").notNull(),
+    slot: bigint("slot", { mode: "bigint" }).notNull(),
+    runAt: timestamp("run_at", { withTimezone: true }).notNull(),
+    record: jsonb("record").notNull(),
+    latest: boolean("latest").notNull(),
+  },
+  (t) => [
+    index("canary_results_market").on(t.market, t.program, t.deploySlot, t.check, t.slot.desc()),
+    index("canary_results_latest_version").on(t.program, t.deploySlot).where(sql`latest`),
+  ],
+);

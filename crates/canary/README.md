@@ -35,6 +35,18 @@ The snapshot may also carry `instructions`, the strategy version's instruction l
 The seed is chosen at random once per run and every wallet of the run comes from it, so all rounds trade from the same wallets and accounts derived from them can be supplied, while no strategy can know the wallets in advance (`CANARY-36`).
 `canary snapshot` writes a complete snapshot with the seed it was recorded with, and refuses when any RPC read failed.
 
+## The container
+
+`Dockerfile` builds the image Aviary runs as a Cloudflare Container (`CanaryContainer` in `apps/terminal-api`; `docs/spec/pipescope-architecture.md`, "Canary runner"), linux/amd64, from this folder's parent as its context:
+
+```sh
+docker build --platform linux/amd64 -t terminal-canary:dev -f crates/canary/Dockerfile crates
+```
+
+It holds the binary alone on a distroless base and runs `canary serve --listen 0.0.0.0:8080`, which stops on SIGTERM as a container runtime stops it.
+The container has internet access off and no variables: `CanaryRun` posts every account a run reads.
+`scripts/measure-instances.sh` times the image at Cloudflare's instance sizes on recorded snapshots.
+
 ## How it is built
 
 - `src/config.rs`: every policy value, as named constants, and the `harness` version every record carries (`CANARY-28`).

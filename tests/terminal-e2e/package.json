@@ -10,14 +10,18 @@
         "typecheck": "tsc -p .",
         "e2e": "playwright test",
         "record": "E2E_RPC=record playwright test",
-        "demo:versions": "node demo/strategy-versions.ts"
+        "demo:versions": "node demo/strategy-versions.ts",
+        "demo:canary": "node demo/canary-runs.ts"
     },
     "devDependencies": {
         "@pipeline-sol/sdk": "catalog:",
         "@playwright/test": "1.65.1",
+        "@solana-program/system": "0.16.0",
+        "@solana-program/token": "0.18.0",
         "@solana/kit": "8.6.0",
         "@types/node": "24.19.2",
         "@types/ws": "8.18.1",
+        "drizzle-orm": "0.45.4",
         "postgres": "3.4.9",
         "terminal-api": "workspace:*",
         "terminal-db": "workspace:*",

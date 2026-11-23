@@ -7,12 +7,13 @@
 
 const SECOND = 1_000;
 const MINUTE = 60 * SECOND;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
 
 /**
  * How often each job runs, in whole minutes (PIPESCOPE-28, PIPESCOPE-36): the every-minute cron
  * runs a job when the minute it fires on is a multiple of the job's interval (./dispatcher), so no
- * interval is written in `wrangler.jsonc`. Canary's schedule (CANARY-22, CANARY-23) joins with
- * Canary in the Container (#124).
+ * interval is written in `wrangler.jsonc`.
  */
 export const JOB_INTERVAL_MINUTES = {
   /** Reconciliation of the router's history from its cursor. */
@@ -29,6 +30,8 @@ export const JOB_INTERVAL_MINUTES = {
   metadataRefetch: 60,
   /** Dropping candles past their length's retention (`CANDLES`), once a day, so the database wakes for it rarely (PIPESCOPE-109). */
   pruneCandles: 24 * 60,
+  /** Canary's scheduled sweep of every market (CANARY-23; docs/spec/pipescope-canary.md, When Canary runs). */
+  canarySweep: 6 * 60,
 } as const;
 
 export type JobName = keyof typeof JOB_INTERVAL_MINUTES;
@@ -170,3 +173,39 @@ export const KEEPER_RECENT_JOBS = 20;
  */
 export const KEEPER_HEARTBEAT_MAX_SKEW_MS = 2 * MINUTE;
 export const KEEPER_HEARTBEAT_MIN_GAP_MS = 30 * SECOND;
+
+/**
+ * Canary's runs (docs/spec/pipescope-architecture.md, "Canary runner"; docs/spec/pipescope-canary.md,
+ * When Canary runs, the one place the schedule is stated; CANARY-22, CANARY-23). The checks' own
+ * policy values are in `crates/canary/src/config.rs` (CANARY-28), the snapshot rounds among them
+ * (CANARY-25), which the binary counts.
+ */
+export const CANARY = {
+  /** A market created or registered is run at once, and again this long after it was found (CANARY-22). */
+  marketCreatedDelaysMs: [0, 10 * MINUTE, HOUR, DAY],
+  /**
+   * The one container: asleep this long after its last run, answering on this port, each run given
+   * this long; after a start, its binary is asked for `/health` this often, this many times, before a run is posted.
+   */
+  container: { sleepAfter: "2m", port: 8080, answerTimeoutMs: 5 * MINUTE, readyEveryMs: 250, readyAttempts: 40 },
+  /**
+   * A market whose snapshot or run failed (the RPC, or the container restarting) is tried again on
+   * the run's alarm, after waits doubling from the first to the longest, up to this many attempts in
+   * all; then Aviary records that it could not run it and the run goes on.
+   */
+  retry: { attempts: 6, firstDelayMs: 30 * SECOND, maxDelayMs: 10 * MINUTE },
+  /**
+   * How many times a run waits for the ProgramData watch to record a newer version, when the chain's
+   * strategy executable is no longer the version's, before giving up on the market, 1 minute apart.
+   */
+  versionWaits: { attempts: 5, delayMs: MINUTE },
+  /**
+   * The most snapshot rounds a market may take before Aviary calls the binary broken: the binary
+   * answers with results by CANARY-25's last round (4), so this only guards against a broken one.
+   */
+  roundsGuard: 8,
+  /** How long a new market's runs wait for the watch to record its strategy's version before Canary passes them by. */
+  versionWaitMs: 30 * MINUTE,
+  /** An operator's re-run (`pnpm canary:rerun`) is taken only if its time is within this much of the Worker's clock, so an old one cannot be replayed. */
+  rerunMaxSkewMs: 2 * MINUTE,
+} as const;

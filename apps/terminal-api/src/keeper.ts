@@ -10,7 +10,7 @@
 //   last heartbeat older than its SWEEP_INTERVAL plus KEEPER_STOPPED_GRACE_MS), the last pass of
 //   each kind, and from Postgres today's spend, the latest jobs and the held and parked ones. A
 //   database or an RPC that does not answer leaves the rest standing.
-import { address, createSolanaRpc, getBase58Encoder, getPublicKeyFromAddress, signatureBytes, verifySignature } from "@solana/kit";
+import { address, createSolanaRpc } from "@solana/kit";
 import type { Hono } from "hono";
 import { createDb, readKeeperRecords, type KeeperJobRead, type KeeperRecords } from "terminal-db";
 import { HEALTH_TIMEOUT_MS, KEEPER_HEARTBEAT_MAX_SKEW_MS, KEEPER_HEARTBEAT_MIN_GAP_MS, KEEPER_RECENT_JOBS, KEEPER_STOPPED_GRACE_MS } from "./config";
@@ -26,6 +26,7 @@ import {
 } from "./contract";
 import type { AppEnv } from "./index";
 import { countAsRead } from "./rateLimits";
+import { signedBy } from "./signed";
 
 /**
  * What KV holds for the keeper wallet: when each kind of pass last sent a heartbeat, the newest
@@ -52,7 +53,7 @@ export function keeperRoutes(app: Hono<AppEnv>) {
     const payload = KeeperHeartbeatPayload.safeParse(parsed);
     if (!payload.success) return refuse(400, "This is not a keeper heartbeat.");
     const heartbeat = payload.data;
-    if (!(await signedBy(heartbeat.wallet, body.data.payload, body.data.signature))) return refuse(401, "The heartbeat's signature does not match its wallet.");
+    if (!(await signedBy(heartbeat.wallet, keeperHeartbeatMessage(body.data.payload), body.data.signature))) return refuse(401, "The heartbeat's signature does not match its wallet.");
     if (heartbeat.wallet !== c.env.KEEPER_WALLET) return refuse(403, "Only the keeper wallet's heartbeats are kept.");
     const at = Date.parse(heartbeat.at);
     if (Math.abs(at - Date.now()) > KEEPER_HEARTBEAT_MAX_SKEW_MS) return refuse(409, "The heartbeat's time is too far from now.");
@@ -123,17 +124,6 @@ export function keeperRoutes(app: Hono<AppEnv>) {
 }
 
 /** Whether `signature` (base58) is `wallet`'s signature of the heartbeat message of `payload`. */
-async function signedBy(wallet: string, payload: string, signature: string): Promise<boolean> {
-  try {
-    const bytes = getBase58Encoder().encode(signature);
-    if (bytes.length !== 64) return false;
-    const key = await getPublicKeyFromAddress(address(wallet));
-    return await verifySignature(key, signatureBytes(new Uint8Array(bytes)), keeperHeartbeatMessage(payload));
-  } catch {
-    return false;
-  }
-}
-
 async function readBalance(rpcUrl: string, wallet: string): Promise<Keeper["balance"]> {
   try {
     const { value } = await createSolanaRpc(rpcUrl)

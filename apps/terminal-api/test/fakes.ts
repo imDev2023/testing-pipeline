@@ -38,6 +38,9 @@ export function bindings(overrides: Partial<Bindings> & { databaseUrl: string; r
     INDEXER: {} as Bindings["INDEXER"],
     LIVE_ROOMS: {} as Bindings["LIVE_ROOMS"],
     KEEPER_WALLET: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
+    CANARY_RUNS: {} as Bindings["CANARY_RUNS"],
+    CANARY_CONTAINER: {} as Bindings["CANARY_CONTAINER"],
+    CANARY_OPERATOR: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
     ...rest,
   };
 }

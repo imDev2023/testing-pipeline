@@ -61,7 +61,11 @@ export class LocalApi {
   private readonly log = join(this.state, "wrangler.log");
   private database: Awaited<ReturnType<typeof createTestDatabase>> | null = null;
 
-  constructor(private readonly port: number) {
+  /** `containers`: build and run Canary's container (Docker), for the tests of Canary's runs; the others leave it out. */
+  constructor(
+    private readonly port: number,
+    private readonly options: { containers?: boolean } = {},
+  ) {
     this.url = `http://localhost:${port}`;
   }
 
@@ -74,7 +78,7 @@ export class LocalApi {
     const log = openSync(this.log, "a");
     this.process = spawn(
       join(apiDir, "node_modules/.bin/wrangler"),
-      ["dev", "--port", String(this.port), "--inspector-port", String(this.port + 1000), "--persist-to", this.state, "--test-scheduled"],
+      ["dev", "--port", String(this.port), "--inspector-port", String(this.port + 1000), "--persist-to", this.state, "--test-scheduled", `--enable-containers=${this.options.containers ?? false}`],
       { cwd: apiDir, env: { ...process.env, CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE: this.database.url }, stdio: ["ignore", log, log], detached: true },
     );
     try {

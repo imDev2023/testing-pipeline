@@ -70,7 +70,9 @@ export default defineConfig({
         ]),
     {
       // The keeper page's wallet is the tests' own, whose heartbeats they can sign (src/keeper.ts).
-      command: `node scripts/dev.ts --var KEEPER_WALLET:${TEST_KEEPER_WALLET}`,
+      // Canary's container is not built: no page these tests check shows its results yet (#125),
+      // and its runs are checked by Canary's own demo and devnet tests.
+      command: `node scripts/dev.ts --var KEEPER_WALLET:${TEST_KEEPER_WALLET} --enable-containers=false`,
       cwd: "../../apps/terminal-api",
       env: { RPC_URL: rpcUrl, DATABASE_URL, TERMINAL_API_PORT: String(API_PORT) },
       url: `${API}/health`,

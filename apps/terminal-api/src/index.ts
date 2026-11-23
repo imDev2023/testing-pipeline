@@ -4,6 +4,9 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
+import { createDb } from "terminal-db";
+import { canaryRoutes, startCanary } from "./canary";
+import { drainCanaryOutbox, sweepCanary } from "./canaryTriggers";
 import type { JobName } from "./config";
 import type { ApiError } from "./contract";
 import { runDueJobs, type Job } from "./dispatcher";
@@ -38,6 +41,7 @@ app.get("/health", async (c) => {
 
 app.route("/", feed);
 app.route("/", strategyRoutes);
+app.route("/", canaryRoutes);
 
 /**
  * The live rooms (./liveRoom): a page opens a WebSocket here and the Worker hands the upgrade to the
@@ -77,7 +81,19 @@ export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
     registrySnapshot: async () => void (await indexer(env).snapshot(version)),
     programDataWatch: async () => void (await indexer(env).watchPrograms(version)),
     pruneCandles: async () => void (await indexer(env).prune(version)),
+    canarySweep: () => canarySweep(env),
   };
+}
+
+/** Canary's scheduled sweep (CANARY-23): what the outbox still holds, then every market on its strategy's current version. */
+async function canarySweep(env: Bindings): Promise<void> {
+  const { db, close } = createDb(env.HYPERDRIVE.connectionString);
+  try {
+    await drainCanaryOutbox(db, startCanary(env), Date.now());
+    await sweepCanary(db, startCanary(env));
+  } finally {
+    await close();
+  }
 }
 
 export default {

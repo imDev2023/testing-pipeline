@@ -42,13 +42,14 @@ strategyRoutes.get("/v1/strategies/:program/versions", async (c) => {
 });
 
 /**
- * The instructions of a strategy's current version, each with how often it has been called and by
- * which signers, counted over the strategy program's whole history by discriminator, which names an
- * instruction across versions. `signersShown` caps each list; the snapshot Canary's runs post (#124)
- * passes none, for every signer.
+ * The instructions of a strategy's current version, or of the version deployed in `deploySlot`,
+ * each with how often it has been called and by which signers, counted over the strategy program's
+ * whole history by discriminator, which names an instruction across versions. `signersShown` caps
+ * each list; the snapshot Canary's runs post (#124) passes none, for every signer.
  */
-export async function readStrategyInstructions(db: Db, program: string, { signersShown }: { signersShown?: number } = {}): Promise<StrategyInstructions> {
-  const [current] = await versionsOf(db, program);
+export async function readStrategyInstructions(db: Db, program: string, { signersShown, deploySlot }: { signersShown?: number; deploySlot?: bigint } = {}): Promise<StrategyInstructions> {
+  const versions = await versionsOf(db, program);
+  const current = deploySlot === undefined ? versions[0] : versions.find((v) => v.deploySlot === deploySlot);
   if (!current) return { program, deploy_slot: null, anchor: null, instructions: [] };
   const list = await db
     .select()

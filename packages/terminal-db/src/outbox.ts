@@ -1,7 +1,8 @@
 // The outbox (docs/spec/pipescope-architecture.md, Indexer, "Events for what follows"; #117): what
 // the indexer saw happen, written once in the order seen, for whoever acts on it. Canary's runs
 // (#124) start from `strategy_registered`, `market_created`, `strategy_version` and `router_upgraded`
-// (CANARY-22), and the Telegram bot's queue (#133, #134) alerts on them. Each reader keeps its own
+// (CANARY-22), and the Telegram bot's queue (#133, #134) alerts on them and on what Canary itself
+// writes here: a market's first results, each changed outcome and the end of each run (#124). Each reader keeps its own
 // cursor: it reads with `readOutbox`, acts, and then calls `ackOutbox` with the last id it is done
 // with, so an event it failed to act on is read again.
 //
@@ -24,6 +25,12 @@ export type OutboxPayloads = {
   strategy_version: { deploySlot: string; executableSha256: string | null; previousSlot: string | null };
   /** The router upgraded: its new version, and the version it replaced. */
   router_upgraded: { deploySlot: string; executableSha256: string | null; previousSlot: string | null };
+  /** Canary's first results for a market (#124), under the strategy version named. */
+  canary_first_results: { program: string; deploySlot: string };
+  /** A Canary check's outcome on a market changed from one run of a version to the next. */
+  canary_outcome_changed: { program: string; deploySlot: string; check: string; from: string; to: string; record: string };
+  /** A Canary run of a strategy version ended: its trigger, how many markets it covered and how many Aviary could not run. */
+  canary_run_finished: { deploySlot: string; runId: string; trigger: string; delayMs: number; markets: number; failed: number };
 };
 
 export type OutboxKind = keyof OutboxPayloads;
@@ -41,6 +48,12 @@ function keyOf(event: NewOutboxEvent): string {
     case "strategy_version":
     case "router_upgraded":
       return `${event.kind}:${event.subject}:${event.payload.deploySlot}`;
+    case "canary_first_results":
+      return `${event.kind}:${event.subject}`;
+    case "canary_outcome_changed":
+      return `${event.kind}:${event.payload.record}`;
+    case "canary_run_finished":
+      return `${event.kind}:${event.payload.runId}`;
   }
 }
 

@@ -2301,6 +2301,66 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
 
+### PIPESCOPE-117: Canary's re-run
+
+- Question: How does the owner re-run Canary on a market or a strategy?
+- Answer: With `pnpm canary:rerun --market <m> | --strategy <s>`, which signs the request with the operator wallet, `CANARY_OPERATOR` (the project's devnet wallet), and posts it to `POST /v1/canary/reruns`, which takes it only with that wallet's signature and a time within 2 minutes of its own; the one owner operation in the API, since it must wake a `CanaryRun` object.
+- Alternatives: Writing the request to Postgres for the runs to find, which would need a job reading the database every minute and keep it awake; a shared secret in the Worker.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Canary runner](spec/pipescope-architecture.md#canary-runner)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
+
+### PIPESCOPE-118: How Canary's triggers reach its runs
+
+- Question: How do the outbox's events reach the `CanaryRun` objects without waking the database to look for them?
+- Answer: Canary's reader drains the outbox from its own cursor right after each indexer job that opened Postgres, and the 6-hourly sweep job drains it first; an event is acknowledged only once its runs were handed over, and a new market waits for its strategy's version to be recorded, for at most 30 minutes.
+- Alternatives: A job reading the outbox every minute, which keeps the free database awake all month.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Canary runner](spec/pipescope-architecture.md#canary-runner)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
+
+### PIPESCOPE-119: A Canary run that fails
+
+- Question: What happens when a market's snapshot or run fails, as when the RPC refuses or the container restarts?
+- Answer: The run's alarm tries the market again after waits doubling from 30 seconds to 10 minutes, six attempts in all, then records that Aviary could not run it, keeps its earlier results and goes on; a refusal by the binary (its 400) is recorded at once.
+- Alternatives: Recording a "not run" result, which would replace a real result with one about Aviary's own trouble.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Canary runner](spec/pipescope-architecture.md#canary-runner)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
+
+### PIPESCOPE-120: A Canary run whose strategy is upgraded under it
+
+- Question: What does a version's run do when the chain no longer runs that version's code?
+- Answer: It hands every market still to do to the strategy's newer recorded version, each run still due when it was, and records those markets as moved; while the watch has not recorded the newer version, it waits a minute at a time, five times.
+- Alternatives: Running the markets anyway, which would store the newer code's results under the older version.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Canary runner](spec/pipescope-architecture.md#canary-runner)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
+
+### PIPESCOPE-121: One Canary run at a time in the container
+
+- Question: How do several versions' runs share the one container?
+- Answer: The container's object takes one market's run at a time, in the order asked, so a `basic` instance's quarter vCPU and 1 GiB serve one run at a time.
+- Alternatives: Letting runs share the instance at once, which risks its memory and slows each run alike.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Canary runner](spec/pipescope-architecture.md#canary-runner)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
+
+### PIPESCOPE-122: Canary's results in the API
+
+- Question: How does the API serve Canary's results?
+- Answer: `GET /v1/markets/{market}/canary` serves a market's latest result of each check under its strategy's current version, or the version asked for, each with the binary's reason and `terminal-api`'s sentences for what the check does and when and on which version it ran, and the "could not sell back" notice as the reasons of the results it rests on; `GET /v1/strategies/{program}/versions/{slot}/canary` serves the version's roll-up, computed from its markets' latest results.
+- Alternatives: Storing a roll-up per run, which a run of one market would leave out of date.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Canary runner](spec/pipescope-architecture.md#canary-runner)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
@@ -2771,6 +2831,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: build-time constant
 - Status: default
 - Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### CANARY-48: A new market's later runs
+
+- Question: When are a new market's runs 10 minutes, 1 hour and 1 day later counted from?
+- Answer: From the market's creation, so a market the indexer finds late, as its first backfill finds every market, runs once at once and then only at the times still ahead.
+- Alternatives: Counting from when the indexer found it, which would run every old market four times after a backfill.
+- Specified in: [`docs/spec/pipescope-canary.md`, When Canary runs](spec/pipescope-canary.md#when-canary-runs)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
 
 ## Explainer (EXPLAINER)
 
