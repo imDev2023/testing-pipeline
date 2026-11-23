@@ -2,8 +2,9 @@
 //! "Invariants"; docs/spec/README.md, "Test layers" 3 and 5): long random sequences of
 //! everything anyone can do to a contained token and its home market, as real transactions
 //! through the router copied from devnet in LiteSVM, with the bar's three invariants, the
-//! hook's five and the tax AMM's own checked after every step. What it covers is
-//! `support/fuzz.rs`; the harness it runs on is the tax AMM's (`tax-amm/tests/common/fuzz/`).
+//! hook's five, the three its hardening added (#74) and the tax AMM's own checked after every
+//! step. What it covers is `support/fuzz.rs`; the harness it runs on is the tax AMM's
+//! (`tax-amm/tests/common/fuzz/`).
 //!
 //! A plain `cargo test` runs 1,000 sequences of up to 50 steps, spread over every core.
 //! `PROPTEST_CASES` and `FUZZ_STEPS` change that, `FUZZ_THREADS` the threads, and
@@ -52,6 +53,25 @@ fn the_invariants_hold_after_every_step_of_every_sequence() {
         }
     });
     let run = run.into_inner().unwrap();
+    // What the hardening of #74 added must have happened in a run of the default size or
+    // more: sales paying Pipeline's fee on each side, through `swap` and through `route`
+    // (ST-6), and the two attempts on ownership refused (H092).
+    if cases >= hook::DEFAULT_CASES {
+        for label in [
+            hook::SELL_FEE_IN_THE_TOKEN,
+            hook::ROUTED_SELL_FEE_IN_THE_TOKEN,
+            hook::SELL_FEE_IN_WRAPPED_SOL,
+            hook::ROUTED_SELL_FEE_IN_WRAPPED_SOL,
+            "swap through route: settled",
+            "buy into an account whose owner can change: DestinationOwnerCanChange",
+            "SetAuthority(AccountOwner) on a holder's account: ImmutableOwner",
+        ] {
+            assert!(
+                run.tally.get(label).is_some_and(|&count| count > 0),
+                "no step of the run did this: {label}"
+            );
+        }
+    }
     println!(
         "{} sequences of up to {steps} steps passed in {:.0?} on {threads} threads; {} ended unlocked",
         run.sequences,
@@ -74,7 +94,7 @@ fn the_invariants_hold_after_every_step_of_every_sequence() {
 }
 
 #[test]
-fn the_eight_invariants_are_the_specs() {
+fn the_invariants_are_the_specs_then_the_hardenings() {
     let names: Vec<&str> = ContainmentHook::invariants()
         .iter()
         .map(|i| i.name)
@@ -87,6 +107,8 @@ fn the_eight_invariants_are_the_specs() {
         .position(|&n| n == hook::INVARIANTS[0])
         .unwrap();
     assert_eq!(&names[at..at + 5], &hook::INVARIANTS[..]);
+    // Then the three the hardening of #74 added.
+    assert_eq!(&names[at + 5..at + 8], &hook::HARDENING_INVARIANTS[..]);
     let spec = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../docs/spec/containment-hook.md"),

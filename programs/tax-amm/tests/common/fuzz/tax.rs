@@ -215,6 +215,14 @@ pub enum Step {
         input: u8,
         size: Size,
     },
+    /// [`Step::Swap`] sent as a one-hop `route` (Pipeline 0.3) rather than a `swap`. This
+    /// product's steps never choose it; a product built on this one does, as the
+    /// containment hook's fuzzer routes through a contained token's home market.
+    Route {
+        wallet: u8,
+        input: u8,
+        size: Size,
+    },
     /// The seed action, with one side left empty when `empty_side` says so.
     Seed {
         who: Who,
@@ -270,6 +278,8 @@ pub enum Action {
         output: usize,
         amount: u64,
         all: bool,
+        /// Sent as a one-hop `route` ([`Step::Route`]).
+        route: bool,
     },
     Seed,
     Distribute {
@@ -341,6 +351,7 @@ impl Outcome {
     pub fn label(&self) -> String {
         let action = match self.action {
             Action::Start => "start",
+            Action::Swap { route: true, .. } => "swap through route",
             Action::Swap { all: true, .. } => "swap of a whole holding",
             Action::Swap { .. } => "swap",
             Action::Seed => "seed",
@@ -960,7 +971,12 @@ impl TaxWorld {
                 wallet,
                 input,
                 size,
-            } => self.swap(&state, wallet, input as usize % 2, size),
+            } => self.swap(&state, wallet, input as usize % 2, size, false),
+            Step::Route {
+                wallet,
+                input,
+                size,
+            } => self.swap(&state, wallet, input as usize % 2, size, true),
             Step::Seed { who, empty_side } => {
                 let signer = self.signer(who).insecure_clone();
                 let mut amounts = self.shape.seed;
@@ -1297,7 +1313,15 @@ impl TaxWorld {
         outcome
     }
 
-    fn swap(&mut self, state: &TaxMarket, wallet: u8, input: usize, size: Size) -> Outcome {
+    /// A [`Step::Swap`], or a [`Step::Route`] when `route`.
+    fn swap(
+        &mut self,
+        state: &TaxMarket,
+        wallet: u8,
+        input: usize,
+        size: Size,
+        route: bool,
+    ) -> Outcome {
         let output = 1 - input;
         let trader = self.signer(Who::Wallet(wallet)).insecure_clone();
         // What the wallet can spend, Pipeline's fee on top.
@@ -1327,24 +1351,28 @@ impl TaxWorld {
         // As a terminal sends it: the trader's token account for the output created in the
         // same transaction when it is missing, as a recipient wallet paid in one mint lacks
         // one for the other.
-        let sent = self
-            .env
-            .swap_instruction(
-                &self.market,
+        let instruction = if route {
+            Env::route_instruction
+        } else {
+            Env::swap_instruction
+        };
+        let sent = instruction(
+            &self.env,
+            &self.market,
+            &trader.pubkey(),
+            (input, output),
+            amount,
+            &options,
+        )
+        .and_then(|swap| {
+            let create = create_token_account_idempotent(
+                &self.env.admin.pubkey(),
                 &trader.pubkey(),
-                (input, output),
-                amount,
-                &options,
-            )
-            .and_then(|swap| {
-                let create = create_token_account_idempotent(
-                    &self.env.admin.pubkey(),
-                    &trader.pubkey(),
-                    &self.market.mints[output],
-                    &self.market.token_programs[output],
-                );
-                self.env.send_meta(&[create, swap], &[&trader])
-            });
+                &self.market.mints[output],
+                &self.market.token_programs[output],
+            );
+            self.env.send_meta(&[create, swap], &[&trader])
+        });
         let logs = sent
             .as_ref()
             .map(|meta| meta.logs.clone())
@@ -1353,7 +1381,11 @@ impl TaxWorld {
             costs.extend(costs_of(&meta.logs, "pipeline_swap"));
         }
         let swap = sent.and_then(|meta| {
-            borsh::from_slice::<SwapResult>(&meta.return_data.data).map_err(|e| e.to_string())
+            if route {
+                Env::route_result(&meta)
+            } else {
+                borsh::from_slice::<SwapResult>(&meta.return_data.data).map_err(|e| e.to_string())
+            }
         });
         let all = size == Size::All;
         let mut outcome = Outcome::of(
@@ -1362,6 +1394,7 @@ impl TaxWorld {
                 output,
                 amount,
                 all,
+                route,
             },
             model.clone().map(|_| ()),
             named(&swap),

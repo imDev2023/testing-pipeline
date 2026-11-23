@@ -21,7 +21,7 @@ import { findAssociatedTokenPda, getCloseAccountInstruction, getTokenDecoder, TO
 import { outcomeOf, products as allProducts, type AnyKeeperProduct, type JobUnit, type KeeperJob, type Pass } from 'keeper-jobs';
 import { KEEPER_WARNING_MAX_LENGTH, KEEPER_WARNINGS_MAX } from 'terminal-api/contract';
 
-import { ChainError, type Chain, type LandedTransaction, type Result, type SignedTransaction } from './chain.ts';
+import { ACCOUNTS_PER_REQUEST, ChainError, type AccountData, type Chain, type LandedTransaction, type Result, type SignedTransaction } from './chain.ts';
 import type { Clock, Timer } from './clock.ts';
 import type { Heartbeat } from './heartbeat.ts';
 import type { Logger } from './log.ts';
@@ -37,7 +37,11 @@ export type PassKind = 'start' | 'once' | 'sweep' | 'hourly' | 'daily' | 'transa
 
 export type PassSummary = { pass: PassKind; markets: number; sent: number; held: number; parked: number; skipped: number; failed: number };
 
-type Market = { address: Address; product: AnyKeeperProduct; data: Uint8Array };
+/**
+ * A market of ours: its state, and the accounts beyond it that its product's due rules read
+ * (`watches`), read in the same request so a due rule sees one moment of the chain.
+ */
+type Market = { address: Address; product: AnyKeeperProduct; data: Uint8Array; watched: Map<Address, Uint8Array | null> };
 type AnyJob = KeeperJob<unknown>;
 
 const COMPUTE_BUDGET_PROGRAM = address('ComputeBudget111111111111111111111111111111');
@@ -240,7 +244,7 @@ export class Runner {
         for (const product of this.products) {
             try {
                 for (const { address: account, data } of await this.chain.programAccounts(product.programAddress)) {
-                    if (product.isMarket(data)) this.markets.set(account, { address: account, product, data });
+                    if (product.isMarket(data)) this.markets.set(account, { address: account, product, data, watched: this.markets.get(account)?.watched ?? new Map() });
                 }
             } catch (error) {
                 if (!(error instanceof ChainError)) throw error;
@@ -250,15 +254,38 @@ export class Runner {
         return warnings;
     }
 
-    /** Re-reads the given markets' states; a market that is gone is forgotten. */
+    /**
+     * Re-reads the given markets' states, with the accounts each one's product watches, in one
+     * request; a market that is gone is forgotten.
+     */
     private async refresh(addresses: readonly Address[]) {
-        const found = await this.chain.accounts(addresses);
+        const watchesOf = (market: Market) => market.product.watches?.(market.data) ?? [];
+        // Requests of at most ACCOUNTS_PER_REQUEST accounts, each market with its watched ones, so
+        // no market is read at one slot and its reserve or clock at another (SUITE-59).
+        const requests: Set<Address>[] = [new Set()];
+        for (const account of addresses) {
+            const market = this.markets.get(account);
+            const group = [account, ...(market ? watchesOf(market) : [])];
+            let request = requests.at(-1)!;
+            if (request.size > 0 && new Set([...request, ...group]).size > ACCOUNTS_PER_REQUEST) requests.push((request = new Set()));
+            for (const wanted of group) request.add(wanted);
+        }
+        const found = new Map<Address, AccountData | null>();
+        for (const request of requests) {
+            if (request.size === 0) continue;
+            for (const [key, value] of await this.chain.accounts([...request])) found.set(key, value);
+        }
         for (const account of addresses) {
             const current = found.get(account);
             const market = this.markets.get(account);
             if (!market) continue;
-            if (!current || !market.product.isMarket(current.data)) this.markets.delete(account);
-            else market.data = current.data;
+            if (!current || !market.product.isMarket(current.data)) {
+                this.markets.delete(account);
+                continue;
+            }
+            market.data = current.data;
+            // An account not read in this request is missing to the due rules until the next one.
+            market.watched = new Map(watchesOf(market).map((watched) => [watched, found.get(watched)?.data ?? null]));
         }
     }
 
@@ -270,7 +297,7 @@ export class Runner {
             for (const [account, found] of await this.chain.accounts(unknown)) {
                 const product = found && this.productOf(found.owner, found.data);
                 if (found && product) {
-                    this.markets.set(account, { address: account, product, data: found.data });
+                    this.markets.set(account, { address: account, product, data: found.data, watched: new Map() });
                     this.log.write({ row: 'market', event: 'found', market: account, product: product.name, signature });
                 }
             }
@@ -296,7 +323,7 @@ export class Runner {
                 summary.markets++;
                 for (const job of market.product.jobs as readonly AnyJob[]) {
                     if (!passes.includes(job.pass)) continue;
-                    const units = job.due(market.product.decode(market.data));
+                    const units = job.due(market.product.decode(market.data, market.watched));
                     this.records.stillDue(market.address, job.name, units.map((unit) => unit.key));
                     for (const unit of units) await this.runUnit(market, job, unit, summary);
                 }
@@ -439,14 +466,15 @@ export class Runner {
         // Due on the state just read, never on an older one.
         await this.refresh([market.address]);
         if (!this.markets.has(market.address)) return;
-        const current = job.due(market.product.decode(market.data)).find((due) => due.key === unit.key);
+        const state = market.product.decode(market.data, market.watched);
+        const current = job.due(state).find((due) => due.key === unit.key);
         if (!current) {
             this.failures.delete(key);
             this.jobRow(market, unit, 'nothing-to-do', { reason: 'no longer due' });
             summary.skipped++;
             return;
         }
-        const input = { rpc: this.chain.rpc, marketState: market.address, state: market.product.decode(market.data), unit: current, payer: this.wallet };
+        const input = { rpc: this.chain.rpc, marketState: market.address, state, unit: current, payer: this.wallet };
         const skip = (await job.skipReason?.(input)) ?? null;
         if (skip !== null) {
             this.failures.delete(key);
@@ -457,9 +485,10 @@ export class Runner {
         const balance = await this.chain.balance(this.wallet.address);
         if (balance < this.settings.minBalance) return this.hold(market, current, 'MIN_BALANCE', { balance, limit: this.settings.minBalance }, summary);
 
-        const transaction = await this.chain.prepare(this.wallet, this.withPriority(await job.build(input)));
+        const instructions = this.withPriority(await job.build(input));
+        const transaction = await this.chain.prepare(this.wallet, instructions);
         const simulation = await this.chain.simulate(transaction, this.wallet.address);
-        if (this.settled(market, job, current, key, simulation, summary, null)) return;
+        if (this.settled(market, job, current, key, this.ownRefusal(market, instructions, simulation), summary, null)) return;
 
         // The fee and the rent of anything the job creates: what the simulation took from the wallet.
         const estimate = balance > simulation.payerLamportsAfter ? balance - simulation.payerLamportsAfter : 0n;
@@ -471,10 +500,23 @@ export class Runner {
         }
         if (spend.total + estimate > this.settings.dailyCap) return this.hold(market, current, 'DAILY_CAP', { estimate, spent: spend.total, limit: this.settings.dailyCap }, summary);
 
-        await this.send(market, job, current, key, transaction, estimate, summary);
+        await this.send(market, job, current, key, instructions, transaction, estimate, summary);
     }
 
-    private async send(market: Market, job: AnyJob, unit: JobUnit, key: string, transaction: SignedTransaction, estimate: bigint, summary: PassSummary) {
+    /**
+     * The result with its custom error code kept only if the product's own program raised it:
+     * the same number from another program (klend's, a token program's), whether its own
+     * instruction in the transaction or a call the product's program made to it, is a failure like
+     * any other, never a "nothing to do" or "try again in a later slot" (SUITE-62). The program
+     * that raised it is read from the logs, and without them from the instruction that failed.
+     */
+    private ownRefusal<T extends Result>(market: Market, instructions: readonly Instruction[], result: T): T {
+        if (result.customError === null) return result;
+        const raisedBy = result.refusedBy ?? (result.failedInstruction === null ? null : (instructions[result.failedInstruction]?.programAddress ?? null));
+        return raisedBy === market.product.programAddress ? result : { ...result, customError: null };
+    }
+
+    private async send(market: Market, job: AnyJob, unit: JobUnit, key: string, instructions: readonly Instruction[], transaction: SignedTransaction, estimate: bigint, summary: PassSummary) {
         let result;
         try {
             await this.chain.sendAndConfirm(transaction);
@@ -487,7 +529,7 @@ export class Runner {
         }
         const cost = spendOf(result, this.wallet.address);
         this.spend!.add(result.accountKeys, cost);
-        if (this.settled(market, job, unit, key, result, summary, { signature: transaction.signature, cost })) return;
+        if (this.settled(market, job, unit, key, this.ownRefusal(market, instructions, result), summary, { signature: transaction.signature, cost })) return;
         if (job.pass === 'hourly') this.runs.push({ job, accounts: [market.address], at: this.clock.now() });
         this.failures.delete(key);
         this.jobRow(market, unit, 'sent', { signature: transaction.signature, cost, estimate });

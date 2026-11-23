@@ -8,10 +8,13 @@
 //! the spec section that explains it and the decision's block in `docs/decisions.md`
 //! change in one PR.
 
-/// The Canary version that produced a result (`harness` on every record). 0.3.0 since Pipeline
+/// The Canary version that produced a result (`harness` on every record). 0.3.1 since
+/// 2026-11-23: traders' Token-2022 accounts carry the immutable owner extension and
+/// `conformance` counts `pipeline-check`'s trades the containment hook refuses for lack of it
+/// as known (`HOOK-47`), and the `outside_supply` check (`CANARY-47`). 0.3.0 since Pipeline
 /// 0.3, whose fee mints changed how `cost` values the sale's fee and how quotes compare with
 /// swaps.
-pub const HARNESS: &str = "canary/0.3.0";
+pub const HARNESS: &str = "canary/0.3.1";
 
 // ---------------------------------------------------------------------------------------
 // Units (not policy, but written only here so the policy grep has no false friends)
@@ -111,6 +114,19 @@ pub const FAIL_BAND_BELOW_PPM: u64 = 500_000;
 pub const TOLERANCE_PPM: u64 = PPM_PER_POINT;
 
 // ---------------------------------------------------------------------------------------
+// Supply outside the pool (`CANARY-47`)
+// ---------------------------------------------------------------------------------------
+
+/// `outside_supply` warns when the supply the market cannot buy back, sold first, takes this
+/// share of its quote vault or more: 1 point, the size of the tolerance, so rounding dust
+/// never warns while any allocation held outside a virtual reserve's pool does (the
+/// containment launch's default 20% takes nearly all of a buyer's quote).
+pub const OUTSIDE_SUPPLY_WARN_PPM: u64 = PPM_PER_POINT;
+/// The most times `outside_supply` halves a refused sale to find the largest part of it
+/// that quotes: about a millionth of the amount.
+pub const OUTSIDE_SUPPLY_SEARCH_STEPS: u32 = 20;
+
+// ---------------------------------------------------------------------------------------
 // Wallets and token authorities (`CANARY-16`, `CANARY-17`)
 // ---------------------------------------------------------------------------------------
 
@@ -154,6 +170,11 @@ pub const CONTAINMENT_HOOK_PROGRAM: pipeline_client::Pubkey =
     pipeline_client::pubkey!("aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv");
 /// The seed of a contained mint's unlock PDA, `["unlock", mint]`, its hook authority.
 pub const CONTAINMENT_HOOK_UNLOCK_SEED: &[u8] = b"unlock";
+/// The hook's `DestinationOwnerCanChange` error number (`HOOK-47`): a contained token sent
+/// to an account, other than the home market's vault and fee account, that lacks the
+/// immutable owner extension. `conformance` counts `pipeline-check`'s trades refused with it
+/// as known, since `pipeline-check`'s own traders lack the extension.
+pub const CONTAINMENT_HOOK_DESTINATION_OWNER_CAN_CHANGE: u32 = 6023;
 
 // ---------------------------------------------------------------------------------------
 // The licence seam (`CANARY-26`)

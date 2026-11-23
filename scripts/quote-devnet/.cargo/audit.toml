@@ -1,0 +1,10 @@
+# cargo-audit's settings for this tool's lock file (.github/workflows/advisories.yml).
+[advisories]
+ignore = [
+  # crypto-bigint 0.5.5's timing variability, reached only through k256 in the local VM's
+  # secp256k1-recover syscall that litesvm links. quote-devnet only quotes public market
+  # state on the developer's machine: it holds no key and signs nothing, so there is no
+  # secret whose timing could leak. The fix is crypto-bigint 0.7, which k256 0.13 does not
+  # take; drop this entry when litesvm moves to a k256 that does.
+  "RUSTSEC-2026-0387",
+]

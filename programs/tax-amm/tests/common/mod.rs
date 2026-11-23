@@ -34,7 +34,6 @@ use tax_amm::config::MAX_RECIPIENTS;
 use tax_amm::events::MarketCreated;
 use tax_amm::{InitParams, StrategyError, TaxMarket};
 
-pub use pipeline_check::write_token_account;
 pub use pipeline_client::interface::{QuoteResult, ResolveRequest, ResolveResult, TradeRequest};
 
 pub const SOL: u64 = 1_000_000_000;
@@ -489,6 +488,11 @@ impl Env {
         let now = self.svm.get_sysvar::<solana_clock::Clock>().unix_timestamp;
         data.extend_from_slice(&(now + 30 * 24 * 60 * 60).to_le_bytes());
         let admin = self.admin.pubkey();
+        let quote = if market.mints[0] == *mint {
+            market.mints[1]
+        } else {
+            market.mints[0]
+        };
         let bind = Instruction::new_with_bytes(
             hook,
             &data,
@@ -501,6 +505,8 @@ impl Env {
                 AccountMeta::new_readonly(unlock_pda(mint), false),
                 AccountMeta::new_readonly(market.market, false),
                 AccountMeta::new_readonly(market.market_state, false),
+                // The market's other mint, whose hook and authorities `bind` checks (HOOK-52).
+                AccountMeta::new_readonly(quote, false),
                 AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
             ],
         );
@@ -815,6 +821,112 @@ impl Env {
         self.simulate_meta(instruction)
     }
 
+    /// A Token-2022 account of `mint` for `owner` at a fresh keypair's address, with the
+    /// transfer hook account extension when the mint has a hook and, when `immutable_owner`,
+    /// the `ImmutableOwner` extension, created the way a wallet would create a non-associated
+    /// account.
+    pub fn keypair_token_2022_account(
+        &mut self,
+        owner: &Pubkey,
+        mint: &Pubkey,
+        immutable_owner: bool,
+    ) -> Pubkey {
+        use spl_token_2022_interface::extension::ExtensionType;
+        let account = Keypair::new();
+        let mut extensions = vec![];
+        if self.hook_program(mint).is_some() {
+            extensions.push(ExtensionType::TransferHookAccount);
+        }
+        if immutable_owner {
+            extensions.push(ExtensionType::ImmutableOwner);
+        }
+        let space = ExtensionType::try_calculate_account_len::<
+            spl_token_2022_interface::state::Account,
+        >(&extensions)
+        .unwrap();
+        let mut create = 0u32.to_le_bytes().to_vec();
+        create.extend_from_slice(
+            &self
+                .svm
+                .minimum_balance_for_rent_exemption(space)
+                .to_le_bytes(),
+        );
+        create.extend_from_slice(&(space as u64).to_le_bytes());
+        create.extend_from_slice(TOKEN_2022.as_ref());
+        let mut instructions = vec![Instruction::new_with_bytes(
+            client::SYSTEM_PROGRAM_ID,
+            &create,
+            vec![
+                AccountMeta::new(self.admin.pubkey(), true),
+                AccountMeta::new(account.pubkey(), true),
+            ],
+        )];
+        if immutable_owner {
+            instructions.push(
+                spl_token_2022_interface::instruction::initialize_immutable_owner(
+                    &TOKEN_2022,
+                    &account.pubkey(),
+                )
+                .unwrap(),
+            );
+        }
+        instructions.push(
+            spl_token_2022_interface::instruction::initialize_account3(
+                &TOKEN_2022,
+                &account.pubkey(),
+                mint,
+                owner,
+            )
+            .unwrap(),
+        );
+        self.send(&instructions, &[&account]).unwrap();
+        account.pubkey()
+    }
+
+    /// The evidence [`known_failure_is_the_hooks`] needs: a buy of the mint at `contained` in
+    /// `market` into a fresh keypair account without the immutable owner extension, written as
+    /// `pipeline-check` writes its traders' accounts, whose logs show the containment hook
+    /// program itself failing with `DestinationOwnerCanChange`. The error why not otherwise.
+    pub fn show_hook_refusal(
+        &mut self,
+        market: &Market,
+        contained: usize,
+    ) -> Result<HookRefusalShown, String> {
+        const BUY: u64 = 1_000_000;
+        let trader = self.funded_wallet(market, 10 * BUY);
+        let mint = market.mints[contained];
+        let account = self.keypair_token_2022_account(&trader.pubkey(), &mint, false);
+        let options = SwapOptions {
+            output_to: Some(account),
+            ..SwapOptions::default()
+        };
+        match self.swap_with(market, &trader, (1 - contained, contained), BUY, &options) {
+            Ok(_) => Err(format!(
+                "a buy of {mint} into {account}, an account without the immutable owner \
+                 extension, went through"
+            )),
+            Err(failure) => {
+                let hook_failed = format!(
+                    "Program {} failed: custom program error: {:#x}",
+                    containment_hook_id(),
+                    HOOK_REFUSAL_NUMBER
+                );
+                let named = format!(
+                    "Error Code: {HOOK_REFUSAL_NAME}. Error Number: {HOOK_REFUSAL_NUMBER}."
+                );
+                if failure.lines().any(|line| line == hook_failed) && failure.contains(&named) {
+                    Ok(HookRefusalShown(()))
+                } else {
+                    Err(format!(
+                        "a buy of {mint} into {account}, an account without the immutable owner \
+                         extension, failed, but not in the containment hook with \
+                         {HOOK_REFUSAL_NAME}:\n{failure}"
+                    ))
+                }
+            }
+        }
+    }
+
     /// A new wallet holding `amount` of each of the market's mints, plus some SOL.
     pub fn funded_wallet(&mut self, market: &Market, amount: u64) -> Keypair {
         let wallet = Keypair::new();
@@ -981,12 +1093,89 @@ impl Env {
         options: &SwapOptions,
     ) -> Result<Instruction, String> {
         let mode = options.mode.unwrap_or(TradeMode::ExactIn);
-        let mut trade = exact_in(input, output, amount_in);
-        trade.mode = mode;
+        let accounts = self.swap_accounts(market, owner, (input, output), amount_in, options)?;
+        let (amount_in, amount_out) = match mode {
+            TradeMode::ExactIn => (amount_in, 0),
+            TradeMode::ExactOut => (u64::MAX / 2, amount_in),
+        };
+        let args = client::SwapArgs {
+            mode,
+            amount_in,
+            amount_out,
+            min_amount_out: options.min_amount_out,
+            integrator_fee_bps: 0,
+            input_hook_accounts: accounts.input_hook_accounts.len() as u8,
+            extra: vec![],
+        };
+        Ok(client::swap_with_fee_side(
+            &accounts,
+            &args,
+            self.fee_side(market, output),
+        ))
+    }
+
+    /// The same trade as [`Env::swap_instruction`]'s, exact-in, sent as a one-hop `route`
+    /// (Pipeline 0.3), whose one hop has the swap's accounts; `options.min_amount_out` is
+    /// what the trader keeps of the hop's output. Its result is [`Env::route_result`].
+    pub fn route_instruction(
+        &self,
+        market: &Market,
+        owner: &Pubkey,
+        (input, output): (usize, usize),
+        amount_in: u64,
+        options: &SwapOptions,
+    ) -> Result<Instruction, String> {
+        let accounts = self.swap_accounts(market, owner, (input, output), amount_in, options)?;
+        let hop = client::RouteHopSpec {
+            accounts,
+            fee_side: self.fee_side(market, output),
+            extra: vec![],
+        };
+        Ok(client::route(
+            owner,
+            None,
+            &[hop],
+            amount_in,
+            options.min_amount_out,
+            0,
+        ))
+    }
+
+    /// What a one-hop `route` did, as `swap` returns it: the router's event of its one hop
+    /// (a route returns only the first hop's spend and the last hop's output).
+    pub fn route_result(meta: &TransactionMetadata) -> Result<client::SwapResult, String> {
+        match Env::swap_events(meta).as_slice() {
+            [hop] => Ok(client::SwapResult {
+                net_sent: hop.net_sent,
+                received: hop.received,
+                pipeline_fee: hop.pipeline_fee,
+                integrator_fee: hop.integrator_fee,
+                fee_mint: Pubkey::new_from_array(hop.fee_mint.to_bytes()),
+            }),
+            hops => Err(format!(
+                "a one-hop route emitted {} swap events",
+                hops.len()
+            )),
+        }
+    }
+
+    /// A swap's accounts as a terminal builds them, from `owner`'s associated token
+    /// accounts (or `options.output_to`): the strategy accounts resolved (or `options.strategy_accounts`), then the
+    /// output mint's transfer-hook accounts, and the input mint's hook accounts for the
+    /// router.
+    fn swap_accounts(
+        &self,
+        market: &Market,
+        owner: &Pubkey,
+        (input, output): (usize, usize),
+        amount_in: u64,
+        options: &SwapOptions,
+    ) -> Result<client::SwapAccounts, String> {
         let trader_input =
             pda::associated_token(owner, &market.mints[input], &market.token_programs[input]);
-        let trader_output =
-            pda::associated_token(owner, &market.mints[output], &market.token_programs[output]);
+        let trader_output = options.output_to.unwrap_or_else(|| {
+            pda::associated_token(owner, &market.mints[output], &market.token_programs[output])
+        });
         let mut strategy_accounts = match &options.strategy_accounts {
             Some(accounts) => accounts.clone(),
             None => self.resolve_accounts(market, &exact_in(input, output, amount_in))?,
@@ -1003,7 +1192,7 @@ impl Env {
             market.vaults[input],
             *owner,
         );
-        let accounts = client::SwapAccounts {
+        Ok(client::SwapAccounts {
             trader: *owner,
             strategy_program: strategy_id(),
             market_state: market.market_state,
@@ -1016,26 +1205,8 @@ impl Env {
             output_token_program: market.token_programs[output],
             integrator_fee_account: None,
             strategy_accounts,
-            input_hook_accounts: input_hook_accounts.clone(),
-        };
-        let (amount_in, amount_out) = match mode {
-            TradeMode::ExactIn => (amount_in, 0),
-            TradeMode::ExactOut => (u64::MAX / 2, amount_in),
-        };
-        let args = client::SwapArgs {
-            mode,
-            amount_in,
-            amount_out,
-            min_amount_out: options.min_amount_out,
-            integrator_fee_bps: 0,
-            input_hook_accounts: input_hook_accounts.len() as u8,
-            extra: vec![],
-        };
-        Ok(client::swap_with_fee_side(
-            &accounts,
-            &args,
-            self.fee_side(market, output),
-        ))
+            input_hook_accounts,
+        })
     }
 
     /// The transfer-hook accounts a transfer of `mint` needs, or none when it has no hook.
@@ -1189,6 +1360,8 @@ pub struct SwapOptions {
     pub mode: Option<TradeMode>,
     /// The strategy accounts to pass instead of resolving them.
     pub strategy_accounts: Option<Vec<AccountMeta>>,
+    /// The output account to pay into instead of the trader's associated token account.
+    pub output_to: Option<Pubkey>,
 }
 
 /// The buy and sell tax a market's tax authority last set: its pending rates while a change
@@ -1461,4 +1634,133 @@ pub fn create_token_account_idempotent(
             AccountMeta::new_readonly(*token_program, false),
         ],
     )
+}
+
+/// Writes `owner`'s associated token account for `mint` holding `amount` straight into the VM,
+/// as `pipeline_check::write_token_account` does, but for a Token-2022 mint with the immutable
+/// owner extension too, as every real Token-2022 associated token account has it (the
+/// associated token program initialises it before `InitializeAccount3`). The containment hook
+/// refuses to deliver a contained token into an account without it (`HOOK-47`), so an account
+/// written without it would make the tests see a refusal no real holder meets. Canary's own
+/// writer (`crates/canary/src/token_account.rs`) does the same in its own workspace.
+pub fn write_token_account(
+    svm: &mut LiteSVM,
+    mint: &Pubkey,
+    token_program: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+) -> Result<Pubkey, String> {
+    use spl_token_2022_interface::extension::account_len::{
+        try_calculate_account_len_from_mint_data, try_for_each_required_init_account_extension,
+    };
+    use spl_token_2022_interface::extension::{
+        BaseStateWithExtensions, BaseStateWithExtensionsMut, ExtensionType, PodStateWithExtensions,
+        StateWithExtensions, StateWithExtensionsMut,
+    };
+    use spl_token_2022_interface::pod::PodMint;
+    use spl_token_2022_interface::state::Account as TokenAccount;
+
+    let address = pipeline_check::write_token_account(svm, mint, token_program, owner, amount)?;
+    if *token_program != TOKEN_2022 {
+        return Ok(address);
+    }
+    fn text(e: impl std::fmt::Display) -> String {
+        e.to_string()
+    }
+    let written = svm
+        .get_account(&address)
+        .ok_or("token account not written")?;
+    let mint_data = svm.get_account(mint).ok_or("mint does not exist")?.data;
+    let len =
+        try_calculate_account_len_from_mint_data(&mint_data, &[ExtensionType::ImmutableOwner])
+            .map_err(text)?;
+    let mut required = vec![];
+    let pod = PodStateWithExtensions::<PodMint>::unpack(&mint_data).map_err(text)?;
+    try_for_each_required_init_account_extension(pod.get_tlv_data(), |extension| {
+        required.push(extension);
+        Ok(())
+    })
+    .map_err(text)?;
+    let base = StateWithExtensions::<TokenAccount>::unpack(&written.data)
+        .map_err(text)?
+        .base;
+    let mut data = vec![0u8; len];
+    let mut state =
+        StateWithExtensionsMut::<TokenAccount>::unpack_uninitialized(&mut data).map_err(text)?;
+    state
+        .init_account_extension_from_type(ExtensionType::ImmutableOwner)
+        .map_err(text)?;
+    for extension in required {
+        state
+            .init_account_extension_from_type(extension)
+            .map_err(text)?;
+    }
+    state.base = base;
+    state.pack_base();
+    state.init_account_type().map_err(text)?;
+    let lamports = written.lamports - svm.minimum_balance_for_rent_exemption(written.data.len())
+        + svm.minimum_balance_for_rent_exemption(len);
+    svm.set_account(
+        address,
+        solana_account::Account {
+            lamports,
+            data,
+            owner: *token_program,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(address)
+}
+
+/// The containment hook's refusal of a destination whose owner can change: its error
+/// `DestinationOwnerCanChange`, number 6023, and how a failed swap's text shows it. The number
+/// alone does not say the hook raised it, since 6023 is also the router's `SetupPayerMisused`
+/// and the buy wall AMM's `ExactOutNotSupported`: [`Env::show_hook_refusal`] gives that
+/// evidence.
+pub const HOOK_REFUSAL_NUMBER: u32 = 6023;
+pub const HOOK_REFUSAL_NAME: &str = "DestinationOwnerCanChange";
+pub const HOOK_REFUSAL: &str = "Custom(6023)";
+
+/// Evidence, made only by [`Env::show_hook_refusal`], that on a market the containment hook
+/// itself refuses a buy into an account written as `pipeline-check` writes its traders'.
+#[derive(Debug)]
+pub struct HookRefusalShown(());
+
+/// Whether a `pipeline-check` check known to fail on a market with a contained mint, because
+/// its buys go into the checker's own trader accounts, which lack the immutable owner extension
+/// every real associated token account has (`HOOK-47`), failed only for that: every swap of
+/// `quote_matches_swap` that did not match, and every trip of `round_trip` that errored, failed
+/// with error 6023, so no real mismatch hides behind the first one its message names, and the
+/// hook was shown raising 6023 on the market (`_shown`), since the checker's text names the
+/// number but not the program.
+pub fn known_failure_is_the_hooks(
+    check: &pipeline_check::CheckResult,
+    _shown: &HookRefusalShown,
+) -> Result<(), String> {
+    let (rows, failed): (&str, fn(&serde_json::Value) -> bool) = match check.id.as_str() {
+        "quote_matches_swap" => ("swaps", |row| {
+            row["matched"] == serde_json::Value::Bool(false)
+        }),
+        "round_trip" => ("trips", |row| !row["error"].is_null()),
+        other => return Err(format!("{other} is not a known failure")),
+    };
+    let rows = check.details[rows]
+        .as_array()
+        .ok_or_else(|| format!("{}: no {rows} in its details", check.id))?;
+    let failures: Vec<&serde_json::Value> = rows.iter().filter(|row| failed(row)).collect();
+    if failures.is_empty() {
+        return Err(format!("{}: no failed swap in its details", check.id));
+    }
+    for row in failures {
+        let error = row["error"].as_str().unwrap_or_default();
+        if !error.contains(HOOK_REFUSAL) {
+            return Err(format!(
+                "{}: a swap failed for another reason than the hook's refusal: {row}",
+                check.id
+            ));
+        }
+    }
+    Ok(())
 }

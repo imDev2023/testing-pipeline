@@ -637,6 +637,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
 
+### SUITE-59: Keeper runner: accounts a due rule reads beyond the market
+
+- Question: How does a due rule that depends on more than its market's state, as the lending AMM's withdraw mode depends on Kamino's reserve, read what it needs while staying a pure function in `packages/keeper-jobs`?
+- Answer: The product's entry names those accounts (`watches`), the runner reads them with the market in the same `getMultipleAccounts` (requests of at most 100 accounts never split a market from its watched ones), every pass and again just before a job is sent, and hands them to the entry's `decode`, so a due rule sees one moment of the chain; the lending AMM's entry watches the market's reserve, its lending market and the clock sysvar, and a market whose watched accounts are missing has nothing due.
+- Alternatives: Always due in withdraw mode with the simulation deciding, which would show Aviary's button on every market in withdraw mode; each entry reading the chain itself in its due rule, which would make the rule no longer pure and read the chain once per job.
+- Specified in: [`docs/spec/keeper-runner.md`, One definition of due](spec/keeper-runner.md#one-definition-of-due)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96)
+
+### SUITE-60: Keeper runner: when the lending AMM's `rebalance` is due
+
+- Question: Exactly when is the lending AMM's `rebalance` due, so the runner sends it and Aviary shows its button?
+- Answer: Whenever the program would act: the rule is the program's own (`decide_with_exit_delay` with the band, `MIN_REBALANCE`, what Kamino can pay with its rate headroom, withdraw mode's thresholds and its exit delay) written again in TypeScript on the market and the reserve at their stored state, with `WithinBand`, `BelowMinRebalance`, `KaminoStopped` and `KaminoDepositsBlocked` taken as nothing to do when a simulation still refuses; `MIN_REBALANCE` per reserve and `KAMINO_RATE_HEADROOM_BPS`, which the program does not export, are repeated in the entry and checked against `config.rs` by its tests; what the program does not model either, such as klend's deposit limit (finding H035, signed off), is left to the simulation, where klend's refusal is a failure, retried and then parked until the market changes.
+- Alternatives: Due whenever the buffer is outside its band or the market is in withdraw mode, leaving the rest to the simulation, which would keep a button up on markets with nothing the program would do; exporting the per-reserve values in the program's IDL, which waits for the lending AMM's next release.
+- Specified in: [`docs/spec/keeper-runner.md`, The jobs](spec/keeper-runner.md#the-jobs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96)
+
+### SUITE-61: Keeper runner: refreshing the lending AMM's reserves
+
+- Question: How does the runner keep a reserve fresh enough for quotes (`LENDING-95`), and whose cap pays for it?
+- Answer: As a keeper job of its own on each lending AMM market, klend's `refresh_reserve` alone, due after each transaction and in every sweep when the market holds cTokens and its reserve's last refresh is more than half of `TRADE_MAX_RESERVE_AGE_SLOTS` (4,500 slots) old, unless the lending market's emergency mode is on; once one market's refresh lands, the next market on the same reserve finds it no longer due; its transaction names no market, so its fee counts in today's total and against `DAILY_CAP` but against no market's cap.
+- Alternatives: A pass of its own over the reserves, which the runner would have to know about; a refresh in front of every rebalance only, which leaves a quiet market's reserve unquotable after an hour.
+- Specified in: [`docs/spec/keeper-runner.md`, The jobs](spec/keeper-runner.md#the-jobs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96)
+
+### SUITE-62: Keeper runner: whose refusal codes count
+
+- Question: When a job's transaction holds another program's instruction too, as the lending AMM's `rebalance` holds klend's `refresh_reserve`, which refusal codes may mean "nothing to do" or "try again in a later slot"?
+- Answer: Only those the product's own program raised, told by the first "failed: custom program error" line of the logs (the innermost failing program), or without logs by the instruction the transaction error names; the same number from klend inside the product's own call to it, or from any other program (klend's errors share the 6,000 range with ours) is a failure, retried and parked like any other.
+- Alternatives: Reading the code whichever program raised it, or by the failing instruction alone, which takes klend's code inside the product's own call for the product's, so a klend error that shared a number with `WithinBand` would be skipped silently instead of retried and parked.
+- Specified in: [`docs/spec/keeper-runner.md`, One definition of due](spec/keeper-runner.md#one-definition-of-due)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96)
+
 ## Engineering and security bar (BAR)
 
 ### BAR-01: Framework
@@ -1088,6 +1128,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### BAR-46: Dependency advisories
+
+- Question: How do we hear of a known vulnerability in a Rust crate our programs, tests or Canary depend on?
+- Answer: A workflow of its own runs `cargo audit` on every tracked `Cargo.lock` and `pnpm audit --prod` on `pnpm-lock.yaml` when a lock file changes, every day and on demand, failing on any vulnerability or unsound advisory, only reporting unmaintained crates, which come through Solana's and LiteSVM's own dependencies, and opening an issue when a daily run fails.
+- Alternatives: A step in `ci.yml`, which would check only when on-chain code changed and never on a quiet day; `cargo deny` with a licence and source policy as well, more than this finding asked for; failing on unmaintained crates, which would fail every run on crates we do not choose.
+- Specified in: [`docs/toolchain.md`, CI](toolchain.md#ci)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
 
 ## Aviary, the terminal (PIPESCOPE)
 
@@ -2386,11 +2436,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-15: The checks
 
 - Question: Which checks does Canary run?
-- Answer: Sixteen, with stable ids: `readable`, `conformance`, `exit_sizes`, `exit_hold`, `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred`, `exit_queue`, `quote_matches_swap`, `cost`, `direct_call`, `token_authorities`, `transaction_accounts`, `contained_mint` and `custom_instructions`.
+- Answer: Seventeen, with stable ids: `readable`, `conformance`, `exit_sizes`, `exit_hold`, `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred`, `exit_queue`, `quote_matches_swap`, `cost`, `direct_call`, `token_authorities`, `transaction_accounts`, `contained_mint`, `outside_supply` (since 2026-11-23, `CANARY-47`) and `custom_instructions`.
 - Alternatives: None recorded.
 - Specified in: [`docs/spec/pipescope-canary.md`, The checks](spec/pipescope-canary.md#the-checks)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Canary checks on the four devnet strategies](https://github.com/imDev2023/testing-pipeline/issues/14)
 
 ### CANARY-16: Wallets
@@ -2701,6 +2751,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
+
+### CANARY-47: Supply outside the pool
+
+- Question: How does Canary's `outside_supply` (`HOOK-50`) tell when supply held outside a market's pool could be sold into the real quote buyers paid in, and on which markets?
+- Answer: On every market, by one rule: after the ordinary buy, the part of the supply outside the pool (supply less the market's vault) that the market cannot buy back, sold first, takes `OUTSIDE_SUPPLY_WARN_PPM` (1 point) or more of the quote vault, a warn; the part is what is left once the largest sale of the outside supply that quotes, found in up to `OUTSIDE_SUPPLY_SEARCH_STEPS` (20) halvings, is taken out, a quote paying out more than the quote vault really holds counting as refused. Only supply that never came out of the pool, on a market that never pays out more than its real quote (a virtual reserve), is left over, so a market seeded with the whole supply or with an all-real quote passes; 1 point, the tolerance's size, keeps rounding dust from warning while the containment launch's default 20% takes all but dust of a buyer's quote.
+- Alternatives: Warning on a share of the quote vault the whole outside supply takes, which would warn on every traded market on a virtual reserve because buyers' own tokens are outside its pool too; checking only markets known to have a virtual reserve, which Canary cannot read without each strategy's own layout and which would exempt the strategies it does not know.
+- Specified in: [`docs/spec/pipescope-canary.md`, Control](spec/pipescope-canary.md#control)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
 
 ## Explainer (EXPLAINER)
 
@@ -3511,21 +3571,21 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-01: Transfers while contained
 
 - Question: Where may a contained token move?
-- Answer: Only into or out of its home market's vault or that market's Pipeline fee account; every wallet-to-wallet transfer is refused, including between a holder's own wallets and to a CEX deposit address.
-- Alternatives: Wallet-to-wallet transfers between keypair wallets signed by their owner.
+- Answer: Only into or out of its home market's vault or that market's Pipeline fee account, and into no account outside those two whose owner can change (`HOOK-47`); every wallet-to-wallet transfer is refused, including between a holder's own wallets and to a CEX deposit address.
+- Alternatives: The earlier default, only into or out of its home market's vault or that market's Pipeline fee account; every wallet-to-wallet transfer is refused, including between a holder's own wallets and to a CEX deposit address (changed by the owner's answer 1a on #74 on 2026-11-23); wallet-to-wallet transfers between keypair wallets signed by their owner.
 - Specified in: [`docs/spec/containment-hook.md`, The allow rule](spec/containment-hook.md#the-allow-rule)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
 
 ### HOOK-02: Integrator fees on sells
 
 - Question: Can an integrator charge a fee on a sell of a contained token?
-- Answer: No: no integrator fee account is allowed, so integrators pass a zero fee on sells; buys pay their integrator fee in the quote mint as usual.
-- Alternatives: A launcher-set list of integrator fee accounts allowed as destinations.
+- Answer: No: no integrator fee account is allowed, so integrators pass a zero fee on sells; buys pay their integrator fee in the quote mint as usual; an integrator fee account that is the home vault or the fee account itself passes, but paying either is a donation.
+- Alternatives: The earlier default, the same without the note on the vault and the fee account (made exact by hardening finding H045 of #74 on 2026-11-23); a launcher-set list of integrator fee accounts allowed as destinations.
 - Specified in: [`docs/spec/containment-hook.md`, What this refuses](spec/containment-hook.md#what-this-refuses)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
 
 ### HOOK-03: One home market
@@ -3611,11 +3671,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-11: What the unlock does
 
 - Question: What does unlocking change on the mint?
-- Answer: It clears both the transfer hook program and the hook authority, so the token becomes an ordinary Token-2022 token, and records the unlock time in a config that is never closed.
-- Alternatives: None recorded.
+- Answer: It clears both the transfer hook program and the hook authority, so the token becomes an ordinary Token-2022 token, tradable everywhere that accepts it (a mint with any of the group extensions still needs Meteora's approval for a permissionless DAMM v2 pool, and Aviary warns on it), and records the unlock time in a config that is never closed.
+- Alternatives: The earlier default, it clears both the transfer hook program and the hook authority, so the token becomes an ordinary Token-2022 token, and records the unlock time in a config that is never closed (changed by the owner's answer 6a on #74 on 2026-11-23).
 - Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
 
 ### HOOK-12: Mint rules at binding
@@ -3671,21 +3731,21 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-17: In Aviary
 
 - Question: What does Aviary show for a contained token?
-- Answer: A panel on the home market's page (that the token is contained, the tax collected against the goal, the deadline), an Unlock button once the unlock is due, and the one-line rule in the trade box before a buy, built into Aviary since the hook has no strategy metadata.
-- Alternatives: None recorded.
+- Answer: A panel on the home market's page (that the token is contained, the tax collected against the goal, the deadline, who receives the tax and whether its authority is live, the supply outside the pool, a warning on weak terms, what containment cannot see, and for a mint with group extensions that some venues may not accept it after the unlock), an Unlock button once the unlock is due, and the one-line rule in the trade box before a buy, built into Aviary since the hook has no strategy metadata.
+- Alternatives: The earlier default, a panel on the home market's page (that the token is contained, the tax collected against the goal, the deadline), an Unlock button once the unlock is due, and the one-line rule in the trade box before a buy, built into Aviary since the hook has no strategy metadata (changed by the owner's answers 2a, 4a, 5a and 6a on #74 on 2026-11-23).
 - Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
 
 ### HOOK-18: Invariants
 
 - Question: Which invariants does the hook's fuzzing check?
-- Answer: Five beyond the shared three: no transfer between two accounts outside the home vault and the fee account, refusal when a hook account is missing or substituted, an unchanging config, `unlock` succeeding exactly when due, and every holder still able to exit through the home market.
-- Alternatives: None recorded.
+- Answer: Five beyond the shared three: no transfer between two accounts outside the home vault and the fee account, and no delivery outside them into an account whose owner can change, refusal when a hook account is missing or substituted, an unchanging config, `unlock` succeeding exactly when due, and every holder still able to exit through the home market.
+- Alternatives: The earlier default, five beyond the shared three: no transfer between two accounts outside the home vault and the fee account, refusal when a hook account is missing or substituted, an unchanging config, `unlock` succeeding exactly when due, and every holder still able to exit through the home market (changed by the hardening of #74 on 2026-11-23 for `HOOK-47`).
 - Specified in: [`docs/spec/containment-hook.md`, Invariants](spec/containment-hook.md#invariants)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
 
 ### HOOK-19: Framework
@@ -3841,11 +3901,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-34: The deadline without the market state
 
 - Question: Does an unlock by the deadline still need the home market's state to be readable?
-- Answer: No: a market state at the recorded address that can no longer be read as the tax AMM's (another owner, another size or discriminator, or closed) counts as the goal not reached, so the deadline still unlocks; before the deadline such a market state is refused with `NotATaxMarketState`.
-- Alternatives: Refusing every unlock whose market state cannot be read, which would trap holders for good if a tax AMM upgrade changed the account, the case the deadline exists for.
+- Answer: No: a market state at the recorded address that can no longer be read as the tax AMM's (another owner, another size, discriminator or version, or closed) counts as the goal not reached, so the deadline still unlocks; before the deadline such a market state is refused with `NotATaxMarketState`.
+- Alternatives: The earlier default, the same without the version (`HOOK-43` added it on 2026-11-23); refusing every unlock whose market state cannot be read, which would trap holders for good if a tax AMM upgrade changed the account, the case the deadline exists for.
 - Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
 - Changes by: fixed on-chain once deployed
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-16 in [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70)
 
 ### HOOK-35: The launch script's rehearsal of the devnet launch
@@ -3917,6 +3977,116 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-22 in [Containment hook: deploy on devnet and launch a contained token](https://github.com/imDev2023/testing-pipeline/issues/73)
+
+### HOOK-42: The goal counts from the binding
+
+- Question: May `bind` bind a home market that has already collected tax?
+- Answer: No: `bind` refuses a market state whose tax collected is above zero (`MarketAlreadyCollectedTax`), so the unlock goal counts only tax collected under containment; a launch binds before its seed, when nothing can have traded, so this refuses only a market that traded before its token was pointed at the hook.
+- Alternatives: Recording the counter at binding as a baseline, which needs a new field in the config, whose layout is frozen (`HOOK-46`); requiring the market not yet seeded as well, which adds a dependency on another tax AMM offset for no further protection, since an unseeded market has collected nothing.
+- Specified in: [`docs/spec/containment-hook.md`, Checks on the home market](spec/containment-hook.md#checks-on-the-home-market)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-43: Which market state versions the hook reads
+
+- Question: How does the hook read a home market state written by a later version of the tax AMM?
+- Answer: As unreadable: the hook reads a market state only at version 1, the one it was built against, so `bind` refuses a newer one and `unlock` leaves it to the deadline; a tax AMM build that changes its version fails the hook's own build until the hook is reviewed against it.
+- Alternatives: Reading any version, which a later tax AMM build that kept the account's size but moved the counter would turn into a forged early unlock; refusing every unlock of such a market, which would trap holders for good, the case the deadline exists for (`HOOK-34`).
+- Specified in: [`docs/spec/containment-hook.md`, Unlock (`unlock`)](spec/containment-hook.md#unlock-unlock)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-44: A multisig mint authority
+
+- Question: May a mint whose mint authority is a Token-2022 multisig be bound?
+- Answer: No: `bind` checks one signer, and a multisig account's address can sign only through the keypair it was created at, which would bind the mint without the multisig's other signers, so `bind` refuses a mint authority owned by Token-2022 (`MintAuthorityIsMultisig`); a launcher binds first and may move the authority to a multisig afterwards, until the seed revokes it.
+- Alternatives: Accepting the multisig's signers in the remaining accounts and checking M of N, more code on a path each token takes once.
+- Specified in: [`docs/spec/containment-hook.md`, Binding (`bind`)](spec/containment-hook.md#binding-bind)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-45: `Execute`'s own address checks
+
+- Question: Since Token-2022 passes the validation account and the config at their derived addresses, does `Execute` still check that each sits at its PDA?
+- Answer: Yes, both behind one helper: each check costs about 1,500 units and `Execute` stays near 5,700 of its 10,000, and the hook, frozen before mainnet, keeps no identity check that rests on the caller; the helper keeps the two from drifting apart.
+- Alternatives: Dropping both, keeping the owner, discriminator and stored-mint checks, about 3,000 units less per hooked transfer; the review's mutation run found every substitution through a real transfer refused either way.
+- Specified in: [`docs/spec/containment-hook.md`, The allow rule](spec/containment-hook.md#the-allow-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-46: The frozen config layout and the hook's release gate
+
+- Question: What must a redeploy of the hook prove for tokens contained before it?
+- Answer: The config's version 1 layout never changes while any token is bound, and no build replaces the deployed hook until its release gate, run by `scripts/deploy-devnet.sh` on the very bytes it deploys, has checked a census of every account the hook owns against its copy (on devnet also against every config the committed fixture and the launch record hold, missing ones passing only with an override that names why), bound a fresh mint, decoded every config on the cluster with the new build, traded, refused a wallet transfer, a buy into an account whose owner can change and a direct `Execute`, swept the fee account where the fee is in the token, and unlocked by the goal and at the deadline each token still contained; balances in accounts whose owner can change are reported, never refused.
+- Alternatives: Reallocating a versioned config before it grows, which every instruction would then have to handle; trusting the tests on fresh configs, which cannot see a layout change that breaks only configs written by the deployed build.
+- Specified in: [`docs/spec/containment-hook.md`, Upgrade policy](spec/containment-hook.md#upgrade-policy)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-47: Destinations whose owner can change
+
+- Question: Since Token-2022 lets an account's owner hand the whole account to another wallet with no transfer and no hook call, how does the hook keep a contained token in its home market?
+- Answer: `Execute` refuses a destination other than the home vault and the fee account unless it carries the immutable owner extension, as every associated token account of Token-2022 does (`DestinationOwnerCanChange`); sells and sources are untouched, so every holder can still exit; Pipeline's `pipeline-check` fakes its traders' accounts without the extension, so its `quote_matches_swap` and `round_trip`, and `exact_out_refund` where it runs, are known failures on contained markets until its checker writes it, in the hook's conformance test, the launch script's run and Canary.
+- Alternatives: Also accepting a destination at the associated token address of the owner its data names, which accepts the same accounts on chain and exists only to keep `pipeline-check` passing, at a bump search's cost; keeping the location-only rule and disclosing the escape; a rule on sources, which an owner change, moving no tokens, would never meet.
+- Specified in: [`docs/spec/containment-hook.md`, The allow rule](spec/containment-hook.md#the-allow-rule)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-48: What containment polices
+
+- Question: Does containment also refuse holders that are programs or smart wallets, whose control can change hands without a transfer?
+- Answer: No: containment polices token movements, not who controls a key, so a Squads vault, a program's account or a wrapper issuing receipts is disclosed in the spec and on Aviary's panel rather than refused; every unit in such a structure came in by a taxed buy and leaves only by a taxed sell.
+- Alternatives: Refusing a destination whose owner is off the ed25519 curve, about 160 units, which closes every trustless program-held structure but refuses smart-wallet users, DAO and program treasuries and aggregator routes into program-owned accounts.
+- Specified in: [`docs/spec/containment-hook.md`, What the hook cannot see](spec/containment-hook.md#what-the-hook-cannot-see)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-49: What the unlock goal promises
+
+- Question: Since whoever receives the tax can reach the goal for a fraction of it, atomically, what does the goal promise?
+- Answer: That a third party pays at least the goal to force the unlock (102% to 125% of it); the launcher as sole recipient pays `1 - 0.9a + f(2 - t)/t` of it (12.38% at 10% and 10% on wrapped SOL, 16.12% at the launch default), possibly in one transaction, which the spec states with its numbers and Aviary's panel shows by naming the recipients, the launcher's share, whether the tax authority is live and any pending rate change.
+- Alternatives: `bind` refusing a home market whose tax authority is live, which stops rate changes after the binding but not the wash; counting only tax paid by non-recipients, which a recipient evades from another wallet; a goal seen in an earlier slot, which needs new config state (`HOOK-46`).
+- Specified in: [`docs/spec/containment-hook.md`, Unlock goal](spec/containment-hook.md#unlock-goal)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-50: Supply held outside the pool
+
+- Question: What protects buyers from a launcher selling supply held outside the home market's pool into the real quote they paid in?
+- Answer: Disclosure: Canary's `outside_supply` warn and Aviary's panel show it, and the launch script's defaults keep less of the supply outside the pool; the drain is a virtual reserve's property, possible on any AMM.
+- Alternatives: The tax AMM's seed requiring a contained mint's whole supply in the vault, so a launcher gets an allocation only by buying it.
+- Specified in: [`docs/spec/containment-hook.md`, Canary checks](spec/containment-hook.md#canary-checks)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-51: The mainnet freeze gate
+
+- Question: How is `HOOK-15`'s freeze enforced, given one key upgrades both the hook and the tax AMM?
+- Answer: Both programs are frozen together in one transaction, and every contained mint's hook fields are checked before and after (its program the hook and its authority its unlock PDA, or both cleared); a script does the check and the freeze and refuses unless both end with no upgrade authority, and on devnet it runs as a check only.
+- Alternatives: Recording the rule now and building the script in the mainnet ticket.
+- Specified in: [`docs/spec/containment-hook.md`, Upgrade policy](spec/containment-hook.md#upgrade-policy)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-52: The quote mint at binding
+
+- Question: Does `bind` check the home market's quote mint, whose payouts every holder's exit depends on?
+- Answer: Yes: `bind` takes the quote mint, which must be the market's other mint, refuses one with a live transfer hook (any program's, this hook's included; a hook cleared for good passes), and refuses one with a mint or freeze authority unless it is on the tax AMM's quote list, by the tax AMM's own rule, so the list has one place.
+- Alternatives: Refusing any quote with a freeze authority or a hook, which rules out USDC; refusing only a quote with a hook; relying on the tax AMM's creation and seed rules alone, which a later tax AMM change could loosen after the hook is frozen.
+- Specified in: [`docs/spec/containment-hook.md`, Checks on the home market](spec/containment-hook.md#checks-on-the-home-market)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
 
 ## Buy wall AMM (POOL4)
 
@@ -5544,6 +5714,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-86`: since Pipeline 0.2 dropped the config account from `register_existing_market`, a hooked token's graduation fits a legacy transaction when its shares are locked (1,222 bytes) but not when they go to a wallet (1,254); `lending-pool.md` has the new figures, and the decision's own figures (1,287) are the lending AMM session's to update.
 - `BAR-42`, `TAX-53`, `TAX-54`: set by the session of [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `HOOK-42` to `HOOK-46`, `BAR-46`: set by the session of [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) from its internal adversarial review and listed for the owner on that ticket as the session's own decisions, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `HOOK-35` to `HOOK-37`: set by the session of [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
@@ -5573,3 +5744,6 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-54` to `SUITE-56`: set by the session of [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-99` to `PIPESCOPE-103`: set by the session of [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted; Devnet help's wallet steps (`apps/terminal-web/src/content/devnet-help.ts`) follow each wallet's help pages of 2026-11-22 and were not tried in the wallets.
 - `BAR-45`, `LENDING-97` to `LENDING-103`, the 2026-11-22 change to `LENDING-82` and the 2026-11-23 change to `LENDING-40`: set by the session of [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `SUITE-60`: the lending AMM's `MIN_REBALANCE` of each reserve and its `KAMINO_RATE_HEADROOM_BPS` live in `programs/lending-amm/src/config.rs` and again in `packages/keeper-jobs/lending-amm.ts`, whose tests check the two agree; the program's next release can export them in its IDL, as it does the band, and the copy can go.
+- `SUITE-59` to `SUITE-62`: set by the session of [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `CANARY-47`: the check is the owner's answer 5a on [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) (`HOOK-50`); its rule, its 1-point threshold and its search were set by that session while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.

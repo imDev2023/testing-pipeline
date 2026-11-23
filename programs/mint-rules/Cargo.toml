@@ -14,4 +14,12 @@ name = "mint_rules"
 
 # Only to check, in tests, that this crate reads mints exactly as Token-2022 lays them out.
 [dev-dependencies]
+proptest.workspace = true
+# Token-2022's `Pack` trait, for its account and multisig lengths, at the version the lock
+# file already holds.
+solana-program-pack = "=3.1.0"
 spl-token-2022-interface.workspace = true
+
+# Kani sets `kani` for the proofs in `src/lib.rs`; `kani_full` turns on the full tier.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(kani_full)'] }

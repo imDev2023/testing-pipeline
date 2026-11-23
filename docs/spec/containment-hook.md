@@ -22,6 +22,7 @@ MetalLegBob is not building this product himself, so it stays in scope ([Record 
 5. After the unlock, Token-2022 no longer calls any hook for this mint.
 
 Until `bind`, the hook refuses every transfer, so no liquidity can go in before the rules are fixed.
+A mint whose hook is this program and is never bound can therefore never move, and has no deadline to free it; the launch script binds at once, and a mint whose mint authority is a multisig cannot bind (`HOOK-44`; hardening finding H050 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74), signed off).
 
 ## Accounts
 
@@ -38,6 +39,8 @@ The config is never closed, so it stays as the record of the token's containment
 ## Binding (`bind`)
 
 - Signed by the mint's mint authority, which is how the hook knows the caller is the launcher; nobody else can bind a mint, so binding cannot be front-run.
+  A mint authority that is a Token-2022 multisig is refused (`MintAuthorityIsMultisig`, `HOOK-44`): `bind` checks one signer, and a multisig account's address can sign only through the keypair it was created at, which would bind without the multisig's other signers; a launcher binds first and may move the authority afterwards.
+  The check refuses any signer whose account Token-2022 owns, which only a multisig, a mint or a token account created at a keypair can be, none of them a launcher's own key.
 - Creates the config and the validation account; it fails if the config already exists, which makes binding write-once.
 - No instruction changes the config afterwards: not the launcher, not us.
 - Arguments: the unlock goal (greater than zero, in quote-mint base units, a `u64`) and the unlock deadline (a Unix timestamp strictly later than the binding's clock and at most the longest deadline after it, `MAX_UNLOCK_DEADLINE_SECS` in "Where its policy values live"; a deadline exactly that far away is allowed).
@@ -57,8 +60,15 @@ The config is never closed, so it stays as the record of the token's containment
 - The `Market` account is owned by Pipeline's router and sits at its PDA `["market", strategy, market_state]`.
 - Its strategy is the tax AMM, whose program id is fixed in the hook at build time.
 - One of its two mints is the contained mint; the other is the quote mint.
-- The market state passed in is the one the `Market` records, owned by the tax AMM, and its tax side is the quote mint's index, so its tax collected is counted in the quote mint.
+- The market state passed in is the one the `Market` records, owned by the tax AMM, at the one market state version the hook reads, and its tax side is the quote mint's index, so its tax collected is counted in the quote mint.
+- Its tax collected is zero, so the unlock goal counts only tax collected under containment, from the binding on; a market that already traded, under another hook or none, is refused with `MarketAlreadyCollectedTax` (hardening finding H020 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74), `HOOK-42`).
+  A launch binds before its seed, when nothing can have traded, so this refuses only a market that traded before its token was pointed at this hook.
+  It reads the tax counter only, so a market that traded at a 0% tax before `bind` passes it; under the tax AMM's mint rules no market can trade a mint whose hook is not this one or cleared, and a cleared hook can never be set again, so that needs the launcher's own market on an older tax AMM (hardening finding R2-04 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
+- Its quote mint, the market's other mint, has no live transfer hook, any program's, this one's included (a hook cleared for good passes), and no mint or freeze authority unless it is on the tax AMM's quote list (`QUOTE_MINTS`, both native SOL mints and the cluster's USDC; the tax AMM's own rule, `mint_levers::check_authorities`, so the list has one place): a quote whose issuer could refuse or freeze the payouts would stop every sell and trap every holder until the deadline (`QuoteMintHooked`, `QuoteMintHasAuthority`, `HOOK-52`; hardening findings H014, H030 and H051 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74), answer 3a).
+  This is defence in depth behind the tax AMM's own creation and seed rules (`docs/spec/tax-amm.md`, "Mint rules"), kept in the hook because the hook is frozen and the tax AMM may change; USDC's issuer keeps its freeze authority, a trust disclosed like any USDC market's.
+  The hook compiles in the tax AMM's quote list and its rule from the tax AMM's crate, so a change to either changes the hook's bytes and reaches devnet only through the hook's own release gate, and never after the hook is frozen (hardening finding R2-08).
 - `bind` reads the token's vault from `Market.vaults` and derives the fee account (the Token-2022 associated token account of the router PDA `["fees", market]` for the contained mint), rather than taking either from the caller.
+  The fee account need not exist at binding: anyone may create it with the router's permissionless `init_fee_account`, and until it exists a sell that pays Pipeline's fee in the token fails and is repaired by creating it; the launch script creates both fee accounts with the market, before `bind` (hardening finding H097 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
 
 One home market per token: several would split the liquidity that containment exists to concentrate, and summing tax in different quote mints would need a price on chain.
 
@@ -67,10 +77,14 @@ One home market per token: several would split the liquidity that containment ex
 The hook's `Execute` fails closed: it refuses the transfer unless all of these hold.
 
 - The validation account and the config are present and at their PDAs for this mint, and the mint is the one Token-2022 is transferring.
-- The source token account has Token-2022's `transferring` flag set, so nobody can call `Execute` directly.
+  Token-2022 already passes both at their derived addresses; the hook checks them again, behind one helper, so that no identity check it makes rests on the caller (`HOOK-45`).
+- The source token account has Token-2022's `transferring` flag set, so a direct call of `Execute` reads as no transfer; nothing relies on what such a call returns, since `Execute` writes nothing, and an account of a multisig's length is never read as a token account (hardening finding H034 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
 - The source or the destination is one of the two allowed accounts: the home market's vault for the token, or the market's fee account for the token.
+- A destination other than those two is a Token-2022 account of the mint whose owner can never change: it carries the immutable owner extension, as every associated token account of Token-2022 does (`DestinationOwnerCanChange`, `HOOK-47`, hardening finding H001 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
+  Token-2022 lets an account's owner hand the whole account to another wallet with `SetAuthority(AccountOwner)`, which moves no tokens and so calls no hook; without this rule a buy could deliver into an account made by hand without the extension, which could then change hands with no tax paid and nothing counted toward the goal.
+  Sources are not checked: an owner change moves no tokens, so a rule on sources could not see it, and tokens already in such an account can still be sold into the home market.
 
-It makes no CPI, because on a buy it already runs at the last call level the runtime allows (router, strategy, Token-2022, hook).
+It makes no CPI: on a direct buy it runs at the fourth of the five call levels the runtime allows (router, strategy, Token-2022, hook), so a program that wraps the router puts it at the fifth, and a CPI of its own would leave no room for that wrapper (hardening finding H046 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74); the deeper calls of SIMD-0268 are not active on devnet).
 The allowed sets are the same for sources and destinations, and neither allowed account is controlled by a wallet: the vault is moved only by the tax AMM and the fee account only by the router's `sweep_fees`.
 
 ### What this allows
@@ -91,9 +105,23 @@ Bypass needs no rule: the tax AMM refuses it, so every trade in the home market 
 - Funding a second market for the token anywhere, on Pipeline or elsewhere, and paying out of one.
 - Any integrator fee on a sell, because the router pays it in the token into the integrator's own account, which is not allowed.
   Integrators must pass a zero integrator fee on sells of a contained token (at zero the router makes no transfer); buys pay their integrator fee in the quote mint as usual.
+  An integrator fee account that is the home vault or the fee account itself passes, but paying either is a donation, to the market's reserve or to Pipeline's treasury (hardening finding H045 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
+- A buy into an account whose owner can change, such as a keypair account made without the immutable owner extension or another market's vault.
 
-A buy may deliver the token to anyone's account, since the router does not check who owns the output account; that account can then only sell into the home market, so it is a gift, not an escape.
-This includes another market's vault: a buy can deliver into it, since the hook cannot tell a vault from a wallet, but that market can neither pay the token out nor take it in from anyone, so it never trades it, and the token's liquidity stays in its home market (shown in `tests/second_market.rs` by [Containment hook: a contained token moves only through its home market](https://github.com/imDev2023/testing-pipeline/issues/69)).
+A buy may deliver the token to anyone's account whose owner can never change, since the router does not check who owns the output account; that account can then only sell into the home market, so it is a gift, not an escape.
+Another market's vault is refused as a destination, since a strategy creates its vaults without the extension; and that market could neither pay the token out nor take it in from anyone anyway (shown in `tests/second_market.rs`).
+
+### What the hook cannot see
+
+Containment polices token movements, not who controls a key; these remain, disclosed and signed off by the owner on 2026-11-23 (`HOOK-48`, answers 2a and 8a on [#74](https://github.com/imDev2023/testing-pipeline/issues/74); `docs/security/containment-hook/sign-offs.md`).
+
+- **Programs and smart wallets as holders** (H003): the immutable owner extension fixes an account's owner key, not who controls that key, so a Squads vault or a program's account changes hands with no transfer, and a wrapper program can hold the token and issue receipts that trade elsewhere.
+  Every unit in such a structure came in by a taxed buy and leaves only by a taxed sell; only claims on it trade elsewhere, behind a trusted wrapper.
+  Refusing destinations whose owner is not an ordinary key was weighed and not taken, since it would refuse smart-wallet users, DAO and program treasuries.
+- **Balances the owner rule cannot reach** (H002): supply minted into an account made by hand (minting calls no hook) and balances bought into one before the rule existed can still change owner; devnet held none when the rule was deployed.
+- **Burning and minting** (H090): neither calls a transfer hook, so a holder may burn its own contained tokens and a live mint authority may mint; neither moves a balance to another holder, and a seeded home market's mint has no mint authority (`docs/spec/tax-amm.md`, "Mint rules").
+- **The fee account** (H012): tokens sent into the fee account reach the account of the router's treasury owner by `sweep_fees`; the router admin is trusted, and that account can only sell back into the home market.
+- **A market that names the home vault as its own** (H013): the router records whatever vaults a strategy declares, so a market on another strategy can name the home vault or the fee account as its own vault; a sell into it passes the hook, the tokens land in the home vault or the fee account, and that market pays out of its own reserve, an untaxed exit it funds at a loss.
 
 ## Unlock (`unlock`)
 
@@ -102,9 +130,11 @@ This includes another market's vault: a buy can deliver into it, since the hook 
   - the home market's `tax_collected`, read from the tax AMM market state recorded at binding (owner and address checked), is at least the unlock goal;
   - the clock's Unix timestamp is at or past the unlock deadline.
 - Past the deadline the unlock does not need the market state: one that can no longer be read as the tax AMM's, after an upgrade changed it or the account was closed, counts as the goal not reached, and the deadline still unlocks, since it exists for a home market that stopped working (see "Unlock deadline").
+  A market state of a version other than the one the hook reads counts the same way, so a later tax AMM build that kept the account's size but moved what the hook reads can never be misread as a goal reached; a tax AMM build that changes its version fails the hook's own build until the hook is reviewed against it (hardening finding H009 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74), `HOOK-43`).
   Before the deadline such a market state is refused, and its address is always checked against the one recorded at binding.
 - Signed by the unlock PDA, it calls Token-2022's `TransferHookInstruction::Update` with no program id, then `SetAuthority(TransferHookProgramId, None)`, and records the unlock time in the config.
 - Both fields must be cleared: Meteora's DAMM v2 and DLMM accept a mint with the transfer hook extension permissionlessly only when the hook program and the hook authority are both unset.
+  A mint that also carries any of the group extensions (group pointer, group member pointer, token group, token group member) still needs Meteora's approval for a permissionless DAMM v2 pool after its unlock, so for such a mint "tradable everywhere" is "tradable everywhere that accepts it", and Aviary warns on it (`HOOK-11`, answer 6a on [#74](https://github.com/imDev2023/testing-pipeline/issues/74); hardening finding H062).
 - It logs whether the goal or the deadline made it due (the goal when both hold), for Aviary's panel and indexers.
 - A second call fails: the config already records the unlock (`AlreadyUnlocked`), and the hook authority that would have to sign is gone.
 
@@ -127,6 +157,18 @@ Nothing breaks while an unlock waits, since sells into the home market keep work
   - Counting tax collected, forcing an early unlock always costs a third party the whole goal in tax, whatever the rate; at 0% the goal stops moving and the deadline unlocks the token.
   - It measures what containment protects: the token's tax income, until it has earned a set amount.
 - The only party who can reach the goal cheaply is whoever receives the tax (they pay Pipeline's fee and the suite share and get the rest back), and they would be undoing their own protection.
+  The goal therefore binds the launcher only against third parties (`HOOK-49`, answer 4a on [#74](https://github.com/imDev2023/testing-pipeline/issues/74); hardening findings H023 and H024).
+  A tax authority that makes itself the sole recipient reaches a goal for `cost / goal = 1 - 0.9a + f(2 - t)/t`, with `a` its share of the creator's part, `t = 1 - (1 - b)(1 - s)` the round trip's tax at buy tax `b` and sell tax `s`, and `f` Pipeline's 0.25%, taken in SOL on a market quoted in wrapped SOL; the pool's depth drops out, since a round trip returns the pool to where it started.
+
+  | Buy and sell tax | Sole recipient | A recipient of half | An outsider |
+  | --- | --- | --- | --- |
+  | 10% and 10% | 12.38% | 57.38% | 102.38% |
+  | 8% and 9% (the launch range's top) | 12.82% | - | 102.82% |
+  | 3% and 5% (the launch default) | 16.12% | 61.12% | 106.12% |
+  | 1% and 1% | 34.88% | 79.88% | 124.88% |
+
+  On a quote other than wrapped SOL, Pipeline's fee on a sell is taken in the token, which makes it cheaper (11.43% at 10% and 10%).
+  It fits one transaction with borrowed capital (one round trip of about 527 SOL for a 100 SOL goal, or 8 to 11 round trips from working capital), so the unlock can come with no warning; Aviary's panel says who receives the tax and whether its authority is live (see "In Aviary").
 - No minimum age: the deadline already bounds how long containment lasts, and the goal is the launcher's commitment.
 
 ## Unlock deadline
@@ -138,6 +180,7 @@ Nothing breaks while an unlock waits, since sells into the home market keep work
 
 - Every transfer of a contained token needs the same tail: the hook program, the validation account and the config, read-only.
 - Sells put it in the router's `input_hook_accounts`; buys put it after the strategy's own accounts; `sweep_fees` takes it as remaining accounts; the tax AMM's `seed` takes it after its own accounts.
+- A holder whose account has Token-2022's CPI Guard on cannot sell through the router until it turns the guard off, since the router moves the token by a CPI; an account that requires memos is refused as a seller the same way; both are the holder's own settings, which Aviary names when a sell fails for either (hardening finding H069 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
 - Neither Pipeline client resolves hook accounts, and Pipeline's hosted API refuses to build swaps whose input mint has a transfer hook (`docs/API.md` at `5ad130d`), so Aviary, our scripts and anyone sweeping fees resolve them from the validation account and build those transactions with the SDK; a call that leaves them out is refused.
 
 ## Launch in v1
@@ -163,6 +206,11 @@ The hook is not a strategy and has no strategy metadata, so its panel and its on
   - "Contained": the token can only be bought and sold in this market until it unlocks, and cannot be sent to another wallet;
   - the tax collected against the unlock goal, in the quote mint, as a number and a bar;
   - the unlock deadline, as a date and the time left;
+  - who receives the home market's tax and the launcher's share of it, whether its tax authority is live, and any pending rate change, since a sole recipient can reach the goal for a fraction of it (see "Unlock goal", `HOOK-49`);
+  - the supply held outside the pool, which its holder can sell into the real quote buyers paid in (`HOOK-50`);
+  - a warning on weak terms, a goal or a deadline so small the containment means little (hardening finding H049);
+  - that containment watches token movements, not who controls a key: a program or smart wallet holding the token can change hands without a transfer (`HOOK-48`);
+  - for a mint with any of the group extensions, that after the unlock some venues may still not accept it (`HOOK-11`);
   - once unlocked: when, and whether by the goal or the deadline.
 - **Unlock button**: shown to anyone once the unlock is due; it sends `unlock` from the connected wallet.
 - **Trade box**: before a buy of a contained token, the same one-line rule as the panel.
@@ -172,9 +220,10 @@ The hook is not a strategy and has no strategy metadata, so its panel and its on
 
 ## Depends on
 
-- The tax AMM (`docs/spec/tax-amm.md`): `tax_collected` and the tax side at fixed offsets that later versions never move, vaults at PDAs `["vault", market_state, mint]`, bypass refused, liquidity locked, tax paid out of the vault only, and the program frozen before mainnet because the unlock trusts its counter.
+- The tax AMM (`docs/spec/tax-amm.md`): `tax_collected` and the tax side at fixed offsets that later versions never move, its market state's version at 1 (a newer version reads as unreadable, see "Unlock"), vaults at PDAs `["vault", market_state, mint]`, bypass refused, liquidity locked, tax paid out of the vault only, and the program frozen before mainnet because the unlock trusts its counter.
 - `docs/spec/README.md`, the engineering and security bar every program of ours meets; "Building it" below adds what it asks of each product's file.
-- Pipeline's router: the fee account's derivation belongs to the router, which is upgradeable on devnet; if an upgrade changed it, sells of contained tokens would fail until their deadline.
+- Token-2022 itself, which is upgradeable by its own authority: the hook trusts it to call the hook on every transfer, to set the `transferring` flag only for the length of one, and to pass the hook accounts at their derived addresses; devnet and mainnet both ran v11.1.0 when the hook was hardened, whose behaviour the review checked (hardening findings H004 and H073 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
+- Pipeline's router: the fee account's derivation belongs to the router, which is upgradeable on devnet; if an upgrade changed it, sells of contained tokens whose home market takes Pipeline's fee in the token (a quote other than wrapped SOL) would fail until their deadline, and so would `sweep_fees` of the token; on a market quoted in wrapped SOL a sell never moves the token into its fee account (hardening finding H070 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
 
 ## Ruled out
 
@@ -233,6 +282,18 @@ As for the tax AMM (`docs/spec/tax-amm.md`, "Where its policy values live"), und
 - On devnet the hook stays upgradeable under the project upgrade-authority key, as the bar says.
 - It is frozen (upgrade authority removed) before any mainnet use, rather than the bar's default of a multisig with a timelock: the hook's whole promise is that nobody can change the rules, and a key that can upgrade it could block every contained token's transfers at once.
 - The cost is that a bug found after freezing cannot be fixed; the mainnet launch effort, out of scope here, audits the hook before freezing it.
+- The config's version 1 layout is frozen while any token is bound (`HOOK-46`, hardening finding H011 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)): `unlock` writes the config back, so an upgrade that grew it by even one byte would keep trading working but make every bound token's `unlock` fail, its deadline included.
+  New state goes in a new account; `tests/release_gate.rs` pins the layout byte for byte.
+- Before mainnet the hook and the tax AMM are frozen together, in one transaction, and every contained mint's hook fields are checked before and after (its program the hook and its authority its unlock PDA, or both cleared), so no upgrade slipped in before the freeze can have repointed one; `programs/containment-hook/scripts/freeze-gate.ts` does the check and, given `--freeze`, the freeze, and refuses unless both programs end with no upgrade authority (`HOOK-51`, answer 7a on [#74](https://github.com/imDev2023/testing-pipeline/issues/74); hardening findings H016 to H018).
+  The check also reads what every config says against the chain, as `bind` checked and wrote it (its home market on the tax AMM, market state, vault, fee account, quote mint, terms, canonical bumps and validation account), requires every contained mint ever recorded (the launch record, the release gate's fixture and its reports) to still have its config, requires each program's executable hash to be the one `deployments/devnet.json` records (or the hash given for a local rehearsal), refuses a pair of which only one is frozen, and reads both programs again immediately before signing so the bytes checked are the bytes frozen (Round 2 findings R2T-07 to R2T-09 and R2-B).
+  On devnet it runs as a check only, and reports both programs still upgradeable, as the bar keeps them there.
+- No upgrade replaces the deployed hook until its release gate passes: `programs/containment-hook/scripts/pre-deploy.sh`, which `scripts/deploy-devnet.sh` runs on the very bytes it is about to deploy, copies every config on the cluster with its mint, home market, vaults and fee accounts (`scripts/gate_snapshot.py`), and with the new build, in LiteSVM, decodes each config, and for each token still contained buys into a fresh associated token account, sells, has a wallet-to-wallet transfer refused, and unlocks it at its deadline; each token already unlocked must refuse a second `unlock`.
+  It also refuses a build whose compiled tax AMM id is not the one `deployments/devnet.json` records, and on devnet keeps what it read in `deployments/release-gate/containment-hook/devnet.json`.
+  The copy starts from a census of every account the hook owns, each a config or the validation account of one, and the gate refuses a copy of another program than the build's own id, a census its files do not match, a deployed hook with no config, and on devnet, known by its genesis hash, a census missing a config of the committed fixture or a mint of the launch record; the last two pass only with an override naming why (`HOOK_GATE_ALLOW_EMPTY`, `HOOK_GATE_ALLOW_FEWER`), which the report records (Round 2 findings R2T-01 and R2T-04).
+  An RPC error stops the copy rather than reading as "not deployed", and the copy goes into an empty folder, whose manifest lists everything the gate loads (R2T-05, R2T-06).
+  Beyond the steps above, the gate binds a fresh mint with the new build, and for each token still contained refuses a buy into a keypair account without `ImmutableOwner` and a direct `Execute`, pays and sweeps the fee account where a sell pays Pipeline's fee in the token, and unlocks by the goal in a fresh VM, with the market state's counter written through the tax AMM's own `TaxMarket`, after refusing one below it (R2T-02, R2T-03).
+  It reports, without refusing, each contained token's balances in accounts whose owner can change, found by a `getProgramAccounts` on Token-2022 or, where the RPC refuses that as public devnet does, through the mint's transaction history, and warns when the accounts found do not add up to the supply (H002).
+  Every `cargo test` runs the same gate on the devnet configs copied on 2026-11-23 (`tests/fixtures/release-gate/devnet/`).
 
 ### Compute ceilings
 
@@ -253,7 +314,7 @@ Less those, it costs the same on every mint (20,916 units measured on 2026-11-16
 
 For the bar's stateful fuzzing layer, beyond its shared three:
 
-1. While contained, no sequence of actions moves the token between two accounts that are both outside the home vault and the fee account.
+1. While contained, no sequence of actions moves the token between two accounts that are both outside the home vault and the fee account, and every account a contained token is delivered into, outside those two, has an owner that can never change; the residuals no transfer hook can see are in "What the hook cannot see".
 2. A transfer that leaves out or substitutes any hook account is refused, but for a transfer from an account to itself, which moves nothing (see "What this allows").
 3. The config never changes after binding, except the unlock time, which is set once.
 4. `unlock` succeeds exactly when the tax collected reaches the goal or the deadline has passed; afterwards both of the mint's hook fields are unset, and nothing else ever changes them.
@@ -264,6 +325,7 @@ For the bar's stateful fuzzing layer, beyond its shared three:
 The bar asks our strategies to pass Canary checks on devnet with every warn named in the product's file.
 A contained token's home market is a tax market, so these add to the tax AMM's own (`docs/spec/tax-amm.md`, "Canary checks").
 
+- `outside_supply`: a warn when supply held outside the home market's pool could be sold into the real quote buyers paid in, as the launch default's 20% outside the pool on a virtual quote reserve can (`HOOK-50`, answer 5a on [#74](https://github.com/imDev2023/testing-pipeline/issues/74); hardening finding H067).
 - `exit_transferred`: a warn on every contained token, because the hook refuses the wallet-to-wallet transfer the check makes.
   - Decided with the owner on 2026-11-10: a refused transfer is a warn for any token, ours or anyone else's, stating that the token could not be sent to another wallet and what the buyer got back by selling it.
   - The check fails only when a token that was transferred cannot then be sold.
@@ -354,3 +416,17 @@ By [Containment hook: deploy on devnet and launch a contained token](https://git
 - On a home market quoted in wrapped SOL, a sell ran the hook once, into the vault, since Pipeline's fee came out of the SOL it bought back.
 - `unlock` cost 13,819 units by the deadline and 14,171 by the goal, about 950 more than on a local validator, still under its 30,000 ceiling.
 - Every signature and address of the run is in `deployments/devnet-demo-containment-hook.json`, and `pipeline-check` 0.3.0's reports, 13 pass, 0 warn, 0 fail on each home market while contained and after the unlock, are in `programs/containment-hook/conformance/devnet/`.
+
+By [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) on 2026-11-23, in LiteSVM against devnet's router bytes, with the hardening's fixes (the owner rule, the quote mint check, the zero counter, the version check and the multisig refusal):
+
+| Instruction | Cost (CU) | Ceiling | Before the hardening |
+| --- | --- | --- | --- |
+| `Execute`, out of the vault on a buy | 5,676 | 10,000 | 5,578 |
+| `Execute`, into the vault on a sell | 5,611 | 10,000 | 5,602 |
+| `Execute`, into the fee account on a sell | 5,614 | 10,000 | 5,603 |
+| `bind`, less its bump searches beyond the first bumps | 21,434 | 60,000 | 20,916 |
+| `unlock` by the deadline | 12,914 | 30,000 | 12,912 |
+| `unlock` by the goal | 13,214 | 30,000 | 13,212 |
+
+- The owner rule costs a buy about 100 units, one walk of the destination's extension entries; a sell, whose destination is the vault, does not walk it.
+- `bind` reads the quote mint too, about 500 units.
