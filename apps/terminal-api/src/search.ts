@@ -25,9 +25,12 @@ import { marketViews } from "./views";
 export const searchRoutes = new Hono<DbEnv>();
 searchRoutes.use("/v1/search", requestDb);
 
-/** What was typed, trimmed, or a 400 for nothing or too much. */
+/**
+ * What was typed, without control characters (no name or address holds one, and Postgres refuses a
+ * NUL in text), trimmed; or a 400 for nothing or too much.
+ */
 function queryOf(c: Context<DbEnv>): string {
-  const q = (c.req.query("q") ?? "").trim();
+  const q = (c.req.query("q") ?? "").replace(/\p{Cc}/gu, "").trim();
   if (!q || [...q].length > SEARCH_QUERY_MAX) throw new HTTPException(400, { message: `q is what to search for: 1 to ${SEARCH_QUERY_MAX} characters.` });
   return q;
 }

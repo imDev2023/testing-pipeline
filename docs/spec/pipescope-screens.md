@@ -377,7 +377,7 @@ From top to bottom, with the explanation beside the facts at desktop width.
 
 - The search box is in the header of every page.
   Results appear as the reader types, 220 ms after the last keystroke, and on Enter, on a page whose address holds the query.
-- Results are grouped as Strategies, Markets and Mints, each with its count, and at most 20 a group, with "The first 20 of 34. Type more of the address to narrow it."
+- Results are grouped as Strategies, Markets and Mints, each with its count, and at most 20 a group, with "The first 20 of 34. Type more of the name or the address to narrow it." (as built; the prototype's "Type more of the address" missed groups matched by name).
 - **Names** match anywhere and in any case: a strategy's name from valid metadata, and a token's symbol and name.
 - **Addresses** match exactly as typed, from their start or their end, the two parts people copy or remember: a strategy's program, a market, a market state or a mint.
   Base58 is case-sensitive, so "AbC" and "abc" are different addresses.

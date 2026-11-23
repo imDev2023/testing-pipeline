@@ -5,13 +5,16 @@
 // named by their own metadata in the author's style beside their short address; and a token image is
 // served by Aviary's API alone, with nosniff, never wakes Postgres, and is the only image a page asks for.
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { Market, MarketsPage, SearchResults } from "terminal-api/contract";
+import { Market, SearchResults } from "terminal-api/contract";
 import { SEARCH_EXAMPLES } from "../../../apps/terminal-web/src/config";
 import { API, OWN_ORIGINS } from "./target";
 
 // The buy wall AMM's demo market on devnet, and a token that names itself in its own metadata.
 const MARKET = "7BctWoaSumdxkMBCXxMum59NV5CZJBvC33SCrcGa5CAK";
 const DREAM = "5AMPgS3baS6g4gsgSGwkE2wx9dV6iJNzaCMfpDFNfvM9";
+// Aviary's token-image check token and its market on devnet (deployments/devnet-demo-token-image.json).
+const CHECK_TOKEN = "6jtEmUreNsX6B7xwnqjB4D3bSASwTZTweL16bk8xHD7D";
+const CHECK_MARKET = "4DZbJgcdZyZUoYxKsN8atmMjTipBQ3zd6Yjzkp2i5HsR";
 const AUTHOR = "rgb(122, 43, 140)";
 
 const search = async (request: APIRequestContext, q: string) =>
@@ -110,7 +113,7 @@ test.describe("the search page", () => {
     await page.goto("/search?q=e");
     const mints = page.getByRole("region", { name: /^Mints/ });
     await expect(mints.getByRole("list").first().locator(":scope > li")).toHaveCount(20);
-    await expect(mints.getByText(`The first 20 of ${found.mints.total}. Type more of the address to narrow it.`)).toBeVisible();
+    await expect(mints.getByText(`The first 20 of ${found.mints.total}. Type more of the name or the address to narrow it.`)).toBeVisible();
     await expect(page.getByText("Token names are each token's own claim. Aviary names only SOL and USDC itself, and marks no other token as verified, so check the mint address.")).toBeVisible();
   });
 
@@ -134,14 +137,13 @@ test.describe("token names and images", () => {
   });
 
   test("show every image a page asks for from Aviary's own API, served with nosniff, its type fixed and no script", async ({ page, request }) => {
-    // Every market a token with a kept image trades on, from the feed's first pages.
-    const { markets } = MarketsPage.parse(await (await request.get(`${API}/v1/markets?limit=200`)).json());
-    const pictured = markets.find((m) => m.mints.some((x) => x.token?.image));
-    expect(pictured, "a devnet market whose token names an image Aviary keeps").toBeDefined();
+    // Aviary's check token, the one devnet token naming an image Aviary keeps (deployments/devnet-demo-token-image.json).
+    const pictured = Market.parse(await (await request.get(`${API}/v1/markets/${CHECK_MARKET}`)).json());
+    expect(pictured.mints.find((x) => x.mint === CHECK_TOKEN)?.token).toMatchObject({ symbol: "AVIMG", name: "Aviary Image Check", image: expect.stringMatching(/^[0-9a-f]{64}$/) });
     const images: string[] = [];
     page.on("request", (r) => r.resourceType() === "image" && images.push(r.url()));
-    await page.goto(`/markets/${pictured!.address}`);
-    const hash = pictured!.mints.find((x) => x.token?.image)!.token!.image!;
+    await page.goto(`/markets/${pictured.address}`);
+    const hash = pictured.mints.find((x) => x.token?.image)!.token!.image!;
     const img = page.getByRole("heading", { level: 1 }).locator(`img[src="${API}/images/${hash}"]`);
     await expect(img).toBeVisible();
     expect(await img.evaluate((el: HTMLImageElement) => [el.naturalWidth > 0, el.getBoundingClientRect().width, el.getBoundingClientRect().height])).toEqual([true, 20, 20]);

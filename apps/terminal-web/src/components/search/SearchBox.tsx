@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { SEARCH_QUERY_MAX } from "terminal-api/config";
 import { SearchResults } from "terminal-api/contract";
 import { ApiFailure, getFromApi } from "@/api";
 import { SEARCH_PAUSE_MS, SEARCH_RESULTS_PER_GROUP } from "@/config";
@@ -25,7 +26,15 @@ export function SearchBox() {
   const pathname = usePathname();
   const params = useSearchParams();
   const onSearchPage = pathname === "/search";
-  const [text, setText] = useState(() => (onSearchPage ? (params.get("q") ?? "") : ""));
+  // On the search page the box holds the page's query, and follows it when the page moves to
+  // another (an example picked, Back or Forward); elsewhere it keeps what was typed.
+  const pageQuery = onSearchPage ? (params.get("q") ?? "") : null;
+  const [text, setText] = useState(pageQuery ?? "");
+  const [shownQuery, setShownQuery] = useState(pageQuery);
+  if (pageQuery !== shownQuery) {
+    setShownQuery(pageQuery);
+    if (pageQuery !== null) setText(pageQuery);
+  }
   // Open on the page it was opened on: moving to another page closes it.
   const location = `${pathname}?${params.toString()}`;
   const [openOn, setOpenOn] = useState<string | null>(null);
@@ -105,7 +114,7 @@ export function SearchBox() {
         placeholder="Search strategies, markets and mints"
         autoComplete="off"
         spellCheck={false}
-        maxLength={100}
+        maxLength={SEARCH_QUERY_MAX}
         aria-controls={`${id}-results`}
         aria-expanded={open}
       />

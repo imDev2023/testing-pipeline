@@ -104,10 +104,10 @@
   --market-top-areas: "chart trade" "trades trade";
   --chart-height: 380px;
 
-  /* A token's image and Aviary's marks for SOL and USDC: a fixed square beside the name, sitting on
-     the line like a capital (components/MintLabel.module.css; PIPESCOPE-82). */
+  /* A token's image and Aviary's marks for SOL and USDC: a fixed square beside the name, centred on
+     the line's lower-case letters at any text size (components/MintLabel.module.css; PIPESCOPE-82). */
   --token-image-size: 20px;
-  --token-image-align: -5px;
+  --token-image-align: middle;
 
   /* Facts (components/Flags.module.css, components/facts/Facts.module.css): a flag beside its
      description, and a fact's name beside its value; one under the other at 720 px and narrower. */

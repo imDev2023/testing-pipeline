@@ -126,6 +126,8 @@ export class IndexerCore {
    * new; true on a new instance, which looks once for what an earlier one left unfetched.
    */
   private imagesDue = true;
+  /** Whether the next look also tries again the URIs that could not be reached: after the hourly read of every mint. */
+  private imagesRetry = false;
   /** The token-image fetch running now, which a second call waits for. */
   private imagesRun: Promise<{ fetched: number; kept: number }> | null = null;
 
@@ -351,23 +353,28 @@ export class IndexerCore {
   async refreshMints(): Promise<number> {
     const read = await this.withDb((db) => refreshMints(db, this.deps.rpcUrl));
     this.imagesDue = true;
+    this.imagesRetry = true;
     return read;
   }
 
   /**
    * Fetches the image of every token metadata URI not fetched yet (./tokenImages), once mints were
-   * read since the last look, so a run that read none never opens the database for it. The Indexer
+   * read since the last look, so a run that read none never opens the database for it; after the
+   * hourly read of every mint, it also tries again what could not be reached. The Indexer
    * runs it after what a run indexed is published, so neither the pages nor the live rooms wait on the
    * web; if it fails, the next call looks again.
    */
   fetchPendingImages(): Promise<{ fetched: number; kept: number }> {
     this.imagesRun ??= (async () => {
       if (!this.imagesDue) return { fetched: 0, kept: 0 };
+      const retryUnreachable = this.imagesRetry;
       this.imagesDue = false;
+      this.imagesRetry = false;
       try {
-        return await this.withDb((db) => fetchTokenImages(db, this.deps.images, { fetch: this.deps.webFetch }));
+        return await this.withDb((db) => fetchTokenImages(db, this.deps.images, { fetch: this.deps.webFetch, retryUnreachable }));
       } catch (e) {
         this.imagesDue = true;
+        this.imagesRetry ||= retryUnreachable;
         throw e;
       }
     })().finally(() => (this.imagesRun = null));

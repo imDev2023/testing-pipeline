@@ -108,6 +108,28 @@ describe("fetching", () => {
   });
 });
 
+describe("trying again", () => {
+  it("fetches a URI that could not be reached again on the hourly read of mints, and never one kept, missing or refused", async () => {
+    const kv = memoryKv();
+    const down = web({ [SHARED_URI]: () => new Response("busy", { status: 429 }), [OTHER_URI]: json({ name: "No Image" }) });
+    await fetchTokenImages(client.db, kvImageStore(kv), { fetch: down.fetch });
+    const up = web({ [SHARED_URI]: bytes(PNG, "image/png"), [OTHER_URI]: json({ image: "https://example.com/dream.png" }), "https://example.com/dream.png": bytes(PNG, "image/png") });
+    // Between hourly reads nothing is tried again.
+    expect(await fetchTokenImages(client.db, kvImageStore(kv), { fetch: up.fetch })).toEqual({ fetched: 0, kept: 0 });
+    expect(await fetchTokenImages(client.db, kvImageStore(kv), { fetch: up.fetch, retryUnreachable: true })).toEqual({ fetched: 1, kept: 1 });
+    expect(up.asked).toEqual([SHARED_URI]);
+    const [shared] = await client.db.select().from(tokenImages).where(eq(tokenImages.uri, SHARED_URI));
+    expect(shared).toMatchObject({ status: "kept", sha256: sha256(PNG) });
+  });
+
+  it("fetches nothing for a mint that names no symbol and no name, whose image no page would show", async () => {
+    await client.db.update(mints).set({ symbol: null, name: null }).where(eq(mints.address, NAMED[2]!));
+    const { fetch, asked } = web({});
+    await fetchTokenImages(client.db, kvImageStore(memoryKv()), { fetch });
+    expect(asked).toEqual([SHARED_URI]);
+  });
+});
+
 describe("serving /images/<hash>", () => {
   const serve = async (path: string, kv: KVNamespace) => {
     // A database that cannot answer: serving an image must never ask it anything.

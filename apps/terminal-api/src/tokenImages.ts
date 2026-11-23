@@ -8,7 +8,7 @@
 // page is given the hash with the mint. The answer's type is fixed to the one the first bytes said,
 // with `nosniff`, and a policy under which nothing in it can run, so a reader's browser never asks an
 // author's server for anything and never runs what an author sent.
-import { and, inArray, isNotNull, notExists, sql } from "drizzle-orm";
+import { and, inArray, isNotNull, notExists, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { mints, tokenImages, type Db } from "terminal-db";
 import { AVIARY_MINT_NAMES, METADATA_FETCH, TOKEN_IMAGE } from "./config";
@@ -50,20 +50,29 @@ async function inTurns<T>(items: T[], limit: number, work: (item: T) => Promise<
 }
 
 /**
- * Fetches the image of every token metadata URI a mint names that has not been fetched, other than
- * those of the mints Aviary names itself (SOL, USDC), whose marks ship with the app. A kept image is
+ * Fetches the image of every token metadata URI a mint that names itself names and that has not been
+ * fetched, other than those of the mints Aviary names itself (SOL, USDC), whose marks ship with the
+ * app; with `retryUnreachable` (the hourly read of every mint), also each URI that could not be
+ * reached last time, since a host can be down for a moment (PIPESCOPE-123). What was kept, found
+ * naming no image or refused is never fetched again until a mint names another URI. A kept image is
  * written to the store before its record, so a record never names bytes that are not there. Returns
  * how many URIs it fetched and how many images it kept.
  */
-export async function fetchTokenImages(db: Db, store: ImageStore, { fetch, now }: { fetch: FetchLike; now?: Date }): Promise<{ fetched: number; kept: number }> {
+export async function fetchTokenImages(
+  db: Db,
+  store: ImageStore,
+  { fetch, now, retryUnreachable = false }: { fetch: FetchLike; now?: Date; retryUnreachable?: boolean },
+): Promise<{ fetched: number; kept: number }> {
+  const settled = retryUnreachable ? sql`and ${tokenImages.status} <> 'unreachable'` : sql``;
   const due = await db
     .selectDistinct({ uri: mints.tokenUri })
     .from(mints)
     .where(
       and(
         isNotNull(mints.tokenUri),
+        or(isNotNull(mints.symbol), isNotNull(mints.name)),
         sql`${mints.address} not in (${sql.join(Object.keys(AVIARY_MINT_NAMES).map((m) => sql`${m}`), sql`, `)})`,
-        notExists(db.select({ one: sql`1` }).from(tokenImages).where(sql`${tokenImages.uri} = ${mints.tokenUri}`)),
+        notExists(db.select({ one: sql`1` }).from(tokenImages).where(sql`${tokenImages.uri} = ${mints.tokenUri} ${settled}`)),
       ),
     );
   let kept = 0;
@@ -81,7 +90,10 @@ export async function fetchTokenImages(db: Db, store: ImageStore, { fetch, now }
         outcome.status === "kept"
           ? { uri, status: "kept", reason: null, imageUrl: outcome.url, sha256: outcome.sha256, contentType: outcome.type, size: outcome.bytes.byteLength, fetchedAt }
           : { uri, status: outcome.status, reason: outcome.reason, imageUrl: outcome.status === "refused" ? outcome.url : null, sha256: null, contentType: null, size: null, fetchedAt };
-      await db.insert(tokenImages).values(row).onConflictDoNothing();
+      await db
+        .insert(tokenImages)
+        .values(row)
+        .onConflictDoUpdate({ target: tokenImages.uri, set: { status: row.status, reason: row.reason, imageUrl: row.imageUrl, sha256: row.sha256, contentType: row.contentType, size: row.size, fetchedAt: row.fetchedAt } });
     },
   );
   return { fetched: due.length, kept };

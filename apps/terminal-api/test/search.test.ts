@@ -113,6 +113,11 @@ describe("names", () => {
     expect((await q("sol")).mints.results.map(({ mint, symbol, token }) => ({ mint, symbol, token }))).toEqual([{ mint: WSOL, symbol: "SOL", token: null }]);
   });
 
+  it("leaves out control characters typed, which no name or address holds", async () => {
+    expect((await q("DRE\u0000AM")).mints.results.map((m) => m.mint)).toEqual([DREAM]);
+    expect((await q("\u0007dream\u001b")).mints.total).toBe(1);
+  });
+
   it("never matches a name by a wildcard typed in it", async () => {
     const found = await q("%");
     expect([found.strategies.total, found.markets.total, found.mints.total]).toEqual([0, 0, 0]);
@@ -145,6 +150,7 @@ describe("what it refuses", () => {
     ["q=%20%20", "q is what to search for: 1 to 100 characters."],
     [`q=${"a".repeat(101)}`, "q is what to search for: 1 to 100 characters."],
     ["q=a&limit=101", "limit is at most 100."],
+    ["q=%00%07", "q is what to search for: 1 to 100 characters."],
   ])("%s", async (query, error) => {
     const { ctx, settle } = executionContext();
     const response = await app.request(`/v1/search?${query}`, {}, env, ctx);

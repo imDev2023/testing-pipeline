@@ -2364,8 +2364,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-123: Where a token's image is found
 
 - Question: What does Aviary fetch to find the image a token's metadata names, and how often?
-- Answer: The token metadata URI once, under the metadata fetcher's limits and at most 1 MB: if what it serves is a PNG, JPEG or WebP by its first bytes, that is the image; if it is a JSON document of at most 64 KB, the `https:` URL in its `image` is fetched once more under the same limits; nothing else is fetched, each URI's outcome is kept once (shared by every mint naming it) and fetched again only when a mint names another URI, and the images of SOL and USDC are never fetched.
-- Alternatives: Treating the URI only as a document, which misses tokens whose URI is the picture; fetching again after a failed fetch, which the spec's once per URI rules out; following `ipfs:` and `ar:` links through a gateway, which would add a third party.
+- Answer: The token metadata URI once, under the metadata fetcher's limits and at most 1 MB: if what it serves is a PNG, JPEG or WebP by its first bytes, that is the image; if it is a JSON document of at most 64 KB, the `https:` URL in its `image` is fetched once more under the same limits; nothing else is fetched; each URI's outcome is kept once, shared by every mint naming it, and a URI is fetched again only when a mint names another, except that one which could not be reached is tried again after each hourly read of every mint, since a host can be down for a moment; only the URIs of mints that name themselves are fetched, and never those of SOL and USDC.
+- Alternatives: Treating the URI only as a document, which misses tokens whose URI is the picture; never trying again after a failed fetch, which loses a token's image for good to one busy moment of its host; following `ipfs:` and `ar:` links through a gateway, which would add a third party.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Metadata fetcher](spec/pipescope-architecture.md#metadata-fetcher)
 - Changes by: build-time constant
 - Status: default

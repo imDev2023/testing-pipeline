@@ -29,7 +29,7 @@ function Group({ title, total, shown, heading: H, children }: { title: string; t
       <ul className={styles.list}>{children}</ul>
       {total > shown && (
         <p className={styles.note}>
-          The first {formatInteger(shown)} of {formatInteger(total)}. Type more of the address to narrow it.
+          The first {formatInteger(shown)} of {formatInteger(total)}. Type more of the name or the address to narrow it.
         </p>
       )}
     </section>

@@ -26,7 +26,8 @@ export function MintLabel({ mint, symbol, token }: Pick<MarketMint, "mint" | "sy
   return (
     <span className={styles.label}>
       <span className={styles.unit}>
-        {token?.image && <TokenImage hash={token.image} />}
+        {/* Keyed by its hash, so a new image is tried even after an earlier one failed to load. */}
+        {token?.image && <TokenImage key={token.image} hash={token.image} />}
         <AuthorText>{name}</AuthorText>
       </span>{" "}
       <ShortAddress address={mint} />

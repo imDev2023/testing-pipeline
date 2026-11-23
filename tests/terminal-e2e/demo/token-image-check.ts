@@ -6,7 +6,7 @@
 //      document naming the image, mint its supply to the wallet and give up the mint authority (a tax
 //      market's seed refuses a mint that keeps one, TAX-16), keeping the metadata's update authority so
 //      the URI can be moved (`--update-uri`);
-//   2. create and seed a tax market of it against wrapped SOL from the tax AMM's own metadata, with
+//   2. create a tax market of it against wrapped SOL, then seed it, from the tax AMM's own metadata, with
 //      Pipeline's SDK, as the tax AMM's devnet demo creates its demo market (programs/tax-amm/scripts/demo.ts),
 //      with only what Aviary's packages have (no tax AMM client), so CI's terminal job type-checks it;
 //   3. buy the token once through the router, so the market has a price.
@@ -14,6 +14,8 @@
 // The record goes to deployments/devnet-demo-token-image.json.
 //
 //   direnv exec <main checkout> node tests/terminal-e2e/demo/token-image-check.ts --uri <https URL of token.json>
+//   direnv exec <main checkout> node tests/terminal-e2e/demo/token-image-check.ts --uri <same URL> --mint <mint>
+//     (after a run that stopped before its market was created: on the token it made; it makes a new market)
 //   direnv exec <main checkout> node tests/terminal-e2e/demo/token-image-check.ts --update-uri <https URL> --mint <mint>
 //
 // Devnet only. It signs with ~/.config/testing-pipeline/devnet/wallet.json, which pays about 0.06 SOL.
@@ -236,12 +238,16 @@ async function createMarket(payer: KeyPairSigner, token: Address) {
   if (!metadata.ok) throw new Error(`programs/tax-amm/metadata.json is invalid: ${metadata.errors.join("; ")}`);
   const init = metadata.value.init ?? (() => { throw new Error("the tax AMM's metadata has no init form"); })();
   const solHolder = await ata(payer.address, WRAPPED_SOL, TOKEN);
-  const wrap = SEED[1] + (pipeline.maxTotalSpend(BUY_LAMPORTS, 0) ?? BUY_LAMPORTS * 2n);
-  await send("wrap the seed's and the buy's SOL", payer, [
-    await createAtaIdempotent(payer.address, payer.address, WRAPPED_SOL, TOKEN),
-    ix(SYSTEM, [[payer.address, WRITABLE_SIGNER], [solHolder, WRITABLE]], [...u32(2), ...u64(wrap)]),
-    ix(TOKEN, [[solHolder, WRITABLE]], [17]),
-  ]);
+  // Wrapped SOL for the seed and the buy, with Pipeline's fee on the buy, less what the wallet already holds.
+  const needed = SEED[1] + (pipeline.maxTotalSpend(BUY_LAMPORTS, 0) ?? BUY_LAMPORTS * 2n);
+  const holding = await rpc.getTokenAccountBalance(solHolder, { commitment: "confirmed" }).send().then((r) => BigInt(r.value.amount), () => 0n);
+  if (holding < needed) {
+    await send("wrap the seed's and the buy's SOL", payer, [
+      await createAtaIdempotent(payer.address, payer.address, WRAPPED_SOL, TOKEN),
+      ix(SYSTEM, [[payer.address, WRITABLE_SIGNER], [solHolder, WRITABLE]], [...u32(2), ...u64(needed - holding)]),
+      ix(TOKEN, [[solHolder, WRITABLE]], [17]),
+    ]);
+  }
 
   const mints = [token, WRAPPED_SOL] as const;
   const tokenPrograms = [TOKEN_2022, TOKEN];
@@ -280,11 +286,14 @@ async function createMarket(payer: KeyPairSigner, token: Address) {
   const vault0 = await vaultPda(marketState, mints[0]);
   const vault1 = await vaultPda(marketState, mints[1]);
   const view: pipeline.MarketView = { market, strategyProgram: TAX_AMM, marketState, mints: [...mints], vaults: [vault0, vault1], tokenPrograms, supportsExactOut: false };
-  await send("create the check market, its fee accounts and its seed", payer, [
+  // The tax AMM's metadata asks for all three in one transaction, which with a Token-2022 mint is 13
+  // bytes past a transaction's limit; a market is closed until its seed and only its seeder (this
+  // wallet) may seed it, so the seed follows in the next transaction.
+  await send("create the check market and its fee accounts", payer, [
     create,
     ...(await Promise.all(mints.map((mint, i) => pipeline.initFeeAccount({ payer: payer.address, market, mint, tokenProgram: tokenPrograms[i]! })))),
-    await seedInstruction(metadata.value, view, payer.address, { amount_0: SEED[0], amount_1: SEED[1], expected_terms: expectedTerms(mints, sent) }),
   ], [marketStateKey]);
+  await send("seed the check market", payer, [await seedInstruction(metadata.value, view, payer.address, { amount_0: SEED[0], amount_1: SEED[1], expected_terms: expectedTerms(mints, sent) })]);
   record["check market"] = market;
   record["check market state"] = marketState;
   const held = await Promise.all([vault0, vault1].map(async (vault) => BigInt((await rpc.getTokenAccountBalance(vault, { commitment: "confirmed" }).send()).value.amount)));
@@ -329,7 +338,9 @@ async function main() {
     return;
   }
   const uri = options.uri ?? (() => { throw new Error("--uri names the token's metadata document, an https: URL"); })();
-  const token = await createToken(payer, uri);
+  // With --mint, the token a run that stopped already created.
+  const token = options.mint ? address(options.mint) : await createToken(payer, uri);
+  record["check token"] = token;
   await createMarket(payer, token);
   const out = `${ROOT}deployments/devnet-demo-token-image.json`;
   writeFileSync(out, `${JSON.stringify({ note: "Aviary's token-image check token and its tax market on devnet (#120): tests/terminal-e2e/demo/token-image-check.ts", cluster: "devnet", date: new Date().toISOString().slice(0, 10), uri, ...record }, null, 2)}\n`);
