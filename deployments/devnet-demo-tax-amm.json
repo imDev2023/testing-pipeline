@@ -1,47 +1,47 @@
 {
   "cluster": "devnet",
-  "metadataUri": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/tax-amm/metadata.json",
-  "at": "2026-11-20T02:40:10.238Z",
+  "metadataUri": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/410f4b39aba52151a86e2673211133279061b564/programs/tax-amm/metadata.json",
+  "at": "2026-11-23T14:57:39.928Z",
   "record": [
     [
       "strategy program",
       "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"
     ],
     [
-      "register_strategy",
-      "5eAbEK6dzFb9KPkwkPzq88ht99ovHFGv3Zyd6DfMAv3asSTs1D49xZTXauvAUy9c8vY7kdgct6WdiUTdn6Tjjsu3"
+      "update_metadata",
+      "5sNHH219FHbbJpw6eXCQkdL2qRktrZ2YqzqQGJjJz3yxv3fDWfA1y38fNsnr4gdDAQPBmHQ4GWicvKx7QMhsPASG"
     ],
     [
       "create demo token",
-      "3tELB18LwbnVXfVYaNRYuFvXW3qaFTZgDhhuFHRRuGkXrnwHeUSZd9TLe65nJHJVKh3qnVfBbVeJcwNiETrePFSD"
+      "5VV1kUF8DunhiDChcZG6N6ZYDe3xFcZv8Ez9bzQ6U1dwqBauzk8WYMRoUrVALZoqWLMNtYSa6AnNNAjj8MqaiQyb"
     ],
     [
       "wrap 0.550125 SOL",
-      "Hp6zfSpradvVqdfCsjeGP9Fiu8nXoma9mNdtGS5iWRCGKQU2hArCd3kFKphPywrGcmRw7twhY5WbNaTnkoTAUhV"
+      "xoQUT4fpRHcnjNNHBL5tqkEWcW6578euLHpkPbAqQ8oPkrSsLKS6KMVRka4daam52LyD2GGx9gZFa9wzYFNuUpf"
     ],
     [
       "demo market: create_market + init_fee_account x2 + seed",
-      "5pUtjurQbsuscY4JJteu9SfjYxaSaG77kZyXS3ZXfoYJxTJd9qVyBtHygwpvtzkNJepEQkx7TMWEkbqKNY5CgudB"
+      "5yzH4SDRxZaophm3gL68vtGD4W3PrJJmmV2WgZmiQ3jmhTV2FLbeDQaieaRpKvPr7oNUgbLyw42QVtpQKcciDEAa"
     ],
     [
       "demo market: market",
-      "C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w"
+      "4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c"
     ],
     [
       "demo market: market state",
-      "FJ1PJovxT4Njfn3fkufxcKeCF8XtsPRAFLKadZZYXgDB"
+      "DaSqZGNqHppoXFHg3HzcUJ9vVTsG7PbRCdc3UE8PLaMQ"
     ],
     [
       "demo market: demo token",
-      "4gqiCkoxxD72nbXGc7XtxQx4UjBHD3KiJyXpMvEZ6u8c"
+      "4KA1vmioSNTyGu2fsH1vaUQDMa3cC5jYDdGaRLUcHJdo"
     ],
     [
       "swap 50000000 wrapped SOL for demo token",
-      "2HRjZaHZZzw5bpJxpTSjaVGWMpNBL3RkoUcSo1mwZkhfsorjeiowgCif47Q3WMc68xA5DkEtesQtc3C5yqyQyxr1"
+      "4ocGpzBqp3ZCwWvVEDb54qGFXouxN3FKj1e9CCER4fTw3RyC5nPudxqENSrcYdhEYu4DzbHyCKsK7xz54csnk2NX"
     ],
     [
       "swap 1000000000 demo token for wrapped SOL",
-      "4wkueGWApEBLQUndD8byhPRy4Lfa7VeHkFbvp1pj5m2Gj1oS2bQL2C74HMEinU4bM6d7vgAaS578uUwMcFPdtkA2"
+      "5NFY9UR1zzShkUP854wTqhnTz5cnM4XqQ1Dpaw5wX2AUBLWxpU4DPbftwKYkcKZ6K7pZ6iYweS35YvHTA3mE5rKW"
     ],
     [
       "demo market: swaps",
@@ -49,23 +49,23 @@
     ],
     [
       "demo market: distribute slot 0 (tax recipient 1)",
-      "5VpYEcDG7J18DK91f7qsbFn3EtMVK1g7PQgV9eUrLfxJi2GnpTyrF8sDLEovQCXgEmFUkPGzq3Q5iUwKfEPviFL8"
+      "28NtZfxA8DSZ3pniBSouM9k8BYGknBYQYjqvt4tq7uwqdrYPJZFd4h6MtCB9mPjg9PC6dPxHTKLu7yhHz6TdA1np"
     ],
     [
       "demo market: distribute slot 1 (tax recipient 2)",
-      "42khEhxGYvmQzaZvYvLbzPvw73Lkj7qVuPvQEwXjcc7adz2tEj16AcjXs6HGyozvhtUm211dnifqYo8Dua9nU8SN"
+      "3byKZs1Ghr1Xqg57JdLv7jjXbfVJuPpMHM8NJQX1Gfa9KiMTqoucKgzYXBTt5GHQYqHaU2CZBjHsJxjqGnhRMwzk"
     ],
     [
       "demo market: tax recipient 2",
-      "had no token account and got one, ACrn3UD4DLgyCKbNMiqx6Vcs2d49RSbHdbLJ82uw61s8"
+      "had no token account and got one, 7zqF6WGH2wwY4uppBjDWhnkKFAUaF2STeECXAocxmrGJ"
     ],
     [
       "demo market: burn slot 4 (burn)",
-      "4D38KYL2rvAZ63LGAfxuTHLCHZGGZeXR1UFSwQhVXiKVBmm9mcrV6XoH4gjLgPG1LqZUiTVwK17p93LFEHyta2YC"
+      "3vHFLZfhgyoE63HM1pJSQRDujW5HMYBLjNTpH9KSxS1s1GPnZ9P3TF4yYZVS1sMoJMFQqzp1AL9nWjGeceZDy3RM"
     ],
     [
       "demo market: distribute slot 5 (suite share)",
-      "5iBarWPEnj1oPSudPx7DF9c6xQ9hDeKj1Dvnni2mDHq4qFQYPGnFCLYw2gFjoha99UZxVcxi1qYenS9GPaLXiwTi"
+      "4k69bLA79nxoY4Jckyt2DmN8MawQu2Ns8bL46YSp3hNvKWxMPBH2zyJB6yXxkREjAkS9DmEbRuEodMb8zUArjhkq"
     ],
     [
       "demo market: payouts",
