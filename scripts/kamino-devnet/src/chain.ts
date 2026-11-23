@@ -195,6 +195,14 @@ export class Chain {
     return total;
   }
 
+  /** The slot a confirmed transaction landed in, as the cluster reports its status. */
+  async slotOf(signature: Signature): Promise<bigint> {
+    const { value } = await this.retry(() => this.rpc.getSignatureStatuses([signature]).send());
+    const status = value[0];
+    if (!status) throw new Error(`no status for ${signature}`);
+    return status.slot;
+  }
+
   async genesisHash(): Promise<string> {
     return this.retry(() => this.rpc.getGenesisHash().send());
   }
