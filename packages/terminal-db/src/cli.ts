@@ -1,6 +1,6 @@
 // Copied from Top-pad b833a7b, packages/db/src/cli.ts; owned here since.
 // `pnpm --filter terminal-db migrate`: applies the migrations to the database in DATABASE_URL (the project's .env).
-import { runMigrations } from "./migrate";
+import { runMigrations } from "./migrate.ts";
 
 const url = process.env.DATABASE_URL;
 if (!url) {

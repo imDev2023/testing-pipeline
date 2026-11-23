@@ -20,4 +20,6 @@ export type Bindings = {
   REPORTS: RateLimiter;
   /** Public caches up to 60 s stale, and the copies of token images (PIPESCOPE-88). */
   TERMINAL_CACHE: KVNamespace;
+  /** The keeper runner's wallet (docs/spec/keeper-runner.md, "The keeper wallet"): the keeper page shows it, and only its signed heartbeats are kept. */
+  KEEPER_WALLET: string;
 };

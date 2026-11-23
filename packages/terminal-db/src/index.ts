@@ -3,14 +3,25 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import journal from "../migrations/meta/_journal.json" with { type: "json" };
-import * as schema from "./schema";
+import * as schema from "./schema.ts";
 
-export * from "./schema";
+export * from "./schema.ts";
 export { schema };
 
-/** One short-lived client per request: Workers must not share sockets across requests, and Hyperdrive pools for us. */
-export function createDb(connectionString: string) {
-  const client = postgres(connectionString, { max: 5, fetch_types: false, prepare: false });
+/**
+ * One short-lived client per request: Workers must not share sockets across requests, and Hyperdrive
+ * pools for us. A long-lived client (the keeper runner's) passes `idleTimeoutSeconds`, so its
+ * connection closes while idle and Neon can sleep, and `connectTimeoutSeconds`.
+ */
+export function createDb(connectionString: string, options: { idleTimeoutSeconds?: number; connectTimeoutSeconds?: number } = {}) {
+  const client = postgres(connectionString, {
+    max: 5,
+    fetch_types: false,
+    prepare: false,
+    onnotice: () => {},
+    ...(options.idleTimeoutSeconds === undefined ? {} : { idle_timeout: options.idleTimeoutSeconds }),
+    ...(options.connectTimeoutSeconds === undefined ? {} : { connect_timeout: options.connectTimeoutSeconds }),
+  });
   return { db: drizzle(client, { schema }), close: () => client.end({ timeout: 5 }) };
 }
 
@@ -29,3 +40,4 @@ export async function probe(db: Db): Promise<{ serverTime: Date; migrations: num
   if (!row) throw new Error("the health query returned no row");
   return { serverTime: new Date(row.server_time), migrations: Number(row.migrations) };
 }
+export * from "./keeper.ts";

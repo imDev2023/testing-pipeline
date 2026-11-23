@@ -11,6 +11,11 @@ import type { AppEnv } from "./index";
  */
 export const limitReads: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD") return next();
+  return countAsRead(c, next);
+};
+
+/** Counts any request as a read: the keeper runner's heartbeats, whose signature check anyone could otherwise make the API run without end. */
+export const countAsRead: MiddlewareHandler<AppEnv> = async (c, next) => {
   // Cloudflare sets the client's address on every request; `wrangler dev` sets it to the local caller's.
   const ip = c.req.header("cf-connecting-ip") ?? "unknown";
   const { success } = await c.env.READS.limit({ key: ip });

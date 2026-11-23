@@ -49,6 +49,8 @@ import { fetchTaxMarket, findVault0Pda, findVault1Pda, TAX_AMM_PROGRAM_ADDRESS, 
 import { rpcChain, type Chain } from '../../src/chain.ts';
 import { FakeClock } from '../../src/clock.ts';
 import { MemoryLogger, type Row } from '../../src/log.ts';
+import type { Heartbeat } from '../../src/heartbeat.ts';
+import type { Recorder } from '../../src/record.ts';
 import { Runner } from '../../src/runner.ts';
 import { loadSettings } from '../../src/settings.ts';
 
@@ -306,7 +308,14 @@ export type TestRunner = { runner: Runner; log: MemoryLogger; clock: FakeClock; 
 export function testRunner(
     keeper: KeyPairSigner,
     mints: readonly Address[],
-    options: { env?: Record<string, string>; chain?: Chain; dailyInMinutes?: number; products?: readonly AnyKeeperProduct[] } = {},
+    options: {
+        env?: Record<string, string>;
+        chain?: Chain;
+        dailyInMinutes?: number;
+        products?: readonly AnyKeeperProduct[];
+        recorder?: (log: MemoryLogger) => Recorder;
+        heartbeat?: Heartbeat;
+    } = {},
 ): TestRunner {
     const clock = new FakeClock(Date.now());
     const settings = loadSettings({
@@ -319,7 +328,16 @@ export function testRunner(
     });
     const log = new MemoryLogger();
     const real = options.chain ?? rpcChain(settings);
-    const runner = new Runner({ settings, chain: real, clock, wallet: keeper, log, products: options.products ?? [scoped(mints)] });
+    const runner = new Runner({
+        settings,
+        chain: real,
+        clock,
+        wallet: keeper,
+        log,
+        products: options.products ?? [scoped(mints)],
+        recorder: options.recorder?.(log),
+        heartbeat: options.heartbeat,
+    });
     return { runner, log, clock, chain: real, keeper };
 }
 

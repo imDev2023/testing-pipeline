@@ -139,12 +139,19 @@ export async function createWallMarket(owner: KeyPairSigner, options: { sol?: bi
         args: { token_amount: SEED.tokens, sol_amount: SEED.lamports },
     });
     await send(owner, [create, ...fees, seed], [marketStateKey]);
-    return { marketState, view, token, owner };
+    // The fee mint the router recorded for the market (Pipeline 0.3), which says which side of a
+    // trade pays Pipeline's fee.
+    const record = await rpc.getAccountInfo(resolved.market, { encoding: 'base64', commitment: 'confirmed' }).send();
+    const routerMarket = record.value && pipeline.decodeMarket(new Uint8Array(Buffer.from(record.value.data[0], 'base64')));
+    if (!routerMarket) throw new Error(`no router market at ${resolved.market}`);
+    return { marketState, view: { ...view, feeMint: pipeline.marketFeeMint(routerMarket) }, token, owner };
 }
 
 /**
- * A swap through the router with its quote as the minimum: a buy of the token with `amount`
- * lamports, or a sell of `amount` token units. Returns what it delivered.
+ * A swap through the router with what the trader keeps of its quote as the minimum: a buy of the
+ * token with `amount` lamports, or a sell of `amount` token units. Since Pipeline 0.3 a sale into
+ * wrapped SOL pays the router's fee out of what arrived, so the minimum is checked against what is
+ * kept (docs/toolchain.md, "Pipeline 0.3"). Returns what the trader kept.
  */
 export async function swap(market: WallMarket, side: 'buy' | 'sell', amount: bigint): Promise<{ signature: Signature; received: bigint }> {
     const trader = market.owner;
@@ -154,6 +161,7 @@ export async function swap(market: WallMarket, side: 'buy' | 'sell', amount: big
     const simulation = { commitment: 'confirmed' } as const;
     const strategyAccounts = await pipeline.resolveAccounts(rpc, view, trade, trader.address, simulation);
     const { quote } = await pipeline.quoteStrategy(rpc, view, trade, strategyAccounts, trader.address, simulation);
+    const kept = pipeline.marketViewFeeSide(view, view.mints[output]!) === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
     const instruction = await pipeline.swap(
         {
             trader: trader.address,
@@ -168,9 +176,9 @@ export async function swap(market: WallMarket, side: 'buy' | 'sell', amount: big
             outputTokenProgram: TOKEN_PROGRAM_ADDRESS,
             strategyAccounts,
         },
-        { mode: pipeline.TradeMode.ExactIn, amountIn: amount, amountOut: 0n, minAmountOut: quote.amountOut, integratorFeeBps: 0, extra: new Uint8Array() },
+        { mode: pipeline.TradeMode.ExactIn, amountIn: amount, amountOut: 0n, minAmountOut: kept, integratorFeeBps: 0, extra: new Uint8Array() },
     );
-    return { signature: await send(trader, [instruction]), received: quote.amountOut };
+    return { signature: await send(trader, [instruction]), received: kept };
 }
 
 /** The market's state as the keeper jobs read it. */

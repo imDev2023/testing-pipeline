@@ -26,7 +26,8 @@ They are all in the decision register, [`docs/decisions.md`](../../docs/decision
 - `SUITE-33`, `SUITE-34`: which jobs it calls, and when: its own socket, a sweep, an hourly and a daily pass, and a full pass whenever it starts.
 - `SUITE-35`: each job's due rule is written once, in `packages/keeper-jobs`, which Aviary's panels use too.
 - `SUITE-36`: Alchemy's free devnet endpoint for reads, simulations and sends.
-- `SUITE-37`: what it records; until Aviary's database exists it writes its rows to its log.
+- `SUITE-37`, `SUITE-58`: what it records, in Aviary's database (`keeper_runs` and `keeper_run_jobs`) or, without one, as `record` rows in its log: only the passes that sent, held or parked something.
+- `SUITE-57`: after every pass it posts a heartbeat signed with the keeper wallet's key to Aviary's API, so the keeper page knows it is running while the database sleeps.
 - `SUITE-49`: the socket and market discovery on Aviary's Helius key once it exists, on Solana's public devnet endpoint until then, since Alchemy's free tier serves neither.
 - `SUITE-50`: a payout simulated without a `Distributed` event had nothing to do, as when another keeper paid it first.
 - `SUITE-51`: a job's cost is what its simulation takes from the wallet, and what it spent is what left the wallet once it landed, never less than its fee.
@@ -61,7 +62,8 @@ The runner logs every value it started with in its first line, so the log always
 | `KEEPER_RPC_URL` | Reads, simulations and sends; defaults to Alchemy's devnet endpoint from `ALCHEMY_API_KEY` |
 | `KEEPER_WS_URL` | The socket, which must serve `logsSubscribe` |
 | `KEEPER_DISCOVERY_RPC_URL` | Where markets are found, which must serve `getProgramAccounts` |
-| `KEEPER_DATABASE_URL` | Aviary's database; unset, the runner only logs |
+| `KEEPER_DATABASE_URL` | Aviary's database, where recorded passes go; defaults to the project's `DATABASE_URL`, and unset, the runner logs them |
+| `KEEPER_HEARTBEAT_URL` | Where each pass's signed heartbeat goes, Aviary's `/keeper/heartbeat` (`http://localhost:8811/keeper/heartbeat` for Aviary's local run); unset, none is sent |
 
 A `KEEPER_` variable not in this table stops the runner at start.
 No log line carries an API key or a password from a URL, and none carries the keeper wallet's key.
@@ -82,6 +84,7 @@ The agent starts [`scripts/keeper-run.sh`](../../scripts/keeper-run.sh) at login
 launchd has no direnv, so the script loads `~/.config/env/global.env` and the project's `.env` itself, then runs the built runner, `dist/keeper.mjs`, on the Node version `docs/toolchain.md` names.
 A setting for the agent goes into the project's `.env`, followed by `pnpm keeper:install` again.
 The log is `~/Library/Logs/testing-pipeline-keeper.log`, one JSON row a line: `start` with the settings, a `pass` row per pass, and a `job` row for each job sent, held, parked or skipped, with its signature, cost or reason.
+A pass that sent, held or parked something is also recorded in Aviary's database, the project's `DATABASE_URL`, and shown on Aviary's keeper page, `/keeper`; without a database it is logged as one `record` row instead, and a `heartbeat` row says when a heartbeat was refused or did not arrive.
 When the Mac sleeps the jobs wait, and the full pass at the next start catches up.
 An `unwrap` row says when the tips were closed into the float.
 
@@ -107,7 +110,9 @@ In Docker the rows go to standard output.
 ## Testing
 
 ```sh
-pnpm --filter keeper test           # settings and the runner's genericity, no chain needed (CI runs these, and packages/keeper-jobs's tests)
+pnpm --filter keeper test           # settings, what a pass records, the heartbeat and the runner's genericity, no chain needed (CI runs these, and packages/keeper-jobs's tests)
+TEST_DATABASE_URL=postgres://terminal:terminal@127.0.0.1:5462/postgres \
+  pnpm --filter keeper test:db      # the writer to Aviary's database (CI's terminal job runs these, with its Postgres)
 ```
 
 The runner's own tests run against a local validator running devnet's router, the tax AMM and the buy wall AMM, after both local demos have registered their strategies (`docs/toolchain.md`, "Local demo run"), with a fake clock for the passes:
@@ -121,9 +126,9 @@ scripts/local-validator.sh          # in another shell
 (cd programs/buy-wall-amm/scripts && pnpm demo --cluster localnet \
   --payer ~/.config/testing-pipeline/devnet/wallet.json \
   --upgrade-authority ~/.config/testing-pipeline/devnet/upgrade-authority.json)
-pnpm --filter keeper test:local     # LOCAL_VALIDATOR_URL names another validator
+pnpm --filter keeper test:local     # LOCAL_VALIDATOR_URL names another validator; TEST_DATABASE_URL as above
 ```
 
-They show a job sent when due and only then, a market owing nothing sending nothing, another keeper paying first costing only a simulation, each cap and the minimum balance holding a job, today's spend rebuilt after a restart equal to the spend before it, a failing job retried at `RETRY_DELAYS` and then parked until its market changes, an RPC hiccup while building a job not counted as its failure, and `keeper once` running one pass and exiting without ever printing the key.
+They show a job sent when due and only then, a market owing nothing sending nothing, another keeper paying first costing only a simulation, each cap and the minimum balance holding a job, today's spend rebuilt after a restart equal to the spend before it, a failing job retried at `RETRY_DELAYS` and then parked until its market changes, an RPC hiccup while building a job not counted as its failure, `keeper once` running one pass and exiting without ever printing the key, and the pass that paid out recorded once with every signature, in the database or as one `record` row in the log, while the passes that sent nothing record nothing and every pass sends its heartbeat.
 For the buy wall AMM they show the wall placed from the runner's own socket after the swap that makes it due, its tip landing in the keeper wallet's wrapped-SOL account, which the same transaction creates, the tips unwrapped once that account holds more than `TIP_UNWRAP_AT` and not at exactly it, `settle` never twice within `SETTLE_INTERVAL` on a market even across a restart, and the daily pass paying the rewards and sweeping fee slots 0 and 2 but never slot 1, with a payout into a missing account worth less than its rent left waiting at no cost.
 Each test makes its own markets and sees only those, so the tests can share one validator.

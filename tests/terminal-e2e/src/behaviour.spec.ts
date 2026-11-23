@@ -2,6 +2,7 @@
 // the theme follows the device and the footer overrides it, every colour and typeface comes from
 // theme.css, panels load and fail on their own, and the "nothing there" page names the address.
 import { expect, test, type Page } from "@playwright/test";
+import { KEEPER_SIGNATURE, postKeeperHeartbeat, seedKeeperRecords, TEST_KEEPER_WALLET } from "./keeper";
 import { API } from "./target";
 
 // The theme's own values (docs/spec/pipescope-screens.md, "Colour and theme"), as the browser computes them.
@@ -135,6 +136,68 @@ test.describe("nothing there", () => {
       await expect(page.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${address}?cluster=devnet`);
       await page.getByRole("link", { name: "Go to the feed" }).click();
       await expect(page).toHaveURL("/");
+    }
+  });
+});
+
+test.describe("the keeper page", () => {
+  test.beforeAll(async () => {
+    await seedKeeperRecords();
+    await postKeeperHeartbeat();
+  });
+
+  test("shows the keeper wallet, the runner running, today's spend against the caps and the jobs with their transactions", async ({ page }) => {
+    await page.goto("/keeper");
+    await expect(page.getByRole("heading", { name: "Keeper", level: 1 })).toBeVisible();
+    await expect(page.getByRole("status")).toHaveText(/^Running\. Its last pass, a sweep, ended (just now|\d+s ago|1m ago)\.$/);
+
+    const wallet = page.getByRole("region", { name: "Keeper wallet" });
+    await expect(wallet.getByText(TEST_KEEPER_WALLET.slice(0, 22))).toBeVisible();
+    await expect(wallet.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${TEST_KEEPER_WALLET}?cluster=devnet`);
+    await expect(wallet.getByText(/^(\d[\d.,]*|0) SOL$/)).toBeVisible();
+
+    const spent = page.getByRole("region", { name: "Spent today" });
+    await expect(spent.getByText("0.000025 SOL of 0.1 SOL DAILY_CAP")).toBeVisible();
+    await expect(spent.getByText("0.000005 SOL of 0.003 SOL MAX_TX_COST")).toBeVisible();
+
+    const waiting = page.getByRole("region", { name: "Held and parked" });
+    await expect(waiting.getByRole("row", { name: /distribute, slot 2 .* Held by MARKET_DAILY_CAP/ })).toBeVisible();
+
+    const latest = page.getByRole("region", { name: "Latest jobs" });
+    await expect(latest.getByRole("row")).toHaveCount(1 + 6);
+    const signature = latest.getByRole("link", { name: `${KEEPER_SIGNATURE.slice(0, 4)}...${KEEPER_SIGNATURE.slice(-4)}` });
+    await expect(signature).toHaveAttribute("href", `https://explorer.solana.com/tx/${KEEPER_SIGNATURE}?cluster=devnet`);
+    await expect(signature).toHaveAttribute("title", KEEPER_SIGNATURE);
+
+    const passes = page.getByRole("region", { name: "Passes" });
+    await expect(passes.getByRole("row", { name: /^Daily .* sent 4$/ })).toBeVisible();
+    await expect(passes.getByRole("row", { name: /^Sweep .* sent 1, held 1$/ })).toBeVisible();
+  });
+
+  test("says the runner looks stopped once its last pass is older than its sweep interval and a few minutes", async ({ page }) => {
+    await page.route(`${API}/keeper`, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      body.liveness = { state: "looks-stopped", lastPass: { pass: "sweep", at: new Date(Date.now() - 42 * 60_000).toISOString() }, stoppedAfterMs: 900_000, sweepIntervalMs: 600_000 };
+      await route.fulfill({ response, json: body });
+    });
+    await page.goto("/keeper");
+    await expect(page.getByRole("status")).toHaveText(
+      "Looks stopped. Its last pass, a sweep, ended 42m ago, and it sweeps every 10 minutes. Due jobs wait meanwhile, and anyone may send them.",
+    );
+  });
+
+  test("keeps the wallet and the runner's state when the records cannot be read, and says so in each panel that needs them", async ({ page }) => {
+    await page.route(`${API}/keeper`, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      Object.assign(body, { records: { ok: false, error: "the database did not answer" }, recent: [], waiting: [] });
+      await route.fulfill({ response, json: body });
+    });
+    await page.goto("/keeper");
+    await expect(page.getByRole("region", { name: "Keeper wallet" }).getByText("Balance", { exact: true })).toBeVisible();
+    for (const name of ["Spent today", "Held and parked", "Latest jobs"]) {
+      await expect(page.getByRole("region", { name }).getByRole("alert")).toContainText("The runner's records could not be read: the database did not answer.");
     }
   });
 });

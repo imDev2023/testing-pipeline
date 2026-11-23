@@ -5,7 +5,7 @@
 //
 // The keeper wallet's key is never handed to the logger, so no row can carry it.
 
-export type Row = { row: string; at?: string } & Record<string, unknown>;
+export type Row = { row: string; at?: string | Date } & Record<string, unknown>;
 
 export interface Logger {
     write(row: Row): void;
