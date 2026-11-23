@@ -63,6 +63,9 @@ export class CanaryContainer extends Container<Bindings> {
     if (this.answering) return;
     for (let attempt = 1; ; attempt++) {
       const response = await this.containerFetch("http://canary/health").catch(() => null);
+      // Read to its end: the library counts a request in flight until its body is, and the
+      // container never sleeps while one is.
+      await response?.arrayBuffer().catch(() => null);
       if (response?.ok) {
         this.answering = true;
         return;

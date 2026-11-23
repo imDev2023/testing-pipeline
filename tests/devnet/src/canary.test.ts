@@ -165,7 +165,7 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
     log(`sweep: ${JSON.stringify(report)}`);
     expect(figures.markets).toBe(markets.length);
     expect(figures.failed).toEqual([]);
-  });
+  }, 90 * MINUTE);
 
   it("agrees with Pipeline's hosted pipeline-check run on each market's conformance, for the same strategy code", async () => {
     const markets = await api.markets();
@@ -188,7 +188,7 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
     log(`conformance compared on ${rows.length} markets (${skipped} without a hosted run for the same code); ${rows.length - disagree.length} agree`);
     for (const d of disagree) log(`disagree ${d.market}: ours ${d.ours} (${d.reason}); hosted ${d.theirs} (${d.failed.join(", ")})`);
     expect(rows.length).toBeGreaterThan(0);
-  });
+  }, 20 * MINUTE);
 
   it("runs the container with no network and no RPC key: a request from inside it fails", async () => {
     const [market] = await api.markets();
@@ -210,7 +210,7 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
     const env = JSON.parse(execFileSync("docker", ["inspect", "--format", "{{json .Config.Env}}", id], { encoding: "utf8" })) as string[];
     log(`the container's environment: ${JSON.stringify(env)}`);
     expect(env.filter((v) => /rpc|helius|api[-_]?key|secret|token/i.test(v))).toEqual([]);
-  });
+  }, 15 * MINUTE);
 
   it("runs a market created with the project's devnet keys within minutes, again 10 minutes after its creation, with its 1-hour and 1-day runs scheduled", async () => {
     const devnet = createSolanaRpc(rpcUrl());
@@ -244,5 +244,5 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
     log(`second run ${((second.canary_runs.startedAt.getTime() - created) / 1000).toFixed(0)} s after the market was created, done in ${second.canary_run_markets.rounds} round(s)`);
     const latest = CanaryResults.parse(await getJson(`/v1/markets/${market}/canary`));
     expect(Math.max(...latest.results.map((r) => r.slot))).toBeGreaterThan(first.results[0]!.slot);
-  });
+  }, 40 * MINUTE);
 });
