@@ -28,8 +28,9 @@ export type FakeRpc = {
   accounts: Map<string, FakeAccount>;
   /** The slot the RPC says it read accounts at, and `getSlot` answers. */
   slot: number;
-  /** What `getEpochInfo`, `getBlockTime` and `getGenesisHash` answer. */
+  /** The epoch `getEpochInfo` answers. */
   epoch: number;
+  /** What `getBlockTime` and `getGenesisHash` answer. */
   blockTime: number | null;
   genesisHash: string;
   /** The rent epoch every account is served with: 0, or u64's largest value as for a rent-exempt account. */
@@ -38,6 +39,8 @@ export type FakeRpc = {
   unserved: Set<string>;
   /** Methods answered with "Method not found", as an RPC without Helius's methods answers. */
   refuse: Set<string>;
+  /** Addresses whose `getAccountInfo` fails, as an RPC that times out on one account. */
+  failing: Set<string>;
   close: () => Promise<void>;
 };
 
@@ -47,7 +50,7 @@ const order = (a: RawTransaction, b: RawTransaction) => a.slot - b.slot || a.tra
 const withoutIndex = ({ transactionIndex: _, ...rest }: RawTransaction) => rest;
 
 export async function fakeRpc(history: RawTransaction[] = []): Promise<FakeRpc> {
-  const fake: Omit<FakeRpc, "url" | "close"> = { requests: [], history: [...history], accounts: new Map(), slot: 525_200_000, epoch: 1215, blockTime: 1_763_900_000, genesisHash: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG", rentEpoch: 0n, unserved: new Set(), refuse: new Set() };
+  const fake: Omit<FakeRpc, "url" | "close"> = { requests: [], history: [...history], accounts: new Map(), slot: 525_200_000, epoch: 812, blockTime: 1_763_900_000, genesisHash: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG", rentEpoch: 0n, unserved: new Set(), refuse: new Set(), failing: new Set() };
 
   const answer = (method: string, params: unknown[]): { result?: unknown; error?: unknown } => {
     if (fake.refuse.has(method)) return { error: { code: -32601, message: "Method not found" } };
@@ -95,16 +98,17 @@ export async function fakeRpc(history: RawTransaction[] = []): Promise<FakeRpc> 
       }
       case "getSlot":
         return { result: fake.slot };
-      case "getEpochInfo":
-        return { result: { epoch: fake.epoch, absoluteSlot: fake.slot, slotIndex: fake.slot % 432_000, slotsInEpoch: 432_000 } };
       case "getBlockTime":
         return fake.blockTime === null ? { error: { code: -32009, message: "Slot was skipped, or missing in long-term storage" } } : { result: fake.blockTime };
       case "getGenesisHash":
         return { result: fake.genesisHash };
       case "getAccountInfo": {
         const [address, opts] = params as [string, { dataSlice?: DataSlice } | undefined];
+        if (fake.failing.has(address)) return { error: { code: -32000, message: `timed out reading ${address}` } };
         return { result: { context: { slot: fake.slot }, value: accountInfo(fake.accounts.get(address), opts?.dataSlice) } };
       }
+      case "getEpochInfo":
+        return { result: { epoch: fake.epoch, absoluteSlot: fake.slot, slotIndex: 0, slotsInEpoch: 432_000, blockHeight: fake.slot, transactionCount: null } };
       case "getProgramAccounts": {
         const [program, opts] = params as [string, { filters?: { memcmp: { offset: number; bytes: string } }[] }];
         const matches = [...fake.accounts].filter(([, account]) => account.owner === program && (opts.filters ?? []).every((f) => memcmpMatches(account.data, f.memcmp)));

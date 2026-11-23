@@ -17,6 +17,8 @@ import { keeperRoutes } from "./keeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
 import { strategyRoutes } from "./strategies";
+import { imageRoutes } from "./tokenImages";
+import { searchRoutes } from "./search";
 
 export type AppEnv = { Bindings: Bindings };
 
@@ -41,6 +43,8 @@ app.get("/health", async (c) => {
 
 app.route("/", feed);
 app.route("/", strategyRoutes);
+app.route("/", imageRoutes);
+app.route("/", searchRoutes);
 app.route("/", canaryRoutes);
 
 /**
@@ -81,6 +85,8 @@ export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
     registrySnapshot: async () => void (await indexer(env).snapshot(version)),
     programDataWatch: async () => void (await indexer(env).watchPrograms(version)),
     pruneCandles: async () => void (await indexer(env).prune(version)),
+    metadataRefetch: async () => void (await indexer(env).refetchMetadata(version)),
+    mintRefresh: async () => void (await indexer(env).refreshMints(version)),
     canarySweep: () => canarySweep(env),
   };
 }

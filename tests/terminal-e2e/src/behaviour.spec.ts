@@ -115,7 +115,8 @@ test.describe("the feed", () => {
     const first = page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1);
     await first.getByRole("link", { name: `${markets[0]!.strategy.slice(0, 4)}...${markets[0]!.strategy.slice(-4)}` }).click();
     await expect(page).toHaveURL(`/strategies/${markets[0]!.strategy}`);
-    await expect(page.getByRole("heading", { name: "Strategy", exact: true })).toBeVisible();
+    // Its page is headed by the name its valid metadata gives, or "Strategy" without one.
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(markets[0]!.strategy_name ?? "Strategy");
   });
 
   test("loads the markets 50 at a time, and the next 50 on asking", async ({ page }) => {
@@ -202,7 +203,7 @@ test.describe("a strategy's page", () => {
     await page.goto(`/strategies/${STRATEGY}`);
     const section = page.getByRole("region", { name: /^Its markets/ });
     await expect(section.getByRole("heading")).toHaveText(`Its markets ${total}`);
-    await expect(section.getByRole("columnheader")).toHaveText(["Market", "Created", "Liquidity", "Volume, 24h"]);
+    await expect(section.getByRole("columnheader")).toHaveText(["Market", "Created", "Liquidity", "Volume, 24h", "Trust flags"]);
     await expect(section.getByRole("row")).toHaveCount(markets.length + 1);
     await section.getByRole("row").nth(1).getByRole("link").first().click();
     await expect(page).toHaveURL(`/markets/${markets[0]!.address}`);
@@ -282,5 +283,108 @@ test.describe("the keeper page", () => {
     for (const name of ["Spent today", "Held and parked", "Latest jobs"]) {
       await expect(page.getByRole("region", { name }).getByRole("alert")).toContainText("The runner's records could not be read: the database did not answer.");
     }
+  });
+});
+
+// The feed's filters (docs/spec/pipescope-screens.md, Feed, "Filters"; PIPESCOPE-05, PIPESCOPE-72):
+// each one changes the page's address, the address reopens the same filters, and the line under them
+// counts what the API counts, with each filter on and with them together.
+test.describe("the feed's filters", () => {
+  type Counts = { total: number; matching: number; no_sol_side: number };
+  const counted = async (query: string): Promise<Counts> => MarketsPage.parse(await (await fetch(`${API}/v1/markets?limit=1${query ? `&${query}` : ""}`)).json());
+  const line = (page: Page) => page.getByRole("region", { name: "Markets" }).locator("p[aria-live]");
+  const n = (value: number) => value.toLocaleString("en-US");
+
+  test("start off, listing every market, and each one alone counts what the API counts", async ({ page }) => {
+    await page.goto("/");
+    const all = await counted("");
+    await expect(line(page)).toHaveText(`All ${n(all.total)} markets are listed. Nothing is curated or hidden.`);
+
+    const bar = page.getByRole("form", { name: "Filter the markets" });
+    const cases: [string, () => Promise<unknown>, string, string][] = [
+      ["liquidity", () => bar.getByLabel("Liquidity").selectOption("0.1"), "liquidity=0.1", "min_sol_liquidity=100000000"],
+      ["volume", () => bar.getByLabel("Volume, 24 hours").selectOption("0.01"), "volume=0.01", "min_sol_volume_24h=10000000"],
+      ["created", () => bar.getByLabel("Created").selectOption("168"), "created=7d", "created_within=604800"],
+    ];
+    for (const [name, choose, address, query] of cases) {
+      await page.goto("/");
+      await choose();
+      await expect(page).toHaveURL(`/?${address}`);
+      const want = await counted(query);
+      const sol = name === "created" ? "" : ` The ${n(want.no_sol_side)} ${want.no_sol_side === 1 ? "market" : "markets"} with no SOL side ${want.no_sol_side === 1 ? "is" : "are"} left out while a liquidity or volume filter is on.`;
+      await expect(line(page), name).toHaveText(`Showing ${n(want.matching)} of ${n(want.total)} markets.${sol} Clear the filters`);
+    }
+  });
+
+  test("hide markets with a flag chosen among those present, each with Pipeline's description", async ({ page }) => {
+    await page.goto("/");
+    await page.getByText("Hide markets with").click();
+    const { flags_present } = MarketsPage.parse(await (await fetch(`${API}/v1/markets?limit=1`)).json());
+    const boxes = page.getByRole("group", { name: /These are Pipeline's trust flags/ }).getByRole("checkbox");
+    await expect(boxes).toHaveCount(flags_present.length);
+    const flag = flags_present.find((f) => f.flag === "metadata-unreachable")!;
+    await expect(page.getByText(flag.description, { exact: true })).toBeVisible();
+    const box = page.getByRole("checkbox", { name: new RegExp(`^${flag.flag} `) });
+    await box.check();
+    await expect(page).toHaveURL("/?hide=metadata-unreachable");
+    await expect(box).toBeChecked();
+    const want = await counted("hide=metadata-unreachable");
+    await expect(line(page)).toHaveText(`Showing ${n(want.matching)} of ${n(want.total)} markets. Clear the filters`);
+    // The summary names the flag hidden, and no row of the table carries it.
+    await expect(page.getByRole("form", { name: "Filter the markets" }).locator("summary")).toContainText("metadata-unreachable");
+    await expect(page.getByRole("region", { name: "Markets" }).locator("tbody").getByText("metadata-unreachable", { exact: true })).toHaveCount(0);
+  });
+
+  test("reopen from a filtered feed's address exactly as they were, with the right counts, and clear with the link", async ({ page }) => {
+    const address = "/?liquidity=0.1&volume=0.01&created=7d&hide=metadata-unreachable%2Cmint-authority";
+    await page.goto(address);
+    const bar = page.getByRole("form", { name: "Filter the markets" });
+    await expect(bar.getByLabel("Liquidity")).toHaveValue("0.1");
+    await expect(bar.getByLabel("Volume, 24 hours")).toHaveValue("0.01");
+    await expect(bar.getByLabel("Created")).toHaveValue("168");
+    await expect(bar.getByText("2 flags", { exact: true })).toBeVisible();
+    const want = await counted("min_sol_liquidity=100000000&min_sol_volume_24h=10000000&created_within=604800&hide=metadata-unreachable,mint-authority");
+    await expect(line(page)).toContainText(`Showing ${n(want.matching)} of ${n(want.total)} markets.`);
+    const rows = page.getByRole("region", { name: "Markets" }).locator("tbody tr");
+    if (want.matching === 0) await expect(page.getByText("No market matches these filters. Loosen one, or clear them all.")).toBeVisible();
+    else await expect(rows).toHaveCount(Math.min(want.matching, 50));
+
+    await page.reload();
+    await expect(bar.getByLabel("Liquidity")).toHaveValue("0.1");
+    await page.getByRole("link", { name: "Clear the filters" }).click();
+    await expect(page).toHaveURL("/");
+    await expect(line(page)).toHaveText(/^All [\d,]+ markets are listed\. Nothing is curated or hidden\.$/);
+  });
+
+  test("that leave nothing say so", async ({ page }) => {
+    // Every devnet strategy is upgradeable, so hiding that flag leaves no market.
+    await page.goto("/?hide=upgradeable");
+    await expect(page.getByText("No market matches these filters. Loosen one, or clear them all.")).toBeVisible();
+    await expect(line(page)).toHaveText(/^Showing 0 of [\d,]+ markets\. Clear the filters$/);
+  });
+});
+
+// Strategy names and trust flags (docs/spec/pipescope.md, "Listing"): a strategy with valid metadata
+// is named in the author's style beside its short address, one without is listed under its address.
+test.describe("strategy names", () => {
+  test("come from valid metadata in the author's style, or are the short address with \"Metadata unavailable\"", async ({ page }) => {
+    const { strategies } = StrategiesList.parse(await (await fetch(`${API}/v1/strategies`)).json());
+    const named = strategies.find((s) => s.name)!;
+    const unnamed = strategies.find((s) => s.metadata.status === "unreachable")!;
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto("/?tab=strategies");
+    const table = page.getByRole("region", { name: "Strategies" });
+    const name = table.getByText(named.name!, { exact: true }).first();
+    expect(await name.evaluate((el) => [getComputedStyle(el).color, getComputedStyle(el).fontStyle])).toEqual([AUTHOR.light, "italic"]);
+    const row = table.locator("tr", { has: page.locator(`[title="${unnamed.program}"]`) });
+    await expect(row.getByText("Metadata unavailable", { exact: true })).toBeVisible();
+  });
+
+  test("of our own three strategies are their metadata's, fetched from GitHub, where documents are text/plain (PIPESCOPE-36)", async ({ page }) => {
+    const ours = { J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t: "Aviary Tax AMM", BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6: "Aviary Buy Wall AMM", Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG: "Aviary Lending AMM" };
+    const { strategies } = StrategiesList.parse(await (await fetch(`${API}/v1/strategies`)).json());
+    for (const [program, name] of Object.entries(ours)) expect(strategies.find((s) => s.program === program), program).toMatchObject({ name, metadata: { status: "valid" }, flags: ["upgradeable"] });
+    await page.goto("/?tab=strategies");
+    for (const name of Object.values(ours)) await expect(page.getByRole("region", { name: "Strategies" }).getByText(name, { exact: true })).toBeVisible();
   });
 });

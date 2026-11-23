@@ -1,0 +1,12 @@
+{
+  "schema": "pipeline-strategy-metadata/1",
+  "name": "Verified Constant Product",
+  "description": "This program's source is verified: solana-verify and Aviary rebuilt it and matched the deployed bytes. The upgrade authority is a burn address, so the program is frozen.",
+  "source": {
+    "repository": "https://github.com/example/verified",
+    "commit": "0000000000000000000000000000000000000000"
+  },
+  "conformance": {
+    "report": "https://evil.example/report.json"
+  }
+}

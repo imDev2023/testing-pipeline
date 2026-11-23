@@ -27,6 +27,7 @@ describe("the every-minute dispatcher (PIPESCOPE-89)", () => {
       "programDataWatch",
       "verifiedBuilds",
       "metadataRefetch",
+      "mintRefresh",
     ]);
   });
 

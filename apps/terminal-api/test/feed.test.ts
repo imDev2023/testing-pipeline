@@ -61,14 +61,20 @@ describe("GET /v1/strategies", () => {
     const { status, body } = await get("/v1/strategies");
     expect(status).toBe(200);
     const { strategies } = StrategiesList.parse(body);
-    expect(strategies).toContainEqual({
-      program: STRATEGY,
-      metadata_uri: expect.stringMatching(/^https:\/\//),
-      fee_paid: "10000000",
-      registered_at: new Date(registered.blockTime! * 1000).toISOString(),
-      registered_signature: registered.transaction.signatures[0],
-      market_count: 1,
-    });
+    expect(strategies).toContainEqual(
+      expect.objectContaining({
+        program: STRATEGY,
+        metadata_uri: expect.stringMatching(/^https:\/\//),
+        fee_paid: "10000000",
+        registered_at: new Date(registered.blockTime! * 1000).toISOString(),
+        registered_signature: registered.transaction.signatures[0],
+        market_count: 1,
+        // Its metadata not fetched yet and its program not watched yet: no name and no flags.
+        name: null,
+        metadata: expect.objectContaining({ status: "not-fetched" }),
+        flags: [],
+      }),
+    );
   });
 
   it("answers one strategy, and a 404 that says so for an address that is none", async () => {
@@ -98,11 +104,15 @@ describe("GET /v1/markets", () => {
       quote_mint: WSOL,
       base_mint: TOKEN,
       mints: [
-        { mint: TOKEN, symbol: null, decimals: 6, vault: "2yLyoJtMyVYu7G1uMCr8mJKzVZj53fFHrJ8Fzb5iT6st", liquidity: "774943493703585" },
-        { mint: WSOL, symbol: "SOL", decimals: 9, vault: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2", liquidity: "31000000000" },
+        // Read before mints kept their flags: none known yet.
+        { mint: TOKEN, symbol: null, token: null, decimals: 6, vault: "2yLyoJtMyVYu7G1uMCr8mJKzVZj53fFHrJ8Fzb5iT6st", liquidity: "774943493703585", flags: null },
+        { mint: WSOL, symbol: "SOL", token: null, decimals: 9, vault: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2", liquidity: "31000000000", flags: null },
       ],
       // The swap fixture is from 2026-11-22, more than a day before CI may run it.
       stats_24h: expect.objectContaining({ volume_quote: expect.stringMatching(/^\d+$/), trades: expect.any(Number) }),
+      strategy_name: null,
+      strategy_metadata: "not-fetched",
+      flags: [],
     });
   });
 

@@ -1,0 +1,26 @@
+{
+    "name": "terminal-explainer",
+    "private": true,
+    "type": "module",
+    "description": "Aviary's explainer: its rules module and the author-text normaliser, with the hostile metadata fixtures; the prompt and the validator join with the explainer jobs (docs/spec/pipescope-explainer.md)",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "exports": {
+        ".": "./src/index.ts",
+        "./rules": "./src/rules.ts",
+        "./fixtures": "./test/fixtures.ts"
+    },
+    "scripts": {
+        "typecheck": "tsc -p .",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@pipeline-sol/sdk": "catalog:"
+    },
+    "devDependencies": {
+        "@types/node": "24.19.2",
+        "typescript": "6.0.3",
+        "vitest": "5.1.1"
+    }
+}

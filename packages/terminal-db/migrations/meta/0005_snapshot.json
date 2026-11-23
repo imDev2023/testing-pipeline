@@ -1,362 +1,9 @@
 {
-  "id": "dd125330-c258-4240-9f52-8e3135ee4c85",
+  "id": "af52ff2d-7c80-4c79-854d-f1a6b43ef4b0",
   "prevId": "6dfa048a-ebd4-4d55-b8d2-a13a6723c964",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.canary_results": {
-      "name": "canary_results",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "program": {
-          "name": "program",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "deploy_slot": {
-          "name": "deploy_slot",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "market": {
-          "name": "market",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "check": {
-          "name": "check",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "outcome": {
-          "name": "outcome",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "harness": {
-          "name": "harness",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "slot": {
-          "name": "slot",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "run_at": {
-          "name": "run_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "record": {
-          "name": "record",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "latest": {
-          "name": "latest",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "canary_results_market": {
-          "name": "canary_results_market",
-          "columns": [
-            {
-              "expression": "market",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "program",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "deploy_slot",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "check",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "slot",
-              "isExpression": false,
-              "asc": false,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "canary_results_latest_version": {
-          "name": "canary_results_latest_version",
-          "columns": [
-            {
-              "expression": "program",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "deploy_slot",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "latest",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "canary_results_run_id_canary_runs_id_fk": {
-          "name": "canary_results_run_id_canary_runs_id_fk",
-          "tableFrom": "canary_results",
-          "tableTo": "canary_runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.canary_run_markets": {
-      "name": "canary_run_markets",
-      "schema": "",
-      "columns": {
-        "run_id": {
-          "name": "run_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "market": {
-          "name": "market",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "rounds": {
-          "name": "rounds",
-          "type": "smallint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "rpc_requests": {
-          "name": "rpc_requests",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "container_ms": {
-          "name": "container_ms",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "notes": {
-          "name": "notes",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "error": {
-          "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "finished_at": {
-          "name": "finished_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "canary_run_markets_run_id_canary_runs_id_fk": {
-          "name": "canary_run_markets_run_id_canary_runs_id_fk",
-          "tableFrom": "canary_run_markets",
-          "tableTo": "canary_runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "canary_run_markets_run_id_market_pk": {
-          "name": "canary_run_markets_run_id_market_pk",
-          "columns": [
-            "run_id",
-            "market"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.canary_runs": {
-      "name": "canary_runs",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "bigint",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "canary_runs_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "9223372036854775807",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "program": {
-          "name": "program",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "deploy_slot": {
-          "name": "deploy_slot",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "trigger": {
-          "name": "trigger",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "delay_ms": {
-          "name": "delay_ms",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "markets": {
-          "name": "markets",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "finished_at": {
-          "name": "finished_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "canary_runs_version": {
-          "name": "canary_runs_version",
-          "columns": [
-            {
-              "expression": "program",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "deploy_slot",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "started_at",
-              "isExpression": false,
-              "asc": false,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.candles": {
       "name": "candles",
       "schema": "",
@@ -1137,6 +784,136 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.metadata_snapshots": {
+      "name": "metadata_snapshots",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "metadata_snapshots_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "9223372036854775807",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "program": {
+          "name": "program",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "uri": {
+          "name": "uri",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "errors": {
+          "name": "errors",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "warnings": {
+          "name": "warnings",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "url": {
+          "name": "url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "document": {
+          "name": "document",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "normalised": {
+          "name": "normalised",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "removed": {
+          "name": "removed",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fetched_at": {
+          "name": "fetched_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "checked_at": {
+          "name": "checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "metadata_snapshots_program": {
+          "name": "metadata_snapshots_program",
+          "columns": [
+            {
+              "expression": "program",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.mints": {
       "name": "mints",
       "schema": "",
@@ -1197,6 +974,18 @@
         },
         "read_slot": {
           "name": "read_slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "flags": {
+          "name": "flags",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "read_epoch": {
+          "name": "read_epoch",
           "type": "bigint",
           "primaryKey": false,
           "notNull": false
@@ -1313,6 +1102,50 @@
           ]
         }
       },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.program_facts": {
+      "name": "program_facts",
+      "schema": "",
+      "columns": {
+        "program": {
+          "name": "program",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "upgrade_authority": {
+          "name": "upgrade_authority",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "flags": {
+          "name": "flags",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "read_slot": {
+          "name": "read_slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

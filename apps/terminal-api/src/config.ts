@@ -28,6 +28,8 @@ export const JOB_INTERVAL_MINUTES = {
   verifiedBuilds: 1,
   /** Re-fetching every strategy's metadata, since the document behind an unchanged URI can change. */
   metadataRefetch: 60,
+  /** Reading every mint again, since its authorities, supply and extensions can change after it is made. */
+  mintRefresh: 60,
   /** Dropping candles past their length's retention (`CANDLES`), once a day, so the database wakes for it rarely (PIPESCOPE-109). */
   pruneCandles: 24 * 60,
   /** Canary's scheduled sweep of every market (CANARY-23; docs/spec/pipescope-canary.md, When Canary runs). */
@@ -99,11 +101,19 @@ export const ROOM_ANNOUNCE_RETRY_MS = SECOND;
 /** How often the trade fast path asks whether a signature has confirmed (PIPESCOPE-33). */
 export const FAST_PATH_CONFIRMATION_POLL_MS = 300;
 
-/** The metadata fetcher's limits (PIPESCOPE-36). */
+/**
+ * The metadata fetcher's limits (PIPESCOPE-36): `https:` only, a body of at most `maxBytes`, an
+ * answer within `timeoutMs` (redirects and body included), at most `maxRedirects` redirects, each to
+ * `https:`, and a JSON content type: one of `contentTypes`, or any type ending in `+json`. `text/plain`
+ * is there because GitHub serves raw files and gists, where most devnet metadata lives, as it.
+ */
 export const METADATA_FETCH = {
   maxBytes: 64 * 1024,
   timeoutMs: 5 * SECOND,
   maxRedirects: 3,
+  contentTypes: ["application/json", "text/plain"],
+  /** How many documents are fetched at once, as after a backfill names every strategy. */
+  concurrency: 4,
 } as const;
 
 /** The token images `terminal-api` keeps (PIPESCOPE-82): told by their first bytes, at most this size. */
@@ -140,7 +150,12 @@ export const PAGE_LIMITS = {
   trades: { default: 40, max: 1000 },
   /** The newest candles of one length a chart is given, and the most asked for at once (PIPESCOPE-107). */
   candles: { default: 1000, max: 5000 },
+  /** Search results a group holds, the screens' 20 by default (PIPESCOPE-124). */
+  search: { default: 20, max: 100 },
 } as const;
+
+/** The longest search the API takes, in characters: past any address or name it keeps (PIPESCOPE-124). */
+export const SEARCH_QUERY_MAX = 100;
 
 /** The most signers an instruction lists in `GET /v1/strategies/{program}/instructions`, most calls first; the answer counts them all. */
 export const INSTRUCTION_SIGNERS_SHOWN = 100;

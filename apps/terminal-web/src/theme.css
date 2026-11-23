@@ -75,9 +75,13 @@
   --control-min-height: 32px;
   /* The page's horizontal margin. */
   --gutter: 32px;
-  /* The header: one row on wide screens. */
-  --header-columns: auto 1fr auto;
-  --header-areas: "brand links end";
+  /* The header: one row on wide screens, the search box before the end (components/SiteHeader.tsx),
+     and the search results beneath it, wider than the box. */
+  --header-columns: auto 1fr minmax(12em, 22em) auto;
+  --header-areas: "brand links search end";
+  --search-popover-width: 36em;
+  --search-item-direction: row;
+  --search-item-align: baseline;
 
   /* Tables: rows and columns on wide screens (components/Table.tsx, components/ListingTable.module.css). */
   --table-display: table;
@@ -99,6 +103,16 @@
   --market-top-columns: minmax(0, 1fr) 388px;
   --market-top-areas: "chart trade" "trades trade";
   --chart-height: 380px;
+
+  /* A token's image and Aviary's marks for SOL and USDC: a fixed square beside the name, centred on
+     the line's lower-case letters at any text size (components/MintLabel.module.css; PIPESCOPE-82). */
+  --token-image-size: 20px;
+  --token-image-align: middle;
+
+  /* Facts (components/Flags.module.css, components/facts/Facts.module.css): a flag beside its
+     description, and a fact's name beside its value; one under the other at 720 px and narrower. */
+  --flag-fact-columns: max-content minmax(0, 1fr);
+  --fact-columns: minmax(8em, 34%) minmax(0, 1fr);
 }
 
 :root[data-theme="light"] {
@@ -127,8 +141,11 @@
     --control-min-height: 44px;
     --gutter: 16px;
     --header-columns: 1fr auto;
-    /* The search box takes a third row, at full width, when it lands (#120). */
-    --header-areas: "brand end" "links links";
+    /* The search box takes a third row, at full width, with its results as wide as it. */
+    --header-areas: "brand end" "links links" "search search";
+    --search-popover-width: 100%;
+    --search-item-direction: column;
+    --search-item-align: flex-start;
     /* Tables become a list of small blocks, one a row, each value under its column's name. */
     --table-display: block;
     --table-head-display: none;
@@ -142,5 +159,7 @@
     --listing-row-rule: 1px;
     --listing-number-align: left;
     --chart-height: 280px;
+    --flag-fact-columns: minmax(0, 1fr);
+    --fact-columns: minmax(0, 1fr);
   }
 }

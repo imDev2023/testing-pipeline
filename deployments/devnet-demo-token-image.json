@@ -1,0 +1,13 @@
+{
+  "note": "Aviary's token-image check token and its tax market on devnet (#120): tests/terminal-e2e/demo/token-image-check.ts",
+  "cluster": "devnet",
+  "date": "2026-11-23",
+  "uri": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/89760e675317f9712279f07387f703acbf22e513/tests/terminal-e2e/demo/token-image-check/token.json",
+  "create the check token": "2yddPfpGSK11iubUQxdsBvP5M1oh3MzUpajiBbSLMM2kgo2GF4a6mQwY1MFdDHta2tdcGGMbYcApjAPhY6FWdrAb",
+  "check token": "6jtEmUreNsX6B7xwnqjB4D3bSASwTZTweL16bk8xHD7D",
+  "create the check market and its fee accounts": "63bMGFTQ6bYGHHaDfo5AeZE7srqGNkGkqX15UmcbtwodzN6iBfgvJhMNWXUhUyNXVQyHjhea7CZWnsEZSKB7FbZo",
+  "seed the check market": "2kBACdbVhJX1bgz6JErgMhkjY97dpkKxagSJ2bUGUyyGAjxpWBHTi7qUnM8Jm4FGdDLGj82H4mg1s7eUWu8J5xb7",
+  "check market": "4DZbJgcdZyZUoYxKsN8atmMjTipBQ3zd6Yjzkp2i5HsR",
+  "check market state": "FT8vVJjkTxvX6dzozUhBVzK54aDNuYrhszWgRAr8HL5t",
+  "buy the check token through the router": "3v5qza9h6nX1GXvhahGWjfpLaF8QD9ErV6jYsj58E4Q1UXCx16M2YreFcKrc8s4yKT8QnmCdhNnUjTmJzckEPpzd"
+}

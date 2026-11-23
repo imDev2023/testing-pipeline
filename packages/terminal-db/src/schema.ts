@@ -111,7 +111,98 @@ export const mints = pgTable("mints", {
   /** The Metaplex metadata account's bytes, base64, or null when the mint has none. */
   metadataData: text("metadata_data"),
   readSlot: bigint("read_slot", { mode: "bigint" }),
+  /**
+   * Pipeline's trust flags for the mint (Pipeline's SDK's `decodeMint`, at `readEpoch` for a
+   * transfer fee in force), in the SDK's order; `mint-unreadable` for an account that is no mint.
+   * Null for a mint read before the flags were kept, which the next read of mints fills in.
+   */
+  flags: text("flags").array(),
+  /** The epoch the mint was read in, which picks the transfer fee in force. */
+  readEpoch: bigint("read_epoch", { mode: "bigint" }),
+  /**
+   * The token's own name (PIPESCOPE-22), from its Token-2022 token metadata extension or else its
+   * Metaplex metadata account: its symbol and name as the author-text normaliser leaves them (author
+   * text, never Aviary's words), and the URI it names, where its image is looked for. Null when the
+   * mint names none.
+   */
+  symbol: text("symbol"),
+  name: text("name"),
+  tokenUri: text("token_uri"),
 });
+
+/**
+ * What fetching each token metadata URI found (docs/spec/pipescope-architecture.md, Data; PIPESCOPE-82,
+ * PIPESCOPE-88): fetched once per URI, and again only when a mint names another, so mints that share a
+ * URI share its row. A kept image's bytes are in `TERMINAL_CACHE` under their SHA-256, which a page
+ * is given with the mint; KV holds only bytes a re-fetch could replace, so this stays the record.
+ */
+export const tokenImages = pgTable("token_images", {
+  /** The token metadata URI a mint names. */
+  uri: text("uri").primaryKey(),
+  /** `kept`, `missing` (the document names no image), `unreachable` or `refused` (its type or size). */
+  status: text("status").notNull(),
+  /** Why it was unreachable or refused, in the fetcher's terms (`http-status`, `type`, `too-large`...). */
+  reason: text("reason"),
+  /** The image's URL: the URI itself when it serves an image, or the `image` its document names. */
+  imageUrl: text("image_url"),
+  /** The SHA-256 of a kept image's bytes, in hex: its key in KV and its address, `/images/<hash>`. */
+  sha256: text("sha256"),
+  /** The type its first bytes say: `image/png`, `image/jpeg` or `image/webp`. */
+  contentType: text("content_type"),
+  size: integer("size"),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+});
+
+/**
+ * Each watched program's facts as Pipeline's SDK words them (`inspectProgram`): who can upgrade it,
+ * and its program flags (`upgradeable`, `frozen` or `program-missing`), read by the ProgramData
+ * watch from the loader's header every minute and written when they change.
+ */
+export const programFacts = pgTable("program_facts", {
+  program: text("program").primaryKey(),
+  /** The upgrade authority, or null for a frozen or missing program. */
+  upgradeAuthority: text("upgrade_authority"),
+  flags: text("flags").array().notNull(),
+  readSlot: bigint("read_slot", { mode: "bigint" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * Each strategy's metadata as fetched (docs/spec/pipescope-architecture.md, Metadata fetcher;
+ * PIPESCOPE-36): one row per outcome, a new row only when the URI, the status or the document's hash
+ * changed, and `checked_at` moved on each fetch that found the same. The newest row is the
+ * strategy's metadata now; a changed hash is a metadata change, which makes a new explanation key.
+ */
+export const metadataSnapshots = pgTable(
+  "metadata_snapshots",
+  {
+    id: bigint("id", { mode: "bigint" }).primaryKey().generatedAlwaysAsIdentity(),
+    program: text("program").notNull(),
+    /** The URI the strategy's account names, as fetched. */
+    uri: text("uri").notNull(),
+    /** Pipeline's SDK's metadata status: `missing`, `unreachable`, `invalid` or `valid`. */
+    status: text("status").notNull(),
+    /** Why it was unreachable or invalid, in the fetcher's terms (`http-status`, `content-type`...). */
+    reason: text("reason"),
+    /** What the fetch or Pipeline's validator said, as they said it: untrusted, since an error can quote the document. */
+    errors: text("errors").array().notNull(),
+    warnings: text("warnings").array().notNull(),
+    /** The URL the document was finally read from, after redirects. */
+    url: text("url"),
+    /** The SHA-256 of the bytes fetched, in hex; null when no body was read. */
+    sha256: text("sha256"),
+    /** The document as Pipeline's validator accepted it, for the forms; null unless valid. */
+    document: jsonb("document"),
+    /** Its author text as the explainer's normaliser left it, for the pages and the explainer; null unless valid. */
+    normalised: jsonb("normalised"),
+    /** What the normaliser removed. */
+    removed: jsonb("removed"),
+    /** When this outcome was first fetched, and when last fetched unchanged. */
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [index("metadata_snapshots_program").on(t.program, t.id)],
+);
 
 /** Every swap through the router, from its `Swap` event, keyed by its transaction and its place among the transaction's events. */
 export const trades = pgTable(

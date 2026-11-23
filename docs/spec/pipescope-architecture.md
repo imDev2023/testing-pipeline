@@ -126,7 +126,8 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
   A name is every prefix of the letters and digits after "Instruction: ", since the next string in the bytes can begin with any letter (devnet's outside builder compiles in "SetMetadatafactory"), and the longest whose discriminator is in the code is kept; a discriminator counts side by side, or split over two instruction slots as a 64-bit immediate, as `match` arms compile it (`PIPESCOPE-115`).
 - **Events for what follows**: a new strategy, a new market, a new strategy version and a router upgrade are each written once to one outbox table, `outbox_events`, in the order seen, keyed so the same thing seen twice (by its event and by the snapshot) is one event; Canary's runs and the Telegram bot's queue each read on from a cursor of their own in `outbox_cursors` (`readOutbox`, `ackOutbox` in `packages/terminal-db`), so a reader that fails reads the event again (`PIPESCOPE-116`).
 - **Market accounts**: after each event or custom action that touches a market, its market state and vaults are re-read; there are no account subscriptions.
-- **Mints**: when a market brings a mint not yet seen, its mint account and on-chain token metadata are read once and stored, for the facts (Pipeline's trust flags) and for symbols and images, which `pipescope.md` treats as untrusted.
+- **Mints**: when a market brings a mint not yet seen, its mint account and on-chain token metadata are read and stored, for the facts (Pipeline's trust flags, worked out with the SDK's `decodeMint` at the epoch read in) and for symbols and images, which `pipescope.md` treats as untrusted; every mint is read again every hour, since its authorities, supply and extensions can change (`PIPESCOPE-117`).
+- **Who can upgrade a program**: the ProgramData watch reads it from the same 45-byte header as the slot, every minute, and writes it to `program_facts` with the program's flag (`upgradeable`, `frozen` or `program-missing`) when it changes, which giving up an authority does without moving the slot (`PIPESCOPE-117`).
 - **Unknown or failed decodes** are kept with the transaction, and re-indexing transactions first indexed by older code is Top-pad's `reindexTransactions`.
 - **Deploys**: an object kept awake goes on running the code from before a deploy, so the indexer resets itself whenever the Worker calling it runs another version (Top-pad's `wake`).
 - **Backfill**: the router's whole history (185 transactions on 2026-11-09) is indexed as soon as the indexer first runs, because devnet history may be reset and Postgres must be the record.
@@ -134,7 +135,7 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - **Parity checks**: Pipeline's hosted devnet API (`https://pipeline-devnet.up.railway.app`, `docs/API.md` in Pipeline's repo) is a test oracle, never a source ([ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md)), and the devnet tests lean on it wherever it answers the same question (`PIPESCOPE-93`):
   - trades, per market and per trader, equal its `/v1/markets/{market}/trades` and `/v1/traders/{address}/trades`;
   - candles, for the lengths it serves, equal its `/v1/markets/{market}/candles` for the same base and quote;
-  - the trust flags of every strategy, market and mint equal its `flags`, apart from `checks-passed`, `checks-failed` and `checks-pending`, which record its own `pipeline-check` runs; Aviary shows its own Canary `conformance` result instead, and a test checks the two agree for the same code hash;
+  - the trust flags of every strategy, market and mint equal its `flags`, apart from `checks-passed`, `checks-failed` and `checks-pending`, which record its own `pipeline-check` runs (Aviary shows its own Canary `conformance` result instead, and a test checks the two agree for the same code hash), and `conformance-report` and `conformance-stale`, which need the report a strategy's metadata links fetched, a URL found inside a document (`PIPESCOPE-36`, `PIPESCOPE-93`); and each strategy's metadata status equals its `metadata_status`;
   - a quote equals its `/v1/quote` for the same market, mints, amount and integrator fee;
   - a prepared swap of an unhooked mint carries the same router instruction as its `POST /v1/swap-transaction`; for a hooked input mint, which it refuses, our own hook accounts are checked against the mint's `ExtraAccountMetaList` instead.
 - **Restart test**: Top-pad's pattern (`tests/devnet/src/indexer-restart.test.ts`): stop the indexer, make swaps with this project's devnet keys (`~/.config/testing-pipeline/devnet/`), restart it, and check the indexed trades equal the swaps decoded from the chain.
@@ -169,7 +170,8 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - Endpoints, as a sketch for the build to settle in the zod contract:
   - strategies, a strategy's versions, and per version its facts, Canary results, verified-build status and explanation;
   - markets, a market's facts, trades and candles, with the feed's filters (liquidity, volume, age and Pipeline's trust flags);
-  - search by name, mint, market address or strategy address, from Postgres;
+  - search by name, mint, market address or strategy address, from Postgres: as built, `GET /v1/search?q=&limit=` (`PIPESCOPE-124`), each group counted in full and served up to `PAGE_LIMITS.search`;
+  - a token image at `GET /images/<hash>`, from KV alone (Data);
   - a wallet's swaps through Pipeline, from our trades, and its balances in mints that trade in Pipeline markets, read through RPC;
   - a quote while the trader types;
   - `POST` prepare for a swap, a custom action and a new market, each returning the unsigned transaction with its simulation's outcome and balance changes;
@@ -179,7 +181,7 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - **Paging** (`PIPESCOPE-105`): markets are listed newest first and trades newest first, each page ending with a `next` cursor that the following page passes as `before`, so a page never repeats or skips a row when new ones arrive; a page holds what the caller asks for up to 200 markets or 1,000 trades (the hosted API's own limit for trades), and the pages ask for what the screens' config says, 50 feed rows and 40 trades.
   Both limits are `PAGE_LIMITS` in the config module.
 - Owner-only operations are not in the API: the explainer's approve command and the reports list read and write Postgres directly from the owner's Mac.
-  The one exception is Canary's re-run, which must wake a `CanaryRun` object: a `POST` that only the operator wallet's signature makes, like the keeper's heartbeats (`PIPESCOPE-117`).
+  The one exception is Canary's re-run, which must wake a `CanaryRun` object: a `POST` that only the operator wallet's signature makes, like the keeper's heartbeats (`PIPESCOPE-126`).
 
 ## Trading path
 
@@ -220,16 +222,16 @@ What the checks are, how a run copies a market and when runs happen are in [`pip
   For each market it builds the snapshot through Helius, posts it to the single `CanaryContainer`, fetches any accounts the binary names as missing and posts again, at most four times, stores the results in Postgres, and retries on its alarm if the container restarts mid-run.
   Its triggers are those of [`pipescope-canary.md`](pipescope-canary.md), When Canary runs, the one place that states them; a manual re-run command is part of the build.
 - **As built** ([#124](https://github.com/imDev2023/testing-pipeline/issues/124); `apps/terminal-api/src/canary*.ts`):
-  - The triggers reach the runs from the indexer's outbox, read on from Canary's own cursor right after each indexer job that opened Postgres, one drain at a time in the `Indexer` object, which the sweep job also asks to drain first; so the database is never woken only to look for them, and no event is read twice at once (`PIPESCOPE-118`).
+  - The triggers reach the runs from the indexer's outbox, read on from Canary's own cursor right after each indexer job that opened Postgres, one drain at a time in the `Indexer` object, which the sweep job also asks to drain first; so the database is never woken only to look for them, and no event is read twice at once (`PIPESCOPE-127`).
   - A run's object keeps only the runs it was asked for in its storage, each with how far it got, and its alarm does one market at a time; the run's row, each market's rounds, RPC requests, container time and notes, and the results are in Postgres (`canary_runs`, `canary_run_markets`, `canary_results`).
-  - A market whose snapshot or run fails is tried again on the alarm after waits doubling from 30 seconds to 10 minutes, six attempts in all; then the run records that Aviary could not run it, its earlier results stand, and the run goes on (`PIPESCOPE-119`).
+  - A market whose snapshot or run fails is tried again on the alarm after waits doubling from 30 seconds to 10 minutes, six attempts in all; then the run records that Aviary could not run it, its earlier results stand, and the run goes on (`PIPESCOPE-128`).
     No round of a market starts once its rounds have taken 6 minutes, so its worst round still ends within an alarm's 15 minutes, and the market is tried again later.
     A failure outside the market (Postgres unreachable) is one more try too: the alarm always saves the runs and sets itself again, and a run's row is stored once, as soon as it is written.
-  - Before posting, the run compares the strategy executable in the snapshot with its version's hash; when the chain runs a newer recorded version, every market still to do goes to that version's run, each run still due when it was (`PIPESCOPE-120`).
-  - The container takes one run at a time, in the order asked, from every version's run; a run that has waited 3 minutes for its turn is given back to be tried again, and each answer is given 4 minutes (`PIPESCOPE-121`).
+  - Before posting, the run compares the strategy executable in the snapshot with its version's hash; when the chain runs a newer recorded version, every market still to do goes to that version's run, each run still due when it was (`PIPESCOPE-129`).
+  - The container takes one run at a time, in the order asked, from every version's run; a run that has waited 3 minutes for its turn is given back to be tried again, and each answer is given 4 minutes (`PIPESCOPE-130`).
   - A request taken twice is one, and a market that a due or started run still holds is left out of a new run due now.
-  - The API serves a market's latest results under its strategy's current version (or a version asked for) at `GET /v1/markets/{market}/canary`, each with the binary's reason and the two sentences `terminal-api` writes, what the check does and when and on which version it ran, and the market's "could not sell back" notice; and a version's roll-up, computed from its markets' latest results, at `GET /v1/strategies/{program}/versions/{slot}/canary` (`PIPESCOPE-122`).
-  - The re-run is `pnpm canary:rerun --market <m> | --strategy <s>`, a request signed with the operator wallet (`CANARY_OPERATOR`, the project's devnet wallet) and posted to `POST /v1/canary/reruns` (`PIPESCOPE-117`).
+  - The API serves a market's latest results under its strategy's current version (or a version asked for) at `GET /v1/markets/{market}/canary`, each with the binary's reason and the two sentences `terminal-api` writes, what the check does and when and on which version it ran, and the market's "could not sell back" notice; and a version's roll-up, computed from its markets' latest results, at `GET /v1/strategies/{program}/versions/{slot}/canary` (`PIPESCOPE-131`).
+  - The re-run is `pnpm canary:rerun --market <m> | --strategy <s>`, a request signed with the operator wallet (`CANARY_OPERATOR`, the project's devnet wallet) and posted to `POST /v1/canary/reruns` (`PIPESCOPE-126`).
   - Canary writes to the outbox for the Telegram bot: `canary_first_results` (a market's first results), `canary_outcome_changed` (a check's outcome differing from the version's previous latest record) and `canary_run_finished` (a run's end, with its trigger, its markets and those Aviary could not run).
 - **Snapshot**: per market, the router's and the strategy's ProgramData, the router config, the market with its market state, mints, vaults and fee accounts, whatever `pipeline_resolve_accounts` asks for, and the cluster's slot, epoch and time; about 7 RPC requests a market (442 for all 61 devnet markets on 2026-11-10).
   The router is loaded from its deployed bytes, never a local build, so checks test what is on chain.
@@ -254,9 +256,14 @@ What the checks are, how a run copies a market and when runs happen are in [`pip
 
 ## Metadata fetcher
 
-- Runs in `terminal-api` on `StrategyRegistered`, on `MetadataUpdated`, and every hour, because the document behind an unchanged URI can change with no event.
-- Limits, in the config module (`PIPESCOPE-36`): `https:` only, at most 64 KB, a JSON content type, a 5 s timeout, at most 3 redirects, each `https:`; it never fetches a URL found inside the document.
+- Runs in `terminal-api` on `StrategyRegistered`, on `MetadataUpdated`, when the registry snapshot finds a strategy, and every hour, because the document behind an unchanged URI can change with no event.
+- Limits, in the config module (`PIPESCOPE-36`): `https:` only, at most 64 KB, the type `application/json`, any `+json` type or `text/plain` (GitHub serves raw files and gists, where most devnet metadata lives, as `text/plain`), a 5 s timeout over the whole fetch, at most 3 redirects, each `https:`, each checked before it is followed; it never fetches a URL found inside the document.
+- Its outcome is the status Pipeline's SDK gives (`PIPESCOPE-118`): what could not be fetched is `metadata-unreachable`; a document of another content type, not JSON, or refused by the validator is `metadata-invalid`.
+  Each outcome is a row of `metadata_snapshots`, a new row only when the URI, the status or the document's hash changes, with the document as validated (for the forms) and its author text as the normaliser leaves it (for the pages and the explainer).
 - The same fetcher, under the same limits apart from the size, fetches the image a mint's on-chain token metadata names, once per URI and again when the URI changes, and keeps it only as [`pipescope-screens.md`](pipescope-screens.md) (Token names and images) allows.
+  As built (`PIPESCOPE-123`): the token metadata URI is fetched once, at most 1 MB; what it serves is the image when its first bytes say PNG, JPEG or WebP, and otherwise, when it is a JSON document of at most 64 KB, the `https:` URL in its `image` is fetched once more under the same limits.
+  Each URI's outcome is one row of `token_images`, shared by every mint that names it, and a kept image's bytes are in `TERMINAL_CACHE` under their SHA-256; a URI that could not be reached is tried again after each hourly read of every mint; only mints that name themselves have their URIs fetched, and never SOL and USDC, since Aviary names those two itself.
+  The indexer fetches after a run that read mints, so a run that read none never opens the database for it.
 - The document is validated with Pipeline's `parse_strategy_metadata` (the TypeScript SDK's port), giving the `metadata-missing`, `metadata-unreachable` or `metadata-invalid` fact, then normalised as `pipescope-explainer.md` says, and stored with its hash.
 - A changed hash is a metadata change: it makes a new explanation key, pending approval.
 - Everything works with no metadata at all, as on devnet today, where all four strategies' metadata links returned 404 on 2026-11-09.
@@ -288,10 +295,11 @@ Each is a named constant; the pages and the Telegram bot read what they show fro
 | Live-room batching | 100 ms | `PIPESCOPE-31` |
 | Fast path: confirmation poll | every 300 ms | `PIPESCOPE-33` |
 | Metadata fetcher limits and re-fetch interval | as [Metadata fetcher](#metadata-fetcher), every hour | `PIPESCOPE-36` |
+| Every mint read again | every hour | `PIPESCOPE-117` |
 | Quote mint order | wrapped SOL, then the cluster's USDC, then the later mint of the pair | `PIPESCOPE-74` |
 | Token image types and size | PNG, JPEG or WebP, at most 1 MB | `PIPESCOPE-82` |
 | Canary's schedule | as [`pipescope-canary.md`](pipescope-canary.md), When Canary runs | `CANARY-22`, `CANARY-23` |
-| Canary's runs: the container's sleep, a run's wait for its turn and its answer; a market's rounds per alarm; retries of a market; waits for a newer version; the rounds guard; a re-run's clock difference | 2 minutes, 3 minutes and 4 minutes; 6 minutes; 6 attempts, waits doubling from 30 s to 10 minutes; 5, a minute apart; 8; 2 minutes | `CANARY-24`, `PIPESCOPE-117`, `PIPESCOPE-119`, `PIPESCOPE-120`, `PIPESCOPE-121` |
+| Canary's runs: the container's sleep, a run's wait for its turn and its answer; a market's rounds per alarm; retries of a market; waits for a newer version; the rounds guard; a re-run's clock difference | 2 minutes, 3 minutes and 4 minutes; 6 minutes; 6 attempts, waits doubling from 30 s to 10 minutes; 5, a minute apart; 8; 2 minutes | `CANARY-24`, `PIPESCOPE-126`, `PIPESCOPE-128`, `PIPESCOPE-129`, `PIPESCOPE-130` |
 | ProgramData watch: looks for a version's transaction the RPC had not served | 30 | `PIPESCOPE-113` |
 | Signers listed with each of a strategy's instructions, most calls first | 100 | `PIPESCOPE-114` |
 | Public caches | up to 60 s stale | `PIPESCOPE-32` |

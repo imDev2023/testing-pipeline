@@ -1,5 +1,7 @@
+/* One column the width of the window: a child's own minimum width (the filters' grid) never widens it. */
 .feed {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
 }
 
@@ -58,6 +60,7 @@
 
 .section {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -82,4 +85,16 @@
       background: transparent;
     }
   }
+}
+
+.line {
+  color: var(--ink2);
+}
+
+.empty {
+  padding: 24px 16px;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--ink2);
 }

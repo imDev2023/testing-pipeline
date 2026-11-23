@@ -1494,12 +1494,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-36: Fetching metadata
 
 - Question: When and how is strategy metadata fetched?
-- Answer: On `StrategyRegistered`, on `MetadataUpdated` and every hour, over `https:` only, at most 64 KB of JSON, with a 5 second timeout and at most 3 redirects, never fetching a URL found inside the document.
-- Alternatives: None recorded.
+- Answer: On `StrategyRegistered`, on `MetadataUpdated`, when the registry snapshot finds a strategy, and every hour, over `https:` only, at most 64 KB, of the type `application/json`, any `+json` type or `text/plain` (as GitHub serves raw files and gists), with a 5 second timeout and at most 3 redirects, each to `https:`, never fetching a URL found inside the document.
+- Alternatives: The earlier default, any JSON content type, which refused `text/plain` and so the documents GitHub serves, most of devnet's and all three of ours; no content-type check, as Pipeline's SDK has none.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Metadata fetcher](spec/pipescope-architecture.md#metadata-fetcher)
 - Changes by: build-time constant
-- Status: default
-- Decided: 2026-11-10 in [Pipescope architecture](https://github.com/imDev2023/testing-pipeline/issues/13)
+- Status: changed 2026-11-23
+- Decided: 2026-11-10 in [Pipescope architecture](https://github.com/imDev2023/testing-pipeline/issues/13); changed 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
 
 ### PIPESCOPE-37: Keys and paid calls on the server
 
@@ -2064,12 +2064,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-93: Pipeline's hosted API in the tests
 
 - Question: How far does the terminal lean on Pipeline's hosted devnet API?
-- Answer: As a test oracle only: the devnet tests compare our trades, candles, trust flags, quotes and unhooked swap transactions with its answers, and our Canary `conformance` result with its hosted checks; its `checks-*` flags are not shown, since Canary's own result says the same thing.
-- Alternatives: Serving the feed, charts or wallet page from it, which ADR 0003 ruled out; showing its `checks-*` flags beside Canary's result.
+- Answer: As a test oracle only: the devnet tests compare our trades, candles, trust flags, quotes and unhooked swap transactions with its answers, and our Canary `conformance` result with its hosted checks; its `checks-*` flags are not shown, since Canary's own result says the same thing, nor its `conformance-report` and `conformance-stale`, which need the report a strategy's metadata links fetched, a URL found inside a document (`PIPESCOPE-36`).
+- Alternatives: The earlier default, leaving out only `checks-*`; fetching the linked conformance report as an exception to `PIPESCOPE-36`; serving the feed, charts or wallet page from it, which ADR 0003 ruled out; showing its `checks-*` flags beside Canary's result.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
 - Changes by: spec only
-- Status: default
-- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+- Status: changed 2026-11-23
+- Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22); changed 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
 
 ### PIPESCOPE-94: How signing is tested
 
@@ -2301,7 +2301,96 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: index strategy programs and their versions, with the strategy page's version history](https://github.com/imDev2023/testing-pipeline/issues/117)
 
-### PIPESCOPE-117: Canary's re-run
+### PIPESCOPE-117: Keeping program and mint facts current
+
+- Question: How does Aviary keep the facts behind the trust flags current, since an upgrade authority, a mint authority, a supply or an extension can change after it is first read?
+- Answer: Who can upgrade each program is read from the header the ProgramData watch already reads every minute and written when it changes; every mint is read again every hour (`mintRefresh` in `terminal-api`'s config module), its flags worked out with Pipeline's SDK's `decodeMint` at the epoch it was read in.
+- Alternatives: Reading each mint once, when a market first brings it, which leaves a flag showing after the authority behind it is gone; reading every mint every minute, which would wake the database for nothing.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
+
+### PIPESCOPE-118: What a metadata fetch keeps
+
+- Question: What does Aviary keep of each fetch of a strategy's metadata, and how does a refusal read?
+- Answer: One row per outcome in `metadata_snapshots` (the URI, Pipeline's SDK's status, the fetch's or validator's errors, the document's SHA-256, the document as validated and its author text as the explainer's normaliser leaves it), a new row only when the URI, the status or the hash changes; what could not be fetched is `metadata-unreachable`, and a document of a refused content type, not JSON, or refused by Pipeline's validator is `metadata-invalid`, as Pipeline's SDK gives them.
+- Alternatives: Keeping only the newest outcome, which loses the change a new explanation key needs; a status of our own for a refused content type.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Metadata fetcher](spec/pipescope-architecture.md#metadata-fetcher)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
+
+### PIPESCOPE-119: The feed's filters in the address and the API
+
+- Question: How do the feed's filters reach the API, and how does a filtered feed's address read?
+- Answer: The address carries `liquidity` and `volume` (one of the screens' steps, in SOL), `created` (`1h`, `24h` or `7d`) and `hide` (Pipeline's flags, separated by commas), ignoring any other value; `GET /v1/markets` takes `min_sol_liquidity` and `min_sol_volume_24h` in lamports, `created_within` in seconds and `hide`, and answers, besides the page, how many markets there are, how many the filters keep, how many have no SOL side, and every flag present with its description.
+- Alternatives: Filtering in the page over the markets loaded, which cannot count what is not loaded; filters kept in the browser and not the address.
+- Specified in: [`docs/spec/pipescope-screens.md`, Filters](spec/pipescope-screens.md#filters)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
+
+### PIPESCOPE-120: A strategy's name and description on the pages
+
+- Question: Which of a strategy's author text do the pages show, and what does a strategy show before its metadata is first fetched?
+- Answer: Its name from valid metadata wherever the strategy is named, and its description under the name at the head of its page, both as the explainer's normaliser leaves them, in the author's style; before the first fetch, the short address with "Metadata not read yet".
+- Alternatives: The name only; the author's text as fetched, with its control and text-direction characters.
+- Specified in: [`docs/spec/pipescope-screens.md`, Strategy page](spec/pipescope-screens.md#strategy-page)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
+
+### PIPESCOPE-121: The market page's facts before its explanation and forms
+
+- Question: Where does the market page's facts panel sit while the explanation and the forms have not landed beside it?
+- Answer: In the lower band, under the trades, at its full width, with "This market", "Its strategy" and "Its mints" side by side and one under another on narrow screens; the explanation and the forms take the band's first column when they land.
+- Alternatives: The facts in the band's right column with its left column empty.
+- Specified in: [`docs/spec/pipescope-screens.md`, Explanation, actions and facts](spec/pipescope-screens.md#explanation-actions-and-facts)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
+
+### PIPESCOPE-122: Token names as Aviary keeps them
+
+- Question: Where does a token's name come from, and how is it kept and shown?
+- Answer: From its mint's Token-2022 token metadata extension, or else its Metaplex metadata account, read with the mint and again every hour; its symbol and name go through the author-text normaliser (control, direction and zero-width characters stripped), the symbol capped at 16 characters and the name at 64 (`AUTHOR_TEXT_CAPS` in the explainer's rules module), and a page shows the symbol, or the name when there is no symbol, in the author's style beside the short address.
+- Alternatives: Keeping the names exactly as the chain holds them, which lets a direction override make one token's name read as another's; no cap on the symbol, which lets one author's file set a table row's width.
+- Specified in: [`docs/spec/pipescope-screens.md`, Token names and images](spec/pipescope-screens.md#token-names-and-images)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: token names and images, and search](https://github.com/imDev2023/testing-pipeline/issues/120)
+
+### PIPESCOPE-123: Where a token's image is found
+
+- Question: What does Aviary fetch to find the image a token's metadata names, and how often?
+- Answer: The token metadata URI once, under the metadata fetcher's limits and at most 1 MB: if what it serves is a PNG, JPEG or WebP by its first bytes, that is the image; if it is a JSON document of at most 64 KB, the `https:` URL in its `image` is fetched once more under the same limits; nothing else is fetched; each URI's outcome is kept once, shared by every mint naming it, and a URI is fetched again only when a mint names another, except that one which could not be reached is tried again after each hourly read of every mint, since a host can be down for a moment; only the URIs of mints that name themselves are fetched, and never those of SOL and USDC.
+- Alternatives: Treating the URI only as a document, which misses tokens whose URI is the picture; never trying again after a failed fetch, which loses a token's image for good to one busy moment of its host; following `ipfs:` and `ar:` links through a gateway, which would add a third party.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Metadata fetcher](spec/pipescope-architecture.md#metadata-fetcher)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: token names and images, and search](https://github.com/imDev2023/testing-pipeline/issues/120)
+
+### PIPESCOPE-124: The search endpoint
+
+- Question: How does `terminal-api` answer a search?
+- Answer: `GET /v1/search?q=&limit=`, from Postgres: a query of 1 to 100 characters compared as text and never as a pattern; each group (strategies, markets, mints) counted in full and served up to `limit` (20 by default, at most 100, `PAGE_LIMITS.search`), a whole address typed coming first, then strategies by their market count, markets newest first and mints by their market count; SOL and USDC found by Aviary's names for them, every market a mint trades on named with it, and the three examples shown when nothing is typed kept in the screens' config module and checked by the end-to-end tests to find something on devnet.
+- Alternatives: Searching in the browser over the feed's pages, which misses whatever is not loaded; a cap on the markets listed with a mint, which the spec does not ask for.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: token names and images, and search](https://github.com/imDev2023/testing-pipeline/issues/120)
+
+### PIPESCOPE-125: The marks for SOL and USDC
+
+- Question: What marks do SOL and USDC carry beside the names Aviary gives them?
+- Answer: Marks Aviary draws itself and ships with the app, in the page's ink at the 20 px of a token's image: three slanted bars for SOL and a ringed dollar sign for USDC.
+- Alternatives: Solana's and Circle's own logos, whose green and blue would break the rule that nothing on a page is coloured but the canary yellow and an author's purple.
+- Specified in: [`docs/spec/pipescope-screens.md`, Token names and images](spec/pipescope-screens.md#token-names-and-images)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: token names and images, and search](https://github.com/imDev2023/testing-pipeline/issues/120)
+### PIPESCOPE-126: Canary's re-run
 
 - Question: How does the owner re-run Canary on a market or a strategy?
 - Answer: With `pnpm canary:rerun --market <m> | --strategy <s>`, which signs the request with the operator wallet, `CANARY_OPERATOR` (the project's devnet wallet), and posts it to `POST /v1/canary/reruns`, which takes it only with that wallet's signature and a time within 2 minutes of its own; the one owner operation in the API, since it must wake a `CanaryRun` object.
@@ -2311,7 +2400,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
 
-### PIPESCOPE-118: How Canary's triggers reach its runs
+### PIPESCOPE-127: How Canary's triggers reach its runs
 
 - Question: How do the outbox's events reach the `CanaryRun` objects without waking the database to look for them?
 - Answer: Canary's reader drains the outbox from its own cursor right after each indexer job that opened Postgres, one drain at a time in the `Indexer` object, which the 6-hourly sweep job asks to drain first; an event is acknowledged only once its runs were handed over, and a new market waits for its strategy's version to be recorded, for at most 30 minutes.
@@ -2321,7 +2410,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
 
-### PIPESCOPE-119: A Canary run that fails
+### PIPESCOPE-128: A Canary run that fails
 
 - Question: What happens when a market's snapshot or run fails, as when the RPC refuses or the container restarts?
 - Answer: The run's alarm tries the market again after waits doubling from 30 seconds to 10 minutes, six attempts in all, then records that Aviary could not run it, keeps its earlier results and goes on; a refusal by the binary (its 400) is recorded at once, and a market whose rounds pass 6 minutes is put off to a later alarm, so an alarm stays within its 15 minutes.
@@ -2331,7 +2420,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
 
-### PIPESCOPE-120: A Canary run whose strategy is upgraded under it
+### PIPESCOPE-129: A Canary run whose strategy is upgraded under it
 
 - Question: What does a version's run do when the chain no longer runs that version's code?
 - Answer: It hands every market still to do to the strategy's newer recorded version, each run still due when it was, and records those markets as moved; while the watch has not recorded the newer version, it waits a minute at a time, five times.
@@ -2341,7 +2430,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
 
-### PIPESCOPE-121: One Canary run at a time in the container
+### PIPESCOPE-130: One Canary run at a time in the container
 
 - Question: How do several versions' runs share the one container?
 - Answer: The container's object takes one market's run at a time, in the order asked, so a `basic` instance's quarter vCPU and 1 GiB serve one run at a time; a run that has waited 3 minutes for its turn is given back to be tried again, and each answer is given 4 minutes.
@@ -2351,7 +2440,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
 
-### PIPESCOPE-122: Canary's results in the API
+### PIPESCOPE-131: Canary's results in the API
 
 - Question: How does the API serve Canary's results?
 - Answer: `GET /v1/markets/{market}/canary` serves a market's latest result of each check under its strategy's current version, or the version asked for, each with the binary's reason and `terminal-api`'s sentences for what the check does and when and on which version it ran, and the "could not sell back" notice as the reasons of the results it rests on; `GET /v1/strategies/{program}/versions/{slot}/canary` serves the version's roll-up, computed from its markets' latest results.
@@ -3053,6 +3142,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: build-time constant
 - Status: default
 - Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
+
+### EXPLAINER-22: What the normaliser strips and caps
+
+- Question: Which characters does the author-text normaliser strip, and what does it cap besides the name, the description and the action labels?
+- Answer: Every control character and every format character (Unicode `Cc` and `Cf`, which take in each text-direction mark and zero-width character), after line breaks and tabs become a space; the create form's description and each argument's description are capped as a description, at 600 characters, and each argument's label and each tag as a label, at 64; links, the image, the source, the conformance report and the security contact are left out, and what it removed is counted.
+- Alternatives: Stripping only control and text-direction characters, which leaves other invisible characters in a name.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Inputs](spec/pipescope-explainer.md#inputs)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
 
 ## Tax AMM (TAX)
 

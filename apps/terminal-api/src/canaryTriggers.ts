@@ -6,7 +6,7 @@
 //   markets the first backfill finds run once and those still young again later (CANARY-48); a
 //   new strategy version runs every market of the strategy; a router upgrade runs every market of
 //   every strategy's current version. The indexer drains it after each of its jobs that touched
-//   Postgres, so the database is never woken just to look (./indexer; PIPESCOPE-118).
+//   Postgres, so the database is never woken just to look (./indexer; PIPESCOPE-127).
 // - The sweep, every JOB_INTERVAL_MINUTES.canarySweep, runs every market, after draining the outbox.
 //
 // An event is acknowledged only once its runs were handed to their objects, so a failure reads it

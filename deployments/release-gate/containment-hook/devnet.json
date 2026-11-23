@@ -1,0 +1,317 @@
+{
+  "bind": {
+    "passed": true,
+    "result": "the fresh mint 86rN8snA6w5VnxEJRuqdrnDYWsLRHeqQf125mThqMC5i bound to its home market BUjVA5bvS9AD6zdrbws9qWuBDuU32vzwGYKaRgBLrVAg and seeded through the hook",
+    "step": "bind a fresh mint"
+  },
+  "candidate": "53626e3ddea4d6650951e5308aa9cff117e738a4abde67e2ac04145caa6fc584",
+  "census": [
+    {
+      "passed": true,
+      "result": "the snapshot is of aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv, the build's declare_id!",
+      "step": "program id"
+    },
+    {
+      "passed": true,
+      "result": "6 configs and 6 validation accounts, paired, and no other hook account",
+      "step": "census"
+    },
+    {
+      "passed": true,
+      "result": "6 configs",
+      "step": "configs found"
+    },
+    {
+      "passed": true,
+      "result": "every config of the fixture (6) and every demo mint (3) is there, and the recorded hook is deployed",
+      "step": "devnet records"
+    },
+    {
+      "passed": true,
+      "result": "--program aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv is the build's declare_id!",
+      "step": "program given"
+    },
+    {
+      "passed": true,
+      "result": "the tax AMM the home markets run on, dumped from the cluster",
+      "step": "deployed tax AMM given"
+    }
+  ],
+  "cluster": "https://api.devnet.solana.com",
+  "configs": [
+    {
+      "config": "79e2K19PBgn5EcgxwNzpZ5EbAuBEboPKhSXjxGN63L5m",
+      "mint": "5iEQzUi2ANPiQWKdcbyUU3EXnYviCiNKS6hbXzc3sSVX",
+      "state": "contained",
+      "steps": [
+        {
+          "passed": true,
+          "result": "version 1, 237 bytes, serialised back identically",
+          "step": "decode"
+        },
+        {
+          "passed": true,
+          "result": "the Market 7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz trades the contained mint at index 0 against So11111111111111111111111111111111111111112",
+          "step": "home market"
+        },
+        {
+          "passed": true,
+          "result": "10000000 of So11111111111111111111111111111111111111112 bought 242641209854 of the token",
+          "step": "buy"
+        },
+        {
+          "passed": true,
+          "result": "refused with DestinationOwnerCanChange",
+          "step": "buy into an account whose owner can change refused"
+        },
+        {
+          "passed": true,
+          "result": "refused with NotTransferring",
+          "step": "direct Execute refused"
+        },
+        {
+          "passed": true,
+          "result": "121320604927 of the token sold for 4596700 of So11111111111111111111111111111111111111112",
+          "step": "sell"
+        },
+        {
+          "passed": true,
+          "result": "not applicable: a sell pays Pipeline's fee in So11111111111111111111111111111111111111112, not in the token",
+          "step": "fee account"
+        },
+        {
+          "passed": true,
+          "result": "refused with TransferRefused",
+          "step": "wallet-to-wallet transfer refused"
+        },
+        {
+          "passed": true,
+          "result": "already due by the Deadline (Some(30542538) of 5000000000 collected, deadline 1795367191), so not tried",
+          "step": "unlock refused before it is due"
+        },
+        {
+          "passed": true,
+          "result": "not tried: the deadline 1795367191 has passed, so one below the goal unlocks by it",
+          "step": "unlock refused one below the goal"
+        },
+        {
+          "passed": true,
+          "result": "Unlocked by the goal: 5000000000 of 5000000000 collected; both hook fields cleared, the config changed only by unlocked_at",
+          "step": "unlock by the goal"
+        },
+        {
+          "passed": true,
+          "result": "unlocked at 1795452179, both hook fields cleared, the config changed only by unlocked_at",
+          "step": "unlock at the deadline"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "config": "7xZ61DwYQ54n6wX6sSCV6gm3X7tyWBmTwKLo7DbBejaJ",
+      "mint": "2e1iecsWF5aHFsuKCgUi5j5DW7wXyWRnsBMTkDHBmcXR",
+      "state": "contained",
+      "steps": [
+        {
+          "passed": true,
+          "result": "version 1, 237 bytes, serialised back identically",
+          "step": "decode"
+        },
+        {
+          "passed": true,
+          "result": "the Market 6eqVrhnojqZpW9bZCpYYYRUnxuNUeStTXinNuA6f4yQ3 trades the contained mint at index 0 against HDxAEyb2JNPYEC7uZfUhr8oyfWK9cqLdCUSGKNAcCYFa",
+          "step": "home market"
+        },
+        {
+          "passed": true,
+          "result": "10000 of HDxAEyb2JNPYEC7uZfUhr8oyfWK9cqLdCUSGKNAcCYFa bought 258658219 of the token",
+          "step": "buy"
+        },
+        {
+          "passed": true,
+          "result": "refused with DestinationOwnerCanChange",
+          "step": "buy into an account whose owner can change refused"
+        },
+        {
+          "passed": true,
+          "result": "refused with NotTransferring",
+          "step": "direct Execute refused"
+        },
+        {
+          "passed": true,
+          "result": "129329109 of the token sold for 4607 of HDxAEyb2JNPYEC7uZfUhr8oyfWK9cqLdCUSGKNAcCYFa",
+          "step": "sell"
+        },
+        {
+          "passed": true,
+          "result": "the sell paid 323323 of the token into the fee account; sweep_fees moved all 323323 to the treasury",
+          "step": "fee account"
+        },
+        {
+          "passed": true,
+          "result": "refused with TransferRefused",
+          "step": "wallet-to-wallet transfer refused"
+        },
+        {
+          "passed": true,
+          "result": "refused with UnlockNotDue",
+          "step": "unlock refused before it is due"
+        },
+        {
+          "passed": true,
+          "result": "refused with UnlockNotDue with 999999999 of 1000000000 collected",
+          "step": "unlock refused one below the goal"
+        },
+        {
+          "passed": true,
+          "result": "Unlocked by the goal: 1000000000 of 1000000000 collected; both hook fields cleared, the config changed only by unlocked_at",
+          "step": "unlock by the goal"
+        },
+        {
+          "passed": true,
+          "result": "unlocked at 1797976913, both hook fields cleared, the config changed only by unlocked_at",
+          "step": "unlock at the deadline"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "config": "8bvkSTnMrkU9bkHkDuXLTqVuhfECrQK8SeFjwAzxAPoY",
+      "mint": "AQSAyaGKsgrGqDDhA6ijW6cfuPwQkkcToSBWQBMFuk9v",
+      "state": "unlocked",
+      "steps": [
+        {
+          "passed": true,
+          "result": "version 1, 237 bytes, serialised back identically",
+          "step": "decode"
+        },
+        {
+          "passed": true,
+          "result": "refused with AlreadyUnlocked",
+          "step": "unlock refused"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "config": "9G9G8bRYyS9mDVs7UZpaAzUYswdkpmoFPb2Lseggje2M",
+      "mint": "F7M6PLwZAa5BKofK3GcZvqcAtgKMgYRfAPyGwXTrmsJc",
+      "state": "unlocked",
+      "steps": [
+        {
+          "passed": true,
+          "result": "version 1, 237 bytes, serialised back identically",
+          "step": "decode"
+        },
+        {
+          "passed": true,
+          "result": "refused with AlreadyUnlocked",
+          "step": "unlock refused"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "config": "Dc5tYj5UkXxwDFLR91vPYkpaYpc6FjHFwWyMPgaKek6k",
+      "mint": "64qicrEzu17dTHgikB9HtaJznqTwz7w2jCGi4V2FUwgW",
+      "state": "unlocked",
+      "steps": [
+        {
+          "passed": true,
+          "result": "version 1, 237 bytes, serialised back identically",
+          "step": "decode"
+        },
+        {
+          "passed": true,
+          "result": "refused with AlreadyUnlocked",
+          "step": "unlock refused"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "config": "Fm1fz5LJQyRbYD6ULbFF4vNwBQc5eiBygmk7kg1hj5cG",
+      "mint": "FvsouVQ3pqKcZXoBzTs1nWVFw2BFDoa8552B3XSVvvQ8",
+      "state": "contained",
+      "steps": [
+        {
+          "passed": true,
+          "result": "version 1, 237 bytes, serialised back identically",
+          "step": "decode"
+        },
+        {
+          "passed": true,
+          "result": "the Market 8kiwknCnG7bYCpPPM2QUhdftsYxQwK6LmRnAhYUJotNX trades the contained mint at index 0 against So11111111111111111111111111111111111111112",
+          "step": "home market"
+        },
+        {
+          "passed": true,
+          "result": "10000000 of So11111111111111111111111111111111111111112 bought 250548757684 of the token",
+          "step": "buy"
+        },
+        {
+          "passed": true,
+          "result": "refused with DestinationOwnerCanChange",
+          "step": "buy into an account whose owner can change refused"
+        },
+        {
+          "passed": true,
+          "result": "refused with NotTransferring",
+          "step": "direct Execute refused"
+        },
+        {
+          "passed": true,
+          "result": "125274378842 of the token sold for 4596711 of So11111111111111111111111111111111111111112",
+          "step": "sell"
+        },
+        {
+          "passed": true,
+          "result": "not applicable: a sell pays Pipeline's fee in So11111111111111111111111111111111111111112, not in the token",
+          "step": "fee account"
+        },
+        {
+          "passed": true,
+          "result": "refused with TransferRefused",
+          "step": "wallet-to-wallet transfer refused"
+        },
+        {
+          "passed": true,
+          "result": "refused with UnlockNotDue",
+          "step": "unlock refused before it is due"
+        },
+        {
+          "passed": true,
+          "result": "refused with UnlockNotDue with 99999999 of 100000000 collected",
+          "step": "unlock refused one below the goal"
+        },
+        {
+          "passed": true,
+          "result": "Unlocked by the goal: 100000000 of 100000000 collected; both hook fields cleared, the config changed only by unlocked_at",
+          "step": "unlock by the goal"
+        },
+        {
+          "passed": true,
+          "result": "unlocked at 1795470926, both hook fields cleared, the config changed only by unlocked_at",
+          "step": "unlock at the deadline"
+        }
+      ],
+      "warnings": []
+    }
+  ],
+  "deployed": "f6ac2df343a63b7acf351152d2106eb3ee2ea517a8815aed2165ae7aba4cdd98",
+  "genesis_hash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+  "overrides": {
+    "allow_empty": null,
+    "allow_fewer": null
+  },
+  "passed": true,
+  "program": "aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv",
+  "slot": 525494243,
+  "tax_amm": "7891f0a9e5e63b61571765a8823541d4c7fa9da573f98bed81cf1966225666ad",
+  "tax_amm_program_id": {
+    "passed": true,
+    "result": "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t, as deployments/devnet.json records",
+    "step": "tax AMM program id"
+  },
+  "unix_timestamp": 1795452179
+}

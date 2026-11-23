@@ -5,13 +5,14 @@
 import { readFileSync } from "node:fs";
 import { encodeAccount, getStrategyCodec, PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { address } from "@solana/kit";
-import { candles, createDb, markets, strategies, trades } from "terminal-db";
+import { candles, createDb, markets, metadataSnapshots, mints, strategies, trades } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { DECODER_VERSION, indexTransactions, pipelineHandler, type RawTransaction, type TransactionHandler } from "terminal-indexer";
 import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CANDLES, LIVE_ROOM_TRADES_MAX } from "../src/config";
 import { IndexerCore } from "../src/indexerCore";
+import { memoryImages, metadataWeb } from "./fakes";
 
 const fixture = (name: string) => JSON.parse(readFileSync(`${import.meta.dirname}/../../../packages/terminal-indexer/test/fixtures/${name}.json`, "utf8")) as RawTransaction;
 const [registered, created, swap] = ["registered", "marketCreated", "swap"].map(fixture) as [RawTransaction, RawTransaction, RawTransaction];
@@ -32,9 +33,9 @@ afterEach(async () => {
 afterAll(() => vi.restoreAllMocks());
 
 /** The core with a spy on its database client: every client it opens is counted, and each is a real one. */
-function core() {
+function core(web = metadataWeb()) {
   const openDb = vi.fn(() => createDb(database.url));
-  return { indexer: new IndexerCore({ rpcUrl: rpc.url, openDb }), openDb };
+  return { indexer: new IndexerCore({ rpcUrl: rpc.url, openDb, webFetch: web.fetch, images: memoryImages() }), openDb, web };
 }
 
 describe("reconciliation of the router", () => {
@@ -71,7 +72,7 @@ describe("reconciliation of the router", () => {
       return { db: client.db, close: () => client.close().then(() => void closed++) };
     });
     rpc.refuse.add("getMultipleAccounts");
-    await expect(new IndexerCore({ rpcUrl: rpc.url, openDb }).reconcile()).rejects.toThrow("getMultipleAccounts");
+    await expect(new IndexerCore({ rpcUrl: rpc.url, openDb, webFetch: metadataWeb().fetch, images: memoryImages() }).reconcile()).rejects.toThrow("getMultipleAccounts");
     expect(openDb).toHaveBeenCalledTimes(1);
     expect(closed).toBe(1);
   });
@@ -108,7 +109,7 @@ describe("reading again what older code could not decode", () => {
       if (raw.transaction.signatures[0] === kept.transaction.signatures[0]) throw new Error("this transaction cannot be read");
       return real(db, raw);
     };
-    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler });
+    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler, webFetch: metadataWeb().fetch, images: memoryImages() });
     expect((await indexer.reconcile()).indexed.counts).toEqual({ strategies: 1, markets: 1 });
   });
 });
@@ -200,7 +201,7 @@ describe("the live path, when part of a batch fails", () => {
       if (raw.transaction.signatures[0] === bad.transaction.signatures[0]) throw new Error("this transaction cannot be read");
       return real(db, raw);
     };
-    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler });
+    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), handler, webFetch: metadataWeb().fetch, images: memoryImages() });
     await indexer.reconcile();
     rpc.history.push(good, bad);
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -223,5 +224,113 @@ describe("events after a large backlog", () => {
     const events = await indexer.events(indexed, ["feed", `market:${SWAP_MARKET}`]);
     expect(events.get(`market:${SWAP_MARKET}`)!.map((e) => e.type)).toEqual(["resync", "market"]);
     expect(events.get("feed")!.map((e) => e.type)).toEqual(["market"]);
+  });
+});
+
+describe("strategy metadata", () => {
+  const STRATEGY = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t";
+  const doc = (name: string) => JSON.stringify({ schema: "pipeline-strategy-metadata/1", name });
+  const uriOf = async () => (await reader.db.select({ uri: strategies.metadataUri }).from(strategies))[0]!.uri;
+  const statuses = async () => (await reader.db.select({ status: metadataSnapshots.status, name: metadataSnapshots.normalised }).from(metadataSnapshots).orderBy(metadataSnapshots.id)).map((r) => [r.status, (r.name as { name?: string } | null)?.name ?? null]);
+
+  it("is fetched after the router's reconciliation indexes the strategy's registration, and not again while nothing new happens", async () => {
+    const web = metadataWeb();
+    const { indexer } = core(web);
+    await indexer.reconcile();
+    // Reconciliation only notes it, so what it indexed reaches the live rooms first; the fetch follows.
+    expect(web.asked).toEqual([]);
+    expect(await indexer.fetchPendingMetadata()).toEqual({ fetched: 1, changed: ["J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"] });
+    expect(web.asked).toEqual([await uriOf()]);
+    expect(await statuses()).toEqual([["unreachable", null]]);
+    await indexer.reconcile();
+    expect(await indexer.fetchPendingMetadata()).toEqual({ fetched: 0, changed: [] });
+    expect(web.asked).toHaveLength(1);
+  });
+
+  it("is fetched by one turn at a time, so a re-fetch and a pending fetch together write one row", async () => {
+    const web = metadataWeb();
+    const { indexer } = core(web);
+    await indexer.reconcile();
+    web.documents[await uriOf()] = doc("Once");
+    await Promise.all([indexer.fetchPendingMetadata(), indexer.refetchMetadata()]);
+    expect(await statuses()).toEqual([["valid", "Once"]]);
+  });
+
+  it("is fetched again from the new URI once a MetadataUpdated is indexed", async () => {
+    const { metadataUpdatedTransaction } = await import("terminal-indexer/swaps");
+    const web = metadataWeb({ "https://example.org/v2.json": doc("Tax AMM") });
+    const { indexer } = core(web);
+    await indexer.reconcile();
+    await indexer.fetchPendingMetadata();
+    rpc.history.push(metadataUpdatedTransaction({ id: 77, slot: 525_500_000, strategy: STRATEGY, uri: "https://example.org/v2.json" }));
+    await indexer.reconcile();
+    await indexer.fetchPendingMetadata();
+    expect(web.asked.at(-1)).toBe("https://example.org/v2.json");
+    expect(await statuses()).toEqual([["unreachable", null], ["valid", "Tax AMM"]]);
+  });
+
+  it("is fetched for a MetadataUpdated the live socket reported, by the next fetch, never holding up the live path", async () => {
+    const { metadataUpdatedTransaction } = await import("terminal-indexer/swaps");
+    const web = metadataWeb({ "https://example.org/live.json": doc("Live") });
+    const { indexer } = core(web);
+    await indexer.reconcile();
+    await indexer.fetchPendingMetadata();
+    const update = metadataUpdatedTransaction({ id: 78, slot: 525_500_001, strategy: STRATEGY, uri: "https://example.org/live.json" });
+    rpc.history.push(update);
+    expect((await indexer.indexSignatures([update.transaction.signatures[0]!])).strategies).toEqual([STRATEGY]);
+    expect(web.asked).not.toContain("https://example.org/live.json");
+    await indexer.fetchPendingMetadata();
+    expect((await statuses()).at(-1)).toEqual(["valid", "Live"]);
+  });
+
+  it("is fetched again for every strategy by the hourly re-fetch, which stores a changed document", async () => {
+    const web = metadataWeb();
+    const { indexer } = core(web);
+    await indexer.reconcile();
+    await indexer.fetchPendingMetadata();
+    web.documents[await uriOf()] = doc("Changed Behind The Same URI");
+    expect(await indexer.refetchMetadata()).toEqual({ fetched: 1, changed: [STRATEGY] });
+    expect((await statuses()).at(-1)).toEqual(["valid", "Changed Behind The Same URI"]);
+  });
+
+  it("is fetched by a new instance for a strategy that has none yet, as after this code's first deploy, or whose newest is for an earlier URI", async () => {
+    const first = core().indexer;
+    await first.reconcile();
+    await first.fetchPendingMetadata();
+    await reader.db.delete(metadataSnapshots);
+    const web = metadataWeb();
+    const second = core(web).indexer;
+    await second.reconcile();
+    await second.fetchPendingMetadata();
+    expect(web.asked).toEqual([await uriOf()]);
+
+    // A URI changed while the fetch after it failed: the next instance fetches it.
+    await reader.db.update(strategies).set({ metadataUri: "https://example.org/moved.json" });
+    const third = core(web).indexer;
+    await third.reconcile();
+    await third.fetchPendingMetadata();
+    expect(web.asked.at(-1)).toBe("https://example.org/moved.json");
+  });
+
+  it("is fetched for a strategy the registry snapshot finds", async () => {
+    const strategyAccount = (program: string) =>
+      encodeAccount("Strategy", getStrategyCodec(), { programId: address(program), metadataUri: "https://example.org/found.json", interfaceVersion: 1, registeredAt: 1_795_000_000n, marketCount: 0n, bump: 255 });
+    rpc.accounts.set("StrategyPdaB", { owner: PIPELINE_PROGRAM_ADDRESS, data: strategyAccount("BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6") });
+    const web = metadataWeb({ "https://example.org/found.json": doc("Found") });
+    const { indexer } = core(web);
+    await indexer.reconcile();
+    await indexer.snapshot();
+    await indexer.fetchPendingMetadata();
+    expect(web.asked).toContain("https://example.org/found.json");
+  });
+});
+
+describe("the hourly read of mints", () => {
+  it("reads every mint again", async () => {
+    const { indexer } = core();
+    await indexer.reconcile();
+    await reader.db.update(mints).set({ flags: ["stale"] });
+    expect(await indexer.refreshMints()).toBe(2);
+    expect((await reader.db.select({ flags: mints.flags }).from(mints)).every((m) => !m.flags?.includes("stale"))).toBe(true);
   });
 });

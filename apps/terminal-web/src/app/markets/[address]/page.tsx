@@ -4,9 +4,10 @@ import { Suspense } from "react";
 import { SubjectAddress } from "@/components/Address";
 import styles from "@/components/heads/Head.module.css";
 import bands from "@/components/market/Market.module.css";
+import { MarketFacts } from "@/components/facts/MarketFacts";
 import { MarketLive } from "@/components/market/MarketLive";
+import { StrategyName } from "@/components/StrategyName";
 import { MintLabel } from "@/components/MintLabel";
-import { ShortAddress } from "@/components/ShortAddress";
 import { formatDate, shortAddress } from "@/format";
 import { ROUTES } from "@/routes";
 import { readMarket } from "@/serverReads";
@@ -24,8 +25,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 /**
  * A market's page (docs/spec/pipescope-screens.md, Market page): its head, then the top band, the
- * chart with the trades beneath it, live. The trade box joins the top band with #121; the lower
- * band's explanation, forms and facts panel with their tickets.
+ * chart with the trades beneath it, live, and the lower band, the facts panel. The trade box joins
+ * the top band with #121; the lower band's explanation and forms with their tickets, beside the facts.
  */
 export default async function MarketPage({ params }: Props) {
   const { address } = await params;
@@ -52,6 +53,9 @@ export default async function MarketPage({ params }: Props) {
           <MarketLive market={value} />
         </Suspense>
       </div>
+      <div className={bands.low}>
+        <MarketFacts market={value.address} />
+      </div>
     </div>
   );
 }
@@ -60,7 +64,7 @@ function MarketHead({ market, base, quote }: { market: Market; base: MarketMint;
   return (
     <header className={styles.head}>
       <h1>
-        <MintLabel mint={base.mint} symbol={base.symbol} /> / <MintLabel mint={quote.mint} symbol={quote.symbol} />
+        <MintLabel mint={base.mint} symbol={base.symbol} token={base.token} /> / <MintLabel mint={quote.mint} symbol={quote.symbol} token={quote.token} />
       </h1>
       <SubjectAddress address={market.address} short />
       <dl className={styles.facts}>
@@ -68,7 +72,7 @@ function MarketHead({ market, base, quote }: { market: Market; base: MarketMint;
           <dt>Strategy</dt>
           <dd>
             <Link href={ROUTES.strategy(market.strategy)}>
-              <ShortAddress address={market.strategy} />
+              <StrategyName program={market.strategy} name={market.strategy_name} metadata={market.strategy_metadata} />
             </Link>
           </dd>
         </div>

@@ -58,7 +58,8 @@
   border-top: var(--listing-cell-rule) solid var(--rule);
 }
 
-.main {
+.main,
+.wide {
   grid-column: 1 / -1;
 }
 
@@ -112,4 +113,9 @@
 
 .none {
   color: var(--ink3);
+}
+
+/* An age ("16m ago") never breaks over two lines. */
+.age {
+  white-space: nowrap;
 }
