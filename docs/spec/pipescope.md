@@ -70,7 +70,7 @@ Not in the first version:
 ### How the fee is shown before signing
 
 - The trade box always shows the fee breakdown, never collapsed, in token amounts and percentages:
-  - Pipeline fee, at the rate the router's config holds, which `terminal-api` reads from the chain and returns, so no page writes it;
+  - Pipeline fee, at the router's own rate, which `terminal-api` returns, so no page writes it (since Pipeline 0.3 a constant of the router's program, taken from Pipeline's SDK pinned with the router; [`pipescope-architecture.md`](pipescope-architecture.md), The integrator fee's configuration);
   - Aviary fee, at the rate the API built the swap with, or "none on this swap" when the input is not a fee mint;
   - the strategy's own fees and taxes: "included in the quote", since strategy metadata has no field for them;
   - the expected output and the minimum received after slippage.

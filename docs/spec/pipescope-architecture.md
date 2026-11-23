@@ -183,6 +183,16 @@ Top-pad's flow (`apps/web/src/components/coin/QuickTrade.tsx`, `prepareSwap` the
 4. The wallet signs and sends through Wallet Standard's `signAndSendTransaction`.
 5. The page sends the signature to the API, which waits for it to confirm (asking every 300 ms), reads it back, answers with the trade and a provisional order key, and hands it to the indexer, which later replaces it in place.
 
+As built in [#121](https://github.com/imDev2023/testing-pipeline/issues/121):
+
+- `GET /v1/quote` takes the amount typed and works the market amount back from it (`pipescope-screens.md`, The amount typed), `POST /v1/swaps/prepare` builds and simulates the swap for the trader named, and `POST /v1/trades` takes the signature; all three count against the 60-a-minute limit (`PIPESCOPE-90`), and a refusal from a strategy or the chain is a 422 carrying the failure decoded, its raw error and the program's log lines.
+- A quote's simulation is paid for by the fee wallet, which does not sign, so a quote works before the trader's wallet holds any SOL (`PIPESCOPE-113`).
+- The fast path gives up after 60 s, about a blockhash's life, and says the trade joins Trades once the indexer reads it if it lands; its provisional key is the trade's slot and event index with no place in its block, which the indexer's own row, sent to the market's live room, replaces (`PIPESCOPE-114`).
+- A prepared swap older than 45 s when the trader asks to sign is built and simulated again before the wallet is asked, since its blockhash would soon expire (`PIPESCOPE-115`).
+- The swap carries the strategy's quoted output in its `amount_out` argument, which exact-in does not read, as Pipeline's own builder does, so its router instruction is the hosted API's (`PIPESCOPE-93`).
+- `GET /v1/traders/{trader}/balances` reads the wallet's balance in up to four mints through RPC for the trade box, answering wrapped SOL with plain SOL, since a swap paying in it wraps SOL for the trader.
+- A mint with a transfer hook gets no quote until [hooked mints](https://github.com/imDev2023/testing-pipeline/issues/122) resolve its accounts.
+
 - Transfer-hook extra accounts are resolved by our own code for buys, sells and sweeps, from each mint's `ExtraAccountMetaList`, because neither Pipeline's SDK nor its Rust client does it ([How the containment hook works with the router and unlocks](https://github.com/imDev2023/testing-pipeline/issues/10)).
 - Custom actions and market creation are prepared and simulated the same way, with the SDK's generic builders (`buildActionInstruction`, `buildCreateMarketFromMetadata`) from the strategy's validated metadata after the discriminator check; a custom action is signed directly on the strategy, outside the router's protections.
 
@@ -196,7 +206,7 @@ Top-pad's flow (`apps/web/src/components/coin/QuickTrade.tsx`, `prepareSwap` the
 
 - The rate ([`pipescope.md`](pipescope.md), The integrator fee), the fee mints (wrapped SOL and the cluster's USDC mint) and the fee wallet's two token accounts are vars of `terminal-api` per environment in its `wrangler.jsonc`, so they change by a configuration deploy, with no code change; the fee wallet's key is never on a server ([`pipescope.md`](pipescope.md), The integrator fee).
 - The API returns the rate it built each swap with, so the trade box shows exactly that rate.
-- Pipeline's own fee is the router's setting, not ours: `terminal-api` reads it from the router's config account (cached up to 60 s) and returns it with every quote and on the fees endpoint, so the trade box, the Fees page, the Telegram bot and Canary's cost split never write it as a number (`PIPESCOPE-91`).
+- Pipeline's own fee is the router's setting, not ours: since Pipeline 0.3 the router keeps it as a constant of its program, not in its config account, so `terminal-api` takes it from Pipeline's SDK at the version pinned with the router (`PIPELINE_FEE_BPS`) and returns it with every quote and on the fees endpoint, so the trade box, the Fees page, the Telegram bot and Canary's cost split never write it as a number (`PIPESCOPE-91`, changed on 2026-11-23); a router release that changes it moves the SDK pin with it.
 
 ## Canary runner
 
@@ -266,7 +276,7 @@ Each is a named constant; the pages and the Telegram bot read what they show fro
 | Candle pruning | once a day | `PIPESCOPE-109` |
 | Candle prices written to; candles a request is served, by default and at most | 36 significant digits; 1,000 and 5,000 | `PIPESCOPE-107` |
 | Live-room batching | 100 ms | `PIPESCOPE-31` |
-| Fast path: confirmation poll | every 300 ms | `PIPESCOPE-33` |
+| Fast path: confirmation poll, and how long it waits | every 300 ms, 60 s | `PIPESCOPE-33`, `PIPESCOPE-114` |
 | Metadata fetcher limits and re-fetch interval | as [Metadata fetcher](#metadata-fetcher), every hour | `PIPESCOPE-36` |
 | Quote mint order | wrapped SOL, then the cluster's USDC, then the later mint of the pair | `PIPESCOPE-74` |
 | Token image types and size | PNG, JPEG or WebP, at most 1 MB | `PIPESCOPE-82` |

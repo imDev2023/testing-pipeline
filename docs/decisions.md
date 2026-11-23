@@ -1994,11 +1994,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-91: Pipeline's fee on the pages
 
 - Question: Where do the pages, the bot and Canary's cost split get Pipeline's own fee?
-- Answer: From the router's config account, read by `terminal-api` and returned with every quote and on the fees endpoint, so no page, message or check writes it as a number.
-- Alternatives: The 0.25% written into the trade box and the Fees page.
+- Answer: From `terminal-api`, which returns it with every quote and on the fees endpoint, taking it from Pipeline's SDK at the version pinned with the router, since Pipeline 0.3's router keeps it as a constant of its program and not in its config account; so no page, message or check writes it as a number.
+- Alternatives: The earlier default, the router's config account read by `terminal-api`, which since Pipeline 0.3 holds no fee; the 0.25% written into the trade box and the Fees page.
 - Specified in: [`docs/spec/pipescope-architecture.md`, The integrator fee's configuration](spec/pipescope-architecture.md#the-integrator-fees-configuration)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
 
 ### PIPESCOPE-92: One list of a strategy's instructions
@@ -2210,6 +2210,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: build-time constant
 - Status: default
 - Decided: 2026-11-23 in [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118)
+
+### PIPESCOPE-113: Who pays for a quote's simulation
+
+- Question: Which account pays the fee of the simulation behind a trade-box quote?
+- Answer: The fee wallet, which does not sign, so a quote works before the trader's wallet holds any SOL; it keeps a little devnet SOL for that.
+- Alternatives: The trader's wallet, which fails every quote for a wallet that has never held SOL.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-23 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
+
+### PIPESCOPE-114: How long the fast path waits
+
+- Question: How long does the trade fast path wait for a signature to confirm before it answers that it has not?
+- Answer: 60 s, about a blockhash's life, after which the page says the trade joins Trades once Aviary reads it, if it lands.
+- Alternatives: Waiting until the transaction's blockhash has expired by block height.
+- Specified in: [`docs/spec/pipescope-architecture.md`, One place for every value](spec/pipescope-architecture.md#one-place-for-every-value)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
+
+### PIPESCOPE-115: A prepared swap grown old
+
+- Question: What happens when the trader asks to sign a swap that was prepared a while ago?
+- Answer: A prepared swap older than 45 s is built and simulated again, and shown again, before the wallet is asked, since its blockhash would soon expire.
+- Alternatives: Letting the wallet send it and fail on an expired blockhash; rebuilding it on a timer while the review is open, which spends RPC credits while nobody acts.
+- Specified in: [`docs/spec/pipescope-screens.md`, One place for every value](spec/pipescope-screens.md#one-place-for-every-value)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
 
 ## Canary checks (CANARY)
 

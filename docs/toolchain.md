@@ -104,6 +104,8 @@ All under `~/.config/testing-pipeline/devnet/` (directory 700, files 600), never
 | Buy wall AMM program | `buy-wall-amm.json` | `BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6` | The program's address, for its first devnet deploy |
 | Containment hook program | `containment-hook.json` | `aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv` | The hook's address, for its first devnet deploy |
 | Lending AMM program | `lending-amm.json` | `Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG` | The program's address, for its first devnet deploy |
+| Aviary's fee wallet | `fee-wallet.json` | `9QyvxvMQQcDhRJG8qbrSL7KaXtfoMnfX37ny6XFRL3Eg` | Receives the integrator fee in its wrapped-SOL account `2aCTxP…vThn` and devnet-USDC account `6DEijY…ySwC` (`INTEGRATOR_FEE` in `apps/terminal-api/wrangler.jsonc`), and pays for quotes' simulations without signing (`PIPESCOPE-113`); Aviary never holds its key |
+| Aviary's test trader | `e2e-trader.json` | `E69PqdUigwXRBdCBR5LfkACb9f342QsRK8oRGGdtJnAW` | The Playwright test wallet's key (`PIPESCOPE-94`), read only by `pnpm --filter terminal-e2e swaps:devnet` |
 
 Each program keypair was passed to `new-strategy.sh`, so nothing went into `~/.config/pipeline/keys/`.
 `cargo build-sbf` also writes a `programs/target/deploy/<program>-keypair.json` (`tax_amm-keypair.json`, `buy_wall_amm-keypair.json`), which is not the program's key and is gitignored; deploy with `--program-id ~/.config/testing-pipeline/devnet/<program>.json`.
@@ -857,6 +859,11 @@ They read devnet, so they never run in CI.
 `wrangler dev`'s `workerd` reaches devnet only once LuLu allows its path, which differs in every worktree (`node_modules/.pnpm/@cloudflare+workerd-darwin-64@<version>/node_modules/@cloudflare/workerd-darwin-64/bin/workerd`, unsigned, so LuLu cannot allow it by signature).
 
 Passed on 2026-11-22 with Node 24.4.1 (#113): 36 tests, in 1.4 minutes against devnet and 1.2 minutes on the recorded fixtures.
+
+The trading path's checks (#121): `tests/devnet/src/trading-parity.test.ts` compares a quote and a prepared swap's router instruction with the hosted API's, and `pnpm --filter terminal-e2e swaps:devnet` (`E2E_SWAPS`, never in CI) buys with 0.1 SOL and sells back through the trade box on Pipeline's example constant-product market with the test trader's key, checking the fast path and the fee wallet; it writes the signatures to `tests/terminal-e2e/test-results/swaps.json`.
+The trade box's other tests (`src/trade.spec.ts`) never send, so they run on the recorded fixtures, where the test wallet holds the trader's address and no key.
+Record the fixtures on an empty database (`DATABASE_URL` naming a new one), or the recording lacks the history a fresh CI database asks for.
+The production build is checked for the test wallet with `pnpm --filter terminal-web check:no-test-wallet` after it is built.
 
 ## Known problems
 
