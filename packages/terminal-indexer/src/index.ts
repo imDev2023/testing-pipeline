@@ -8,6 +8,7 @@ import type { IndexResult, TransactionHandler } from "./handler";
 import { addResult } from "./result";
 
 export * from "./accounts";
+export * from "./candles";
 export * from "./decode";
 export * from "./handler";
 export * from "./history";

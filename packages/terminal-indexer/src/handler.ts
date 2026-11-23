@@ -4,6 +4,7 @@
 // re-index, and must write its rows once.
 import { sql } from "drizzle-orm";
 import { indexedTransactions, marketMints, markets, strategies, trades, type Db } from "terminal-db";
+import { foldTrade } from "./candles";
 import { DECODER_VERSION, decodeRouterEvents, type EventDecoder, type RawTransaction } from "./decode";
 
 /** What indexing wrote, counted by kind, and the markets whose accounts are to be read again because an event touched them. */
@@ -17,9 +18,14 @@ const blockDate = (raw: RawTransaction) => (raw.blockTime === null ? null : new 
 /**
  * The router's handler. `decode` and `decoderVersion` are the event decoder and its version; the
  * defaults are Pipeline's SDK and `DECODER_VERSION`, and tests pass an older decoder to see an
- * unknown event kept and indexed later.
+ * unknown event kept and indexed later. `candleSeconds` are the candle lengths each new swap is
+ * folded into (the API's config module, `CANDLES`).
  */
-export function pipelineHandler({ decode, decoderVersion = DECODER_VERSION }: { decode?: EventDecoder; decoderVersion?: number } = {}): TransactionHandler {
+export function pipelineHandler({
+  decode,
+  decoderVersion = DECODER_VERSION,
+  candleSeconds = [],
+}: { decode?: EventDecoder; decoderVersion?: number; candleSeconds?: readonly number[] } = {}): TransactionHandler {
   return async (db, raw) => {
     const result: IndexResult = { counts: {}, markets: [] };
     // A failed transaction changed nothing on chain, so it has no rows.
@@ -78,7 +84,7 @@ export function pipelineHandler({ decode, decoderVersion = DECODER_VERSION }: { 
           }
           case "Swap": {
             const s = event.data;
-            await tx
+            const [written] = await tx
               .insert(trades)
               .values({
                 signature,
@@ -100,7 +106,16 @@ export function pipelineHandler({ decode, decoderVersion = DECODER_VERSION }: { 
                 integratorFee: String(s.integratorFee),
                 unixTimestamp: s.unixTimestamp,
               })
-              .onConflictDoNothing();
+              .onConflictDoNothing()
+              .returning({ signature: trades.signature });
+            // Only a trade written now is folded, so a swap indexed again never adds to a candle twice.
+            if (written) {
+              await foldTrade(
+                tx as unknown as Db,
+                { market: s.market, inputMint: s.inputMint, outputMint: s.outputMint, netSent: s.netSent, received: s.received, at: Number(s.unixTimestamp), slot, blockIndex, eventIndex },
+                candleSeconds,
+              );
+            }
             touched.add(s.market);
             count("trades");
             break;

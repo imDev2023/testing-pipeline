@@ -53,6 +53,7 @@ export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
   return {
     reconcileRouter: async () => void (await indexer(env).reconcile(version)),
     registrySnapshot: async () => void (await indexer(env).snapshot(version)),
+    pruneCandles: async () => void (await indexer(env).prune(version)),
   };
 }
 

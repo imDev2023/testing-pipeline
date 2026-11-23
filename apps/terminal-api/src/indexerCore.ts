@@ -15,6 +15,7 @@ import {
   historySource,
   indexRegistry,
   pipelineHandler,
+  pruneCandles,
   readCursor,
   readRegistry,
   reconcileAccount,
@@ -28,6 +29,7 @@ import {
 } from "terminal-indexer";
 import { markets, strategies } from "terminal-db";
 import { isNull } from "drizzle-orm";
+import { CANDLES } from "./config";
 
 export const ROUTER = PIPELINE_PROGRAM_ADDRESS;
 
@@ -59,7 +61,7 @@ export class IndexerCore {
 
   constructor(private readonly deps: { rpcUrl: string; openDb: OpenDb; source?: HistorySource; handler?: TransactionHandler }) {
     this.source = deps.source ?? historySource(deps.rpcUrl);
-    this.handle = deps.handler ?? pipelineHandler();
+    this.handle = deps.handler ?? pipelineHandler({ candleSeconds: CANDLES.map((c) => c.seconds) });
   }
 
   /** Where reconciliation of the router stands, once this instance knows. */
@@ -126,6 +128,11 @@ export class IndexerCore {
       };
       return added;
     });
+  }
+
+  /** Drops candles past their length's retention (`CANDLES`, PIPESCOPE-30); returns how many went. */
+  prune(now?: number): Promise<number> {
+    return this.withDb((db) => pruneCandles(db, CANDLES, now));
   }
 
   /**

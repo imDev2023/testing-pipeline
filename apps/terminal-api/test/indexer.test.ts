@@ -5,11 +5,12 @@
 import { readFileSync } from "node:fs";
 import { encodeAccount, getStrategyCodec, PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { address } from "@solana/kit";
-import { createDb, markets, strategies, trades } from "terminal-db";
+import { candles, createDb, markets, strategies, trades } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { DECODER_VERSION, indexTransactions, pipelineHandler, type RawTransaction, type TransactionHandler } from "terminal-indexer";
 import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CANDLES } from "../src/config";
 import { IndexerCore } from "../src/indexerCore";
 
 const fixture = (name: string) => JSON.parse(readFileSync(`${import.meta.dirname}/../../../packages/terminal-indexer/test/fixtures/${name}.json`, "utf8")) as RawTransaction;
@@ -128,5 +129,24 @@ describe("the registry snapshot", () => {
     rpc.accounts.set("StrategyPdaB", { owner: PIPELINE_PROGRAM_ADDRESS, data: strategyAccount("BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6") });
     expect(await indexer.snapshot()).toEqual({ strategies: ["BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6"], markets: [] });
     expect(openDb).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("candles", () => {
+  it("are folded from each swap reconciliation indexes, at every length the config module lists", async () => {
+    rpc.history.push(swap);
+    await core().indexer.reconcile();
+    const lengths = (await reader.db.select({ seconds: candles.seconds }).from(candles)).map((c) => c.seconds).sort((a, b) => a - b);
+    expect(lengths).toEqual(CANDLES.map((c) => c.seconds));
+  });
+
+  it("past their retention are dropped by the daily prune, which leaves the rest", async () => {
+    rpc.history.push(swap);
+    const { indexer } = core();
+    await indexer.reconcile();
+    // The swap is from 2026-11-22; a week and a day later its 1 s candle has gone and the rest stay.
+    const deleted = await indexer.prune(swap.blockTime! + 8 * 86_400);
+    expect(deleted).toBe(1);
+    expect((await reader.db.select({ seconds: candles.seconds }).from(candles)).map((c) => c.seconds)).not.toContain(1);
   });
 });

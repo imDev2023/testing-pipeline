@@ -27,6 +27,8 @@ export const JOB_INTERVAL_MINUTES = {
   verifiedBuilds: 1,
   /** Re-fetching every strategy's metadata, since the document behind an unchanged URI can change. */
   metadataRefetch: 60,
+  /** Dropping candles past their length's retention (`CANDLES`), once a day, so the database wakes for it rarely (PIPESCOPE-107). */
+  pruneCandles: 24 * 60,
 } as const;
 
 export type JobName = keyof typeof JOB_INTERVAL_MINUTES;
@@ -35,17 +37,27 @@ export type JobName = keyof typeof JOB_INTERVAL_MINUTES;
 export const SOCKET_REOPEN_ALARM_MS = 15 * SECOND;
 export const SOCKET_CLOSE_AFTER_LAST_VIEWER_MS = 3 * MINUTE;
 
-/** Candle lengths in seconds and how long each is kept, in days; `null` keeps it forever (PIPESCOPE-30). Trades are kept forever. */
-export const CANDLES: readonly { seconds: number; keepDays: number | null }[] = [
-  { seconds: 1, keepDays: 7 },
-  { seconds: 15, keepDays: 30 },
-  { seconds: 60, keepDays: null },
-  { seconds: 5 * 60, keepDays: null },
-  { seconds: 15 * 60, keepDays: null },
-  { seconds: 60 * 60, keepDays: null },
-  { seconds: 4 * 60 * 60, keepDays: null },
-  { seconds: 24 * 60 * 60, keepDays: null },
+/**
+ * Candle lengths, each with the name the API's `interval` takes, and how long each is kept, in days;
+ * `null` keeps it forever (PIPESCOPE-30). Trades are kept forever.
+ */
+export const CANDLES: readonly { interval: string; seconds: number; keepDays: number | null }[] = [
+  { interval: "1s", seconds: 1, keepDays: 7 },
+  { interval: "15s", seconds: 15, keepDays: 30 },
+  { interval: "1m", seconds: 60, keepDays: null },
+  { interval: "5m", seconds: 5 * 60, keepDays: null },
+  { interval: "15m", seconds: 15 * 60, keepDays: null },
+  { interval: "1h", seconds: 60 * 60, keepDays: null },
+  { interval: "4h", seconds: 4 * 60 * 60, keepDays: null },
+  { interval: "1d", seconds: 24 * 60 * 60, keepDays: null },
 ];
+
+/**
+ * How many significant digits the API writes a price to (PIPESCOPE-107): candles keep each price
+ * exactly, so this is only how finely it is written out, well past what any page shows and past the
+ * 24 decimal places Pipeline's hosted API writes, so a parity check compares them exactly.
+ */
+export const PRICE_SIGNIFICANT_DIGITS = 36;
 
 /** How long a live room gathers events before it sends them (PIPESCOPE-31). */
 export const LIVE_ROOM_BATCH_MS = 100;
@@ -92,6 +104,8 @@ export const VOLUME_WINDOW_SECONDS = 24 * 60 * 60;
 export const PAGE_LIMITS = {
   markets: { default: 50, max: 200 },
   trades: { default: 40, max: 1000 },
+  /** The newest candles of one length a chart is given, and the most asked for at once (PIPESCOPE-107). */
+  candles: { default: 1000, max: 5000 },
 } as const;
 
 /** How stale a public cache may be (PIPESCOPE-32). */

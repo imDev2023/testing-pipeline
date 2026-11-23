@@ -69,6 +69,17 @@ export class Indexer extends DurableObject<Bindings> {
     return this.status();
   }
 
+  /** Drops candles past their retention, once a day. */
+  async prune(version?: string): Promise<number> {
+    this.checkVersion(version);
+    try {
+      return await this.indexer().prune();
+    } catch (e) {
+      this.failed("dropping candles past their retention", e);
+      throw e;
+    }
+  }
+
   status(): IndexerStatus {
     const cursor = this.core?.position() ?? null;
     return {
