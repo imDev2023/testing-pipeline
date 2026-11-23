@@ -12,6 +12,10 @@
 //! never pays out more than its real quote, is left over. The check then quotes a sale of
 //! that part first, or of the largest part of it that quotes, and compares what the sale
 //! takes out of the pool with the market's quote vault.
+//! A quote that pays out more than the quote vault really holds counts as refused (R2T-12):
+//! its swap could not pay it, so the search finds the largest sale the real quote can pay,
+//! and a strategy that quotes on a virtual reserve without capping the payout is judged as
+//! one that caps it.
 //!
 //! - Fail: never; the supply's holder has to sell.
 //! - Warn: the market cannot buy back all the supply outside its pool, and the part it
@@ -30,7 +34,7 @@ use serde_json::json;
 
 use crate::checks::readable::Trading;
 use crate::config::{OUTSIDE_SUPPLY_SEARCH_STEPS, OUTSIDE_SUPPLY_WARN_PPM};
-use crate::failure::Failure;
+use crate::failure::{Failure, FailureClass, Stage};
 use crate::market::{token_amount, Session};
 use crate::record::{Outcome, Verdict};
 use crate::sizes::share_of_vault_ppm;
@@ -154,9 +158,36 @@ fn mint_supply(svm: &LiteSVM, mint: &Pubkey) -> Option<u64> {
     })
 }
 
+/// What the strategy pays out of the pool for a sale of `amount` of `token` for `money`, as
+/// quoted; a quote paying out more than the money vault really holds is refused, since its
+/// swap could not pay it.
+fn quoted_payout(
+    session: &mut Session,
+    svm: &mut LiteSVM,
+    token: usize,
+    money: usize,
+    amount: u64,
+) -> Result<u64, Failure> {
+    let quote = session.probe(svm, token, money, amount)?;
+    let real = token_amount(svm, &session.market.vault(money)).unwrap_or(0);
+    if quote.strategy_amount_out > real {
+        return Err(Failure::plain(
+            Stage::Quote,
+            FailureClass::StrategyRefused,
+            &session.market.strategy(),
+            format!(
+                "the quote pays out {} of mint {money}, more than the {real} its vault really holds",
+                quote.strategy_amount_out
+            ),
+        ));
+    }
+    Ok(quote.strategy_amount_out)
+}
+
 /// The sale of `amount` of `token` for `money`, or, when the market refuses it, of the
 /// largest part of it that quotes, found by halving the range at most
-/// [`OUTSIDE_SUPPLY_SEARCH_STEPS`] times; the error when no part of it quotes.
+/// [`OUTSIDE_SUPPLY_SEARCH_STEPS`] times; the error when no part of it quotes. A quote that
+/// pays out more than the money vault really holds counts as refused ([`quoted_payout`]).
 fn largest_sale(
     session: &mut Session,
     svm: &mut LiteSVM,
@@ -164,12 +195,12 @@ fn largest_sale(
     money: usize,
     amount: u64,
 ) -> Result<Sale, Failure> {
-    let refused = match session.probe(svm, token, money, amount) {
-        Ok(quote) => {
+    let refused = match quoted_payout(session, svm, token, money, amount) {
+        Ok(taken) => {
             return Ok(Sale {
                 asked: amount,
                 sold: amount,
-                taken: quote.strategy_amount_out,
+                taken,
                 refused: None,
             })
         }
@@ -183,10 +214,10 @@ fn largest_sale(
             break;
         }
         let middle = low + (high - low) / 2;
-        match session.probe(svm, token, money, middle) {
-            Ok(quote) => {
+        match quoted_payout(session, svm, token, money, middle) {
+            Ok(taken) => {
                 low = middle;
-                best = Some(quote.strategy_amount_out);
+                best = Some(taken);
             }
             Err(_) => high = middle,
         }

@@ -1,23 +1,33 @@
-# Known vulnerabilities in our Rust dependencies (hardening finding H075 of the containment
-# hook, #74): `cargo audit` reads both lock files, the on-chain workspace's and Aviary's
-# native crates', against the RustSec advisory database, and fails on any vulnerability.
+# Known vulnerabilities in our dependencies (hardening findings H075 and R2T-14 of the
+# containment hook, #74).
+# `cargo audit` reads every tracked Cargo.lock (the on-chain workspace's, Aviary's native
+# crates', Canary's fixture strategy's and scripts/quote-devnet's) against the RustSec advisory
+# database, and fails on any vulnerability or unsound advisory.
 # Unmaintained-crate warnings are reported, not failed on: they come through Solana's and
 # LiteSVM's own dependencies, which we do not choose.
+# A lock file's own `.cargo/audit.toml` may ignore an advisory, each with the reason it cannot
+# reach that tool's users.
+# `pnpm audit --prod` reads pnpm-lock.yaml's production dependencies (among them the
+# @solana/kit and @solana-program packages the freeze gate and launch scripts load keypairs
+# through) against the npm advisory database.
 # It runs when a lock file changes, every day (a new advisory can land on a lock file that
-# did not change), and on demand.
+# did not change), and on demand; a failed daily run opens an issue, or comments on the open
+# one, since no pull request shows it.
 name: advisories
 
 on:
   pull_request:
     paths:
-      - programs/Cargo.lock
-      - crates/Cargo.lock
+      - "**/Cargo.lock"
+      - "**/.cargo/audit.toml"
+      - pnpm-lock.yaml
       - .github/workflows/advisories.yml
   push:
     branches: [main]
     paths:
-      - programs/Cargo.lock
-      - crates/Cargo.lock
+      - "**/Cargo.lock"
+      - "**/.cargo/audit.toml"
+      - pnpm-lock.yaml
       - .github/workflows/advisories.yml
   schedule:
     - cron: "41 6 * * *"
@@ -45,10 +55,47 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: cargo install cargo-audit --locked --version "$CARGO_AUDIT_VERSION"
       # The binary is called directly, not as `cargo audit`, so the workspaces' pinned Rust
-      # toolchains are not downloaded just to read their lock files.
-      - name: The on-chain workspace
-        working-directory: programs
-        run: ~/.cargo/bin/cargo-audit audit
-      - name: Aviary's native crates
-        working-directory: crates
-        run: ~/.cargo/bin/cargo-audit audit
+      # toolchains are not downloaded just to read their lock files. Every lock file is
+      # audited, and the step fails if any one fails.
+      - name: Every Cargo.lock
+        run: |
+          failed=0
+          for lock in $(git ls-files '*Cargo.lock'); do
+            echo "::group::$lock"
+            if ! (cd "$(dirname "$lock")" && ~/.cargo/bin/cargo-audit audit --deny unsound); then
+              echo "::error file=$lock::cargo audit failed on $lock"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: pnpm-lock.yaml's production dependencies
+        run: pnpm audit --prod
+
+  # A failed daily run is shown on no pull request, so it opens an issue, or comments on the
+  # one still open.
+  report:
+    name: report a failed daily audit
+    needs: audit
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="advisories: the daily dependency audit failed"
+          open="$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --title "$title" --body "The scheduled advisories workflow failed: $RUN_URL. A new advisory affects a tracked lock file; see the run for which."
+          fi

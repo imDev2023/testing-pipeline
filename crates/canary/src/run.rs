@@ -250,6 +250,13 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
     let (transferred, transferred_lacking) = measuring(&mut session, open, no_transfers, |s| {
         exit_transferred::measure(s, path, &sizes_measured)
     });
+    // Canary's own evidence on each contained mint, which `conformance`'s known-failure rule
+    // needs (R2T-10); a trade like any other, so it runs even when trading is closed and
+    // simply shows no refusal by the hook then.
+    let reference = sizes.sizes[0];
+    let (hook_probe, hook_probe_lacking) = measuring(&mut session, true, vec![], |s| {
+        conformance::probe_hook(s, path, reference)
+    });
     let no_queue = exit_queue::Measured { pairs: vec![] };
     let (queue, queue_lacking) = measuring(&mut session, open, no_queue, |s| {
         exit_queue::measure(s, path, &sizes_measured)
@@ -349,8 +356,8 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         context.record(
             checks::CONFORMANCE,
             gate(
-                &BTreeSet::new(),
-                conformance::run(&copy, options.swap.runs_router()),
+                &hook_probe_lacking,
+                conformance::run(&copy, options.swap.runs_router(), &hook_probe),
             ),
         ),
         context.record(

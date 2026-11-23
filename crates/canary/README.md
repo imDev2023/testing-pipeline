@@ -49,7 +49,8 @@ The seed is chosen at random once per run and every wallet of the run comes from
 - `src/sizes.rs`: the money side and the sizes; `src/bands.rs`: the pass and fail bands.
 - `src/clock.rs`: the clock positions, waits forward and the launch clock back, moving slot, epoch and Unix time together at the rates in `config.rs`.
 - `src/checks/`: each check as a measurement in the copy and a judgement that is a pure function of it.
-  `conformance.rs` counts `pipeline-check`'s `quote_matches_swap`, `exact_out_refund` and `round_trip` as known on a contained token's market when they fail only with the hook's `DestinationOwnerCanChange`, because `pipeline-check`'s own traders lack that extension; known until Pipeline's checker writes it.
+  `conformance.rs` counts `pipeline-check`'s `quote_matches_swap`, `exact_out_refund` and `round_trip` as known on a contained token's home market when they fail only with error 6023, because `pipeline-check`'s own traders lack that extension; known until Pipeline's checker writes it.
+  Since `pipeline-check`'s failure text does not name the program, its `probe_hook` first shows, in a fresh copy, that the mint's hook config names this market and that a buy into an account like `pipeline-check`'s is refused with 6023 by the containment hook itself.
   `exits.rs` holds what the checks over time and across wallets share: the reference amount they trade (the reference size, or its stand-in from `exit_sizes`), the swaps they commit for `quote_matches_swap`, and `could_not_sell_back`, which every exit record carries in its numbers (`CANARY-21`, `CANARY-38`); `timed.rs` judges the three checks over time against the present.
 - `src/failure.rs`: how a failure is named; `src/record.rs`: the records and the roll-up.
 - `src/http.rs`: the endpoint; `src/main.rs`: the command.

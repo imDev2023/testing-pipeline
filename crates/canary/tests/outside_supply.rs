@@ -72,6 +72,36 @@ fn a_launch_keeping_a_fifth_of_the_supply_outside_a_virtual_reserves_pool_warns(
     assert!(row["first"]["refused"].is_object(), "{row}");
 }
 
+/// R2T-12: a strategy whose quote pays out more than the output vault really holds (its swap
+/// would then fail) still has its outside supply judged by the sales it can pay: a quote
+/// beyond the quote vault counts as refused.
+#[test]
+fn a_quote_paying_more_than_the_real_reserve_counts_as_refused() {
+    let mut cluster = Cluster::new();
+    let market = cluster.virtual_reserve_market_in_mode(
+        common::mode::VIRTUAL_RESERVE_UNCAPPED,
+        SUPPLY,
+        SUPPLY / 5 * 4,
+    );
+
+    let record = record(&cluster, market.market);
+
+    assert_eq!(record.outcome, Outcome::Warn, "{}", record.reason);
+    let row = &record.numbers["mints"][0];
+    let all = &row["all"];
+    assert!(all["refused"].is_object(), "{row}");
+    assert!(
+        all["taken"].as_u64().unwrap() <= row["money_vault"].as_u64().unwrap(),
+        "{row}"
+    );
+    let unbacked = row["unbacked"].as_u64().unwrap();
+    let outside = row["outside"].as_u64().unwrap();
+    assert!(
+        (SUPPLY / 5..SUPPLY / 5 + outside / 1_000_000).contains(&unbacked),
+        "{row}"
+    );
+}
+
 #[test]
 fn a_virtual_reserve_seeded_with_the_whole_supply_passes() {
     let mut cluster = Cluster::new();

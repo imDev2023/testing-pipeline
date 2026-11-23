@@ -45,10 +45,12 @@ jobs:
             ^programs/|^packages/|^apps/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator|deploy-devnet|test-deploy-devnet)\.sh$|^scripts/workspace-programs\.py$
           # Canary's crates, the fixtures its tests load (the router's pin, Pipeline's test
           # programs at the rev programs/Cargo.toml pins, and the containment hook, whose rules
-          # Canary's checks meet on contained tokens), the scripts that fetch them, and this
-          # workflow.
+          # Canary's checks meet on contained tokens, with every build input of the hook: the
+          # crates it links, the workspace's lock file and toolchain, and the build scripts),
+          # the scripts that fetch them, and this workflow. scripts/check-canary-paths.py,
+          # which the canary job runs, fails when a build input of the hook is missing here.
           CANARY_PATHS: >-
-            ^crates/|^fixtures/pins\.env$|^programs/Cargo\.toml$|^programs/containment-hook/|^\.github/workflows/ci\.yml$|^scripts/(fetch-router|fetch-pipeline|install-toolchain|toolchain-env)\.sh$
+            ^crates/|^fixtures/pins\.env$|^programs/(Cargo\.toml|Cargo\.lock|rust-toolchain\.toml)$|^programs/(containment-hook|mint-rules|tax-amm)/|^\.github/workflows/ci\.yml$|^scripts/(fetch-router|fetch-pipeline|install-toolchain|toolchain-env|build-programs)\.sh$|^scripts/(workspace-programs|check-canary-paths)\.py$
           # Aviary's packages, the workspace files they install from, the lint config, and this
           # workflow. Aviary's own packages alone never wake the on-chain jobs.
           TERMINAL_PATHS: >-
@@ -256,6 +258,8 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: CANARY_PATHS covers every build input of the containment hook Canary loads
+        run: python3 -I scripts/check-canary-paths.py
       - name: Cache the Solana toolchain
         if: runner.environment == 'github-hosted'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

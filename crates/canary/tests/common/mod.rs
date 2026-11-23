@@ -53,6 +53,7 @@ pub mod mode {
     pub const LAUNCH_TAX: u8 = 3;
     pub const CLOSES: u8 = 4;
     pub const VIRTUAL_RESERVE: u8 = 5;
+    pub const VIRTUAL_RESERVE_UNCAPPED: u8 = 6;
 }
 
 fn repo_root() -> PathBuf {
@@ -477,8 +478,18 @@ impl Cluster {
     /// SOL, 30 SOL of virtual reserve, and `in_pool` of the token's `supply` in its vault, the
     /// rest held outside the pool by the admin.
     pub fn virtual_reserve_market(&mut self, supply: u64, in_pool: u64) -> Market {
+        self.virtual_reserve_market_in_mode(mode::VIRTUAL_RESERVE, supply, in_pool)
+    }
+
+    /// [`Cluster::virtual_reserve_market`] in the fixture strategy's `mode`, one of its
+    /// virtual reserve modes.
+    pub fn virtual_reserve_market_in_mode(
+        &mut self,
+        mode: u8,
+        supply: u64,
+        in_pool: u64,
+    ) -> Market {
         self.register_bytes(&FIXTURE, &fixture_program());
-        let mode = mode::VIRTUAL_RESERVE;
         let mint_a = self.wrapped_sol();
         let mint_b = self.create_mint(6);
         let state = Pubkey::find_program_address(

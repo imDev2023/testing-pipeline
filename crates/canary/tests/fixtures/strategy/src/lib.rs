@@ -11,6 +11,9 @@
 //! - [`VIRTUAL_RESERVE`]: the first mint's reserve is priced with [`VIRTUAL_RESERVE_A`] added,
 //!   as a launch on a virtual quote reserve is, and no trade pays out more of a mint than its
 //!   vault really holds.
+//! - [`VIRTUAL_RESERVE_UNCAPPED`]: priced as [`VIRTUAL_RESERVE`], but its quote does not cap
+//!   the payout at what the output vault really holds, so it quotes sales its swap cannot
+//!   pay (the router's transfer out of the vault then fails).
 //!
 //! Written for these tests from Pipeline's Apache-2.0 strategy interface; nothing in it comes
 //! from Pipeline's own programs.
@@ -37,6 +40,7 @@ pub const INSIDER_PAID_LESS: u8 = 2;
 pub const LAUNCH_TAX: u8 = 3;
 pub const CLOSES: u8 = 4;
 pub const VIRTUAL_RESERVE: u8 = 5;
+pub const VIRTUAL_RESERVE_UNCAPPED: u8 = 6;
 
 /// [`VIRTUAL_RESERVE`]'s virtual reserve of the first mint: 30 SOL, the containment launch's
 /// default (`docs/spec/containment-hook.md`).
@@ -191,7 +195,7 @@ fn output_for(
         return Err(ProgramError::Custom(TRADING_CLOSED));
     }
     let virtual_of = |index: u8| {
-        if state.mode == VIRTUAL_RESERVE && index == 0 {
+        if matches!(state.mode, VIRTUAL_RESERVE | VIRTUAL_RESERVE_UNCAPPED) && index == 0 {
             VIRTUAL_RESERVE_A
         } else {
             0
@@ -204,7 +208,7 @@ fn output_for(
     }
     let mut out =
         (amount as u128 * priced_out as u128 / (priced_in as u128 + amount as u128)) as u64;
-    if out > reserve_out {
+    if out > reserve_out && state.mode != VIRTUAL_RESERVE_UNCAPPED {
         msg!("the trade would pay out more than the vault holds");
         return Err(ProgramError::Custom(INSUFFICIENT_LIQUIDITY));
     }

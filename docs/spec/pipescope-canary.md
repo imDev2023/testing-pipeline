@@ -128,9 +128,13 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | `readable` | Calls `pipeline_market_info`, resolves accounts and quotes the smallest size in every direction | The strategy's current version cannot read the market's state: a **stranded market** | A direction resolves and then crashes or runs out of compute | The version reads the market; a market that reads but refuses every trade passes here and its trading checks are "not run" with the strategy's own error |
 | `conformance` | Runs `pipeline-check` on the copy and keeps its whole report | `pipeline-check` reports fail | It reports warn | It reports pass |
 
-- On a market with a mint our containment hook contains, `pipeline-check`'s `quote_matches_swap`, `exact_out_refund` and `round_trip` are known, not counted, when every failure they report is the hook's `DestinationOwnerCanChange` (6023).
+- On a contained mint's home market, `pipeline-check`'s `quote_matches_swap`, `exact_out_refund` and `round_trip` are known, not counted, when every failure they report is error 6023, the hook's `DestinationOwnerCanChange`.
   `pipeline-check`'s own traders lack the immutable owner extension, so the hook refuses to deliver the token to them; the record says so, lists them in `canary_known` and keeps the whole report, known until Pipeline's checker writes the immutable owner extension (`HOOK-47`).
   A known check that also fails for any other reason counts as usual.
+- `pipeline-check`'s failure text names the error number but not the program that raised it, and 6023 is other programs' number too (the buy wall AMM's `ExactOutNotSupported`, the tax AMM's `AlreadySeeded`, the router's `SetupPayerMisused`).
+  So the rule needs Canary's own evidence for every contained mint of the market: the hook's config `["config", mint]` names this market as the mint's home, and Canary's buy of the mint into an account written as `pipeline-check` writes it, without the immutable owner extension, fails with 6023 raised by the containment hook program itself.
+  Without that evidence the failures count; the record lists the evidence in `canary_hook_probe`.
+- With the known checks left out, `pipeline-check`'s `min_out_enforced`, `compute` and `dust_and_zero` still pass, but they measure only swaps that went through, so on such a market they covered only the sell direction; the reason says so and lists them in `canary_known_partial`.
 
 ### Exit test
 
@@ -180,6 +184,8 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 - `outside_supply` applies the same rule to every market, ours or anyone's (`CANARY-47`, `HOOK-50`).
   A market whose quote is all real buys back every token outside its pool, and so does a market on a virtual reserve seeded with the whole supply, since selling back every bought token returns its pool to where it started; what is left over is supply that never came out of the pool, on a market that never pays out more than its real quote, which is how a virtual reserve works.
   The containment launch's default, a fifth of the supply outside the pool on a 30 SOL virtual quote reserve, warns: sold first, that fifth takes all but dust of an ordinary buyer's quote.
+  A quote that pays out more than the market's quote vault really holds counts as refused, since its swap could not pay it, so a strategy whose quote on a virtual reserve is not capped at the real reserve is judged by the largest sale it can really pay, as one that caps it is.
+  The check still reads quotes, not swaps: a strategy whose quote stays within the real reserve but whose swap pays out differently is `quote_matches_swap`'s to find.
   The largest sale that quotes is found by halving the refused amount up to 20 times, to about a millionth of it.
 
 What `token_authorities` does with each authority, when the authority is a wallet:
