@@ -1,0 +1,146 @@
+{
+  "candidate": "7891f0a9e5e63b61571765a8823541d4c7fa9da573f98bed81cf1966225666ad",
+  "deployed": "a48b5e5962290aafe35ced955d0a8a8d6cb5cb63bd0be435fc87935d6c05db59",
+  "markets": [
+    {
+      "market_state": "BLWmdMTzYqAZqjtEFFtMrP75DdLRmsXsFYCvLCxVRkX",
+      "quotes": [
+        {
+          "amount": 7874717468517,
+          "input": 0,
+          "quote": 286667521
+        },
+        {
+          "amount": 304772839,
+          "input": 1,
+          "quote": 7565094503559
+        }
+      ],
+      "reserves": [
+        787471746851792,
+        477283912
+      ],
+      "status": "Open"
+    },
+    {
+      "market_state": "4zByVFMRfJZZQr9VATMsfiYatyKaXsvxQ9SSWfSHbXBz",
+      "quotes": [
+        {
+          "amount": 7999870670848,
+          "input": 0,
+          "quote": "InsufficientLiquidity"
+        },
+        {
+          "amount": 300004849,
+          "input": 1,
+          "quote": 7685326842529
+        }
+      ],
+      "reserves": [
+        799987067084831,
+        484993
+      ],
+      "status": "Open"
+    },
+    {
+      "market_state": "AmucMjc56zPB6tFgQeAhTExqZVY2KFQDeZwmrYQZGtnn",
+      "quotes": [
+        {
+          "amount": 7874717468517,
+          "input": 0,
+          "quote": 286667521
+        },
+        {
+          "amount": 304772839,
+          "input": 1,
+          "quote": 7565094503313
+        }
+      ],
+      "reserves": [
+        787471746851792,
+        477283913
+      ],
+      "status": "Open"
+    },
+    {
+      "market_state": "Cy8soyU52ZLTBQpeHdiDkW6aVbCjXeCsAGrkVkStmzyh",
+      "quotes": [
+        {
+          "amount": 7874717468517,
+          "input": 0,
+          "quote": 286667521
+        },
+        {
+          "amount": 304772839,
+          "input": 1,
+          "quote": 7565094503805
+        }
+      ],
+      "reserves": [
+        787471746851792,
+        477283911
+      ],
+      "status": "Open"
+    },
+    {
+      "market_state": "EE3ifuzvJGAtcY6xTxxr26ezaXG1cethHvA52R3r6x1U",
+      "quotes": [
+        {
+          "amount": 7749434937035,
+          "input": 0,
+          "quote": 291301979
+        },
+        {
+          "amount": 309700000,
+          "input": 1,
+          "quote": 7444737930994
+        }
+      ],
+      "reserves": [
+        774943493703585,
+        970000000
+      ],
+      "status": "Open"
+    },
+    {
+      "market_state": "FJ1PJovxT4Njfn3fkufxcKeCF8XtsPRAFLKadZZYXgDB",
+      "quotes": [
+        {
+          "amount": 1099448135,
+          "input": 0,
+          "quote": 4277573
+        },
+        {
+          "amount": 4547736,
+          "input": 1,
+          "quote": 1056219092
+        }
+      ],
+      "reserves": [
+        109944813545,
+        454773623
+      ],
+      "status": "Open"
+    },
+    {
+      "market_state": "GRiyMGsqQYLBW5Y6Hsusotts1x9A3M3hCjLozc2LuKVV",
+      "quotes": [
+        {
+          "amount": 7874717468517,
+          "input": 0,
+          "quote": 286667521
+        },
+        {
+          "amount": 304772839,
+          "input": 1,
+          "quote": 7565094503559
+        }
+      ],
+      "reserves": [
+        787471746851792,
+        477283912
+      ],
+      "status": "Open"
+    }
+  ]
+}
