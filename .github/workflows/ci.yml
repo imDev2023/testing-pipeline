@@ -43,11 +43,12 @@ jobs:
           # apps too), and this workflow.
           ONCHAIN_PATHS: >-
             ^programs/|^packages/|^apps/|^fixtures/pins\.env$|^\.github/workflows/ci\.yml$|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|^scripts/(build-programs|fetch-router|test-fetch-router|fetch-pipeline|install-toolchain|toolchain-env|local-validator|deploy-devnet|test-deploy-devnet)\.sh$|^scripts/workspace-programs\.py$
-          # Canary's crates, the fixtures its tests load (the router's pin, and Pipeline's test
-          # programs at the rev programs/Cargo.toml pins), the scripts that fetch them, and this
+          # Canary's crates, the fixtures its tests load (the router's pin, Pipeline's test
+          # programs at the rev programs/Cargo.toml pins, and the containment hook, whose rules
+          # Canary's checks meet on contained tokens), the scripts that fetch them, and this
           # workflow.
           CANARY_PATHS: >-
-            ^crates/|^fixtures/pins\.env$|^programs/Cargo\.toml$|^\.github/workflows/ci\.yml$|^scripts/(fetch-router|fetch-pipeline|install-toolchain|toolchain-env)\.sh$
+            ^crates/|^fixtures/pins\.env$|^programs/Cargo\.toml$|^programs/containment-hook/|^\.github/workflows/ci\.yml$|^scripts/(fetch-router|fetch-pipeline|install-toolchain|toolchain-env)\.sh$
           # Aviary's packages, the workspace files they install from, the lint config, and this
           # workflow. Aviary's own packages alone never wake the on-chain jobs.
           TERMINAL_PATHS: >-
