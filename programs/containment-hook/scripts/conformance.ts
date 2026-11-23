@@ -16,20 +16,34 @@ const SKIPPED = 'exact_out_refund';
  * The checks whose buys go into `pipeline-check`'s own trader accounts, which it writes without
  * the immutable owner extension every real Token-2022 associated token account carries: while a
  * token is contained the hook refuses those buys with `DestinationOwnerCanChange`, its error
- * 6023 (`HOOK-47`), so they fail until Pipeline's checker writes the extension. The tax AMM's
- * own 6023, `AlreadySeeded`, cannot arise in a swap, so `Custom(6023)` in a swap's failure is
- * the hook's refusal.
+ * 6023 (`HOOK-47`), so they fail until Pipeline's checker writes the extension. The checker's
+ * failure text names the error number, not the program that raised it, and 6023 is also the
+ * router's `SetupPayerMisused` and the buy wall AMM's `ExactOutNotSupported`; so `Custom(6023)`
+ * counts as the hook's refusal only with the launch script's own evidence, as Canary requires
+ * (R2T-10): a simulated router buy of the token into an account written as the checker writes
+ * its own, which the logs show the containment hook failing with `DestinationOwnerCanChange`.
  */
 const KNOWN_WHILE_CONTAINED = ['quote_matches_swap', 'round_trip'];
 const HOOK_REFUSAL = 'Custom(6023)';
 
+/** What the launch script knows of the market it judges a report of. */
+export type ConformanceContext = {
+    /** The token is contained, so its hook runs on every transfer of it. */
+    contained?: boolean;
+    /**
+     * The launch script's own simulated buy into an account without the immutable owner extension
+     * showed the containment hook itself failing with `DestinationOwnerCanChange` on this market.
+     */
+    hookRefusalShown?: boolean;
+};
+
 /**
  * Judges a `pipeline-check --json` report as tests/conformance.rs judges `check_market`: it
  * passes only when it is the report of `market`, `exact_out_refund` was skipped and every other
- * check passed, but for the known failures while the token is contained, which must fail and
- * only for the hook's refusal.
+ * check passed, but for the known failures while the token is contained, which must fail, only
+ * with error 6023, and only once the hook was shown raising it (`hookRefusalShown`).
  */
-export function judgeConformance(report: ConformanceReport, market: string, { contained = false }: { contained?: boolean } = {}): ConformanceVerdict {
+export function judgeConformance(report: ConformanceReport, market: string, { contained = false, hookRefusalShown = false }: ConformanceContext = {}): ConformanceVerdict {
     const problems: string[] = [];
     if (report.market.address !== market) problems.push(`the report is of market ${report.market.address}, not ${market}`);
     const passed = report.checks.filter((check) => check.status === 'pass').length;
@@ -42,6 +56,11 @@ export function judgeConformance(report: ConformanceReport, market: string, { co
             } else {
                 const other = otherFailure(check);
                 if (other !== undefined) problems.push(`${check.id} failed for another reason than the hook refusing the checker's own account (HOOK-47): ${other}`);
+                else if (!hookRefusalShown) {
+                    problems.push(
+                        `${check.id} failed with ${HOOK_REFUSAL}, but the containment hook was not shown raising it on this market: 6023 is also the router's SetupPayerMisused and the buy wall AMM's ExactOutNotSupported (HOOK-47)`,
+                    );
+                }
             }
         } else if (check.id === SKIPPED ? check.status !== 'skip' && check.status !== 'pass' : check.status !== 'pass') {
             problems.push(`${check.id} is ${check.status}: ${check.message ?? ''}`);

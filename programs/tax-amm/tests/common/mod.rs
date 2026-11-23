@@ -821,6 +821,112 @@ impl Env {
         self.simulate_meta(instruction)
     }
 
+    /// A Token-2022 account of `mint` for `owner` at a fresh keypair's address, with the
+    /// transfer hook account extension when the mint has a hook and, when `immutable_owner`,
+    /// the `ImmutableOwner` extension, created the way a wallet would create a non-associated
+    /// account.
+    pub fn keypair_token_2022_account(
+        &mut self,
+        owner: &Pubkey,
+        mint: &Pubkey,
+        immutable_owner: bool,
+    ) -> Pubkey {
+        use spl_token_2022_interface::extension::ExtensionType;
+        let account = Keypair::new();
+        let mut extensions = vec![];
+        if self.hook_program(mint).is_some() {
+            extensions.push(ExtensionType::TransferHookAccount);
+        }
+        if immutable_owner {
+            extensions.push(ExtensionType::ImmutableOwner);
+        }
+        let space = ExtensionType::try_calculate_account_len::<
+            spl_token_2022_interface::state::Account,
+        >(&extensions)
+        .unwrap();
+        let mut create = 0u32.to_le_bytes().to_vec();
+        create.extend_from_slice(
+            &self
+                .svm
+                .minimum_balance_for_rent_exemption(space)
+                .to_le_bytes(),
+        );
+        create.extend_from_slice(&(space as u64).to_le_bytes());
+        create.extend_from_slice(TOKEN_2022.as_ref());
+        let mut instructions = vec![Instruction::new_with_bytes(
+            client::SYSTEM_PROGRAM_ID,
+            &create,
+            vec![
+                AccountMeta::new(self.admin.pubkey(), true),
+                AccountMeta::new(account.pubkey(), true),
+            ],
+        )];
+        if immutable_owner {
+            instructions.push(
+                spl_token_2022_interface::instruction::initialize_immutable_owner(
+                    &TOKEN_2022,
+                    &account.pubkey(),
+                )
+                .unwrap(),
+            );
+        }
+        instructions.push(
+            spl_token_2022_interface::instruction::initialize_account3(
+                &TOKEN_2022,
+                &account.pubkey(),
+                mint,
+                owner,
+            )
+            .unwrap(),
+        );
+        self.send(&instructions, &[&account]).unwrap();
+        account.pubkey()
+    }
+
+    /// The evidence [`known_failure_is_the_hooks`] needs: a buy of the mint at `contained` in
+    /// `market` into a fresh keypair account without the immutable owner extension, written as
+    /// `pipeline-check` writes its traders' accounts, whose logs show the containment hook
+    /// program itself failing with `DestinationOwnerCanChange`. The error why not otherwise.
+    pub fn show_hook_refusal(
+        &mut self,
+        market: &Market,
+        contained: usize,
+    ) -> Result<HookRefusalShown, String> {
+        const BUY: u64 = 1_000_000;
+        let trader = self.funded_wallet(market, 10 * BUY);
+        let mint = market.mints[contained];
+        let account = self.keypair_token_2022_account(&trader.pubkey(), &mint, false);
+        let options = SwapOptions {
+            output_to: Some(account),
+            ..SwapOptions::default()
+        };
+        match self.swap_with(market, &trader, (1 - contained, contained), BUY, &options) {
+            Ok(_) => Err(format!(
+                "a buy of {mint} into {account}, an account without the immutable owner \
+                 extension, went through"
+            )),
+            Err(failure) => {
+                let hook_failed = format!(
+                    "Program {} failed: custom program error: {:#x}",
+                    containment_hook_id(),
+                    HOOK_REFUSAL_NUMBER
+                );
+                let named = format!(
+                    "Error Code: {HOOK_REFUSAL_NAME}. Error Number: {HOOK_REFUSAL_NUMBER}."
+                );
+                if failure.lines().any(|line| line == hook_failed) && failure.contains(&named) {
+                    Ok(HookRefusalShown(()))
+                } else {
+                    Err(format!(
+                        "a buy of {mint} into {account}, an account without the immutable owner \
+                         extension, failed, but not in the containment hook with \
+                         {HOOK_REFUSAL_NAME}:\n{failure}"
+                    ))
+                }
+            }
+        }
+    }
+
     /// A new wallet holding `amount` of each of the market's mints, plus some SOL.
     pub fn funded_wallet(&mut self, market: &Market, amount: u64) -> Keypair {
         let wallet = Keypair::new();
@@ -1054,7 +1160,7 @@ impl Env {
     }
 
     /// A swap's accounts as a terminal builds them, from `owner`'s associated token
-    /// accounts: the strategy accounts resolved (or `options.strategy_accounts`), then the
+    /// accounts (or `options.output_to`): the strategy accounts resolved (or `options.strategy_accounts`), then the
     /// output mint's transfer-hook accounts, and the input mint's hook accounts for the
     /// router.
     fn swap_accounts(
@@ -1067,8 +1173,9 @@ impl Env {
     ) -> Result<client::SwapAccounts, String> {
         let trader_input =
             pda::associated_token(owner, &market.mints[input], &market.token_programs[input]);
-        let trader_output =
-            pda::associated_token(owner, &market.mints[output], &market.token_programs[output]);
+        let trader_output = options.output_to.unwrap_or_else(|| {
+            pda::associated_token(owner, &market.mints[output], &market.token_programs[output])
+        });
         let mut strategy_accounts = match &options.strategy_accounts {
             Some(accounts) => accounts.clone(),
             None => self.resolve_accounts(market, &exact_in(input, output, amount_in))?,
@@ -1253,6 +1360,8 @@ pub struct SwapOptions {
     pub mode: Option<TradeMode>,
     /// The strategy accounts to pass instead of resolving them.
     pub strategy_accounts: Option<Vec<AccountMeta>>,
+    /// The output account to pay into instead of the trader's associated token account.
+    pub output_to: Option<Pubkey>,
 }
 
 /// The buy and sell tax a market's tax authority last set: its pending rates while a change
@@ -1605,17 +1714,31 @@ pub fn write_token_account(
     Ok(address)
 }
 
-/// The containment hook's refusal of a destination whose owner can change, as a failed swap's
-/// text shows it: its error 6023 (`DestinationOwnerCanChange`); the tax AMM's own 6023,
-/// `AlreadySeeded`, cannot arise in a swap.
+/// The containment hook's refusal of a destination whose owner can change: its error
+/// `DestinationOwnerCanChange`, number 6023, and how a failed swap's text shows it. The number
+/// alone does not say the hook raised it, since 6023 is also the router's `SetupPayerMisused`
+/// and the buy wall AMM's `ExactOutNotSupported`: [`Env::show_hook_refusal`] gives that
+/// evidence.
+pub const HOOK_REFUSAL_NUMBER: u32 = 6023;
+pub const HOOK_REFUSAL_NAME: &str = "DestinationOwnerCanChange";
 pub const HOOK_REFUSAL: &str = "Custom(6023)";
+
+/// Evidence, made only by [`Env::show_hook_refusal`], that on a market the containment hook
+/// itself refuses a buy into an account written as `pipeline-check` writes its traders'.
+#[derive(Debug)]
+pub struct HookRefusalShown(());
 
 /// Whether a `pipeline-check` check known to fail on a market with a contained mint, because
 /// its buys go into the checker's own trader accounts, which lack the immutable owner extension
 /// every real associated token account has (`HOOK-47`), failed only for that: every swap of
 /// `quote_matches_swap` that did not match, and every trip of `round_trip` that errored, failed
-/// with the hook's refusal, so no real mismatch hides behind the first one its message names.
-pub fn known_failure_is_the_hooks(check: &pipeline_check::CheckResult) -> Result<(), String> {
+/// with error 6023, so no real mismatch hides behind the first one its message names, and the
+/// hook was shown raising 6023 on the market (`_shown`), since the checker's text names the
+/// number but not the program.
+pub fn known_failure_is_the_hooks(
+    check: &pipeline_check::CheckResult,
+    _shown: &HookRefusalShown,
+) -> Result<(), String> {
     let (rows, failed): (&str, fn(&serde_json::Value) -> bool) = match check.id.as_str() {
         "quote_matches_swap" => ("swaps", |row| {
             row["matched"] == serde_json::Value::Bool(false)

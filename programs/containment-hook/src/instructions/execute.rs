@@ -44,9 +44,9 @@ pub struct Execute<'info> {
     /// The mint.
     /// CHECK: the handler checks it is the config's mint and the source's.
     pub mint: UncheckedAccount<'info>,
-    /// The destination token account.
-    /// CHECK: its address is compared with the allowed accounts, and any other destination
-    /// is checked to be a Token-2022 account of the mint whose owner can never change.
+    /// The destination token account: its address is compared with the allowed accounts, and
+    /// any other destination is checked to be a Token-2022 account whose owner can never change.
+    /// CHECK: the handler checks its address, or its mint, owner and immutable owner extension.
     pub destination: UncheckedAccount<'info>,
     /// The source's owner or delegate.
     /// CHECK: not read; who signs is Token-2022's to check.

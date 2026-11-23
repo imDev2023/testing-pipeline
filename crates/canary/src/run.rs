@@ -251,11 +251,11 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         exit_transferred::measure(s, path, &sizes_measured)
     });
     // Canary's own evidence on each contained mint, which `conformance`'s known-failure rule
-    // needs (R2T-10); a trade like any other, so it runs even when trading is closed and
+    // needs (R2T-10), paid in the money mint the reference size is in; a trade like any other, so it runs even when trading is closed and
     // simply shows no refusal by the hook then.
     let reference = sizes.sizes[0];
     let (hook_probe, hook_probe_lacking) = measuring(&mut session, true, vec![], |s| {
-        conformance::probe_hook(s, path, reference)
+        conformance::probe_hook(s, path, reference, money)
     });
     let no_queue = exit_queue::Measured { pairs: vec![] };
     let (queue, queue_lacking) = measuring(&mut session, open, no_queue, |s| {

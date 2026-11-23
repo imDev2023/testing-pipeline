@@ -138,6 +138,15 @@ fn conformance_counts_pipeline_checks_trades_refused_for_its_traders_accounts_as
     );
 }
 
+/// The index of the market's wrapped SOL, the run's money mint on these markets.
+fn money(copy: &Copy) -> usize {
+    copy.market
+        .mints
+        .iter()
+        .position(|mint| mint.address == common::WSOL)
+        .expect("a wrapped SOL mint")
+}
+
 /// The home market's copy, pipeline-check's report on it, and Canary's own probe of the
 /// containment hook on it.
 fn copy_and_report() -> (Copy, Report, Vec<conformance::HookEvidence>) {
@@ -157,7 +166,7 @@ fn copy_and_report() -> (Copy, Report, Vec<conformance::HookEvidence>) {
     let mut source = SvmSource::new(cluster.svm.clone());
     let mut session = Session::new(&copy, &mut source, vec![], Seed::random());
     // 0.01 SOL, the first size of the run's ladder on this market.
-    let evidence = conformance::probe_hook(&mut session, &ThroughRouter, 10_000_000);
+    let evidence = conformance::probe_hook(&mut session, &ThroughRouter, 10_000_000, money(&copy));
     (copy, report, evidence)
 }
 
@@ -269,4 +278,44 @@ fn a_6023_from_another_program_is_not_excused() {
 
     assert_eq!(verdict.outcome, Outcome::Fail, "{}", verdict.reason);
     assert!(verdict.numbers.get("canary_known").is_none());
+}
+
+/// The probe pays with the run's money mint, which `amount` is sized in, when that is not the
+/// contained mint; else with the first other mint. On a market of more than two mints the first
+/// other mint need not be the money mint.
+#[test]
+fn the_hook_probe_pays_with_the_runs_money_mint() {
+    assert_eq!(conformance::probe_money(3, 0, 2), Some(2));
+    assert_eq!(conformance::probe_money(3, 1, 2), Some(2));
+    assert_eq!(conformance::probe_money(3, 2, 0), Some(0));
+    // The money mint is the contained one: the first other mint.
+    assert_eq!(conformance::probe_money(3, 2, 2), Some(0));
+    assert_eq!(conformance::probe_money(2, 0, 0), Some(1));
+    assert_eq!(conformance::probe_money(1, 0, 0), None);
+}
+
+/// On the home market given a third mint, the probe paid in wrapped SOL, the run's money mint,
+/// still shows the hook refusing the buy.
+#[test]
+fn the_hook_probe_on_a_three_mint_home_market_shows_the_hooks_refusal() {
+    let mut cluster = Cluster::new();
+    let market = cluster.contained_home_market();
+    cluster.add_third_mint(&market, 100 * common::SOL);
+    cluster.pass_time(2 * DAY);
+    let copy = Copy::build(
+        &mut SvmSource::new(cluster.svm.clone()),
+        market.market,
+        &CheckOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(copy.market.len(), 3);
+    let money = money(&copy);
+    let mut source = SvmSource::new(cluster.svm.clone());
+    let mut session = Session::new(&copy, &mut source, vec![], Seed::random());
+
+    let evidence = conformance::probe_hook(&mut session, &ThroughRouter, 10_000_000, money);
+
+    assert_eq!(evidence.len(), 1, "{evidence:?}");
+    assert!(evidence[0].home_market, "{evidence:?}");
+    assert!(evidence[0].refused_by_the_hook(), "{evidence:?}");
 }

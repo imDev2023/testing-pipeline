@@ -83,11 +83,26 @@ impl HookEvidence {
     }
 }
 
+/// The mint a probe of the contained mint `token` pays with, on a market of `len` mints: the
+/// run's money mint `money`, which the probe's amount is sized in, unless that is `token`
+/// itself, then the first other mint; `None` on a market with no other mint.
+pub fn probe_money(len: usize, token: usize, money: usize) -> Option<usize> {
+    if money != token && money < len {
+        return Some(money);
+    }
+    (0..len).find(|i| *i != token)
+}
+
 /// For each mint of the market our containment hook contains, whether its config names this
 /// market and how a buy of it into an account without the immutable owner extension, as
 /// `pipeline-check` writes its traders' accounts, fails, each in a fresh copy; `amount` is
-/// the buy, in the other mint.
-pub fn probe_hook(session: &mut Session, path: &dyn SwapPath, amount: u64) -> Vec<HookEvidence> {
+/// the buy, in the run's money mint `money` ([`probe_money`]).
+pub fn probe_hook(
+    session: &mut Session,
+    path: &dyn SwapPath,
+    amount: u64,
+    money: usize,
+) -> Vec<HookEvidence> {
     let market = session.market.clone();
     let mut evidence = vec![];
     for token in 0..market.len() {
@@ -95,7 +110,7 @@ pub fn probe_hook(session: &mut Session, path: &dyn SwapPath, amount: u64) -> Ve
         if mint.transfer_hook_program() != Some(CONTAINMENT_HOOK_PROGRAM) {
             continue;
         }
-        let Some(money) = (0..market.len()).find(|i| *i != token) else {
+        let Some(money) = probe_money(market.len(), token, money) else {
             continue;
         };
         let mut svm = session.fresh();

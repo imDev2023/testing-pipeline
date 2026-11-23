@@ -8,7 +8,8 @@
 //! (`HOOK-47`): the hook lets a contained token go only into an account whose owner can never
 //! change, and every real Token-2022 associated token account carries that extension, so on
 //! chain a buy into one passes; the checker's own accounts lack it, so its buys are refused.
-//! Those two must fail for exactly that reason, and every other check must pass.
+//! Those two must fail for exactly that reason, shown by a buy of our own into an account like
+//! the checker's, which the logs show the hook refusing, and every other check must pass.
 
 mod support;
 
@@ -34,6 +35,21 @@ fn a_home_market_passes_every_check_but_the_two_the_checkers_own_accounts_fail()
             anchor_lang::error::ERROR_CODE_OFFSET + HookError::DestinationOwnerCanChange as u32
         )
     );
+    assert_eq!(
+        HOOK_REFUSAL_NAME,
+        format!("{:?}", HookError::DestinationOwnerCanChange)
+    );
+    // 6023 is other programs' number too, so the known failures count as the hook's only once
+    // a buy into an account like the checker's own shows the hook itself raising it.
+    let contained = launched
+        .market
+        .mints
+        .iter()
+        .position(|mint| *mint == launched.mint)
+        .unwrap();
+    let shown = env
+        .show_hook_refusal(&launched.market, contained)
+        .unwrap_or_else(|why| panic!("{why}"));
     for id in KNOWN_FAILURES {
         let check = report
             .checks
@@ -45,7 +61,7 @@ fn a_home_market_passes_every_check_but_the_two_the_checkers_own_accounts_fail()
             "{id} passed: Pipeline's checker may now write the immutable owner extension, so \
              HOOK-47's known failures can go"
         );
-        if let Err(reason) = known_failure_is_the_hooks(check) {
+        if let Err(reason) = known_failure_is_the_hooks(check, &shown) {
             panic!("{reason}");
         }
     }

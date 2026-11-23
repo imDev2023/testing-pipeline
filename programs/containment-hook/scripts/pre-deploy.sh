@@ -46,6 +46,8 @@ if [ -d "$dir" ] && [ -n "$(ls -A "$dir")" ]; then
   exit 2
 fi
 mkdir -p "$dir"
+# Absolute from here on: the gate's cargo test runs from programs/, not from here.
+dir="$(CDPATH= cd -- "$dir" && pwd)"
 snapshot="$dir/snapshot"
 # An RPC or transport error stops the copy, and with it the deploy; it never reads as "not deployed".
 python3 -I "$ROOT/programs/containment-hook/scripts/gate_snapshot.py" --url "$url" --program "$program" --out "$snapshot"

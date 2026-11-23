@@ -73,9 +73,11 @@ const refusedWith = (errors: Record<string, string[]>) => ({
 });
 const bothRefused = refusedWith({ quote_matches_swap: [refusal], round_trip: [refusal] });
 
+const shown = { contained: true, hookRefusalShown: true };
+
 test("on a contained market, the checker's two known failures pass when they fail for the hook's refusal", () => {
     const passed = bothRefused.checks.filter((check: { status: string }) => check.status === 'pass').length;
-    assert.deepEqual(judgeConformance(bothRefused, market, { contained: true }), {
+    assert.deepEqual(judgeConformance(bothRefused, market, shown), {
         ok: true,
         passed,
         skipped: ['exact_out_refund'],
@@ -86,11 +88,11 @@ test("on a contained market, the checker's two known failures pass when they fai
 test('on a contained market, a known check failing for another reason, or passing, is refused', () => {
     // A second swap failing for another reason, behind a first one the hook refused.
     const hidden = refusedWith({ quote_matches_swap: [refusal], round_trip: [refusal, 'InstructionError(0, Custom(6002))'] });
-    const verdict = judgeConformance(hidden, market, { contained: true });
+    const verdict = judgeConformance(hidden, market, shown);
     assert.equal(verdict.ok, false);
     assert.match((verdict as { problems: string[] }).problems[0]!, /^round_trip failed for another reason .*Custom\(6002\)/);
     const onlyOne = refusedWith({ quote_matches_swap: [refusal] });
-    assert.deepEqual(judgeConformance(onlyOne, market, { contained: true }), {
+    assert.deepEqual(judgeConformance(onlyOne, market, shown), {
         ok: false,
         problems: ['round_trip is pass: pipeline-check may now write the immutable owner extension, so HOOK-47\'s known failures can go'],
     });
@@ -98,4 +100,21 @@ test('on a contained market, a known check failing for another reason, or passin
 
 test('after the unlock, the known failures are failures again', () => {
     assert.equal(judgeConformance(bothRefused, market, { contained: false }).ok, false);
+    assert.equal(judgeConformance(bothRefused, market, { contained: false, hookRefusalShown: true }).ok, false);
+});
+
+// Error 6023 is not only the hook's: it is also the router's SetupPayerMisused and the buy wall
+// AMM's ExactOutNotSupported, and pipeline-check's failure text names the number, not the
+// program. So the known failures are accepted only with the launch script's own evidence that
+// the hook raises it: a simulated buy into an account written as the checker writes its own.
+test("on a contained market, the known failures are refused without evidence that the hook raised them", () => {
+    const why = (id: string) => `${id} failed with Custom(6023), but the containment hook was not shown raising it on this market: 6023 is also the router's SetupPayerMisused and the buy wall AMM's ExactOutNotSupported (HOOK-47)`;
+    assert.deepEqual(judgeConformance(bothRefused, market, { contained: true }), {
+        ok: false,
+        problems: [why('quote_matches_swap'), why('round_trip')],
+    });
+    assert.deepEqual(judgeConformance(bothRefused, market, { contained: true, hookRefusalShown: false }), {
+        ok: false,
+        problems: [why('quote_matches_swap'), why('round_trip')],
+    });
 });

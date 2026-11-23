@@ -1910,6 +1910,58 @@ fn sos_r2t06_a_stale_snapshot_folder_is_refused() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// `pre-deploy.sh` given a relative `HOOK_GATE_DIR` passes absolute paths on: the gate's
+/// `cargo test` runs from `programs/`, where a relative snapshot or report path would name
+/// another folder. A stand-in `python3` records what the snapshot step was given and stops the
+/// script there, before it needs a cluster.
+#[test]
+fn a_relative_gate_folder_is_passed_on_as_an_absolute_path() {
+    let cwd = temp_folder("relative");
+    let bin = cwd.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let args = cwd.join("python3-args");
+    let python = bin.join("python3");
+    std::fs::write(
+        &python,
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$PYTHON_ARGS\"\nexit 3\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let run = std::process::Command::new("bash")
+        .arg(script("pre-deploy.sh"))
+        .args(["--url", "http://127.0.0.1:9", "--so"])
+        .arg(script("pre-deploy.sh"))
+        .args(["--program", &hook_id().to_string()])
+        .current_dir(&cwd)
+        .env("HOOK_GATE_DIR", "gate")
+        .env("PYTHON_ARGS", &args)
+        .env("PATH", path)
+        .output()
+        .expect("bash");
+    assert_eq!(run.status.code(), Some(3), "{run:?}");
+    let given = std::fs::read_to_string(&args).unwrap();
+    let given: Vec<&str> = given.lines().collect();
+    let out = given
+        .iter()
+        .position(|arg| *arg == "--out")
+        .map(|i| Path::new(given[i + 1]))
+        .unwrap_or_else(|| panic!("no --out in {given:?}"));
+    assert!(out.is_absolute(), "--out {}", out.display());
+    assert_eq!(out.file_name().unwrap(), "snapshot");
+    assert_eq!(
+        std::fs::canonicalize(out.parent().unwrap()).unwrap(),
+        std::fs::canonicalize(cwd.join("gate")).unwrap()
+    );
+    std::fs::remove_dir_all(&cwd).unwrap();
+}
+
 /// H002: of a contained mint's Token-2022 accounts, the gate reports the balances in accounts
 /// without `ImmutableOwner`, other than the home market's vault and fee account, and counts
 /// what they all hold.

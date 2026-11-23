@@ -19,24 +19,36 @@ use tax_amm::InitParams;
 const KNOWN_ON_CONTAINED: [&str; 2] = ["quote_matches_swap", "round_trip"];
 
 fn check(env: &Env, market: &Market, options: &CheckOptions, what: &str) {
-    check_with_known(env, market, options, what, &[]);
+    let report = check_market(&env.svm, market.market, options);
+    println!("{what}:\n{}", report.to_text());
+    judge(&report, what, &[], None);
 }
 
-/// [`check`] on a market with a contained mint: the [`KNOWN_ON_CONTAINED`] checks must fail,
-/// and only with the containment hook's `DestinationOwnerCanChange` (its error 6023).
-fn check_contained(env: &Env, market: &Market, options: &CheckOptions, what: &str) {
-    check_with_known(env, market, options, what, &KNOWN_ON_CONTAINED);
-}
-
-fn check_with_known(
-    env: &Env,
+/// [`check`] on a market with a contained mint at `contained_index`: the [`KNOWN_ON_CONTAINED`]
+/// checks must fail, only with error 6023, and only once a buy into an account like the
+/// checker's own shows the containment hook itself raising it as `DestinationOwnerCanChange`,
+/// since 6023 is other programs' number too.
+fn check_contained(
+    env: &mut Env,
     market: &Market,
+    contained_index: usize,
     options: &CheckOptions,
     what: &str,
-    known: &[&str],
 ) {
     let report = check_market(&env.svm, market.market, options);
     println!("{what}:\n{}", report.to_text());
+    let shown = env
+        .show_hook_refusal(market, contained_index)
+        .unwrap_or_else(|why| panic!("{what}: {why}"));
+    judge(&report, what, &KNOWN_ON_CONTAINED, Some(&shown));
+}
+
+fn judge(
+    report: &pipeline_check::Report,
+    what: &str,
+    known: &[&str],
+    shown: Option<&HookRefusalShown>,
+) {
     for id in known {
         let check = report.checks.iter().find(|check| check.id == *id).unwrap();
         assert!(
@@ -44,7 +56,8 @@ fn check_with_known(
             "{what}: {id} passed, so Pipeline's checker may now write the immutable owner \
              extension and HOOK-47's known failures can go"
         );
-        if let Err(reason) = known_failure_is_the_hooks(check) {
+        let shown = shown.expect("known failures are accepted only with the hook's refusal shown");
+        if let Err(reason) = known_failure_is_the_hooks(check, shown) {
             panic!("{what}: {reason}");
         }
     }
@@ -124,11 +137,30 @@ fn a_seeded_market_with_a_contained_mint_passes_every_check() {
     let mut env = Env::new();
     let market = env.contained_market(1, [100_000_000_000, 200_000_000_000]);
     check_contained(
-        &env,
+        &mut env,
         &market,
+        1,
         &CheckOptions::default(),
         "a contained mint on side 1",
     );
+}
+
+#[test]
+fn the_hooks_refusal_is_not_shown_on_a_market_whose_mint_has_no_hook() {
+    // The evidence the known failures need is the hook's own refusal: a buy into an account
+    // without the immutable owner extension, of a Token-2022 mint with no hook, goes through.
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN_2022), TOKEN_2022),
+        (env.create_mint(&TOKEN), TOKEN),
+    ];
+    let market = env.seeded_market(
+        mints,
+        &params(1, 300, 500),
+        [100_000_000_000, 200_000_000_000],
+    );
+    let why = env.show_hook_refusal(&market, 0).unwrap_err();
+    assert!(why.contains("went through"), "{why}");
 }
 
 #[test]

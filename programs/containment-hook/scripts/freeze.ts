@@ -9,7 +9,7 @@
 
 import { createHash } from 'node:crypto';
 
-import { AccountRole, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, type Address, type Instruction } from '@solana/kit';
+import { AccountRole, address, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, type Address, type Instruction } from '@solana/kit';
 import { findAssociatedTokenPda, TOKEN_2022_PROGRAM_ADDRESS } from '@solana-program/token-2022';
 
 import { findConfigPda, findExtraAccountMetasPda, findUnlockPda, MAX_UNLOCK_DEADLINE_SECS, type Config } from './client/index.ts';
@@ -334,14 +334,67 @@ export function recordedMints(sources: { source: string; mints: string[] }[]): M
     return recorded;
 }
 
+/** A recorded mint without a config in the census: the mint, when it is an address, and why. */
+export type MissingRecorded = { mint: Address | null; message: string };
+
 /**
  * A refusal for each recorded mint without a config in the census: an upgraded hook could repoint
  * a mint's hook fields and close its config, which a census of live configs alone would not see.
+ * A record naming something that is not an address is refused too, with no mint to look up.
  */
-export function missingRecorded(recorded: Map<string, string[]>, configMints: Set<string>): string[] {
+export function missingRecorded(recorded: Map<string, string[]>, configMints: Set<string>): MissingRecorded[] {
     return [...recorded]
         .filter(([mint]) => !configMints.has(mint))
-        .map(([mint, sources]) => `mint ${mint}, recorded in ${sources.join(' and ')}, has no config in the census`);
+        .map(([mint, sources]) => {
+            const message = `mint ${mint}, recorded in ${sources.join(' and ')}, has no config in the census`;
+            try {
+                return { mint: address(mint), message };
+            } catch {
+                return { mint: null, message };
+            }
+        });
+}
+
+/**
+ * [`missingRecorded`]'s refusals, each saying whether the mint's config PDA under `hook` exists
+ * (`configExists`, the cluster's answer), so a census that missed a live config reads apart from
+ * a config that was closed.
+ */
+export async function missingRecordedRefusals(
+    recorded: Map<string, string[]>,
+    configMints: Set<string>,
+    hook: Address,
+    configExists: (configPda: Address) => Promise<boolean>,
+): Promise<string[]> {
+    const refusals: string[] = [];
+    for (const { mint, message } of missingRecorded(recorded, configMints)) {
+        if (mint === null) {
+            refusals.push(`${message} (and is not an address, so it has no config PDA)`);
+            continue;
+        }
+        const [configPda] = await findConfigPda({ mint }, { programAddress: hook });
+        refusals.push(`${message} (its config PDA ${configPda} ${(await configExists(configPda)) ? 'exists, so the census missed it' : 'does not exist'})`);
+    }
+    return refusals;
+}
+
+/**
+ * The validation accounts of the census that no config's mint derives (`configValidations`, one
+ * per config read, whether the gate accepted the config or refused it), sorted: the orphans. A
+ * config refused early keeps its validation account out of this list, so it is not reported
+ * twice.
+ */
+export function orphanValidations(validations: Set<string>, configValidations: string[]): string[] {
+    const claimed = new Set(configValidations);
+    return [...validations].filter((validation) => !claimed.has(validation)).sort();
+}
+
+/**
+ * `key`, or the signer among `known` with its address: kit refuses two signer objects with one
+ * address in a transaction, so a `--payer` naming an `--authority` reuses the authority's.
+ */
+export function reuseByAddress<T extends { address: string }>(key: T, known: readonly T[]): T {
+    return known.find((candidate) => candidate.address === key.address) ?? key;
 }
 
 /** The contained mints `launch.ts` recorded in deployments/<cluster>-demo-containment-hook.json. */

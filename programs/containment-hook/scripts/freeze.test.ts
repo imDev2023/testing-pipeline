@@ -9,9 +9,9 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { getAddressEncoder, type Address } from '@solana/kit';
+import { address, getAddressEncoder, type Address } from '@solana/kit';
 
-import { findExtraAccountMetasPda, getConfigDecoder } from './client/index.ts';
+import { findConfigPda, findExtraAccountMetasPda, getConfigDecoder } from './client/index.ts';
 import {
     BPF_UPGRADEABLE_LOADER,
     chainFacts,
@@ -27,8 +27,11 @@ import {
     mintsOfGateReport,
     mintsOfSnapshot,
     missingRecorded,
+    missingRecordedRefusals,
+    orphanValidations,
     programDataAddressOf,
     recordedMints,
+    reuseByAddress,
     UNSET,
     upgradeAuthorityOf,
     VALIDATION_DATA,
@@ -240,11 +243,33 @@ test('recorded mints are gathered from every record and named by where they came
 test('a recorded mint with no config in the census is refused, naming it and its records', () => {
     const recorded = recordedMints([{ source: 'deployments/devnet-demo-containment-hook.json', mints: [WALLET, HOOK] }]);
     assert.deepEqual(missingRecorded(recorded, new Set([HOOK])), [
-        `mint ${WALLET}, recorded in deployments/devnet-demo-containment-hook.json, has no config in the census`,
+        { mint: WALLET, message: `mint ${WALLET}, recorded in deployments/devnet-demo-containment-hook.json, has no config in the census` },
     ]);
     assert.deepEqual(missingRecorded(recorded, new Set([HOOK, WALLET])), []);
     // Zero configs while records list contained tokens is a refusal per mint.
     assert.equal(missingRecorded(recorded, new Set()).length, 2);
+});
+
+test('a recorded mint with no config gives a refusal naming its config PDA, not a throw', async () => {
+    // The refusal's text has a comma after the mint; the gate once took the mint back out of it
+    // with split(' ')[1], so findConfigPda threw on "<mint>," and every refusal was lost.
+    const recorded = recordedMints([
+        { source: 'a.json', mints: [WALLET] },
+        { source: 'b.json', mints: [WALLET, 'not-a-mint'] },
+    ]);
+    const [configPda] = await findConfigPda({ mint: address(WALLET) }, { programAddress: address(HOOK) });
+    const asked: Address[] = [];
+    const refusals = await missingRecordedRefusals(recorded, new Set(), address(HOOK), async (pda) => {
+        asked.push(pda);
+        return false;
+    });
+    assert.deepEqual(asked, [configPda]);
+    assert.deepEqual(refusals, [
+        `mint ${WALLET}, recorded in a.json and b.json, has no config in the census (its config PDA ${configPda} does not exist)`,
+        'mint not-a-mint, recorded in b.json, has no config in the census (and is not an address, so it has no config PDA)',
+    ]);
+    const found = await missingRecordedRefusals(recordedMints([{ source: 'a.json', mints: [WALLET] }]), new Set(), address(HOOK), async () => true);
+    assert.deepEqual(found, [`mint ${WALLET}, recorded in a.json, has no config in the census (its config PDA ${configPda} exists, so the census missed it)`]);
 });
 
 test('the records give their mints: the demo record, a release gate report and the fixture', () => {
@@ -258,4 +283,26 @@ test('the records give their mints: the demo record, a release gate report and t
     const demo = mintsOfDemoRecord(JSON.parse(readFileSync(join(here, '../../../deployments/devnet-demo-containment-hook.json'), 'utf8')));
     assert.equal(demo.length, 3);
     for (const mint of demo) assert.ok(fixtureMints.includes(mint), `${mint} is in the fixture`);
+});
+
+// The census: a validation account is an orphan only when no config's mint derives it.
+
+test("a refused config's validation account is not also reported as an orphan", () => {
+    const [refusedConfigs, accepted, orphan] = ['Va1idation1111111111111111111111111111111111', 'Va1idation2222222222222222222222222222222222', 'Va1idation3333333333333333333333333333333333'];
+    // The census holds three validation accounts; the configs' mints derive the first two,
+    // one of a config the gate refused early (its version, its address), one it accepted.
+    assert.deepEqual(orphanValidations(new Set([orphan, accepted, refusedConfigs]), [refusedConfigs, accepted]), [orphan]);
+    assert.deepEqual(orphanValidations(new Set([accepted]), [accepted]), []);
+});
+
+// --freeze: the payer may be one of the authorities, and kit refuses two signer objects with
+// one address, so the payer reuses the authority's.
+
+test('a payer naming an authority reuses its signer', () => {
+    const authority = { address: WALLET, from: '--authority' };
+    const other = { address: HOOK, from: '--authority' };
+    const samePayer = { address: WALLET, from: '--payer' };
+    assert.equal(reuseByAddress(samePayer, [other, authority]), authority);
+    const ownPayer = { address: UNLOCK_PDA, from: '--payer' };
+    assert.equal(reuseByAddress(ownPayer, [other, authority]), ownPayer);
 });

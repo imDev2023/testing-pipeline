@@ -102,9 +102,11 @@ import {
     mintsOfDemoRecord,
     mintsOfGateReport,
     mintsOfSnapshot,
-    missingRecorded,
+    missingRecordedRefusals,
+    orphanValidations,
     programDataAddressOf,
     recordedMints,
+    reuseByAddress,
     upgradeAuthorityOf,
     UNSET,
     type MintHook,
@@ -241,6 +243,7 @@ async function checkMints(recorded: Map<string, string[]>): Promise<{ rows: Mint
         else refusals.push(`account ${pubkey}, owned by the hook, is neither a config nor a validation account (${data.length} bytes)`);
     }
     const rows: MintRow[] = [];
+    const configValidations: string[] = [];
     const decoder = getConfigDecoder();
     for (const { address: configAddress, data } of configs.sort((a, b) => a.address.localeCompare(b.address))) {
         const config = decoder.decode(data);
@@ -250,6 +253,10 @@ async function checkMints(recorded: Map<string, string[]>): Promise<{ rows: Mint
             refusals.push(`mint ${mint} (config ${configAddress}): ${reason}`);
             row({ state, hookProgram: '-', hookAuthority: '-', verdict: 'REFUSED (below)', ok: false });
         };
+        // The mint's validation account is this config's, also when the config is refused below,
+        // so it is not reported a second time as an orphan.
+        const [validation] = await findExtraAccountMetasPda({ mint }, { programAddress: hook });
+        configValidations.push(validation);
         if (config.version !== CONFIG_VERSION) {
             fail(`config version ${config.version}, while the gate reads version ${CONFIG_VERSION}`);
             continue;
@@ -259,8 +266,7 @@ async function checkMints(recorded: Map<string, string[]>): Promise<{ rows: Mint
             fail(`the config is not at the mint's config PDA ${expectedConfig}`);
             continue;
         }
-        const [validation] = await findExtraAccountMetasPda({ mint }, { programAddress: hook });
-        if (!validations.delete(validation)) {
+        if (!validations.has(validation)) {
             fail(`no validation account at ${validation}`);
             continue;
         }
@@ -306,16 +312,12 @@ async function checkMints(recorded: Map<string, string[]>): Promise<{ rows: Mint
         if (!verdict.ok) refusals.push(`mint ${mint} (config ${configAddress}): ${verdict.reason}`);
         row({ state, hookProgram: named(mintHook?.programId), hookAuthority: named(mintHook?.authority), verdict: verdict.ok ? 'ok' : 'REFUSED (below)', ok: verdict.ok });
     }
-    for (const orphan of [...validations].sort()) refusals.push(`account ${orphan}, owned by the hook, is a validation account with no config`);
+    for (const orphan of orphanValidations(validations, configValidations)) refusals.push(`account ${orphan}, owned by the hook, is a validation account with no config`);
     // Every contained mint ever recorded must still have its config (R2-B, R2T-09).
     const censused = new Set<string>();
     for (const { data } of configs) censused.add(decoder.decode(data).mint);
-    for (const refusal of missingRecorded(recorded, censused)) {
-        const mint = refusal.split(' ')[1]! as Address;
-        const [configPda] = await findConfigPda({ mint }, { programAddress: hook });
-        const exists = (await fetchEncodedAccount(rpc, configPda, { commitment: 'confirmed' })).exists;
-        refusals.push(`${refusal} (its config PDA ${configPda} ${exists ? 'exists, so the census missed it' : 'does not exist'})`);
-    }
+    const configExists = async (configPda: Address) => (await fetchEncodedAccount(rpc, configPda, { commitment: 'confirmed' })).exists;
+    refusals.push(...(await missingRecordedRefusals(recorded, censused, hook, configExists)));
     return { rows, refusals };
 }
 
@@ -397,7 +399,9 @@ async function freeze(programs: ProgramState[], where: 'devnet' | 'local', recor
         if (!signer) refuse(`the ${name}'s upgrade authority is ${authority}, which no --authority holds (given: ${authorities.map((key) => key.address).join(', ')})`);
         return signer;
     });
-    const payer = options.payer ? await loadKey(options.payer) : authorities[0]!;
+    // A payer that is also an authority signs with the authority's signer: kit refuses two
+    // signer objects with one address.
+    const payer = options.payer ? reuseByAddress(await loadKey(options.payer), authorities) : authorities[0]!;
     const { value: balance } = await rpc.getBalance(payer.address, { commitment: 'confirmed' }).send();
     if (balance < LOCAL_PAYER_LAMPORTS) {
         const airdrop = await rpc.requestAirdrop(payer.address, lamports(LOCAL_PAYER_LAMPORTS - balance)).send();
