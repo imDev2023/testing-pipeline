@@ -1,0 +1,20 @@
+// Reads the address pages make on the server, so an address that is no market or strategy gets the
+// "nothing there" page with a 404 (PIPESCOPE-101). Each is cached for the request, so the page and
+// its title read the API once.
+import { notFound } from "next/navigation";
+import { cache } from "react";
+import { Market, Strategy } from "terminal-api/contract";
+import { ApiFailure, getFromApi } from "./api";
+
+/** The thing at an address, the 404 page when the API knows none, or the failure to show. */
+async function readOrNotFound<T>(read: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+  try {
+    return { ok: true, value: await read() };
+  } catch (e) {
+    if (e instanceof ApiFailure && e.status === 404) notFound();
+    return { ok: false, message: e instanceof ApiFailure ? e.message : "Something went wrong on this page." };
+  }
+}
+
+export const readMarket = cache((address: string) => readOrNotFound(() => getFromApi(`/v1/markets/${encodeURIComponent(address)}`, Market)));
+export const readStrategy = cache((program: string) => readOrNotFound(() => getFromApi(`/v1/strategies/${encodeURIComponent(program)}`, Strategy)));

@@ -1,12 +1,147 @@
 // Adapted from Top-pad b833a7b, packages/db/src/schema.ts; owned here since.
 // Aviary's tables (docs/spec/pipescope-architecture.md, Data). Each ticket adds the tables it
 // needs, with a migration from `pnpm --filter terminal-db generate`.
-import { bigint, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+//
+// Token amounts are u64 on chain, so they are kept as numeric(20, 0) and read back as strings of
+// integers, never as JavaScript numbers.
+import { sql } from "drizzle-orm";
+import { bigint, boolean, index, integer, jsonb, numeric, pgTable, primaryKey, smallint, text, timestamp } from "drizzle-orm/pg-core";
 
-/** Where reconciliation stands for each watched address: the newest signature it has indexed. */
+/** A u64 token amount. */
+const amount = (name: string) => numeric(name, { precision: 20, scale: 0 });
+
+/**
+ * Where reconciliation stands for each watched address: the newest transaction it has indexed, by
+ * signature and by its place in the chain (slot, then position in the block), which is where the
+ * history source goes on from.
+ */
 export const indexerCursors = pgTable("indexer_cursors", {
   account: text("account").primaryKey(),
   signature: text("signature"),
   slot: bigint("slot", { mode: "bigint" }),
+  blockIndex: integer("block_index"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/**
+ * Every transaction the indexer has indexed, once. `decoderVersion` is the version of the decoder
+ * that read it; a transaction with events that decoder did not know (`unknownEvents`) keeps its raw
+ * JSON in `raw`, so newer code can index it again without asking the chain (`reindexUnknown`).
+ */
+export const indexedTransactions = pgTable(
+  "indexed_transactions",
+  {
+    signature: text("signature").primaryKey(),
+    slot: bigint("slot", { mode: "bigint" }).notNull(),
+    blockIndex: integer("block_index"),
+    blockTime: timestamp("block_time", { withTimezone: true }),
+    decoderVersion: integer("decoder_version").notNull(),
+    unknownEvents: integer("unknown_events").notNull().default(0),
+    raw: jsonb("raw"),
+    indexedAt: timestamp("indexed_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("indexed_transactions_unknown").on(t.decoderVersion).where(sql`unknown_events > 0`)],
+);
+
+/** Every strategy registered with the router, from its `StrategyRegistered` event or, if that was missed, its account. */
+export const strategies = pgTable("strategies", {
+  program: text("program").primaryKey(),
+  metadataUri: text("metadata_uri").notNull(),
+  /** The listing fee paid, in lamports; unknown when the strategy was found by its account alone. */
+  feePaid: amount("fee_paid"),
+  registeredAt: timestamp("registered_at", { withTimezone: true }).notNull(),
+  registeredSlot: bigint("registered_slot", { mode: "bigint" }),
+  registeredSignature: text("registered_signature"),
+  /** The slot of the newest `MetadataUpdated` applied, so an older one indexed later never overwrites it. */
+  metadataSlot: bigint("metadata_slot", { mode: "bigint" }),
+});
+
+/**
+ * Every market created through the router. The market state is the strategy's own account, kept as
+ * its raw bytes and the slot they were read at; the router's `Market` account gives the vaults.
+ */
+export const markets = pgTable(
+  "markets",
+  {
+    address: text("address").primaryKey(),
+    strategyProgram: text("strategy_program").notNull(),
+    marketState: text("market_state").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    createdSlot: bigint("created_slot", { mode: "bigint" }),
+    createdSignature: text("created_signature"),
+    supportsExactOut: boolean("supports_exact_out"),
+    /** The mint Pipeline takes its fee in when it is one side of a trade, or null for none. */
+    feeMint: text("fee_mint"),
+    /** The market state's bytes, base64, as last read, and the slot they were read at. */
+    stateData: text("state_data"),
+    readSlot: bigint("read_slot", { mode: "bigint" }),
+  },
+  (t) => [index("markets_newest").on(t.createdAt, t.address), index("markets_strategy").on(t.strategyProgram)],
+);
+
+/** A market's mints in the market's own order, each with its vault and what the vault held when last read. */
+export const marketMints = pgTable(
+  "market_mints",
+  {
+    market: text("market").notNull(),
+    position: smallint("position").notNull(),
+    mint: text("mint").notNull(),
+    vault: text("vault"),
+    vaultAmount: amount("vault_amount"),
+  },
+  (t) => [primaryKey({ columns: [t.market, t.position] }), index("market_mints_mint").on(t.mint)],
+);
+
+/**
+ * Every mint a market trades, read once when first seen: its mint account and its Metaplex
+ * metadata account, as raw bytes for the facts and token names that later read them. A mint whose
+ * account is missing or not a mint is kept with `readable` false.
+ */
+export const mints = pgTable("mints", {
+  address: text("address").primaryKey(),
+  readable: boolean("readable").notNull(),
+  tokenProgram: text("token_program"),
+  decimals: smallint("decimals"),
+  supply: amount("supply"),
+  mintAuthority: text("mint_authority"),
+  freezeAuthority: text("freeze_authority"),
+  /** The mint account's bytes, base64, Token-2022 extensions and all. */
+  data: text("data"),
+  /** The Metaplex metadata account's bytes, base64, or null when the mint has none. */
+  metadataData: text("metadata_data"),
+  readSlot: bigint("read_slot", { mode: "bigint" }),
+});
+
+/** Every swap through the router, from its `Swap` event, keyed by its transaction and its place among the transaction's events. */
+export const trades = pgTable(
+  "trades",
+  {
+    signature: text("signature").notNull(),
+    eventIndex: smallint("event_index").notNull(),
+    slot: bigint("slot", { mode: "bigint" }).notNull(),
+    blockIndex: integer("block_index"),
+    blockTime: timestamp("block_time", { withTimezone: true }),
+    market: text("market").notNull(),
+    strategy: text("strategy").notNull(),
+    trader: text("trader").notNull(),
+    inputMint: text("input_mint").notNull(),
+    outputMint: text("output_mint").notNull(),
+    /** 0 exact-in, 1 exact-out. */
+    mode: smallint("mode").notNull(),
+    netSent: amount("net_sent").notNull(),
+    received: amount("received").notNull(),
+    pipelineFee: amount("pipeline_fee").notNull(),
+    feeMint: text("fee_mint").notNull(),
+    integrator: text("integrator"),
+    integratorFee: amount("integrator_fee").notNull(),
+    /** The event's own clock, in Unix seconds. */
+    unixTimestamp: bigint("unix_timestamp", { mode: "bigint" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.signature, t.eventIndex] }),
+    index("trades_market_order").on(t.market, t.slot, t.blockIndex, t.eventIndex),
+    index("trades_trader_order").on(t.trader, t.slot, t.blockIndex, t.eventIndex),
+    index("trades_time").on(t.unixTimestamp),
+  ],
+);

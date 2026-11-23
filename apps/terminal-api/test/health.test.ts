@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { MIGRATION_COUNT } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Health } from "../src/contract";
@@ -30,7 +31,7 @@ describe("GET /health", () => {
       expect(body).toMatchObject({
         ok: true,
         cluster: "devnet",
-        database: { ok: true, migrations: 1, error: null },
+        database: { ok: true, migrations: MIGRATION_COUNT, error: null },
         rpc: { ok: true, slot: 525_142_117, error: null },
         version: { id: "7f0c1a5e-0000-4000-8000-000000000001", timestamp: "2026-11-22T10:00:00.000Z" },
       });
@@ -73,7 +74,7 @@ describe("GET /health", () => {
       await sql`delete from drizzle.__drizzle_migrations where id = (select max(id) from drizzle.__drizzle_migrations)`;
       const { status, text } = await health(bindings({ databaseUrl: behind.url, rpcUrl: rpc.url }));
       expect(status).toBe(503);
-      expect(JSON.parse(text)).toMatchObject({ ok: false, database: { ok: false, migrations: 0, error: "the database has 0 of the 1 migrations this code needs" } });
+      expect(JSON.parse(text)).toMatchObject({ ok: false, database: { ok: false, migrations: MIGRATION_COUNT - 1, error: `the database has ${MIGRATION_COUNT - 1} of the ${MIGRATION_COUNT} migrations this code needs` } });
     } finally {
       await sql.end();
       await rpc.close();

@@ -2,6 +2,7 @@
 // the theme follows the device and the footer overrides it, every colour and typeface comes from
 // theme.css, panels load and fail on their own, and the "nothing there" page names the address.
 import { expect, test, type Page } from "@playwright/test";
+import { MarketsPage, StrategiesList } from "terminal-api/contract";
 import { API } from "./target";
 
 // The theme's own values (docs/spec/pipescope-screens.md, "Colour and theme"), as the browser computes them.
@@ -59,20 +60,19 @@ test.describe("the theme", () => {
 
 test.describe("panels", () => {
   test("a panel that cannot load says what could not be loaded and offers to try again, and the page stays", async ({ page }) => {
-    await page.route(`${API}/health`, (route) => route.abort("connectionrefused"));
+    await page.route(`${API}/v1/markets*`, (route) => route.abort("connectionrefused"));
     await page.goto("/");
-    const panel = page.getByRole("region", { name: /on devnet$/ });
-    await expect(panel.getByRole("alert")).toHaveText(/Could not load devnet's latest slot\. .+'s API did not answer\./);
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText(/^Could not load the markets and strategies\. .+'s API did not answer\.Try again$/);
     await expect(page.getByRole("heading", { name: "New on Pipeline" })).toBeVisible();
     await expect(page.getByRole("contentinfo")).toBeVisible();
 
-    await page.unroute(`${API}/health`);
-    await panel.getByRole("button", { name: "Try again" }).click();
-    await expect(panel.getByText("Latest slot")).toBeVisible();
+    await page.unroute(`${API}/v1/markets*`);
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1)).toBeVisible();
   });
 
   test("a refused read shows the wait the API named", async ({ page }) => {
-    await page.route(`${API}/health`, (route) =>
+    await page.route(`${API}/v1/strategies`, (route) =>
       route.fulfill({
         status: 429,
         headers: { "content-type": "application/json", "access-control-allow-origin": "*", "retry-after": "60" },
@@ -80,7 +80,59 @@ test.describe("panels", () => {
       }),
     );
     await page.goto("/");
-    await expect(page.getByRole("region", { name: /on devnet$/ }).getByRole("alert")).toHaveText("Could not load devnet's latest slot. Too many requests from your address. Try again in 60 seconds.Try again");
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText("Could not load the markets and strategies. Too many requests from your address. Try again in 60 seconds.Try again");
+  });
+});
+
+test.describe("the feed", () => {
+  test("says how many markets and strategies there are, as the API counts them, on its head and its tabs", async ({ page, request }) => {
+    const { total } = MarketsPage.parse(await (await request.get(`${API}/v1/markets?limit=1`)).json());
+    const { strategies } = StrategiesList.parse(await (await request.get(`${API}/v1/strategies`)).json());
+    await page.goto("/");
+    const n = (x: number) => x.toLocaleString("en-US");
+    await expect(page.getByText(`${n(total)} markets on ${n(strategies.length)} strategies, newest first.`, { exact: false })).toBeVisible();
+    const tabs = page.getByRole("navigation", { name: "Show" });
+    await expect(tabs.getByRole("link", { name: `Markets ${n(total)}` })).toHaveAttribute("aria-current", "page");
+    await expect(tabs.getByRole("link", { name: `Strategies ${n(strategies.length)}` })).toBeVisible();
+  });
+
+  test("lists the newest market first, and its row opens the market", async ({ page, request }) => {
+    const { markets } = MarketsPage.parse(await (await request.get(`${API}/v1/markets?limit=1`)).json());
+    await page.goto("/");
+    const first = page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1);
+    await expect(first).toContainText(`market ${markets[0]!.address.slice(0, 4)}...${markets[0]!.address.slice(-4)}`);
+    // The whole row opens the market, not only its first cell: a click where it says when the market was created.
+    const created = (await first.getByText(/ago$/).boundingBox())!;
+    await page.mouse.click(created.x + created.width / 2, created.y + created.height / 2);
+    await expect(page).toHaveURL(`/markets/${markets[0]!.address}`);
+    await expect(page.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${markets[0]!.address}?cluster=devnet`);
+  });
+
+  test("a market's strategy opens the strategy, from inside the market's row", async ({ page, request }) => {
+    const { markets } = MarketsPage.parse(await (await request.get(`${API}/v1/markets?limit=1`)).json());
+    await page.goto("/");
+    const first = page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1);
+    await first.getByRole("link", { name: `${markets[0]!.strategy.slice(0, 4)}...${markets[0]!.strategy.slice(-4)}` }).click();
+    await expect(page).toHaveURL(`/strategies/${markets[0]!.strategy}`);
+    await expect(page.getByRole("heading", { name: "Strategy", exact: true })).toBeVisible();
+  });
+
+  test("loads the markets 50 at a time, and the next 50 on asking", async ({ page }) => {
+    await page.goto("/");
+    const rows = page.getByRole("region", { name: "Markets" }).getByRole("row");
+    await expect(rows).toHaveCount(51);
+    await page.getByRole("button", { name: "Show 50 more markets" }).click();
+    await expect(rows).toHaveCount(101);
+  });
+
+  test("keeps the tab in the page's address, so the strategies can be linked", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("navigation", { name: "Show" }).getByRole("link", { name: /^Strategies/ }).click();
+    await expect(page).toHaveURL("/?tab=strategies");
+    await page.reload();
+    await expect(page.getByRole("region", { name: "Strategies" }).getByRole("row").nth(1)).toBeVisible();
+    await page.getByRole("region", { name: "Strategies" }).getByRole("row").nth(1).click();
+    await expect(page).toHaveURL(/\/strategies\/[1-9A-HJ-NP-Za-km-z]{32,44}$/);
   });
 });
 

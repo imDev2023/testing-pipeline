@@ -8,6 +8,8 @@
 // - `fixtures` (the default in CI): recorded devnet answers from fixtures/devnet-rpc.json, no network.
 // - `record`: live devnet through the fixture server, which records every answer it passes on.
 //
+// Before the tests, src/global-setup.ts fires the cron and waits for the indexer's first run.
+//
 // Every page test runs at 1440, 390 and 360 px wide in the light and the dark theme, and saves a
 // screenshot of each page to screenshots/<width>-<theme>/.
 import { defineConfig, devices } from "@playwright/test";
@@ -29,6 +31,8 @@ const THEMES = ["light", "dark"] as const;
 
 export default defineConfig({
   testDir: "./src",
+  // The indexer runs once the Workers are up, so the pages have devnet's markets to show.
+  globalSetup: "./src/global-setup.ts",
   timeout: 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,

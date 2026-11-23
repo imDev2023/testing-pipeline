@@ -1,6 +1,7 @@
 // Adapted from Top-pad b833a7b, apps/api/src/env.ts; owned here since.
 // The bindings `wrangler.jsonc` gives `terminal-api`. Per-environment values (the cluster, the rate
 // limits) live there; policy values the code uses live in ./config.
+import type { Indexer } from "./indexer";
 
 /** The Workers rate-limiting binding: one call per request, counted per key over the binding's period. */
 export type RateLimiter = { limit(options: { key: string }): Promise<{ success: boolean }> };
@@ -20,4 +21,6 @@ export type Bindings = {
   REPORTS: RateLimiter;
   /** Public caches up to 60 s stale, and the copies of token images (PIPESCOPE-88). */
   TERMINAL_CACHE: KVNamespace;
+  /** The indexer, one instance (docs/spec/pipescope-architecture.md, Indexer). */
+  INDEXER: DurableObjectNamespace<Indexer>;
 };

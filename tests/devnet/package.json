@@ -1,0 +1,24 @@
+{
+    "name": "terminal-devnet",
+    "private": true,
+    "type": "module",
+    "description": "Aviary's devnet tests: the indexer's restart test and the parity checks against Pipeline's hosted API, on the local run against devnet (docs/spec/pipescope-architecture.md, Indexer)",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "scripts": {
+        "typecheck": "tsc -p .",
+        "devnet": "vitest run"
+    },
+    "devDependencies": {
+        "@pipeline-sol/sdk": "catalog:",
+        "@solana-program/token": "0.18.0",
+        "@solana/kit": "8.6.0",
+        "@types/node": "24.19.2",
+        "terminal-api": "workspace:*",
+        "terminal-db": "workspace:*",
+        "terminal-indexer": "workspace:*",
+        "typescript": "6.0.3",
+        "vitest": "5.1.1"
+    }
+}

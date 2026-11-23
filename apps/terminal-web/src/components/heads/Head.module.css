@@ -1,0 +1,33 @@
+.head {
+  display: grid;
+  gap: 10px;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  margin: 0;
+  color: var(--ink2);
+}
+
+.facts div {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.facts dt {
+  color: var(--ink3);
+}
+
+.facts dd {
+  margin: 0;
+  color: var(--ink);
+}
+
+.failed {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}

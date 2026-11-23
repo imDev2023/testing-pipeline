@@ -25,6 +25,9 @@
   // `wrangler dev` connects straight to the database that DATABASE_URL names, passed in by
   // scripts/dev.ts as CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE.
   "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "00000000000000000000000000000000" }],
+  // The indexer, one SQLite-backed Durable Object (docs/spec/pipescope-architecture.md, Indexer).
+  "durable_objects": { "bindings": [{ "name": "INDEXER", "class_name": "Indexer" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Indexer"] }],
   // Public caches up to 60 s stale and the copies of token images (PIPESCOPE-88); simulated locally.
   "kv_namespaces": [{ "binding": "TERMINAL_CACHE" }],
   // The public API's per-IP limits (PIPESCOPE-90), their one place. A refused request is told to

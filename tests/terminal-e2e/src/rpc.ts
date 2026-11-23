@@ -14,6 +14,16 @@ const keyOf = (method: string, params: unknown) => `${method} ${JSON.stringify(p
 type Recording = Record<string, { result?: unknown; error?: unknown }>;
 
 /**
+ * The recording as JSON with one request per line, each answer compact: the router's whole history
+ * is most of it, and pretty-printing would double its size; a line per request keeps a diff to the
+ * requests that changed.
+ */
+const serialise = (recording: Recording) =>
+  `{\n${Object.entries(recording)
+    .map(([key, answer]) => `${JSON.stringify(key)}: ${JSON.stringify(answer)}`)
+    .join(",\n")}\n}\n`;
+
+/**
  * Serves recorded answers, or with `upstream` records them. A request with no recording is answered
  * with a JSON-RPC error naming it, so a test that needs a new answer fails until it is recorded.
  */
@@ -39,7 +49,7 @@ export function serveRpc(options: { upstream?: string } = {}): Promise<Server> {
           answer = error === undefined ? { result } : { error };
           if (error === undefined) {
             recording[key] = answer;
-            writeFileSync(FIXTURES, `${JSON.stringify(recording, null, 2)}\n`);
+            writeFileSync(FIXTURES, serialise(recording));
           }
         } catch (e) {
           answer = { error: { code: -32000, message: `devnet did not answer ${key}: ${e instanceof Error ? e.name : typeof e}` } };

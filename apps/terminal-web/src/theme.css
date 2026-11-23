@@ -75,6 +75,19 @@
   --control-min-height: 32px;
   /* The page's horizontal margin. */
   --gutter: 32px;
+  /* Tables: rows and columns on wide screens; labelled blocks at 720 px and narrower, where each
+     row becomes a block and each cell carries its column's label. */
+  --table-display: table;
+  --table-head-display: table-header-group;
+  --table-body-display: table-row-group;
+  --table-row-display: table-row;
+  --table-cell-display: table-cell;
+  --table-cell-label-display: none;
+  --table-cell-padding: 12px 16px;
+  --table-cell-rule: 1px;
+  --table-row-padding: 0;
+  --table-row-rule: 0;
+  --table-number-align: right;
   /* The header: one row on wide screens. */
   --header-columns: auto 1fr auto;
   --header-areas: "brand links end";
@@ -98,6 +111,17 @@
     --text-size: 15px;
     --control-min-height: 44px;
     --gutter: 16px;
+    --table-display: block;
+    --table-head-display: none;
+    --table-body-display: block;
+    --table-row-display: grid;
+    --table-cell-display: block;
+    --table-cell-label-display: block;
+    --table-cell-padding: 0;
+    --table-cell-rule: 0;
+    --table-row-padding: 14px 16px;
+    --table-row-rule: 1px;
+    --table-number-align: left;
     --header-columns: 1fr auto;
     /* The search box takes a third row, at full width, when it lands (#120). */
     --header-areas: "brand end" "links links";
