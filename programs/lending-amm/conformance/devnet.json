@@ -1,0 +1,569 @@
+{
+  "schema": "pipeline-check-report/1",
+  "checker_version": "0.3.0",
+  "generated_at": 1795438096,
+  "source": {
+    "kind": "rpc",
+    "cluster": "devnet",
+    "genesis_hash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+    "slot": 525435621,
+    "unix_timestamp": 1795438095
+  },
+  "router": {
+    "program_id": "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34",
+    "loader": "bpf-loader-upgradeable",
+    "executable_sha256": "4500c2939465439279caa0555123b44b81c63293a35ff36a1932a7cf51c49803",
+    "executable_len": 445321,
+    "upgrade_authority": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ",
+    "deploy_slot": 524761925
+  },
+  "strategy": {
+    "program_id": "Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG",
+    "loader": "bpf-loader-upgradeable",
+    "executable_sha256": "34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c",
+    "executable_len": 464409,
+    "upgrade_authority": "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe",
+    "deploy_slot": 525242911
+  },
+  "strategy_metadata_uri": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/lending-amm/metadata.json",
+  "market": {
+    "address": "AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu",
+    "market_state": "9M5mzsto7Wvj9tBNzAGwyFd84ASSFUh4kuPALhunkMJs",
+    "supports_exact_out": false,
+    "fee_mint": "So11111111111111111111111111111111111111112",
+    "mints": [
+      {
+        "address": "LuZBpaL9LXZCrZXtqfgsbuxN2PSp42k1bkUEuzXwpCi",
+        "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "decimals": 6,
+        "mint_authority": null,
+        "freeze_authority": null,
+        "extensions": [],
+        "vault": "9SoEjsfnJa8JpGLDEpJswgzvZVq32e4n1JCMdRAUmosT",
+        "vault_balance": 530936639565,
+        "fee_account": "E8zp58M9DBAsu9NNMkoMjrgbSt3j1U1PdFi21JyGoD4Q",
+        "fee_account_exists": true
+      },
+      {
+        "address": "So11111111111111111111111111111111111111112",
+        "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "decimals": 9,
+        "mint_authority": null,
+        "freeze_authority": null,
+        "extensions": [],
+        "vault": "7rphdBTsYCQMScHoqeMdaxkLfYPdZyqyGAswnKayhXGr",
+        "vault_balance": 58867715,
+        "fee_account": "7PTKrtekjGs8RTai6eqD3Nf89TEB8xmPaZbcKdrE777M",
+        "fee_account_exists": true
+      }
+    ]
+  },
+  "options": {
+    "amounts": null,
+    "extra": "",
+    "quote_compute_limit": 200000
+  },
+  "summary": {
+    "result": "pass",
+    "pass": 13,
+    "warn": 0,
+    "fail": 0,
+    "skip": 1
+  },
+  "checks": [
+    {
+      "id": "market_account",
+      "title": "Market, registration and router config",
+      "status": "pass",
+      "message": "Market of registered strategy Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG with 2 mints; router config found.",
+      "details": {
+        "mint_count": 2,
+        "strategy_registered": true
+      }
+    },
+    {
+      "id": "market_info",
+      "title": "pipeline_market_info matches the recorded market",
+      "status": "pass",
+      "message": "The strategy reports the same mints, vaults and exact-out support the router recorded.",
+      "details": {
+        "reported_mints": [
+          "LuZBpaL9LXZCrZXtqfgsbuxN2PSp42k1bkUEuzXwpCi",
+          "So11111111111111111111111111111111111111112"
+        ],
+        "reported_supports_exact_out": false,
+        "reported_vaults": [
+          "9SoEjsfnJa8JpGLDEpJswgzvZVq32e4n1JCMdRAUmosT",
+          "7rphdBTsYCQMScHoqeMdaxkLfYPdZyqyGAswnKayhXGr"
+        ]
+      }
+    },
+    {
+      "id": "fee_accounts",
+      "title": "Pipeline fee accounts exist for every mint",
+      "status": "pass",
+      "message": "Every mint has its Pipeline fee account.",
+      "details": {
+        "frozen": [],
+        "local_creation_failures": [],
+        "missing": []
+      }
+    },
+    {
+      "id": "mint_extensions",
+      "title": "Token-2022 extensions that affect trading",
+      "status": "pass",
+      "message": "No Token-2022 extensions.",
+      "details": {
+        "mints": [
+          {
+            "address": "LuZBpaL9LXZCrZXtqfgsbuxN2PSp42k1bkUEuzXwpCi",
+            "extensions": [],
+            "transfer_hook_program": null
+          },
+          {
+            "address": "So11111111111111111111111111111111111111112",
+            "extensions": [],
+            "transfer_hook_program": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "resolve_accounts",
+      "title": "pipeline_resolve_accounts completes",
+      "status": "pass",
+      "message": "Resolves in at most 2 of 4 rounds in every direction; swaps need up to 3 strategy account(s).",
+      "details": {
+        "directions": [
+          {
+            "accounts": [
+              {
+                "address": "7rphdBTsYCQMScHoqeMdaxkLfYPdZyqyGAswnKayhXGr",
+                "writable": true
+              },
+              {
+                "address": "6wD2fWV277Gox1DbimuvFYxxrizJG8FaBC1D4VHestDF",
+                "writable": false
+              },
+              {
+                "address": "5vJJ1sQi972Qcf6oUy3gHEx6prijjSj31CWo5He85Hjw",
+                "writable": false
+              }
+            ],
+            "direction": "0→1",
+            "failures": [],
+            "rounds": 2
+          },
+          {
+            "accounts": [
+              {
+                "address": "9SoEjsfnJa8JpGLDEpJswgzvZVq32e4n1JCMdRAUmosT",
+                "writable": true
+              },
+              {
+                "address": "6wD2fWV277Gox1DbimuvFYxxrizJG8FaBC1D4VHestDF",
+                "writable": false
+              },
+              {
+                "address": "5vJJ1sQi972Qcf6oUy3gHEx6prijjSj31CWo5He85Hjw",
+                "writable": false
+              }
+            ],
+            "direction": "1→0",
+            "failures": [],
+            "rounds": 1
+          }
+        ],
+        "max_accounts": 3,
+        "max_rounds": 2
+      }
+    },
+    {
+      "id": "transaction_size",
+      "title": "A swap fits in one transaction",
+      "status": "pass",
+      "message": "The largest swap is 748 of 1232 bytes with 18 accounts, so it fits in a legacy transaction.",
+      "details": {
+        "includes": "one swap instruction and a compute-limit instruction, signed by the trader",
+        "limit_accounts": 64,
+        "limit_bytes": 1232,
+        "swaps": [
+          {
+            "account_keys": 18,
+            "case": "mint 0→1 exact-in 5309366 (small)",
+            "estimated_bytes_with_lookup_table": 319,
+            "serialized_bytes": 748
+          },
+          {
+            "account_keys": 18,
+            "case": "mint 0→1 exact-in 530936639 (medium)",
+            "estimated_bytes_with_lookup_table": 319,
+            "serialized_bytes": 748
+          },
+          {
+            "account_keys": 18,
+            "case": "mint 0→1 exact-in 26546831978 (large)",
+            "estimated_bytes_with_lookup_table": 319,
+            "serialized_bytes": 748
+          },
+          {
+            "account_keys": 18,
+            "case": "mint 1→0 exact-in 588 (small)",
+            "estimated_bytes_with_lookup_table": 319,
+            "serialized_bytes": 748
+          },
+          {
+            "account_keys": 18,
+            "case": "mint 1→0 exact-in 58867 (medium)",
+            "estimated_bytes_with_lookup_table": 319,
+            "serialized_bytes": 748
+          },
+          {
+            "account_keys": 18,
+            "case": "mint 1→0 exact-in 2943385 (large)",
+            "estimated_bytes_with_lookup_table": 319,
+            "serialized_bytes": 748
+          }
+        ]
+      }
+    },
+    {
+      "id": "quotes",
+      "title": "Quotes in every direction and size",
+      "status": "pass",
+      "message": "All 6 quotes succeeded through pipeline-quoter using only the resolved accounts (up to 8974 compute units each).",
+      "details": {
+        "max_quote_compute_units": 8974,
+        "quote_compute_limit": 200000,
+        "quotes": [
+          {
+            "amount": 1,
+            "case": "mint 0→1 exact-in 1 (dust)",
+            "direction": "0→1",
+            "error": "strategy failed: InstructionError(1, Custom(6015)): Program Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG failed: custom program error: 0x177f",
+            "mode": "ExactIn",
+            "quote": null,
+            "size": "dust"
+          },
+          {
+            "amount": 5309366,
+            "case": "mint 0→1 exact-in 5309366 (small)",
+            "direction": "0→1",
+            "error": null,
+            "mode": "ExactIn",
+            "quote": {
+              "amount_in": 5309366,
+              "amount_out": 2926,
+              "compute_units": 8974,
+              "net_sent": 5309366,
+              "pipeline_fee": 8,
+              "strategy_amount_out": 2934,
+              "total_spend": 5309366
+            },
+            "size": "small"
+          },
+          {
+            "amount": 530936639,
+            "case": "mint 0→1 exact-in 530936639 (medium)",
+            "direction": "0→1",
+            "error": null,
+            "mode": "ExactIn",
+            "quote": {
+              "amount_in": 530936639,
+              "amount_out": 292430,
+              "compute_units": 8974,
+              "net_sent": 530936639,
+              "pipeline_fee": 733,
+              "strategy_amount_out": 293163,
+              "total_spend": 530936639
+            },
+            "size": "medium"
+          },
+          {
+            "amount": 26546831978,
+            "case": "mint 0→1 exact-in 26546831978 (large)",
+            "direction": "0→1",
+            "error": null,
+            "mode": "ExactIn",
+            "quote": {
+              "amount_in": 26546831978,
+              "amount_out": 13941130,
+              "compute_units": 8974,
+              "net_sent": 26546831978,
+              "pipeline_fee": 34941,
+              "strategy_amount_out": 13976071,
+              "total_spend": 26546831978
+            },
+            "size": "large"
+          },
+          {
+            "amount": 1,
+            "case": "mint 1→0 exact-in 1 (dust)",
+            "direction": "1→0",
+            "error": "strategy failed: InstructionError(1, Custom(6015)): Program Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG failed: custom program error: 0x177f",
+            "mode": "ExactIn",
+            "quote": null,
+            "size": "dust"
+          },
+          {
+            "amount": 588,
+            "case": "mint 1→0 exact-in 588 (small)",
+            "direction": "1→0",
+            "error": null,
+            "mode": "ExactIn",
+            "quote": {
+              "amount_in": 588,
+              "amount_out": 1057042,
+              "compute_units": 8971,
+              "net_sent": 588,
+              "pipeline_fee": 2,
+              "strategy_amount_out": 1057042,
+              "total_spend": 590
+            },
+            "size": "small"
+          },
+          {
+            "amount": 58867,
+            "case": "mint 1→0 exact-in 58867 (medium)",
+            "direction": "1→0",
+            "error": null,
+            "mode": "ExactIn",
+            "quote": {
+              "amount_in": 58867,
+              "amount_out": 105845652,
+              "compute_units": 8971,
+              "net_sent": 58867,
+              "pipeline_fee": 148,
+              "strategy_amount_out": 105845652,
+              "total_spend": 59015
+            },
+            "size": "medium"
+          },
+          {
+            "amount": 2943385,
+            "case": "mint 1→0 exact-in 2943385 (large)",
+            "direction": "1→0",
+            "error": null,
+            "mode": "ExactIn",
+            "quote": {
+              "amount_in": 2943385,
+              "amount_out": 5241180772,
+              "compute_units": 8971,
+              "net_sent": 2943385,
+              "pipeline_fee": 7359,
+              "strategy_amount_out": 5241180772,
+              "total_spend": 2950744
+            },
+            "size": "large"
+          }
+        ]
+      }
+    },
+    {
+      "id": "quote_matches_swap",
+      "title": "Quote equals the router swap",
+      "status": "pass",
+      "message": "All 6 router swaps delivered exactly the quoted output and charged exactly the quoted input and fee.",
+      "details": {
+        "mismatches": [],
+        "swaps": [
+          {
+            "case": "mint 0→1 exact-in 5309366 (small)",
+            "compute_units": 39898,
+            "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
+            "matched": true,
+            "net_sent": 5309366,
+            "pipeline_fee": 8,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
+            "quoted_net_sent": 5309366,
+            "quoted_out": 2926,
+            "quoted_pipeline_fee": 8,
+            "received": 2934
+          },
+          {
+            "case": "mint 0→1 exact-in 530936639 (medium)",
+            "compute_units": 39898,
+            "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
+            "matched": true,
+            "net_sent": 530936639,
+            "pipeline_fee": 733,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
+            "quoted_net_sent": 530936639,
+            "quoted_out": 292430,
+            "quoted_pipeline_fee": 733,
+            "received": 293163
+          },
+          {
+            "case": "mint 0→1 exact-in 26546831978 (large)",
+            "compute_units": 39898,
+            "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
+            "matched": true,
+            "net_sent": 26546831978,
+            "pipeline_fee": 34941,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
+            "quoted_net_sent": 26546831978,
+            "quoted_out": 13941130,
+            "quoted_pipeline_fee": 34941,
+            "received": 13976071
+          },
+          {
+            "case": "mint 1→0 exact-in 588 (small)",
+            "compute_units": 39116,
+            "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
+            "matched": true,
+            "net_sent": 588,
+            "pipeline_fee": 2,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
+            "quoted_net_sent": 588,
+            "quoted_out": 1057042,
+            "quoted_pipeline_fee": 2,
+            "received": 1057042
+          },
+          {
+            "case": "mint 1→0 exact-in 58867 (medium)",
+            "compute_units": 39116,
+            "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
+            "matched": true,
+            "net_sent": 58867,
+            "pipeline_fee": 148,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
+            "quoted_net_sent": 58867,
+            "quoted_out": 105845652,
+            "quoted_pipeline_fee": 148,
+            "received": 105845652
+          },
+          {
+            "case": "mint 1→0 exact-in 2943385 (large)",
+            "compute_units": 39116,
+            "error": null,
+            "fee_mint": "So11111111111111111111111111111111111111112",
+            "matched": true,
+            "net_sent": 2943385,
+            "pipeline_fee": 7359,
+            "quoted_fee_mint": "So11111111111111111111111111111111111111112",
+            "quoted_net_sent": 2943385,
+            "quoted_out": 5241180772,
+            "quoted_pipeline_fee": 7359,
+            "received": 5241180772
+          }
+        ]
+      }
+    },
+    {
+      "id": "min_out_enforced",
+      "title": "Asking for one unit more than the quote fails",
+      "status": "pass",
+      "message": "In 2 direction(s), asking for one unit more than the quote makes the swap fail.",
+      "details": {
+        "tested": [
+          {
+            "case": "mint 0→1 exact-in 530936639 (medium)",
+            "error": "InstructionError(1, Custom(6020)): Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x1784",
+            "min_amount_out": 292431,
+            "refused_by": "router",
+            "rejected": true
+          },
+          {
+            "case": "mint 1→0 exact-in 58867 (medium)",
+            "error": "InstructionError(1, Custom(6020)): Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x1784",
+            "min_amount_out": 105845653,
+            "refused_by": "router",
+            "rejected": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "determinism",
+      "title": "Repeatable, trader-independent quotes",
+      "status": "pass",
+      "message": "Repeated quotes agree, and two different traders get the anonymous quote.",
+      "details": {
+        "clock_dependent": [],
+        "directions_tested": 2,
+        "not_repeatable": [],
+        "trader_dependent": []
+      }
+    },
+    {
+      "id": "compute",
+      "title": "Compute units of a router swap",
+      "status": "pass",
+      "message": "Router swaps used 39116–39898 compute units, of which the strategy used up to 14938.",
+      "details": {
+        "limit": 1400000,
+        "max_strategy_units": 14938,
+        "max_swap_units": 39898,
+        "min_swap_units": 39116,
+        "warn_above": 200000
+      }
+    },
+    {
+      "id": "exact_out_refund",
+      "title": "Exact-out refunds unused input",
+      "status": "skip",
+      "message": "The market does not support exact-out.",
+      "details": null
+    },
+    {
+      "id": "round_trip",
+      "title": "Buying then selling straight back",
+      "status": "pass",
+      "message": "In 2 pair(s), buying and immediately selling back returned less than was put in.",
+      "details": {
+        "trips": [
+          {
+            "error": null,
+            "got_back": 525125704,
+            "intermediate": 292430,
+            "pipeline_fees": 1463,
+            "put_in": 530936639,
+            "route": "0→1→0"
+          },
+          {
+            "error": null,
+            "got_back": 58366,
+            "intermediate": 105845652,
+            "pipeline_fees": 295,
+            "put_in": 58867,
+            "route": "1→0→1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dust_and_zero",
+      "title": "Zero and one-unit trades",
+      "status": "pass",
+      "message": "Zero-input quotes give no output, zero-input swaps are refused, and 1-unit swaps either fail cleanly or deliver what was quoted.",
+      "details": {
+        "directions": [
+          {
+            "direction": "0→1",
+            "one_unit_quote_out": null,
+            "one_unit_swap_error": "InstructionError(1, Custom(6015)): Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x177f",
+            "one_unit_swap_received": null,
+            "zero_quote_error": "strategy failed: InstructionError(1, Custom(6015)): Program Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG failed: custom program error: 0x177f",
+            "zero_quote_out": null,
+            "zero_swap_error": "InstructionError(1, Custom(6015)): Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x177f"
+          },
+          {
+            "direction": "1→0",
+            "one_unit_quote_out": null,
+            "one_unit_swap_error": "InstructionError(1, Custom(6015)): Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x177f",
+            "one_unit_swap_received": null,
+            "zero_quote_error": "strategy failed: InstructionError(1, Custom(6015)): Program Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG failed: custom program error: 0x177f",
+            "zero_quote_out": null,
+            "zero_swap_error": "InstructionError(1, Custom(6015)): Program PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34 failed: custom program error: 0x177f"
+          }
+        ]
+      }
+    }
+  ]
+}

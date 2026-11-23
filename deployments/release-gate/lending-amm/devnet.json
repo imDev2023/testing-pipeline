@@ -1,0 +1,17 @@
+[
+  {
+    "program": "Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG",
+    "genesis_hash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+    "cluster": "devnet",
+    "url": "https://api.devnet.solana.com",
+    "slot": 525241436,
+    "unix_timestamp": 1795391383,
+    "recorded_at": 1795391385,
+    "candidate_sha256": "34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c",
+    "deployed_sha256": null,
+    "market_states": [],
+    "pricing_change_declared": false,
+    "shared_failures": [],
+    "own_market": true
+  }
+]

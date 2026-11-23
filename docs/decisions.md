@@ -4737,11 +4737,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-40: Devnet reserves' price max age
 
 - Question: How old a Pyth price do our devnet reserves accept?
-- Answer: 600 seconds, because devnet's Pyth feeds were seen updating about every 5 minutes on 2026-11-10; Kamino's mainnet SOL and USDC reserves accept 120 and 180 seconds.
-- Alternatives: Kamino's mainnet ages, which would refuse a borrow for much of each 5-minute cycle; posting fresh Pyth prices ourselves before each borrow.
+- Answer: A week (604,800 seconds), because devnet's sponsored Pyth feeds can stop for long stretches, as on 2026-11-23 when klend refused the devnet demo's borrow after both had stood still for over 25 minutes, and on devnet a price only gates the test borrower's loan; Kamino's mainnet SOL and USDC reserves accept 120 and 180 seconds.
+- Alternatives: The earlier default, 600 seconds, from feeds seen updating about every 5 minutes on 2026-11-10; Kamino's mainnet ages, which would refuse a borrow for much of each cycle; posting fresh Pyth prices ourselves before each borrow, which depends on Pyth's devnet pipeline running.
 - Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
 - Changes by: runtime setting
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77)
 
 ### LENDING-41: Devnet reserves' risk settings and caps
@@ -5432,4 +5432,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-49` to `SUITE-53`: set by the session of [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `SUITE-54` to `SUITE-56`: set by the session of [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-99` to `PIPESCOPE-103`: set by the session of [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted; Devnet help's wallet steps (`apps/terminal-web/src/content/devnet-help.ts`) follow each wallet's help pages of 2026-11-22 and were not tried in the wallets.
-- `BAR-45`, `LENDING-97` to `LENDING-103` and the 2026-11-22 change to `LENDING-82`: set by the session of [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `BAR-45`, `LENDING-97` to `LENDING-103`, the 2026-11-22 change to `LENDING-82` and the 2026-11-23 change to `LENDING-40`: set by the session of [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
