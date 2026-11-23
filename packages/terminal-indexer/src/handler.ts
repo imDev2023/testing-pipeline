@@ -4,7 +4,7 @@
 // re-index, and must write its rows once.
 import { sql } from "drizzle-orm";
 import { indexedTransactions, marketMints, markets, strategies, trades, type Db } from "terminal-db";
-import { foldTrade } from "./candles";
+import { foldTrade, tradeTime } from "./candles";
 import { emptyResult } from "./result";
 import { DECODER_VERSION, decodeRouterEvents, type EventDecoder, type RawTransaction } from "./decode";
 
@@ -120,7 +120,7 @@ export function pipelineHandler({
               result.trades.push({ signature, eventIndex });
               await foldTrade(
                 tx as unknown as Db,
-                { market: s.market, inputMint: s.inputMint, outputMint: s.outputMint, netSent: s.netSent, received: s.received, at: Number(s.unixTimestamp), slot, blockIndex, eventIndex },
+                { market: s.market, inputMint: s.inputMint, outputMint: s.outputMint, netSent: s.netSent, received: s.received, at: tradeTime(blockTime, s.unixTimestamp), slot, blockIndex, eventIndex },
                 candleSeconds,
               );
             }

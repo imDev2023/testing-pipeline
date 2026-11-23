@@ -21,6 +21,8 @@ export type SwapSpec = {
   blockIndex: number;
   /** The event's clock, in Unix seconds. */
   at: number;
+  /** The block's time, in Unix seconds, when it differs from the event's clock; null for a block whose time is unknown. */
+  blockTime?: number | null;
   market?: string;
   input: string;
   output: string;
@@ -59,7 +61,7 @@ export function swapTransaction(spec: SwapSpec): RawTransaction {
   );
   for (const group of raw.meta!.innerInstructions!) for (const ix of group.instructions) if (keys[ix.programIdIndex] === PIPELINE_PROGRAM_ADDRESS) ix.data = data;
   raw.slot = spec.slot;
-  raw.blockTime = spec.at;
+  raw.blockTime = spec.blockTime === undefined ? spec.at : spec.blockTime;
   raw.transactionIndex = spec.blockIndex;
   raw.transaction.signatures[0] = signatureFor(spec.id);
   return raw;

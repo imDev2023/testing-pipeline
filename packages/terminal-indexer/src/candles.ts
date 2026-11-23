@@ -45,7 +45,7 @@ export type CandleTrade = {
   outputMint: string;
   netSent: bigint;
   received: bigint;
-  /** The event's clock, in Unix seconds. */
+  /** When it ran, in Unix seconds: see `tradeTime`. */
   at: number;
   slot: bigint;
   blockIndex: number | null;
@@ -54,6 +54,13 @@ export type CandleTrade = {
 
 /** A pair's mints in address order: the order candles are kept in, whichever a page quotes in. */
 export const pairOrder = (x: string, y: string): [string, string] => (x < y ? [x, y] : [y, x]);
+
+/**
+ * When a swap ran, for its candle: its block's time, which is where Pipeline's hosted API places it
+ * and which can be a second later than the event's own clock (105 of devnet's 387 swaps on
+ * 2026-11-23, PIPESCOPE-108); the event's clock only for a block whose time is unknown.
+ */
+export const tradeTime = (blockTime: Date | null, unixTimestamp: bigint): number => (blockTime ? Math.floor(blockTime.getTime() / 1000) : Number(unixTimestamp));
 
 /** The start of the candle a moment falls in, in Unix seconds. */
 export const candleStart = (at: number, seconds: number) => Math.floor(at / seconds) * seconds;
@@ -206,7 +213,7 @@ export async function rebuildCandles(db: Db, market: string, pair: readonly [str
   for (const { t, key } of ordered) {
     const priced = pricedTrade({ inputMint: t.inputMint, outputMint: t.outputMint, netSent: BigInt(t.netSent), received: BigInt(t.received) });
     if (!priced) continue;
-    const start = candleStart(Number(t.unixTimestamp), seconds);
+    const start = candleStart(tradeTime(t.blockTime, t.unixTimestamp), seconds);
     const candle = built.get(start);
     if (!candle) {
       built.set(start, {

@@ -4,13 +4,17 @@
 // with strategies on a second tab, each tab with its count, under a head that says how many there
 // are and that nothing is curated. The Canary column, the trust flags and the filters come with
 // their tickets (#125, #119); strategy names with strategy metadata (#119), token names with #120.
+// Live (docs/spec/pipescope-architecture.md, Live rooms): the feed's room sends each market new or
+// changed; a new one joins the top, a changed one updates in place, and while the pointer or the
+// focus is on the table new rows wait, so the row under it never moves.
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { MarketsPage, StrategiesList, type Market, type Strategy } from "terminal-api/contract";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { MarketsPage, StrategiesList, type LiveEvent, type Market, type Strategy } from "terminal-api/contract";
 import { ApiFailure, getFromApi } from "@/api";
 import { BRAND } from "@/brand";
 import { FEED_ROWS_PER_LOAD } from "@/config";
 import { formatAge, formatDate, formatInteger, formatTokenAmount } from "@/format";
+import { LIVE_ROOMS, useLiveRoom } from "@/live";
 import { ROUTES } from "@/routes";
 import { MintLabel } from "../MintLabel";
 import { ShortAddress } from "../ShortAddress";
@@ -41,6 +45,57 @@ export function Feed({ tab }: { tab: FeedTab }) {
     );
     return () => controller.abort();
   }, [attempt]);
+
+  // ---- Live ----
+  const loaded = useRef<Loaded | null>(null);
+  useEffect(() => {
+    loaded.current = state.status === "loaded" ? state.data : null;
+  });
+  const holding = useRef(false);
+  const [held, setHeld] = useState<Market[]>([]);
+  const heldNow = useRef<Market[]>([]);
+  const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
+
+  /** Markets from the room or a resync: a known one updates in place, a new one joins the top or, while the reader is on the table, waits. */
+  const arrive = useCallback((arriving: Market[]) => {
+    const data = loaded.current;
+    if (!data || !arriving.length) return;
+    const byAddress = new Map(arriving.map((m) => [m.address, m]));
+    const known = new Set(data.markets.map((m) => m.address));
+    const added = arriving.filter((m) => !known.has(m.address) && !heldNow.current.some((h) => h.address === m.address));
+    const markets = data.markets.map((m) => byAddress.get(m.address) ?? m);
+    heldNow.current = heldNow.current.map((m) => byAddress.get(m.address) ?? m);
+    if (added.length) setFresh((before) => new Set([...before, ...added.map((m) => m.address)]));
+    if (added.length && holding.current) {
+      heldNow.current = [...added, ...heldNow.current];
+      setHeld(heldNow.current);
+      setState({ status: "loaded", data: { ...data, markets } });
+      return;
+    }
+    const newest = [...added].sort((a, b) => b.created_at.localeCompare(a.created_at) || b.address.localeCompare(a.address));
+    setState({ status: "loaded", data: { ...data, markets: [...newest, ...markets], total: data.total + added.length } });
+  }, []);
+
+  const releaseHeld = useCallback(() => {
+    holding.current = false;
+    const waiting = heldNow.current;
+    const data = loaded.current;
+    heldNow.current = [];
+    setHeld([]);
+    if (waiting.length && data) setState({ status: "loaded", data: { ...data, markets: [...waiting, ...data.markets], total: data.total + waiting.length } });
+  }, []);
+
+  useLiveRoom(LIVE_ROOMS.feed, {
+    onEvents: (events: LiveEvent[]) => arrive(events.flatMap((e) => (e.type === "market" ? [e.market] : []))),
+    // Whatever changed while the page was away: the first page read again, and put in place.
+    onOpen: () => {
+      if (!loaded.current) return;
+      getFromApi(`/v1/markets?limit=${FEED_ROWS_PER_LOAD}`, MarketsPage).then(
+        (page) => arrive(page.markets),
+        () => {},
+      );
+    },
+  });
 
   const retry = useCallback(() => {
     setState({ status: "loading" });
@@ -92,7 +147,23 @@ export function Feed({ tab }: { tab: FeedTab }) {
           </nav>
           {tab === "markets" ? (
             <section aria-label="Markets" className={styles.section}>
-              <MarketsTable markets={state.data.markets} />
+              {held.length > 0 && (
+                <p>
+                  <button type="button" onClick={releaseHeld}>
+                    Show {plural(held.length, "new market", "new markets")}
+                  </button>
+                </p>
+              )}
+              <div
+                onPointerEnter={() => (holding.current = true)}
+                onPointerLeave={releaseHeld}
+                onFocus={() => (holding.current = true)}
+                onBlur={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) releaseHeld();
+                }}
+              >
+                <MarketsTable markets={state.data.markets} fresh={fresh} />
+              </div>
               {state.data.next && (
                 <div className={styles.more}>
                   <button type="button" onClick={loadMore} disabled={more.status === "loading"}>
@@ -135,7 +206,7 @@ function Age({ iso }: { iso: string }) {
   );
 }
 
-function MarketsTable({ markets }: { markets: Market[] }) {
+function MarketsTable({ markets, fresh }: { markets: Market[]; fresh: ReadonlySet<string> }) {
   return (
     <div className={table.scroll}>
       <table className={table.table}>
@@ -157,7 +228,7 @@ function MarketsTable({ markets }: { markets: Market[] }) {
             const base = m.mints.find((x) => x.mint === m.base_mint)!;
             const quote = m.mints.find((x) => x.mint === m.quote_mint)!;
             return (
-              <tr key={m.address} className={table.row}>
+              <tr key={m.address} className={`${table.row} ${fresh.has(m.address) ? styles.fresh : ""}`}>
                 <td className={table.main}>
                   <Link href={ROUTES.market(m.address)} className={table.rowLink}>
                     <MintLabel mint={base.mint} symbol={base.symbol} /> / <MintLabel mint={quote.mint} symbol={quote.symbol} />

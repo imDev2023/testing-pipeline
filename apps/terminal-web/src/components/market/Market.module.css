@@ -1,0 +1,196 @@
+/* The market page (docs/spec/pipescope-screens.md, Market page; PIPESCOPE-73): two bands at desktop
+   width and one column at the width theme.css names, whose market tokens hold every rule that
+   changes there. The top band is the chart with the trades beneath it and, once it lands, the trade
+   box in a column on the right; the lower band, the explanation and the strategy's forms beside the
+   facts panel. A band whose side column has nothing in it yet is one column. */
+.page {
+  display: grid;
+  gap: 28px;
+}
+
+.top {
+  display: grid;
+  gap: 28px 24px;
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "chart" "trades";
+}
+
+.top.withTrade {
+  grid-template-columns: var(--market-top-columns);
+  grid-template-areas: var(--market-top-areas);
+}
+
+.chartArea {
+  grid-area: chart;
+}
+
+.tradesArea {
+  grid-area: trades;
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+/* The heading, with the new trades waiting while the reader is on the table beside it, so nothing above the table moves. */
+.tradesHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  min-height: var(--control-min-height);
+}
+
+.panel {
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 16px 20px 20px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.note {
+  color: var(--ink3);
+}
+
+.noTrades {
+  color: var(--ink2);
+  max-width: 60ch;
+}
+
+.failed {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.chartTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+}
+
+.price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+
+.priceValue {
+  font-size: 26px;
+  line-height: 1.1;
+  font-weight: var(--heading-weight);
+  font-stretch: var(--heading-stretch);
+}
+
+.priceUnit {
+  color: var(--ink2);
+}
+
+.flip {
+  color: var(--ink2);
+}
+
+/* The candle lengths: one pressed, the rest plain, wrapping on a narrow screen. */
+.lengths {
+  display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.lengths button {
+  border-radius: 0;
+  margin-left: -1px;
+  padding: 0 10px;
+  color: var(--ink2);
+  background: transparent;
+}
+
+.lengths button:first-child {
+  border-radius: 4px 0 0 4px;
+  margin-left: 0;
+}
+
+.lengths button:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.lengths button:hover {
+  background: var(--wash);
+  border-color: var(--rule2);
+}
+
+.lengths button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--sheet);
+  border-color: var(--ink);
+  position: relative;
+}
+
+.chartFrame {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chart {
+  height: var(--chart-height);
+  min-width: 0;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  font-size: 12px;
+  color: var(--ink2);
+  min-height: 18px;
+}
+
+.legend b {
+  color: var(--ink);
+  font-weight: var(--strong-weight);
+}
+
+/* Trades: the table's columns, and at 720 px and narrower a block each: side, when and price on the first line, then what was paid and received. */
+.trades .side {
+  font-weight: var(--strong-weight);
+}
+
+.more {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+/* A trade that arrived live is washed for a moment, only for readers who allow motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .fresh {
+    animation: arrived 2s ease-out;
+  }
+
+  @keyframes arrived {
+    from {
+      background: var(--wash);
+    }
+
+    to {
+      background: transparent;
+    }
+  }
+}

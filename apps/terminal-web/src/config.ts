@@ -23,9 +23,22 @@ export const QUOTE_PAUSE_MS = 350;
 /** SOL kept back for network fees and rent when the trader uses their whole balance. */
 export const SOL_KEPT_BACK = 0.01;
 
-/** The chart: the candle lengths offered, in seconds, and the one it opens at. */
-export const CHART_CANDLE_SECONDS = [60, 5 * 60, 15 * 60, 60 * 60, 4 * 60 * 60, 24 * 60 * 60];
-export const CHART_OPENS_AT_SECONDS = 15 * 60;
+/**
+ * The chart (PIPESCOPE-75): the candle lengths offered, by the API's names for them, and the one it
+ * opens at. The API also keeps 1 s and 15 s candles ("1s", "15s"), which this list can add.
+ */
+export const CHART_INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
+export const CHART_OPENS_AT = "15m";
+/** The room a chart gives each candle, in pixels, whatever its width, so a lone candle is drawn at a readable size. */
+export const CHART_CANDLE_SPACING_PX = 16;
+
+/**
+ * Live updates (docs/spec/pipescope-architecture.md, Live rooms): the longest wait before a dropped
+ * live room is joined again (each try waits twice the last, from a second), and the shortest gap
+ * between two reads of the forming candle while trades land.
+ */
+export const LIVE_RECONNECT_MAX_MS = 15_000;
+export const LIVE_CANDLE_REFRESH_MS = 1_000;
 
 /** Paging. */
 export const TRADES_SHOWN = 40;

@@ -93,6 +93,12 @@
   --listing-row-padding: 0;
   --listing-row-rule: 0;
   --listing-number-align: right;
+
+  /* The market page (components/market/Market.module.css): its top band's columns and areas, the
+     chart and the trades beside the trade box, and the chart's height. */
+  --market-top-columns: minmax(0, 1fr) 388px;
+  --market-top-areas: "chart trade" "trades trade";
+  --chart-height: 380px;
 }
 
 :root[data-theme="light"] {
@@ -103,8 +109,15 @@
   color-scheme: dark;
 }
 
-/* 1080 px: the width at which the market page becomes one column; its rules arrive with the market
-   page (#118). */
+/* 1080 px: the width at which the market page becomes one column, in this order: head, chart, trade
+   box, trades; the trade box no longer stays in view. */
+@media (max-width: 1080px) {
+  :root {
+    --market-top-columns: minmax(0, 1fr);
+    --market-top-areas: "chart" "trade" "trades";
+    --chart-height: 320px;
+  }
+}
 
 /* 720 px: the width at which tables become labelled blocks, the header becomes three rows, text is
    15 px and every field and button is at least 44 px high. */
@@ -128,5 +141,6 @@
     --listing-row-padding: 14px 16px;
     --listing-row-rule: 1px;
     --listing-number-align: left;
+    --chart-height: 280px;
   }
 }

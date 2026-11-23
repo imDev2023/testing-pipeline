@@ -50,6 +50,20 @@ describe("folding a swap", () => {
     expect(candle).toMatchObject({ open: { a: 10n, b: 1n }, close: { a: 15n, b: 1n }, high: { a: 20n, b: 1n }, low: { a: 10n, b: 1n }, trades: 3, volumeA: 60n, volumeB: 4n });
   });
 
+  it("is placed by its block's time, as Pipeline's hosted API places it, and by the event's own clock only when the block has none", async () => {
+    // The event's clock reads the last second of a minute; its block was timed a second later.
+    await indexTransactions(client.db, handler, [
+      swapTransaction({ ...buy(1, 100, T0 + 59, 1n, 2n), blockTime: T0 + 60 }),
+      swapTransaction({ ...buy(2, 101, T0 + 59, 1n, 3n), blockTime: null }),
+    ]);
+    const minutes = await writtenCandles(client.db, SWAP_MARKET, PAIR, 60);
+    expect(minutes.map((c) => [c.start, c.trades])).toEqual([
+      [T0, 1],
+      [T0 + 60, 1],
+    ]);
+    expect(await rebuildCandles(client.db, SWAP_MARKET, PAIR, 60)).toEqual(minutes);
+  });
+
   it("is never counted twice, when a transaction arrives again or is indexed again", async () => {
     const raw = swapTransaction(buy(1, 100, T0, 3n, 9n));
     await indexTransactions(client.db, handler, [raw, raw]);
