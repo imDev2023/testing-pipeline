@@ -15,19 +15,8 @@
 
 use anchor_lang::prelude::*;
 
-/// A token account's base length, which a mint's base is padded to.
-const ACCOUNT_LEN: usize = 165;
-/// The account type byte after the base: 2 for a token account.
-const ACCOUNT_TYPE_ACCOUNT: u8 = 2;
-/// Token-2022's number for the transfer hook account extension, whose one-byte value is the
-/// `transferring` flag.
-const TRANSFER_HOOK_ACCOUNT: u16 = 15;
-/// A Token-2022 multisig's length: Token-2022 never reads an account of this length as a
-/// token account, so neither does the hook.
-const MULTISIG_LEN: usize = 355;
-/// Token-2022's number for the immutable owner extension, which has no value: an account
-/// that carries it can never change its owner.
-const IMMUTABLE_OWNER: u16 = 7;
+use mint_rules::account_extension::{IMMUTABLE_OWNER, TRANSFER_HOOK_ACCOUNT};
+use mint_rules::{ACCOUNT_LEN, ACCOUNT_TYPE_ACCOUNT, MULTISIG_LEN};
 
 /// Whether `account` is a Token-2022 token account of `mint` with its `transferring` flag
 /// set.

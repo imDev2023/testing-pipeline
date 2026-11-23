@@ -2213,6 +2213,7 @@ name = "mint-rules"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "solana-program-pack",
  "spl-token-2022-interface 3.1.2",
 ]
 

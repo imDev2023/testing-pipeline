@@ -70,12 +70,25 @@ pub enum MintRefusal {
 /// An SPL Token mint, and a Token-2022 mint's base, before any extension.
 pub const MINT_LEN: usize = 82;
 const IS_INITIALIZED: usize = 45;
-/// Token-2022 pads an extended mint to a token account's length, then writes the account
-/// type, then its type-length-value extension entries.
-const ACCOUNT_LEN: usize = 165;
+/// A token account's base length. Token-2022 pads an extended mint to it, then writes the
+/// account type, then its type-length-value extension entries; an extended token account
+/// writes its account type and entries straight after it.
+pub const ACCOUNT_LEN: usize = 165;
 const ACCOUNT_TYPE_MINT: u8 = 1;
-/// A multisig's length, which Token-2022 never reads as a mint.
-const MULTISIG_LEN: usize = 355;
+/// The account type byte after the base of a token account.
+pub const ACCOUNT_TYPE_ACCOUNT: u8 = 2;
+/// A multisig's length, which Token-2022 never reads as a mint or as a token account.
+pub const MULTISIG_LEN: usize = 355;
+
+/// Token-2022's numbers for the token account extensions programs read
+/// (`tests/account_layout.rs` checks them against its `ExtensionType`).
+pub mod account_extension {
+    /// Holds the `transferring` flag Token-2022 sets on a transfer's accounts while it calls a
+    /// transfer hook.
+    pub const TRANSFER_HOOK_ACCOUNT: u16 = 15;
+    /// Has no value: an account that carries it can never change its owner.
+    pub const IMMUTABLE_OWNER: u16 = 7;
+}
 /// Token-2022's `Uninitialized` type, which ends the list of entries.
 const UNINITIALIZED: u16 = 0;
 
