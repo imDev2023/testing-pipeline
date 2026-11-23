@@ -16,9 +16,9 @@
 
 pub mod authority;
 pub mod ceilings;
-pub mod fuzz;
 pub mod launchpad;
 pub mod model;
+pub mod wide;
 
 use std::path::PathBuf;
 
@@ -79,6 +79,19 @@ pub fn strategy_so() -> Vec<u8> {
     read_program(
         dir.join("tax_amm.so"),
         "Build it first: cargo build-sbf --manifest-path programs/tax-amm/Cargo.toml",
+    )
+}
+
+/// The containment hook's compiled program, beside the strategy's:
+/// `cargo build-sbf --manifest-path programs/containment-hook/Cargo.toml`.
+pub fn containment_hook_so() -> Vec<u8> {
+    let dir = std::env::var("SBF_OUT_DIR")
+        .map(PathBuf::from)
+        .or_else(|_| std::env::var("CARGO_TARGET_DIR").map(|dir| PathBuf::from(dir).join("deploy")))
+        .unwrap_or_else(|_| crate_dir().join("../target/deploy"));
+    read_program(
+        dir.join("containment_hook.so"),
+        "Build it first: cargo build-sbf --manifest-path programs/containment-hook/Cargo.toml",
     )
 }
 
@@ -357,12 +370,14 @@ impl Env {
             );
         }
         if let Some(hook_program) = options.transfer_hook {
+            // The default key stands for none, as Token-2022 stores it.
+            let some = |key: Pubkey| (key != Pubkey::default()).then_some(key);
             instructions.push(
                 transfer_hook::instruction::initialize(
                     token_program,
                     &mint.pubkey(),
-                    Some(options.transfer_hook_authority.unwrap_or(authority)),
-                    Some(hook_program),
+                    some(options.transfer_hook_authority.unwrap_or(authority)),
+                    some(hook_program),
                 )
                 .unwrap(),
             );
@@ -388,6 +403,19 @@ impl Env {
             )
             .unwrap(),
         );
+        if !options.mint_authority {
+            instructions.push(
+                instruction::set_authority(
+                    token_program,
+                    &mint.pubkey(),
+                    None,
+                    instruction::AuthorityType::MintTokens,
+                    &authority,
+                    &[],
+                )
+                .unwrap(),
+            );
+        }
         self.send(&instructions, &[mint]).unwrap();
         mint.pubkey()
     }
@@ -402,14 +430,159 @@ impl Env {
         hook_authority: impl FnOnce(&Pubkey) -> Pubkey,
         options: MintOptions,
     ) -> Pubkey {
-        let mint = Keypair::new();
+        self.create_hooked_mint_at(&Keypair::new(), hook_program, hook_authority, options)
+    }
+
+    /// [`Env::create_hooked_mint`] at a given mint keypair's address.
+    pub fn create_hooked_mint_at(
+        &mut self,
+        mint: &Keypair,
+        hook_program: &Pubkey,
+        hook_authority: impl FnOnce(&Pubkey) -> Pubkey,
+        options: MintOptions,
+    ) -> Pubkey {
         let authority = hook_authority(&mint.pubkey());
         let options = MintOptions {
             transfer_hook: Some(*hook_program),
             transfer_hook_authority: Some(authority),
             ..options
         };
-        self.create_mint_at(&mint, &TOKEN_2022, options)
+        self.create_mint_at(mint, &TOKEN_2022, options)
+    }
+
+    /// Loads the containment hook, once: the one transfer hook program a market's mint may
+    /// run (docs/spec/tax-amm.md, "Mint rules").
+    pub fn add_containment_hook(&mut self) {
+        if self.svm.get_account(&containment_hook_id()).is_none() {
+            self.svm
+                .add_program(containment_hook_id(), &containment_hook_so())
+                .unwrap();
+        }
+    }
+
+    /// A contained mint as a launch creates it: Token-2022, the containment hook as its
+    /// transfer hook with its unlock PDA as hook authority, no freeze authority, and the
+    /// admin as mint authority until [`Env::contain`] binds it.
+    pub fn create_contained_mint(&mut self) -> Pubkey {
+        self.create_contained_mint_at(&Keypair::new())
+    }
+
+    /// [`Env::create_contained_mint`] at a given mint keypair's address.
+    pub fn create_contained_mint_at(&mut self, mint: &Keypair) -> Pubkey {
+        self.add_containment_hook();
+        let options = MintOptions {
+            mint_authority: true,
+            ..MintOptions::default()
+        };
+        self.create_hooked_mint_at(mint, &containment_hook_id(), unlock_pda, options)
+    }
+
+    /// Binds a contained `mint` to `market`, its home market, with a goal of 5 SOL of tax and a
+    /// deadline 30 days away, then revokes the mint authority, as a launch does between `bind`
+    /// and the seed (docs/spec/containment-hook.md, "Launch in v1").
+    pub fn contain(&mut self, mint: &Pubkey, market: &Market) {
+        let hook = containment_hook_id();
+        let pda = |seed: &[u8]| Pubkey::find_program_address(&[seed, mint.as_ref()], &hook).0;
+        // Anchor's discriminator of `bind`, `sha256("global:bind")[..8]`.
+        let mut data = vec![178, 57, 187, 254, 138, 43, 99, 134];
+        data.extend_from_slice(&(5 * SOL).to_le_bytes());
+        let now = self.svm.get_sysvar::<solana_clock::Clock>().unix_timestamp;
+        data.extend_from_slice(&(now + 30 * 24 * 60 * 60).to_le_bytes());
+        let admin = self.admin.pubkey();
+        let bind = Instruction::new_with_bytes(
+            hook,
+            &data,
+            vec![
+                AccountMeta::new_readonly(admin, true),
+                AccountMeta::new(admin, true),
+                AccountMeta::new_readonly(*mint, false),
+                AccountMeta::new(pda(b"config"), false),
+                AccountMeta::new(pda(b"extra-account-metas"), false),
+                AccountMeta::new_readonly(unlock_pda(mint), false),
+                AccountMeta::new_readonly(market.market, false),
+                AccountMeta::new_readonly(market.market_state, false),
+                AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
+            ],
+        );
+        let revoke = spl_token_2022_interface::instruction::set_authority(
+            &TOKEN_2022,
+            mint,
+            None,
+            spl_token_2022_interface::instruction::AuthorityType::MintTokens,
+            &admin,
+            &[],
+        )
+        .unwrap();
+        self.send(&[bind, revoke], &[]).unwrap();
+    }
+
+    /// A contained mint's home market, seeded: the contained mint at `contained_index`
+    /// against a plain SPL Token quote mint taxed at [`quote_taxed_params`], bound and its
+    /// mint authority revoked before the seed of `amounts`, by a fresh seeder.
+    pub fn contained_market(&mut self, contained_index: usize, amounts: [u64; 2]) -> Market {
+        let contained = self.create_contained_mint();
+        let quote = (self.create_mint(&TOKEN), TOKEN);
+        let mut mints = [quote, quote];
+        mints[contained_index] = (contained, TOKEN_2022);
+        let seeder = Keypair::new();
+        let params = quote_taxed_params(&seeder.pubkey(), 1 - contained_index as u8);
+        let market = self.create_tax_market(mints, &params).unwrap();
+        self.contain(&contained, &market);
+        self.fund(&seeder.pubkey(), &market, amounts);
+        self.seed(&market, &seeder, amounts).unwrap();
+        market
+    }
+
+    /// The VM's current slot.
+    pub fn slot(&self) -> u64 {
+        self.svm.get_sysvar::<solana_clock::Clock>().slot
+    }
+
+    /// Moves the VM's clock `slots` slots on.
+    pub fn warp_slots(&mut self, slots: u64) {
+        let mut clock: solana_clock::Clock = self.svm.get_sysvar();
+        clock.slot += slots;
+        self.svm.set_sysvar(&clock);
+    }
+
+    /// Clears a Token-2022 mint's transfer hook as the containment hook's `unlock` does: no
+    /// program, then no authority, signed by the admin as its hook authority.
+    pub fn clear_transfer_hook(&mut self, mint: &Pubkey) {
+        use spl_token_2022_interface::extension::transfer_hook;
+        use spl_token_2022_interface::instruction::{set_authority, AuthorityType};
+        let admin = self.admin.pubkey();
+        let update =
+            transfer_hook::instruction::update(&TOKEN_2022, mint, &admin, &[], None).unwrap();
+        let clear = set_authority(
+            &TOKEN_2022,
+            mint,
+            None,
+            AuthorityType::TransferHookProgramId,
+            &admin,
+            &[],
+        )
+        .unwrap();
+        self.send(&[update, clear], &[]).unwrap();
+    }
+
+    /// A Token-2022 mint carrying a transfer hook extension that is cleared, no program and
+    /// no authority, as a contained mint's is after its unlock: the one kind of hooked mint
+    /// a market accepts besides a contained mint, and one that never runs a hook.
+    pub fn create_mint_with_cleared_hook(&mut self) -> Pubkey {
+        self.create_mint_with_cleared_hook_at(&Keypair::new())
+    }
+
+    /// [`Env::create_mint_with_cleared_hook`] at a given mint keypair's address.
+    pub fn create_mint_with_cleared_hook_at(&mut self, mint: &Keypair) -> Pubkey {
+        let admin = self.admin.pubkey();
+        let mint = self.create_hooked_mint_at(
+            mint,
+            &Pubkey::new_unique(),
+            |_| admin,
+            MintOptions::default(),
+        );
+        self.clear_transfer_hook(&mint);
+        mint
     }
 
     /// A plain mint of `token_program` with 6 decimals and no freeze authority.
@@ -442,6 +615,29 @@ impl Env {
             lamports: self.svm.minimum_balance_for_rent_exemption(data.len()),
             data,
             owner: TOKEN_2022,
+            executable: false,
+            rent_epoch: 0,
+        };
+        self.svm.set_account(mint, account).unwrap();
+        mint
+    }
+
+    /// The cluster's USDC (`tax_amm::config::QUOTE_MINTS[2]`) as Circle runs it, written into
+    /// the VM: an SPL Token mint with 6 decimals and both a mint and a freeze authority, the
+    /// admin standing in for Circle.
+    pub fn write_usdc_mint(&mut self) -> Pubkey {
+        let some = |key: Pubkey| [[1u8, 0, 0, 0].as_slice(), key.as_ref()].concat();
+        let mut data = some(self.admin.pubkey());
+        data.extend_from_slice(&0u64.to_le_bytes());
+        data.push(6);
+        data.push(1);
+        data.extend(some(self.admin.pubkey()));
+        assert_eq!(data.len(), MINT_LEN);
+        let mint = ck(&tax_amm::config::QUOTE_MINTS[2]);
+        let account = solana_account::Account {
+            lamports: self.svm.minimum_balance_for_rent_exemption(data.len()),
+            data,
+            owner: TOKEN,
             executable: false,
             rent_epoch: 0,
         };
@@ -674,7 +870,8 @@ impl Env {
         amounts: [u64; 2],
         hook_accounts: Vec<AccountMeta>,
     ) -> Result<TransactionMetadata, String> {
-        let instruction = seed_instruction(market, &seeder.pubkey(), amounts, hook_accounts);
+        let terms = terms_of(&self.tax_market(&market.market_state));
+        let instruction = seed_instruction(market, &seeder.pubkey(), amounts, terms, hook_accounts);
         self.send_meta(&[instruction], &[seeder])
     }
 
@@ -878,51 +1075,6 @@ impl Env {
         transfer_hook::get_program_id(&state).map(|id| Pubkey::new_from_array(id.to_bytes()))
     }
 
-    /// Loads Pipeline's `test-hook` (built by `scripts/fetch-pipeline.sh`), a transfer hook
-    /// that approves every transfer once a mint's list is initialized with nobody on it.
-    pub fn add_test_hook(&mut self) -> Pubkey {
-        let program = test_hook_id();
-        if self.svm.get_account(&program).is_none() {
-            let path =
-                crate_dir().join("../../fixtures/pipeline/programs/target/deploy/test_hook.so");
-            let bytes = read_program(path, "Run `scripts/fetch-pipeline.sh` first.");
-            self.svm.add_program(program, &bytes).unwrap();
-        }
-        program
-    }
-
-    /// A Token-2022 mint whose transfer hook is Pipeline's `test-hook`, approving every
-    /// transfer, with the admin as its hook authority.
-    pub fn create_mint_with_test_hook(&mut self) -> Pubkey {
-        self.create_mint_with_test_hook_at(&Keypair::new())
-    }
-
-    /// [`Env::create_mint_with_test_hook`] at a given mint keypair's address.
-    pub fn create_mint_with_test_hook_at(&mut self, mint: &Keypair) -> Pubkey {
-        let hook = self.add_test_hook();
-        let options = MintOptions {
-            transfer_hook: Some(hook),
-            transfer_hook_authority: Some(self.admin.pubkey()),
-            ..MintOptions::default()
-        };
-        let mint = self.create_mint_at(mint, &TOKEN_2022, options);
-        let validation = pipeline_check::hooks::validation_address(&hook, &mint);
-        let whitelist = Pubkey::find_program_address(&[b"whitelist", mint.as_ref()], &hook).0;
-        let initialize = Instruction::new_with_bytes(
-            hook,
-            b"tsthkini",
-            vec![
-                AccountMeta::new(self.admin.pubkey(), true),
-                AccountMeta::new(validation, false),
-                AccountMeta::new(whitelist, false),
-                AccountMeta::new_readonly(mint, false),
-                AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
-            ],
-        );
-        self.send(&[initialize], &[]).unwrap();
-        mint
-    }
-
     /// The router's swap events in a transaction.
     pub fn swap_events(meta: &TransactionMetadata) -> Vec<pipeline_events::SwapEvent> {
         meta.inner_instructions
@@ -1039,18 +1191,42 @@ pub struct SwapOptions {
     pub strategy_accounts: Option<Vec<AccountMeta>>,
 }
 
-/// Where tests load Pipeline's `test-hook`.
-pub fn test_hook_id() -> Pubkey {
-    pipeline_client::pubkey!("TestHook11111111111111111111111111111111111")
+/// The buy and sell tax a market's tax authority last set: its pending rates while a change
+/// waits (docs/spec/tax-amm.md, "Rates"), the rates in force otherwise.
+pub fn set_rates(state: &TaxMarket) -> (u16, u16) {
+    let [buy, sell] = state.rates_at(u64::MAX);
+    (buy, sell)
+}
+
+/// The containment hook's program id, as the tax AMM compiles it in: the one transfer hook
+/// program a market's mint may name (docs/spec/tax-amm.md, "Mint rules").
+pub fn containment_hook_id() -> Pubkey {
+    ck(&tax_amm::config::CONTAINMENT_HOOK_ID)
+}
+
+/// A mint's unlock PDA under the containment hook, `["unlock", mint]`: a contained mint's
+/// transfer hook authority.
+pub fn unlock_pda(mint: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[tax_amm::config::CONTAINMENT_UNLOCK_SEED, mint.as_ref()],
+        &containment_hook_id(),
+    )
+    .0
 }
 
 /// What [`Env::create_mint_with`] sets up besides a plain mint.
 #[derive(Clone, Copy, Debug)]
 pub struct MintOptions {
     pub decimals: u8,
+    /// Keeps the admin as the mint authority; otherwise it is revoked once the mint is set
+    /// up, as a market's mint must be at the seed unless it is a quote mint
+    /// (docs/spec/tax-amm.md, "Mint rules"). [`Env::fund`] writes balances without minting.
+    pub mint_authority: bool,
     pub freeze_authority: bool,
+    /// The transfer hook's program; the default key for an extension with no program.
     pub transfer_hook: Option<Pubkey>,
-    /// The transfer hook's authority; the admin when `None`.
+    /// The transfer hook's authority; the admin when `None`, no authority when the default
+    /// key.
     pub transfer_hook_authority: Option<Pubkey>,
     pub transfer_fee_bps: Option<u16>,
     pub permanent_delegate: bool,
@@ -1060,6 +1236,7 @@ impl Default for MintOptions {
     fn default() -> Self {
         MintOptions {
             decimals: 6,
+            mint_authority: false,
             freeze_authority: false,
             transfer_hook: None,
             transfer_hook_authority: None,
@@ -1088,12 +1265,14 @@ pub fn seed_instruction(
     market: &Market,
     seeder: &Pubkey,
     amounts: [u64; 2],
+    expected_terms: [u8; 32],
     hook_accounts: Vec<AccountMeta>,
 ) -> Instruction {
     use anchor_lang::InstructionData;
     let data = tax_amm::instruction::Seed {
         amount_0: amounts[0],
         amount_1: amounts[1],
+        expected_terms,
     }
     .data();
     let source =
@@ -1112,6 +1291,36 @@ pub fn seed_instruction(
     ];
     accounts.extend(hook_accounts);
     Instruction::new_with_bytes(strategy_id(), &data, accounts)
+}
+
+/// The hash of a market's terms the seed checks (docs/spec/tax-amm.md, "The seed"), written
+/// out from the spec rather than taken from the program: the SHA-256 of the Borsh encoding of
+/// the two mints, the creation parameters (`init_data`'s fields, in their order), the
+/// pending buy and sell tax and the slot they apply from (all 0 when nothing is pending).
+pub fn terms_hash(mints: [Pubkey; 2], params: &InitParams, pending: ([u16; 2], u64)) -> [u8; 32] {
+    use sha2::Digest;
+    let mut bytes = vec![];
+    for mint in mints {
+        bytes.extend_from_slice(mint.as_ref());
+    }
+    bytes.extend(init_data(params));
+    bytes.extend_from_slice(&pending.0[0].to_le_bytes());
+    bytes.extend_from_slice(&pending.0[1].to_le_bytes());
+    bytes.extend_from_slice(&pending.1.to_le_bytes());
+    sha2::Sha256::digest(&bytes).into()
+}
+
+/// [`terms_hash`] of a market state as it stands, as a client that shows the market to its
+/// seeder computes it.
+pub fn terms_of(state: &TaxMarket) -> [u8; 32] {
+    terms_hash(
+        state.mints.map(|mint| ck(&mint)),
+        &state.params(),
+        (
+            [state.pending_buy_tax_bps, state.pending_sell_tax_bps],
+            state.pending_from_slot,
+        ),
+    )
 }
 
 /// The wallet a tax slot is paid to, as the program's `TaxMarket::slot_wallet` says
@@ -1173,13 +1382,11 @@ pub fn strategy_call<T: borsh::BorshSerialize>(
 
 /// Fails unless `result` is the strategy refusing with `error`: Anchor's error number for it
 /// in the transaction error, and its name in the logs.
-pub fn assert_refused<T: std::fmt::Debug>(result: Result<T, String>, error: StrategyError) {
+pub fn assert_refused<T>(result: Result<T, String>, error: StrategyError) {
     let name = format!("{error:?}");
     let number = anchor_lang::error::ERROR_CODE_OFFSET + error as u32;
     match result {
-        Ok(value) => {
-            panic!("expected the strategy to refuse with {name}, but it passed: {value:?}")
-        }
+        Ok(_) => panic!("expected the strategy to refuse with {name}, but it passed"),
         Err(failure) => assert!(
             failure.contains(&format!("Custom({number})"))
                 && failure.contains(&format!("Error Code: {name}.")),
@@ -1231,5 +1438,27 @@ fn create_account(
         client::SYSTEM_PROGRAM_ID,
         &data,
         vec![AccountMeta::new(*from, true), AccountMeta::new(*to, true)],
+    )
+}
+
+/// The associated token program's `CreateIdempotent`: `owner`'s token account for `mint`,
+/// paid for by `payer`, created unless it exists.
+pub fn create_token_account_idempotent(
+    payer: &Pubkey,
+    owner: &Pubkey,
+    mint: &Pubkey,
+    token_program: &Pubkey,
+) -> Instruction {
+    Instruction::new_with_bytes(
+        client::ASSOCIATED_TOKEN_PROGRAM_ID,
+        &[1],
+        vec![
+            AccountMeta::new(*payer, true),
+            AccountMeta::new(pda::associated_token(owner, mint, token_program), false),
+            AccountMeta::new_readonly(*owner, false),
+            AccountMeta::new_readonly(*mint, false),
+            AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
+            AccountMeta::new_readonly(*token_program, false),
+        ],
     )
 }

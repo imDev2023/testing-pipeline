@@ -1,6 +1,6 @@
 [package]
 name = "lending-amm"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -49,6 +49,7 @@ litesvm.workspace = true
 pipeline-check.workspace = true
 pipeline-client.workspace = true
 proptest.workspace = true
+published-check.workspace = true
 serde_json.workspace = true
 solana-account.workspace = true
 solana-clock.workspace = true

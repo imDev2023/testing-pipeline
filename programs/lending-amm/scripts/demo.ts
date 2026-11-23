@@ -12,7 +12,8 @@
 //   2. check metadata.json, and the published copy at the metadata URI;
 //   3. register the strategy, signed and paid for by the upgrade authority (once), or point
 //      it at a new metadata URI;
-//   4. create a test token and wrap SOL for the LP and trader;
+//   4. create a test token, mint its supply, remove its mint authority (it never had a freeze
+//      authority) and check the mint holds neither, and wrap SOL for the LP and trader;
 //   5. compute, before sending anything, the addresses the creation will use: the router's
 //      market and fee accounts, and the lending AMM's market state, vaults, cToken account,
 //      LP mint, vault authority and the LP's shares account;
@@ -67,7 +68,9 @@
 //      form, as an LP would whose other token can no longer move: the buffer's part in WSOL,
 //      the cTokens' part as cTokens, and nothing of the other token, whose part stays recorded;
 //  22. Kamino runs short: the test borrower of scripts/kamino-devnet borrows the WSOL reserve's
-//      free liquidity below WITHDRAW_MODE_ENTER times the market's exposure max(V, T);
+//      free liquidity below WITHDRAW_MODE_ENTER times the market's exposure max(V, T); with the
+//      loan held, the market's lending yield so far, V + redeemed - deposited at the stored rate
+//      klend's refresh_reserve leaves, is read twice, and the second read must be the higher;
 //  23. `rebalance` enters withdraw mode, its event carrying the free liquidity and the exposure
 //      it measured, and klend redeems every cToken the market holds, as its maths gives;
 //  24. a second `rebalance` is refused with `BelowMinRebalance`, in simulation: it neither
@@ -81,7 +84,9 @@
 //      the buffer trades, one beyond it is refused by the quote and by the swap with
 //      `BeyondBuffer`, `rebalance` is refused with `KaminoStopped` and a cash removal with
 //      `KaminoCannotPay`, and the second wallet removes the rest of its shares in kind;
-//  27. emergency mode off, a sale beyond the buffer redeems its shortfall from Kamino again;
+//  27. emergency mode off, a sale beyond the buffer redeems its shortfall from Kamino again,
+//      and `rebalance` brings the buffer back to its target, leaving the market as a keeper
+//      would keep it;
 //  28. on a local validator only, the stand-in launchpad (../../tax-amm/scripts/launchpad.ts)
 //      graduates a new token into a second market: `pipeline_seed_liquidity`, built from the
 //      metadata's `seed_liquidity` form with the market's vault authority as the LP recipient,
@@ -93,7 +98,14 @@
 //  29. the seeded market trades both ways through the router, each swap equal to its quote and
 //      to the script's calculation;
 //  30. `rebalance` lends its surplus to Kamino by klend's own deposit, as its maths gives, and
-//      the lock account still holds every share.
+//      the lock account still holds every share;
+//  31. on devnet, Pipeline's hosted API lists the demo market and quotes it both ways within the
+//      buffer, each quote equal to the program's own on the same state; should it refuse to
+//      quote a market whose swaps read another program's account, the run records its answer.
+//
+// After every step the script reads the market state and the reserve back and checks the
+// buffer, the cTokens, the running totals, the share count and withdraw mode against what the
+// step should have done, and prints each transaction's signature.
 //
 // Steps 22 to 27 run the Kamino-side commands of scripts/kamino-devnet (`borrow`, `repay` and
 // `emergency on|off`), with the keys in ~/.config/testing-pipeline/devnet/ (KEYS_DIR); on a
@@ -108,7 +120,7 @@
 //
 //   node demo.ts --cluster <localnet|devnet|URL> \
 //     --payer <keypair.json> --upgrade-authority <keypair.json> \
-//     [--metadata-uri <URI>] [--program-id <address>]
+//     [--metadata-uri <URI>] [--program-id <address>] [--register-only] [--record <file>]
 //
 //   --cluster            localnet (http://127.0.0.1:8899), devnet, or an RPC URL of either;
 //                        the cluster's genesis hash must be devnet's, or the URL a local
@@ -116,8 +128,21 @@
 //   --payer              pays fees, creates the token, is the LP and the trader
 //   --upgrade-authority  the program's upgrade authority; signs register_strategy and pays
 //                        its listing fee (docs/spec/README.md, "Upgrade authority")
-//   --metadata-uri       where metadata.json is published (default: this repo's main branch)
+//   --metadata-uri       where metadata.json is published (default: this repo's main branch);
+//                        on devnet, once metadata.json on main is pinned, not main's link
 //   --program-id         the strategy program (default: the address in declare_id!)
+//   --register-only      steps 1 to 3 only: register the strategy, or point it at a new
+//                        metadata URI, as each later deploy does (docs/toolchain.md, "Deploy
+//                        to devnet")
+//   --hosted-api         on devnet, step 31 alone, on an existing market (the router's Market): what
+//                        Pipeline's hosted API lists and quotes, against the program's own quotes
+//   --record             also write what the run did (addresses and signatures) to a file, and
+//                        how it ended, even when it stops part way
+//
+// On devnet the metadata URI must resolve and pass Pipeline's validator with zero warnings
+// before the script registers it or points the strategy at it.
+//
+// On devnet, step 25's wait is WITHDRAW_MODE_EXIT_DELAY_SLOTS of devnet's slots, about an hour.
 //
 // On a local cluster the script airdrops the SOL both keys need; on devnet it never does
 // (fund them with devnet-airdrop, docs/toolchain.md). The lending AMM's devnet build lends
@@ -126,7 +151,7 @@
 // (programs/lending-amm/scripts/fetch-klend.sh and fetch-accounts.sh, docs/toolchain.md).
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -163,8 +188,11 @@ import { getCreateAccountInstruction, getTransferSolInstruction } from '@solana-
 import {
     findAssociatedTokenPda,
     getCreateAssociatedTokenIdempotentInstructionAsync,
+    AuthorityType,
     getInitializeMint2Instruction,
+    getMintDecoder,
     getMintSize,
+    getSetAuthorityInstruction,
     getMintToInstruction,
     getSyncNativeInstruction,
     getTransferCheckedInstruction,
@@ -200,8 +228,8 @@ import { decodeReserve, freeLiquidity, klendDeposit, klendRedeem, lentValue, rat
 
 // Written by Pipeline's scripts/new-strategy.sh; the same address as `declare_id!`.
 const DEFAULT_PROGRAM_ID = 'Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG';
-const DEFAULT_METADATA_URI =
-    'https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/lending-amm/metadata.json';
+const RAW_REPO = 'https://raw.githubusercontent.com/imDev2023/testing-pipeline';
+const DEFAULT_METADATA_URI = `${RAW_REPO}/main/programs/lending-amm/metadata.json`;
 // The native mint of SPL Token, WSOL, the lent mint of the demo market.
 const WSOL = address('So11111111111111111111111111111111111111112');
 
@@ -220,20 +248,22 @@ function idlConstant(name: string): bigint {
 // The other side is a fresh test token with 6 decimals; WSOL is lent.
 //
 // Sized for our devnet lending market's WSOL reserve, whose freely available liquidity the
-// second depositor keeps at about 5 SOL (scripts/kamino-devnet/src/policy.ts): the lent side
-// ends at about 0.4 SOL, so the market's exposure max(V, T) stays below 0.5 SOL and the reserve
-// stays above WITHDRAW_MODE_EXIT times it, until the test borrower borrows it down.
+// second depositor keeps at about 5 SOL (scripts/kamino-devnet/src/policy.ts): the first
+// deposit puts 0.5 SOL on the lent side, as the devnet ticket asks, and the lent side stays
+// near 0.6 SOL, so the market's exposure max(V, T) stays below 0.5 SOL and the reserve, holding
+// the market's own deposit too, stays above WITHDRAW_MODE_EXIT times it until the test
+// borrower borrows it down (LENDING-82).
 const DEMO = {
     lpFeeBps: 30,
     tokenDecimals: 6,
     tokenMinted: 10_000_000_000_000n,
     // What the payer wraps into WSOL for the deposits and the trades.
     wrapLamports: 1_000_000_000n,
-    firstDeposit: { token: 175_000_000_000n, wsol: 350_000_000n },
+    firstDeposit: { token: 250_000_000_000n, wsol: 500_000_000n },
     buyWithLamports: 20_000_000n,
     sellTokens: 5_000_000_000n,
     // The WSOL each later deposit adds; the token it offers follows from the market's ratio.
-    secondDeposit: { wsol: 150_000_000n },
+    secondDeposit: { wsol: 50_000_000n },
     // The second wallet, an LP who adds, removes in cash and in kind, and locks: what the payer
     // gives it, what it offers to add, and what it removes and locks of the shares it gets.
     secondLp: {
@@ -277,6 +307,9 @@ const { values: options } = parseArgs({
         'upgrade-authority': { type: 'string' },
         'metadata-uri': { type: 'string', default: DEFAULT_METADATA_URI },
         'program-id': { type: 'string', default: DEFAULT_PROGRAM_ID },
+        'register-only': { type: 'boolean', default: false },
+        'hosted-api': { type: 'string' },
+        record: { type: 'string' },
     },
     strict: true,
 });
@@ -284,7 +317,7 @@ const { values: options } = parseArgs({
 function usage(message: string): never {
     console.error(`${message}\n`);
     console.error(
-        'Usage: node demo.ts --cluster <localnet|devnet|URL> --payer <keypair.json> --upgrade-authority <keypair.json> [--metadata-uri <URI>] [--program-id <address>]',
+        'Usage: node demo.ts --cluster <localnet|devnet|URL> --payer <keypair.json> --upgrade-authority <keypair.json> [--metadata-uri <URI>] [--program-id <address>] [--register-only] [--hosted-api <router market>] [--record <file>]',
     );
     process.exit(2);
 }
@@ -312,14 +345,22 @@ const upgradeAuthorityPath = options['upgrade-authority'] ?? usage('--upgrade-au
 const metadataUri = options['metadata-uri'];
 const onDevnet = !cluster.local;
 
-// Public RPC endpoints rate-limit bursts (HTTP 429); retry those with back-off.
+// Public RPC endpoints rate-limit bursts (HTTP 429), answer with a passing 5xx and drop
+// connections (ECONNRESET, a socket closed mid-answer), most of all over the hour step 25 polls
+// devnet; retry those with back-off. Every call is safe to repeat: a read reads again, and a
+// signed transaction sent again keeps its signature, so it can land only once.
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
+/** Whether an RPC call failed on the way there or back, not because the cluster refused it. */
+function transient(error: unknown): boolean {
+    const text = `${String(error)} ${String((error as { cause?: unknown } | undefined)?.cause ?? '')}`;
+    return /\b429\b|\b50[234]\b|fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EPIPE|UND_ERR_SOCKET|socket hang up|other side closed/i.test(text);
+}
 const retryingTransport = (async (...args: Parameters<typeof baseTransport>) => {
     for (let attempt = 0; ; attempt++) {
         try {
             return await baseTransport(...args);
         } catch (error) {
-            if (attempt >= 8 || !String(error).includes('429')) throw error;
+            if (attempt >= 8 || !transient(error)) throw error;
             await sleep(500 * 2 ** attempt);
         }
     }
@@ -343,6 +384,9 @@ function info(message: string) {
 
 function fail(message: string): never {
     console.error(`\nStopped: ${message}`);
+    // A run stopped part way still leaves what it did, for a devnet run above all: its markets
+    // and signatures stay on the cluster.
+    writeRecord(`stopped: ${message}`);
     process.exit(1);
 }
 
@@ -391,7 +435,13 @@ async function send(label: string, feePayer: KeyPairSigner, instructions: Instru
     );
     const signed = await signTransactionMessageWithSigners(message);
     const signature = getSignatureFromTransaction(signed);
-    await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64' }).send();
+    try {
+        await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64' }).send();
+    } catch (error) {
+        // A send retried after a dropped answer finds its first copy landed: the same signature,
+        // which the wait below confirms.
+        if (!/already been processed|AlreadyProcessed/i.test(`${String(error)} ${JSON.stringify((error as { context?: unknown }).context ?? '')}`)) throw error;
+    }
     await waitFor(label, signature);
     info(`${label}: ${explorer('tx', signature)}`);
     record.push([label, signature]);
@@ -482,10 +532,17 @@ async function createTestToken(wallet: KeyPairSigner, label: string, decimals: n
                 mint: mint.address,
             }),
             getMintToInstruction({ mint: mint.address, token: holder, mintAuthority: wallet, amount }),
+            // Its supply is fixed from here: nobody can mint more, and it never had a freeze
+            // authority (docs/spec/README.md, "Test layers", layer 7).
+            getSetAuthorityInstruction({ owned: mint.address, owner: wallet, authorityType: AuthorityType.MintTokens, newAuthority: null }),
         ],
         [mint],
     );
-    info(`${label}: ${mint.address}`);
+    const created = getMintDecoder().decode((await accountData(mint.address)) ?? fail(`no mint at ${mint.address}`));
+    if (created.mintAuthority.__option !== 'None' || created.freezeAuthority.__option !== 'None' || created.supply !== amount) {
+        fail(`the ${label} ${mint.address} keeps an authority, or its supply is not ${amount}`);
+    }
+    info(`${label}: ${mint.address}, supply ${amount}, no mint or freeze authority`);
     return mint.address;
 }
 
@@ -621,12 +678,26 @@ async function lendingMarketAuthority(): Promise<Address> {
     return authority;
 }
 
+// How long to wait for the RPC to serve a transaction it has reported confirmed: public devnet
+// can answer getTransaction with nothing for a while after, which a local validator never does.
+const LANDED_TRANSACTION_WAIT_MS = 30_000;
+
+/** Confirmed transaction `signature`, as the RPC serves it once it does, or a stop naming it. */
+async function landedTransaction(signature: Signature) {
+    const deadline = Date.now() + LANDED_TRANSACTION_WAIT_MS;
+    for (;;) {
+        const transaction = await rpc
+            .getTransaction(signature, { commitment: 'confirmed', encoding: 'json', maxSupportedTransactionVersion: 0 })
+            .send();
+        if (transaction?.meta) return { slot: transaction.slot, logs: transaction.meta.logMessages ?? [] };
+        if (Date.now() > deadline) fail(`the RPC served no transaction ${signature} within ${LANDED_TRANSACTION_WAIT_MS / 1000} s of confirming it`);
+        await sleep(1_000);
+    }
+}
+
 /** The data of every event with `discriminator` that transaction `signature` logged, without it. */
 async function strategyEvents(signature: Signature, discriminator: ReadonlyUint8Array): Promise<Uint8Array[]> {
-    const transaction = await rpc
-        .getTransaction(signature, { commitment: 'confirmed', encoding: 'json', maxSupportedTransactionVersion: 0 })
-        .send();
-    const logs = transaction?.meta?.logMessages ?? fail(`no logs for ${signature}`);
+    const { logs } = await landedTransaction(signature);
     return logs
         .filter((line) => line.startsWith('Program data: '))
         .map((line) => new Uint8Array(Buffer.from(line.slice('Program data: '.length), 'base64')))
@@ -791,10 +862,7 @@ async function seedFromLaunchpad(input: {
     info(`market ${explorer('address', market)}`);
     record.push(['seeded market', market], ['seeded market state', marketState]);
 
-    const transaction = await rpc
-        .getTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0, encoding: 'json' })
-        .send();
-    const logs = transaction?.meta?.logMessages ?? fail('the graduation left no logs');
+    const { logs } = await landedTransaction(signature);
     const graduation = graduationFromLogs(logs) ?? fail("the launchpad's return data is missing");
     const shares = isqrt(seed.token * seed.wsol) - minimumLiquidity;
     const left = await Promise.all(escrows.map(async (escrow, i) => escrowed[i]! - (await tokenBalance(escrow))));
@@ -950,6 +1018,18 @@ async function main() {
     console.log(`Payer ${payer.address}, upgrade authority ${upgradeAuthority.address}`);
     record.push(['strategy program', programId]);
     await checkCluster();
+    if (options['hosted-api']) {
+        if (!onDevnet) fail("--hosted-api: Pipeline's hosted API reads devnet only");
+        const market = address(options['hosted-api']);
+        const decoded = pipeline.decodeMarket((await accountData(market)) ?? new Uint8Array()) ?? fail(`the router has no market at ${market}`);
+        const view = pipeline.marketViewFromMarket(market, decoded, [TOKEN_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS]);
+        if (view.strategyProgram !== programId) fail(`${market} is a market of ${view.strategyProgram}, not of ${programId}`);
+        const { data: state } = await fetchLendingAmmMarket(rpc, view.marketState!, { commitment: 'confirmed' });
+        step("31. Pipeline's hosted API listing and quoting the market");
+        await compareHostedQuotes(payer, view, async () => (await fetchLendingAmmMarket(rpc, view.marketState!, { commitment: 'confirmed' })).data.reserves[state.lentIndex]!, state.reserves[1 - state.lentIndex]!);
+        finish();
+        return;
+    }
 
     if (cluster.local) {
         step('0. Funding both keys on the local validator');
@@ -987,11 +1067,28 @@ async function main() {
     if (!local.ok) fail(`metadata.json is invalid:\n   ${local.errors.join('\n   ')}`);
     if (local.warnings.length > 0) fail(`metadata.json must pass with zero warnings:\n   ${local.warnings.join('\n   ')}`);
     info(`metadata.json is valid with zero warnings: "${local.value.name}"`);
+    // Once the metadata pins a deploy, the router is pointed at it at its commit, never at main's
+    // link, whose content moves with every later change (TAX-54); whether or not that link resolves.
+    if (onDevnet && metadataUri === `${RAW_REPO}/main/programs/lending-amm/metadata.json`) {
+        let onMain: { source?: { commit?: string } } | undefined;
+        try {
+            const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim();
+            onMain = JSON.parse(execFileSync('git', ['-C', root, 'show', 'origin/main:programs/lending-amm/metadata.json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+        } catch {
+            // No git or no origin/main here: the checkout's copy says.
+        }
+        const pinned = onMain?.source?.commit ?? (local.value as { source?: { commit?: string } }).source?.commit;
+        if (pinned) fail(`the metadata.json on main is pinned to the deploy of ${pinned}: register it at the commit that holds it, not on main`);
+    }
     const published = await pipeline.fetchStrategyMetadata(metadataUri);
-    if (published.ok) {
-        info(`${metadataUri} is valid`);
+    const problems = published.ok ? published.warnings.join('; ') : `${published.reason}: ${published.errors.join('; ')}`;
+    if (published.ok && published.warnings.length === 0) {
+        info(`${metadataUri} is valid with zero warnings`);
+    } else if (onDevnet) {
+        // What the router is pointed at is what every desk shows, so on devnet it must be right.
+        fail(`${metadataUri} must resolve and pass Pipeline's validator with zero warnings before it is registered: ${problems}`);
     } else {
-        info(`warning: ${metadataUri} can't be used yet (${published.reason}: ${published.errors.join('; ')})`);
+        info(`warning: ${metadataUri} can't be used yet (${problems})`);
         info('desks will show the strategy without metadata until it can be fetched');
     }
     const metadata = local.value;
@@ -1034,6 +1131,11 @@ async function main() {
         );
     } else {
         info('already registered with this metadata URI');
+    }
+    if (options['register-only']) {
+        info('--register-only: no market is created');
+        finish();
+        return;
     }
 
     step('4. Creating a test token and wrapping SOL');
@@ -1170,6 +1272,8 @@ async function main() {
     let shareCount = firstShares + minimumLiquidity;
     // What the market has lent, as the script calculates it: nothing until step 11.
     let lent = { ctokens: 0n, deposited: 0n, redeemed: 0n };
+    // Whether the market should be in withdraw mode, as the script follows it: not until step 23.
+    let inWithdrawMode = false;
     /**
      * The market's cTokens and running totals after `paid` cTokens leave in kind: the cTokens take
      * their part of the net amount lent, rounded towards zero, off whichever running total is the
@@ -1193,12 +1297,13 @@ async function main() {
             ctokens: state.ctokens,
             deposited: state.deposited,
             redeemed: state.redeemed,
+            withdrawMode: state.withdrawMode,
         };
-        const want = { reserves, shareCount, ...lent };
+        const want = { reserves, shareCount, ...lent, withdrawMode: inWithdrawMode };
         if (show(got) !== show(want)) fail(`${label}: the market state holds ${show(got)}, but the formulas give ${show(want)}`);
         if ((await tokenBalance(ctokenAccount)) !== lent.ctokens) fail(`${label}: the cToken account holds other than the recorded cTokens`);
         info(
-            `${label}: reserves ${reserves[0]} token and ${reserves[1]} WSOL in the buffer, ${lent.ctokens} cTokens, share count ${shareCount}, all as calculated`,
+            `${label}: reserves ${reserves[0]} token and ${reserves[1]} WSOL in the buffer, ${lent.ctokens} cTokens, deposited ${lent.deposited} and redeemed ${lent.redeemed}, share count ${shareCount}, ${inWithdrawMode ? 'in' : 'not in'} withdraw mode, all as calculated`,
         );
         return state;
     }
@@ -1492,25 +1597,30 @@ async function main() {
     record.push(['sell beyond the buffer', `${saleAmount} in, ${saleQuote.amountOut} out, ${saleReceived} kept, ${shortfall} redeemed for ${burn} cTokens`]);
 
     step('16. Rebalancing: the buffer back to its target');
-    const drained = await lentSide();
-    if (drained.buffer * BPS >= drained.total * idlConstant('BUFFER_MIN_BPS')) fail(`the buffer ${drained.buffer} of ${drained.total} is not below its band`);
-    const ctokensBeforeRebalance = await tokenBalance(ctokenAccount);
-    const bufferBeforeRebalance = await tokenBalance(vault1);
-    await send('rebalance after the sale', payer, [await rebalanceInstruction()]);
-    const burned = ctokensBeforeRebalance - (await tokenBalance(ctokenAccount));
-    const paid = (await tokenBalance(vault1)) - bufferBeforeRebalance;
-    reserves = [reserves[0], reserves[1] + paid];
-    lent = { ctokens: lent.ctokens - burned, deposited: lent.deposited, redeemed: lent.redeemed + paid };
-    await checkMarket('after the second rebalance');
-    const restored = await lentSide();
-    const restoredTarget = (restored.total * targetBps) / BPS;
-    // Within Kamino's rounding: a redeem burns the cTokens worth at most the shortfall, so the
-    // buffer lands less than one cToken's worth below its target, plus what klend's refresh adds.
-    const oneCtoken = ceilDiv(stored.totalSupplySf, stored.mintTotalSupply << 60n);
-    const gap = restored.buffer > restoredTarget ? restored.buffer - restoredTarget : restoredTarget - restored.buffer;
-    if (gap > oneCtoken + 2n) fail(`the buffer ${restored.buffer} is ${gap} from its target ${restoredTarget}`);
-    info(`klend paid ${paid} WSOL for ${burned} cTokens: the buffer is ${restored.buffer} of ${restored.total}, its target ${restoredTarget}, within klend's rounding`);
-    record.push(['rebalance after the sale', `redeemed ${paid} WSOL for ${burned} cTokens; buffer ${restored.buffer} of ${restored.total}, at its target`]);
+    /** `rebalance` on a buffer drained below its band: klend redeems it back to its target. */
+    async function restoreBuffer(label: string) {
+        const drained = await lentSide();
+        if (drained.buffer * BPS >= drained.total * idlConstant('BUFFER_MIN_BPS')) fail(`the buffer ${drained.buffer} of ${drained.total} is not below its band`);
+        const ctokensBeforeRebalance = await tokenBalance(ctokenAccount);
+        const bufferBeforeRebalance = await tokenBalance(vault1);
+        await send(label, payer, [await rebalanceInstruction()]);
+        const burned = ctokensBeforeRebalance - (await tokenBalance(ctokenAccount));
+        const paid = (await tokenBalance(vault1)) - bufferBeforeRebalance;
+        reserves = [reserves[0], reserves[1] + paid];
+        lent = { ctokens: lent.ctokens - burned, deposited: lent.deposited, redeemed: lent.redeemed + paid };
+        await checkMarket(`after "${label}"`);
+        const restored = await lentSide();
+        const restoredTarget = (restored.total * targetBps) / BPS;
+        // Within Kamino's rounding: a redeem burns the cTokens worth at most the shortfall, so the
+        // buffer lands less than one cToken's worth below its target, plus what klend's refresh adds.
+        const reserveNow = await readReserve();
+        const oneCtoken = ceilDiv(reserveNow.totalSupplySf, reserveNow.mintTotalSupply << 60n);
+        const gap = restored.buffer > restoredTarget ? restored.buffer - restoredTarget : restoredTarget - restored.buffer;
+        if (gap > oneCtoken + 2n) fail(`the buffer ${restored.buffer} is ${gap} from its target ${restoredTarget}`);
+        info(`klend paid ${paid} WSOL for ${burned} cTokens: the buffer is ${restored.buffer} of ${restored.total}, its target ${restoredTarget}, within klend's rounding`);
+        record.push([label, `redeemed ${paid} WSOL for ${burned} cTokens; buffer ${restored.buffer} of ${restored.total}, at its target`]);
+    }
+    await restoreBuffer('rebalance after the sale');
 
     step('17. A second wallet adds liquidity');
     const lp2 = await generateKeyPairSigner();
@@ -1603,7 +1713,7 @@ async function main() {
     const cashSignature = await send('remove_liquidity in cash', lp2, [
         await removeInstruction('remove_liquidity', third, [cashParts.token, cashParts.buffer + cashWorth], false),
     ]);
-    const cashLogs = (await rpc.getTransaction(cashSignature, { commitment: 'confirmed', encoding: 'json', maxSupportedTransactionVersion: 0 }).send())?.meta?.logMessages ?? [];
+    const { logs: cashLogs } = await landedTransaction(cashSignature);
     if (!cashLogs.some((line) => line.startsWith(`Program ${KLEND} invoke`)) || !cashLogs.some((line) => line.includes('Instruction: RedeemReserveCollateral'))) {
         fail("the cash removal's transaction has no klend redeem");
     }
@@ -1833,9 +1943,36 @@ async function main() {
     const borrowAmount = beforeBorrow.free - enterMultiple * beforeBorrow.x + DEMO.borrowBelowEntry;
     info(`Kamino has ${beforeBorrow.free} WSOL free against the market's X = max(V, T) = max(${beforeBorrow.value}, ${beforeBorrow.total - (beforeBorrow.total * targetBps) / BPS}) = ${beforeBorrow.x}: the borrower takes ${borrowAmount}`);
     kaminoCommand('borrow', '--amount', wholeSol(borrowAmount));
-    const short = await exposure();
+    let short = await exposure();
     if (short.free >= enterMultiple * short.x) fail(`after the borrow Kamino has ${short.free} free, not below ${enterMultiple} x ${short.x}`);
     info(`Kamino now has ${short.free} WSOL free, below ${enterMultiple} x ${short.x} = ${enterMultiple * short.x}`);
+    // With the loan held, interest accrues to the reserve and so to the market's cTokens: the
+    // market's lending yield so far, V + redeemed - deposited (docs/spec/lending-pool.md, "The
+    // rule"), read at the stored rate klend's refresh_reserve leaves, must be higher at a second
+    // read than at the first.
+    const lendingYield = async (label: string) => {
+        const signature = await send(`refresh_reserve, ${label}`, payer, [refreshReserve()]);
+        const { data: market } = await fetchLendingAmmMarket(rpc, marketState, { commitment: 'confirmed' });
+        const reserve = await readReserve();
+        const value = lentValue(market.ctokens, reserve);
+        const earned = value + market.redeemed - market.deposited;
+        info(`${label}: V ${value} at the stored rate ${rate(reserve)} (refreshed in slot ${reserve.lastUpdateSlot}), + redeemed ${market.redeemed} - deposited ${market.deposited} = yield ${earned}`);
+        return { earned, slot: reserve.lastUpdateSlot, signature };
+    };
+    const firstRead = await lendingYield('the lending yield, first read');
+    let secondRead = await lendingYield('the lending yield, second read');
+    for (let tries = 0; secondRead.earned <= firstRead.earned; tries++) {
+        // Interest rounds to whole lamports of the market's cTokens' value, so it may take a few
+        // slots to show.
+        if (tries >= 20) fail(`the lending yield stayed at ${secondRead.earned} from slot ${firstRead.slot} to ${secondRead.slot} with the loan held`);
+        await sleep(3_000);
+        secondRead = await lendingYield('the lending yield, read again');
+    }
+    info(`with the loan held the market's lending yield rose from ${firstRead.earned} to ${secondRead.earned} between slots ${firstRead.slot} and ${secondRead.slot}`);
+    record.push(['lending yield with the loan held', `${firstRead.earned} at slot ${firstRead.slot}, ${secondRead.earned} at slot ${secondRead.slot}`]);
+    // The refreshes raised V a little, and with it X, so measure again for step 23.
+    short = await exposure();
+    if (short.free >= enterMultiple * short.x) fail(`after the yield reads Kamino has ${short.free} free, no longer below ${enterMultiple} x ${short.x}`);
 
     step('23. Rebalancing: the market enters withdraw mode and redeems everything Kamino can pay');
     const reserveBeforeExit = await readReserve();
@@ -1859,6 +1996,7 @@ async function main() {
     }
     reserves = [reserves[0], reserves[1] + paidAll];
     lent = { ctokens: 0n, deposited: lent.deposited, redeemed: lent.redeemed + paidAll };
+    inWithdrawMode = true;
     await checkMarket('after entering withdraw mode');
     info(`WithdrawModeEntered at ${entered[0]!.freeLiquidity} free and X ${entered[0]!.exposure}; klend redeemed every one of the market's ${burnedAll} cTokens for ${paidAll} WSOL, as its maths gives`);
     record.push(['withdraw mode entered', `redeemed ${burnedAll} cTokens for ${paidAll} WSOL`]);
@@ -1880,7 +2018,7 @@ async function main() {
     const exitDelay = idlConstant('WITHDRAW_MODE_EXIT_DELAY_SLOTS');
     const waitStart = await send('rebalance starts the wait to leave withdraw mode', payer, [await rebalanceInstruction()]);
     const waiting = (await fetchLendingAmmMarket(rpc, marketState, { commitment: 'confirmed' })).data;
-    const startedAt = (await rpc.getTransaction(waitStart, { commitment: 'confirmed', maxSupportedTransactionVersion: 0, encoding: 'json' }).send())?.slot ?? fail('no slot for the wait');
+    const { slot: startedAt } = await landedTransaction(waitStart);
     if (!waiting.withdrawMode || waiting.exitSeenSlot !== startedAt || (await tokenBalance(ctokenAccount)) !== 0n) {
         fail(`the first rebalance above the exit threshold left withdraw mode, lent, or recorded ${waiting.exitSeenSlot}, not slot ${startedAt}`);
     }
@@ -1916,6 +2054,7 @@ async function main() {
     }
     reserves = [reserves[0], reserves[1] - taken2];
     lent = { ctokens: minted2, deposited: lent.deposited + taken2, redeemed: lent.redeemed };
+    inWithdrawMode = false;
     await checkMarket('after leaving withdraw mode');
     info(`WithdrawModeLeft at ${left[0]!.freeLiquidity} free; the band applies again and klend took ${taken2} WSOL for ${minted2} cTokens, as its deposit maths gives`);
     record.push(['withdraw mode left', `lent ${taken2} WSOL for ${minted2} cTokens`]);
@@ -1968,6 +2107,15 @@ async function main() {
     const sideNow = await lentSide();
     const afterEmergency = await sellToken('sell beyond the buffer after emergency mode', await saleNow(sideNow.buffer + sideNow.buffer / 2n));
     if (!afterEmergency.redeem) fail('the sale beyond the buffer did not redeem');
+    // The market is left as a keeper would keep it, its buffer at its target, for the release
+    // gate and pipeline-check to find.
+    await restoreBuffer('rebalance after emergency mode');
+    // Sales of the token whose output lands just inside and just beyond the buffer, for
+    // pipeline-check's --amounts on both sides of the buffer's edge (the devnet ticket).
+    const edge = await lentSide();
+    const edgeAmounts = [await saleNow((edge.buffer * 99n) / 100n), await saleNow((edge.buffer * 101n) / 100n)];
+    info(`sales paying out 99% and 101% of the buffer's ${edge.buffer} WSOL: ${edgeAmounts.join(' and ')} of the token`);
+    record.push(["sales at the buffer's edge, for pipeline-check --amounts", edgeAmounts.join(',')]);
 
     if (cluster.local) {
         await seedFromLaunchpad({ payer, programId, metadata, rebalanceAction, minimumLiquidity });
@@ -1976,12 +2124,134 @@ async function main() {
         info('skipped: the stand-in launchpad is a test program, never deployed to devnet');
     }
 
+    step("31. Pipeline's hosted API listing and quoting the market");
+    if (onDevnet) {
+        await compareHostedQuotes(payer, routerView, async () => (await lentSide()).buffer, reserves[0]);
+    } else {
+        info("skipped: Pipeline's hosted API reads devnet only");
+    }
+
+    finish();
+}
+
+/** Prints what the run did and, with --record, writes it to a file. */
+function finish() {
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));
     for (const [label, value] of record) info(`${label.padEnd(width)}  ${value}`);
+    writeRecord('done');
+}
+
+/** With --record, writes what the run did to that file, and how it ended. */
+function writeRecord(outcome: string) {
+    if (!options.record) return;
+    const run = {
+        cluster: cluster.local ? cluster.url : 'devnet',
+        at: new Date().toISOString(),
+        outcome,
+        record: Object.fromEntries(record.map(([label, value], i) => [`${String(i).padStart(2, '0')} ${label}`, value])),
+    };
+    writeFileSync(options.record, `${JSON.stringify(run, null, 2)}\n`);
+    info(`written to ${options.record}`);
+}
+
+// Pipeline's hosted API on devnet (Pipeline's docs/API.md).
+const HOSTED_API = 'https://pipeline-devnet.up.railway.app';
+
+/**
+ * Step 31: Pipeline's hosted devnet API lists the market and quotes it both ways, each within
+ * the buffer, and each quote must equal the program's own, simulated through the router on the
+ * same state (the market state, both vaults and the reserve read the same before and after, or
+ * the comparison runs again). A lending AMM market's quotes read Kamino's reserve, another
+ * program's account; if the API refuses such a market, its answer is recorded for the ticket
+ * instead of stopping the run.
+ */
+async function compareHostedQuotes(payer: KeyPairSigner, view: pipeline.MarketView, buffer: () => Promise<bigint>, tokenReserve: bigint) {
+    const listed = await hostedGet(`/v1/markets/${view.market}`);
+    const apiMarket = listed.ok ? (listed.body as { market?: { strategy_program?: string } }).market : undefined;
+    if (apiMarket?.strategy_program !== view.strategyProgram) {
+        fail(`Pipeline's hosted API does not list ${view.market} as a market of ${view.strategyProgram}: HTTP ${listed.status} ${JSON.stringify(listed.body)}`);
+    }
+    info(`Pipeline's hosted API lists market ${view.market}, strategy ${apiMarket.strategy_program}`);
+    record.push(['hosted API lists the market', view.market]);
+    const snapshot = async () =>
+        JSON.stringify(await Promise.all([view.marketState!, ...view.vaults, RESERVE].map(async (account) => Buffer.from((await accountData(account)) ?? []).toString('base64'))));
+    const simulation = { commitment: 'confirmed' } as const;
+    // Each way within the buffer: a buy with a tenth of it, and a sale of a hundredth of the
+    // token reserve, which pays out about a hundredth of the lent side, while the buffer holds
+    // about a fifth of it.
+    const wsolIn = (await buffer()) / 10n;
+    const tokenIn = tokenReserve / 100n;
+    for (const [label, input, amount] of [['buy', 1, wsolIn], ['sell', 0, tokenIn]] as const) {
+        const output = input === 1 ? 0 : 1;
+        for (let attempt = 0; ; attempt++) {
+            const before = await snapshot();
+            const hosted = await hostedGet(`/v1/quote?market=${view.market}&input_mint=${view.mints[input]}&output_mint=${view.mints[output]}&amount=${amount}&mode=exact_in`);
+            const request = { mode: pipeline.TradeMode.ExactIn, inputIndex: input, outputIndex: output, amount, trader: payer.address, extra: new Uint8Array() };
+            const accounts = await pipeline.resolveAccounts(rpc, view, request, payer.address, simulation);
+            const { quote } = await pipeline.quoteStrategy(rpc, view, request, accounts, payer.address, simulation);
+            // The API quotes what the trader keeps: since Pipeline 0.3 a trade into the market's fee
+            // mint, WSOL here, pays Pipeline's fee out of what arrives, so a sale keeps less than the
+            // strategy's own quote by exactly that fee.
+            const kept = pipeline.marketViewFeeSide(view, view.mints[output]!) === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
+            if ((await snapshot()) !== before) {
+                if (attempt >= 5) fail('the market kept changing while its quotes were compared');
+                info('the market changed while its quotes were compared; again');
+                continue;
+            }
+            if (!hosted.ok) {
+                // Its own refusal, not a busy server (hostedGet retries those): record it.
+                info(`${label} of ${amount}: the hosted API refused to quote it, HTTP ${hosted.status} ${JSON.stringify(hosted.body)}; the program quotes ${quote.amountOut}, ${kept} kept`);
+                record.push([`hosted API quote, ${label}`, `refused: HTTP ${hosted.status} ${JSON.stringify(hosted.body)}; the program quotes ${amount} in, ${quote.amountOut} out, ${kept} kept`]);
+                break;
+            }
+            const body = hosted.body as { amount_in: string; amount_out: string; slot: number; strategy_accounts: { address: string }[] };
+            if (BigInt(body.amount_in) !== amount) fail(`the hosted API quoted ${body.amount_in} in, not ${amount}`);
+            const resolved = accounts.map((account) => account.address).join();
+            if (body.strategy_accounts.map((account) => account.address).join() !== resolved) {
+                fail(`the hosted API resolved ${body.strategy_accounts.map((account) => account.address).join()} for the ${label}, not ${resolved}`);
+            }
+            if (BigInt(body.amount_out) !== kept) {
+                // The hosted API reads the cluster through its own RPC, which can trail ours by a
+                // few slots after the demo's last write; it must catch up within the retries.
+                if (attempt >= 5) fail(`${label} of ${amount}: the hosted API quoted ${body.amount_out} at slot ${body.slot}, the program ${quote.amountOut} with ${kept} kept, on the same state`);
+                info(`the hosted API quoted ${body.amount_out} at slot ${body.slot}, not yet the program's ${kept} kept; again`);
+                await sleep(3_000);
+                continue;
+            }
+            info(`${label} of ${amount}: the hosted API quoted ${body.amount_out} at slot ${body.slot}, exactly what the program's quote of ${quote.amountOut} leaves the trader on the same state`);
+            record.push([`hosted API quote, ${label}`, `${amount} in, ${body.amount_out} kept, equal to the program's quote of ${quote.amountOut} less Pipeline's fee where it is taken from the output`]);
+            break;
+        }
+    }
+}
+
+/** A GET from Pipeline's hosted devnet API, retried while it is busy or the connection drops. */
+async function hostedGet(path: string): Promise<{ ok: boolean; status: number; body: unknown }> {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            const response = await fetch(`${HOSTED_API}${path}`, { headers: { 'user-agent': 'testing-pipeline-demo' } });
+            const text = await response.text();
+            let body: unknown = text;
+            try {
+                body = JSON.parse(text);
+            } catch {
+                // Not JSON: keep the text.
+            }
+            if (response.ok || attempt >= 5 || (response.status !== 429 && response.status < 500)) {
+                return { ok: response.ok, status: response.status, body };
+            }
+        } catch (error) {
+            if (attempt >= 5) throw error;
+        }
+        await sleep(2_000 * (attempt + 1));
+    }
 }
 
 main().catch((error) => {
     console.error(error);
+    // A thrown error, such as an RPC failure past every retry, stops the run as a failed check
+    // does, and leaves its record the same way.
+    writeRecord(`stopped: ${String(error)}`);
     process.exit(1);
 });

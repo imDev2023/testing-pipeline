@@ -11,7 +11,7 @@
 # local demo: docs/toolchain.md.
 [workspace]
 resolver = "2"
-members = ["mint-rules", "tax-amm", "buy-wall-amm", "buy-wall-amm/gate", "containment-hook", "lending-amm", "test-programs/stand-in-launchpad", "test-programs/stand-in-smart-wallet"]
+members = ["mint-rules", "published-check", "tax-amm", "buy-wall-amm", "buy-wall-amm/gate", "release-gate", "containment-hook", "lending-amm", "lending-amm/gate", "test-programs/stand-in-launchpad", "test-programs/stand-in-smart-wallet"]
 
 [workspace.package]
 edition = "2021"
@@ -30,7 +30,12 @@ pipeline-client = { git = "https://github.com/MetalLegBob/pipeline", rev = "48a6
 pipeline-check = { git = "https://github.com/MetalLegBob/pipeline", rev = "48a6b5f", default-features = false }
 pipeline-events = { git = "https://github.com/MetalLegBob/pipeline", rev = "48a6b5f" }
 solana-security-txt = "=1.1.3"
+# SHA-256 through the runtime's syscall: the tax AMM's hash of a market's terms, which its
+# seed checks. The version Anchor 1.2.2 already brings in.
+solana-sha256-hasher = "=3.1.0"
 mint-rules = { path = "mint-rules" }
+# Test only: the published-metadata checks every program's tests/published.rs runs.
+published-check = { path = "published-check" }
 # The buy wall AMM's zero-copy market state (Anchor's `zero_copy` derives through it).
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
 # The containment hook reads the tax AMM's program id and market state layout from its crate.

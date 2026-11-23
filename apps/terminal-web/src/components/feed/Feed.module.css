@@ -1,0 +1,68 @@
+.feed {
+  display: grid;
+  gap: 20px;
+}
+
+.head {
+  display: grid;
+  gap: 8px;
+  max-width: 760px;
+}
+
+.lede {
+  color: var(--ink2);
+}
+
+.note {
+  color: var(--ink3);
+}
+
+.failed {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--control-min-height);
+  padding: 6px 12px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--ink2);
+  font-weight: var(--strong-weight);
+  text-decoration: none;
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab[aria-current="page"] {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+.count {
+  font-weight: var(--text-weight);
+  color: var(--ink3);
+}
+
+.section {
+  display: grid;
+  gap: 16px;
+}
+
+.more {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}

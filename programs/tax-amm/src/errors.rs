@@ -83,4 +83,26 @@ pub enum StrategyError {
     NotSlotTokenAccount,
     #[msg("The burn lowers the tax-side mint's supply, so it needs the mint writable")]
     BurnNeedsWritableMint,
+    #[msg(
+        "A tax recipient can't be one of the market's own addresses or programs, which could never move what it is paid"
+    )]
+    NotAWallet,
+    #[msg("The market state was written by a newer version of this program than the one running")]
+    NewerStateVersion,
+    #[msg("Arithmetic underflow")]
+    Underflow,
+    #[msg(
+        "A mint's transfer hook must be cleared, or be the containment hook with the mint's unlock PDA as its authority"
+    )]
+    TransferHookNotAllowed,
+    #[msg("A mint other than a quote mint must have no mint authority when its market is seeded")]
+    MintAuthoritySet,
+    #[msg(
+        "A mint other than a quote mint must have no freeze authority when its market is seeded"
+    )]
+    FreezeAuthoritySet,
+    #[msg("A recipient slot still owed tax keeps its wallet until it is paid out")]
+    OwedSlotRedirected,
+    #[msg("The market's terms are not the ones the seeder agreed to")]
+    TermsChanged,
 }

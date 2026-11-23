@@ -420,11 +420,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### SUITE-37: Keeper runner: what it records
 
 - Question: Where does the runner record what it did?
-- Answer: In one table, `keeper_runs`, of Aviary's Postgres, written directly from the runner, or in its log when it has no database; a public keeper page in Aviary shows the wallet, today's spend against each cap and every held or parked job.
-- Alternatives: None recorded.
+- Answer: In two tables of Aviary's Postgres, `keeper_runs` (a row per pass) and `keeper_run_jobs` (a row per job it sent, held or parked), written directly from the runner, or in its log when it has no database; a public keeper page in Aviary shows the wallet, today's spend against each cap and every held or parked job.
+- Alternatives: The earlier default, one table `keeper_runs` holding both, which a row per pass and a row per job would have had to share.
 - Specified in: [`docs/spec/keeper-runner.md`, What it records](spec/keeper-runner.md#what-it-records)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-10 in [Keeper runner](https://github.com/imDev2023/testing-pipeline/issues/45)
 
 ### SUITE-38: Progress site: where its content comes from
@@ -616,6 +616,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-21 in [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95)
+
+### SUITE-57: Keeper runner: how Aviary knows it is running
+
+- Question: How does the keeper page tell a quiet runner from a stopped one, when the runner records in Postgres only the passes that did something so the database can sleep?
+- Answer: After every pass the runner posts a heartbeat (the pass, its time, when its run started, its `SWEEP_INTERVAL`, its caps and warnings) to `terminal-api`'s `POST /keeper/heartbeat`, signed with the keeper wallet's key; `terminal-api` keeps only heartbeats `KEEPER_WALLET` signed, within two minutes of its clock, at most one of each kind of pass every 30 seconds, in its KV namespace, which never wakes the database; the runner's setting `HEARTBEAT_URL` names where they go, and unset sends none.
+- Alternatives: Judging the runner by due work alone, which cannot flag a stopped runner on a quiet devnet; a heartbeat row in Postgres at most once an hour, with an hour's threshold and about 15 of Neon's 100 free compute-hours a month; the spec as first written, whose page would say the runner looks stopped whenever devnet is quiet; a heartbeat row every sweep, which would keep Neon awake about 90 compute-hours a month.
+- Specified in: [`docs/spec/keeper-runner.md`, How Aviary shows it](spec/keeper-runner.md#how-aviary-shows-it)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
+
+### SUITE-58: Keeper runner: which passes and jobs are recorded
+
+- Question: Which jobs make a pass worth recording, and where does the runner find Aviary's database?
+- Answer: A job whose transaction landed, whatever it did, with its signature and cost; a job held by a cap, once a UTC day for each cap that holds it and again after it was anything but held; a parked job; whatever ends a recorded hold or park (unparked, any other outcome, or no longer due at all); and the keeper wallet unwrapping its tips; retries run as passes of their own, `retry`; a spend that could not be rebuilt is recorded as unknown, and errors and warnings with their URLs cut to the host. The database is the project's `DATABASE_URL` unless `KEEPER_DATABASE_URL` names another; records are written behind the passes, and a database that cannot be reached logs the pass as the log would hold it, never stopping the runner.
+- Alternatives: Recording only sent jobs, which would leave the fees of refused transactions off the page; recording every hold in every pass, which would keep Neon awake every sweep while a cap is reached; `DATABASE_URL` unset unless `KEEPER_DATABASE_URL` is set, which would leave the owner's runner unrecorded until someone remembered to set it.
+- Specified in: [`docs/spec/keeper-runner.md`, What it records](spec/keeper-runner.md#what-it-records)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
 
 ## Engineering and security bar (BAR)
 
@@ -1059,7 +1079,17 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-22 in [Pipeline 0.3: re-pin the router, SDK and pipeline-check, adapt every program and Canary, and check the pin daily](https://github.com/imDev2023/testing-pipeline/issues/194)
 
-### BAR-45: Dependency advisories
+### BAR-45: One publishing tool for every program
+
+- Question: How do the programs pin and verify the metadata they publish for a devnet deploy, now that a third program needs the same steps?
+- Answer: With one shared tool, `packages/strategy-publish` for pinning and verifying and `programs/published-check` for the checks each program's `tests/published.rs` runs, each program naming only its folder, its name and its IDL; the tax AMM's and the buy wall AMM's copies moved onto it unchanged in behaviour.
+- Alternatives: A third copy of `publish.ts` and `tests/published.rs` with only the names changed, as the buy wall AMM made of the tax AMM's.
+- Specified in: [`docs/toolchain.md`, Deploy to devnet](toolchain.md#deploy-to-devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### BAR-46: Dependency advisories
 
 - Question: How do we hear of a known vulnerability in a Rust crate our programs, tests or Canary depend on?
 - Answer: A workflow of its own runs `cargo audit` on `programs/Cargo.lock` and `crates/Cargo.lock` when either changes, every day and on demand, failing on any vulnerability and only reporting unmaintained crates, which come through Solana's and LiteSVM's own dependencies.
@@ -2101,6 +2131,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
 
+### PIPESCOPE-104: What the keeper page shows
+
+- Question: What does the keeper page show, and when does it say the runner looks stopped?
+- Answer: Whether the runner is running, the keeper wallet (`KEEPER_WALLET`, a var of `terminal-api`) with its balance through RPC, today's spend against `DAILY_CAP`, `MAX_TX_COST` and each market's `MARKET_DAILY_CAP`, the last time each kind of pass ran and the last time it did something, the held and parked jobs, the latest 20 jobs with their transactions, and the latest warnings; the runner looks stopped once its last heartbeat is older than its own `SWEEP_INTERVAL` plus 5 minutes (`KEEPER_STOPPED_GRACE_MS`); a database or RPC that does not answer leaves the rest of the page standing.
+- Alternatives: A fixed threshold, which would go wrong as soon as someone set a different `SWEEP_INTERVAL`; a page per product, beside each panel's due jobs.
+- Specified in: [`docs/spec/keeper-runner.md`, How Aviary shows it](spec/keeper-runner.md#how-aviary-shows-it)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
+
+### PIPESCOPE-105: How the API pages its lists
+
+- Question: How do the markets list and the trade lists page, and how much may one page hold?
+- Answer: Newest first, each page ending with a `next` cursor the following page passes as `before`, with at most 200 markets or 1,000 trades a page and the pages asking for the screens' 50 feed rows and 40 trades, as `PAGE_LIMITS` in `terminal-api`'s config module.
+- Alternatives: Offset paging, which repeats or skips a row whenever a new market or trade arrives between two pages; the hosted API's `before_slot`, which splits the trades of one slot across two pages.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Aviary: index the router's history into Postgres, with the feed's two tables](https://github.com/imDev2023/testing-pipeline/issues/116)
+
+### PIPESCOPE-106: A market's 24 hours on the feed
+
+- Question: What do a market's trade count and volume in the last 24 hours count on a market of three or four mints?
+- Answer: The count takes every trade in the last 24 hours by the event's own clock, and the volume adds the quote mint's side of each trade that has the quote mint on one side, since no other trade carries an amount of it.
+- Alternatives: Counting only the trades of the default pair, which would hide the other pairs' trades from the count.
+- Specified in: [`docs/spec/pipescope-screens.md`, Feed](spec/pipescope-screens.md#feed)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Aviary: index the router's history into Postgres, with the feed's two tables](https://github.com/imDev2023/testing-pipeline/issues/116)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
@@ -2829,12 +2889,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-05: Tax authority
 
 - Question: Who may change a market's taxes after creation?
-- Answer: Only its optional tax authority, which may move the rates inside their fixed ranges, change the recipients and renounce, each taking effect at once; nobody else can change anything about a market, us included, and the program has no admin.
-- Alternatives: Moving the tax authority to another address.
-- Specified in: [`docs/spec/tax-amm.md`, Tax authority](spec/tax-amm.md#tax-authority)
+- Answer: Only its optional tax authority, which may move the rates inside their fixed ranges, change the recipients and renounce; a change of rates waits `RATE_CHANGE_DELAY_SLOTS` (300 slots, twice a blockhash's 150 blocks) as the market's pending rates, decreases included, so no change can reach a swap signed with a blockhash before it while fewer than half the slots are skipped, renouncing cancels a change still pending, and the other actions take effect at once; nobody else can change anything about a market, us included, and the program has no admin.
+- Alternatives: The earlier default, every change taking effect at once, which let the authority put a rate change on either side of a victim's swap and take its slippage allowance as tax (hardening finding H010); capping how far one change may move a rate, one change per slot, which shrinks that take but never removes it; accepting it, the trader's minimum output being the protection; moving the tax authority to another address.
+- Specified in: [`docs/spec/tax-amm.md`, Rates](spec/tax-amm.md#rates)
 - Changes by: fixed on-chain once deployed
-- Status: default
-- Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19)
+- Status: changed 2026-11-22
+- Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19); changed by the owner on 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
 
 ### TAX-06: Suite share
 
@@ -2939,12 +2999,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-16: Mint rules
 
 - Question: Which mints may a tax market hold?
-- Answer: SPL Token mints, and Token-2022 mints carrying only extensions on an allowlist (transfer hook, metadata pointer, token metadata, group pointer, group member pointer, token group and token group member); every other extension is refused at creation, while mint and freeze authorities are allowed.
-- Alternatives: Allowing more extensions, which would admit quote mints such as PYUSD.
+- Answer: SPL Token mints, and Token-2022 mints carrying only extensions on an allowlist (transfer hook, metadata pointer, token metadata, group pointer, group member pointer, token group and token group member), every other extension refused at creation; a transfer hook only when it is cleared or is the containment hook with the mint's unlock PDA as its authority, checked at creation; and at the seed, through either seed path, no mint authority and no freeze authority on any mint but a quote mint (`TAX-58`).
+- Alternatives: The earlier default, any hook program and mint and freeze authorities allowed and disclosed, which let a token's issuer refuse sells, mint into the curve or freeze a vault once buyers were in (hardening findings H007, H008, H009, H016); refusing only foreign hooks, leaving the authorities disclosed; allowing more extensions, which would admit quote mints such as PYUSD.
 - Specified in: [`docs/spec/tax-amm.md`, Mint rules](spec/tax-amm.md#mint-rules)
 - Changes by: fixed on-chain once deployed
-- Status: default
-- Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19)
+- Status: changed 2026-11-22
+- Decided: 2026-11-10 in [Tax AMM rules](https://github.com/imDev2023/testing-pipeline/issues/19); changed by the owner on 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
 
 ### TAX-17: Market addresses
 
@@ -3168,13 +3228,13 @@ Each field is one line, and each value is one sentence of inline Markdown.
 
 ### TAX-39: Emptying a recipient slot that is still owed
 
-- Question: May `set_recipients` empty a recipient slot that is still owed tax?
-- Answer: No: it refuses with `OwedSlotLeftEmpty`, so every owed amount always has a wallet or the burn to go to; the slot can be handed to another wallet instead, or paid out first, and the burn share may still drop to 0 since the burn needs no wallet.
-- Alternatives: Allowing it, which would strand the owed amount in the vault for good once the authority renounced; moving the owed amount to another slot, which would make `set_recipients` change owed amounts, which none of the tax authority's actions does.
-- Specified in: [`docs/spec/tax-amm.md`, Tax authority](spec/tax-amm.md#tax-authority)
+- Question: May `set_recipients` empty a recipient slot that is still owed tax, or hand it to another wallet?
+- Answer: Neither: a slot still owed tax keeps its wallet until it is paid out, refused with `OwedSlotLeftEmpty` when emptied and `OwedSlotRedirected` when handed to another wallet, so what a slot is owed always goes to the wallet that earned it; the authority pays it out first with `distribute`, in the same transaction if it likes, shares may move whatever is owed, and the burn share may still drop to 0 since the burn needs no wallet.
+- Alternatives: The earlier default, the slot handed to another wallet with what it was owed, which let the authority hand every slot to itself and pay them out in one transaction (hardening finding H023); allowing an owed slot to be emptied, which would strand the owed amount for good once the authority renounced; moving the owed amount to another slot, which would make `set_recipients` change owed amounts.
+- Specified in: [`docs/spec/tax-amm.md`, Payout](spec/tax-amm.md#payout)
 - Changes by: fixed on-chain once deployed
-- Status: default
-- Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62)
+- Status: changed 2026-11-22
+- Decided: 2026-11-12 in [Tax AMM: the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62); changed by the owner on 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
 
 ### TAX-40: How a refused tax authority action is reported
 
@@ -3299,7 +3359,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-52: What every holder can exit means on a tax market
 
 - Question: How does the fuzzer check the bar's shared invariant that every holder can still exit, given that a tax market never pays out its virtual reserve?
-- Answer: Every wallet's whole holding of either mint quotes, or is refused as dust or, only on a market with a virtual reserve, because the curve would pay out more than the real reserve, in which case the largest sale the real reserve covers must quote; every sequence ends with every wallet selling all it holds, and each sale settles unless the spec refuses it.
+- Answer: Every wallet's whole holding of either mint quotes, or is refused as dust or, only on a market with a virtual reserve, because the curve would pay out more than the real reserve, in which case the largest sale the real reserve covers must quote unless it is itself dust (hardening finding H036, signed off); every sequence ends with every wallet selling all it holds, and each sale settles unless the spec refuses it.
 - Alternatives: Requiring every whole holding to sell, which a single-sided launch refuses by design; checking quotes only, which would miss a swap that fails after its quote.
 - Specified in: [`docs/spec/tax-amm.md`, Invariants](spec/tax-amm.md#invariants)
 - Changes by: spec only
@@ -3325,6 +3385,56 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: changed 2026-11-19
 - Decided: 2026-11-16 in [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66)
+
+### TAX-55: Tax recipients that are the market's own addresses
+
+- Question: May a tax recipient be one of the market's own addresses or the programs it runs on?
+- Answer: No: creation and `set_recipients` refuse a recipient that is the market state, its vault authority, its vaults or mints, the tax AMM, the router or the market's signer under it, or a token or associated token program (`NotAWallet`), since none could ever move what it is paid while its payout event reads as paid.
+- Alternatives: Allowing them and leaving such tax stuck in an account nobody controls (hardening finding H024).
+- Specified in: [`docs/spec/tax-amm.md`, Creation parameters](spec/tax-amm.md#creation-parameters)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-20 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
+
+### TAX-56: A market state a newer build wrote
+
+- Question: What does the program do with a market state whose version byte is newer than the one it writes?
+- Answer: Every instruction refuses it (`NewerStateVersion`), so a build rolled back under markets a newer build wrote never reads them with an older layout's meaning; fields added into the reserved bytes keep the version byte, as the pending rates did, since markets created before read zeros there.
+- Alternatives: Reading any version, which would misread fields a newer layout gave other meanings (hardening finding H069).
+- Specified in: [`docs/spec/tax-amm.md`, Counters for the containment hook](spec/tax-amm.md#counters-for-the-containment-hook)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-20 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
+
+### TAX-57: The release gate before an upgrade
+
+- Question: How is an upgrade kept from stranding a market that already exists?
+- Answer: Before a new build replaces the deployed one, its release gate copies every tax market on the cluster with the cluster's slot, and reads and quotes each both ways with the new bytes at that slot, at the spec's price and exactly as the deployed build does; `scripts/deploy-devnet.sh` runs it on the very bytes it deploys and records what it read, and every `cargo test` runs it on a committed copy of devnet's markets.
+- Alternatives: Trusting the layout tests alone, which can't tell whether real markets still quote (hardening finding H038).
+- Specified in: [`docs/spec/tax-amm.md`, Upgrades and freezing](spec/tax-amm.md#upgrades-and-freezing)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-20 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
+
+### TAX-58: The quote mints
+
+- Question: Which mints may keep a mint or freeze authority when a tax market is seeded?
+- Answer: Only the quote mints, the build-time list `QUOTE_MINTS`: SPL Token's and Token-2022's native SOL mints and the cluster's USDC (Circle's devnet mint on devnet; a mainnet build names mainnet's before it is frozen).
+- Alternatives: No exception, which would refuse every market quoted in USDC; a creation parameter naming the quote side, which a decoy creator would set to its own token.
+- Specified in: [`docs/spec/tax-amm.md`, Mint rules](spec/tax-amm.md#mint-rules)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
+
+### TAX-59: The seed names the market's terms
+
+- Question: How does a seeder make sure the market it funds has the terms it agreed to?
+- Answer: `seed` takes `expected_terms`, the SHA-256 of the Borsh encoding of the mints, the creation parameters as stored and any pending rate change, and refuses a mismatch before anything moves (`TermsChanged`); the metadata's `seed` action takes it as a `pubkey`-typed argument, since metadata arguments have no fixed-size byte type, and `pipeline_seed_liquidity` needs none, since its caller passes the parameters themselves.
+- Alternatives: Binding no terms, which let anyone lure a seeder into funding a look-alike market with a huge virtual reserve on the other side (hardening finding H019); a `bytes` argument, which the metadata encodes with a length prefix; accepting it because Aviary creates and seeds in one transaction for one signer.
+- Specified in: [`docs/spec/tax-amm.md`, The seed](spec/tax-amm.md#the-seed)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
 
 ## Containment hook (HOOK)
 
@@ -3441,12 +3551,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-12: Mint rules at binding
 
 - Question: Which mints can be contained?
-- Answer: Token-2022 mints whose only extensions are on the tax AMM's allowlist and whose freeze authority is unset; the mint authority may stay set.
-- Alternatives: Allowing a freeze authority, as the tax AMM does.
+- Answer: Token-2022 mints whose only extensions are on the tax AMM's allowlist and whose freeze authority is unset; `bind` needs the mint authority's signature, and a launch revokes it after `bind` and before the seed, since the tax AMM's seed refuses a mint that keeps one (`TAX-16`).
+- Alternatives: The earlier default, the mint authority allowed to stay set for good, which let a launcher mint and sell into its home market (hardening finding H008 of the tax AMM); allowing a freeze authority, as the tax AMM once did.
 - Specified in: [`docs/spec/containment-hook.md`, Checks on the mint](spec/containment-hook.md#checks-on-the-mint)
 - Changes by: fixed on-chain once deployed
-- Status: default
-- Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18)
+- Status: changed 2026-11-22
+- Decided: 2026-11-10 in [Containment hook policy](https://github.com/imDev2023/testing-pipeline/issues/18); changed by the owner on 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
 
 ### HOOK-13: How the hook decides
 
@@ -4797,11 +4907,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-40: Devnet reserves' price max age
 
 - Question: How old a Pyth price do our devnet reserves accept?
-- Answer: 600 seconds, because devnet's Pyth feeds were seen updating about every 5 minutes on 2026-11-10; Kamino's mainnet SOL and USDC reserves accept 120 and 180 seconds.
-- Alternatives: Kamino's mainnet ages, which would refuse a borrow for much of each 5-minute cycle; posting fresh Pyth prices ourselves before each borrow.
+- Answer: A week (604,800 seconds), because devnet's sponsored Pyth feeds can stop for long stretches, as on 2026-11-23 when klend refused the devnet demo's borrow after both had stood still for over 25 minutes, and on devnet a price only gates the test borrower's loan; Kamino's mainnet SOL and USDC reserves accept 120 and 180 seconds.
+- Alternatives: The earlier default, 600 seconds, from feeds seen updating about every 5 minutes on 2026-11-10; Kamino's mainnet ages, which would refuse a borrow for much of each cycle; posting fresh Pyth prices ourselves before each borrow, which depends on Pyth's devnet pipeline running.
 - Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
 - Changes by: runtime setting
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77)
 
 ### LENDING-41: Devnet reserves' risk settings and caps
@@ -5217,11 +5327,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-82: The demo market's size and the tests' second depositor
 
 - Question: How large is the demo market, and how do the `devnet` build's tests keep its WSOL reserve out of withdraw mode?
-- Answer: The demo market's lent side stays near 0.4 SOL, so it fits the 5 SOL the devnet wallet keeps free in the WSOL reserve, and the `devnet` build's tests give the dumped reserve a second depositor of their own that keeps 2,500 SOL free.
-- Alternatives: Topping the devnet reserve up for the demo, which would make the devnet ticket's demo depend on a larger second depositor; shrinking every test market to fit 5 SOL.
+- Answer: The demo market's first deposit puts 0.5 SOL on the lent side, as the devnet ticket asks, and its later deposits are small enough that the lent side stays near 0.6 SOL, so it fits the 5 SOL the devnet wallet keeps free in the WSOL reserve, and the `devnet` build's tests give the dumped reserve a second depositor of their own that keeps 2,500 SOL free.
+- Alternatives: The earlier default, a lent side near 0.4 SOL from a first deposit of 0.35 SOL, which the devnet ticket's 0.5 SOL ruled out; topping the devnet reserve up for the demo, which would make the devnet ticket's demo depend on a larger second depositor; shrinking every test market to fit 5 SOL.
 - Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-22
 - Decided: 2026-11-16 in [Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83)
 
 ### LENDING-83: Rebalance runs alone in its transaction
@@ -5364,6 +5474,76 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-17 in [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86)
 
+### LENDING-97: How the devnet demo shows the lending yield
+
+- Question: How does the devnet demo show that the market earns from Kamino while a borrower holds a loan?
+- Answer: Right after the test borrower borrows, the demo reads the market's lending yield so far, `V + redeemed - deposited` at the stored rate klend's `refresh_reserve` leaves, twice, refreshing the reserve before each read, and stops unless the second read is the higher, reading again for up to a minute while interest is still below a lamport.
+- Alternatives: Reading the yield across the hour of withdraw mode's wait, when the market holds no cTokens and earns nothing; comparing the stored rate alone, which says nothing about the market.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-98: Pipeline's hosted API on a market that reads Kamino
+
+- Question: What does the devnet demo do with Pipeline's hosted API, when a lending AMM market's quotes read Kamino's reserve, an account of another program?
+- Answer: It requires the API to list the demo market, and quotes a buy and a sale within the buffer through it; each quote it gives must equal the program's own on the same state with the same accounts resolved, while a refusal is recorded with the API's answer and does not stop the run.
+- Alternatives: Stopping the run on a refusal, which would make our devnet demo depend on Pipeline's API reading other programs' accounts; skipping the API.
+- Specified in: [`docs/spec/lending-pool.md`, Devnet](spec/lending-pool.md#devnet)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-99: Where the release gates' shared code lives
+
+- Question: Where does the code the buy wall AMM's and the lending AMM's release gates share live?
+- Answer: In one host crate, `programs/release-gate`: the gate records the deploy path trusts, the read-only cluster reads, the release declaration and the reading of a failed step's error, which the buy wall AMM's gate re-exports with its behaviour unchanged.
+- Alternatives: The lending AMM's gate depending on the buy wall AMM's gate crate; a copy of the code in each gate.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-100: How the release gate replays a stale Kamino reserve
+
+- Question: How does the release gate replay a market whose Kamino reserve the cluster left stale, with no live oracle in LiteSVM?
+- Answer: Each replay marks the reserve's saved price as checked at the snapshot's clock and refreshes it with klend's own `refresh_reserve` before anything else, the same in the deployed build's replay and the candidate's, so both compare on identical state.
+- Alternatives: Moving the Pyth account's publish time; copying live oracle accounts, which would differ between the two replays.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-101: What the release gate runs on each market
+
+- Question: What does the lending AMM's release gate run on each market?
+- Answer: Account resolution both ways, quotes both ways at a tenth, a hundredth and a thousandth of the input vault compared with the deployed build's, `pipeline_market_info`, `rebalance` when it is due or the deployed build ran it, a buy and the sale of what it bought, and a sale beyond the buffer that redeems from Kamino, each swap delivering exactly its quote.
+- Alternatives: Adding liquidity and every removal (cash, in kind, the lent side alone) as well, which could be added later.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-102: The release gate's own market
+
+- Question: In what world does the release gate make and trade a market of its own with the candidate?
+- Answer: In one holding only the router, klend, the candidate and the lent mints' Kamino accounts with Kamino's stops cleared and a second depositor of 2,500 SOL in each reserve, where it creates a WSOL-lent market of 10 SOL at 30 basis points and rebalances, trades and sells beyond the buffer, every step counting.
+- Alternatives: Using the cluster's reserve as it is, where a borrower or an emergency switch on devnet could refuse every candidate, an emergency fix included.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
+### LENDING-103: How the release gate is shown to catch stranding
+
+- Question: How is the lending AMM's release gate shown to refuse a build that would strand a market?
+- Answer: A test build that swaps two fields of the market state, listed in `programs/lending-amm/gate/test-builds.json` and built from an edited copy of the source by `scripts/broken-builds.py` beside the fuzzer's broken builds, must be refused on a market holding cTokens, one whose `rebalance` succeeds but lends nothing on its own market and where the deployed build sold beyond the buffer, and the fuzzer's `no-sale-beyond-the-buffer` on every market and on the gate's own.
+- Alternatives: A `test-builds` command of the gate's own, as the buy wall AMM's has.
+- Specified in: [`docs/spec/lending-pool.md`, A release gate](spec/lending-pool.md#a-release-gate)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -5394,7 +5574,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `LENDING-86`: since Pipeline 0.2 dropped the config account from `register_existing_market`, a hooked token's graduation fits a legacy transaction when its shares are locked (1,222 bytes) but not when they go to a wallet (1,254); `lending-pool.md` has the new figures, and the decision's own figures (1,287) are the lending AMM session's to update.
 - `BAR-42`, `TAX-53`, `TAX-54`: set by the session of [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
-- `HOOK-42` to `HOOK-46`, `BAR-45`: set by the session of [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) from its internal adversarial review and listed for the owner on that ticket as the session's own decisions, so they are that session's defaults until the owner or MetalLegBob has reacted.
+- `HOOK-42` to `HOOK-46`, `BAR-46`: set by the session of [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) from its internal adversarial review and listed for the owner on that ticket as the session's own decisions, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `HOOK-35` to `HOOK-37`: set by the session of [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
@@ -5419,9 +5599,9 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `BAR-04`, `BAR-29`, `PIPESCOPE-87`: Pipeline's crates are on crates.io and its SDK on npm since 2026-11-10; the terminal uses the published packages, while the bar still pins the on-chain workspace's crates by git `rev` and the programs' demo scripts link a local SDK build from `scripts/fetch-pipeline.sh`; whether they move to the published packages is for the bar's owner.
 - `BAR-40`, `TAX-51`, `TAX-52`: set by the session of [Tax AMM: invariant fuzzing across every instruction](https://github.com/imDev2023/testing-pipeline/issues/65) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-54` to `POOL4-56`: set by the session of [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
-- `TAX-54`, `POOL4-54`: `programs/tax-amm/scripts/publish.ts` and `tests/published.rs` were copied for the buy wall AMM with only the program's names changed; the lending AMM's devnet ticket will need a third copy, so the shared part belongs in one helper the three programs call.
 - `SUITE-48`: set by the session of [Progress site: link straight to the public repository](https://github.com/imDev2023/testing-pipeline/issues/186), which read its ticket as every link going to GitHub, and not yet put to the owner, so it is that session's default until the owner has been asked.
 - `SUITE-49` to `SUITE-53`: set by the session of [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `SUITE-54` to `SUITE-56`: set by the session of [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-99` to `PIPESCOPE-103`: set by the session of [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted; Devnet help's wallet steps (`apps/terminal-web/src/content/devnet-help.ts`) follow each wallet's help pages of 2026-11-22 and were not tried in the wallets.
+- `BAR-45`, `LENDING-97` to `LENDING-103`, the 2026-11-22 change to `LENDING-82` and the 2026-11-23 change to `LENDING-40`: set by the session of [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `CANARY-47`: the check is the owner's answer 5a on [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) (`HOOK-50`); its rule, its 1-point threshold and its search were set by that session while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.

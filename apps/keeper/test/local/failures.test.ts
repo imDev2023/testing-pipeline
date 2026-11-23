@@ -1,6 +1,8 @@
 // A failed job is retried after each of RETRY_DELAYS, then parked until its market's state
 // changes (docs/spec/keeper-runner.md, "Failures"). The failure is real: the recipient's token
-// account is frozen, so the payout's transfer is refused.
+// account requires memos on incoming transfers, which `distribute` doesn't send, so the
+// payout's transfer is refused. (It froze the account until the tax AMM's hardening, #67,
+// refused freeze authorities on every mint but a quote mint at the seed.)
 
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
@@ -10,11 +12,11 @@ import { ChainError, type Chain } from '../../src/chain.ts';
 import {
     checkLocalValidator,
     createMarket,
-    freezeRecipient,
+    blockRecipient,
     jobRows,
     owed,
     testRunner,
-    thawRecipient,
+    unblockRecipient,
     tokenBalance,
     tokens,
     trade,
@@ -31,8 +33,8 @@ test('a failing payout is retried at RETRY_DELAYS, then parked until its market 
     const owner = await wallet(10n);
     const mints = await tokens(owner, true);
     const market = await createMarket(owner, mints);
-    const frozen = market.recipients[1]!;
-    await freezeRecipient(market, frozen);
+    const blocked = market.recipients[1]!;
+    await blockRecipient(market, market.recipientKeys[0]!);
     await trade(market);
     const owedToFrozen = (await owed(market))[1]!;
     assert.ok(owedToFrozen > 0n);
@@ -45,11 +47,11 @@ test('a failing payout is retried at RETRY_DELAYS, then parked until its market 
     const { runner, log, clock } = keeper;
     const slot1 = () => jobRows(log, market).filter((row) => row.slot === 1);
 
-    // The full pass on start pays every slot but the frozen recipient's, whose payout fails.
+    // The full pass on start pays every slot but the blocked recipient's, whose payout fails.
     await runner.start();
     assert.deepEqual(jobRows(log, market).filter((row) => row.slot !== 1).map((row) => row.outcome), ['sent', 'sent', 'sent']);
     assert.deepEqual(slot1().map((row) => [row.outcome, row.attempt, row.retryInMs]), [['failed', 1, 60_000]]);
-    assert.match(String(slot1()[0]!.error), /0x11|AccountFrozen|frozen/i);
+    assert.match(String(slot1()[0]!.error), /memo/i);
 
     // Not before its delay; then exactly at it.
     await clock.advance(59_000, () => runner.idle());
@@ -69,15 +71,15 @@ test('a failing payout is retried at RETRY_DELAYS, then parked until its market 
     assert.equal(daily[0]!.parked, 1);
     assert.equal(slot1().length, 3);
 
-    // The market changes (a trade), and the account is thawed: the next daily pass pays it.
-    await thawRecipient(market, frozen);
+    // The market changes (a trade), and the memo requirement is off: the next daily pass pays it.
+    await unblockRecipient(market, market.recipientKeys[0]!);
     await trade(market);
     const owedNow = (await owed(market))[1]!;
-    const before = await tokenBalance(frozen, mints[1]);
+    const before = await tokenBalance(blocked, mints[1]);
     await runner.idle();
     await clock.advance(24 * 60 * 60_000, () => runner.idle());
     assert.deepEqual(slot1().slice(3).map((row) => row.outcome), ['unparked', 'sent']);
-    assert.equal((await tokenBalance(frozen, mints[1])) - before, owedNow);
+    assert.equal((await tokenBalance(blocked, mints[1])) - before, owedNow);
     assert.deepEqual(await owed(market), [0n, 0n, 0n, 0n, 0n, 0n]);
 });
 

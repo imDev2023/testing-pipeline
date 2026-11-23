@@ -26,6 +26,8 @@ litesvm.workspace = true
 pipeline-check.workspace = true
 pipeline-client.workspace = true
 pipeline-strategy-interface.workspace = true
+# The parts every release gate shares: reading a cluster, the records, the release declaration.
+release-gate = { path = "../../release-gate" }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 solana-account.workspace = true

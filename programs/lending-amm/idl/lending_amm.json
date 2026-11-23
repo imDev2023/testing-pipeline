@@ -2,7 +2,7 @@
   "address": "Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG",
   "metadata": {
     "name": "lending_amm",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "spec": "0.1.0",
     "description": "A Pipeline strategy whose markets lend one side to Kamino Lend and trade from their own vaults",
     "repository": "https://github.com/imDev2023/testing-pipeline"
@@ -2712,9 +2712,10 @@
       "docs": [
         "How many slots old the reserve's last refresh may be when a quote or a swap values a market's",
         "cTokens: about an hour. A trade at the stored rate and one back after a refresh pay Pipeline's",
-        "fee twice, 0.5%, besides the LP fee, which may be 0; an hour of interest at the steepest rate",
-        "the deploy sees, our devnet reserves' 1,000% a year, is about 0.11%, so no such round trip",
-        "pays. Beyond it a trader, a keeper or Aviary puts klend's `refresh_reserve` first."
+        "fee twice, 0.5%, besides the LP fee, which may be 0; 9,000 slots of interest at the steepest",
+        "rate the deploy sees, our devnet reserves' 1,000% a year, is about 0.14% as klend counts slots",
+        "(two a second), so no such round trip pays, with a margin of 1.7 to 3.5 times once reward and",
+        "time-based interest are allowed for (finding R2-12). Beyond it a trader, a keeper or Aviary puts klend's `refresh_reserve` first."
       ],
       "type": "u64",
       "value": "9000"

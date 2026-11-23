@@ -136,7 +136,7 @@ pub fn seed_liquidity<'info>(
         if request.amounts[i] > 0 {
             taken[i] = escrowed[i]
                 .checked_sub(token_balance(&escrows[i].to_account_info())?)
-                .ok_or(StrategyError::Overflow)?;
+                .ok_or(StrategyError::Underflow)?;
         }
     }
 

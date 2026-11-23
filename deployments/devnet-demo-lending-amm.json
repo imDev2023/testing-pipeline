@@ -1,0 +1,243 @@
+{
+  "cluster": "devnet",
+  "metadataUri": "https://raw.githubusercontent.com/imDev2023/testing-pipeline/main/programs/lending-amm/metadata.json",
+  "deploy": "25a209c62f1abed0ea1db1ba178e9b1bbbdd5e87, executable 34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c",
+  "at": "2026-11-23",
+  "note": "The third run of programs/lending-amm/scripts/demo.ts on devnet, through every step but 28 to 30 (the stand-in launchpad, never deployed); its step 31 sell comparison was taken again with --hosted-api once the demo compared what the trader keeps after Pipeline's output fee. Two earlier runs stopped after step 21 (a stale Pyth price, LENDING-40, then a dropped RPC connection); their markets stay on devnet as further live markets the release gate covers.",
+  "earlierRuns": [
+    {
+      "run": 1,
+      "marketState": "GKPxNv4nwbcSFaxXu7uFpMoBX8qXjoeRCiYwt1CtuQQJ",
+      "market": "GmsiCAQRJSFMYmdJrYGhkUapgaxEsCYta2mNETSgNUtq",
+      "stoppedAt": "step 22: klend refused the test borrower's borrow with PriceTooOld"
+    },
+    {
+      "run": 2,
+      "marketState": "GYNEKbEpRGAtrFTAMHNrixSW5dnDHJBsXXHHr8Jxa2bV",
+      "market": "5kH9btnjERok6J9vUiKLVVvairUNnuicuWYKXNCMi1dc",
+      "stoppedAt": "step 22: the RPC dropped a connection (ECONNRESET) after the borrow landed; the loan was repaid"
+    }
+  ],
+  "record": [
+    [
+      "strategy program",
+      "Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG"
+    ],
+    [
+      "step 3: register_strategy (in the first run)",
+      "5xk4dEoWKi4E1aTLMtguv2bkooJbTG8URy3Nv9tYyHZS5tQhStV2KoyZdwXVcoVWjBMUnjv2GMXZuLbTBm9fw44T"
+    ],
+    [
+      "step 4: create test token",
+      "3nNTKTLmrLkigtzfsvR2cXrcuKbKocRypNXBEPzgFe9FQS4fHE8hRJRLh1zGBwf7zcUbmmvzpqxV5fxchZt7Tikw"
+    ],
+    [
+      "test token",
+      "LuZBpaL9LXZCrZXtqfgsbuxN2PSp42k1bkUEuzXwpCi"
+    ],
+    [
+      "step 4: wrap SOL",
+      "2TuFtCG5KWDP73dkph13N9XbWZMqgbqC8LXMRMra2vyvaXWjc14iA9w8zLNj4psVomqC72cd4ASAP52Xx6XswJVu"
+    ],
+    [
+      "demo market state",
+      "9M5mzsto7Wvj9tBNzAGwyFd84ASSFUh4kuPALhunkMJs"
+    ],
+    [
+      "step 6: create_market + init_fee_account x2 + add_liquidity",
+      "VAaAmndgRFukNn4kjo8Ft55Z5pmNycUbck1LFReM8uPu4krocGc4aeUJAFnGCmfryzjyRtG9tew3TKWEQGHERXo"
+    ],
+    [
+      "demo market",
+      "AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu"
+    ],
+    [
+      "step 8: buy the token with WSOL",
+      "5tg8PcD2PjKZ46597jC2UG6rKV1LAkQypaKVhGu5jYrW23ZTi4PbWRbhZvQRtrXhN9TncqU55c3xGAgiogi6Y5Xg"
+    ],
+    [
+      "step 8: sell the token for WSOL",
+      "sAr8o35iqFVBzhPiGHHLTbwznZMS2duhPtvhZAiGAiHq5CDNRuLLBPBWRvjdJ1hbRWEjwDrLjZqWMRJ2nVXfvsq"
+    ],
+    [
+      "step 10: add_liquidity",
+      "5U5jCqP7Sh5Fmb2wDZtM49iANpQyeER8SHSA299iJiH8vLLKgBNB6g2ofE5rVitwTEzGu5WNPUVjaUV8T8mzyiSE"
+    ],
+    [
+      "step 11: rebalance",
+      "2psxrYXX37oi2VT4WpzdhedWYcn56nXdwYVJYuNDtjSJ5NSHB75YLq519rNYioBnWX1QVJWP4eQqUbrhJS1xdq7N"
+    ],
+    [
+      "step 12: result",
+      "refused with WithinBand, in simulation, so nothing was sent and nobody paid"
+    ],
+    [
+      "step 13: buy the token with WSOL, after lending",
+      "6W2X1vqqubpuJVeFdYEdUBrzsLvQdombj3ywhNKcieP81gCcdGT4HGgpz2nLbAQvMDbF9kE4ihqetwKc4MST2Lz"
+    ],
+    [
+      "step 13: sell the token for WSOL, after lending",
+      "2nu9uGb1mw9MU13SiNeNwj5BLpgivqk3H9LRwNeHtAa4TFbKgZCZZ8pkwrctwWUcGbJmuXg1P3f7QQtT2iayzDxX"
+    ],
+    [
+      "step 14: result",
+      "selling 124845493980 with the 3 accounts resolved for selling 31704698324: refused with RedeemAccountsMissing, in simulation"
+    ],
+    [
+      "step 15: sell beyond the buffer",
+      "3sd4EWucMped4q2gaE1Tjhz7jzWGg6A18mKS2t9Q5Mv9Grc9SwfVHMi9RUYH4srx2TV5bVyjsPcfwiMCKkpHtefY"
+    ],
+    [
+      "step 16: rebalance after the sale",
+      "4evqum3nmS1sty9ZFQQpLzXVJLvDn8Wg1zEhyCYLN657BWezSRxAKiGUAbWKjkYy4CRDtvJgcxRN5DB66WeCgeKM"
+    ],
+    [
+      "step 17: fund the second wallet",
+      "sBrUMjNboDqY8KxSNJMqAgmbzUKnbUkbrRw4xo2A8e3XEJWUxkiQhsHT25shyvjmmbujWv9uWGttGJtTbWNTtSm"
+    ],
+    [
+      "step 17: the second wallet wraps SOL",
+      "4b643joLBHHrqvm61A6f9JZ3KUHuCFcYTTsX8uUMXYqLPZSHxRFTDd161iqcjZmGptWXWsRGA6BBceeXREHMF3ET"
+    ],
+    [
+      "step 17: result",
+      "without klend's refresh first, the deposit is refused with ReserveStale (the reserve was last refreshed 33 slots before), in simulation"
+    ],
+    [
+      "step 17: refresh_reserve + add_liquidity by the second wallet",
+      "31CwTQPcG4LJ7U6DSTwbEWwqDyedrQWwAWPDty5TJUi2DXfmJiv7UHPKFwDKdovMKNWujk9wE39iEhX3NXHqnEF7"
+    ],
+    [
+      "step 18: remove_liquidity in cash",
+      "2mx6HihveAyvKCHtHVj4dFMxCsjFjfdXC8Qf17eP7JxjBjQpSSHRRSyNgaziiXzN2Cp92Z8LPK9USomkRUhcmiR4"
+    ],
+    [
+      "step 19: remove_liquidity in kind",
+      "38kZc8d6NbJnRunwacfjT1ENNemhW4vWYHVzSdw71a3e8dvS1JPYeNZE2dq3MdEWoktLysswFTyWVYz8kEAJQN5X"
+    ],
+    [
+      "step 20: redeem the cTokens at klend",
+      "2kHGw13RDYeeM2vayCCbnDMurPgcxckCeFZX2o5rsVkhhAY3PiAFrcJaSonVvRiyEXPFoWfF3CKw3S3fx6pck3Wa"
+    ],
+    [
+      "step 21: lock_lp",
+      "5X44X3dKJkpDC14tfWK1q7SJtidn3YEkVv82NCbdnKVZBSbZqQ7YA3ATPN5BY4Xv273BfJ5EHxGHaL3i67waTGcQ"
+    ],
+    [
+      "step 21: remove_lent_side",
+      "5UB9fdUvFqfo3xZWopPRqBkRPP92QshREANEzVYf3kBQZkTbfjrBsAghfXnTwCzHx4KhVeiYDgDVE5uyziq9navK"
+    ],
+    [
+      "step 22: Kamino side, test borrower borrows WSOL",
+      "3pm7c8prmLVqv9ipR2E3UnXXsDuym3tWHXhjnJoHpiFzMeY4ufB9T3mppyzPNEyHSrwLA9wed1K6UYNodqRKtUEj"
+    ],
+    [
+      "step 22: refresh_reserve, the lending yield, first read",
+      "3HMZiEkMiCjzfHZTV6kRZJ3HrUn3mQssgAqc8Hopes4Vpgmmp2ixHadXhXVCCXJ7yu3KQW18Z31A33ffwUFf7qR5"
+    ],
+    [
+      "step 22: refresh_reserve, the lending yield, second read",
+      "M6sNHoZhsWGFhiCgno1TRB2TLgHMWX1G6VEvajn6nnzdHpauNJSydEPKmoVazZs9HyCKAebddqvP4Heckovsgo3"
+    ],
+    [
+      "step 22: result",
+      "with the loan held the market's lending yield rose from 83 to 140 between slots 525425925 and 525425935"
+    ],
+    [
+      "step 23: rebalance into withdraw mode",
+      "4uHyT3yQkoL6bvqq3vBSoWBLtPRBjmXaEvTDfUkrRLDnB6YyPJPKqUPm4Tv9C52FAYfUh95AZVusoFzbBR3ysCTB"
+    ],
+    [
+      "step 23: result",
+      "WithdrawModeEntered at 1556837980 free and X 321367711; klend redeemed every one of the market's 284303018 cTokens for 284306864 WSOL, as its maths gives"
+    ],
+    [
+      "step 24: result",
+      "a second rebalance in withdraw mode: refused with BelowMinRebalance, in simulation, so nothing was sent"
+    ],
+    [
+      "step 25: Kamino side, refresh the test borrower's obligation",
+      "2d5vmVpKxz1ovX1JdjiRC72Cf2j3c5fgz1jgYDGsW6E14kCFg62hcJu7qq7pMMV4Lg6wdLyt9ihBUgLvx7LNUVjr"
+    ],
+    [
+      "step 25: Kamino side, test borrower repays in full",
+      "4mKEqcHSBi1QjLfWMT3ufTH1i7Dd3vcfnVQWZdhGiNsAxZh9iqbsk6p8Y9yJCwUiP526XZwiVogLYJzNJdjYBd8Y"
+    ],
+    [
+      "step 25: rebalance starts the wait to leave withdraw mode",
+      "2JwgaPDNxJx8ufTNiNYnkUARdLMnMhxLXAtQVBo5s2dWE5zCQHQmt6RP9q2mRbJGkrno9cX2qoGbXsgUBzo6BnkM"
+    ],
+    [
+      "step 25: result",
+      "rebalance before the wait is over: refused with BelowMinRebalance, in simulation, so nothing was sent"
+    ],
+    [
+      "step 25: rebalance out of withdraw mode",
+      "4gSr7pRR4wu15x33xZgNd3ko1bnRduapg1zZkrXPSKfXn76kdRqgjwAASjSXVzRFmNHr1psG7ePXB1Kc2SxqNfnP"
+    ],
+    [
+      "step 25: result",
+      "WithdrawModeLeft at 5574119164 free; the band applies again and klend took 321367826 WSOL for 321363070 cTokens, as its deposit maths gives"
+    ],
+    [
+      "step 26: Kamino side, turn the WSOL reserve's emergency mode on",
+      "5WtGaud3r2KhpsTL9t5pxhbqSTMWe7LGmHVinPn8TBofZJixeR167d9Bd8VPcM4HjLy1pt3D3eD91JKMjnLGKjdL"
+    ],
+    [
+      "step 26: sell within the buffer in emergency mode",
+      "3rfEpyjvKZhPf6ebtWtPWHaYbtdKnR2ia6A7tGrnzd5TTf2Zhj2g2TmwhgQ5yHN4bx9SC8KzVK3dKak5ECFSNcKx"
+    ],
+    [
+      "step 26: result",
+      "a sale of 90804008216, beyond the buffer: the quote is refused with BeyondBuffer"
+    ],
+    [
+      "step 26: result",
+      "a swap beyond the buffer in emergency mode: refused with BeyondBuffer, in simulation, so nothing was sent"
+    ],
+    [
+      "step 26: result",
+      "rebalance in emergency mode: refused with KaminoStopped, in simulation, so nothing was sent"
+    ],
+    [
+      "step 26: result",
+      "the second wallet's removal in cash in emergency mode: refused with KaminoCannotPay, in simulation, so nothing was sent"
+    ],
+    [
+      "step 26: the second wallet removes the rest in kind in emergency mode",
+      "5bUaKrU4AhS1yx7MwabecdpodhuKJABsr1gvqYhBwAVSSn9uFdQeqjNwgCJKzHVZKFToi9xqf2vhMRQ7Q6dmLQ8x"
+    ],
+    [
+      "step 27: Kamino side, turn the WSOL reserve's emergency mode off",
+      "KiegP2SFU3BizDESmUcCbhLFwihY5EzZsWRVhs1kdU8cJCFdYBfDiSKoqJfC7rVDL7sTswWTBqFGvKpibXANfK9"
+    ],
+    [
+      "step 27: sell beyond the buffer after emergency mode",
+      "1stUDhEe9r87cM4gQZAzWUphuU9G7C31wqUKrSnrkLgmrHfYe9bu2W7C1SHD7jtEcmuAdzcsZrbKBF25b9sKFjX"
+    ],
+    [
+      "step 27: result",
+      "sell beyond the buffer after emergency mode: 88711217472 in, 58867716 WSOL out, equal to its quote and the formula, 58720546 kept; klend redeemed 19622572 for 19622282 cTokens inside the swap"
+    ],
+    [
+      "step 27: rebalance after emergency mode",
+      "5o3ZTDbsJ2Hi8HrPDXQQU5ru7zomPHiawuFM8qP8Yz23zVukdbkip1GnCWEzuroAbfxkN8XpA5LwVBj6eJkRP45Z"
+    ],
+    [
+      "step 27: result",
+      "sales paying out 99% and 101% of the buffer's 58867715 WSOL: 131473535384 and 134801897064 of the token"
+    ],
+    [
+      "step 31: hosted API lists the market",
+      "AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu"
+    ],
+    [
+      "step 31: hosted API quote, buy",
+      "5886771 in, 10379899096 kept, equal to the program's quote of 10379899096 less Pipeline's fee where it is taken from the output"
+    ],
+    [
+      "step 31: hosted API quote, sell",
+      "5309366395 in, 2898322 kept, equal to the program's quote of 2905586 less Pipeline's fee where it is taken from the output"
+    ]
+  ]
+}

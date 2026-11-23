@@ -14,16 +14,20 @@
         "image": "pnpm build && docker build --tag testing-pipeline-keeper .",
         "test": "node --test test/*.test.ts",
         "test:local": "node --test --test-concurrency=1 test/local/*.test.ts",
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc --noEmit",
+        "test:db": "node --test --test-concurrency=1 test/db/*.test.ts"
     },
     "dependencies": {
         "@solana-program/token": "0.18.0",
         "@solana/kit": "8.6.0",
-        "keeper-jobs": "workspace:*"
+        "keeper-jobs": "workspace:*",
+        "terminal-api": "workspace:*",
+        "terminal-db": "workspace:*"
     },
     "devDependencies": {
         "@pipeline-placeholder/sdk": "link:../../fixtures/pipeline/sdk/ts",
         "@solana-program/system": "0.16.0",
+        "@solana-program/token-2022": "0.20.0",
         "@types/node": "24.19.2",
         "buy-wall-amm-scripts": "workspace:*",
         "esbuild": "0.28.2",

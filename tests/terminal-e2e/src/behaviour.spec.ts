@@ -2,6 +2,8 @@
 // the theme follows the device and the footer overrides it, every colour and typeface comes from
 // theme.css, panels load and fail on their own, and the "nothing there" page names the address.
 import { expect, test, type Page } from "@playwright/test";
+import { MarketsPage, StrategiesList } from "terminal-api/contract";
+import { KEEPER_SIGNATURE, postKeeperHeartbeat, seedKeeperRecords, TEST_KEEPER_WALLET } from "./keeper";
 import { API } from "./target";
 
 // The theme's own values (docs/spec/pipescope-screens.md, "Colour and theme"), as the browser computes them.
@@ -59,20 +61,19 @@ test.describe("the theme", () => {
 
 test.describe("panels", () => {
   test("a panel that cannot load says what could not be loaded and offers to try again, and the page stays", async ({ page }) => {
-    await page.route(`${API}/health`, (route) => route.abort("connectionrefused"));
+    await page.route(`${API}/v1/markets*`, (route) => route.abort("connectionrefused"));
     await page.goto("/");
-    const panel = page.getByRole("region", { name: /on devnet$/ });
-    await expect(panel.getByRole("alert")).toHaveText(/Could not load devnet's latest slot\. .+'s API did not answer\./);
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText(/^Could not load the markets and strategies\. .+'s API did not answer\.Try again$/);
     await expect(page.getByRole("heading", { name: "New on Pipeline" })).toBeVisible();
     await expect(page.getByRole("contentinfo")).toBeVisible();
 
-    await page.unroute(`${API}/health`);
-    await panel.getByRole("button", { name: "Try again" }).click();
-    await expect(panel.getByText("Latest slot")).toBeVisible();
+    await page.unroute(`${API}/v1/markets*`);
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1)).toBeVisible();
   });
 
   test("a refused read shows the wait the API named", async ({ page }) => {
-    await page.route(`${API}/health`, (route) =>
+    await page.route(`${API}/v1/strategies`, (route) =>
       route.fulfill({
         status: 429,
         headers: { "content-type": "application/json", "access-control-allow-origin": "*", "retry-after": "60" },
@@ -80,7 +81,59 @@ test.describe("panels", () => {
       }),
     );
     await page.goto("/");
-    await expect(page.getByRole("region", { name: /on devnet$/ }).getByRole("alert")).toHaveText("Could not load devnet's latest slot. Too many requests from your address. Try again in 60 seconds.Try again");
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText("Could not load the markets and strategies. Too many requests from your address. Try again in 60 seconds.Try again");
+  });
+});
+
+test.describe("the feed", () => {
+  test("says how many markets and strategies there are, as the API counts them, on its head and its tabs", async ({ page, request }) => {
+    const { total } = MarketsPage.parse(await (await request.get(`${API}/v1/markets?limit=1`)).json());
+    const { strategies } = StrategiesList.parse(await (await request.get(`${API}/v1/strategies`)).json());
+    await page.goto("/");
+    const n = (x: number) => x.toLocaleString("en-US");
+    await expect(page.getByText(`${n(total)} markets on ${n(strategies.length)} strategies, newest first.`, { exact: false })).toBeVisible();
+    const tabs = page.getByRole("navigation", { name: "Show" });
+    await expect(tabs.getByRole("link", { name: `Markets ${n(total)}` })).toHaveAttribute("aria-current", "page");
+    await expect(tabs.getByRole("link", { name: `Strategies ${n(strategies.length)}` })).toBeVisible();
+  });
+
+  test("lists the newest market first, and its row opens the market", async ({ page, request }) => {
+    const { markets } = MarketsPage.parse(await (await request.get(`${API}/v1/markets?limit=1`)).json());
+    await page.goto("/");
+    const first = page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1);
+    await expect(first).toContainText(`market ${markets[0]!.address.slice(0, 4)}...${markets[0]!.address.slice(-4)}`);
+    // The whole row opens the market, not only its first cell: a click where it says when the market was created.
+    const created = (await first.getByText(/ago$/).boundingBox())!;
+    await page.mouse.click(created.x + created.width / 2, created.y + created.height / 2);
+    await expect(page).toHaveURL(`/markets/${markets[0]!.address}`);
+    await expect(page.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${markets[0]!.address}?cluster=devnet`);
+  });
+
+  test("a market's strategy opens the strategy, from inside the market's row", async ({ page, request }) => {
+    const { markets } = MarketsPage.parse(await (await request.get(`${API}/v1/markets?limit=1`)).json());
+    await page.goto("/");
+    const first = page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1);
+    await first.getByRole("link", { name: `${markets[0]!.strategy.slice(0, 4)}...${markets[0]!.strategy.slice(-4)}` }).click();
+    await expect(page).toHaveURL(`/strategies/${markets[0]!.strategy}`);
+    await expect(page.getByRole("heading", { name: "Strategy", exact: true })).toBeVisible();
+  });
+
+  test("loads the markets 50 at a time, and the next 50 on asking", async ({ page }) => {
+    await page.goto("/");
+    const rows = page.getByRole("region", { name: "Markets" }).getByRole("row");
+    await expect(rows).toHaveCount(51);
+    await page.getByRole("button", { name: "Show 50 more markets" }).click();
+    await expect(rows).toHaveCount(101);
+  });
+
+  test("keeps the tab in the page's address, so the strategies can be linked", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("navigation", { name: "Show" }).getByRole("link", { name: /^Strategies/ }).click();
+    await expect(page).toHaveURL("/?tab=strategies");
+    await page.reload();
+    await expect(page.getByRole("region", { name: "Strategies" }).getByRole("row").nth(1)).toBeVisible();
+    await page.getByRole("region", { name: "Strategies" }).getByRole("row").nth(1).click();
+    await expect(page).toHaveURL(/\/strategies\/[1-9A-HJ-NP-Za-km-z]{32,44}$/);
   });
 });
 
@@ -135,6 +188,68 @@ test.describe("nothing there", () => {
       await expect(page.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${address}?cluster=devnet`);
       await page.getByRole("link", { name: "Go to the feed" }).click();
       await expect(page).toHaveURL("/");
+    }
+  });
+});
+
+test.describe("the keeper page", () => {
+  test.beforeAll(async () => {
+    await seedKeeperRecords();
+    await postKeeperHeartbeat();
+  });
+
+  test("shows the keeper wallet, the runner running, today's spend against the caps and the jobs with their transactions", async ({ page }) => {
+    await page.goto("/keeper");
+    await expect(page.getByRole("heading", { name: "Keeper", level: 1 })).toBeVisible();
+    await expect(page.getByRole("status")).toHaveText(/^Running\. Its last pass, a sweep, ended (just now|\d+s ago|1m ago)\.$/);
+
+    const wallet = page.getByRole("region", { name: "Keeper wallet" });
+    await expect(wallet.getByText(TEST_KEEPER_WALLET.slice(0, 22))).toBeVisible();
+    await expect(wallet.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${TEST_KEEPER_WALLET}?cluster=devnet`);
+    await expect(wallet.getByText(/^(\d[\d.,]*|0) SOL$/)).toBeVisible();
+
+    const spent = page.getByRole("region", { name: "Spent today" });
+    await expect(spent.getByText("0.000025 SOL of 0.1 SOL DAILY_CAP")).toBeVisible();
+    await expect(spent.getByText("0.000005 SOL of 0.003 SOL MAX_TX_COST")).toBeVisible();
+
+    const waiting = page.getByRole("region", { name: "Held and parked" });
+    await expect(waiting.getByRole("row", { name: /distribute, slot 2 .* Held by MARKET_DAILY_CAP/ })).toBeVisible();
+
+    const latest = page.getByRole("region", { name: "Latest jobs" });
+    await expect(latest.getByRole("row")).toHaveCount(1 + 6);
+    const signature = latest.getByRole("link", { name: `${KEEPER_SIGNATURE.slice(0, 4)}...${KEEPER_SIGNATURE.slice(-4)}` });
+    await expect(signature).toHaveAttribute("href", `https://explorer.solana.com/tx/${KEEPER_SIGNATURE}?cluster=devnet`);
+    await expect(signature).toHaveAttribute("title", KEEPER_SIGNATURE);
+
+    const passes = page.getByRole("region", { name: "Passes" });
+    await expect(passes.getByRole("row", { name: /^Daily .* sent 4$/ })).toBeVisible();
+    await expect(passes.getByRole("row", { name: /^Sweep .* sent 1, held 1$/ })).toBeVisible();
+  });
+
+  test("says the runner looks stopped once its last pass is older than its sweep interval and a few minutes", async ({ page }) => {
+    await page.route(`${API}/keeper`, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      body.liveness = { state: "looks-stopped", lastPass: { pass: "sweep", at: new Date(Date.now() - 42 * 60_000).toISOString() }, stoppedAfterMs: 900_000, sweepIntervalMs: 600_000 };
+      await route.fulfill({ response, json: body });
+    });
+    await page.goto("/keeper");
+    await expect(page.getByRole("status")).toHaveText(
+      "Looks stopped. Its last pass, a sweep, ended 42m ago, and it sweeps every 10 minutes. Due jobs wait meanwhile, and anyone may send them.",
+    );
+  });
+
+  test("keeps the wallet and the runner's state when the records cannot be read, and says so in each panel that needs them", async ({ page }) => {
+    await page.route(`${API}/keeper`, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      Object.assign(body, { records: { ok: false, error: "the database did not answer" }, recent: [], waiting: [] });
+      await route.fulfill({ response, json: body });
+    });
+    await page.goto("/keeper");
+    await expect(page.getByRole("region", { name: "Keeper wallet" }).getByText("Balance", { exact: true })).toBeVisible();
+    for (const name of ["Spent today", "Held and parked", "Latest jobs"]) {
+      await expect(page.getByRole("region", { name }).getByRole("alert")).toContainText("The runner's records could not be read: the database did not answer.");
     }
   });
 });

@@ -2,17 +2,32 @@
 // (PIPESCOPE-96): it wears the shell, nothing scrolls sideways, it requests nothing from any origin but
 // Aviary's own, fonts included, and its screenshot is saved for the PR.
 import { expect, test, type Page } from "@playwright/test";
+import { postKeeperHeartbeat, seedKeeperRecords } from "./keeper";
 import { screenshot } from "./screenshot";
 import { OWN_ORIGINS } from "./target";
 
 const UNKNOWN_ADDRESS = "6efYq3Jt7k2bQxW9pLm4nR8sV1uZcA5dHgE2oTiwdnYp";
 
+// A market and a strategy of devnet's, both in the recorded fixtures: the buy wall AMM's demo market and its strategy.
+const MARKET = "7BctWoaSumdxkMBCXxMum59NV5CZJBvC33SCrcGa5CAK";
+const STRATEGY = "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6";
+
 const PAGES = [
-  { name: "feed", path: "/", status: 200, ready: (page: Page) => expect(page.getByText("Latest slot")).toBeVisible() },
+  { name: "feed", path: "/", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1)).toBeVisible() },
+  { name: "feed-strategies", path: "/?tab=strategies", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Strategies" }).getByRole("row").nth(1)).toBeVisible() },
+  { name: "market", path: `/markets/${MARKET}`, status: 200, ready: (page: Page) => expect(page.getByRole("link", { name: "Explorer" })).toBeVisible() },
+  { name: "strategy", path: `/strategies/${STRATEGY}`, status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "Strategy", exact: true })).toBeVisible() },
   { name: "devnet-help", path: "/devnet", status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "Get devnet USDC" })).toBeVisible() },
+  { name: "keeper", path: "/keeper", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Latest jobs" }).getByRole("table")).toBeVisible() },
   { name: "nothing-there", path: `/markets/${UNKNOWN_ADDRESS}`, status: 404, ready: (page: Page) => expect(page.getByText(UNKNOWN_ADDRESS)).toBeVisible() },
   { name: "no-page", path: "/no-such-page", status: 404, ready: (page: Page) => expect(page.getByRole("heading", { name: "No page here" })).toBeVisible() },
 ];
+
+// The keeper page shows the test keeper's records and its latest heartbeat (src/keeper.ts).
+test.beforeAll(async () => {
+  await seedKeeperRecords();
+  await postKeeperHeartbeat();
+});
 
 for (const { name, path, status, ready } of PAGES) {
   test(`${name} wears the shell, stays inside the window and calls only Aviary's own origins`, async ({ page }, testInfo) => {
@@ -39,6 +54,7 @@ for (const { name, path, status, ready } of PAGES) {
     await expect(footer.getByText("Text like this was written by a strategy's or token's author and is not verified.")).toBeVisible();
     await expect(footer.getByText(/^Devnet only\. .+ never holds your keys: every transaction is signed in your own wallet, after a simulation you see first\.$/)).toBeVisible();
     await expect(footer.getByRole("link", { name: "Devnet help" })).toBeVisible();
+    await expect(footer.getByRole("link", { name: "Keeper" })).toHaveAttribute("href", "/keeper");
     await expect(footer.getByRole("radio")).toHaveCount(3);
 
     // Nothing scrolls sideways at any width down to 360 px.

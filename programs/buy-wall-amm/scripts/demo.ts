@@ -1606,6 +1606,19 @@ async function main() {
         fail(`metadata.json must pass with zero warnings:\n   ${local.warnings.join('\n   ')}`);
     }
     info(`metadata.json is valid with zero warnings: "${local.value.name}"`);
+    // Once the metadata pins a deploy, the router is pointed at it at its commit, never at main's
+    // link, whose content moves with every later change (TAX-54); whether or not that link resolves.
+    if (onDevnet && metadataUri === `${RAW_REPO}/main/programs/buy-wall-amm/metadata.json`) {
+        let onMain: { source?: { commit?: string } } | undefined;
+        try {
+            const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim();
+            onMain = JSON.parse(execFileSync('git', ['-C', root, 'show', 'origin/main:programs/buy-wall-amm/metadata.json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+        } catch {
+            // No git or no origin/main here: the checkout's copy says.
+        }
+        const pinned = onMain?.source?.commit ?? (local.value as { source?: { commit?: string } }).source?.commit;
+        if (pinned) fail(`the metadata.json on main is pinned to the deploy of ${pinned}: register it at the commit that holds it, not on main`);
+    }
     const published = await pipeline.fetchStrategyMetadata(metadataUri);
     if (published.ok && published.warnings.length === 0) {
         info(`${metadataUri} is valid with zero warnings`);
@@ -2108,6 +2121,10 @@ async function compareHostedQuotes(payer: KeyPairSigner, recorded: pipeline.Mark
             const simulation = { commitment: 'confirmed' } as const;
             const accounts = await pipeline.resolveAccounts(rpc, recorded, request, payer.address, simulation);
             const { quote } = await pipeline.quoteStrategy(rpc, recorded, request, accounts, payer.address, simulation);
+            // The API quotes what the trader keeps: since Pipeline 0.3 a sale into wrapped SOL, the
+            // market's fee mint, pays Pipeline's fee out of what arrives, so it keeps less than the
+            // strategy's own quote by exactly that fee.
+            const kept = pipeline.marketViewFeeSide(recorded, recorded.mints[output]!) === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
             if ((await snapshot()) !== before) {
                 if (attempt >= 5) fail('the market kept changing while its quotes were compared');
                 info('the market changed while its quotes were compared; again');
@@ -2115,16 +2132,16 @@ async function compareHostedQuotes(payer: KeyPairSigner, recorded: pipeline.Mark
             }
             const listed = hosted.strategyAccounts.join();
             if (listed !== [view.vaults[output], vaultAuthority].join()) fail(`the hosted API resolved ${listed} for the ${label}, not the output vault and the vault authority`);
-            if (hosted.amountOut !== quote.amountOut) {
+            if (hosted.amountOut !== kept) {
                 // The hosted API reads the cluster through its own RPC, which can trail ours by a
                 // few slots after the demo's last write; it must catch up within the retries.
-                if (attempt >= 5) fail(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, the program ${quote.amountOut}, on the same state`);
-                info(`the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, not yet the program's ${quote.amountOut}; again`);
+                if (attempt >= 5) fail(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, the program ${quote.amountOut} with ${kept} kept, on the same state`);
+                info(`the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, not yet the program's ${kept} kept; again`);
                 await sleep(3_000);
                 continue;
             }
-            info(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, exactly the program's quote on the same state`);
-            record.push([`hosted API quote, ${label}`, `${amount} in, ${hosted.amountOut} out, equal to the program's`]);
+            info(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, exactly what the program's quote of ${quote.amountOut} leaves the trader on the same state`);
+            record.push([`hosted API quote, ${label}`, `${amount} in, ${hosted.amountOut} kept, equal to the program's quote of ${quote.amountOut} less Pipeline's fee where it is taken from the output`]);
             break;
         }
     }

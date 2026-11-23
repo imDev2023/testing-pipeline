@@ -49,6 +49,29 @@ fn pipeline_init_market_stays_under_its_ceiling() {
 }
 
 #[test]
+fn creating_a_contained_mints_market_stays_under_its_ceiling() {
+    // Checking a contained mint's hook authority derives its unlock PDA; the search beyond
+    // the first bump is the address's, not the program's, and the ceiling leaves it out.
+    for k in 0..8u8 {
+        let mut env = Env::new();
+        let contained =
+            env.create_contained_mint_at(&solana_keypair::Keypair::new_from_array([k + 1; 32]));
+        let quote = env.create_mint(&TOKEN);
+        let params = quote_taxed_params(&Pubkey::new_unique(), 1);
+        let market = env
+            .create_tax_market([(contained, TOKEN_2022), (quote, TOKEN)], &params)
+            .unwrap();
+        let cost = strategy_compute(&market.created.logs)[0];
+        let search = ceilings::unlock_bump_search(&env, &contained);
+        println!("pipeline_init_market with a contained mint: {cost} CU, {search} of them beyond the first bump");
+        assert!(
+            cost - search <= ceilings::PIPELINE_INIT_MARKET,
+            "{cost} - {search}"
+        );
+    }
+}
+
+#[test]
 fn pipeline_market_info_stays_under_its_ceiling() {
     for (name, env, market) in markets() {
         let in_creation = strategy_compute(&market.created.logs)[1];
@@ -276,20 +299,13 @@ fn pipeline_swap_stays_under_its_ceiling() {
 fn a_swap_calls_a_transfer_hook_inside_it_as_the_input_and_as_the_output() {
     // docs/spec/README.md, "Test layers" 5: router (1) -> tax AMM (2) -> Token-2022 (3) ->
     // transfer hook (4) is the deepest call a swap makes, when the hooked mint is the
-    // output; as the input, the router's own transfers call the hook at depth 3.
+    // output; as the input, the router's own transfers call the hook at depth 3. The hook is
+    // the containment hook, the only one a market's mint may run, in its home market.
     for hooked_side in [0usize, 1] {
         let mut env = Env::new();
-        let hooked = env.create_mint_with_test_hook();
-        let plain = env.create_mint(&TOKEN);
-        let mut mints = [(plain, TOKEN), (plain, TOKEN)];
-        mints[hooked_side] = (hooked, TOKEN_2022);
-        let market = env.seeded_market(
-            mints,
-            &valid_params(&Pubkey::new_unique()),
-            [100_000_000_000, 200_000_000_000],
-        );
+        let market = env.contained_market(hooked_side, [100_000_000_000, 200_000_000_000]);
         let trader = env.funded_wallet(&market, 1_000_000_000_000);
-        let hook = test_hook_id();
+        let hook = containment_hook_id();
         for (input, output) in [(0, 1), (1, 0)] {
             let quote = env
                 .quote(&market, &exact_in(input, output, 1_000_000_000))

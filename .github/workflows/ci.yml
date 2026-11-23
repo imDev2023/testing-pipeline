@@ -51,10 +51,11 @@ jobs:
           # which the canary job runs, fails when a build input of the hook is missing here.
           CANARY_PATHS: >-
             ^crates/|^fixtures/pins\.env$|^programs/(Cargo\.toml|Cargo\.lock|rust-toolchain\.toml)$|^programs/(containment-hook|mint-rules|tax-amm)/|^\.github/workflows/ci\.yml$|^scripts/(fetch-router|fetch-pipeline|install-toolchain|toolchain-env|build-programs)\.sh$|^scripts/(workspace-programs|check-canary-paths)\.py$
-          # Aviary's packages, the workspace files they install from, the lint config, and this
-          # workflow. Aviary's own packages alone never wake the on-chain jobs.
+          # Aviary's packages, the keeper runner (whose writer to Aviary's database is tested here),
+          # the workspace files they install from, the lint config, and this workflow. Aviary's own
+          # packages alone never wake the on-chain jobs.
           TERMINAL_PATHS: >-
-            ^(apps|packages|tests)/terminal-|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|eslint\.config\.mjs)$|^\.github/workflows/ci\.yml$
+            ^(apps|packages|tests)/terminal-|^apps/keeper/|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|eslint\.config\.mjs)$|^\.github/workflows/ci\.yml$
         run: |
           case "$EVENT" in
             pull_request) range="$PR_BASE...$PR_HEAD" ;;
@@ -337,6 +338,8 @@ jobs:
         run: pnpm terminal:db:migrate
       - name: Unit tests (the database, the API, the web app's formatters and theme guard)
         run: pnpm --recursive --filter 'terminal-*' --if-present test
+      - name: The keeper runner's writer to Aviary's database
+        run: pnpm --filter keeper test:db
       - name: Playwright's browser
         run: pnpm --filter terminal-e2e exec playwright install --with-deps chromium
       - name: Playwright on the local run, at 1440, 390 and 360 px in both themes

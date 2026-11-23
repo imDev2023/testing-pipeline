@@ -108,6 +108,8 @@ The market state has its final layout from the first build ([Lending AMM: market
 - The hardening ticket took the first field from the reserved space, before any deploy: `exit_seen_slot` (u64, offset 407), the slot from which a market in withdraw mode has seen Kamino's free liquidity above the exit threshold, 0 when it has not (see "Withdraw mode"), leaving 248 reserved bytes at offset 415 and the account its size ([Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86), 2026-11-17).
 - No field ever moves, resizes or disappears; a new field takes reserved space, with a zeroed value meaning the old behaviour.
 - `programs/lending-amm/src/state.rs` publishes the offsets and `tests/layout.rs` pins every one.
+- The layout is frozen from the program's first devnet deploy, build `34f2e33c…` of `25a209c` ([Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)): from then on only a field taken from the reserved space may be added, and the release gate refuses any build that would read a live market differently.
+  The IDL publishes the same layout, which `tests/idl.rs` checks field for field.
 
 ### Creation parameters
 
@@ -465,6 +467,36 @@ The explainer's fact table carries the same facts, and its risks for every lendi
 - A Kamino change that breaks the layout check stops trading in our markets but never traps LPs, who leave in kind; a new strategy version then serves new markets, and LPs move by removing and adding.
 - Carrying the policy out belongs to the mainnet launch effort.
 
+### A release gate
+
+Every upgrade on devnet passes a release gate (`GLOSSARY.md`), so none can leave a stranded market: the deploy script accepts only a build that still resolves, quotes and trades every live lending AMM market, loaded into LiteSVM with the real router and klend's bytes ([Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87), 2026-11-22).
+
+- `programs/lending-amm/gate` (crate `lending-gate`) is the gate, a host tool beside the program, never deployed: the buy wall AMM's gate ([`pool4-for-solana.md`, A release gate](pool4-for-solana.md#a-release-gate)) made for the lending AMM, sharing its cluster reads, its records, its release declaration and its reading of errors through one host crate, `programs/release-gate`, which the buy wall AMM's gate re-exports unchanged ([`LENDING-99`](../decisions.md#lending-99-where-the-release-gates-shared-code-lives)).
+- Before any upgrade it downloads every market state of the program from the cluster, and refuses outright any account carrying the market state's discriminator that is not 663 bytes.
+- It copies each market as `pipeline-check` does, with the cToken account, the LP mint, klend's program and the Kamino accounts of every lent mint in `LENT_MINTS` (the reserve, the lending market and its authority `["lma", lending_market]`, the liquidity mint, the liquidity supply and the collateral mint), read again in as few calls as it can with the clock read last.
+- Each replay first brings every reserve up to date at the snapshot's clock, because a devnet reserve may be millions of slots stale and the replay has no live oracle: it marks the saved price as checked now (the lending market's byte at offset 125 set to 100, the reserve's price status at 25 and its price time at 264) and sends klend's own `refresh_reserve`, the same for the deployed build's replay and the candidate's ([`LENDING-100`](../decisions.md#lending-100-how-the-release-gate-replays-a-stale-kamino-reserve)).
+- On every market, first with the deployed build, recording what it does, then with the candidate, it runs account resolution both ways, exact-in quotes both ways at a tenth, a hundredth and a thousandth of the input vault (the buffer on the lent side) compared with the deployed build's, `pipeline_market_info`, `rebalance` when the buffer is outside its band, the market is in withdraw mode or the deployed build ran it, a buy of a hundredth of the buffer and a sale of what it bought, and a sale paying out the buffer plus half the lent value, which redeems from Kamino inside the swap; each swap must deliver exactly its quote ([`LENDING-101`](../decisions.md#lending-101-what-the-release-gate-runs-on-each-market)).
+- A failed step counts against the candidate unless the deployed build failed it with the same instruction error in the same program, as the buy wall AMM's gate rules (`POOL4-46`); the layout checks always count, and a quote both builds refuse with the same error is the same answer.
+- A sale beyond the buffer is skipped only on a market with nothing lent, and then counts against the candidate wherever the deployed build made that sale; on the gate's own market, whose first `rebalance` must leave it holding cTokens, it always counts.
+- Every run also makes a market of its own with the candidate, every step of it counting: in a world holding only the router copied from the cluster, configured as devnet's (a 0.01 SOL listing fee), klend, the candidate and the lent mints' Kamino accounts with Kamino's stops cleared and a second depositor of 2,500 SOL in each reserve, it registers the program, creates a WSOL-lent market at 30 basis points with both fee accounts and a first deposit of 1,000,000 tokens and 10 SOL, then rebalances, trades both ways and sells beyond the buffer, so a cluster with no market, or a borrower or an emergency switch on devnet, can neither pass a broken build nor refuse every build ([`LENDING-102`](../decisions.md#lending-102-the-release-gates-own-market)).
+- A release that changes pricing declares it in `programs/lending-amm/release.json`, naming the executable hash of each deployed build whose quotes it changes, as the buy wall AMM's does.
+- A passing run against a cluster is recorded in `deployments/release-gate/lending-amm/<cluster>.json` (a local validator's records are kept out of git), and `scripts/deploy-devnet.sh lending-amm` runs `programs/lending-amm/scripts/pre-deploy.sh`, which asks `lending-gate verify-record` and refuses the build unless a record covers it, the build deployed now and every market there now.
+- CI runs its checks on every build: a cluster with no market passes the current build and refuses `no-sale-beyond-the-buffer` and the current build at another address; markets made through the real router pass against themselves; and a test build that swaps two fields of the market state, `moves-a-field` in `gate/test-builds.json`, built from an edited copy of the source by `scripts/broken-builds.py` beside the fuzzer's broken builds, is refused on the market holding cTokens, and one whose `rebalance` succeeds but lends nothing, `rebalance-lends-nothing`, is refused on its own market and where the deployed build sold beyond the buffer ([`LENDING-103`](../decisions.md#lending-103-how-the-release-gate-is-shown-to-catch-stranding)).
+
+From a clean checkout of `main`, with the toolchain on `PATH` (`source scripts/toolchain-env.sh`):
+
+```sh
+# The verified build, and nothing sent; prints its executable hash.
+scripts/deploy-devnet.sh lending-amm --build-only --out <dir>
+# Replay every market on the cluster with that build; records the pass, or exits 1 naming
+# each market and step that failed.
+(cd programs && cargo run -p lending-gate -- run --cluster devnet --candidate <dir>/lending_amm.so)
+# Deploy or upgrade: the same build again, refused unless a passing run covers it on this cluster now.
+scripts/deploy-devnet.sh lending-amm
+```
+
+`run` also takes `--snapshot-out`, `--records` and `--release`; `cargo run -p lending-gate -- check --snapshot <file> --candidate <so>` replays a saved snapshot offline, and `cargo run -p lending-gate -- help` lists every command.
+
 ## For the shared engineering bar
 
 What `docs/spec/README.md` asks each product's file to add.
@@ -501,7 +533,7 @@ On Pipeline 0.3 (2026-11-22) the Mac measured `rebalance` leaving withdraw mode 
 | Instruction | Measured (compute units) | Ceiling (compute units) | Main cost |
 | --- | --- | --- | --- |
 | `pipeline_quote` | 15,983 | 20,000 | Reserve checks and fixed-point maths; well under the quoter's 200,000 cap |
-| `pipeline_swap`, no redeem | 25,592 | 35,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
+| `pipeline_swap`, no redeem | 25,628 | 35,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
 | `pipeline_swap`, with a redeem | 60,156 | 80,000 | Kamino's redeem (mainnet median 29,670) |
 | `pipeline_resolve_accounts` | 26,316 | 35,000 | Runs the quote to decide on the redeem accounts |
 | `pipeline_init_market` | 61,354 | 80,000 | Creating two vaults, the cToken account and the LP mint |
@@ -558,6 +590,9 @@ Exact-out checks are skipped by design and need no reason.
 
 ## Devnet
 
+- The program is `Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG`, deployed on 2026-11-22 from a verified build of `25a209c` (executable hash `34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c`, `deployments/devnet.json`) and registered with Pipeline's router.
+- Its demo market is router market `AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu` (market state `9M5mzsto7Wvj9tBNzAGwyFd84ASSFUh4kuPALhunkMJs`), a fresh test token with no authorities against lent WSOL at 30 basis points, walked through the whole product by the demo ([`LENDING-36`](../decisions.md#lending-36-devnet-demo-market)); two earlier runs that stopped part way left two more live markets, router markets `GmsiCAQRJSFMYmdJrYGhkUapgaxEsCYta2mNETSgNUtq` and `5kH9btnjERok6J9vUiKLVVvairUNnuicuWYKXNCMi1dc`, which every later release gate run covers (`deployments/devnet-demo-lending-amm.json`).
+
 - Our own Kamino lending market, owned by a key in `~/.config/testing-pipeline/devnet/`, with a WSOL reserve and a reserve for our own test USDC mint (6 decimals, mint authority in the same folder), since Circle's devnet USDC cannot be minted freely.
 - Setting it up, from the [Kamino facts](https://github.com/imDev2023/testing-pipeline/blob/research/lending-market/research/lending-market-kamino-facts.md), section 1, as the first devnet script:
   1. `init_lending_market` with our key as owner.
@@ -568,13 +603,16 @@ Exact-out checks are skipped by design and need no reason.
 - A second depositor, this project's devnet wallet, keeps each reserve's freely available liquidity above `WITHDRAW_MODE_EXIT` times the target lent value of the markets that lend to it.
   A reserve that held only our markets' own deposits would put every market into withdraw mode at its first `rebalance`.
   The test borrower then borrows that liquidity to bring withdraw mode on, and repays it to end it.
-- The demo market is sized for that: with about 5 SOL free in the WSOL reserve, its lent side stays near 0.4 SOL, so its exposure stays below 0.5 SOL and the reserve above 10 times it until the test borrower borrows it down ([Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83), 2026-11-16).
+- The demo market is sized for that: with about 5 SOL free in the WSOL reserve, its first deposit puts 0.5 SOL on the lent side and the lent side stays near 0.6 SOL, so its exposure stays below 0.5 SOL and the reserve, holding the market's own deposit too, above 10 times it until the test borrower borrows it down ([Lending AMM: withdraw mode and Kamino's other states](https://github.com/imDev2023/testing-pipeline/issues/83), 2026-11-16; 0.5 SOL from [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87), 2026-11-22, [`LENDING-82`](../decisions.md#lending-82-the-demo-markets-size-and-the-tests-second-depositor)).
+- With the test borrower's loan held, the devnet demo reads the market's lending yield so far, `V + redeemed - deposited` at the stored rate klend's `refresh_reserve` leaves, twice, and the second read must be the higher ([`LENDING-97`](../decisions.md#lending-97-how-the-devnet-demo-shows-the-lending-yield)).
+- On devnet the demo also asks Pipeline's hosted API for the demo market and a quote each way within the buffer: the API must list the market, and each quote it gives must equal the program's own on the same state, while a refusal to quote a market whose swaps read Kamino's reserve is recorded with the API's answer ([`LENDING-98`](../decisions.md#lending-98-pipelines-hosted-api-on-a-market-that-reads-kamino)).
   The `devnet` build's LiteSVM tests, whose markets lend 40 SOL and more, give the dumped WSOL reserve a second depositor of their own instead, written into the cloned accounts as klend's deposit would leave them, which keeps 2,500 SOL free.
 - Run by us on 2026-11-10 with [`scripts/kamino-devnet`](../../scripts/kamino-devnet/README.md), from [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77); the sequence had been seen working on devnet before, on reserve `24EfeXj3XyLLE6GThh8ik4vcxEPMooAU5XXDL5nJHEr8` on 2026-09-14.
   The script creates the market, the mint and both reserves, plays the second depositor, a plain cToken holder and the test borrower, and turns the WSOL reserve's emergency mode, and the whole market's, on and off; each is a command the devnet demo can call.
   Every account it creates has an address derived from the market owner's or the mint authority's key, so a re-run finds the same accounts, and its `setup` changes only what differs from its policy values.
 - The reserves' policy values live in one place, `scripts/kamino-devnet/src/policy.ts`: the borrow rate curve, steep enough that a few SOL borrowed show interest within seconds, the price max age, the loan-to-value and liquidation threshold, the deposit, borrow and withdrawal caps, and what each party deposits and borrows.
-- Devnet's Pyth feeds were seen updating about every 5 minutes on 2026-11-10, against the 2 to 3 minute price max age of Kamino's mainnet reserves, so our reserves accept an older price; with it the test borrower borrowed and repaid on devnet.
+- Devnet's Pyth feeds were seen updating about every 5 minutes on 2026-11-10, against the 2 to 3 minute price max age of Kamino's mainnet reserves, so our reserves accepted a price up to 10 minutes old; with it the test borrower borrowed and repaid on devnet.
+- On 2026-11-23 both sponsored feeds updated every second and then stopped for over 25 minutes, and klend refused the devnet demo's borrow with `PriceTooOld`, so our reserves now accept a price a week old: on devnet a price only gates the test borrower's loan, and the cToken path never reads it ([`LENDING-40`](../decisions.md#lending-40-devnet-reserves-price-max-age)).
 - Devnet's klend, last deployed at slot 491,561,420, has the layout this file relies on: on 2026-11-10 both reserves read back with the Reserve's size and discriminator, every field of the Kamino facts, section 4, where it puts them, and the fields "Checking the reserve before reading it" compares at version 8, lending market 32, liquidity mint 128, liquidity supply 160, fee vault 192, collateral mint 2560 and collateral supply 2600; the lending market's emergency mode is at 122.
   Each field moved by exactly what the script did, and `npm run cli -- layout` checks them again at any time.
 
@@ -630,10 +668,10 @@ The keeper runner is specified separately ([Keeper runner](https://github.com/im
   - refusal of exact-out, of bypass, of every refused mint extension, and of a lent mint not on the list;
   - donations never credited.
 - `pipeline-check` passes every check on a funded market (with `exact_out_refund` skipped), both in the tests and against devnet.
-- On devnet:
-  - our Kamino lending market created by script;
-  - the program deployed and registered with the router's `register_strategy`, with its metadata and conformance report published;
-  - one market created, funded, rebalanced into Kamino, and traded both ways through the router, including a sell beyond the buffer that redeems in the swap;
-  - a test borrower raising utilisation until the market enters withdraw mode;
-  - emergency mode turned on for our reserve, with swaps from the buffer only and an in-kind removal, then turned off again.
+- On devnet, each run on devnet itself ([Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87); every signature of the demo's run is in `deployments/devnet-demo-lending-amm.json`):
+  - [x] our Kamino lending market created by script: by [Lending AMM: our Kamino lending market on devnet](https://github.com/imDev2023/testing-pipeline/issues/77), its addresses in `deployments/kamino-devnet.json`, and reported in place with nothing to create by that script's `setup` on 2026-11-22, before the deploy, with the second depositor's 5 SOL in the WSOL reserve (its price max age was raised on 2026-11-23, `LENDING-40`);
+  - [ ] the program deployed, [`2rK27mto…`](https://explorer.solana.com/tx/2rK27mtodhzgDZNKM8tSr8EpJJWBift2faAx8ARnk9CFg5io4ZH4P2CmA8gCwHQpV2MyF17RR4kyHzVN12nHQyKb?cluster=devnet) (a verified build, `deployments/devnet.json`), and registered with the router's `register_strategy`, [`5xk4dEoW…`](https://explorer.solana.com/tx/5xk4dEoWKi4E1aTLMtguv2bkooJbTG8URy3Nv9tYyHZS5tQhStV2KoyZdwXVcoVWjBMUnjv2GMXZuLbTBm9fw44T?cluster=devnet), with its conformance report in `programs/lending-amm/conformance/devnet.json`; ticked once its metadata is pinned to the deployed commit and that report and the router points at it, as `docs/toolchain.md`, "Deploy to devnet", says;
+  - [x] one market created and funded in one transaction, [`VAaAmndg…`](https://explorer.solana.com/tx/VAaAmndgRFukNn4kjo8Ft55Z5pmNycUbck1LFReM8uPu4krocGc4aeUJAFnGCmfryzjyRtG9tew3TKWEQGHERXo?cluster=devnet), rebalanced into Kamino, [`2psxrYXX…`](https://explorer.solana.com/tx/2psxrYXX37oi2VT4WpzdhedWYcn56nXdwYVJYuNDtjSJ5NSHB75YLq519rNYioBnWX1QVJWP4eQqUbrhJS1xdq7N?cluster=devnet), and traded both ways through the router, [`6W2X1vqq…`](https://explorer.solana.com/tx/6W2X1vqqubpuJVeFdYEdUBrzsLvQdombj3ywhNKcieP81gCcdGT4HGgpz2nLbAQvMDbF9kE4ihqetwKc4MST2Lz?cluster=devnet) and [`2nu9uGb1…`](https://explorer.solana.com/tx/2nu9uGb1mw9MU13SiNeNwj5BLpgivqk3H9LRwNeHtAa4TFbKgZCZZ8pkwrctwWUcGbJmuXg1P3f7QQtT2iayzDxX?cluster=devnet), including a sell beyond the buffer that redeems in the swap, [`3sd4EWuc…`](https://explorer.solana.com/tx/3sd4EWucMped4q2gaE1Tjhz7jzWGg6A18mKS2t9Q5Mv9Grc9SwfVHMi9RUYH4srx2TV5bVyjsPcfwiMCKkpHtefY?cluster=devnet);
+  - [x] a test borrower raising utilisation, [`3pm7c8pr…`](https://explorer.solana.com/tx/3pm7c8prmLVqv9ipR2E3UnXXsDuym3tWHXhjnJoHpiFzMeY4ufB9T3mppyzPNEyHSrwLA9wed1K6UYNodqRKtUEj?cluster=devnet), until the market enters withdraw mode, [`4uHyT3yQ…`](https://explorer.solana.com/tx/4uHyT3yQkoL6bvqq3vBSoWBLtPRBjmXaEvTDfUkrRLDnB6YyPJPKqUPm4Tv9C52FAYfUh95AZVusoFzbBR3ysCTB?cluster=devnet);
+  - [x] emergency mode turned on for our reserve, [`5WtGaud3…`](https://explorer.solana.com/tx/5WtGaud3r2KhpsTL9t5pxhbqSTMWe7LGmHVinPn8TBofZJixeR167d9Bd8VPcM4HjLy1pt3D3eD91JKMjnLGKjdL?cluster=devnet), with a swap from the buffer only, [`3rfEpyjv…`](https://explorer.solana.com/tx/3rfEpyjvKZhPf6ebtWtPWHaYbtdKnR2ia6A7tGrnzd5TTf2Zhj2g2TmwhgQ5yHN4bx9SC8KzVK3dKak5ECFSNcKx?cluster=devnet), and an in-kind removal, [`5bUaKrU4…`](https://explorer.solana.com/tx/5bUaKrU4AhS1yx7MwabecdpodhuKJABsr1gvqYhBwAVSSn9uFdQeqjNwgCJKzHVZKFToi9xqf2vhMRQ7Q6dmLQ8x?cluster=devnet), then turned off again, [`KiegP2SF…`](https://explorer.solana.com/tx/KiegP2SFU3BizDESmUcCbhLFwihY5EzZsWRVhs1kdU8cJCFdYBfDiSKoqJfC7rVDL7sTswWTBqFGvKpibXANfK9?cluster=devnet).
 - Whatever else `docs/spec/README.md` requires of our on-chain programs.

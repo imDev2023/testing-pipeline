@@ -553,6 +553,110 @@ def split_tax_proofs():
         valid,
         defs,
     )
+    # Slot 0 takes the remainder, so only slots 1 to 3 and the burn can be unshared and empty;
+    # `check_split` keeps slot 0 used, so every booked part has a wallet, the burn or the suite.
+    prove(
+        "P2 valid shares: a recipient slot after the first with share 0 is booked nothing, and so is a burn with share 0",
+        And(
+            *[Implies(shares[i] == 0, slots[i] == 0) for i in range(1, MAX_RECIPIENTS)],
+            Implies(burn == 0, slots[MAX_RECIPIENTS] == 0),
+        ),
+        tax_ok,
+        valid,
+        defs,
+    )
+
+
+def counter_proofs():
+    """V1 and V2: the swap handler's counters (`instructions/swap.rs`).
+
+    Each swap adds its tax to `tax_collected` (u128), its input to `volume[input]` and its
+    output to `volume[output]` (u128), each a u64, and 1 to `swap_count` (u64), all checked.
+    """
+    n, n_ok = u64("swap_count")
+    c, v = Int("tax_collected"), Int("volume")
+    tax, tax_ok = u64("tax")
+    added, added_ok = u64("added")
+    bound = n * U64_MAX  # n x (2^64 - 1): a constant multiplier, so linear
+    counters = And(c >= 0, v >= 0, c <= bound, v <= bound)
+    prove(
+        "V1 while tax_collected and volume[i] are at most swap_count x (2^64 - 1), adding a u64 never overflows a u128, "
+        "even at swap_count == u64::MAX, and the bound holds after swap_count + 1",
+        And(
+            c + tax < U128,
+            v + added < U128,
+            Implies(n < U64_MAX, And(c + tax <= (n + 1) * U64_MAX, v + added <= (n + 1) * U64_MAX)),
+        ),
+        n_ok,
+        counters,
+        tax_ok,
+        added_ok,
+    )
+
+    # V2, per swap: a buy tax is taken from the input, which `volume[input]` counts whole;
+    # a sell tax from the curve's output g, of which `volume[output]` counts the trader's
+    # g - tax, at least 1 for a fill. Both from Pipeline's `ceil_bps` as written.
+    a, a_ok = u64("amount_in")
+    g, g_ok = u64("curve_output")
+    r = Int("bps")
+    rate_ok = And(r >= 0, r <= MAX_TAX_BPS)
+    buy_some, buy_tax = ceil_bps(a, r)
+    sell_some, sell_tax = ceil_bps(g, r)
+    prove(
+        "V2 buy tax: the tax never exceeds the amount in, which volume[input] counts",
+        And(buy_some, buy_tax <= a),
+        a_ok,
+        rate_ok,
+    )
+    prove(
+        "V2 sell tax: for every rate up to MAX_TAX_BPS, the tax never exceeds what the trader gets, g - tax >= 1, "
+        "which volume[output] counts",
+        And(sell_some, sell_tax <= g - sell_tax),
+        g_ok,
+        rate_ok,
+        g - sell_tax >= 1,
+    )
+    # So, swap by swap, tax_collected never passes the tax side's volume.
+    vt, step_tax, step_added = Int("tax_side_volume"), Int("step_tax"), Int("step_added")
+    prove(
+        "V2 tax_collected <= volume[tax_side] holds after every swap that adds tax <= what it adds to that volume",
+        c + step_tax <= vt + step_added,
+        c >= 0,
+        c <= vt,
+        step_tax >= 0,
+        step_tax <= step_added,
+    )
+
+
+def real_side_proofs():
+    """S6: a swap never takes the real reserve of a side without a virtual reserve to 0.
+
+    `exact_in` with `virtual_out == 0`: the effective output reserve is the real one, the
+    curve prices `c` (`a - tax_of(a, bps)` for a buy tax, `a` for a sell tax) at
+    `floor(R_o x c / (E_i + c))` (`curve_out`, exact by M1 to M4), and `settle` refuses a
+    curve output above `R_o` and leaves `R_o - curve`. The side's real reserve is at least 1
+    and the input side's effective reserve at least 1, which the seed rule and this claim
+    keep true for an open market (docs/spec/tax-amm.md, "Invariants"); on the input side a
+    reserve only grows (`R_i + c`).
+    """
+    r_out, r_out_ok = u64("reserve_out")
+    r_in, r_in_ok = u64("reserve_in")
+    v_in, v_in_ok = u64("virtual_in")
+    a, a_ok = u64("amount_in")
+    b = Int("bps")
+    e_in = r_in + v_in
+    buy_some, buy_tax = ceil_bps(a, b)
+    inputs = And(r_out_ok, r_in_ok, v_in_ok, a_ok, capped(b), r_out >= 1, e_in >= 1)
+    for side, c, extra in (("buy", a - buy_tax, buy_some), ("sell", a, True)):
+        q, q_def = curve(e_in, r_out, c, f"{side}_curve")
+        prove(
+            f"S6 {side} tax: a fill leaves the output side's real reserve at least 1 when it has no virtual reserve",
+            Implies(q <= r_out, r_out - q >= 1),
+            inputs,
+            extra,
+            c >= 0,
+            q_def,
+        )
 
 
 def main():
@@ -568,6 +672,8 @@ def main():
     split_trade_proofs()
     round_trip_proofs()
     split_tax_proofs()
+    counter_proofs()
+    real_side_proofs()
     print(f"{sum(RESULTS)} of {len(RESULTS)} proven in {time.monotonic() - started:.1f} s")
     return 0 if all(RESULTS) else 1
 

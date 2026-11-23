@@ -31,24 +31,34 @@ import {
 } from '@solana/kit';
 import { getCreateAccountInstruction } from '@solana-program/system';
 import {
+    AuthorityType,
     fetchToken,
     findAssociatedTokenPda,
     getCreateAssociatedTokenIdempotentInstructionAsync,
-    getFreezeAccountInstruction,
     getInitializeMint2Instruction,
     getMintSize,
     getMintToInstruction,
-    getThawAccountInstruction,
+    getSetAuthorityInstruction,
     TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
+import {
+    ExtensionType,
+    getDisableMemoTransfersInstruction,
+    getEnableMemoTransfersInstruction,
+    getReallocateInstruction,
+    TOKEN_2022_PROGRAM_ADDRESS,
+} from '@solana-program/token-2022';
 import * as pipeline from '@pipeline-placeholder/sdk';
 import { taxAmm, type AnyKeeperProduct } from 'keeper-jobs';
 import { buildActionInstruction, findAction } from 'strategy-actions';
 import { fetchTaxMarket, findVault0Pda, findVault1Pda, TAX_AMM_PROGRAM_ADDRESS, type TaxMarket } from 'tax-amm-scripts/client/index.ts';
+import { termsArg, termsHash } from 'tax-amm-scripts/terms.ts';
 
 import { rpcChain, type Chain } from '../../src/chain.ts';
 import { FakeClock } from '../../src/clock.ts';
 import { MemoryLogger, type Row } from '../../src/log.ts';
+import type { Heartbeat } from '../../src/heartbeat.ts';
+import type { Recorder } from '../../src/record.ts';
 import { Runner } from '../../src/runner.ts';
 import { loadSettings } from '../../src/settings.ts';
 
@@ -121,8 +131,12 @@ export async function send(payer: KeyPairSigner, instructions: Instruction[], ex
     return signature;
 }
 
+/** The token program of each mint `tokens` created: SPL Token unless it says otherwise. */
+const programOf = new Map<Address, Address>();
+const tokenProgramOf = (mint: Address) => programOf.get(mint) ?? TOKEN_PROGRAM_ADDRESS;
+
 export const tokenAccount = async (owner: Address, mint: Address) =>
-    (await findAssociatedTokenPda({ owner, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS }))[0];
+    (await findAssociatedTokenPda({ owner, mint, tokenProgram: tokenProgramOf(mint) }))[0];
 
 export async function tokenBalance(owner: Address, mint: Address): Promise<bigint> {
     const account = await tokenAccount(owner, mint);
@@ -143,17 +157,25 @@ export async function signaturesOf(account: Address): Promise<Signature[]> {
     return (await rpc.getSignaturesForAddress(account, { commitment: 'confirmed' }).send()).map((entry) => entry.signature);
 }
 
-async function createToken(owner: KeyPairSigner, decimals: number, freezable: boolean): Promise<Address> {
+/**
+ * A fresh mint of `tokenProgram` with its whole supply minted to `owner`, then no mint
+ * authority and no freeze authority: a tax market's seed refuses a mint that keeps either,
+ * unless it is a quote mint (`TAX-16`).
+ */
+async function createToken(owner: KeyPairSigner, decimals: number, tokenProgram: Address): Promise<Address> {
     const mint = await generateKeyPairSigner();
+    programOf.set(mint.address, tokenProgram);
     const space = BigInt(getMintSize());
     const rent = await rpc.getMinimumBalanceForRentExemption(space).send();
+    const onProgram = { programAddress: tokenProgram };
     await send(
         owner,
         [
-            getCreateAccountInstruction({ payer: owner, newAccount: mint, lamports: rent, space, programAddress: TOKEN_PROGRAM_ADDRESS }),
-            getInitializeMint2Instruction({ mint: mint.address, decimals, mintAuthority: owner.address, freezeAuthority: freezable ? owner.address : null }),
-            await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: owner, owner: owner.address, mint: mint.address }),
-            getMintToInstruction({ mint: mint.address, token: await tokenAccount(owner.address, mint.address), mintAuthority: owner, amount: 1_000_000_000_000_000n }),
+            getCreateAccountInstruction({ payer: owner, newAccount: mint, lamports: rent, space, programAddress: tokenProgram }),
+            getInitializeMint2Instruction({ mint: mint.address, decimals, mintAuthority: owner.address, freezeAuthority: null }, onProgram),
+            await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: owner, owner: owner.address, mint: mint.address, tokenProgram }),
+            getMintToInstruction({ mint: mint.address, token: await tokenAccount(owner.address, mint.address), mintAuthority: owner, amount: 1_000_000_000_000_000n }, onProgram),
+            getSetAuthorityInstruction({ owned: mint.address, owner, authorityType: AuthorityType.MintTokens, newAuthority: null }, onProgram),
         ],
         [mint],
     );
@@ -167,24 +189,31 @@ export type TestMarket = {
     mints: [Address, Address];
     owner: KeyPairSigner;
     recipients: Address[];
+    /** The keys of `recipients` after the owner, for tests that act as a recipient. */
+    recipientKeys: KeyPairSigner[];
 };
 
 /**
- * Two fresh tokens for a market: B, the tax side, with `owner` as its freeze authority when
- * `freezable`, so a test can freeze a recipient's account and make its payout fail.
+ * Two fresh tokens for a market: A on SPL Token, and B, the tax side, on Token-2022 when
+ * `blockable`, so a recipient can require memos on its token account and make its payout fail
+ * (`blockRecipient`); `distribute` sends no memo (the tax AMM's spec, "Payout").
  */
-export async function tokens(owner: KeyPairSigner, freezable = false): Promise<[Address, Address]> {
-    return [await createToken(owner, 6, false), await createToken(owner, 9, freezable)];
+export async function tokens(owner: KeyPairSigner, blockable = false): Promise<[Address, Address]> {
+    return [
+        await createToken(owner, 6, TOKEN_PROGRAM_ADDRESS),
+        await createToken(owner, 9, blockable ? TOKEN_2022_PROGRAM_ADDRESS : TOKEN_PROGRAM_ADDRESS),
+    ];
 }
 
 /**
- * A tax market of `mints`, taxed in token B at 3% buy and 5% sell, created and seeded from the
- * metadata in one transaction. Its tax recipients are `owner` and `others` (fresh wallets with
+ * A tax market of `mints`, taxed in token B at 3% buy and 5% sell, created and then seeded from
+ * the metadata. Its tax recipients are `owner` and `others` (fresh wallets with
  * no token accounts), sharing 90% with 10% burned.
  */
 export async function createMarket(owner: KeyPairSigner, mints: [Address, Address], others = 1): Promise<TestMarket> {
     const init = metadata.init!;
-    const recipients = [owner.address, ...(await Promise.all(Array.from({ length: others }, async () => (await generateKeyPairSigner()).address)))];
+    const recipientKeys = await Promise.all(Array.from({ length: others }, () => generateKeyPairSigner()));
+    const recipients = [owner.address, ...recipientKeys.map((key) => key.address)];
     const shares = recipients.length === 1 ? [9_000] : [6_000, 3_000, 0, 0].slice(0, recipients.length);
     const marketStateKey = await generateKeyPairSigner();
     const marketState = marketStateKey.address;
@@ -213,7 +242,7 @@ export async function createMarket(owner: KeyPairSigner, mints: [Address, Addres
         marketState,
         args,
         inputs: { mint_0: mints[0], mint_1: mints[1] },
-        tokenPrograms: { [mints[0]]: TOKEN_PROGRAM_ADDRESS, [mints[1]]: TOKEN_PROGRAM_ADDRESS },
+        tokenPrograms: { [mints[0]]: tokenProgramOf(mints[0]), [mints[1]]: tokenProgramOf(mints[1]) },
         maxCreatorLamports: MAX_CREATOR_LAMPORTS,
         rpc,
     });
@@ -226,18 +255,44 @@ export async function createMarket(owner: KeyPairSigner, mints: [Address, Addres
         marketState,
         mints,
         vaults: [vault0, vault1],
-        tokenPrograms: [TOKEN_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS],
+        tokenPrograms: [tokenProgramOf(mints[0]), tokenProgramOf(mints[1])],
         supportsExactOut: false,
     };
     const seed = await buildActionInstruction({
         action: findAction(metadata, 'seed')!,
         market: view,
         wallet: owner.address,
-        args: { amount_0: 100_000_000_000n, amount_1: 200_000_000_000n },
+        args: {
+            amount_0: 100_000_000_000n,
+            amount_1: 200_000_000_000n,
+            // The hash of the terms just sent (`TAX-59`).
+            expected_terms: termsArg(
+                termsHash(mints, {
+                    taxSide: 1,
+                    buyTaxBps: 300,
+                    sellTaxBps: 500,
+                    buyTaxMinBps: 0,
+                    buyTaxMaxBps: 1_000,
+                    sellTaxMinBps: 0,
+                    sellTaxMaxBps: 1_000,
+                    taxAuthority: owner.address,
+                    seeder: owner.address,
+                    recipients: [0, 1, 2, 3].map((i) => recipients[i] ?? DEFAULT_ADDRESS),
+                    shares: [0, 1, 2, 3].map((i) => shares[i] ?? 0),
+                    burnShareBps: 1_000,
+                    virtualSide: 0,
+                    virtualReserve: 0n,
+                }),
+            ),
+        },
     });
-    const fees = await Promise.all(mints.map((mint) => pipeline.initFeeAccount({ payer: owner.address, market, mint, tokenProgram: TOKEN_PROGRAM_ADDRESS })));
-    await send(owner, [create, ...fees, seed], [marketStateKey]);
-    return { marketState, view, mints, owner, recipients };
+    const fees = await Promise.all(mints.map((mint) => pipeline.initFeeAccount({ payer: owner.address, market, mint, tokenProgram: tokenProgramOf(mint) })));
+    // The seed in a transaction of its own, which the hash of the terms makes safe: a market of
+    // two token programs is too big for one with its creation (the tax AMM's spec, "Creating a
+    // market").
+    await send(owner, [create, ...fees], [marketStateKey]);
+    await send(owner, [seed]);
+    return { marketState, view, mints, owner, recipients, recipientKeys };
 }
 
 /** Buys token A with `amount` of token B through the router, leaving tax owed in token B. */
@@ -258,8 +313,8 @@ export async function trade(market: TestMarket, amount = 1_000_000_000n): Promis
             inputVault: view.vaults[1]!,
             inputMint: view.mints[1]!,
             outputMint: view.mints[0]!,
-            inputTokenProgram: TOKEN_PROGRAM_ADDRESS,
-            outputTokenProgram: TOKEN_PROGRAM_ADDRESS,
+            inputTokenProgram: tokenProgramOf(view.mints[1]!),
+            outputTokenProgram: tokenProgramOf(view.mints[0]!),
             strategyAccounts,
         },
         { mode: pipeline.TradeMode.ExactIn, amountIn: amount, amountOut: 0n, minAmountOut: quote.amountOut, integratorFeeBps: 0, extra: new Uint8Array() },
@@ -271,17 +326,30 @@ export async function owed(market: TestMarket): Promise<bigint[]> {
     return [...(await fetchTaxMarket(rpc, market.marketState, { commitment: 'confirmed' })).data.owed];
 }
 
-/** Gives `owner` a token account for token B, and freezes it. */
-export async function freezeRecipient(market: TestMarket, owner: Address) {
-    const account = await tokenAccount(owner, market.mints[1]);
-    await send(market.owner, [
-        await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: market.owner, owner, mint: market.mints[1] }),
-        getFreezeAccountInstruction({ account, mint: market.mints[1], owner: market.owner }),
-    ]);
+/**
+ * Gives a recipient a Token-2022 account for token B that requires memos on incoming
+ * transfers, which its owner may turn on at any time, so its payouts fail (the tax AMM's
+ * hardening, R02 and H025, signed off). The market's owner pays the rent.
+ */
+export async function blockRecipient(market: TestMarket, recipient: KeyPairSigner) {
+    const mint = market.mints[1];
+    const tokenProgram = TOKEN_2022_PROGRAM_ADDRESS;
+    const token = await tokenAccount(recipient.address, mint);
+    await send(
+        market.owner,
+        [
+            await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: market.owner, owner: recipient.address, mint, tokenProgram }),
+            getReallocateInstruction({ token, payer: market.owner, owner: recipient, newExtensionTypes: [ExtensionType.MemoTransfer] }),
+            getEnableMemoTransfersInstruction({ token, owner: recipient }),
+        ],
+        [recipient],
+    );
 }
 
-export async function thawRecipient(market: TestMarket, owner: Address) {
-    await send(market.owner, [getThawAccountInstruction({ account: await tokenAccount(owner, market.mints[1]), mint: market.mints[1], owner: market.owner })]);
+/** Turns the recipient's memo requirement off again, so its payouts go through. */
+export async function unblockRecipient(market: TestMarket, recipient: KeyPairSigner) {
+    const token = await tokenAccount(recipient.address, market.mints[1]);
+    await send(market.owner, [getDisableMemoTransfersInstruction({ token, owner: recipient })], [recipient]);
 }
 
 /** The tax AMM entry, seeing only markets of the given mints, so tests on one validator don't meet. */
@@ -306,7 +374,14 @@ export type TestRunner = { runner: Runner; log: MemoryLogger; clock: FakeClock; 
 export function testRunner(
     keeper: KeyPairSigner,
     mints: readonly Address[],
-    options: { env?: Record<string, string>; chain?: Chain; dailyInMinutes?: number; products?: readonly AnyKeeperProduct[] } = {},
+    options: {
+        env?: Record<string, string>;
+        chain?: Chain;
+        dailyInMinutes?: number;
+        products?: readonly AnyKeeperProduct[];
+        recorder?: (log: MemoryLogger) => Recorder;
+        heartbeat?: Heartbeat;
+    } = {},
 ): TestRunner {
     const clock = new FakeClock(Date.now());
     const settings = loadSettings({
@@ -319,7 +394,16 @@ export function testRunner(
     });
     const log = new MemoryLogger();
     const real = options.chain ?? rpcChain(settings);
-    const runner = new Runner({ settings, chain: real, clock, wallet: keeper, log, products: options.products ?? [scoped(mints)] });
+    const runner = new Runner({
+        settings,
+        chain: real,
+        clock,
+        wallet: keeper,
+        log,
+        products: options.products ?? [scoped(mints)],
+        recorder: options.recorder?.(log),
+        heartbeat: options.heartbeat,
+    });
     return { runner, log, clock, chain: real, keeper };
 }
 

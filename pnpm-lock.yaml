@@ -4,6 +4,12 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    '@pipeline-sol/sdk':
+      specifier: 0.3.0
+      version: 0.3.0
+
 importers:
 
   .:
@@ -41,6 +47,12 @@ importers:
       keeper-jobs:
         specifier: workspace:*
         version: link:../../packages/keeper-jobs
+      terminal-api:
+        specifier: workspace:*
+        version: link:../terminal-api
+      terminal-db:
+        specifier: workspace:*
+        version: link:../../packages/terminal-db
     devDependencies:
       '@pipeline-placeholder/sdk':
         specifier: link:../../fixtures/pipeline/sdk/ts
@@ -48,6 +60,9 @@ importers:
       '@solana-program/system':
         specifier: 0.16.0
         version: 0.16.0(@solana/kit@8.6.0(typescript@7.0.2))
+      '@solana-program/token-2022':
+        specifier: 0.20.0
+        version: 0.20.0(@solana/kit@8.6.0(typescript@7.0.2))(@solana/sysvars@8.6.0(typescript@7.0.2))
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
@@ -69,15 +84,24 @@ importers:
 
   apps/terminal-api:
     dependencies:
+      '@pipeline-sol/sdk':
+        specifier: 'catalog:'
+        version: 0.3.0(typescript@6.0.3)
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@6.0.3)
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@cloudflare/workers-types@5.20261121.1)(postgres@3.4.9)
       hono:
         specifier: 4.13.20
         version: 4.13.20
       terminal-db:
         specifier: workspace:*
         version: link:../../packages/terminal-db
+      terminal-indexer:
+        specifier: workspace:*
+        version: link:../../packages/terminal-indexer
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -185,6 +209,25 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  packages/strategy-publish:
+    dependencies:
+      '@pipeline-placeholder/sdk':
+        specifier: link:../../fixtures/pipeline/sdk/ts
+        version: link:../../fixtures/pipeline/sdk/ts
+      '@solana-program/token':
+        specifier: 0.18.0
+        version: 0.18.0(@solana/kit@8.6.0(typescript@7.0.2))
+      '@solana/kit':
+        specifier: 8.6.0
+        version: 8.6.0(typescript@7.0.2)
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/terminal-db:
     dependencies:
       drizzle-orm:
@@ -210,6 +253,31 @@ importers:
         specifier: 5.1.1
         version: 5.1.1(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(terser@5.46.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  packages/terminal-indexer:
+    dependencies:
+      '@pipeline-sol/sdk':
+        specifier: 'catalog:'
+        version: 0.3.0(typescript@6.0.3)
+      '@solana/kit':
+        specifier: 8.6.0
+        version: 8.6.0(typescript@6.0.3)
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@cloudflare/workers-types@5.20261121.1)(postgres@3.4.9)
+      terminal-db:
+        specifier: workspace:*
+        version: link:../terminal-db
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.1.1
+        version: 5.1.1(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(terser@5.46.0)(tsx@4.23.15)(yaml@2.9.1))
+
   programs/buy-wall-amm/scripts:
     dependencies:
       '@pipeline-placeholder/sdk':
@@ -227,6 +295,9 @@ importers:
       strategy-actions:
         specifier: workspace:*
         version: link:../../../packages/strategy-actions
+      strategy-publish:
+        specifier: workspace:*
+        version: link:../../../packages/strategy-publish
     devDependencies:
       '@codama/nodes-from-anchor':
         specifier: 1.5.6
@@ -298,6 +369,9 @@ importers:
       strategy-actions:
         specifier: workspace:*
         version: link:../../../packages/strategy-actions
+      strategy-publish:
+        specifier: workspace:*
+        version: link:../../../packages/strategy-publish
     devDependencies:
       '@codama/nodes-from-anchor':
         specifier: 1.5.6
@@ -332,6 +406,9 @@ importers:
       strategy-actions:
         specifier: workspace:*
         version: link:../../../packages/strategy-actions
+      strategy-publish:
+        specifier: workspace:*
+        version: link:../../../packages/strategy-publish
     devDependencies:
       '@codama/nodes-from-anchor':
         specifier: 1.5.6
@@ -349,17 +426,56 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
-  tests/terminal-e2e:
+  tests/devnet:
     devDependencies:
-      '@playwright/test':
-        specifier: 1.65.1
-        version: 1.65.1
+      '@pipeline-sol/sdk':
+        specifier: 'catalog:'
+        version: 0.3.0(typescript@6.0.3)
+      '@solana-program/token':
+        specifier: 0.18.0
+        version: 0.18.0(@solana/kit@8.6.0(typescript@6.0.3))
+      '@solana/kit':
+        specifier: 8.6.0
+        version: 8.6.0(typescript@6.0.3)
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
       terminal-api:
         specifier: workspace:*
         version: link:../../apps/terminal-api
+      terminal-db:
+        specifier: workspace:*
+        version: link:../../packages/terminal-db
+      terminal-indexer:
+        specifier: workspace:*
+        version: link:../../packages/terminal-indexer
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.1.1
+        version: 5.1.1(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(terser@5.46.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  tests/terminal-e2e:
+    devDependencies:
+      '@playwright/test':
+        specifier: 1.65.1
+        version: 1.65.1
+      '@solana/kit':
+        specifier: 8.6.0
+        version: 8.6.0(typescript@6.0.3)
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      postgres:
+        specifier: 3.4.9
+        version: 3.4.9
+      terminal-api:
+        specifier: workspace:*
+        version: link:../../apps/terminal-api
+      terminal-db:
+        specifier: workspace:*
+        version: link:../../packages/terminal-db
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -1634,6 +1750,10 @@ packages:
 
   '@oxc-project/types@0.156.0':
     resolution: {integrity: sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw==}
+
+  '@pipeline-sol/sdk@0.3.0':
+    resolution: {integrity: sha512-O/0tVRRtT1YwFujMIwEd32Pp5JTqkEH3Af7KHNyA0ISSLqJy0O6mZBSl7i+H+EqrFFJGeCAWPBiGsp/W0BSu5g==}
+    engines: {node: '>=20.19'}
 
   '@playwright/test@1.65.1':
     resolution: {integrity: sha512-y+NCIRm2LvY4slUVWvGh1nujJ8RF/hEisIsq2mtUPgdQC4L701bq5hZGMhrpeXjACvwvO9tj5dJqhvM6TP9lbw==}
@@ -5484,6 +5604,15 @@ snapshots:
 
   '@oxc-project/types@0.156.0': {}
 
+  '@pipeline-sol/sdk@0.3.0(typescript@6.0.3)':
+    dependencies:
+      '@solana/kit': 8.6.0(typescript@6.0.3)
+    transitivePeerDependencies:
+      - bufferutil
+      - fastestsmallesttextencoderdecoder
+      - typescript
+      - utf-8-validate
+
   '@playwright/test@1.65.1':
     dependencies:
       playwright: 1.65.1
@@ -5754,6 +5883,10 @@ snapshots:
       '@solana-program/system': 0.16.0(@solana/kit@8.6.0(typescript@7.0.2))
       '@solana/kit': 8.6.0(typescript@7.0.2)
 
+  '@solana-program/system@0.16.0(@solana/kit@8.6.0(typescript@6.0.3))':
+    dependencies:
+      '@solana/kit': 8.6.0(typescript@6.0.3)
+
   '@solana-program/system@0.16.0(@solana/kit@8.6.0(typescript@7.0.2))':
     dependencies:
       '@solana/kit': 8.6.0(typescript@7.0.2)
@@ -5765,6 +5898,11 @@ snapshots:
       '@solana-program/zk-elgamal-proof': 0.5.0(@solana/kit@8.6.0(typescript@7.0.2))
       '@solana/kit': 8.6.0(typescript@7.0.2)
       '@solana/sysvars': 8.6.0(typescript@7.0.2)
+
+  '@solana-program/token@0.18.0(@solana/kit@8.6.0(typescript@6.0.3))':
+    dependencies:
+      '@solana-program/system': 0.16.0(@solana/kit@8.6.0(typescript@6.0.3))
+      '@solana/kit': 8.6.0(typescript@6.0.3)
 
   '@solana-program/token@0.18.0(@solana/kit@8.6.0(typescript@7.0.2))':
     dependencies:

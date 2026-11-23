@@ -48,7 +48,8 @@ pipeline-client.workspace = true
 pipeline-events.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
-# The release gate's report names each build by its executable hash.
+# The shared test support's hash of a market's terms, which the tax AMM's seed checks, and
+# the release gate's report, which names each build by its executable hash.
 sha2.workspace = true
 solana-account.workspace = true
 solana-clock.workspace = true

@@ -81,6 +81,7 @@ Set up by [Tax AMM: Pipeline's strategy template in our repo, with CI and a loca
   Its program id is `BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6`; nothing of it is deployed or registered on devnet before [its devnet ticket](https://github.com/imDev2023/testing-pipeline/issues/56).
 - `programs/lending-amm` is the lending AMM (crate `lending-amm`), generated the same way by [Lending AMM: markets that trade from their own vaults](https://github.com/imDev2023/testing-pipeline/issues/78) on 2026-11-12, from a scratchpad clone at `5ad130d`, laid out as the tax AMM is: the program in `src/` (`config.rs` holds every constant and the per-cluster `LENT_MINTS`, `pricing.rs` and `shares.rs` the maths), its LiteSVM tests and invariant fuzzer in `tests/`, its Z3 proofs in `proofs/` (run as the buy wall AMM's are), `metadata.json`, the IDL in `idl/`, and the demo script and generated client in `scripts/`.
   It is built for one cluster by the feature `devnet` (the default) or `mainnet` (`--no-default-features --features mainnet`); its program id is `Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG`, and nothing of it is deployed or registered on devnet before [its devnet ticket](https://github.com/imDev2023/testing-pipeline/issues/87).
+  Its release gate is `programs/lending-amm/gate` ("The lending AMM's release gate" below), and its `README.md` is what the metadata's `links.docs` names.
 - `programs/test-programs/` holds test-only programs, never deployed to devnet: `stand-in-launchpad` (crate `stand-in-launchpad`, program id `StandinLaunchpad111111111111111111111111111`, whose keypair nobody holds), a launchpad that graduates two escrowed mints into any strategy through `pipeline_seed_liquidity` with its seeder PDA `["seeder", creator]` signing and a payer PDA it funds with a bounded amount of SOL, built by [Tax AMM: seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63) for every strategy's seeding tests.
   Each is a workspace member marked `[package.metadata.testing-pipeline] test-program = true`, so fmt, clippy and the pins cover it, while `scripts/workspace-programs.py` leaves it out of the deployable programs (`--test-programs` lists only these), `scripts/build-programs.sh` builds it into `fixtures/test-programs`, and no deploy script names it.
   The tax AMM's test support drives it from Rust (`tax-amm/tests/common/launchpad.rs`), and the demo from TypeScript (`tax-amm/scripts/launchpad.ts`).
@@ -119,7 +120,7 @@ Each program keypair was passed to `new-strategy.sh`, so nothing went into `~/.c
 - `scripts/fetch-pipeline.sh [sdk] [programs]` clones Pipeline into `fixtures/pipeline/` at the `rev` `programs/Cargo.toml` pins (its one source) and builds the TypeScript SDK, which is not on npm and which the demo scripts link to, and Pipeline's test programs (`test-hook`, `test-hook-refill`, `test-strategy-cp`, `test-strategy-evil`) for hostile tests; never the router, whose source is BSL 1.1.
   Nothing of it is copied into the repo.
   The lending AMM's tests load the `test-hook` built here for their hooked-mint cases.
-- `programs/lending-amm/scripts/fetch-klend.sh` copies Kamino Lend (klend) from mainnet and devnet into `fixtures/klend/mainnet.so` and `devnet.so`, refused unless each matches `KLEND_MAINNET_SHA256` or `KLEND_DEVNET_SHA256` in `fixtures/pins.env` (both read on 2026-11-12); its header says how to re-pin after a Kamino upgrade, and `programs/lending-amm/scripts/test-fixture-scripts.sh` tests it without the network.
+- `programs/lending-amm/scripts/fetch-klend.sh` copies Kamino Lend (klend) from mainnet and devnet into `fixtures/klend/mainnet.so` and `devnet.so`, refused unless each matches `KLEND_MAINNET_SHA256` or `KLEND_DEVNET_SHA256` in `fixtures/pins.env` (both read on 2026-11-12; mainnet's re-pinned on 2026-11-23 after Kamino upgraded klend in slot 472,935,074, with the mainnet accounts dumped again); its header says how to re-pin after a Kamino upgrade, and `programs/lending-amm/scripts/test-fixture-scripts.sh` tests it without the network.
   The lending AMM's tests load the cluster build's klend and its Kamino accounts, dumped at one slot by `programs/lending-amm/scripts/kamino_accounts.py` and committed in `programs/lending-amm/tests/fixtures/kamino/<cluster>/` ([`lending-pool.md`](spec/lending-pool.md), "Building it").
 - `programs/lending-amm/scripts/fetch-accounts.sh` clones the accounts of our Kamino lending market from devnet at one slot (its reserves, mints, token accounts and lending market, from `deployments/kamino-devnet.json`) into `fixtures/accounts/`, with `fixtures/accounts/warp-slot`, and, for the Kamino-side commands the demo calls, the reserves' two Pyth price accounts with their publish time moved 50 years ahead and klend's global config (`kamino_accounts.py local`); `scripts/local-validator.sh` loads every account file there at its address, warps to that slot when the file exists, and runs devnet's klend from `fixtures/klend/devnet.so` when it has been fetched (refused unless it matches its pin).
 
@@ -136,7 +137,7 @@ cd programs
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p buy-wall-gate -- test-builds   # the buy wall release gate's stranding test builds, which the tests need
-python3 lending-amm/scripts/broken-builds.py   # the lending AMM's broken builds, which its fuzzer must catch
+python3 lending-amm/scripts/broken-builds.py   # the lending AMM's broken builds, which its fuzzer and its release gate must catch
 cargo test --workspace                   # LiteSVM through devnet's router, with pipeline-check
 cargo kani --workspace -j --output-format=terse   # the maths proofs' default tiers; -j needs terse output
 cd ..
@@ -163,7 +164,7 @@ With it, `cargo test --workspace` took 3 minutes 16 seconds on the owner's Mac o
 On 2026-11-10 on the owner's Mac, from warm caches, everything above but Kani took 49 seconds in a fresh shell: the router matched its pin, Pipeline built at `5ad130d69e9e`, formatting and clippy were clean, and the tests passed: 3 unit tests of the pricing, the `security.txt` test and the template's 4 LiteSVM tests through devnet's router, on whose markets `pipeline-check` reported 14 pass, 0 warn and 0 fail.
 On 2026-11-12, with seeding and trading, `cargo test --workspace` took 66 seconds from warm caches, 31 of them the property tests.
 From cold, the SBF build took 53 seconds, the test build 60 seconds and `fetch-pipeline.sh` 2 minutes 22 seconds.
-`cargo kani --workspace -j --output-format=terse` runs every program's default tier; the tax AMM's is 13 harnesses over its pricing, tax, split and rate rules (`programs/tax-amm/src/pricing.rs`, `split.rs`, `params.rs`), 175 seconds wall in parallel on this Mac on 2026-11-12, and its Z3 proofs (`programs/tax-amm/proofs/pricing_z3.py`) take under 10 seconds.
+`cargo kani --workspace -j --output-format=terse` runs every program's default tier; the tax AMM's is 14 harnesses over its pricing, tax, split and rate rules (`programs/tax-amm/src/pricing.rs`, `split.rs`, `params.rs`), 137 seconds wall in parallel on this Mac on 2026-11-20, the build included, and its Z3 proofs (`programs/tax-amm/proofs/pricing_z3.py`) take under 10 seconds.
 [Tax AMM: proofs of the pricing, tax and split maths](https://github.com/imDev2023/testing-pipeline/issues/64) built them; `docs/security/tax-amm/maths-properties.md` lists every property with the tool that establishes it, each harness's time, the harnesses that did not finish and the mutation checks, and Proptest checks every property on at least 10,000 cases (`programs/tax-amm/tests/maths.rs`, about 41 seconds in a debug build).
 `in_given_out`, the template's exact-out maths, left with [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) on 2026-11-12, because the tax AMM refuses exact-out; its no-panic proof, which passed before it left, took 14.5 minutes.
 
@@ -197,6 +198,9 @@ pnpm demo --cluster localnet \
 Passed on 2026-11-12 with `solana-test-validator` 4.4.1 and Node 24.4.1, in 6 seconds, by [seed a market and trade it](https://github.com/imDev2023/testing-pipeline/issues/60): the strategy registered; the tax market created and seeded with both fee accounts in one version 0 transaction of 1,212 bytes; all fourteen creation parameters read back as sent; a buy of 1,000,000,000 of token B quoted and delivered 482,900,432 of token A, with a buy tax of 30,000,000, and a sell of 300,000 of token A quoted and delivered 575,252 of token B, with a sell tax of 30,277; and the reserves, the six owed amounts, `tax_collected` (30,030,277), both volumes and `swap_count` equal to the spec's formulas.
 Since [the tax authority](https://github.com/imDev2023/testing-pipeline/issues/62), the payer then acts as the tax authority through the metadata's actions: `set_taxes` moves the rates from 300 and 500 to 600 and 900 basis points and the same two trades run again, each quote the spec's price at the new rates; `set_recipients` hands the second recipient's slot to a new wallet, which keeps the slot's owed amount; and after `renounce_tax_authority` both changes are refused in simulation with `AlreadyRenounced` (6028), the market state unchanged.
 That passed on 2026-11-12 from a fresh validator, the demo in 25 seconds: the slot handed over kept its 24,323,027 owed, and `tax_collected` reached 90,085,286 after four swaps.
+Since [the tax AMM's hardening](https://github.com/imDev2023/testing-pipeline/issues/67) the demo's tokens have no mint authority once their supply is minted, its seeds carry the hash of the market's terms (`TAX-59`), step 10 trades once at the old rates, waits until the change's slot `RATE_CHANGE_DELAY_SLOTS` later and then trades at the new ones (`TAX-05`), and step 11 first shows a handover of a slot still owed refused in simulation, then pays the slot out and hands it over in one transaction (`TAX-39`).
+That passed on 2026-11-22 from a fresh validator with fast slots (`scripts/local-validator.sh fixtures/test-ledger-67 --rpc-port 8967 --faucet-port 9967 --gossip-port 8968 --dynamic-port-range 8801-8840 --ticks-per-slot 8`), the demo in 3 minutes 40 seconds, most of it the rate change's wait: the change set at slot 40 applied from slot 340, a trade at slot 41 paid the old rates and the trades after slot 340 the new ones; the handover of slot 1 while it was owed 32,423,170 was refused with 6043 (`OwedSlotRedirected`), and the payout and handover then landed in one transaction of 630 bytes; and `pipeline-check --fail-on-warn`, rebuilt from the Pipeline clone at `3fd85ce` (a build from before Pipeline 0.2 fails every swap with the router's 3007), reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped on every market the demo made.
+The containment hook's launch with `--unlock goal` passed after it on the same validator: the mint authority revoked after `bind`, the seed with the terms hash, the buy, the sell, the hook's refusals, and the unlock by the goal (133,135,805 of 100,000,000 collected); `pipeline-check` on its home market passes given amounts, since its single-sided virtual reserve refuses the largest default quote as the spec says.
 On a local validator the demo goes on to a thirteenth step: the stand-in launchpad graduates a token into a tax market through `pipeline_seed_liquidity`, built from the metadata's `seed_liquidity` form with the SDK's `resolveInit`, the same transaction records it with `register_existing_market` and both fee accounts, and the market trades both ways as in steps 8 and 9; on devnet the step is skipped.
 Passed on 2026-11-12 by [seeding from another program](https://github.com/imDev2023/testing-pipeline/issues/63), the whole demo with the tax authority's steps in 25 seconds, from a fresh validator started with flags only (`scripts/local-validator.sh --rpc-port 8999 --faucet-port 9910 --gossip-port 8100 --dynamic-port-range 8101-8130`) because another project's validator held port 8000: the graduation transaction was 1,214 of 1,232 bytes; the escrows lost exactly the seed (100,000,000,000 and 200,000,000,000), which `SeedResult.taken` reported, with `lp_amount` 0; `pipeline_seed_liquidity` used 41,357 units; the market state held the parameters sent with the launchpad's PDA as its seeder, open and holding the seed; and both swaps delivered their quotes, the spec's prices, leaving the reserves, owed amounts and counters equal to the spec's formulas.
 Since [pay the tax out with distribute](https://github.com/imDev2023/testing-pipeline/issues/61), the demo ends with two more steps.
@@ -234,6 +238,8 @@ It passed that way on 2026-11-16 in 29 seconds from a fresh validator warped to 
 Since [Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86) (2026-11-17) the second wallet's deposit puts klend's `refresh_reserve` first, after checking in simulation that the same deposit without it is refused with `ReserveStale`; the wallet then leaves with the lent side alone for a twentieth of its shares, from the metadata's `remove_lent_side` form; and leaving withdraw mode takes two `rebalance` calls `WITHDRAW_MODE_EXIT_DELAY_SLOTS` (9,000) slots apart, the first starting the wait and the demo waiting for the slot before the second.
 So the validator for the whole lending demo is started with fast slots, `scripts/local-validator.sh fixtures/test-ledger-86 --rpc-port 8986 --faucet-port 9986 --gossip-port 8987 --dynamic-port-range 8700-8760 --ticks-per-slot 8` (`LENDING-96`); at 2 ticks a slot the validator dropped blocks and its root stopped advancing, while at 8 it ran 11 slots a second on the owner's Mac.
 It passed that way on 2026-11-17 in 12 minutes 57 seconds from a fresh validator warped to devnet's slot 523,151,336, nearly all of it the wait, with the later deposits offering the market's ratio plus 1% slippage as their maximums; on devnet the wait is an hour.
+Since [the devnet ticket](https://github.com/imDev2023/testing-pipeline/issues/87) (2026-11-22) the test token has its mint authority removed and is checked to hold neither authority, the first deposit puts 0.5 SOL on the lent side (`LENDING-82`), every state check covers withdraw mode, the lending yield is read twice with the borrower's loan held (`LENDING-97`), step 27 ends with the buffer back at its target and prints the sales at the buffer's edge, and a step 31 on devnet asks Pipeline's hosted API to list and quote the market (`LENDING-98`); `--register-only` and `--record` work as the other demos'.
+It passed that way on 2026-11-22 in 18 minutes 11 seconds on a validator warped to devnet's slot 525,226,388, its slots slowed by builds running beside it: the yield rose from 22 to 74 lamports between slots 525,232,102 and 525,232,148, `rebalance` entered withdraw mode redeeming all 284,304,577 cTokens for 284,306,655 lamports and left it lending 321,367,660, and `pipeline-check --fail-on-warn` on the demo market reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped, at its default sizes and with `--amounts 131473535805,134801893536`, sales paying out 99% and 101% of the buffer.
 Its call-depth test needs the stand-in smart wallet, a test program `scripts/build-programs.sh` builds into `fixtures/test-programs` with the stand-in launchpad (`scripts/build-programs.sh test-programs/stand-in-smart-wallet` builds it alone).
 
 The buy wall AMM's demo (`programs/buy-wall-amm/scripts/demo.ts`) takes the same arguments, on the same validator:
@@ -266,6 +272,15 @@ Passed on 2026-11-16 from a fresh validator in 76 seconds, on its own ports (`sc
 Every gate run, on a cluster or a fixture, also makes and trades a market of its own with the candidate (`POOL4-53`), so `cargo test -p buy-wall-gate --test empty_cluster` checks that a cluster with no market passes the current build and refuses a broken one.
 Kani builds the crate without its dependencies (`cfg(not(kani))` in its `Cargo.toml`), because Kani's nightly Rust refuses LiteSVM's Solana crates and the gate has no proofs.
 `scripts/deploy-devnet.sh buy-wall-amm` deploys only a build the gate has passed against the cluster it deploys to: before it sends anything it runs the program's pre-deploy check, `programs/buy-wall-amm/scripts/pre-deploy.sh`, which asks `buy-wall-gate verify-record` (`POOL4-54`; "Deploy to devnet").
+
+### The lending AMM's release gate
+
+`programs/lending-amm/gate` (crate `lending-gate`) is the lending AMM's release gate, a host tool beside the program, never deployed, added by [the lending AMM's devnet ticket](https://github.com/imDev2023/testing-pipeline/issues/87) on 2026-11-22; [`lending-pool.md`](spec/lending-pool.md#a-release-gate), "A release gate", has what it checks and its commands.
+It shares the buy wall AMM's gate records, cluster reads, release declaration and error reading through `programs/release-gate` (crate `release-gate`), which `buy-wall-gate` re-exports.
+`cargo test -p lending-gate` needs `scripts/fetch-router.sh`, `programs/lending-amm/scripts/fetch-klend.sh`, the program built, and `python3 programs/lending-amm/scripts/broken-builds.py`, which also builds the gate's test builds from `programs/lending-amm/gate/test-builds.json` into the same folder; then its 10 tests take about 2 seconds.
+Kani builds both crates without their dependencies, as `buy-wall-gate`'s.
+`scripts/deploy-devnet.sh lending-amm` runs `programs/lending-amm/scripts/pre-deploy.sh` on the bytes it built, which refuses unless `lending-gate run` has passed that build on that cluster against the build deployed there now and every market there now (`LENDING_GATE_RECORDS` names another records folder, as for a local rehearsal).
+Run against devnet on 2026-11-22, before anything of the lending AMM was deployed there, it found no market, made and traded one of its own with the build in `programs/target/deploy` (a sale beyond the buffer redeeming 6,000,169,061 lamports from Kamino, its quote) and passed, in 4.5 seconds.
 
 ### Containment hook
 
@@ -380,7 +395,7 @@ The hook went to devnet on 2026-11-22.
 `scripts/github-settings.sh` makes it required, through a repository ruleset that admins may bypass (so a history rewrite can still be force-pushed), and switches on private vulnerability reporting, which every program's `security.txt` names as its contact.
 Both settings need the repository public on GitHub Free; `scripts/make-repo-public.sh` ran it when the repository went public on 2026-11-20, and both are on.
 
-`.github/workflows/advisories.yml` checks both lock files, `programs/Cargo.lock` and `crates/Cargo.lock`, against the RustSec advisory database with `cargo audit` (0.22.0), when either changes, every day at 06:41 UTC and on demand (`BAR-45`, hardening finding H075 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
+`.github/workflows/advisories.yml` checks both lock files, `programs/Cargo.lock` and `crates/Cargo.lock`, against the RustSec advisory database with `cargo audit` (0.22.0), when either changes, every day at 06:41 UTC and on demand (`BAR-46`, hardening finding H075 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
 It fails on any vulnerability and only reports unmaintained crates, which come through Solana's and LiteSVM's own dependencies.
 Its first run found `url` 2.5.8 (RUSTSEC-2026-0592), reached through `pipeline-client` in the tests and in Canary, and both lock files moved to 2.5.9; no program's bytes contain `url`.
 
@@ -639,6 +654,7 @@ A program's metadata cannot name the commit that holds it, and a squash merge le
 
    Merge `deployments/devnet.json`, the report, and the README and docs saying where the program is.
 3. **The metadata.** Run `node publish.ts pin --report-commit <the record's merge commit>` in `programs/tax-amm/scripts` and merge `metadata.json`.
+   Each program's `publish.ts` is a few lines naming the program; the steps are one shared tool, `packages/strategy-publish`, and the checks each program's `tests/published.rs` runs are one crate, `programs/published-check`, whose own tests hold the rules (`BAR-45`, since [the lending AMM's devnet ticket](https://github.com/imDev2023/testing-pipeline/issues/87) on 2026-11-22).
    `pin` fetches `origin/main`, refuses a report or deployed commit not on it, a report commit without the report, a report that differs from the one committed here or that checks other code than the deploy's, and hashes the report as that commit holds it.
    `tests/published.rs` fails if the metadata names a commit other than the deployed one or a report other than the committed one, or if the committed report is of other code than the deploy record's or has a warning or a failure.
    Then point the router at it and check everything published, as anyone would see it:
@@ -719,6 +735,42 @@ The first upgrade, to release 0.1.1 from `main` at `d83e048`, went through the g
 - `pipeline-check --fail-on-warn` reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped, on build `e4bd061e…`.
 - Two of the day's Docker builds failed part way with `can't find crate for ...` (`syn`, then `solana-epoch-schedule`), and the same commit built cleanly when run again ("Known problems").
 
+The lending AMM goes the same way, with `programs/lending-amm/scripts/` and its release gate in front of every deploy, including the first (`lending-pool.md`, "A release gate"):
+
+```sh
+scripts/deploy-devnet.sh lending-amm --build-only --out <scratchpad>/verified
+(cd programs && SBF_OUT_DIR=<scratchpad>/verified cargo test -p lending-amm)
+(cd programs && cargo run -p lending-gate -- run --cluster devnet --candidate <scratchpad>/verified/lending_amm.so)
+scripts/deploy-devnet.sh lending-amm
+cd programs/lending-amm/scripts
+pnpm demo --cluster devnet --payer ... --upgrade-authority ... --record <scratchpad>/devnet-demo.json
+```
+
+Before it, `npm run cli -- setup` and `status` in `scripts/kamino-devnet` must report our Kamino lending market unchanged, with the second depositor's 5 SOL in the WSOL reserve, and both reserves' Pyth price accounts must still exist, since klend's `refresh_reserve` reads them.
+On devnet the demo walks the whole product on one market, as on a local validator, and steps 28 to 30 (the launchpad) are skipped; step 25's wait is `WITHDRAW_MODE_EXIT_DELAY_SLOTS` of devnet's slots, about an hour, and step 31 asks Pipeline's hosted API to list and quote the market (`LENDING-98`).
+Step 27 ends with the buffer back at its target and prints two sales of the token whose output lands just inside and just beyond the buffer, which `pipeline-check --amounts` takes for the checks on both sides of the buffer's edge.
+`--hosted-api <router market>` runs step 31 alone on a market an earlier run made, and `--record` writes what a run did even when it stops part way, by a failed check or a thrown error.
+
+The lending AMM went to devnet this way on 2026-11-22 and 2026-11-23:
+
+- **Kamino.** `setup` reported our lending market in place with nothing to create, `layout` matched every offset, and `status` showed the second depositor's 5.0001 SOL in the WSOL reserve, none borrowed and every stop off.
+- **The release gate.** The verified build of `25a209c`, executable hash `34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c`, built in 172 seconds, and every lending AMM and gate test, 263, passed on those bytes.
+  `lending-gate run --cluster devnet` found no market, made and traded one of its own with them, its sale beyond the buffer redeeming 6,000,169,061 lamports from Kamino, exactly its quote, and recorded the pass (`deployments/release-gate/lending-amm/devnet.json`).
+- **Deploy.** `deploy-devnet.sh lending-amm` built the commit again, the first try failing with `can't find crate` and the second building the same hash ("Known problems"); the pre-deploy check found the gate's pass, and the program was deployed over TPU in slot 525,242,911, signature `2rK27mtodhzgDZNKM8tSr8EpJJWBift2faAx8ARnk9CFg5io4ZH4P2CmA8gCwHQpV2MyF17RR4kyHzVN12nHQyKb`, with `solana-verify get-program-hash -u devnet` giving the build's hash.
+- **The demo.** Its first run registered the strategy and walked steps 4 to 21, then klend refused the test borrower's borrow with `PriceTooOld`: devnet's sponsored Pyth feeds had stopped updating for over 25 minutes, past our reserves' 600-second price max age, which `setup` then raised to a week (`LENDING-40` changed); the second run's borrow landed, and public devnet dropped a connection right after, which the demo now retries.
+  The third run passed every step from 4 to 30, 28 to 30 skipped, in about 90 minutes, an hour of it withdraw mode's wait, and stopped at step 31's sale, whose comparison then took the strategy's quote for what the trader keeps; with the comparison fixed, `--hosted-api` ran step 31 alone on the same market and passed (below):
+  - the token held no authorities, and the market was created and funded with 0.5 SOL on its lent side in one transaction;
+  - `rebalance` lent 447,949,380 lamports for 447,943,772 cTokens and a second one was refused with `WithinBand`;
+  - a sale beyond the buffer built from a smaller sale's accounts was refused with `RedeemAccountsMissing`, and with its own accounts redeemed its shortfall inside the swap, the trader receiving exactly the quote;
+  - the second wallet's deposit was refused with `ReserveStale` until klend's `refresh_reserve` went first, which works with devnet's Pyth accounts, and it removed in cash, in kind and the lent side alone, redeemed its cTokens at klend and locked shares;
+  - with the loan held the lending yield rose from 83 to 140 lamports between slots 525,425,925 and 525,425,935;
+  - `rebalance` entered withdraw mode at 1,556,837,980 lamports free, redeeming all 284,303,018 cTokens for 284,306,864, refused to move again until the wait was over, and left it at 5,574,119,164 free, lending 321,367,826;
+  - with emergency mode on a sale within the buffer traded, one beyond it was refused by the quote and the swap with `BeyondBuffer`, `rebalance` with `KaminoStopped` and a cash removal with `KaminoCannotPay`, and the second wallet left in kind; with it off a sale beyond the buffer redeemed again and `rebalance` restored the buffer.
+- **Pipeline's hosted API** listed the demo market and quoted it: a buy of 5,886,771 lamports at 10,379,899,096 of the token, and a sale of 5,309,366,395 at 2,898,322 lamports kept, each exactly what the program's own quote leaves the trader on the same state (Pipeline 0.3 takes its fee out of a sale into WSOL, so the strategy's 2,905,586 less 0.25%).
+  So the API quotes a market whose swaps read another program's account.
+- **Conformance.** `pipeline-check --url devnet --market AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu --fail-on-warn` reported 13 pass, 0 warn, 0 fail and `exact_out_refund` skipped, at its default sizes (`programs/lending-amm/conformance/devnet.json`) and with `--amounts 131473535384,134801897064`, sales paying out 99% and 101% of the buffer, resolving up to 11 strategy accounts and using up to 99,225 compute units; `--list-markets` listed the market.
+- A `pipeline-check` built at a new path waited on LuLu until the owner allowed it ("Known problems").
+
 ## Local validator
 
 Pipeline's `docs/DEVNET.md` gives the command, adapted here to this project's wallet (the programs' upgrade authority, so the script initialises the router's config and registers the example strategy itself) and a ledger outside the clone:
@@ -774,6 +826,19 @@ pnpm terminal:dev:web                # terminal-web built through OpenNext and r
 `pnpm terminal:e2e` runs Playwright (`tests/terminal-e2e`) on the local run: it starts both Workers unless they are already up, checks every page at 1440, 390 and 360 px in the light and the dark theme, and saves each page's screenshot to `tests/terminal-e2e/screenshots/<width>-<theme>/` for the PR.
 `E2E_RPC` says where the API's RPC goes: `devnet` (the default outside CI) uses `RPC_URL`; `fixtures` (CI's) replays `tests/terminal-e2e/fixtures/devnet-rpc.json` with no network; `record` (`pnpm --filter terminal-e2e record`) runs against devnet and records every answer into that file (`PIPESCOPE-102`).
 The first run needs `pnpm --filter terminal-e2e exec playwright install chromium`.
+Before the tests, `src/global-setup.ts` fires the cron and waits for the indexer's first run, which backfills the router's whole history into the database, so the feed has devnet's markets to show; on the recorded fixtures that history is the one recorded, so a run on an empty database draws the same pages.
+
+### Aviary's devnet tests
+
+`tests/devnet` holds the indexer's restart test and the parity checks against Pipeline's hosted devnet API (`docs/spec/pipescope-architecture.md`, Indexer).
+Each starts its own `terminal-api` under `wrangler dev`, on a throwaway database made on `TEST_DATABASE_URL` and on ports 8822 and 8824, so it never meets a local run already up; the restart test spends a little devnet SOL in fees from the project's devnet wallet.
+
+```sh
+direnv exec "<main checkout>" pnpm --filter terminal-devnet devnet
+```
+
+They read devnet, so they never run in CI.
+`wrangler dev`'s `workerd` reaches devnet only once LuLu allows its path, which differs in every worktree (`node_modules/.pnpm/@cloudflare+workerd-darwin-64@<version>/node_modules/@cloudflare/workerd-darwin-64/bin/workerd`, unsigned, so LuLu cannot allow it by signature).
 
 Passed on 2026-11-22 with Node 24.4.1 (#113): 36 tests, in 1.4 minutes against devnet and 1.2 minutes on the recorded fixtures.
 

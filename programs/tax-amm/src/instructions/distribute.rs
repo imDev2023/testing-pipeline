@@ -21,7 +21,7 @@ use anchor_spl::token_interface::{Mint, TokenInterface};
 
 use crate::errors::StrategyError;
 use crate::events::Distributed;
-use crate::state::{vault_authority, TaxMarket, AUTHORITY_SEED, BURN_SLOT};
+use crate::state::{vault_authority, TaxMarket, AUTHORITY_SEED, BURN_SLOT, STATE_VERSION};
 use crate::token::transfer_checked;
 
 /// The order is `metadata.json`'s `distribute` action; keep them in step. Transfer-hook
@@ -31,7 +31,7 @@ pub struct Distribute<'info> {
     /// Anyone; pays for the slot wallet's token account when it is missing.
     #[account(mut)]
     pub payer: Signer<'info>,
-    #[account(mut)]
+    #[account(mut, constraint = market_state.version <= STATE_VERSION @ StrategyError::NewerStateVersion)]
     pub market_state: Account<'info, TaxMarket>,
     /// CHECK: compared with the PDA from the market state's stored bump by the handler.
     pub vault_authority: UncheckedAccount<'info>,

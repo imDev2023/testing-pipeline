@@ -107,11 +107,13 @@ export type SeedInstructionData = {
   discriminator: ReadonlyUint8Array;
   amount0: bigint;
   amount1: bigint;
+  expectedTerms: ReadonlyUint8Array;
 };
 
 export type SeedInstructionDataArgs = {
   amount0: number | bigint;
   amount1: number | bigint;
+  expectedTerms: ReadonlyUint8Array;
 };
 
 export function getSeedInstructionDataEncoder(): FixedSizeEncoder<SeedInstructionDataArgs> {
@@ -120,6 +122,7 @@ export function getSeedInstructionDataEncoder(): FixedSizeEncoder<SeedInstructio
       ["discriminator", fixEncoderSize(getBytesEncoder(), 8)],
       ["amount0", getU64Encoder()],
       ["amount1", getU64Encoder()],
+      ["expectedTerms", fixEncoderSize(getBytesEncoder(), 32)],
     ]),
     (value) => ({ ...value, discriminator: SEED_DISCRIMINATOR }),
   );
@@ -130,6 +133,7 @@ export function getSeedInstructionDataDecoder(): FixedSizeDecoder<SeedInstructio
     ["discriminator", fixDecoderSize(getBytesDecoder(), 8)],
     ["amount0", getU64Decoder()],
     ["amount1", getU64Decoder()],
+    ["expectedTerms", fixDecoderSize(getBytesDecoder(), 32)],
   ]);
 }
 
@@ -172,6 +176,7 @@ export type SeedInput<
   tokenProgram1: TAccountTokenProgram1;
   amount0: SeedInstructionDataArgs["amount0"];
   amount1: SeedInstructionDataArgs["amount1"];
+  expectedTerms: SeedInstructionDataArgs["expectedTerms"];
 };
 
 export function getSeedInstruction<

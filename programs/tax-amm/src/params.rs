@@ -143,6 +143,51 @@ pub fn check_split(
     Ok(())
 }
 
+/// The market's own addresses and the programs it runs on: its market state, vault
+/// authority, vaults and mints, this program, the router and the market's signer under it,
+/// the token programs, and the containment hook (`crate::config::CONTAINMENT_HOOK_ID`), the
+/// one hook program a market's mint may run, which never moves a token it holds. None of them can ever move a token out of its associated token
+/// account, so none can be a tax recipient ([`check_wallets`]).
+pub fn own_addresses(
+    market_state: &Pubkey,
+    vault_authority: &Pubkey,
+    mints: &[Pubkey; 2],
+    vaults: &[Pubkey; 2],
+    market_signer: &Pubkey,
+) -> [Pubkey; 13] {
+    [
+        *market_state,
+        *vault_authority,
+        vaults[0],
+        vaults[1],
+        mints[0],
+        mints[1],
+        crate::ID,
+        Pubkey::new_from_array(pipeline_strategy_interface::PIPELINE_PROGRAM_ID),
+        *market_signer,
+        anchor_spl::token::ID,
+        anchor_spl::token_2022::ID,
+        anchor_spl::associated_token::ID,
+        crate::config::CONTAINMENT_HOOK_ID,
+    ]
+}
+
+/// Refuses a used recipient slot that names one of `own` ([`own_addresses`]), where tax
+/// would be stuck for good while its payout event reads as paid (hardening finding H024,
+/// #67). Checked at creation and by `set_recipients`, beside [`check_split`].
+pub fn check_wallets(
+    recipients: &[Pubkey; MAX_RECIPIENTS],
+    own: &[Pubkey],
+) -> core::result::Result<(), StrategyError> {
+    if recipients[..used_slots(recipients)]
+        .iter()
+        .any(|recipient| own.contains(recipient))
+    {
+        return Err(StrategyError::NotAWallet);
+    }
+    Ok(())
+}
+
 /// How many recipient slots are used: the leading slots that name a wallet.
 pub fn used_slots(recipients: &[Pubkey; MAX_RECIPIENTS]) -> usize {
     recipients

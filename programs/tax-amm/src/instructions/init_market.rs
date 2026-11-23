@@ -14,7 +14,7 @@ use pipeline_strategy_interface as psi;
 
 use crate::errors::StrategyError;
 use crate::events::MarketCreated;
-use crate::params::InitParams;
+use crate::params::{check_wallets, own_addresses, InitParams};
 use crate::state::{
     MarketStatus, TaxMarket, AUTHORITY_SEED, RESERVED_LEN, STATE_VERSION, VAULT_SEED,
 };
@@ -111,6 +111,17 @@ impl NewMarket<'_, '_> {
             check_mint(self.mints[i], self.token_programs[i])?;
         }
         params.validate(&mints)?;
+        let vaults = self.vaults.map(|vault| vault.key());
+        check_wallets(
+            &params.recipients,
+            &own_addresses(
+                &self.market_state,
+                &self.authority.key(),
+                &mints,
+                &vaults,
+                &self.market_signer,
+            ),
+        )?;
 
         for i in 0..2 {
             let bump = [self.vault_bumps[i]];
@@ -132,7 +143,6 @@ impl NewMarket<'_, '_> {
         }
 
         let clock = Clock::get()?;
-        let vaults = self.vaults.map(|vault| vault.key());
         emit!(MarketCreated {
             market_state: self.market_state,
             mints,
@@ -170,6 +180,9 @@ impl NewMarket<'_, '_> {
             swap_count: 0,
             created_slot: clock.slot,
             created_at: clock.unix_timestamp,
+            pending_buy_tax_bps: 0,
+            pending_sell_tax_bps: 0,
+            pending_from_slot: 0,
             reserved: [0; RESERVED_LEN],
         })
     }
@@ -189,7 +202,8 @@ pub fn pipeline_market_signer(market_state: &Pubkey) -> Pubkey {
     .0
 }
 
-/// Refuses a mint its token program doesn't own, or one the mint rules refuse.
+/// Refuses a mint its token program doesn't own, one the shared mint rules refuse, or one
+/// whose transfer hook the tax AMM's own rules refuse ([`crate::mint_levers`]).
 fn check_mint(mint: &UncheckedAccount, token_program: &Interface<TokenInterface>) -> Result<()> {
     require_keys_eq!(
         *mint.owner,
@@ -205,6 +219,10 @@ fn check_mint(mint: &UncheckedAccount, token_program: &Interface<TokenInterface>
         mint_rules::MintRefusal::NotATokenProgram | mint_rules::MintRefusal::NotAMint => {
             error!(StrategyError::NotAMint)
         }
+    })?;
+    crate::mint_levers::check_transfer_hook(mint.key, &data).map_err(|refusal| {
+        msg!("Mint {} has a transfer hook a market refuses", mint.key);
+        error!(refusal)
     })
 }
 
