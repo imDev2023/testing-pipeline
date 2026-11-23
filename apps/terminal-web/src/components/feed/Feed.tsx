@@ -2,35 +2,59 @@
 
 // The feed (docs/spec/pipescope-screens.md, Feed; PIPESCOPE-70): one table of markets, newest first,
 // with strategies on a second tab, each tab with its count, under a head that says how many there
-// are and that nothing is curated. The Canary column, the trust flags and the filters come with
-// their tickets (#125, #119); strategy names with strategy metadata (#119), token names with #120.
+// are and that nothing is curated. Above the markets, the four filters (PIPESCOPE-05, PIPESCOPE-72),
+// kept in the page's address, with the line under them; each strategy named from its valid metadata
+// in the author's style, and every row's trust flags. The Canary column comes with #125, token names
+// with #120.
 // Live (docs/spec/pipescope-architecture.md, Live rooms): the feed's room sends each market new or
 // changed; a new one joins the top, a changed one updates in place, and while the pointer or the
-// focus is on the table new rows wait, so the row under it never moves.
+// focus is on the table new rows wait, so the row under it never moves. While a filter is on, the
+// room's news is read again through the API with the filters, so no row the filters leave out
+// arrives.
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MarketsPage, StrategiesList, type LiveEvent, type Market, type Strategy } from "terminal-api/contract";
+import { MarketsPage, StrategiesList, type FlagFact, type LiveEvent, type Market, type Strategy } from "terminal-api/contract";
 import { ApiFailure, getFromApi } from "@/api";
 import { BRAND } from "@/brand";
 import { FEED_ROWS_PER_LOAD } from "@/config";
+import { apiQuery, describeFilters, filtersOn, NO_FILTERS, pageHref, type FeedFilters } from "@/feedFilters";
 import { formatInteger } from "@/format";
 import { placeMarkets } from "@/liveMerge";
 import { LIVE_ROOMS, useLiveRoom } from "@/live";
 import { ROUTES } from "@/routes";
+import { descriptionsOf, FlagList } from "../Flags";
 import { Age, MarketsTable } from "../MarketsTable";
 import { ShortAddress } from "../ShortAddress";
+import { StrategyName } from "../StrategyName";
+import { FilterBar } from "./FilterBar";
 import table from "../ListingTable.module.css";
 import styles from "./Feed.module.css";
 
 export type FeedTab = "markets" | "strategies";
 
-type Loaded = { markets: Market[]; total: number; next: string | null; strategies: Strategy[] };
+type Loaded = {
+  markets: Market[];
+  /** Every market, and those the filters keep, and those with no SOL side. */
+  total: number;
+  matching: number;
+  noSolSide: number;
+  /** Every flag any market has, for "Hide markets with", and any strategy has, for the strategies' rows. */
+  marketFlags: FlagFact[];
+  strategyFlags: FlagFact[];
+  next: string | null;
+  strategies: Strategy[];
+};
 type State = { status: "loading" } | { status: "failed"; message: string } | { status: "loaded"; data: Loaded };
 
 const plural = (n: number, one: string, many: string) => `${formatInteger(n)} ${n === 1 ? one : many}`;
 const failureOf = (e: unknown) => (e instanceof ApiFailure ? e.message : "Something went wrong on this page.");
 
-export function Feed({ tab }: { tab: FeedTab }) {
+export function Feed({ tab, filters = NO_FILTERS }: { tab: FeedTab; filters?: FeedFilters }) {
+  const router = useRouter();
+  const query = apiQuery(filters);
+  const filtered = filtersOn(filters);
+  const marketsPath = `/v1/markets?limit=${FEED_ROWS_PER_LOAD}${query ? `&${query}` : ""}`;
   const [state, setState] = useState<State>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [more, setMore] = useState<{ status: "idle" | "loading" } | { status: "failed"; message: string }>({ status: "idle" });
@@ -71,7 +95,7 @@ export function Feed({ tab }: { tab: FeedTab }) {
         return;
       }
       heldNow.current = waiting;
-      show({ ...data, markets: [...added, ...markets], total: data.total + added.length });
+      show({ ...data, markets: [...added, ...markets], total: data.total + added.length, matching: data.matching + added.length });
     },
     [show],
   );
@@ -82,7 +106,7 @@ export function Feed({ tab }: { tab: FeedTab }) {
     const data = loaded.current;
     heldNow.current = [];
     setHeld([]);
-    if (waiting.length && data) show({ ...data, markets: [...waiting, ...data.markets], total: data.total + waiting.length });
+    if (waiting.length && data) show({ ...data, markets: [...waiting, ...data.markets], total: data.total + waiting.length, matching: data.matching + waiting.length });
   }, [show]);
 
   /** Whatever changed while the page was away from its room, or before it joined: the first page read again, and put in place. */
@@ -91,15 +115,21 @@ export function Feed({ tab }: { tab: FeedTab }) {
       resyncDue.current = true;
       return;
     }
-    getFromApi(`/v1/markets?limit=${FEED_ROWS_PER_LOAD}`, MarketsPage).then(
-      (page) => arrive(page.markets),
+    getFromApi(marketsPath, MarketsPage).then(
+      (page) => {
+        arrive(page.markets);
+        // The API's counts are the truth after a resync, the filters' line and the flags present with them.
+        const data = loaded.current;
+        if (data) show({ ...data, total: page.total, matching: page.matching, noSolSide: page.no_sol_side, marketFlags: page.flags_present });
+      },
       () => {},
     );
-  }, [arrive]);
+  }, [arrive, marketsPath, show]);
 
   useLiveRoom(LIVE_ROOMS.feed, {
     onEvents: (events: LiveEvent[]) => {
-      if (events.some((e) => e.type === "resync")) resync();
+      // With a filter on, a market the room sends may be one the filters leave out: read the page again.
+      if (filtered || events.some((e) => e.type === "resync")) return resync();
       arrive(events.flatMap((e) => (e.type === "market" ? [e.market] : [])));
     },
     onOpen: resync,
@@ -109,9 +139,18 @@ export function Feed({ tab }: { tab: FeedTab }) {
     const controller = new AbortController();
     const { signal } = controller;
     loaded.current = null;
-    Promise.all([getFromApi(`/v1/markets?limit=${FEED_ROWS_PER_LOAD}`, MarketsPage, { signal }), getFromApi("/v1/strategies", StrategiesList, { signal })]).then(
-      ([page, { strategies }]) => {
-        show({ markets: page.markets, total: page.total, next: page.next, strategies });
+    Promise.all([getFromApi(marketsPath, MarketsPage, { signal }), getFromApi("/v1/strategies", StrategiesList, { signal })]).then(
+      ([page, list]) => {
+        show({
+          markets: page.markets,
+          total: page.total,
+          matching: page.matching,
+          noSolSide: page.no_sol_side,
+          marketFlags: page.flags_present,
+          strategyFlags: list.flags_present,
+          next: page.next,
+          strategies: list.strategies,
+        });
         if (resyncDue.current) {
           resyncDue.current = false;
           resync();
@@ -122,7 +161,7 @@ export function Feed({ tab }: { tab: FeedTab }) {
       },
     );
     return () => controller.abort();
-  }, [attempt, show, resync]);
+  }, [attempt, show, resync, marketsPath]);
 
   const retry = useCallback(() => {
     setState({ status: "loading" });
@@ -134,16 +173,19 @@ export function Feed({ tab }: { tab: FeedTab }) {
     if (!next) return;
     setMore({ status: "loading" });
     try {
-      const page = await getFromApi(`/v1/markets?limit=${FEED_ROWS_PER_LOAD}&before=${encodeURIComponent(next)}`, MarketsPage);
+      const page = await getFromApi(`${marketsPath}&before=${encodeURIComponent(next)}`, MarketsPage);
       // Built on what the page shows now, live arrivals during the read included; a market already shown is not shown twice.
       const data = loaded.current!;
       const shown = new Set(data.markets.map((m) => m.address));
-      show({ ...data, markets: [...data.markets, ...page.markets.filter((m) => !shown.has(m.address))], total: page.total, next: page.next });
+      show({ ...data, markets: [...data.markets, ...page.markets.filter((m) => !shown.has(m.address))], total: page.total, matching: page.matching, noSolSide: page.no_sol_side, next: page.next });
       setMore({ status: "idle" });
     } catch (e) {
       setMore({ status: "failed", message: failureOf(e) });
     }
-  }, [show]);
+  }, [show, marketsPath]);
+
+  /** Each change of a filter is a new address, so the feed can be linked as it is shown. */
+  const choose = useCallback((next: FeedFilters) => router.replace(pageHref(next), { scroll: false }), [router]);
 
   return (
     <div className={styles.feed}>
@@ -169,15 +211,17 @@ export function Feed({ tab }: { tab: FeedTab }) {
       {state.status === "loaded" && (
         <>
           <nav className={styles.tabs} aria-label="Show">
-            <Link href={ROUTES.feed} aria-current={tab === "markets" ? "page" : undefined} className={styles.tab}>
+            <Link href={pageHref(filters)} aria-current={tab === "markets" ? "page" : undefined} className={styles.tab}>
               Markets <span className={styles.count}>{formatInteger(state.data.total)}</span>
             </Link>
-            <Link href={ROUTES.feedStrategies} aria-current={tab === "strategies" ? "page" : undefined} className={styles.tab}>
+            <Link href={pageHref(filters, "strategies")} aria-current={tab === "strategies" ? "page" : undefined} className={styles.tab}>
               Strategies <span className={styles.count}>{formatInteger(state.data.strategies.length)}</span>
             </Link>
           </nav>
           {tab === "markets" ? (
             <section aria-label="Markets" className={styles.section}>
+              <FilterBar filters={filters} flags={state.data.marketFlags} onChange={choose} />
+              <FilterLine filters={filters} data={state.data} />
               {held.length > 0 && (
                 <p>
                   <button type="button" onClick={releaseHeld}>
@@ -193,7 +237,11 @@ export function Feed({ tab }: { tab: FeedTab }) {
                   if (!e.currentTarget.contains(e.relatedTarget as Node | null)) releaseHeld();
                 }}
               >
-                <MarketsTable markets={state.data.markets} rowClass={(m) => (fresh.has(m.address) ? styles.fresh : undefined)} />
+                {state.data.markets.length === 0 && filtered ? (
+                  <p className={styles.empty}>No market matches these filters. Loosen one, or clear them all.</p>
+                ) : (
+                  <MarketsTable markets={state.data.markets} flagDescriptions={descriptionsOf(state.data.marketFlags)} rowClass={(m) => (fresh.has(m.address) ? styles.fresh : undefined)} />
+                )}
               </div>
               {state.data.next && (
                 <div className={styles.more}>
@@ -210,7 +258,7 @@ export function Feed({ tab }: { tab: FeedTab }) {
             </section>
           ) : (
             <section aria-label="Strategies" className={styles.section}>
-              <StrategiesTable strategies={state.data.strategies} />
+              <StrategiesTable strategies={state.data.strategies} flagDescriptions={descriptionsOf(state.data.strategyFlags)} />
             </section>
           )}
         </>
@@ -219,7 +267,34 @@ export function Feed({ tab }: { tab: FeedTab }) {
   );
 }
 
-function StrategiesTable({ strategies }: { strategies: Strategy[] }) {
+/** The line under the filters: what is listed, a link that clears them, and the note on markets with no SOL side. */
+function FilterLine({ filters, data }: { filters: FeedFilters; data: Loaded }) {
+  const line = describeFilters(filters, { total: data.total, matching: data.matching, noSolSide: data.noSolSide });
+  return (
+    <p className={styles.line} aria-live="polite">
+      {line.text}
+      {line.solNote && <> {line.solNote}</>}
+      {line.clear && (
+        <>
+          {" "}
+          <Link href={pageHref(NO_FILTERS)} scroll={false}>
+            Clear the filters
+          </Link>
+        </>
+      )}
+    </p>
+  );
+}
+
+/** Who can upgrade a strategy's program, in a row. */
+function upgradedBy(s: Strategy) {
+  if (s.upgrade_authority) return <>Upgradeable by <ShortAddress address={s.upgrade_authority} /></>;
+  if (s.flags.includes("frozen")) return "Frozen";
+  if (s.flags.includes("program-missing")) return "No program deployed";
+  return <span className={table.none}>Not read yet</span>;
+}
+
+function StrategiesTable({ strategies, flagDescriptions }: { strategies: Strategy[]; flagDescriptions: ReadonlyMap<string, string> }) {
   return (
     <div className={table.scroll}>
       <table className={table.table}>
@@ -230,6 +305,8 @@ function StrategiesTable({ strategies }: { strategies: Strategy[] }) {
             <th scope="col" className={table.num}>
               Markets
             </th>
+            <th scope="col">This version</th>
+            <th scope="col">Trust flags</th>
           </tr>
         </thead>
         <tbody>
@@ -237,7 +314,7 @@ function StrategiesTable({ strategies }: { strategies: Strategy[] }) {
             <tr key={s.program} className={table.row}>
               <td className={table.main}>
                 <Link href={ROUTES.strategy(s.program)} className={table.rowLink}>
-                  <ShortAddress address={s.program} />
+                  <StrategyName program={s.program} name={s.name} metadata={s.metadata.status} lines />
                 </Link>
               </td>
               <td>
@@ -247,6 +324,15 @@ function StrategiesTable({ strategies }: { strategies: Strategy[] }) {
               <td className={table.num}>
                 <span className={table.label}>Markets</span>
                 {formatInteger(s.market_count)}
+              </td>
+              <td>
+                <span className={table.label}>This version</span>
+                {s.current_version ? `Slot ${formatInteger(s.current_version.deploy_slot)}` : <span className={table.none}>Not read yet</span>}
+                <span className={table.sub}>{upgradedBy(s)}</span>
+              </td>
+              <td className={table.wide}>
+                <span className={table.label}>Trust flags</span>
+                <FlagList flags={s.flags} descriptions={flagDescriptions} />
               </td>
             </tr>
           ))}

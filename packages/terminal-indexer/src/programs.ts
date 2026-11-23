@@ -4,8 +4,8 @@
 // of the last deploy, and the upgrade authority as an `Option<Pubkey>`. Reading only that header for
 // 100 programs at once is the watch; a changed slot is a new version, whose whole executable is then
 // read once, and whose transaction is found in the ProgramData account's history.
-import { BPF_LOADER_UPGRADEABLE_PROGRAM_ADDRESS, PROGRAMDATA_METADATA_LEN, programDataPda } from "@pipeline-sol/sdk";
-import { address, getBase58Encoder } from "@solana/kit";
+import { BPF_LOADER_UPGRADEABLE_PROGRAM_ADDRESS, inspectProgram, PROGRAMDATA_METADATA_LEN, programDataPda, type Flag } from "@pipeline-sol/sdk";
+import { address, createSolanaRpc, getAddressDecoder, getBase58Encoder } from "@solana/kit";
 import { accountKeysOf, type CompiledInstruction, type RawTransaction } from "./decode";
 import type { Cursor, HistorySource } from "./history";
 import { rpcCall } from "./rpc";
@@ -25,8 +25,11 @@ const EXTENDING_INSTRUCTIONS = new Set([6, 9]);
 
 type AccountInfo = { owner: string; data: [string, "base64"] } | null;
 
-/** Where a program's code is, and the slot it was last deployed in. */
-export type DeploySlot = { programData: string; deploySlot: bigint };
+/** Where a program's code is, the slot it was last deployed in, and who can upgrade it (null: frozen). */
+export type DeploySlot = { programData: string; deploySlot: bigint; upgradeAuthority: string | null };
+
+/** A program's facts as Pipeline's SDK words them: its upgrade authority, and `upgradeable`, `frozen` or `program-missing`. */
+export type ProgramFacts = { upgradeAuthority: string | null; flags: Flag[] };
 
 const bytesOf = (info: AccountInfo) => (info ? Uint8Array.from(Buffer.from(info.data[0], "base64")) : null);
 
@@ -36,6 +39,14 @@ function slotOf(info: AccountInfo): bigint | null {
   if (!info || !data || info.owner !== BPF_LOADER_UPGRADEABLE_PROGRAM_ADDRESS || data.length < 12) return null;
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   return view.getUint32(0, true) === PROGRAMDATA_TAG ? view.getBigUint64(4, true) : null;
+}
+
+const addressDecoder = getAddressDecoder();
+
+/** The upgrade authority in a ProgramData header, an `Option<Pubkey>` at byte 12, or null when there is none. */
+function authorityOf(info: AccountInfo): string | null {
+  const data = bytesOf(info);
+  return data && data.length >= PROGRAMDATA_METADATA_LEN && data[12] === 1 ? addressDecoder.decode(data.subarray(13, 45)) : null;
 }
 
 /**
@@ -54,11 +65,31 @@ export async function readDeploySlots(rpcUrl: string, programs: string[]): Promi
       { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: PROGRAMDATA_METADATA_LEN } },
     ]);
     chunk.forEach((pd, j) => {
-      const deploySlot = slotOf(answer.value[j] ?? null);
-      slots.set(wanted[i + j]!, deploySlot === null ? null : { programData: pd, deploySlot });
+      const info = answer.value[j] ?? null;
+      const deploySlot = slotOf(info);
+      slots.set(wanted[i + j]!, deploySlot === null ? null : { programData: pd, deploySlot, upgradeAuthority: authorityOf(info) });
     });
   }
   return slots;
+}
+
+/**
+ * Each program's facts as Pipeline's SDK's `inspectProgram` gives them. A program the upgradeable
+ * loader deployed (every Pipeline strategy so far) is told from the header the watch already read:
+ * upgradeable while it has an upgrade authority, frozen once it has none. Any other (closed, or
+ * another loader's) is asked of the SDK itself, which reads its account.
+ */
+export async function readProgramFacts(rpcUrl: string, slots: Map<string, DeploySlot | null>): Promise<Map<string, ProgramFacts>> {
+  const facts = new Map<string, ProgramFacts>();
+  for (const [program, slot] of slots) {
+    if (slot) {
+      facts.set(program, { upgradeAuthority: slot.upgradeAuthority, flags: [slot.upgradeAuthority ? "upgradeable" : "frozen"] });
+      continue;
+    }
+    const inspected = await inspectProgram(createSolanaRpc(rpcUrl), address(program), { hashExecutable: false });
+    facts.set(program, { upgradeAuthority: inspected.upgradeAuthority, flags: inspected.flags });
+  }
+  return facts;
 }
 
 /** A version's executable: its code, and its hash as Pipeline's SDK and `solana-verify get-program-hash` compute it. */

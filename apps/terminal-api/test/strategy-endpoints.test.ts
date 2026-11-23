@@ -151,7 +151,7 @@ describe("GET /v1/markets?strategy=", () => {
     const page = MarketsPage.parse((await get(`/v1/markets?strategy=${STRATEGY}`)).body);
     expect(page.markets.map((m) => m.address)).toEqual([MARKET]);
     expect(page.total).toBe(1);
-    expect(MarketsPage.parse((await get(`/v1/markets?strategy=${UNKNOWN}`)).body)).toEqual({ markets: [], total: 0, next: null });
+    expect(MarketsPage.parse((await get(`/v1/markets?strategy=${UNKNOWN}`)).body)).toEqual({ markets: [], total: 0, matching: 0, no_sol_side: 0, flags_present: [], next: null });
   });
 });
 

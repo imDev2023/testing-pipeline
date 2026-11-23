@@ -11,6 +11,7 @@ import { createDb } from "terminal-db";
 import { logsSubscribeRequest, parseLogsMessage, RpcError, type IndexResult } from "terminal-indexer";
 import type { Bindings } from "./env";
 import { IndexerCore, ROUTER } from "./indexerCore";
+import { metadataFetchFor } from "./metadataFetch";
 import { LiveSocket, type LiveSocketState, type LiveStatus } from "./liveSocket";
 
 /** `GET /v1/indexer`: how the indexer stands, with no secret in it. */
@@ -46,7 +47,7 @@ export class Indexer extends DurableObject<Bindings> {
   private draining: Promise<void> | null = null;
 
   private indexer(): IndexerCore {
-    this.core ??= new IndexerCore({ rpcUrl: this.env.RPC_URL, openDb: () => createDb(this.env.HYPERDRIVE.connectionString) });
+    this.core ??= new IndexerCore({ rpcUrl: this.env.RPC_URL, openDb: () => createDb(this.env.HYPERDRIVE.connectionString), metadataFetch: metadataFetchFor(this.env) });
     return this.core;
   }
 
@@ -196,6 +197,28 @@ export class Indexer extends DurableObject<Bindings> {
       throw e;
     }
     return this.status();
+  }
+
+  /** Fetches every strategy's metadata again, every hour. */
+  async refetchMetadata(version?: string): Promise<void> {
+    this.checkVersion(version);
+    try {
+      await this.indexer().refetchMetadata();
+    } catch (e) {
+      this.failed("fetching every strategy's metadata again", e);
+      throw e;
+    }
+  }
+
+  /** Reads every mint again, every hour. */
+  async refreshMints(version?: string): Promise<void> {
+    this.checkVersion(version);
+    try {
+      await this.indexer().refreshMints();
+    } catch (e) {
+      this.failed("reading every mint again", e);
+      throw e;
+    }
   }
 
   /** Drops candles past their retention, once a day. */

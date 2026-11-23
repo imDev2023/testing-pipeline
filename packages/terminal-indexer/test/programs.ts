@@ -28,14 +28,22 @@ export async function programAddress(i: number): Promise<string> {
   return getAddressDecoder().decode(bytes);
 }
 
-/** `UpgradeableLoaderState::ProgramData { slot, upgrade_authority_address: Some(AUTHORITY) }`, then the executable. */
-export function programDataAccount(slot: bigint, executable: Uint8Array): FakeAccount {
+/** The upgrade authority the tests' programs have, unless made frozen. */
+export const UPGRADE_AUTHORITY = AUTHORITY;
+
+/**
+ * `UpgradeableLoaderState::ProgramData { slot, upgrade_authority_address }`, then the executable;
+ * the authority is UPGRADE_AUTHORITY unless another is named, or null for a frozen program.
+ */
+export function programDataAccount(slot: bigint, executable: Uint8Array, authority: string | null = AUTHORITY): FakeAccount {
   const data = new Uint8Array(45 + executable.length);
   const view = new DataView(data.buffer);
   view.setUint32(0, 3, true);
   view.setBigUint64(4, slot, true);
-  data[12] = 1;
-  data.set(getAddressEncoder().encode(address(AUTHORITY)), 13);
+  if (authority) {
+    data[12] = 1;
+    data.set(getAddressEncoder().encode(address(authority)), 13);
+  }
   data.set(executable, 45);
   return { owner: BPF_LOADER_UPGRADEABLE_PROGRAM_ADDRESS, data };
 }

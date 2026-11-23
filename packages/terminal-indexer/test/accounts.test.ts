@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { createDb, marketMints, markets, mints, type Db } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { indexTransactions, metadataAddress, pipelineHandler, refreshMarkets, type RawTransaction } from "../src/index";
+import { indexTransactions, metadataAddress, pipelineHandler, refreshMarkets, refreshMints, type RawTransaction } from "../src/index";
 import { fakeRpc, type FakeRpc } from "./fakeRpc";
 
 const created = JSON.parse(readFileSync(`${import.meta.dirname}/fixtures/marketCreated.json`, "utf8")) as RawTransaction;
@@ -107,8 +107,10 @@ it("reads a new market's vaults, its state and what each vault holds, and each o
       data: Buffer.from(rpc.accounts.get(TOKEN)!.data).toString("base64"),
       metadataData: Buffer.from([4, 5, 6]).toString("base64"),
       readSlot: 525_200_000n,
+      flags: ["token-2022", "mint-authority"],
+      readEpoch: 812n,
     },
-    expect.objectContaining({ address: WSOL, readable: true, tokenProgram: TOKEN_PROGRAM, decimals: 9, supply: "0", mintAuthority: null, metadataData: null }),
+    expect.objectContaining({ address: WSOL, readable: true, tokenProgram: TOKEN_PROGRAM, decimals: 9, supply: "0", mintAuthority: null, metadataData: null, flags: [], readEpoch: 812n }),
   ]);
 });
 
@@ -127,5 +129,24 @@ it("keeps a mint whose account is missing as unreadable", async () => {
   await client.db.update(marketMints).set({ mint: missing }).where(eq(marketMints.mint, TOKEN));
   await refreshMarkets(client.db, rpc.url, [MARKET]);
   const [row] = await client.db.select().from(mints).where(eq(mints.address, missing));
-  expect(row).toMatchObject({ readable: false, tokenProgram: null, decimals: null });
+  expect(row).toMatchObject({ readable: false, tokenProgram: null, decimals: null, flags: ["mint-unreadable"] });
+});
+
+it("reads again a mint read before its flags were kept", async () => {
+  await client.db.update(mints).set({ flags: null }).where(eq(mints.address, WSOL));
+  await refreshMarkets(client.db, rpc.url, [MARKET]);
+  const [row] = await client.db.select().from(mints).where(eq(mints.address, WSOL));
+  expect(row?.flags).toEqual([]);
+});
+
+it("reads every mint again on the hourly refresh, so an authority given up or a freeze authority set shows", async () => {
+  rpc.accounts.set(WSOL, { owner: TOKEN_PROGRAM, data: mintAccount({ supply: 5n, decimals: 9, mintAuthority: null, freezeAuthority: AUTHORITY }) });
+  rpc.epoch = 813;
+  rpc.slot = 525_300_000;
+  rpc.requests.length = 0;
+  expect(await refreshMints(client.db, rpc.url)).toBe(3);
+  const [row] = await client.db.select().from(mints).where(eq(mints.address, WSOL));
+  expect(row).toMatchObject({ supply: "5", freezeAuthority: AUTHORITY, flags: ["freeze-authority"], readEpoch: 813n, readSlot: 525_300_000n });
+  // One read of the mints and their metadata accounts, and one of the epoch.
+  expect(rpc.requests.map((r) => r.method).sort()).toEqual(["getEpochInfo", "getMultipleAccounts"]);
 });

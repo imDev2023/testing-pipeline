@@ -1,0 +1,112 @@
+/* Facts: name beside value with a hairline between rows, one under the other at the width theme.css
+   names (--fact-columns). */
+.facts {
+  margin: 0;
+  display: grid;
+}
+
+.fact {
+  display: grid;
+  grid-template-columns: var(--fact-columns);
+  gap: 2px 16px;
+  padding: 7px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.fact:first-child {
+  border-top: 0;
+}
+
+.fact dt {
+  color: var(--ink2);
+}
+
+.fact dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.part {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+
+.partTitle {
+  font-size: 1em;
+}
+
+/* A line under a value: the metadata's link, as plain text. */
+.sub {
+  display: block;
+  color: var(--ink3);
+  font-size: 0.92em;
+}
+
+.note {
+  color: var(--ink3);
+}
+
+.mint {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.mint:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.mintTitle {
+  margin: 0;
+  font-size: 1em;
+  font-weight: var(--strong-weight);
+}
+
+.extensions {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The facts panel's parts side by side while it has the band to itself, one under another when narrow. */
+.parts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 24px 32px;
+  align-items: start;
+}
+
+.lines {
+  display: grid;
+  gap: 4px;
+}
+
+.codes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A strategy's facts: its program's on the wider side, its flags and instructions stacked beside them. */
+.split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 24px 32px;
+  align-items: start;
+}
+
+.stack {
+  display: grid;
+  gap: 24px;
+  align-content: start;
+  min-width: 0;
+}

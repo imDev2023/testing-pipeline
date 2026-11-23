@@ -126,7 +126,8 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
   A name is every prefix of the letters and digits after "Instruction: ", since the next string in the bytes can begin with any letter (devnet's outside builder compiles in "SetMetadatafactory"), and the longest whose discriminator is in the code is kept; a discriminator counts side by side, or split over two instruction slots as a 64-bit immediate, as `match` arms compile it (`PIPESCOPE-115`).
 - **Events for what follows**: a new strategy, a new market, a new strategy version and a router upgrade are each written once to one outbox table, `outbox_events`, in the order seen, keyed so the same thing seen twice (by its event and by the snapshot) is one event; Canary's runs and the Telegram bot's queue each read on from a cursor of their own in `outbox_cursors` (`readOutbox`, `ackOutbox` in `packages/terminal-db`), so a reader that fails reads the event again (`PIPESCOPE-116`).
 - **Market accounts**: after each event or custom action that touches a market, its market state and vaults are re-read; there are no account subscriptions.
-- **Mints**: when a market brings a mint not yet seen, its mint account and on-chain token metadata are read once and stored, for the facts (Pipeline's trust flags) and for symbols and images, which `pipescope.md` treats as untrusted.
+- **Mints**: when a market brings a mint not yet seen, its mint account and on-chain token metadata are read and stored, for the facts (Pipeline's trust flags, worked out with the SDK's `decodeMint` at the epoch read in) and for symbols and images, which `pipescope.md` treats as untrusted; every mint is read again every hour, since its authorities, supply and extensions can change (`PIPESCOPE-117`).
+- **Who can upgrade a program**: the ProgramData watch reads it from the same 45-byte header as the slot, every minute, and writes it to `program_facts` with the program's flag (`upgradeable`, `frozen` or `program-missing`) when it changes, which giving up an authority does without moving the slot (`PIPESCOPE-117`).
 - **Unknown or failed decodes** are kept with the transaction, and re-indexing transactions first indexed by older code is Top-pad's `reindexTransactions`.
 - **Deploys**: an object kept awake goes on running the code from before a deploy, so the indexer resets itself whenever the Worker calling it runs another version (Top-pad's `wake`).
 - **Backfill**: the router's whole history (185 transactions on 2026-11-09) is indexed as soon as the indexer first runs, because devnet history may be reset and Postgres must be the record.
@@ -134,7 +135,7 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
 - **Parity checks**: Pipeline's hosted devnet API (`https://pipeline-devnet.up.railway.app`, `docs/API.md` in Pipeline's repo) is a test oracle, never a source ([ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md)), and the devnet tests lean on it wherever it answers the same question (`PIPESCOPE-93`):
   - trades, per market and per trader, equal its `/v1/markets/{market}/trades` and `/v1/traders/{address}/trades`;
   - candles, for the lengths it serves, equal its `/v1/markets/{market}/candles` for the same base and quote;
-  - the trust flags of every strategy, market and mint equal its `flags`, apart from `checks-passed`, `checks-failed` and `checks-pending`, which record its own `pipeline-check` runs; Aviary shows its own Canary `conformance` result instead, and a test checks the two agree for the same code hash;
+  - the trust flags of every strategy, market and mint equal its `flags`, apart from `checks-passed`, `checks-failed` and `checks-pending`, which record its own `pipeline-check` runs (Aviary shows its own Canary `conformance` result instead, and a test checks the two agree for the same code hash), and `conformance-report` and `conformance-stale`, which need the report a strategy's metadata links fetched, a URL found inside a document (`PIPESCOPE-36`, `PIPESCOPE-93`); and each strategy's metadata status equals its `metadata_status`;
   - a quote equals its `/v1/quote` for the same market, mints, amount and integrator fee;
   - a prepared swap of an unhooked mint carries the same router instruction as its `POST /v1/swap-transaction`; for a hooked input mint, which it refuses, our own hook accounts are checked against the mint's `ExtraAccountMetaList` instead.
 - **Restart test**: Top-pad's pattern (`tests/devnet/src/indexer-restart.test.ts`): stop the indexer, make swaps with this project's devnet keys (`~/.config/testing-pipeline/devnet/`), restart it, and check the indexed trades equal the swaps decoded from the chain.
@@ -241,8 +242,10 @@ What the checks are, how a run copies a market and when runs happen are in [`pip
 
 ## Metadata fetcher
 
-- Runs in `terminal-api` on `StrategyRegistered`, on `MetadataUpdated`, and every hour, because the document behind an unchanged URI can change with no event.
-- Limits, in the config module (`PIPESCOPE-36`): `https:` only, at most 64 KB, a JSON content type, a 5 s timeout, at most 3 redirects, each `https:`; it never fetches a URL found inside the document.
+- Runs in `terminal-api` on `StrategyRegistered`, on `MetadataUpdated`, when the registry snapshot finds a strategy, and every hour, because the document behind an unchanged URI can change with no event.
+- Limits, in the config module (`PIPESCOPE-36`): `https:` only, at most 64 KB, the type `application/json`, any `+json` type or `text/plain` (GitHub serves raw files and gists, where most devnet metadata lives, as `text/plain`), a 5 s timeout over the whole fetch, at most 3 redirects, each `https:`, each checked before it is followed; it never fetches a URL found inside the document.
+- Its outcome is the status Pipeline's SDK gives (`PIPESCOPE-118`): what could not be fetched is `metadata-unreachable`; a document of another content type, not JSON, or refused by the validator is `metadata-invalid`.
+  Each outcome is a row of `metadata_snapshots`, a new row only when the URI, the status or the document's hash changes, with the document as validated (for the forms) and its author text as the normaliser leaves it (for the pages and the explainer).
 - The same fetcher, under the same limits apart from the size, fetches the image a mint's on-chain token metadata names, once per URI and again when the URI changes, and keeps it only as [`pipescope-screens.md`](pipescope-screens.md) (Token names and images) allows.
 - The document is validated with Pipeline's `parse_strategy_metadata` (the TypeScript SDK's port), giving the `metadata-missing`, `metadata-unreachable` or `metadata-invalid` fact, then normalised as `pipescope-explainer.md` says, and stored with its hash.
 - A changed hash is a metadata change: it makes a new explanation key, pending approval.
@@ -275,6 +278,7 @@ Each is a named constant; the pages and the Telegram bot read what they show fro
 | Live-room batching | 100 ms | `PIPESCOPE-31` |
 | Fast path: confirmation poll | every 300 ms | `PIPESCOPE-33` |
 | Metadata fetcher limits and re-fetch interval | as [Metadata fetcher](#metadata-fetcher), every hour | `PIPESCOPE-36` |
+| Every mint read again | every hour | `PIPESCOPE-117` |
 | Quote mint order | wrapped SOL, then the cluster's USDC, then the later mint of the pair | `PIPESCOPE-74` |
 | Token image types and size | PNG, JPEG or WebP, at most 1 MB | `PIPESCOPE-82` |
 | Canary's schedule | as [`pipescope-canary.md`](pipescope-canary.md), When Canary runs | `CANARY-22`, `CANARY-23` |

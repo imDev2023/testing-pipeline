@@ -66,3 +66,16 @@ export function swapTransaction(spec: SwapSpec): RawTransaction {
   raw.transaction.signatures[0] = signatureFor(spec.id);
   return raw;
 }
+
+/** A successful router transaction holding one `MetadataUpdated` event: the strategy's metadata URI set to `uri`. */
+export function metadataUpdatedTransaction({ id, slot, strategy, uri }: { id: number; slot: number; strategy: string; uri: string }): RawTransaction {
+  const raw = structuredClone(fixture);
+  const keys = accountKeysOf(raw);
+  const data = base58.decode(encodeEvent({ type: "MetadataUpdated", data: { strategy: address(strategy), metadataUri: uri } }));
+  for (const group of raw.meta!.innerInstructions!) for (const ix of group.instructions) if (keys[ix.programIdIndex] === PIPELINE_PROGRAM_ADDRESS) ix.data = data;
+  raw.slot = slot;
+  raw.blockTime = 1_795_000_000 + slot;
+  raw.transactionIndex = 0;
+  raw.transaction.signatures[0] = signatureFor(id);
+  return raw;
+}

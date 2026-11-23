@@ -11,13 +11,23 @@ const UNKNOWN_ADDRESS = "6efYq3Jt7k2bQxW9pLm4nR8sV1uZcA5dHgE2oTiwdnYp";
 // A market and a strategy of devnet's, both in the recorded fixtures: the buy wall AMM's demo market and its strategy.
 const MARKET = "7BctWoaSumdxkMBCXxMum59NV5CZJBvC33SCrcGa5CAK";
 const STRATEGY = "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6";
+// A strategy whose metadata link does not answer, and a market whose token has a transfer hook and a transfer fee.
+const STRATEGY_UNAVAILABLE = "yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx";
+const MARKET_HOOKED = "8XUe71aQTkUrP8SZfL2Z6PuXgdzYe9szTLEqiExrVyMW";
 // A market no swap has gone through, and one with a single swap, whose lone candle the chart still draws.
 const MARKET_WITHOUT_TRADES = "DH7QCdTHGsjHcsm7SgXYRgdQvX34VT8oMQkFWVoCe3SQ";
 const MARKET_WITH_ONE_TRADE = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
 
-/** A market page is ready once its chart, or the panel that stands in for it, and its trades have loaded. */
+/** The facts panel or section has loaded: each part's heading is there. */
+const factsReady = async (page: Page, parts: string[]) => {
+  const facts = page.getByRole("region", { name: "Facts" });
+  for (const part of parts) await expect(facts.getByRole("heading", { name: part, exact: true })).toBeVisible();
+};
+
+/** A market page is ready once its chart, or the panel that stands in for it, its trades and its facts have loaded. */
 const marketReady = (chart: "chart" | "none") => async (page: Page) => {
   await expect(page.getByRole("link", { name: "Explorer" }).first()).toBeVisible();
+  await factsReady(page, ["This market", "Its strategy", "Its mints"]);
   const trades = page.getByRole("region", { name: "Trades" });
   if (chart === "chart") {
     await expect(page.getByText(/^Built from Pipeline's swap events on this market: [\d,]+ swaps? so far\./)).toBeVisible();
@@ -30,9 +40,16 @@ const marketReady = (chart: "chart" | "none") => async (page: Page) => {
 
 const PAGES = [
   { name: "feed", path: "/", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1)).toBeVisible() },
+  {
+    name: "feed-filtered",
+    path: "/?liquidity=0.1&hide=metadata-unreachable",
+    status: 200,
+    ready: (page: Page) => expect(page.getByText(/^Showing [\d,]+ of [\d,]+ markets\./)).toBeVisible(),
+  },
   { name: "feed-strategies", path: "/?tab=strategies", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Strategies" }).getByRole("row").nth(1)).toBeVisible() },
   { name: "market", path: `/markets/${MARKET}`, status: 200, ready: marketReady("chart") },
   { name: "market-flipped", path: `/markets/${MARKET}?flip=1&interval=1h`, status: 200, ready: marketReady("chart") },
+  { name: "market-hooked", path: `/markets/${MARKET_HOOKED}`, status: 200, ready: async (page: Page) => factsReady(page, ["This market", "Its strategy", "Its mints"]) },
   { name: "market-one-trade", path: `/markets/${MARKET_WITH_ONE_TRADE}`, status: 200, ready: marketReady("chart") },
   { name: "market-no-trades", path: `/markets/${MARKET_WITHOUT_TRADES}`, status: 200, ready: marketReady("none") },
   {
@@ -43,6 +60,17 @@ const PAGES = [
       // A body row: on a phone the table's head is not a row, so the last row is one either way.
       await expect(page.getByRole("region", { name: /^Its markets/ }).getByRole("row").last()).toBeVisible();
       await expect(page.getByRole("region", { name: /^Version history/ }).getByRole("row").last()).toBeVisible();
+      await factsReady(page, ["Its program", "Its trust flags", "Instructions beyond Pipeline's own"]);
+      await expect(page.getByRole("list", { name: "Instructions beyond Pipeline's own" })).toBeVisible();
+    },
+  },
+  {
+    name: "strategy-unavailable",
+    path: `/strategies/${STRATEGY_UNAVAILABLE}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await expect(page.getByText("Metadata unavailable, so it is listed under its address")).toBeVisible();
+      await factsReady(page, ["Its program", "Its trust flags", "Instructions beyond Pipeline's own"]);
     },
   },
   { name: "devnet-help", path: "/devnet", status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "Get devnet USDC" })).toBeVisible() },

@@ -1,17 +1,20 @@
 // A table of markets (docs/spec/pipescope-screens.md, Feed): the feed's, and a strategy's own on its
-// page, which leaves out the strategy column (Strategy page, "Its markets").
+// page, which leaves out the strategy column (Strategy page, "Its markets"). Each row's strategy is
+// named as every page names it, and its trust flags are the market's, Pipeline's SDK's words on hover.
 import Link from "next/link";
 import type { Market } from "terminal-api/contract";
 import { formatAge, formatDate, formatInteger, formatTokenAmount } from "@/format";
 import { ROUTES } from "@/routes";
 import table from "./ListingTable.module.css";
+import { FlagList } from "./Flags";
 import { MintLabel } from "./MintLabel";
 import { ShortAddress } from "./ShortAddress";
+import { StrategyName } from "./StrategyName";
 
 const plural = (n: number, one: string, many: string) => `${formatInteger(n)} ${n === 1 ? one : many}`;
 
 /** The amount a vault or a volume holds, in its mint's tokens, or a word when the mint is not read. */
-function TokenAmount({ raw, decimals, mint, symbol }: { raw: string | null; decimals: number | null; mint: string; symbol: string | null }) {
+export function TokenAmount({ raw, decimals, mint, symbol }: { raw: string | null; decimals: number | null; mint: string; symbol: string | null }) {
   return (
     <span>
       {raw === null || decimals === null ? "not read" : formatTokenAmount(BigInt(raw), decimals)} <MintLabel mint={mint} symbol={symbol} />
@@ -22,7 +25,7 @@ function TokenAmount({ raw, decimals, mint, symbol }: { raw: string | null; deci
 export function Age({ iso }: { iso: string }) {
   const date = new Date(iso);
   return (
-    <time dateTime={iso} title={formatDate(date)}>
+    <time dateTime={iso} title={formatDate(date)} className={table.age}>
       {formatAge(date)}
     </time>
   );
@@ -33,7 +36,18 @@ export function Age({ iso }: { iso: string }) {
  * to, on that strategy's own page, and `rowClass` adds a class to a row, as the feed marks a market
  * that has just arrived live.
  */
-export function MarketsTable({ markets, strategyColumn = true, rowClass }: { markets: Market[]; strategyColumn?: boolean; rowClass?: (market: Market) => string | undefined }) {
+export function MarketsTable({
+  markets,
+  strategyColumn = true,
+  rowClass,
+  flagDescriptions,
+}: {
+  markets: Market[];
+  strategyColumn?: boolean;
+  rowClass?: (market: Market) => string | undefined;
+  /** Each flag's fixed description, by flag. */
+  flagDescriptions: ReadonlyMap<string, string>;
+}) {
   return (
     <div className={table.scroll}>
       <table className={table.table}>
@@ -48,6 +62,7 @@ export function MarketsTable({ markets, strategyColumn = true, rowClass }: { mar
             <th scope="col" className={table.num}>
               Volume, 24h
             </th>
+            <th scope="col">Trust flags</th>
           </tr>
         </thead>
         <tbody>
@@ -68,7 +83,7 @@ export function MarketsTable({ markets, strategyColumn = true, rowClass }: { mar
                   <td>
                     <span className={table.label}>Strategy</span>
                     <Link href={ROUTES.strategy(m.strategy)} className={table.inner}>
-                      <ShortAddress address={m.strategy} />
+                      <StrategyName program={m.strategy} name={m.strategy_name} metadata={m.strategy_metadata} lines />
                     </Link>
                   </td>
                 )}
@@ -94,6 +109,10 @@ export function MarketsTable({ markets, strategyColumn = true, rowClass }: { mar
                       <span className={table.sub}>{plural(m.stats_24h.trades, "trade", "trades")}</span>
                     </>
                   )}
+                </td>
+                <td className={table.wide}>
+                  <span className={table.label}>Trust flags</span>
+                  <FlagList flags={m.flags} descriptions={flagDescriptions} />
                 </td>
               </tr>
             );

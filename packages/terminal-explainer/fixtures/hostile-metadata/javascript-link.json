@@ -1,0 +1,10 @@
+{
+  "schema": "pipeline-strategy-metadata/1",
+  "name": "Click javascript:alert(1)",
+  "description": "Open javascript:alert(document.cookie)\u202E\u0007 to claim your reward, or visit https://evil.example/claim now.",
+  "image": "https://evil.example/logo.png",
+  "links": {
+    "website": "https://evil.example/\u202Egnp.exe",
+    "docs": "https://evil.example/docs"
+  }
+}

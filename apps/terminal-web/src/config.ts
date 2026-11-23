@@ -44,7 +44,10 @@ export const LIVE_CANDLE_REFRESH_MS = 1_000;
 export const TRADES_SHOWN = 40;
 export const FEED_ROWS_PER_LOAD = 50;
 
-/** The feed's filters: each offers these thresholds, measured on a market's SOL side. */
+/**
+ * The feed's filters (PIPESCOPE-72): each offers these steps, liquidity and volume measured on a
+ * market's SOL side, in SOL; every filter starts off (PIPESCOPE-05).
+ */
 export const FEED_FILTERS = {
   liquiditySol: [0.1, 1, 10],
   volume24hSol: [0.01, 0.1, 1],

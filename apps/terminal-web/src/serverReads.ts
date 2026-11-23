@@ -3,7 +3,7 @@
 // its title read the API once.
 import { notFound } from "next/navigation";
 import { cache } from "react";
-import { Market, Strategy } from "terminal-api/contract";
+import { Market, StrategyDetail } from "terminal-api/contract";
 import { ApiFailure, getFromApi } from "./api";
 
 /** The thing at an address, the 404 page when the API knows none, or the failure to show. */
@@ -17,4 +17,4 @@ async function readOrNotFound<T>(read: () => Promise<T>): Promise<{ ok: true; va
 }
 
 export const readMarket = cache((address: string) => readOrNotFound(() => getFromApi(`/v1/markets/${encodeURIComponent(address)}`, Market)));
-export const readStrategy = cache((program: string) => readOrNotFound(() => getFromApi(`/v1/strategies/${encodeURIComponent(program)}`, Strategy)));
+export const readStrategy = cache((program: string) => readOrNotFound(() => getFromApi(`/v1/strategies/${encodeURIComponent(program)}`, StrategyDetail)));

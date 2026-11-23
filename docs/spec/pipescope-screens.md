@@ -181,7 +181,7 @@ The feed is one table of markets, newest first, with strategies on a second tab.
 - Every filter starts off ([`pipescope.md`](pipescope.md), Listing).
   With none on, the line under them reads "All 61 markets are listed. Nothing is curated or hidden."
   With any on, it reads "Showing 12 of 61 markets." with a link that clears them.
-- The filters live in the page's address, so a filtered feed can be linked.
+- The filters live in the page's address, so a filtered feed can be linked: `liquidity` and `volume` hold a step in SOL, `created` holds `1h`, `24h` or `7d`, and `hide` holds flags separated by commas; any other value is ignored (`PIPESCOPE-119`).
 - Liquidity and volume are measured on a market's SOL side, since there are no dollar prices to compare other mints by.
   While either is on, a market with no SOL side is left out, and the line under the filters says so.
   On 2026-11-10 that was 28 of devnet's 61 markets.
@@ -317,6 +317,7 @@ Asking to swap never opens the wallet straight away; the trader first sees what 
   3. **Its strategy**: the program, who can upgrade it, the current version's slot, the verified build or "None: source not verified", the metadata's status, and Pipeline's trust flags with their fixed descriptions.
   4. **Its mints**: for each, where its name comes from, its token program, decimals and supply, its mint and freeze authorities, its extensions, what share of the supply this market's vault holds, and its trust flags.
      SOL and USDC read "Named by Aviary. It names SOL and USDC itself, and no other token."
+- Until the explanation and the forms land beside it, the facts panel has the lower band to itself, at its full width, its parts side by side and one under another on narrow screens (`PIPESCOPE-121`).
 - **After an upgrade** ([`pipescope.md`](pipescope.md), When a strategy is upgraded): the notice "Upgraded on <date>; tests and explanation for this version are pending." sits under the page's head, and Canary's part and the explanation each read as pending until the new version has its own.
 
 ### Arriving from Telegram
@@ -335,7 +336,7 @@ None of it was in the prototype, which was shown before that spec landed.
 
 From top to bottom, with the explanation beside the facts at desktop width.
 
-1. **Head**: the strategy's name and short address, or its short address and "Metadata unavailable, so it is listed under its address"; how many markets it has; when it was registered; an explorer link; and "Get alerts in Telegram" once the bot exists.
+1. **Head**: the strategy's name and short address, with its description under the name, both in the author's style (`PIPESCOPE-120`), or its short address and "Metadata unavailable, so it is listed under its address" ("Metadata not read yet" before its metadata is first fetched); how many markets it has; when it was registered; an explorer link; and "Get alerts in Telegram" once the bot exists.
 2. **Explanation**: presentation A.
 3. **Facts**, under the line "Read from the chain by Aviary, worded as Pipeline's own SDK words them. No score, and no verdict.": the program; who can upgrade it; the current version's slot and date; its code hash; the verified build; the metadata's status, with the link itself as plain text; when it was registered and the listing fee paid; its markets; its trust flags; and its instructions beyond Pipeline's own, with the line "Found by name in the deployed program. People call these directly on the strategy, outside the router. Canary lists them and does not call them."
 4. **What Canary saw on this version**:
