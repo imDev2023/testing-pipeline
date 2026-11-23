@@ -52,6 +52,7 @@ pub mod mode {
     pub const INSIDER_PAID_LESS: u8 = 2;
     pub const LAUNCH_TAX: u8 = 3;
     pub const CLOSES: u8 = 4;
+    pub const VIRTUAL_RESERVE: u8 = 5;
 }
 
 fn repo_root() -> PathBuf {
@@ -461,6 +462,59 @@ impl Cluster {
             &[
                 client::init_fee_account(&creator, &market, &mint_a, &TOKEN),
                 client::init_fee_account(&creator, &market, &mint_b, &TOKEN),
+            ],
+            &[],
+        );
+        Market {
+            market,
+            state,
+            mint_a,
+            mint_b,
+        }
+    }
+
+    /// A market of Canary's fixture strategy launched as on a virtual quote reserve: no real
+    /// SOL, 30 SOL of virtual reserve, and `in_pool` of the token's `supply` in its vault, the
+    /// rest held outside the pool by the admin.
+    pub fn virtual_reserve_market(&mut self, supply: u64, in_pool: u64) -> Market {
+        self.register_bytes(&FIXTURE, &fixture_program());
+        let mode = mode::VIRTUAL_RESERVE;
+        let mint_a = self.wrapped_sol();
+        let mint_b = self.create_mint(6);
+        let state = Pubkey::find_program_address(
+            &[b"state", mint_a.as_ref(), mint_b.as_ref(), &[mode]],
+            &FIXTURE,
+        )
+        .0;
+        let vault_a = self.give(&mint_a, &state, 0);
+        let vault_b = self.give(&mint_b, &state, in_pool);
+        let admin = self.admin.pubkey();
+        if supply > in_pool {
+            self.give(&mint_b, &admin, supply - in_pool);
+        }
+        self.set_supply(&mint_b, supply);
+        let mut init_data = vec![mode];
+        init_data.extend_from_slice(Pubkey::default().as_ref());
+        let ix = client::create_market(&client::CreateMarket {
+            creator: admin,
+            strategy_program: FIXTURE,
+            market_state: state,
+            market_state_signs: false,
+            init_data,
+            max_creator_lamports: SOL,
+            strategy_accounts: vec![
+                AccountMeta::new_readonly(mint_a, false),
+                AccountMeta::new_readonly(mint_b, false),
+                AccountMeta::new(vault_a, false),
+                AccountMeta::new(vault_b, false),
+            ],
+        });
+        self.send(&[ix], &[]);
+        let market = pda::market(&FIXTURE, &state);
+        self.send(
+            &[
+                client::init_fee_account(&admin, &market, &mint_a, &TOKEN),
+                client::init_fee_account(&admin, &market, &mint_b, &TOKEN),
             ],
             &[],
         );

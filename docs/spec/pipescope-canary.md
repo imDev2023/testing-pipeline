@@ -174,7 +174,13 @@ Each row gives the outcome rule; "ordinary trade" is as defined above.
 | `token_authorities` | For each of the market's mints, acts as each authority that exists and then trades again (see below) | Never: it depends on an authority acting | An authority exists and its action took from the market or stopped or emptied a trade; the figure is reported | No mint has such an authority |
 | `transaction_accounts` | Lists accounts the strategy asks for that describe the transaction, not the market: the Instructions, SlotHashes and RecentBlockhashes sysvars | Never | The strategy asks for one, so it could tell a simulated trade from a real one and Canary's results may not hold | It asks for none |
 | `contained_mint` | For a mint with a transfer hook, reads the hook program, whether it can still be upgraded, and the hook's authority, as [`containment-hook.md`](containment-hook.md) recognises a contained token | Never | The hook is not our containment hook with the mint's unlock PDA as its authority, or the hook program can still be upgraded | The hook is our containment hook, its authority is the mint's unlock PDA and the hook program is frozen; "not run" when no mint has a hook, and when a mint's transfer hook extension has both its program and its authority unset, as a contained token's has after its unlock |
+| `outside_supply` | After the ordinary buy, quotes a sale of all the supply held outside the market's pool (each token's supply less the market's vault of it) and finds the part the market cannot buy back, the rest once the largest sale that quotes is taken out; then quotes a sale of that part first, or of the largest part of it that quotes | Never: the supply's holder has to sell | The market cannot buy back all of it, and the part it cannot, sold first, takes the outside-supply threshold or more of the quote vault: "Supply held outside the pool could be sold into the real quote buyers paid in", with the amounts | No supply is outside the pool, the market can buy all of it back, or the part it cannot takes less than the threshold |
 | `custom_instructions` | Lists every instruction in the strategy's code beyond Pipeline's six, each with how often it has been called and by which signers | Noted only | Noted only | Noted only |
+
+- `outside_supply` applies the same rule to every market, ours or anyone's (`CANARY-47`, `HOOK-50`).
+  A market whose quote is all real buys back every token outside its pool, and so does a market on a virtual reserve seeded with the whole supply, since selling back every bought token returns its pool to where it started; what is left over is supply that never came out of the pool, on a market that never pays out more than its real quote, which is how a virtual reserve works.
+  The containment launch's default, a fifth of the supply outside the pool on a 30 SOL virtual quote reserve, warns: sold first, that fifth takes all but dust of an ordinary buyer's quote.
+  The largest sale that quotes is found by halving the refused amount up to 20 times, to about a millionth of it.
 
 What `token_authorities` does with each authority, when the authority is a wallet:
 
@@ -291,6 +297,7 @@ A change to any of them changes the `harness` version that every Canary result c
 | Token authorities acting | mint 100 times the vault's holding; a transfer fee of 100% with no maximum, two epochs on | `CANARY-17` |
 | Compute limits used to class a failure | 200,000 units for a quote, 1,400,000 for a swap | `CANARY-14` |
 | Snapshot rounds before checks are "not run" | 4 | `CANARY-25` |
+| Outside-supply threshold, and the search for the largest sale that quotes | 1 point of the quote vault; 20 halvings | `CANARY-47` |
 
 - The sections above explain each value where it is used; when one changes, the constant, this table, that section and the decision's block change in one PR.
 - The schedule is not here: see [When Canary runs](#when-canary-runs).

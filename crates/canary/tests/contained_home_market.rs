@@ -57,6 +57,7 @@ fn the_exit_quote_and_cost_checks_pass_in_a_contained_tokens_home_market() {
         "quote_matches_swap",
         "cost",
         "contained_mint",
+        "outside_supply",
     ] {
         assert_outcome(run.record(check), Outcome::Pass);
     }

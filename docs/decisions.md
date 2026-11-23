@@ -2246,11 +2246,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-15: The checks
 
 - Question: Which checks does Canary run?
-- Answer: Sixteen, with stable ids: `readable`, `conformance`, `exit_sizes`, `exit_hold`, `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred`, `exit_queue`, `quote_matches_swap`, `cost`, `direct_call`, `token_authorities`, `transaction_accounts`, `contained_mint` and `custom_instructions`.
+- Answer: Seventeen, with stable ids: `readable`, `conformance`, `exit_sizes`, `exit_hold`, `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred`, `exit_queue`, `quote_matches_swap`, `cost`, `direct_call`, `token_authorities`, `transaction_accounts`, `contained_mint`, `outside_supply` (since 2026-11-23, `CANARY-47`) and `custom_instructions`.
 - Alternatives: None recorded.
 - Specified in: [`docs/spec/pipescope-canary.md`, The checks](spec/pipescope-canary.md#the-checks)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-23
 - Decided: 2026-11-10 in [Canary checks on the four devnet strategies](https://github.com/imDev2023/testing-pipeline/issues/14)
 
 ### CANARY-16: Wallets
@@ -2561,6 +2561,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
+
+### CANARY-47: Supply outside the pool
+
+- Question: How does Canary's `outside_supply` (`HOOK-50`) tell when supply held outside a market's pool could be sold into the real quote buyers paid in, and on which markets?
+- Answer: On every market, by one rule: after the ordinary buy, the part of the supply outside the pool (supply less the market's vault) that the market cannot buy back, sold first, takes `OUTSIDE_SUPPLY_WARN_PPM` (1 point) or more of the quote vault, a warn; the part is what is left once the largest sale of the outside supply that quotes, found in up to `OUTSIDE_SUPPLY_SEARCH_STEPS` (20) halvings, is taken out. Only supply that never came out of the pool, on a market that never pays out more than its real quote (a virtual reserve), is left over, so a market seeded with the whole supply or with an all-real quote passes; 1 point, the tolerance's size, keeps rounding dust from warning while the containment launch's default 20% takes all but dust of a buyer's quote.
+- Alternatives: Warning on a share of the quote vault the whole outside supply takes, which would warn on every traded market on a virtual reserve because buyers' own tokens are outside its pool too; checking only markets known to have a virtual reserve, which Canary cannot read without each strategy's own layout and which would exempt the strategies it does not know.
+- Specified in: [`docs/spec/pipescope-canary.md`, Control](spec/pipescope-canary.md#control)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
 
 ## Explainer (EXPLAINER)
 
@@ -5414,3 +5424,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-49` to `SUITE-53`: set by the session of [Keeper runner: the runner, its wallet and the tax AMM's `distribute`](https://github.com/imDev2023/testing-pipeline/issues/94) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `SUITE-54` to `SUITE-56`: set by the session of [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-99` to `PIPESCOPE-103`: set by the session of [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted; Devnet help's wallet steps (`apps/terminal-web/src/content/devnet-help.ts`) follow each wallet's help pages of 2026-11-22 and were not tried in the wallets.
+- `CANARY-47`: the check is the owner's answer 5a on [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) (`HOOK-50`); its rule, its 1-point threshold and its search were set by that session while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.

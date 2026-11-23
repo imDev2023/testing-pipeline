@@ -12,8 +12,8 @@ use serde::Serialize;
 
 use crate::checks::{
     self, conformance, contained_mint, cost, direct_call, exit_hold, exit_late, exit_launch_clock,
-    exit_queue, exit_sizes, exit_transferred, exit_wallets, quote_matches_swap, readable, timed,
-    token_authorities, transaction_accounts,
+    exit_queue, exit_sizes, exit_transferred, exit_wallets, outside_supply, quote_matches_swap,
+    readable, timed, token_authorities, transaction_accounts,
 };
 use crate::market::{token_amount, Copy, Session, Version};
 use crate::record::{Record, RecordContext, Verdict};
@@ -272,6 +272,9 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
     });
     let (hooked_mints, hooks_lacking) =
         measuring(&mut session, true, vec![], contained_mint::measure);
+    let (outside_measured, outside_lacking) = measuring(&mut session, open, None, |s| {
+        Some(outside_supply::measure(s, path, money, sizes.reference))
+    });
 
     let mut lacking = copy_lacking.clone();
     for own in [
@@ -286,6 +289,7 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         &direct_lacking,
         &authorities_lacking,
         &hooks_lacking,
+        &outside_lacking,
     ] {
         lacking.extend(own.iter().copied());
     }
@@ -323,6 +327,7 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
     }
     let direct_needed = with(&direct_lacking, &BTreeSet::new());
     let authorities_needed = with(&authorities_lacking, &BTreeSet::new());
+    let outside_needed = with(&outside_lacking, &BTreeSet::new());
     let money_words = |amount: u64| sizes_measured.amount(amount);
     let gate = |own: &BTreeSet<Pubkey>, verdict: Verdict| {
         let mut needed = copy_lacking.clone();
@@ -435,6 +440,13 @@ pub fn run_market(source: &mut dyn Source, market: Pubkey, options: &RunOptions)
         context.record(
             checks::CONTAINED_MINT,
             gate(&hooks_lacking, contained_mint::judge(&hooked_mints)),
+        ),
+        context.record(
+            checks::OUTSIDE_SUPPLY,
+            gate(
+                &outside_needed,
+                outside_supply::judge(outside_measured.as_ref(), &trading, &money_words),
+            ),
         ),
         context.record(
             checks::CUSTOM_INSTRUCTIONS,

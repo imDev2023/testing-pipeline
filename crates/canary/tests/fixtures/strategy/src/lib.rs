@@ -8,6 +8,9 @@
 //!   created: 99% in the first 10 seconds, 50% until 1 minute, 10% until 10 minutes, then
 //!   nothing, like a sniper tax.
 //! - [`CLOSES`]: every trade is refused once two days have passed since creation.
+//! - [`VIRTUAL_RESERVE`]: the first mint's reserve is priced with [`VIRTUAL_RESERVE_A`] added,
+//!   as a launch on a virtual quote reserve is, and no trade pays out more of a mint than its
+//!   vault really holds.
 //!
 //! Written for these tests from Pipeline's Apache-2.0 strategy interface; nothing in it comes
 //! from Pipeline's own programs.
@@ -33,6 +36,11 @@ pub const INSIDER_PAID_MORE: u8 = 1;
 pub const INSIDER_PAID_LESS: u8 = 2;
 pub const LAUNCH_TAX: u8 = 3;
 pub const CLOSES: u8 = 4;
+pub const VIRTUAL_RESERVE: u8 = 5;
+
+/// [`VIRTUAL_RESERVE`]'s virtual reserve of the first mint: 30 SOL, the containment launch's
+/// default (`docs/spec/containment-hook.md`).
+pub const VIRTUAL_RESERVE_A: u64 = 30_000_000_000;
 
 /// The launch tax: until each number of seconds after creation, this many basis points.
 const LAUNCH_TAX_BPS: [(i64, u64); 3] = [(10, 9_900), (60, 5_000), (600, 1_000)];
@@ -43,6 +51,7 @@ const CLOSES_AFTER: i64 = 2 * 24 * 60 * 60;
 const TRADING_CLOSED: u32 = 1;
 const EMPTY_POOL: u32 = 2;
 const WRONG_STATE: u32 = 3;
+const INSUFFICIENT_LIQUIDITY: u32 = 4;
 
 /// The init data a market is created with, inside `pipeline_init_market`'s byte vector.
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug)]
@@ -181,11 +190,24 @@ fn output_for(
         msg!("trading has closed");
         return Err(ProgramError::Custom(TRADING_CLOSED));
     }
-    if reserve_in == 0 || reserve_out == 0 {
+    let virtual_of = |index: u8| {
+        if state.mode == VIRTUAL_RESERVE && index == 0 {
+            VIRTUAL_RESERVE_A
+        } else {
+            0
+        }
+    };
+    let priced_in = reserve_in + virtual_of(request.input_index);
+    let priced_out = reserve_out + virtual_of(request.output_index);
+    if priced_in == 0 || priced_out == 0 {
         return Err(ProgramError::Custom(EMPTY_POOL));
     }
     let mut out =
-        (amount as u128 * reserve_out as u128 / (reserve_in as u128 + amount as u128)) as u64;
+        (amount as u128 * priced_out as u128 / (priced_in as u128 + amount as u128)) as u64;
+    if out > reserve_out {
+        msg!("the trade would pay out more than the vault holds");
+        return Err(ProgramError::Custom(INSUFFICIENT_LIQUIDITY));
+    }
     let insider = trader.is_some_and(|t| t.to_bytes() == state.insider);
     match state.mode {
         INSIDER_PAID_MORE if insider => out = (out + out / 10).min(reserve_out - 1),

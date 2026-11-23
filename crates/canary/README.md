@@ -3,7 +3,7 @@
 The Canary checks' binary: it copies one Pipeline market into LiteSVM and trades it the way a trader would, then writes one Canary result per check.
 What the checks are and why is [`docs/spec/pipescope-canary.md`](../../docs/spec/pipescope-canary.md); where the binary runs is [`docs/spec/pipescope-architecture.md`](../../docs/spec/pipescope-architecture.md), "Canary runner".
 
-This crate runs `readable`, `conformance`, the exit test (`exit_sizes`, `exit_hold`, `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred` and `exit_queue`), `quote_matches_swap` and `cost`, and the control checks `direct_call`, `token_authorities`, `transaction_accounts`, `contained_mint` and `custom_instructions`: all sixteen of `CANARY-15`.
+This crate runs `readable`, `conformance`, the exit test (`exit_sizes`, `exit_hold`, `exit_late`, `exit_launch_clock`, `exit_wallets`, `exit_transferred` and `exit_queue`), `quote_matches_swap` and `cost`, and the control checks `direct_call`, `token_authorities`, `transaction_accounts`, `contained_mint`, `outside_supply` and `custom_instructions`: all seventeen of `CANARY-15`.
 Every trade of every check passes the transfer-hook accounts its mints need, resolved as `pipeline-check` resolves them.
 
 ## Run it
@@ -58,7 +58,7 @@ Pipeline's crates come from crates.io at exact versions in `../Cargo.toml` (`PIP
 
 ## Test it
 
-The tests build a small cluster in LiteSVM from devnet's router, checked against the hash in `fixtures/pins.env`, Pipeline's Apache-2.0 `test-strategy-cp`, `test-strategy-evil`, `test-hook` and `test-hook-refill` (on Token-2022 mints; the hook also stands in for our containment hook, deployed at its program id), our real containment hook from `programs/` (`tests/contained_home_market.rs`, a contained token's home market), and Canary's own fixture strategy (`tests/fixtures/strategy`: a constant-product market that can pay one insider more or less, tax buys by the time since its creation, or close two days after it), then copy markets out of it exactly as Canary copies them from devnet.
+The tests build a small cluster in LiteSVM from devnet's router, checked against the hash in `fixtures/pins.env`, Pipeline's Apache-2.0 `test-strategy-cp`, `test-strategy-evil`, `test-hook` and `test-hook-refill` (on Token-2022 mints; the hook also stands in for our containment hook, deployed at its program id), our real containment hook from `programs/` (`tests/contained_home_market.rs`, a contained token's home market), and Canary's own fixture strategy (`tests/fixtures/strategy`: a constant-product market that can pay one insider more or less, tax buys by the time since its creation, close two days after it, or price its quote side with a 30 SOL virtual reserve), then copy markets out of it exactly as Canary copies them from devnet.
 From the repo root:
 
 ```sh

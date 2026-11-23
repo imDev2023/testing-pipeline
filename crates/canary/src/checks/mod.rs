@@ -15,6 +15,7 @@ pub mod exit_sizes;
 pub mod exit_transferred;
 pub mod exit_wallets;
 pub mod exits;
+pub mod outside_supply;
 pub mod quote_matches_swap;
 pub mod readable;
 pub mod timed;
@@ -38,9 +39,10 @@ pub const TOKEN_AUTHORITIES: &str = "token_authorities";
 pub const TRANSACTION_ACCOUNTS: &str = "transaction_accounts";
 pub const CONTAINED_MINT: &str = "contained_mint";
 pub const CUSTOM_INSTRUCTIONS: &str = "custom_instructions";
+pub const OUTSIDE_SUPPLY: &str = "outside_supply";
 
 /// Every check this binary runs, in the order of its records.
-pub const CHECKS: [&str; 16] = [
+pub const CHECKS: [&str; 17] = [
     READABLE,
     CONFORMANCE,
     EXIT_SIZES,
@@ -56,5 +58,6 @@ pub const CHECKS: [&str; 16] = [
     TOKEN_AUTHORITIES,
     TRANSACTION_ACCOUNTS,
     CONTAINED_MINT,
+    OUTSIDE_SUPPLY,
     CUSTOM_INSTRUCTIONS,
 ];
