@@ -4,15 +4,17 @@ The keeper runner calls every keeper job of every market of our strategies when 
 Its design is [`docs/spec/keeper-runner.md`](../../docs/spec/keeper-runner.md); this file says how to run it.
 Every keeper job is permissionless, so anyone can run their own copy with their own key.
 
-Today it runs five jobs, each defined in [`packages/keeper-jobs`](../../packages/keeper-jobs):
+Today it runs seven jobs, each defined in [`packages/keeper-jobs`](../../packages/keeper-jobs):
 
 - the tax AMM's `distribute`, one transaction per owed slot, the burn slot included, in the daily pass;
 - the buy wall AMM's `place_wall`, after each transaction on a market and in every sweep;
 - its `settle`, in the hourly pass, at most once every `KEEPER_SETTLE_INTERVAL` on each market;
-- its `pay_rewards` and `sweep_fees`, one transaction per fee slot, in the daily pass, slot 1 only once the program's `DESIGNER_RECIPIENT` is set.
+- its `pay_rewards` and `sweep_fees`, one transaction per fee slot, in the daily pass, slot 1 only once the program's `DESIGNER_RECIPIENT` is set;
+- the lending AMM's `rebalance`, after each transaction on a market and in every sweep, whenever the program would act (the buffer outside its band, withdraw mode entered, left or waited out), with klend's `refresh_reserve` first in the same transaction except while the lending market's emergency mode is on;
+- klend's `refresh_reserve` on its own, in the same passes, for a lending AMM market holding cTokens whose reserve was last refreshed more than half of `TRADE_MAX_RESERVE_AGE_SLOTS` ago, so the market keeps quoting.
 
 `place_wall` tips the keeper wallet's wrapped-SOL account, which the placement creates when it is missing; once that account holds more than `KEEPER_TIP_UNWRAP_AT`, the end of the pass closes it into the float.
-The lending AMM's `rebalance` joins them by adding its entry to `packages/keeper-jobs`, with no change here.
+The lending AMM's jobs read the market's Kamino reserve, its lending market and the clock as well as the market state: its entry names them, and the runner reads them with the market in one request.
 
 ## The decisions it rests on
 
@@ -37,6 +39,11 @@ They are all in the decision register, [`docs/decisions.md`](../../docs/decision
 - `SUITE-55`: no cap and not the minimum balance hold the unwrapping of the tips, whose fee still counts in today's spend.
 - `SUITE-56`: `settle` runs at most once every `KEEPER_SETTLE_INTERVAL` on a market, a restart included, learned from the keeper wallet's own transactions.
 - `TAX-43`, `TAX-45`, `TAX-48`: how the tax AMM's `distribute` names its slots and their wallets, and why only the burn takes the mint writable.
+- `SUITE-59`: a due rule that needs more than its market's state names the accounts it reads, and the runner reads them with the market.
+- `SUITE-60`: the lending AMM's `rebalance` is due exactly when the program would act, its own rule written again on the stored state.
+- `SUITE-61`: reserves are refreshed by a job of their own once older than half of `TRADE_MAX_RESERVE_AGE_SLOTS`, their fees counting in the day's total but against no market.
+- `SUITE-62`: a refusal code means "nothing to do" or "try again in a later slot" only when the product's own program refused.
+- `LENDING-16`, `LENDING-93`, `LENDING-95`: when the lending AMM's `rebalance` runs, why leaving withdraw mode takes readings an hour apart, and why the keeper refreshes reserves and sweeps withdraw mode.
 - `POOL4-37`, `POOL4-38`, `POOL4-48`, `POOL4-50`: how the buy wall AMM's payouts name their recipients' accounts and who signs them, why `pay_rewards` needs no hook accounts, and why `place_wall` waits for a slot no swap has run in.
 
 ## Settings
@@ -115,10 +122,12 @@ TEST_DATABASE_URL=postgres://terminal:terminal@127.0.0.1:5462/postgres \
   pnpm --filter keeper test:db      # the writer to Aviary's database (CI's terminal job runs these, with its Postgres)
 ```
 
-The runner's own tests run against a local validator running devnet's router, the tax AMM and the buy wall AMM, after both local demos have registered their strategies (`docs/toolchain.md`, "Local demo run"), with a fake clock for the passes:
+The runner's own tests run against a local validator running devnet's router, the tax AMM, the buy wall AMM and the lending AMM, with devnet's klend and our Kamino lending market cloned, after the local demos have registered the strategies (`docs/toolchain.md`, "Local demo run"), with a fake clock for the passes:
 
 ```sh
 source scripts/toolchain-env.sh
+bash programs/lending-amm/scripts/fetch-klend.sh devnet
+bash programs/lending-amm/scripts/fetch-accounts.sh
 scripts/local-validator.sh          # in another shell
 (cd programs/tax-amm/scripts && pnpm demo --cluster localnet \
   --payer ~/.config/testing-pipeline/devnet/wallet.json \
@@ -126,9 +135,17 @@ scripts/local-validator.sh          # in another shell
 (cd programs/buy-wall-amm/scripts && pnpm demo --cluster localnet \
   --payer ~/.config/testing-pipeline/devnet/wallet.json \
   --upgrade-authority ~/.config/testing-pipeline/devnet/upgrade-authority.json)
+(cd programs/lending-amm/scripts && pnpm demo --cluster localnet --register-only \
+  --payer ~/.config/testing-pipeline/devnet/wallet.json \
+  --upgrade-authority ~/.config/testing-pipeline/devnet/upgrade-authority.json)
 pnpm --filter keeper test:local     # LOCAL_VALIDATOR_URL names another validator; TEST_DATABASE_URL as above
 ```
 
 They show a job sent when due and only then, a market owing nothing sending nothing, another keeper paying first costing only a simulation, each cap and the minimum balance holding a job, today's spend rebuilt after a restart equal to the spend before it, a failing job retried at `RETRY_DELAYS` and then parked until its market changes, an RPC hiccup while building a job not counted as its failure, `keeper once` running one pass and exiting without ever printing the key, and the pass that paid out recorded once with every signature, in the database or as one `record` row in the log, while the passes that sent nothing record nothing and every pass sends its heartbeat.
 For the buy wall AMM they show the wall placed from the runner's own socket after the swap that makes it due, its tip landing in the keeper wallet's wrapped-SOL account, which the same transaction creates, the tips unwrapped once that account holds more than `TIP_UNWRAP_AT` and not at exactly it, `settle` never twice within `SETTLE_INTERVAL` on a market even across a restart, and the daily pass paying the rewards and sweeping fee slots 0 and 2 but never slot 1, with a payout into a missing account worth less than its rent left waiting at no cost.
+For the lending AMM they show `rebalance` sent from the runner's own socket within a minute of a swap that pushes the buffer out of its band, a deposit after a buy and a redeem after a sale beyond the buffer, each leaving the buffer at its target; a sweep catching a market that left its band while the socket was closed, both ways; a rival keeper's rebalance between the runner's read and its simulation leaving only a `WithinBand` refusal, skipped with no transaction sent; and the reserve refreshed once its last refresh is more than 4,500 slots old, and not before.
 Each test makes its own markets and sees only those, so the tests can share one validator.
+The lending AMM's reserve-refresh test waits about 4,500 slots, so it skips itself on a validator at the usual pace; run it on a validator of its own started with `--ticks-per-slot 8` (`node --test --test-name-pattern refreshed test/local/lending.test.ts`), not with the rest, since fast slots make the block time run several times faster than the wall clock, and the runner learns when `settle` last ran and what it spent today from block times.
+The Kamino accounts warp the validator to devnet's slot, which puts its block time hours ahead of the wall clock, so each test runner's fake clock starts at the validator's block time, as the runner's own clock agrees with the chain's on a real cluster.
+
+On devnet, `node apps/keeper/scripts/demo-lending.ts --payer ~/.config/testing-pipeline/devnet/wallet.json --buy <lamports>` (or `--sell <token units>`) trades the lending AMM's demo market out of its band and prints the swap, the runner's `rebalance` and the buffer's share before, after the swap and after the rebalance.

@@ -71,6 +71,23 @@ export const LOCAL_WS_URL = (() => {
 })();
 
 export const rpc = createSolanaRpc(LOCAL_URL);
+
+/**
+ * How far the validator's block time is ahead of the wall clock, read once: a validator warped to
+ * devnet's slot for the lending AMM's Kamino accounts (programs/lending-amm/scripts/fetch-accounts.sh)
+ * runs hours ahead, and the runner learns when jobs ran and what it spent today from block times,
+ * so a test runner's clock starts at the chain's time, as the runner's does on a real cluster.
+ */
+const CHAIN_AHEAD_MS = await (async () => {
+    try {
+        const slot = await rpc.getSlot({ commitment: 'confirmed' }).send();
+        const time = await rpc.getBlockTime(slot).send();
+        return time === null ? 0 : Number(time) * 1000 - Date.now();
+    } catch {
+        // No validator yet: each test's own check says so.
+        return 0;
+    }
+})();
 const DEFAULT_ADDRESS = address('11111111111111111111111111111111');
 const MAX_CREATOR_LAMPORTS = 100_000_000n;
 export const DAY_MS = 86_400_000;
@@ -82,10 +99,15 @@ const metadata = (() => {
     return parsed.value;
 })();
 
-/** Refuses to run unless the validator is local and the tax AMM is registered with its router. */
-export async function checkLocalValidator() {
+/** Refuses to run unless the validator is local. */
+export function checkLocalHost() {
     const host = new URL(LOCAL_URL).hostname;
     if (!['127.0.0.1', 'localhost'].includes(host)) throw new Error(`LOCAL_VALIDATOR_URL must be a local validator, not ${LOCAL_URL}`);
+}
+
+/** Refuses to run unless the validator is local and the tax AMM is registered with its router. */
+export async function checkLocalValidator() {
+    checkLocalHost();
     const strategy = await rpc.getAccountInfo(await pipeline.strategyPda(TAX_AMM_PROGRAM_ADDRESS), { encoding: 'base64' }).send();
     if (!strategy.value) {
         throw new Error(`the tax AMM is not registered on ${LOCAL_URL}: run its local demo first (docs/toolchain.md, "Local demo run")`);
@@ -368,7 +390,7 @@ export function scoped(mints: readonly Address[]): AnyKeeperProduct {
 export type TestRunner = { runner: Runner; log: MemoryLogger; clock: FakeClock; chain: Chain; keeper: KeyPairSigner };
 
 /**
- * A runner on a fake clock (starting at the real time), the keeper wallet given, seeing only
+ * A runner on a fake clock (starting at the chain's time), the keeper wallet given, seeing only
  * `mints`' tax markets, or only the products given; its daily pass `dailyInMinutes` after the start unless `env` says otherwise.
  */
 export function testRunner(
@@ -383,7 +405,7 @@ export function testRunner(
         heartbeat?: Heartbeat;
     } = {},
 ): TestRunner {
-    const clock = new FakeClock(Date.now());
+    const clock = new FakeClock(Date.now() + CHAIN_AHEAD_MS);
     const settings = loadSettings({
         KEEPER_RPC_URL: LOCAL_URL,
         KEEPER_DISCOVERY_RPC_URL: LOCAL_URL,

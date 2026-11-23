@@ -18,8 +18,8 @@ const runnerFiles = [
     join('scripts', 'agent.ts'),
 ];
 
-/** Every instruction of the buy wall AMM and the tax AMM a keeper job sends, in either spelling. */
-const INSTRUCTIONS = [/place_?wall/i, /pay_?rewards/i, /sweep_?fees/i, /\bsettle\b/, /\bdistribute\b/];
+/** Every instruction a keeper job of the buy wall AMM, the tax AMM or the lending AMM sends, in either spelling. */
+const INSTRUCTIONS = [/place_?wall/i, /pay_?rewards/i, /sweep_?fees/i, /\bsettle\b/, /\bdistribute\b/, /\brebalance/i, /refresh_?reserve/i];
 const CLIENTS = /buy-wall-amm-scripts|tax-amm-scripts|lending-amm-scripts/;
 
 test("no runner code names a product's keeper instruction or imports a product's client", () => {
