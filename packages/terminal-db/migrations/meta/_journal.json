@@ -22,6 +22,13 @@
       "when": 1795435764309,
       "tag": "0002_feed",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795441637358,
+      "tag": "0003_candles",
+      "breakpoints": true
     }
   ]
 }

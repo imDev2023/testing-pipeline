@@ -2151,6 +2151,66 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-22 in [Aviary: index the router's history into Postgres, with the feed's two tables](https://github.com/imDev2023/testing-pipeline/issues/116)
 
+### PIPESCOPE-107: How candles keep and serve prices
+
+- Question: How are candle prices kept, written out and served?
+- Answer: Exactly, each open, high, low and close as the reduced fraction of the amounts of the swap that set it, per market and mint pair; the API writes them for the base and quote asked for to 36 significant digits (`PRICE_SIGNIFICANT_DIGITS`) and serves a length's newest 1,000 candles, or up to 5,000 when asked (`PAGE_LIMITS`).
+- Alternatives: Prices kept as decimals of a fixed scale, which a flipped chart or a parity check against Pipeline's hosted API would read with rounding error; candles kept twice, once each way round.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Candles](spec/pipescope-architecture.md#candles)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118)
+
+### PIPESCOPE-108: Which time places a swap in its candle
+
+- Question: Which time decides the candle a swap is folded into?
+- Answer: Its block's time, which is where Pipeline's hosted API places it and which can be a second after the event's own clock (105 of devnet's 387 swaps on 2026-11-23); the event's clock only for a block whose time is unknown.
+- Alternatives: The event's own clock, which Top-pad's candles use and which put swaps in a different minute from the hosted API's candles.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Candles](spec/pipescope-architecture.md#candles)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118)
+
+### PIPESCOPE-109: When candles past their retention are dropped
+
+- Question: How often does the indexer drop 1 s and 15 s candles past their retention?
+- Answer: Once a day, at midnight UTC on the every-minute cron's schedule (`JOB_INTERVAL_MINUTES.pruneCandles`), so the database wakes for it rarely.
+- Alternatives: Every hour, or with each reconciliation that opens the database.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Candles](spec/pipescope-architecture.md#candles)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118)
+
+### PIPESCOPE-110: What live rooms send, and how a page resyncs
+
+- Question: What does a live room send a page, and how does a page catch up on what it missed?
+- Answer: A market's room is sent each new swap as the API's trade, or told to resync past 100 at once (`LIVE_ROOM_TRADES_MAX`), and the feed's room each market new or changed as the API's market, only while the room has a viewer; a page resyncs each time it joins, the first time included, through `trades?after=` from the newest trade it shows; a room tells the indexer of each viewer that joins, so one it missed is counted at the next; and the indexer's alarm asks each room how many viewers it holds, so a room whose browsers left unseen never keeps the socket open.
+- Alternatives: Events that only name what changed, each sending every page back to the API for it; resyncing only after a reconnection, which misses what lands between a page's first read and its room.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Live rooms](spec/pipescope-architecture.md#live-rooms)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118)
+
+### PIPESCOPE-111: How live rows arrive on a page
+
+- Question: How do new rows and candles arrive on the feed and on a market page without moving what a reader is looking at?
+- Answer: While the pointer or the keyboard focus is on the table, new rows wait behind a "Show 2 new trades" button beside its heading and join the top when it leaves; a row already shown updates in place; a new row is washed for a moment only for a reader who allows motion; the forming candle is read again at most once a second (`LIVE_CANDLE_REFRESH_MS`); a dropped room is joined again after a wait doubling from a second to 15 s (`LIVE_RECONNECT_MAX_MS`).
+- Alternatives: Inserting new rows at once and moving the page's scroll to keep the row under the pointer in place; no wash at all.
+- Specified in: [`docs/spec/pipescope-screens.md`, What the prototype did not show](spec/pipescope-screens.md#what-the-prototype-did-not-show)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118)
+
+### PIPESCOPE-112: How wide a candle is drawn
+
+- Question: How much room does the chart give each candle?
+- Answer: 16 px whatever the chart's width (`CHART_CANDLE_SPACING_PX`), the newest at the right, so a lone candle is drawn at a readable size on a phone and on a desktop alike, and a reader scrolls back for older ones.
+- Alternatives: The prototype's fixed count of candles across the width, 44, which drew phone candles as hairlines; fitting every candle into the width.
+- Specified in: [`docs/spec/pipescope-screens.md`, Chart](spec/pipescope-screens.md#chart)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-23 in [Aviary: candles, live rooms and the market page's chart and trades](https://github.com/imDev2023/testing-pipeline/issues/118)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims

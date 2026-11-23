@@ -3,3 +3,4 @@
 // here as their tickets land.
 export { default } from "./index";
 export { Indexer } from "./indexer";
+export { LiveRoom } from "./liveRoom";

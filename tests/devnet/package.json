@@ -20,5 +20,8 @@
         "terminal-indexer": "workspace:*",
         "typescript": "6.0.3",
         "vitest": "5.1.1"
+    },
+    "exports": {
+        "./devnet": "./src/devnet.ts"
     }
 }

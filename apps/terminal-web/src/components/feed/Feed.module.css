@@ -66,3 +66,20 @@
   gap: 8px;
   justify-items: start;
 }
+
+/* A market that arrived live is washed for a moment, only for readers who allow motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .fresh {
+    animation: arrived 2s ease-out;
+  }
+
+  @keyframes arrived {
+    from {
+      background: var(--wash);
+    }
+
+    to {
+      background: transparent;
+    }
+  }
+}

@@ -1,12 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import { SubjectAddress } from "@/components/Address";
 import styles from "@/components/heads/Head.module.css";
+import bands from "@/components/market/Market.module.css";
+import { MarketLive } from "@/components/market/MarketLive";
 import { MintLabel } from "@/components/MintLabel";
 import { ShortAddress } from "@/components/ShortAddress";
 import { formatDate, shortAddress } from "@/format";
 import { ROUTES } from "@/routes";
 import { readMarket } from "@/serverReads";
+import type { Market, MarketMint } from "terminal-api/contract";
 
 type Props = { params: Promise<{ address: string }> };
 
@@ -19,8 +23,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 /**
- * A market's page (docs/spec/pipescope-screens.md, Market page). This ticket draws its head, so a
- * row of the feed opens somewhere real; the chart, trades and trade box come with #118 and #121.
+ * A market's page (docs/spec/pipescope-screens.md, Market page): its head, then the top band, the
+ * chart with the trades beneath it, live. The trade box joins the top band with #121; the lower
+ * band's explanation, forms and facts panel with their tickets.
  */
 export default async function MarketPage({ params }: Props) {
   const { address } = await params;
@@ -34,10 +39,24 @@ export default async function MarketPage({ params }: Props) {
       </div>
     );
   }
-  const market = read.value;
-  const mint = (address: string) => market.mints.find((m) => m.mint === address)!;
-  const base = mint(market.base_mint);
-  const quote = mint(market.quote_mint);
+  const value = read.value;
+  const mint = (address: string) => value.mints.find((m) => m.mint === address)!;
+  const base = mint(value.base_mint);
+  const quote = mint(value.quote_mint);
+  return (
+    <div className={bands.page}>
+      <MarketHead market={value} base={base} quote={quote} />
+      <div className={bands.top}>
+        {/* The chart's length and Flip are read from the page's address. */}
+        <Suspense fallback={null}>
+          <MarketLive market={value} />
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
+function MarketHead({ market, base, quote }: { market: Market; base: MarketMint; quote: MarketMint }) {
   return (
     <header className={styles.head}>
       <h1>
