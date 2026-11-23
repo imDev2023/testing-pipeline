@@ -2,3 +2,4 @@
 // `cloudflare:workers`; the Durable Objects (the indexer, the live rooms, CanaryRun) are exported
 // here as their tickets land.
 export { default } from "./index";
+export { Indexer } from "./indexer";

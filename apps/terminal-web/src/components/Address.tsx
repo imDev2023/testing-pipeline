@@ -5,8 +5,11 @@ import { EXPLORER } from "@/config";
 import { shortAddress } from "@/format";
 import styles from "./Address.module.css";
 
-/** An address that is the subject of its page: whole, with Copy and a link to the block explorer. */
-export function SubjectAddress({ address }: { address: string }) {
+/**
+ * An address that is the subject of its page, with Copy and a link to the block explorer: whole, or
+ * `short` ("6efY...dnYp", the whole address on hover) where the page names it in its head.
+ */
+export function SubjectAddress({ address, short = false }: { address: string; short?: boolean }) {
   const [outcome, setOutcome] = useState<"idle" | "copied" | "failed">("idle");
   const reset = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(reset.current), []);
@@ -23,12 +26,18 @@ export function SubjectAddress({ address }: { address: string }) {
   }
   return (
     <span className={styles.subject}>
-      {/* On a narrow screen the address breaks once, at its middle, rather than leaving a few characters on a line of their own. */}
-      <code className={styles.whole}>
-        {address.slice(0, Math.ceil(address.length / 2))}
-        <wbr />
-        {address.slice(Math.ceil(address.length / 2))}
-      </code>
+      {short ? (
+        <code className={styles.whole} title={address}>
+          {shortAddress(address)}
+        </code>
+      ) : (
+        // On a narrow screen the address breaks once, at its middle, rather than leaving a few characters on a line of their own.
+        <code className={styles.whole}>
+          {address.slice(0, Math.ceil(address.length / 2))}
+          <wbr />
+          {address.slice(Math.ceil(address.length / 2))}
+        </code>
+      )}
       <span className={styles.actions}>
         <button type="button" onClick={copy} aria-live="polite">
           {outcome === "copied" ? "Copied" : outcome === "failed" ? "Could not copy" : "Copy"}

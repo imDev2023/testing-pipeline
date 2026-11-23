@@ -1,0 +1,131 @@
+// Market accounts and mints (docs/spec/pipescope-architecture.md, Indexer): after an event touches a
+// market its state and vaults are read again, and a mint is read once, when a market first brings it.
+import { readFileSync } from "node:fs";
+import { encodeAccount, getMarketCodec, PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
+import { address, getAddressEncoder } from "@solana/kit";
+import { eq } from "drizzle-orm";
+import { createDb, marketMints, markets, mints, type Db } from "terminal-db";
+import { createTestDatabase } from "terminal-db/testing";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { indexTransactions, metadataAddress, pipelineHandler, refreshMarkets, type RawTransaction } from "../src/index";
+import { fakeRpc, type FakeRpc } from "./fakeRpc";
+
+const created = JSON.parse(readFileSync(`${import.meta.dirname}/fixtures/marketCreated.json`, "utf8")) as RawTransaction;
+const MARKET = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
+const STATE = "EE3ifuzvJGAtcY6xTxxr26ezaXG1cethHvA52R3r6x1U";
+const TOKEN = "5iEQzUi2ANPiQWKdcbyUU3EXnYviCiNKS6hbXzc3sSVX";
+const WSOL = "So11111111111111111111111111111111111111112";
+const VAULTS = ["2yLyoJtMyVYu7G1uMCr8mJKzVZj53fFHrJ8Fzb5iT6st", "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2"];
+const TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const STRATEGY = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t";
+const AUTHORITY = "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt";
+const DEFAULT = "11111111111111111111111111111111";
+
+const addressBytes = (a: string) => getAddressEncoder().encode(address(a));
+
+/** A token account holding `amount`, as both token programs lay out its first 165 bytes. */
+function tokenAccount(mint: string, amount: bigint): Uint8Array {
+  const data = new Uint8Array(165);
+  data.set(addressBytes(mint), 0);
+  new DataView(data.buffer).setBigUint64(64, amount, true);
+  return data;
+}
+
+/** A mint account: supply, decimals, and the two authorities as `COption`s. */
+function mintAccount({ supply, decimals, mintAuthority, freezeAuthority }: { supply: bigint; decimals: number; mintAuthority: string | null; freezeAuthority: string | null }): Uint8Array {
+  const data = new Uint8Array(82);
+  const view = new DataView(data.buffer);
+  if (mintAuthority) {
+    view.setUint32(0, 1, true);
+    data.set(addressBytes(mintAuthority), 4);
+  }
+  view.setBigUint64(36, supply, true);
+  data[44] = decimals;
+  data[45] = 1;
+  if (freezeAuthority) {
+    view.setUint32(46, 1, true);
+    data.set(addressBytes(freezeAuthority), 50);
+  }
+  return data;
+}
+
+let database: Awaited<ReturnType<typeof createTestDatabase>>;
+let client: { db: Db; close: () => Promise<void> };
+let rpc: FakeRpc;
+beforeAll(async () => {
+  database = await createTestDatabase();
+  client = createDb(database.url);
+  rpc = await fakeRpc();
+  const market = encodeAccount("Market", getMarketCodec(), {
+    strategyProgram: address(STRATEGY),
+    marketState: address(STATE),
+    mintCount: 2,
+    mints: [address(TOKEN), address(WSOL), address(DEFAULT), address(DEFAULT)],
+    vaults: [address(VAULTS[0]!), address(VAULTS[1]!), address(DEFAULT), address(DEFAULT)],
+    supportsExactOut: false,
+    createdBy: address(AUTHORITY),
+    createdAt: BigInt(created.blockTime!),
+    bump: 255,
+    feeAuthorityBump: 254,
+    feeMintIndex: 1,
+  });
+  rpc.accounts.set(MARKET, { owner: PIPELINE_PROGRAM_ADDRESS, data: market });
+  rpc.accounts.set(STATE, { owner: STRATEGY, data: Uint8Array.from([1, 2, 3, 4]) });
+  rpc.accounts.set(VAULTS[0]!, { owner: TOKEN_2022, data: tokenAccount(TOKEN, 774_943_493_703_585n) });
+  rpc.accounts.set(VAULTS[1]!, { owner: TOKEN_PROGRAM, data: tokenAccount(WSOL, 30_000_000_000n) });
+  rpc.accounts.set(TOKEN, { owner: TOKEN_2022, data: mintAccount({ supply: 10n ** 15n, decimals: 6, mintAuthority: AUTHORITY, freezeAuthority: null }) });
+  rpc.accounts.set(WSOL, { owner: TOKEN_PROGRAM, data: mintAccount({ supply: 0n, decimals: 9, mintAuthority: null, freezeAuthority: null }) });
+  rpc.accounts.set(await metadataAddress(TOKEN), { owner: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s", data: Uint8Array.from([4, 5, 6]) });
+  await indexTransactions(client.db, pipelineHandler(), [created]);
+});
+afterAll(async () => {
+  await rpc?.close();
+  await client?.close();
+  await database?.drop();
+});
+
+it("reads a new market's vaults, its state and what each vault holds, and each of its mints", async () => {
+  await refreshMarkets(client.db, rpc.url, [MARKET]);
+  const [market] = await client.db.select().from(markets).where(eq(markets.address, MARKET));
+  expect(market).toMatchObject({ supportsExactOut: false, feeMint: WSOL, stateData: Buffer.from([1, 2, 3, 4]).toString("base64"), readSlot: 525_200_000n });
+  const held = await client.db.select().from(marketMints).where(eq(marketMints.market, MARKET)).orderBy(marketMints.position);
+  expect(held.map(({ mint, vault, vaultAmount }) => ({ mint, vault, vaultAmount }))).toEqual([
+    { mint: TOKEN, vault: VAULTS[0], vaultAmount: "774943493703585" },
+    { mint: WSOL, vault: VAULTS[1], vaultAmount: "30000000000" },
+  ]);
+  const read = await client.db.select().from(mints).orderBy(mints.address);
+  expect(read).toEqual([
+    {
+      address: TOKEN,
+      readable: true,
+      tokenProgram: TOKEN_2022,
+      decimals: 6,
+      supply: "1000000000000000",
+      mintAuthority: AUTHORITY,
+      freezeAuthority: null,
+      data: Buffer.from(rpc.accounts.get(TOKEN)!.data).toString("base64"),
+      metadataData: Buffer.from([4, 5, 6]).toString("base64"),
+      readSlot: 525_200_000n,
+    },
+    expect.objectContaining({ address: WSOL, readable: true, tokenProgram: TOKEN_PROGRAM, decimals: 9, supply: "0", mintAuthority: null, metadataData: null }),
+  ]);
+});
+
+it("reads the state and vaults again after the next event, and never the mints or the market's account again", async () => {
+  rpc.accounts.set(VAULTS[1]!, { owner: TOKEN_PROGRAM, data: tokenAccount(WSOL, 31_000_000_000n) });
+  rpc.requests.length = 0;
+  await refreshMarkets(client.db, rpc.url, [MARKET]);
+  const [sol] = await client.db.select().from(marketMints).where(eq(marketMints.vault, VAULTS[1]!));
+  expect(sol?.vaultAmount).toBe("31000000000");
+  const asked = rpc.requests.flatMap((r) => (r.method === "getMultipleAccounts" ? (r.params[0] as string[]) : []));
+  expect(asked).toEqual([STATE, ...VAULTS].sort());
+});
+
+it("keeps a mint whose account is missing as unreadable", async () => {
+  const missing = "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe";
+  await client.db.update(marketMints).set({ mint: missing }).where(eq(marketMints.mint, TOKEN));
+  await refreshMarkets(client.db, rpc.url, [MARKET]);
+  const [row] = await client.db.select().from(mints).where(eq(mints.address, missing));
+  expect(row).toMatchObject({ readable: false, tokenProgram: null, decimals: null });
+});
