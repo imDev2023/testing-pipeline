@@ -17,7 +17,9 @@
   "triggers": { "crons": ["* * * * *"] },
   // The version this code is, which the indexer later checks against the Worker's after a deploy.
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
-  "vars": { "CLUSTER": "devnet" },
+  // KEEPER_WALLET: the keeper runner's wallet, whose page /keeper is and whose signed heartbeats are
+  // kept (docs/spec/keeper-runner.md, "The keeper wallet").
+  "vars": { "CLUSTER": "devnet", "KEEPER_WALLET": "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2" },
   // RPC_URL is the one secret here (PIPESCOPE-37): the Helius devnet URL, which carries the key.
   // `wrangler dev` reads it from the environment, which direnv fills from the project's .env.
   "secrets": { "required": ["RPC_URL"] },

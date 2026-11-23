@@ -4,15 +4,14 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ApiFailure } from "@/api";
 import styles from "./Panel.module.css";
 
-type State<T> = { status: "loading" } | { status: "failed"; message: string } | { status: "loaded"; data: T };
+export type Loaded<T> = { status: "loading" } | { status: "failed"; message: string } | { status: "loaded"; data: T };
 
 /**
- * A panel that loads on its own under its heading, so a slow panel never blanks the page, and that
- * says what could not be loaded and offers to try again when it fails (docs/spec/pipescope-screens.md,
- * "On every page"). `what` names what it loads, as a sentence would: "devnet's latest slot".
+ * Loads once per mount and again on `retry`, keeping what a panel needs to say: still loading, what
+ * failed, or the data. Several panels fed by one answer share one of these.
  */
-export function Panel<T>({ title, what, load, children }: { title: string; what: string; load: (signal: AbortSignal) => Promise<T>; children: (data: T) => ReactNode }) {
-  const [state, setState] = useState<State<T>>({ status: "loading" });
+export function useLoad<T>(load: (signal: AbortSignal) => Promise<T>): { state: Loaded<T>; retry: () => void } {
+  const [state, setState] = useState<Loaded<T>>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => {
     setState({ status: "loading" });
@@ -31,6 +30,16 @@ export function Panel<T>({ title, what, load, children }: { title: string; what:
     return () => controller.abort();
   }, [load, attempt]);
 
+  return { state, retry };
+}
+
+/**
+ * A panel under its heading that shows its own loading and failure, so a slow panel never blanks the
+ * page, and that says what could not be loaded and offers to try again when it fails
+ * (docs/spec/pipescope-screens.md, "On every page"). `what` names what it loads, as a sentence
+ * would: "devnet's latest slot".
+ */
+export function PanelFrame<T>({ title, what, state, retry, children }: { title: string; what: string; state: Loaded<T>; retry: () => void; children: (data: T) => ReactNode }) {
   const heading = `panel-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
     <section className={styles.panel} aria-labelledby={heading} aria-busy={state.status === "loading"}>
@@ -50,5 +59,15 @@ export function Panel<T>({ title, what, load, children }: { title: string; what:
       )}
       {state.status === "loaded" && children(state.data)}
     </section>
+  );
+}
+
+/** A panel that loads its own data. */
+export function Panel<T>({ title, what, load, children }: { title: string; what: string; load: (signal: AbortSignal) => Promise<T>; children: (data: T) => ReactNode }) {
+  const { state, retry } = useLoad(load);
+  return (
+    <PanelFrame title={title} what={what} state={state} retry={retry}>
+      {children}
+    </PanelFrame>
   );
 }

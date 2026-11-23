@@ -23,4 +23,6 @@ export type Bindings = {
   TERMINAL_CACHE: KVNamespace;
   /** The indexer, one instance (docs/spec/pipescope-architecture.md, Indexer). */
   INDEXER: DurableObjectNamespace<Indexer>;
+  /** The keeper runner's wallet (docs/spec/keeper-runner.md, "The keeper wallet"): the keeper page shows it, and only its signed heartbeats are kept. */
+  KEEPER_WALLET: string;
 };

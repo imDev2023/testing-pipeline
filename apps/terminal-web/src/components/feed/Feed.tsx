@@ -14,7 +14,7 @@ import { formatAge, formatDate, formatInteger, formatTokenAmount } from "@/forma
 import { ROUTES } from "@/routes";
 import { MintLabel } from "../MintLabel";
 import { ShortAddress } from "../ShortAddress";
-import table from "../Table.module.css";
+import table from "../ListingTable.module.css";
 import styles from "./Feed.module.css";
 
 export type FeedTab = "markets" | "strategies";

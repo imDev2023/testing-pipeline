@@ -36,12 +36,30 @@ export function bindings(overrides: Partial<Bindings> & { databaseUrl: string; r
     REPORTS: rateLimiter(10),
     TERMINAL_CACHE: {} as KVNamespace,
     INDEXER: {} as Bindings["INDEXER"],
+    KEEPER_WALLET: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
     ...rest,
   };
 }
 
-/** A Solana JSON-RPC endpoint on localhost that answers `getSlot` with the slot given, or fails as asked. */
-export async function fakeRpc(answer: { slot: number } | { status: number }): Promise<{ url: string; close: () => Promise<void> }> {
+/** A KV namespace in memory, as much of one as the API uses: `get` as JSON and `put`, counting the writes. */
+export function memoryKv() {
+  const values = new Map<string, string>();
+  const kv = {
+    puts: 0,
+    async get(key: string, type?: "json") {
+      const value = values.get(key);
+      return value === undefined ? null : type === "json" ? JSON.parse(value) : value;
+    },
+    async put(key: string, value: string) {
+      kv.puts++;
+      values.set(key, value);
+    },
+  };
+  return kv as unknown as KVNamespace & { puts: number };
+}
+
+/** A Solana JSON-RPC endpoint on localhost that answers `getSlot` and `getBalance` with the values given, or fails as asked. */
+export async function fakeRpc(answer: { slot: number; balance?: number } | { status: number }): Promise<{ url: string; close: () => Promise<void> }> {
   const server: Server = createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
@@ -51,8 +69,9 @@ export async function fakeRpc(answer: { slot: number } | { status: number }): Pr
         return;
       }
       const { id, method } = JSON.parse(body) as { id: number; method: string };
+      const result = method === "getSlot" ? answer.slot : method === "getBalance" && answer.balance !== undefined ? { context: { slot: answer.slot }, value: answer.balance } : undefined;
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(method === "getSlot" ? { jsonrpc: "2.0", id, result: answer.slot } : { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } }));
+      res.end(JSON.stringify(result === undefined ? { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } } : { jsonrpc: "2.0", id, result }));
     });
   });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));

@@ -50,6 +50,7 @@ import {
   getPipelineSeedLiquidityInstructionAsync,
   getPipelineSwapInstruction,
   getRebalanceInstructionAsync,
+  getRemoveLentSideInstructionAsync,
   getRemoveLiquidityInstructionAsync,
   parseAddLiquidityInstruction,
   parseLockLpInstruction,
@@ -60,6 +61,7 @@ import {
   parsePipelineSeedLiquidityInstruction,
   parsePipelineSwapInstruction,
   parseRebalanceInstruction,
+  parseRemoveLentSideInstruction,
   parseRemoveLiquidityInstruction,
   type AddLiquidityAsyncInput,
   type LockLpAsyncInput,
@@ -72,6 +74,7 @@ import {
   type ParsedPipelineSeedLiquidityInstruction,
   type ParsedPipelineSwapInstruction,
   type ParsedRebalanceInstruction,
+  type ParsedRemoveLentSideInstruction,
   type ParsedRemoveLiquidityInstruction,
   type PipelineInitMarketAsyncInput,
   type PipelineMarketInfoInput,
@@ -80,6 +83,7 @@ import {
   type PipelineSeedLiquidityAsyncInput,
   type PipelineSwapInput,
   type RebalanceAsyncInput,
+  type RemoveLentSideAsyncInput,
   type RemoveLiquidityAsyncInput,
 } from "../instructions/index.ts";
 import {
@@ -126,24 +130,26 @@ export function identifyLendingAmmAccount(
 }
 
 export const LendingAmmEvent = {
-  0: "LiquidityAdded",
-  1: "LiquidityRemoved",
-  2: "MarketCreated",
-  3: "MarketSeeded",
-  4: "Rebalanced",
-  5: "SharesLocked",
-  6: "ShortfallRedeemed",
-  7: "WithdrawModeEntered",
-  8: "WithdrawModeLeft",
-  LiquidityAdded: 0,
-  LiquidityRemoved: 1,
-  MarketCreated: 2,
-  MarketSeeded: 3,
-  Rebalanced: 4,
-  SharesLocked: 5,
-  ShortfallRedeemed: 6,
-  WithdrawModeEntered: 7,
-  WithdrawModeLeft: 8,
+  0: "LentSideRemoved",
+  1: "LiquidityAdded",
+  2: "LiquidityRemoved",
+  3: "MarketCreated",
+  4: "MarketSeeded",
+  5: "Rebalanced",
+  6: "SharesLocked",
+  7: "ShortfallRedeemed",
+  8: "WithdrawModeEntered",
+  9: "WithdrawModeLeft",
+  LentSideRemoved: 0,
+  LiquidityAdded: 1,
+  LiquidityRemoved: 2,
+  MarketCreated: 3,
+  MarketSeeded: 4,
+  Rebalanced: 5,
+  SharesLocked: 6,
+  ShortfallRedeemed: 7,
+  WithdrawModeEntered: 8,
+  WithdrawModeLeft: 9,
 } as const;
 
 export type LendingAmmEvent = (typeof LendingAmmEvent)[Exclude<
@@ -155,6 +161,17 @@ export function identifyLendingAmmEvent(
   event: { data: ReadonlyUint8Array } | ReadonlyUint8Array,
 ): LendingAmmEvent {
   const data = "data" in event ? event.data : event;
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([119, 163, 51, 136, 154, 170, 199, 78]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmEvent.LentSideRemoved;
+  }
   if (
     containsBytes(
       data,
@@ -269,7 +286,8 @@ export const LendingAmmInstruction = {
   6: "PipelineSeedLiquidity",
   7: "PipelineSwap",
   8: "Rebalance",
-  9: "RemoveLiquidity",
+  9: "RemoveLentSide",
+  10: "RemoveLiquidity",
   AddLiquidity: 0,
   LockLp: 1,
   PipelineInitMarket: 2,
@@ -279,7 +297,8 @@ export const LendingAmmInstruction = {
   PipelineSeedLiquidity: 6,
   PipelineSwap: 7,
   Rebalance: 8,
-  RemoveLiquidity: 9,
+  RemoveLentSide: 9,
+  RemoveLiquidity: 10,
 } as const;
 
 export type LendingAmmInstruction = (typeof LendingAmmInstruction)[Exclude<
@@ -394,6 +413,17 @@ export function identifyLendingAmmInstruction(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([167, 127, 36, 38, 141, 236, 21, 205]),
+      ),
+      0,
+    )
+  ) {
+    return LendingAmmInstruction.RemoveLentSide;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
         new Uint8Array([80, 85, 209, 72, 24, 206, 177, 108]),
       ),
       0,
@@ -437,6 +467,9 @@ export type ParsedLendingAmmInstruction<
   | ({
       instructionType: typeof LendingAmmInstruction.Rebalance;
     } & ParsedRebalanceInstruction<TProgram>)
+  | ({
+      instructionType: typeof LendingAmmInstruction.RemoveLentSide;
+    } & ParsedRemoveLentSideInstruction<TProgram>)
   | ({
       instructionType: typeof LendingAmmInstruction.RemoveLiquidity;
     } & ParsedRemoveLiquidityInstruction<TProgram>);
@@ -507,6 +540,13 @@ export function parseLendingAmmInstruction<TProgram extends string>(
       return {
         instructionType: LendingAmmInstruction.Rebalance,
         ...parseRebalanceInstruction(instruction),
+      };
+    }
+    case LendingAmmInstruction.RemoveLentSide: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: LendingAmmInstruction.RemoveLentSide,
+        ...parseRemoveLentSideInstruction(instruction),
       };
     }
     case LendingAmmInstruction.RemoveLiquidity: {
@@ -584,6 +624,11 @@ export type LendingAmmPluginInstructions = {
     input: RebalanceAsyncInput,
     config?: { programAddress?: Address | HasAddress },
   ) => ReturnType<typeof getRebalanceInstructionAsync> &
+    SelfPlanAndSendFunctions;
+  removeLentSide: (
+    input: RemoveLentSideAsyncInput,
+    config?: { programAddress?: Address | HasAddress },
+  ) => ReturnType<typeof getRemoveLentSideInstructionAsync> &
     SelfPlanAndSendFunctions;
   removeLiquidity: (
     input: RemoveLiquidityAsyncInput,
@@ -697,6 +742,14 @@ export function lendingAmmProgram(
             addSelfPlanAndSendFunctions(
               client,
               getRebalanceInstructionAsync(input, {
+                programAddress:
+                  instructionConfig?.programAddress ?? config.programAddress,
+              }),
+            ),
+          removeLentSide: (input, instructionConfig) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getRemoveLentSideInstructionAsync(input, {
                 programAddress:
                   instructionConfig?.programAddress ?? config.programAddress,
               }),

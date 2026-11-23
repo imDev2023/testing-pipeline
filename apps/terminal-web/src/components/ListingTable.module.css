@@ -1,0 +1,113 @@
+/* A listing, the feed's tables of markets and strategies: rows and columns on wide screens, labelled
+   blocks at 720 px and narrower, by the table and listing tokens in theme.css, which holds that width. A row's first link covers
+   the whole row, so the row opens what it lists; other links in the row sit above that cover. */
+.scroll {
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+.table {
+  display: var(--table-display);
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table thead {
+  display: var(--table-head-display);
+}
+
+.table tbody {
+  display: var(--table-body-display);
+}
+
+.table th {
+  text-align: left;
+  font-weight: var(--strong-weight);
+  color: var(--ink2);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.row {
+  display: var(--table-row-display);
+  position: relative;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+  padding: var(--listing-row-padding);
+}
+
+.row:hover {
+  background: var(--wash);
+}
+
+.row + .row {
+  border-top: var(--listing-row-rule) solid var(--rule);
+}
+
+.row td {
+  display: var(--table-cell-display);
+  padding: var(--listing-cell-padding);
+  vertical-align: top;
+}
+
+.row + .row td {
+  border-top: var(--listing-cell-rule) solid var(--rule);
+}
+
+.main {
+  grid-column: 1 / -1;
+}
+
+.num,
+.table th.num {
+  text-align: var(--listing-number-align);
+}
+
+.label {
+  display: var(--table-label-display);
+  color: var(--ink3);
+  font-size: 0.9em;
+}
+
+.sub {
+  display: block;
+  color: var(--ink3);
+}
+
+.rowLink {
+  font-weight: var(--strong-weight);
+  text-decoration: none;
+}
+
+.rowLink::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.rowLink:focus-visible {
+  outline: none;
+}
+
+.rowLink:focus-visible::after {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+/* A link of its own inside a row (the strategy of a market) stays clickable above the row's cover. */
+.inner {
+  position: relative;
+  z-index: 1;
+}
+
+.lines {
+  display: grid;
+  gap: 6px;
+  line-height: 1.35;
+}
+
+.none {
+  color: var(--ink3);
+}

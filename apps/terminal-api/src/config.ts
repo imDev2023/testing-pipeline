@@ -106,3 +106,19 @@ export const RATE_LIMIT_PERIOD_SECONDS = 60;
 
 /** How long `/health` waits for the RPC and for the database before calling them unreachable. */
 export const HEALTH_TIMEOUT_MS = 5 * SECOND;
+
+/**
+ * The keeper page (PIPESCOPE-104; docs/spec/keeper-runner.md, "How Aviary shows it"): the runner
+ * looks stopped once its last heartbeat is older than its own SWEEP_INTERVAL, which the heartbeat
+ * carries, and this much more; the page lists this many of the latest recorded jobs.
+ */
+export const KEEPER_STOPPED_GRACE_MS = 5 * MINUTE;
+export const KEEPER_RECENT_JOBS = 20;
+
+/**
+ * The keeper runner's heartbeats (SUITE-57): one is kept only if its time is within this much of
+ * the Worker's clock, so an old one cannot be replayed, and at most one of each kind of pass is
+ * written to KV this often, however often the runner posts.
+ */
+export const KEEPER_HEARTBEAT_MAX_SKEW_MS = 2 * MINUTE;
+export const KEEPER_HEARTBEAT_MIN_GAP_MS = 30 * SECOND;

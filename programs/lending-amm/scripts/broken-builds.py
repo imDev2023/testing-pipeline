@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Builds the lending AMM's deliberately broken builds (tests/broken-builds.json), which
-tests/broken_builds.rs runs the invariant fuzzer on to show each invariant able to fail.
+"""Builds the lending AMM's deliberately broken builds: the fuzzer's (tests/broken-builds.json),
+which tests/broken_builds.rs runs the invariant fuzzer on to show each invariant able to fail,
+and the release gate's (gate/test-builds.json), which gate/tests/markets.rs shows the gate
+refuses (docs/spec/lending-pool.md, "A release gate").
 
 Each build is one edit to a copy of the program's source, made at one fixed path and built with
 its own cargo target dir, so no copy can share the real program's cargo fingerprint and pass for
@@ -29,8 +31,16 @@ COPY = OUT / "workspace"
 TARGET = OUT / "target"
 
 
+LISTS = [CRATE / "tests" / "broken-builds.json", CRATE / "gate" / "test-builds.json"]
+
+
 def builds():
-    return json.loads((CRATE / "tests" / "broken-builds.json").read_text())["builds"]
+    every = [b for path in LISTS for b in json.loads(path.read_text())["builds"]]
+    names = [b["name"] for b in every]
+    duplicated = sorted({name for name in names if names.count(name) > 1})
+    if duplicated:
+        sys.exit(f"broken builds named twice: {', '.join(duplicated)}")
+    return every
 
 
 def copy_workspace():

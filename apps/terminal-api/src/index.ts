@@ -10,6 +10,7 @@ import { runDueJobs, type Job } from "./dispatcher";
 import type { Bindings } from "./env";
 import { feed } from "./feed";
 import { health } from "./health";
+import { keeperRoutes } from "./keeper";
 import { limitReads } from "./rateLimits";
 
 export type AppEnv = { Bindings: Bindings };
@@ -40,6 +41,7 @@ app.get("/v1/indexer", async (c) => c.json(await indexer(c.env).status()));
 
 /** The one indexer, by name, so every caller reaches the same instance. */
 export const indexer = (env: Bindings) => env.INDEXER.get(env.INDEXER.idFromName("router"));
+keeperRoutes(app);
 
 /**
  * The jobs that have been built, by name; each later ticket adds its own, and ./config says how

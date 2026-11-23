@@ -1,16 +1,18 @@
-/* The tables of markets and strategies: rows and columns on wide screens, labelled blocks at 720 px
-   and narrower, by the table tokens in theme.css, which holds that width. A row's first link covers
-   the whole row, so the row opens what it lists; other links in the row sit above that cover. */
-.scroll {
-  background: var(--sheet);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-}
-
+/* The table's shape at each width comes from theme.css's table tokens, which change at the width
+   where tables become labelled blocks, so that width is written in one place. */
 .table {
   display: var(--table-display);
   width: 100%;
   border-collapse: collapse;
+}
+
+.caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .table thead {
@@ -21,93 +23,43 @@
   display: var(--table-body-display);
 }
 
+.table tr {
+  display: var(--table-row-display);
+  gap: 4px 16px;
+  /* One label width for every block, so their values line up. */
+  grid-template-columns: 9.5em minmax(0, 1fr);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.table tbody tr:last-child {
+  border-bottom: 0;
+}
+
 .table th {
   text-align: left;
-  font-weight: var(--strong-weight);
+  font-weight: var(--text-weight);
   color: var(--ink2);
-  padding: 10px 16px;
+  padding: 0 16px 8px 0;
   border-bottom: 1px solid var(--rule);
   white-space: nowrap;
 }
 
-.row {
-  display: var(--table-row-display);
-  position: relative;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 16px;
-  padding: var(--table-row-padding);
-}
-
-.row:hover {
-  background: var(--wash);
-}
-
-.row + .row {
-  border-top: var(--table-row-rule) solid var(--rule);
-}
-
-.row td {
+.table td {
   display: var(--table-cell-display);
-  padding: var(--table-cell-padding);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  padding: 8px 16px 8px 0;
   vertical-align: top;
 }
 
-.row + .row td {
-  border-top: var(--table-cell-rule) solid var(--rule);
+.table td::before {
+  content: attr(data-label);
+  display: var(--table-label-display);
+  color: var(--ink2);
 }
 
-.main {
-  grid-column: 1 / -1;
-}
-
-.num,
-.table th.num {
-  text-align: var(--table-number-align);
-}
-
-.label {
-  display: var(--table-cell-label-display);
-  color: var(--ink3);
-  font-size: 0.9em;
-}
-
-.sub {
-  display: block;
-  color: var(--ink3);
-}
-
-.rowLink {
-  font-weight: var(--strong-weight);
-  text-decoration: none;
-}
-
-.rowLink::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-}
-
-.rowLink:focus-visible {
-  outline: none;
-}
-
-.rowLink:focus-visible::after {
-  outline: 2px solid var(--ink);
-  outline-offset: -2px;
-}
-
-/* A link of its own inside a row (the strategy of a market) stays clickable above the row's cover. */
-.inner {
-  position: relative;
-  z-index: 1;
-}
-
-.lines {
-  display: grid;
-  gap: 6px;
-  line-height: 1.35;
-}
-
-.none {
-  color: var(--ink3);
+.table th:last-child,
+.table td:last-child {
+  padding-right: 0;
 }

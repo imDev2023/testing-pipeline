@@ -808,8 +808,8 @@ dependencies = [
  "pipeline-client",
  "pipeline-strategy-interface",
  "proptest",
+ "published-check",
  "serde_json",
- "sha2 0.10.9",
  "solana-account",
  "solana-keypair",
  "solana-message",
@@ -833,6 +833,7 @@ dependencies = [
  "pipeline-check",
  "pipeline-client",
  "pipeline-strategy-interface",
+ "release-gate",
  "serde",
  "serde_json",
  "solana-account",
@@ -1975,6 +1976,7 @@ dependencies = [
  "pipeline-client",
  "pipeline-strategy-interface",
  "proptest",
+ "published-check",
  "serde_json",
  "solana-account",
  "solana-clock 3.2.1",
@@ -1987,6 +1989,30 @@ dependencies = [
  "spl-token-2022-interface 3.1.2",
  "stand-in-launchpad",
  "toml",
+]
+
+[[package]]
+name = "lending-gate"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "base64 0.22.1",
+ "borsh",
+ "lending-amm",
+ "litesvm",
+ "pipeline-check",
+ "pipeline-client",
+ "pipeline-strategy-interface",
+ "release-gate",
+ "serde",
+ "serde_json",
+ "solana-account",
+ "solana-clock 3.2.1",
+ "solana-keypair",
+ "solana-message",
+ "solana-signer",
+ "solana-transaction",
+ "spl-token-2022-interface 3.1.2",
 ]
 
 [[package]]
@@ -2538,6 +2564,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "published-check"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "qstring"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2720,6 +2754,19 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "release-gate"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "pipeline-check",
+ "pipeline-client",
+ "pipeline-strategy-interface",
+ "serde",
+ "serde_json",
+ "solana-account",
+]
 
 [[package]]
 name = "rfc6979"
@@ -5168,8 +5215,8 @@ dependencies = [
  "pipeline-events",
  "pipeline-strategy-interface",
  "proptest",
+ "published-check",
  "serde_json",
- "sha2 0.10.9",
  "solana-account",
  "solana-clock 3.2.1",
  "solana-keypair",

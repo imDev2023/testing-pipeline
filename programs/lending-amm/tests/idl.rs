@@ -9,8 +9,8 @@ mod common;
 use anchor_lang::Discriminator;
 use common::*;
 use lending_amm::events::{
-    LiquidityAdded, LiquidityRemoved, MarketCreated, MarketSeeded, Rebalanced, SharesLocked,
-    ShortfallRedeemed, WithdrawModeEntered, WithdrawModeLeft,
+    LentSideRemoved, LiquidityAdded, LiquidityRemoved, MarketCreated, MarketSeeded, Rebalanced,
+    SharesLocked, ShortfallRedeemed, WithdrawModeEntered, WithdrawModeLeft,
 };
 use lending_amm::state::layout;
 use lending_amm::LendingAmmMarket;
@@ -99,6 +99,7 @@ fn its_instructions_are_pipelines_and_the_custom_actions() {
         ("add_liquidity", anchor_discriminator("add_liquidity")),
         ("rebalance", anchor_discriminator("rebalance")),
         ("remove_liquidity", anchor_discriminator("remove_liquidity")),
+        ("remove_lent_side", anchor_discriminator("remove_lent_side")),
         ("lock_lp", anchor_discriminator("lock_lp")),
     ];
     assert_eq!(
@@ -255,7 +256,11 @@ fn its_events_and_errors_are_the_programs() {
         WithdrawModeLeft::DISCRIMINATOR.to_vec()
     )));
     assert!(events.contains(&("MarketSeeded".into(), MarketSeeded::DISCRIMINATOR.to_vec())));
-    assert_eq!(events.len(), 9);
+    assert!(events.contains(&(
+        "LentSideRemoved".into(),
+        LentSideRemoved::DISCRIMINATOR.to_vec()
+    )));
+    assert_eq!(events.len(), 10);
 
     // Errors are numbered from 6000 in the enum's order, new ones only ever appended.
     let errors = idl["errors"].as_array().unwrap();
@@ -325,6 +330,15 @@ fn its_events_and_errors_are_the_programs() {
             lending_amm::StrategyError::RebalanceNotAlone,
         ),
         ("BadSeedAmounts", lending_amm::StrategyError::BadSeedAmounts),
+        ("ReserveStale", lending_amm::StrategyError::ReserveStale),
+        (
+            "ReserveWrongVersion",
+            lending_amm::StrategyError::ReserveWrongVersion,
+        ),
+        (
+            "BelowMinCtokens",
+            lending_amm::StrategyError::BelowMinCtokens,
+        ),
     ] {
         let listed = errors.iter().find(|e| e["name"] == name).unwrap();
         assert_eq!(
@@ -333,5 +347,5 @@ fn its_events_and_errors_are_the_programs() {
             "{name}"
         );
     }
-    assert_eq!(errors.last().unwrap()["name"], "BadSeedAmounts");
+    assert_eq!(errors.last().unwrap()["name"], "BelowMinCtokens");
 }

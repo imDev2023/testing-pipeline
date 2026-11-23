@@ -47,6 +47,12 @@ importers:
       keeper-jobs:
         specifier: workspace:*
         version: link:../../packages/keeper-jobs
+      terminal-api:
+        specifier: workspace:*
+        version: link:../terminal-api
+      terminal-db:
+        specifier: workspace:*
+        version: link:../../packages/terminal-db
     devDependencies:
       '@pipeline-placeholder/sdk':
         specifier: link:../../fixtures/pipeline/sdk/ts
@@ -200,6 +206,25 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  packages/strategy-publish:
+    dependencies:
+      '@pipeline-placeholder/sdk':
+        specifier: link:../../fixtures/pipeline/sdk/ts
+        version: link:../../fixtures/pipeline/sdk/ts
+      '@solana-program/token':
+        specifier: 0.18.0
+        version: 0.18.0(@solana/kit@8.6.0(typescript@7.0.2))
+      '@solana/kit':
+        specifier: 8.6.0
+        version: 8.6.0(typescript@7.0.2)
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/terminal-db:
     dependencies:
       drizzle-orm:
@@ -267,6 +292,9 @@ importers:
       strategy-actions:
         specifier: workspace:*
         version: link:../../../packages/strategy-actions
+      strategy-publish:
+        specifier: workspace:*
+        version: link:../../../packages/strategy-publish
     devDependencies:
       '@codama/nodes-from-anchor':
         specifier: 1.5.6
@@ -338,6 +366,9 @@ importers:
       strategy-actions:
         specifier: workspace:*
         version: link:../../../packages/strategy-actions
+      strategy-publish:
+        specifier: workspace:*
+        version: link:../../../packages/strategy-publish
     devDependencies:
       '@codama/nodes-from-anchor':
         specifier: 1.5.6
@@ -372,6 +403,9 @@ importers:
       strategy-actions:
         specifier: workspace:*
         version: link:../../../packages/strategy-actions
+      strategy-publish:
+        specifier: workspace:*
+        version: link:../../../packages/strategy-publish
     devDependencies:
       '@codama/nodes-from-anchor':
         specifier: 1.5.6
@@ -424,12 +458,21 @@ importers:
       '@playwright/test':
         specifier: 1.65.1
         version: 1.65.1
+      '@solana/kit':
+        specifier: 8.6.0
+        version: 8.6.0(typescript@6.0.3)
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
+      postgres:
+        specifier: 3.4.9
+        version: 3.4.9
       terminal-api:
         specifier: workspace:*
         version: link:../../apps/terminal-api
+      terminal-db:
+        specifier: workspace:*
+        version: link:../../packages/terminal-db
       typescript:
         specifier: 6.0.3
         version: 6.0.3

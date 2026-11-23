@@ -37,10 +37,14 @@ pub const FRACTION_BITS: u32 = 60;
 pub const RESERVE_LEN: usize = 8_624;
 /// Anchor's discriminator of klend's `Reserve`, `sha256("account:Reserve")[..8]`.
 pub const RESERVE_DISCRIMINATOR: [u8; 8] = [43, 242, 204, 202, 26, 247, 59, 127];
-/// A reserve's `version` while klend can use it; klend sets it to `u64::MAX` when a write-off
-/// reaches the reserve's whole supply, and refuses redeems from a reserve whose version is not
-/// this one (`ReserveDeprecated`).
+/// A reserve's `version` while klend can use it; klend sets it to [`DEPRECATED_RESERVE_VERSION`]
+/// when a write-off reaches the reserve's whole supply, and refuses redeems from a reserve whose
+/// version is not this one (`ReserveDeprecated`).
 pub const RESERVE_VERSION: u64 = 1;
+/// The `version` klend gives a reserve a write-off has deprecated. Any version but this one and
+/// [`RESERVE_VERSION`] would be a klend this module was not written for, and fails the reserve
+/// check (finding H008, docs/security/lending-amm/).
+pub const DEPRECATED_RESERVE_VERSION: u64 = u64::MAX;
 
 /// A klend `LendingMarket` account's size, discriminator included.
 pub const LENDING_MARKET_LEN: usize = 4_664;
@@ -50,6 +54,9 @@ pub const LENDING_MARKET_DISCRIMINATOR: [u8; 8] = [246, 114, 50, 98, 72, 157, 28
 /// Byte offsets in a klend `Reserve` at 1.28.0, discriminator included.
 pub mod offsets {
     pub const VERSION: usize = 8;
+    /// `last_update.slot`: the slot klend last brought the reserve's interest up to date, by its
+    /// `refresh_reserve` or inside a deposit or redeem.
+    pub const LAST_UPDATE_SLOT: usize = 16;
     pub const LENDING_MARKET: usize = 32;
     pub const LIQUIDITY_MINT: usize = 128;
     /// `liquidity.supply_vault`, the token account holding the reserve's liquidity.
@@ -92,6 +99,10 @@ pub const REDEEM_RESERVE_COLLATERAL: [u8; 8] = [234, 117, 181, 125, 185, 142, 22
 /// klend's `refresh_reserve`, `sha256("global:refresh_reserve")[..8]`: the one klend instruction
 /// `rebalance` allows in its transaction, which a keeper puts first when the stored rate is stale.
 pub const REFRESH_RESERVE: [u8; 8] = [2, 218, 138, 235, 79, 201, 25, 102];
+/// klend's `refresh_reserves_batch`, `sha256("global:refresh_reserves_batch")[..8]`, which refreshes
+/// several reserves in one instruction and moves no liquidity, so `rebalance` allows it beside it
+/// as it allows `refresh_reserve` (finding R2-14).
+pub const REFRESH_RESERVES_BATCH: [u8; 8] = [144, 110, 26, 103, 162, 204, 252, 147];
 
 /// A reserve's deposit withdrawal cap: how much may leave it, net of deposits, per interval.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -108,6 +119,8 @@ pub struct WithdrawalCap {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Reserve {
     pub version: u64,
+    /// The slot of the reserve's last refresh, as of which its stored rate counts the interest.
+    pub last_update_slot: u64,
     pub total_available_amount: u64,
     pub borrowed_amount_sf: u128,
     pub accumulated_protocol_fees_sf: u128,
@@ -130,7 +143,7 @@ pub struct LendingMarket {
 
 /// Checks that `data`, owned by `owner` at `address`, is the reserve `lent` names, in the
 /// layout this module reads: its address, owner, size, Anchor discriminator, lending market,
-/// liquidity mint and collateral mint, in that order (docs/spec/lending-pool.md, "Checking the
+/// liquidity mint, collateral mint and version, in that order (docs/spec/lending-pool.md, "Checking the
 /// reserve before reading it"). Any mismatch, such as a Kamino upgrade that changes the
 /// layout, refuses rather than misprices.
 pub fn check_reserve(
@@ -160,6 +173,10 @@ pub fn check_reserve(
     if key_at(data, offsets::COLLATERAL_MINT) != Some(lent.collateral_mint) {
         return Err(StrategyError::ReserveWrongCollateralMint);
     }
+    let version = u64_at(data, offsets::VERSION);
+    if version != Some(RESERVE_VERSION) && version != Some(DEPRECATED_RESERVE_VERSION) {
+        return Err(StrategyError::ReserveWrongVersion);
+    }
     Ok(())
 }
 
@@ -175,6 +192,7 @@ pub fn read_reserve(
     let cap = offsets::WITHDRAWAL_CAP;
     Ok(Reserve {
         version: u64_at(data, offsets::VERSION).ok_or(bad)?,
+        last_update_slot: u64_at(data, offsets::LAST_UPDATE_SLOT).ok_or(bad)?,
         total_available_amount: u64_at(data, offsets::TOTAL_AVAILABLE_AMOUNT).ok_or(bad)?,
         borrowed_amount_sf: u128_at(data, offsets::BORROWED_AMOUNT_SF).ok_or(bad)?,
         accumulated_protocol_fees_sf: u128_at(data, offsets::ACCUMULATED_PROTOCOL_FEES_SF)
@@ -221,8 +239,7 @@ pub fn read_lending_market(
 
 /// The reserve a market lends to, from the account passed for it: the lent mint's entry in
 /// `LENT_MINTS` names the reserve, so the account must be exactly that one.
-pub fn reserve_of(lent_mint: &Pubkey, account: &AccountInfo) -> Result<Reserve> {
-    let lent = crate::config::lent_mint(lent_mint).ok_or(StrategyError::LentMintNotListed)?;
+pub fn reserve_of(lent: &LentMint, account: &AccountInfo) -> Result<Reserve> {
     let data = account.try_borrow_data()?;
     read_reserve(account.key, account.owner, &data, lent).map_err(|refusal| {
         msg!("Reserve {} refused: {:?}", account.key, refusal);
@@ -258,6 +275,13 @@ impl Reserve {
         }
         collateral_value(ctokens, self.total_supply_sf()?, self.mint_total_supply)
             .ok_or(StrategyError::Overflow)
+    }
+
+    /// Whether the reserve's stored rate was brought up to date at most `max_age` slots before
+    /// `slot`: the interest it has not counted yet is then at most `max_age` slots' worth
+    /// (docs/spec/lending-pool.md, "The stored rate, everywhere").
+    pub fn refreshed_within(&self, slot: u64, max_age: u64) -> bool {
+        slot.saturating_sub(self.last_update_slot) <= max_age
     }
 
     /// Whether a write-off has reached the reserve's whole supply, after which klend never
@@ -1178,6 +1202,64 @@ mod tests {
                 prop_assert!((x - value) as u128 <= one_ctoken);
             }
         }
+
+        /// The valuation is additive to within one unit: splitting cTokens in two loses at most
+        /// one unit of the lent mint to rounding, `V(a) + V(b) <= V(a + b) <= V(a) + V(b) + 1`
+        /// (Book of Knowledge KA-3). At rates up to 2 lamports a cToken, with any remainder of
+        /// the total supply over the cToken supply, and parts up to 2^62, where nothing is
+        /// refused.
+        #[test]
+        fn the_valuation_is_additive_within_one_unit(
+            a in 0u64..(1 << 62),
+            b in 0u64..(1 << 62),
+            n in 1u64..,
+            rate_sf in 0u128..(1 << 61),
+            extra: u64,
+        ) {
+            let s = n as u128 * rate_sf + (extra % n) as u128;
+            let value = |k: u64| collateral_value(k, s, n);
+            let (Some(whole), Some(va), Some(vb)) = (value(a + b), value(a), value(b)) else {
+                return Err(TestCaseError::fail("a value below 2^64 was refused"));
+            };
+            let parts = va as u128 + vb as u128;
+            prop_assert!(parts <= whole as u128, "{} + {} > {}", va, vb, whole);
+            prop_assert!(whole as u128 <= parts + 1, "{} > {} + {} + 1", whole, va, vb);
+        }
+
+        /// A shortfall within the cTokens' value can always be burned, and the burn is at most
+        /// the cTokens held (Book of Knowledge KA-5): for any shortfall from 1 to `V(c)`, or of
+        /// any size when the cTokens are worth more than a u64 holds (which `can_pay_now` counts
+        /// as `u64::MAX`), the swap's burn succeeds and is at most `c`, so a quote and its swap
+        /// never disagree. At rates up to 2 lamports a cToken, with any remainder.
+        #[test]
+        fn a_shortfall_within_the_ctokens_value_is_always_burned(
+            c: u64,
+            n in 1u64..,
+            rate_sf in 0u128..(1 << 61),
+            extra: u64,
+            pick: u64,
+        ) {
+            let s = n as u128 * rate_sf + (extra % n) as u128;
+            let reserve = Reserve {
+                version: RESERVE_VERSION,
+                borrowed_amount_sf: s,
+                mint_total_supply: n,
+                ..Reserve::default()
+            };
+            let shortfalls = match collateral_value(c, s, n) {
+                Some(0) => return Ok(()),
+                Some(value) => [1 + pick % value, value],
+                None => [pick.max(1), u64::MAX],
+            };
+            for shortfall in shortfalls {
+                let burn = ctokens_covering(shortfall, s, n);
+                prop_assert!(burn.is_some_and(|k| k <= c), "{:?} for {}", burn, shortfall);
+                prop_assert_eq!(
+                    reserve.ctokens_for_shortfall(shortfall, c).map_err(|e| e as u32),
+                    Ok(burn.unwrap())
+                );
+            }
+        }
     }
 }
 
@@ -1599,5 +1681,90 @@ mod proofs {
     #[kani::solver(cadical)]
     fn the_ctokens_covering_a_shortfall_are_the_fewest_worth_it() {
         assert_worth_at_least_and_at_most_one_ctoken_more(kani::any(), kani::any(), kani::any());
+    }
+
+    fn assert_valuation_is_additive_within_one_unit(a: u64, b: u64, s: u128, n: u64) {
+        let Some(sum) = a.checked_add(b) else {
+            return;
+        };
+        if let Some(whole) = collateral_value(sum, s, n) {
+            // Each part is worth no more than the whole, so it is valued too.
+            let parts = collateral_value(a, s, n).unwrap() as u128
+                + collateral_value(b, s, n).unwrap() as u128;
+            assert!(parts <= whole as u128 && whole as u128 <= parts + 1);
+        }
+    }
+
+    /// The valuation is additive to within one unit, `V(a) + V(b) <= V(a + b) <= V(a) + V(b) +
+    /// 1`, so splitting cTokens (a redeem, a burn, a removal's part) loses at most one unit to
+    /// rounding (Book of Knowledge KA-3): for small amounts at any fractional rate;
+    /// `proofs/kamino_z3.py` for every input.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_valuation_is_additive_within_one_unit_bounded() {
+        let a: u64 = kani::any_where(|&a| a < SMALL);
+        let b: u64 = kani::any_where(|&b| b < SMALL);
+        let n: u64 = kani::any_where(|&n| n < SMALL);
+        let whole: u64 = kani::any_where(|&w| w < SMALL);
+        let fraction: u64 = kani::any_where(|&f| f < (1 << FRACTION_BITS));
+        let s = ((whole as u128) << FRACTION_BITS) | fraction as u128;
+        assert_valuation_is_additive_within_one_unit(a, b, s, n);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn the_valuation_is_additive_within_one_unit() {
+        assert_valuation_is_additive_within_one_unit(
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
+    }
+
+    fn assert_a_shortfall_within_the_value_is_burned(
+        shortfall: u64,
+        ctokens: u64,
+        s: u128,
+        n: u64,
+    ) {
+        // `can_pay_now` counts cTokens worth more than a u64 holds as worth `u64::MAX`.
+        let within = collateral_value(ctokens, s, n).is_none_or(|value| shortfall <= value);
+        if shortfall > 0 && within {
+            assert!(ctokens_covering(shortfall, s, n).is_some_and(|burn| burn <= ctokens));
+        }
+    }
+
+    /// A shortfall within the cTokens' value can always be burned, and the burn is at most the
+    /// cTokens held, so a quote that accepts a shortfall up to what Kamino can pay never meets a
+    /// swap that refuses it (Book of Knowledge KA-5): for small amounts at any fractional rate;
+    /// `proofs/kamino_z3.py` for every input.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_shortfall_within_the_ctokens_value_is_always_burned_bounded() {
+        let shortfall: u64 = kani::any_where(|&x| x < SMALL);
+        let ctokens: u64 = kani::any_where(|&c| c < SMALL);
+        let n: u64 = kani::any_where(|&n| n < SMALL);
+        let whole: u64 = kani::any_where(|&w| w < SMALL);
+        let fraction: u64 = kani::any_where(|&f| f < (1 << FRACTION_BITS));
+        let s = ((whole as u128) << FRACTION_BITS) | fraction as u128;
+        assert_a_shortfall_within_the_value_is_burned(shortfall, ctokens, s, n);
+    }
+
+    #[cfg(kani_full)]
+    #[kani::proof]
+    #[kani::unwind(65)]
+    #[kani::solver(cadical)]
+    fn a_shortfall_within_the_ctokens_value_is_always_burned() {
+        assert_a_shortfall_within_the_value_is_burned(
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
     }
 }

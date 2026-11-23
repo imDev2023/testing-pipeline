@@ -1,5 +1,5 @@
-//! The release declaration, `programs/buy-wall-amm/release.json`, committed with each
-//! release: whether the release changes pricing, and from which builds.
+//! The release declaration, `programs/<program>/release.json` (`buy-wall-amm`, `lending-amm`),
+//! committed with each release: whether the release changes pricing, and from which builds.
 //!
 //! The gate refuses a build whose quote differs from the baseline build's on the same state,
 //! unless the declaration names that baseline build's executable hash under

@@ -21,3 +21,7 @@
   align-items: center;
   min-height: var(--control-min-height);
 }
+
+.short {
+  white-space: nowrap;
+}

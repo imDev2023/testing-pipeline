@@ -14,6 +14,7 @@
 // screenshot of each page to screenshots/<width>-<theme>/.
 import { defineConfig, devices } from "@playwright/test";
 import { API, RPC_MODE, WEB } from "./src/target";
+import { TEST_KEEPER_WALLET } from "./src/keeper";
 import { RPC_PORT } from "./src/rpc";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -66,7 +67,8 @@ export default defineConfig({
           },
         ]),
     {
-      command: "node scripts/dev.ts",
+      // The keeper page's wallet is the tests' own, whose heartbeats they can sign (src/keeper.ts).
+      command: `node scripts/dev.ts --var KEEPER_WALLET:${TEST_KEEPER_WALLET}`,
       cwd: "../../apps/terminal-api",
       env: { RPC_URL: rpcUrl, DATABASE_URL },
       url: `${API}/health`,
