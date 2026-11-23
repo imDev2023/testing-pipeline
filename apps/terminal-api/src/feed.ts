@@ -70,13 +70,17 @@ feed.get("/v1/strategies/:program", async (c) => {
 
 // ---- The feed's filters (PIPESCOPE-05, PIPESCOPE-72) ----
 
-/** A whole number from the query, at least `min`, or a 400 saying what it takes. */
-function wholeOf(c: Context<FeedEnv>, name: string, min: bigint, what: string): bigint | null {
+/** A whole number from the query, from `min` to `max`, or a 400 saying what it takes. */
+function wholeOf(c: Context<FeedEnv>, name: string, [min, max]: [bigint, bigint], what: string): bigint | null {
   const raw = c.req.query(name);
   if (raw === undefined) return null;
-  if (!/^\d+$/.test(raw) || BigInt(raw) < min) throw new HTTPException(400, { message: `${name} is ${what}.` });
+  if (!/^\d{1,40}$/.test(raw) || BigInt(raw) < min || BigInt(raw) > max) throw new HTTPException(400, { message: `${name} is ${what}.` });
   return BigInt(raw);
 }
+
+/** The most lamports a filter takes, u64's largest, and the longest time since creation, a hundred years. */
+const U64_MAX = 2n ** 64n - 1n;
+const CREATED_WITHIN_MAX_SECONDS = 100n * 365n * 86_400n;
 
 /** The flags to hide, each one of Pipeline's, or a 400. */
 function hiddenOf(c: Context<FeedEnv>): string[] {
@@ -99,16 +103,17 @@ const solVolume = (since: bigint) =>
  * either leaves out a market with no SOL side), the time since creation, and no hidden flag.
  */
 function filtersOf(c: Context<FeedEnv>): { where: SQL | undefined; onSolSide: boolean } {
-  const lamports = "a whole number of lamports";
-  const minLiquidity = wholeOf(c, "min_sol_liquidity", 0n, lamports);
-  const minVolume = wholeOf(c, "min_sol_volume_24h", 0n, lamports);
-  const within = wholeOf(c, "created_within", 1n, "a whole number of seconds of at least 1");
+  const lamports = `a whole number of lamports, at most ${U64_MAX}`;
+  const minLiquidity = wholeOf(c, "min_sol_liquidity", [0n, U64_MAX], lamports);
+  const minVolume = wholeOf(c, "min_sol_volume_24h", [0n, U64_MAX], lamports);
+  const within = wholeOf(c, "created_within", [1n, CREATED_WITHIN_MAX_SECONDS], `a whole number of seconds of at least 1 and at most ${CREATED_WITHIN_MAX_SECONDS}`);
   const hide = hiddenOf(c);
   const nowSeconds = Math.floor(Date.now() / 1000);
   const conditions = [
     minLiquidity === null && minVolume === null ? undefined : hasSolSide,
-    minLiquidity === null ? undefined : sql`${solLiquidity} >= ${minLiquidity}`,
-    minVolume === null ? undefined : sql`${solVolume(BigInt(nowSeconds - VOLUME_WINDOW_SECONDS))} >= ${minVolume}`,
+    // As numeric: a u64 of lamports can pass Postgres's bigint.
+    minLiquidity === null ? undefined : sql`${solLiquidity} >= ${String(minLiquidity)}::numeric`,
+    minVolume === null ? undefined : sql`${solVolume(BigInt(nowSeconds - VOLUME_WINDOW_SECONDS))} >= ${String(minVolume)}::numeric`,
     within === null ? undefined : sql`${markets.createdAt} >= ${new Date((nowSeconds - Number(within)) * 1000).toISOString()}::timestamptz`,
     hide.length ? sql`not (${marketFlagsSql} && ${sql.raw(`array[${hide.map((f) => `'${f}'`).join(",")}]::text[]`)})` : undefined,
   ];

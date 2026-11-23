@@ -15,6 +15,8 @@ export const METADATA_PROGRAM = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 const TOKEN_PROGRAMS = new Set(["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]);
 /** The most accounts one `getMultipleAccounts` reads. */
 const ACCOUNTS_PER_CALL = 100;
+/** The most mints one statement writes: 13 columns each, well inside Postgres's 65,535 parameters. */
+const MINTS_PER_WRITE = 500;
 
 type AccountInfo = { owner: string; data: [string, "base64"] } | null;
 
@@ -155,13 +157,11 @@ async function readMints(db: Db, rpcUrl: string, wanted: string[]): Promise<void
       readEpoch: BigInt(epoch),
     };
   });
-  await db
-    .insert(mints)
-    .values(rows)
-    .onConflictDoUpdate({
-      target: mints.address,
-      set: Object.fromEntries(
-        (["readable", "tokenProgram", "decimals", "supply", "mintAuthority", "freezeAuthority", "data", "metadataData", "readSlot", "flags", "readEpoch"] as const).map((k) => [k, sql.raw(`excluded.${mints[k].name}`)]),
-      ),
-    });
+  const set = Object.fromEntries(
+    (["readable", "tokenProgram", "decimals", "supply", "mintAuthority", "freezeAuthority", "data", "metadataData", "readSlot", "flags", "readEpoch"] as const).map((k) => [k, sql.raw(`excluded.${mints[k].name}`)]),
+  );
+  // In parts, so a refresh of every mint never makes one statement too large to build or to send.
+  for (let i = 0; i < rows.length; i += MINTS_PER_WRITE) {
+    await db.insert(mints).values(rows.slice(i, i + MINTS_PER_WRITE)).onConflictDoUpdate({ target: mints.address, set });
+  }
 }

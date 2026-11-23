@@ -134,7 +134,7 @@ try {
   // 1. Register the tax AMM with devnet's router, as its author would, naming the first document.
   const { value: configAccount } = await rpc.getAccountInfo(await pipeline.configPda(), { encoding: "base64" }).send();
   const config = pipeline.decodeConfig(Uint8Array.from(Buffer.from(configAccount!.data[0], "base64")))!;
-  if (!(await rpc.getAccountInfo(await pipeline.strategyPda(TAX_AMM)).send()).value) {
+  if (!(await rpc.getAccountInfo(await pipeline.strategyPda(TAX_AMM), { encoding: "base64" }).send()).value) {
     const signature = await send(authority, [
       await pipeline.registerStrategy({ payer: authority.address, registrar: authority.address, strategyProgram: TAX_AMM, listingFeeRecipient: config.listingFeeRecipient, metadataUri: DOCUMENTS[0]!, maxListingFeeLamports: config.listingFeeLamports }),
     ]);

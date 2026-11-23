@@ -153,6 +153,8 @@ export class Indexer extends DurableObject<Bindings> {
       this.reconciledAt = new Date().toISOString();
       // What reconciliation found reaches the pages too: the socket's misses, and every trade while it is closed.
       await this.publish(indexed).catch((e: unknown) => this.failed("publishing what reconciliation indexed", e));
+      // Then the metadata of every strategy a run noted, this one's or the live socket's since.
+      await this.fetchMetadata();
     } catch (e) {
       this.failed("reconciling the router", e);
       throw e;
@@ -166,6 +168,7 @@ export class Indexer extends DurableObject<Bindings> {
     try {
       await this.indexer().snapshot();
       this.snapshotAt = new Date().toISOString();
+      await this.fetchMetadata();
     } catch (e) {
       this.failed("taking the registry snapshot", e);
       throw e;
@@ -197,6 +200,13 @@ export class Indexer extends DurableObject<Bindings> {
       throw e;
     }
     return this.status();
+  }
+
+  /** Fetches the metadata of the strategies indexing noted; a failure is reported, and they stay noted for the next run. */
+  private async fetchMetadata(): Promise<void> {
+    await this.indexer()
+      .fetchPendingMetadata()
+      .catch((e: unknown) => this.failed("fetching strategies' metadata", e));
   }
 
   /** Fetches every strategy's metadata again, every hour. */

@@ -86,8 +86,13 @@ export async function readProgramFacts(rpcUrl: string, slots: Map<string, Deploy
       facts.set(program, { upgradeAuthority: slot.upgradeAuthority, flags: [slot.upgradeAuthority ? "upgradeable" : "frozen"] });
       continue;
     }
-    const inspected = await inspectProgram(createSolanaRpc(rpcUrl), address(program), { hashExecutable: false });
-    facts.set(program, { upgradeAuthority: inspected.upgradeAuthority, flags: inspected.flags });
+    // One program the RPC will not answer for is left out, keeping its facts as they were; it never stops the others or the watch.
+    try {
+      const inspected = await inspectProgram(createSolanaRpc(rpcUrl), address(program), { hashExecutable: false });
+      facts.set(program, { upgradeAuthority: inspected.upgradeAuthority, flags: inspected.flags });
+    } catch (e) {
+      console.error(`reading ${program}'s program account failed; its facts stay as they were`, e);
+    }
   }
   return facts;
 }

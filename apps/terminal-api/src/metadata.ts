@@ -31,9 +31,23 @@ function rowOf(program: string, uri: string, outcome: MetadataOutcome): Omit<Sna
   }
 }
 
-/** Whether a fetch found what the newest row holds: the same URI, status, document and reasons. */
+/** A JSON value written with its keys sorted, so two that hold the same compare equal however Postgres ordered them. */
+const canonical = (value: unknown): string =>
+  JSON.stringify(value ?? null, (_, v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v));
+
+/**
+ * Whether a fetch found what the newest row holds: the same URI, status, document and reasons, and
+ * the same author text normalised, so a change of the normaliser reaches a document unchanged.
+ */
 const same = (row: typeof metadataSnapshots.$inferSelect, next: ReturnType<typeof rowOf>) =>
-  row.uri === next.uri && row.status === next.status && row.sha256 === next.sha256 && row.reason === next.reason && row.url === next.url && row.errors.join("\n") === next.errors.join("\n");
+  row.uri === next.uri &&
+  row.status === next.status &&
+  row.sha256 === next.sha256 &&
+  row.reason === next.reason &&
+  row.url === next.url &&
+  row.errors.join("\n") === next.errors.join("\n") &&
+  canonical(row.normalised) === canonical(next.normalised) &&
+  canonical(row.removed) === canonical(next.removed);
 
 /** Runs `work` over `items`, at most `limit` at a time. */
 async function inTurns<T>(items: T[], limit: number, work: (item: T) => Promise<void>): Promise<void> {

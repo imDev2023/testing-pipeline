@@ -233,14 +233,27 @@ describe("strategy metadata", () => {
   const uriOf = async () => (await reader.db.select({ uri: strategies.metadataUri }).from(strategies))[0]!.uri;
   const statuses = async () => (await reader.db.select({ status: metadataSnapshots.status, name: metadataSnapshots.normalised }).from(metadataSnapshots).orderBy(metadataSnapshots.id)).map((r) => [r.status, (r.name as { name?: string } | null)?.name ?? null]);
 
-  it("is fetched once the router's reconciliation indexes the strategy's registration, and not again while nothing new happens", async () => {
+  it("is fetched after the router's reconciliation indexes the strategy's registration, and not again while nothing new happens", async () => {
     const web = metadataWeb();
     const { indexer } = core(web);
     await indexer.reconcile();
+    // Reconciliation only notes it, so what it indexed reaches the live rooms first; the fetch follows.
+    expect(web.asked).toEqual([]);
+    expect(await indexer.fetchPendingMetadata()).toEqual({ fetched: 1, changed: ["J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"] });
     expect(web.asked).toEqual([await uriOf()]);
     expect(await statuses()).toEqual([["unreachable", null]]);
     await indexer.reconcile();
+    expect(await indexer.fetchPendingMetadata()).toEqual({ fetched: 0, changed: [] });
     expect(web.asked).toHaveLength(1);
+  });
+
+  it("is fetched by one turn at a time, so a re-fetch and a pending fetch together write one row", async () => {
+    const web = metadataWeb();
+    const { indexer } = core(web);
+    await indexer.reconcile();
+    web.documents[await uriOf()] = doc("Once");
+    await Promise.all([indexer.fetchPendingMetadata(), indexer.refetchMetadata()]);
+    expect(await statuses()).toEqual([["valid", "Once"]]);
   });
 
   it("is fetched again from the new URI once a MetadataUpdated is indexed", async () => {
@@ -248,20 +261,25 @@ describe("strategy metadata", () => {
     const web = metadataWeb({ "https://example.org/v2.json": doc("Tax AMM") });
     const { indexer } = core(web);
     await indexer.reconcile();
+    await indexer.fetchPendingMetadata();
     rpc.history.push(metadataUpdatedTransaction({ id: 77, slot: 525_500_000, strategy: STRATEGY, uri: "https://example.org/v2.json" }));
     await indexer.reconcile();
+    await indexer.fetchPendingMetadata();
     expect(web.asked.at(-1)).toBe("https://example.org/v2.json");
     expect(await statuses()).toEqual([["unreachable", null], ["valid", "Tax AMM"]]);
   });
 
-  it("is fetched for a MetadataUpdated the live socket reported", async () => {
+  it("is fetched for a MetadataUpdated the live socket reported, by the next fetch, never holding up the live path", async () => {
     const { metadataUpdatedTransaction } = await import("terminal-indexer/swaps");
     const web = metadataWeb({ "https://example.org/live.json": doc("Live") });
     const { indexer } = core(web);
     await indexer.reconcile();
+    await indexer.fetchPendingMetadata();
     const update = metadataUpdatedTransaction({ id: 78, slot: 525_500_001, strategy: STRATEGY, uri: "https://example.org/live.json" });
     rpc.history.push(update);
     expect((await indexer.indexSignatures([update.transaction.signatures[0]!])).strategies).toEqual([STRATEGY]);
+    expect(web.asked).not.toContain("https://example.org/live.json");
+    await indexer.fetchPendingMetadata();
     expect((await statuses()).at(-1)).toEqual(["valid", "Live"]);
   });
 
@@ -269,17 +287,29 @@ describe("strategy metadata", () => {
     const web = metadataWeb();
     const { indexer } = core(web);
     await indexer.reconcile();
+    await indexer.fetchPendingMetadata();
     web.documents[await uriOf()] = doc("Changed Behind The Same URI");
     expect(await indexer.refetchMetadata()).toEqual({ fetched: 1, changed: [STRATEGY] });
     expect((await statuses()).at(-1)).toEqual(["valid", "Changed Behind The Same URI"]);
   });
 
-  it("is fetched by a new instance's first run for a strategy that has none yet, as after this code's first deploy", async () => {
-    await core().indexer.reconcile();
+  it("is fetched by a new instance for a strategy that has none yet, as after this code's first deploy, or whose newest is for an earlier URI", async () => {
+    const first = core().indexer;
+    await first.reconcile();
+    await first.fetchPendingMetadata();
     await reader.db.delete(metadataSnapshots);
     const web = metadataWeb();
-    await core(web).indexer.reconcile();
+    const second = core(web).indexer;
+    await second.reconcile();
+    await second.fetchPendingMetadata();
     expect(web.asked).toEqual([await uriOf()]);
+
+    // A URI changed while the fetch after it failed: the next instance fetches it.
+    await reader.db.update(strategies).set({ metadataUri: "https://example.org/moved.json" });
+    const third = core(web).indexer;
+    await third.reconcile();
+    await third.fetchPendingMetadata();
+    expect(web.asked.at(-1)).toBe("https://example.org/moved.json");
   });
 
   it("is fetched for a strategy the registry snapshot finds", async () => {
@@ -290,6 +320,7 @@ describe("strategy metadata", () => {
     const { indexer } = core(web);
     await indexer.reconcile();
     await indexer.snapshot();
+    await indexer.fetchPendingMetadata();
     expect(web.asked).toContain("https://example.org/found.json");
   });
 });

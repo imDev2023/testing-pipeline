@@ -73,29 +73,51 @@ export function Feed({ tab, filters = NO_FILTERS }: { tab: FeedTab; filters?: Fe
   const holding = useRef(false);
   const [held, setHeld] = useState<Market[]>([]);
   const heldNow = useRef<Market[]>([]);
+  /** How many of the held markets the counts shown do not include yet: those the room sent, not those a resync's counts already hold. */
+  const heldUncounted = useRef(0);
+  /** A filtered resync's first page that arrived while the reader was on the table, put in place once they leave it. */
+  const pendingPage = useRef<MarketsPage | null>(null);
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
+  /** The markets path the page shows now: an answer to an earlier one (the filters changed while it was on its way) is dropped. */
+  const pathNow = useRef(marketsPath);
 
   /**
    * Markets from the room or a resync, put in place: a market shown updates where it is, a newer one
    * joins the top or, while the reader is on the table, waits; an older one not loaded yet stays for
-   * its own page (placeMarkets).
+   * its own page (placeMarkets). `counted` says the counts shown already include them, as a
+   * resync's, which come from the API, do.
    */
   const arrive = useCallback(
-    (arriving: Market[]) => {
+    (arriving: Market[], { counted }: { counted: boolean }) => {
       const data = loaded.current;
       if (!data || !arriving.length) return;
       const { markets: placed, added } = placeMarkets([...heldNow.current, ...data.markets], arriving);
       const waiting = placed.slice(0, heldNow.current.length);
       const markets = placed.slice(heldNow.current.length);
       if (added.length) setFresh((before) => new Set([...before, ...added.map((m) => m.address)]));
+      const more = counted ? 0 : added.length;
       if (holding.current) {
         heldNow.current = [...added, ...waiting];
+        heldUncounted.current += more;
         setHeld(heldNow.current);
         show({ ...data, markets });
         return;
       }
       heldNow.current = waiting;
-      show({ ...data, markets: [...added, ...markets], total: data.total + added.length, matching: data.matching + added.length });
+      show({ ...data, markets: [...added, ...markets], total: data.total + more, matching: data.matching + more });
+    },
+    [show],
+  );
+
+  /** A filtered resync's first page in place of the rows shown, with the API's counts: a market the filters no longer keep goes. */
+  const replaceFirstPage = useCallback(
+    (page: MarketsPage) => {
+      const data = loaded.current;
+      if (!data) return;
+      const shown = new Set(data.markets.map((m) => m.address));
+      const added = page.markets.filter((m) => !shown.has(m.address));
+      if (added.length) setFresh((before) => new Set([...before, ...added.map((m) => m.address)]));
+      show({ ...data, markets: page.markets, next: page.next, total: page.total, matching: page.matching, noSolSide: page.no_sol_side, marketFlags: page.flags_present });
     },
     [show],
   );
@@ -103,34 +125,54 @@ export function Feed({ tab, filters = NO_FILTERS }: { tab: FeedTab; filters?: Fe
   const releaseHeld = useCallback(() => {
     holding.current = false;
     const waiting = heldNow.current;
-    const data = loaded.current;
+    const uncounted = heldUncounted.current;
+    const pending = pendingPage.current;
     heldNow.current = [];
+    heldUncounted.current = 0;
+    pendingPage.current = null;
     setHeld([]);
-    if (waiting.length && data) show({ ...data, markets: [...waiting, ...data.markets], total: data.total + waiting.length, matching: data.matching + waiting.length });
-  }, [show]);
+    if (pending) return replaceFirstPage(pending);
+    const data = loaded.current;
+    if (waiting.length && data) show({ ...data, markets: [...waiting, ...data.markets], total: data.total + uncounted, matching: data.matching + uncounted });
+  }, [show, replaceFirstPage]);
 
-  /** Whatever changed while the page was away from its room, or before it joined: the first page read again, and put in place. */
+  /**
+   * Whatever changed while the page was away from its room, or before it joined, or (with a filter
+   * on) whatever the room said changed: the first page read again. Unfiltered, it is put in place;
+   * filtered, it replaces the rows shown, so a market the filters no longer keep goes. Either way the
+   * API's counts are then the ones shown.
+   */
   const resync = useCallback(() => {
     if (!loaded.current) {
       resyncDue.current = true;
       return;
     }
-    getFromApi(marketsPath, MarketsPage).then(
+    const path = marketsPath;
+    getFromApi(path, MarketsPage).then(
       (page) => {
-        arrive(page.markets);
-        // The API's counts are the truth after a resync, the filters' line and the flags present with them.
+        if (pathNow.current !== path || !loaded.current) return;
+        if (filtered) {
+          if (holding.current) pendingPage.current = page;
+          else replaceFirstPage(page);
+          return;
+        }
+        arrive(page.markets, { counted: true });
+        heldUncounted.current = 0;
         const data = loaded.current;
-        if (data) show({ ...data, total: page.total, matching: page.matching, noSolSide: page.no_sol_side, marketFlags: page.flags_present });
+        show({ ...data, total: page.total, matching: page.matching, noSolSide: page.no_sol_side, marketFlags: page.flags_present });
       },
       () => {},
     );
-  }, [arrive, marketsPath, show]);
+  }, [arrive, marketsPath, show, filtered, replaceFirstPage]);
 
   useLiveRoom(LIVE_ROOMS.feed, {
     onEvents: (events: LiveEvent[]) => {
-      // With a filter on, a market the room sends may be one the filters leave out: read the page again.
+      // With a filter on, a market the room sends may be one the filters leave out, or one they no longer keep: read the page again.
       if (filtered || events.some((e) => e.type === "resync")) return resync();
-      arrive(events.flatMap((e) => (e.type === "market" ? [e.market] : [])));
+      arrive(
+        events.flatMap((e) => (e.type === "market" ? [e.market] : [])),
+        { counted: false },
+      );
     },
     onOpen: resync,
   });
@@ -139,8 +181,14 @@ export function Feed({ tab, filters = NO_FILTERS }: { tab: FeedTab; filters?: Fe
     const controller = new AbortController();
     const { signal } = controller;
     loaded.current = null;
+    pathNow.current = marketsPath;
+    heldNow.current = [];
+    heldUncounted.current = 0;
+    pendingPage.current = null;
     Promise.all([getFromApi(marketsPath, MarketsPage, { signal }), getFromApi("/v1/strategies", StrategiesList, { signal })]).then(
       ([page, list]) => {
+        // Markets held for the filters before belong to no list now.
+        setHeld([]);
         show({
           markets: page.markets,
           total: page.total,
@@ -171,16 +219,19 @@ export function Feed({ tab, filters = NO_FILTERS }: { tab: FeedTab; filters?: Fe
   const loadMore = useCallback(async () => {
     const next = loaded.current?.next;
     if (!next) return;
+    const path = marketsPath;
     setMore({ status: "loading" });
     try {
-      const page = await getFromApi(`${marketsPath}&before=${encodeURIComponent(next)}`, MarketsPage);
+      const page = await getFromApi(`${path}&before=${encodeURIComponent(next)}`, MarketsPage);
+      // An answer for filters no longer shown belongs to no list on the page now.
+      const data = loaded.current;
+      if (pathNow.current !== path || !data) return setMore({ status: "idle" });
       // Built on what the page shows now, live arrivals during the read included; a market already shown is not shown twice.
-      const data = loaded.current!;
       const shown = new Set(data.markets.map((m) => m.address));
       show({ ...data, markets: [...data.markets, ...page.markets.filter((m) => !shown.has(m.address))], total: page.total, matching: page.matching, noSolSide: page.no_sol_side, next: page.next });
       setMore({ status: "idle" });
     } catch (e) {
-      setMore({ status: "failed", message: failureOf(e) });
+      if (pathNow.current === path) setMore({ status: "failed", message: failureOf(e) });
     }
   }, [show, marketsPath]);
 

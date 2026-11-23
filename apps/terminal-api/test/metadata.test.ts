@@ -118,3 +118,15 @@ describe("fetchStrategiesMetadata", () => {
     expect(await fetchStrategiesMetadata(client.db, ["11111111111111111111111111111111"], { fetch: serving({}).fetch })).toEqual({ fetched: 0, changed: [] });
   });
 });
+
+describe("a change of the normaliser", () => {
+  it("reaches a stored document at its next fetch, as a new row, though the document is unchanged", async () => {
+    const body = doc("Tax‮ AMM");
+    const { fetch } = serving({ [URI]: body });
+    await fetchStrategiesMetadata(client.db, [PROGRAM], { fetch });
+    // As a row the normaliser of an earlier build left: its name cut otherwise.
+    await client.db.update(metadataSnapshots).set({ normalised: { name: "Tax", description: null, category: null, tags: [], init: null, audits: [] } }).where(eq(metadataSnapshots.program, PROGRAM));
+    expect(await fetchStrategiesMetadata(client.db, [PROGRAM], { fetch })).toEqual({ fetched: 1, changed: [PROGRAM] });
+    expect((await snapshots()).map((r) => (r.normalised as { name: string }).name)).toEqual(["Tax", "Tax AMM"]);
+  });
+});

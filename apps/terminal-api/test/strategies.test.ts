@@ -191,6 +191,18 @@ describe("the ProgramData watch", () => {
     expect(await versionsOf(STRATEGY)).toHaveLength(1);
   });
 
+  it("still records versions when asking about a program with no ProgramData account fails", async () => {
+    const { indexer } = core();
+    await indexer.reconcile();
+    // A strategy whose program is gone: its facts are asked of the RPC with getAccountInfo, which refuses.
+    rpc.accounts.delete(strategyData);
+    rpc.failing.add(STRATEGY);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await indexer.watchPrograms()).toEqual({ quiet: false, recorded: [PIPELINE_PROGRAM_ADDRESS], upgraded: [] });
+    log.mockRestore();
+    expect((await reader.db.select().from(programFacts)).map((f) => f.program)).toEqual([PIPELINE_PROGRAM_ADDRESS]);
+  });
+
   it("is carried on by a new instance from what Postgres holds, as after a deploy, without recording the same version again", async () => {
     await core().indexer.reconcile();
     await core().indexer.watchPrograms();

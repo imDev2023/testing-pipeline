@@ -33,6 +33,8 @@ export type FakeRpc = {
   unserved: Set<string>;
   /** Methods answered with "Method not found", as an RPC without Helius's methods answers. */
   refuse: Set<string>;
+  /** Addresses whose `getAccountInfo` fails, as an RPC that times out on one account. */
+  failing: Set<string>;
   close: () => Promise<void>;
 };
 
@@ -42,7 +44,7 @@ const order = (a: RawTransaction, b: RawTransaction) => a.slot - b.slot || a.tra
 const withoutIndex = ({ transactionIndex: _, ...rest }: RawTransaction) => rest;
 
 export async function fakeRpc(history: RawTransaction[] = []): Promise<FakeRpc> {
-  const fake: Omit<FakeRpc, "url" | "close"> = { requests: [], history: [...history], accounts: new Map(), slot: 525_200_000, epoch: 812, unserved: new Set(), refuse: new Set() };
+  const fake: Omit<FakeRpc, "url" | "close"> = { requests: [], history: [...history], accounts: new Map(), slot: 525_200_000, epoch: 812, unserved: new Set(), refuse: new Set(), failing: new Set() };
 
   const answer = (method: string, params: unknown[]): { result?: unknown; error?: unknown } => {
     if (fake.refuse.has(method)) return { error: { code: -32601, message: "Method not found" } };
@@ -90,6 +92,7 @@ export async function fakeRpc(history: RawTransaction[] = []): Promise<FakeRpc> 
       }
       case "getAccountInfo": {
         const [address, opts] = params as [string, { dataSlice?: DataSlice } | undefined];
+        if (fake.failing.has(address)) return { error: { code: -32000, message: `timed out reading ${address}` } };
         return { result: { context: { slot: fake.slot }, value: accountInfo(fake.accounts.get(address), opts?.dataSlice) } };
       }
       case "getEpochInfo":

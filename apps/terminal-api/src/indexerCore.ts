@@ -44,7 +44,7 @@ import {
   type TransactionHandler,
 } from "terminal-indexer";
 import { indexedTransactions, markets, metadataSnapshots, programFacts, programVersions, strategies, trades } from "terminal-db";
-import { eq, inArray, isNull, max, notExists, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, max, notExists, sql } from "drizzle-orm";
 import { CANDLES, LIVE_ROOM_TRADES_MAX, RPC_WAITS, VERSION_TRANSACTION_LOOKS } from "./config";
 import type { LiveEvent } from "./contract";
 import { fetchStrategiesMetadata } from "./metadata";
@@ -110,8 +110,10 @@ export class IndexerCore {
    */
   private deploySlots: Map<string, bigint> | null = null;
   private versionSlots = new Map<string, bigint>();
-  /** Strategies whose metadata is still to be fetched, after a failure or on a new instance's first run. */
+  /** Strategies whose metadata is still to be fetched: noted by indexing, or on a new instance's first run. */
   private unfetched = new Set<string>();
+  /** The metadata fetch running now, which the next waits for. */
+  private metadataTurn: Promise<unknown> = Promise.resolve();
   /** Versions recorded before the RPC served their transaction, looked for again on each watch. */
   private unsigned = new Map<string, { programData: string; deploySlot: bigint; looks: number }>();
   private runningStrategies: Promise<StrategiesOutcome> | null = null;
@@ -141,7 +143,7 @@ export class IndexerCore {
   }
 
   private async reconcileOnce(): Promise<ReconcileOutcome> {
-    if (this.cursor && this.started && this.unread.size === 0 && this.unfetched.size === 0 && !(await this.source.hasAfter(ROUTER, this.cursor))) {
+    if (this.cursor && this.started && this.unread.size === 0 && !(await this.source.hasAfter(ROUTER, this.cursor))) {
       return { quiet: true, indexed: emptyResult(), cursor: this.cursor };
     }
     return this.withDb(async (db) => {
@@ -153,11 +155,25 @@ export class IndexerCore {
           // transaction that still cannot be read keeps its record and is tried by the next
           // instance; it never holds up the router's history.
           for (const { address } of await db.select({ address: markets.address }).from(markets).where(isNull(markets.readSlot))) this.unread.add(address);
-          // And every strategy with no metadata fetched yet, as after this code's first deploy.
+          // And every strategy whose metadata now was never fetched: none fetched yet (as after this
+          // code's first deploy), or the newest fetched for an earlier URI, its fetch after an update failed.
           const unfetched = await db
             .select({ program: strategies.program })
             .from(strategies)
-            .where(notExists(db.select({ one: sql`1` }).from(metadataSnapshots).where(eq(metadataSnapshots.program, strategies.program))));
+            .where(
+              notExists(
+                db
+                  .select({ one: sql`1` })
+                  .from(metadataSnapshots)
+                  .where(
+                    and(
+                      eq(metadataSnapshots.program, strategies.program),
+                      eq(metadataSnapshots.uri, strategies.metadataUri),
+                      sql`${metadataSnapshots.id} = (select max(newest.id) from ${metadataSnapshots} newest where newest.program = ${strategies.program})`,
+                    ),
+                  ),
+              ),
+            );
           for (const { program } of unfetched) this.unfetched.add(program);
           this.started = true;
           try {
@@ -171,7 +187,7 @@ export class IndexerCore {
         addResult(indexed, result);
         this.cursor = cursor;
         await this.refresh(db, indexed.markets);
-        await this.fetchMetadata(db, indexed.strategies);
+        this.toFetch(indexed.strategies);
         this.learn(indexed);
         return { quiet: false, indexed, cursor };
       } catch (e) {
@@ -194,7 +210,7 @@ export class IndexerCore {
     return this.withDb(async (db) => {
       const added = await indexRegistry(db, registry);
       await this.refresh(db, added.markets);
-      await this.fetchMetadata(db, added.strategies);
+      this.toFetch(added.strategies);
       if (added.strategies.length) this.watched = null;
       this.known = {
         strategies: new Set((await db.select({ program: strategies.program }).from(strategies)).map((s) => s.program)),
@@ -239,7 +255,8 @@ export class IndexerCore {
         // They stay unread for the next run; what was indexed is still handed on.
         console.error("reading the markets the live socket touched failed; the next run reads them", e);
       }
-      await this.fetchMetadata(db, indexed.strategies);
+      // Fetched by the next fetch (the Indexer's, after the next reconciliation), never holding up the live path.
+      this.toFetch(indexed.strategies);
       this.learn(indexed);
       return indexed;
     });
@@ -280,29 +297,45 @@ export class IndexerCore {
     });
   }
 
-  /**
-   * Fetches the metadata of the strategies named, and of any still to be fetched after a failure,
-   * storing what changed (./metadata). A failure here never fails the run that indexed them: they
-   * stay to be fetched on the next run, and the hourly re-fetch reaches every strategy anyway.
-   */
-  private async fetchMetadata(db: Db, programs: string[]) {
+  /** Notes strategies whose metadata is to be fetched: indexing never waits on a document from the web. */
+  private toFetch(programs: string[]) {
     for (const program of programs) this.unfetched.add(program);
-    const due = [...this.unfetched];
-    if (!due.length) return;
-    try {
-      await fetchStrategiesMetadata(db, due, { fetch: this.deps.metadataFetch });
+  }
+
+  /** Runs metadata fetches one at a time, so two never read the same newest row and both write a change. */
+  private inTurn<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.metadataTurn.then(work, work);
+    this.metadataTurn = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Fetches the metadata of every strategy noted since the last fetch (a registration, a
+   * `MetadataUpdated`, a strategy the snapshot found, or one a new instance found unfetched), storing
+   * what changed (./metadata). The Indexer runs it after publishing what a run indexed, so the live
+   * rooms never wait on the web. Postgres is opened only when something is noted; a strategy whose
+   * fetch fails stays noted for the next.
+   */
+  fetchPendingMetadata(): Promise<{ fetched: number; changed: string[] }> {
+    return this.inTurn(async () => {
+      const due = [...this.unfetched];
+      if (!due.length) return { fetched: 0, changed: [] };
+      const outcome = await this.withDb((db) => fetchStrategiesMetadata(db, due, { fetch: this.deps.metadataFetch }));
       for (const program of due) this.unfetched.delete(program);
-    } catch (e) {
-      console.error("fetching strategy metadata failed; the next run tries again", e);
-    }
+      return outcome;
+    });
   }
 
   /** The hourly re-fetch of every strategy's metadata, since the document behind an unchanged URI can change with no event. */
   refetchMetadata(): Promise<{ fetched: number; changed: string[] }> {
-    return this.withDb(async (db) => {
-      const all = (await db.select({ program: strategies.program }).from(strategies)).map((s) => s.program);
-      return fetchStrategiesMetadata(db, all, { fetch: this.deps.metadataFetch });
-    });
+    return this.inTurn(() =>
+      this.withDb(async (db) => {
+        const all = (await db.select({ program: strategies.program }).from(strategies)).map((s) => s.program);
+        const outcome = await fetchStrategiesMetadata(db, all, { fetch: this.deps.metadataFetch });
+        for (const program of all) this.unfetched.delete(program);
+        return outcome;
+      }),
+    );
   }
 
   /** The hourly read of every mint, for the trust flags of what changed since it was first read; returns how many it read. */

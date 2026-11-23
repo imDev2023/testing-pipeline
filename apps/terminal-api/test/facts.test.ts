@@ -243,9 +243,9 @@ describe("the feed's filters", () => {
 
   it.each([
     ["?hide=not-a-flag", "hide names Pipeline's trust flags, separated by commas."],
-    ["?min_sol_liquidity=-1", "min_sol_liquidity is a whole number of lamports."],
-    ["?min_sol_volume_24h=0.5", "min_sol_volume_24h is a whole number of lamports."],
-    ["?created_within=soon", "created_within is a whole number of seconds of at least 1."],
+    ["?min_sol_liquidity=-1", "min_sol_liquidity is a whole number of lamports, at most 18446744073709551615."],
+    ["?min_sol_volume_24h=0.5", "min_sol_volume_24h is a whole number of lamports, at most 18446744073709551615."],
+    ["?created_within=soon", "created_within is a whole number of seconds of at least 1 and at most 3153600000."],
   ])("refuse %s with a sentence that says what it takes", async (query, error) => {
     const { status, body } = await get(`/v1/markets${query}`);
     expect(status).toBe(400);
@@ -293,5 +293,53 @@ describe("a mint's extensions in words", () => {
     expect(extensionsInWords({ transferFee }, [])).toEqual([{ name: "Transfer fee", detail: "1% of each transfer, with no maximum", address: null, authority: null }]);
     const later = { ...transferFee, newer: fee(900n, 250, 10n) };
     expect(extensionsInWords({ transferFee: later }, [])[0]!.detail).toBe("1% of each transfer, with no maximum; from epoch 900, 2.5%, at most 10 of its smallest units");
+  });
+});
+
+describe("filter values out of range", () => {
+  it.each([
+    ["?created_within=99999999999999999999", "created_within is a whole number of seconds of at least 1 and at most 3153600000."],
+    ["?min_sol_liquidity=18446744073709551616", "min_sol_liquidity is a whole number of lamports, at most 18446744073709551615."],
+    ["?min_sol_volume_24h=99999999999999999999999", "min_sol_volume_24h is a whole number of lamports, at most 18446744073709551615."],
+  ])("refuse %s with a 400 that says the most", async (query, error) => {
+    const { status, body } = await get(`/v1/markets${query}`);
+    expect(status).toBe(400);
+    expect((body as ApiError).error).toBe(error);
+  });
+
+  it("take the largest u64 of lamports, which no market holds", async () => {
+    expect(await page("?min_sol_liquidity=18446744073709551615")).toMatchObject({ matching: 0, markets: [] });
+    expect(await page("?min_sol_volume_24h=18446744073709551615")).toMatchObject({ matching: 0, markets: [] });
+  });
+});
+
+describe("a strategy whose metadata URI changed since its newest fetch", () => {
+  const E = "EZwLuZ8mSiBoeKtbHwQK4kxCqqj4JuureT1kHpTK3i6b";
+  const M4 = "7NWjaeqo1Nb6F3krxLdRhbevXQk4KU92XMZME83N3i8J";
+  beforeAll(async () => {
+    const { db, close } = createDb(database.url);
+    try {
+      await db.insert(strategies).values({ program: E, metadataUri: "https://example.org/e-v2.json", registeredAt: ago(60 * HOUR) });
+      // Its newest fetch was of the URI before a MetadataUpdated, and found an invalid document.
+      await db.insert(metadataSnapshots).values({ program: E, uri: "https://example.org/e-v1.json", status: "invalid", reason: "invalid", errors: ["name: must be a non-empty string"], warnings: [], fetchedAt: ago(HOUR), checkedAt: ago(HOUR) });
+      await db.insert(markets).values({ address: M4, strategyProgram: E, marketState: T4, createdBy: CREATOR, createdAt: ago(5 * HOUR) });
+      await db.insert(marketMints).values([
+        { market: M4, position: 0, mint: T3, vault: T1, vaultAmount: "5" },
+        { market: M4, position: 1, mint: WSOL, vault: T2, vaultAmount: "5" },
+      ]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("reads as not fetched yet, with the URI its account names, and no metadata flag", async () => {
+    const strategy = StrategyDetail.parse((await get(`/v1/strategies/${E}`)).body);
+    expect(strategy).toMatchObject({ name: null, metadata: { status: "not-fetched", uri: "https://example.org/e-v2.json", errors: [] }, flags: [], flag_facts: [] });
+  });
+
+  it("and its markets are not hidden by the earlier document's flag", async () => {
+    const hidden = await page("?hide=metadata-invalid");
+    expect(addresses(hidden.markets)).toContain(M4);
+    expect((await page()).markets.find((m) => m.address === M4)).toMatchObject({ strategy_metadata: "not-fetched", flags: [] });
   });
 });

@@ -35,7 +35,7 @@ const caseOfStatus = (column: string) => sql.raw(`case ${column} ${Object.entrie
  */
 export const marketFlagsSql: SQL = sql`(
   coalesce((select pf.flags from ${programFacts} pf where pf.program = "markets"."strategy_program"), '{}'::text[])
-  || coalesce((select ${caseOfStatus("ms.status")} from ${metadataSnapshots} ms where ms.program = "markets"."strategy_program" order by ms.id desc limit 1), '{}'::text[])
+  || coalesce((select case when ms.uri = s.metadata_uri then ${caseOfStatus("ms.status")} end from ${metadataSnapshots} ms join ${strategies} s on s.program = ms.program where ms.program = "markets"."strategy_program" order by ms.id desc limit 1), '{}'::text[])
   || coalesce((select array_agg(f) from ${marketMints} mm join ${mints} mi on mi.address = mm.mint cross join lateral unnest(mi.flags) f where mm.market = "markets"."address"), '{}'::text[])
 )`;
 
@@ -54,8 +54,9 @@ async function newestSnapshots(db: Db, programs: string[]): Promise<Map<string, 
   return new Map(rows.map((r) => [r.program, r]));
 }
 
+/** The metadata status a strategy's newest snapshot gives, or not fetched when there is none or it was for a URI the strategy no longer names. */
 function metadataStatus(uri: string, snapshot: SnapshotRow | undefined): MetadataStatus {
-  if (!snapshot) return { status: "not-fetched", uri, url: null, fetched_at: null, checked_at: null, errors: [], warnings: [], sha256: null, removed: null };
+  if (!snapshot || snapshot.uri !== uri) return { status: "not-fetched", uri, url: null, fetched_at: null, checked_at: null, errors: [], warnings: [], sha256: null, removed: null };
   return {
     status: snapshot.status as MetadataStatus["status"],
     uri: snapshot.uri,
@@ -82,7 +83,8 @@ export async function strategyFacts(db: Db, programs: { program: string; metadat
   ]);
   return new Map(
     programs.map(({ program: name, metadataUri }) => {
-      const snapshot = snapshots.get(name);
+      const newest = snapshots.get(name);
+      const snapshot = newest?.uri === metadataUri ? newest : undefined;
       const metadata = metadataStatus(metadataUri, snapshot);
       const facts = program.find((p) => p.program === name);
       const version = versions.find((v) => v.program === name);
