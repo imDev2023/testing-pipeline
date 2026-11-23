@@ -40,6 +40,7 @@ The config is never closed, so it stays as the record of the token's containment
 
 - Signed by the mint's mint authority, which is how the hook knows the caller is the launcher; nobody else can bind a mint, so binding cannot be front-run.
   A mint authority that is a Token-2022 multisig is refused (`MintAuthorityIsMultisig`, `HOOK-44`): `bind` checks one signer, and a multisig account's address can sign only through the keypair it was created at, which would bind without the multisig's other signers; a launcher binds first and may move the authority afterwards.
+  The check refuses any signer whose account Token-2022 owns, which only a multisig, a mint or a token account created at a keypair can be, none of them a launcher's own key.
 - Creates the config and the validation account; it fails if the config already exists, which makes binding write-once.
 - No instruction changes the config afterwards: not the launcher, not us.
 - Arguments: the unlock goal (greater than zero, in quote-mint base units, a `u64`) and the unlock deadline (a Unix timestamp strictly later than the binding's clock and at most the longest deadline after it, `MAX_UNLOCK_DEADLINE_SECS` in "Where its policy values live"; a deadline exactly that far away is allowed).
@@ -62,6 +63,7 @@ The config is never closed, so it stays as the record of the token's containment
 - The market state passed in is the one the `Market` records, owned by the tax AMM, at the one market state version the hook reads, and its tax side is the quote mint's index, so its tax collected is counted in the quote mint.
 - Its tax collected is zero, so the unlock goal counts only tax collected under containment, from the binding on; a market that already traded, under another hook or none, is refused with `MarketAlreadyCollectedTax` (hardening finding H020 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74), `HOOK-42`).
   A launch binds before its seed, when nothing can have traded, so this refuses only a market that traded before its token was pointed at this hook.
+  It reads the tax counter only, so a market that traded at a 0% tax before `bind` passes it; under the tax AMM's mint rules no market can trade a mint whose hook is not this one or cleared, and a cleared hook can never be set again, so that needs the launcher's own market on an older tax AMM (hardening finding R2-04 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
 - `bind` reads the token's vault from `Market.vaults` and derives the fee account (the Token-2022 associated token account of the router PDA `["fees", market]` for the contained mint), rather than taking either from the caller.
 
 One home market per token: several would split the liquidity that containment exists to concentrate, and summing tax in different quote mints would need a price on chain.

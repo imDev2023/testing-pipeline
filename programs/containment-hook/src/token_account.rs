@@ -58,10 +58,10 @@ pub fn owner_is_immutable(account: &AccountInfo, mint: &Pubkey) -> bool {
 
 /// [`owner_is_immutable`] on a Token-2022 account's data: not a multisig's length, its mint is
 /// `mint`, its account type is a token account's, and it carries the immutable owner
-/// extension.
+/// extension, whose entry is empty as Token-2022 requires.
 pub fn owner_is_immutable_data(data: &[u8], mint: &Pubkey) -> bool {
     data.len() != MULTISIG_LEN
         && data.get(..32) == Some(mint.as_ref())
         && data.get(ACCOUNT_LEN) == Some(&ACCOUNT_TYPE_ACCOUNT)
-        && mint_rules::find_extension(data, IMMUTABLE_OWNER).is_some()
+        && mint_rules::find_extension(data, IMMUTABLE_OWNER) == Some(&[])
 }
