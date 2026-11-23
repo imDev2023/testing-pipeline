@@ -1,5 +1,14 @@
 {
   "getSlot [{\"commitment\":\"confirmed\"}]": {
-    "result": 525150077
+    "result": 525223064
+  },
+  "getBalance [\"AxBAe8zXwD3GhbTkwMqQ4VX9LGt1CxGxc7keNPuBinni\",{\"commitment\":\"confirmed\"}]": {
+    "result": {
+      "context": {
+        "slot": 525223231,
+        "apiVersion": "4.3.0-alpha.2"
+      },
+      "value": 0
+    }
   }
 }

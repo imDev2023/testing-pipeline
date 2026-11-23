@@ -1,6 +1,6 @@
 // Copied from Top-pad b833a7b, packages/db/src/testing.ts; owned here since.
 import postgres from "postgres";
-import { runMigrations } from "./migrate";
+import { runMigrations } from "./migrate.ts";
 
 /**
  * A throwaway, migrated database on the Postgres server in TEST_DATABASE_URL (the Docker Postgres locally, a service

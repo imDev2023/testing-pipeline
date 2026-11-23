@@ -2,6 +2,7 @@
 export const ROUTES = {
   feed: "/",
   devnetHelp: "/devnet",
+  keeper: "/keeper",
   market: (address: string) => `/markets/${address}`,
   strategy: (address: string) => `/strategies/${address}`,
 };

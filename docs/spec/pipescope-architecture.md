@@ -90,9 +90,9 @@ Pipeline published its TypeScript SDK and its Rust crates on 2026-11-10 (commit 
 [ADR 0004](../adr/0004-postgres-on-neon-is-pipescopes-record.md).
 
 - Postgres on Neon is the only system of record, through Drizzle, reached by the Workers through Hyperdrive with its query cache off (Hyperdrive never invalidates a cached read when a write lands, and the indexer, the Canary runner and the explainer must read what was just written).
-- What it holds, as tables for the build to name: strategies; strategy versions (program id, ProgramData slot, `executable_sha256`, when seen); markets and their mints; indexed transactions; trades (keyed by signature and event index, with slot and in-block position); candles; indexer cursors; metadata snapshots (URI, fetch time, outcome, hash, normalised document); Canary runs and one record per check; verified-build requests and results; explanation keys with their stored evidence, estimated cost and status; explanations; reports from the "This is wrong" control; each strategy version's instruction list; token image records; the keeper runner's `keeper_runs` ([`keeper-runner.md`](keeper-runner.md), What it records); and the Telegram bot's chats, watch lists, alerts and deliveries ([`pipescope-telegram.md`](pipescope-telegram.md), What the bot stores).
+- What it holds, as tables for the build to name: strategies; strategy versions (program id, ProgramData slot, `executable_sha256`, when seen); markets and their mints; indexed transactions; trades (keyed by signature and event index, with slot and in-block position); candles; indexer cursors; metadata snapshots (URI, fetch time, outcome, hash, normalised document); Canary runs and one record per check; verified-build requests and results; explanation keys with their stored evidence, estimated cost and status; explanations; reports from the "This is wrong" control; each strategy version's instruction list; token image records; the keeper runner's `keeper_runs` and `keeper_run_jobs` ([`keeper-runner.md`](keeper-runner.md), What it records); and the Telegram bot's chats, watch lists, alerts and deliveries ([`pipescope-telegram.md`](pipescope-telegram.md), What the bot stores).
 - Durable Object storage holds only the indexer's socket and alarm state and the Canary run's progress.
-- KV holds public caches up to 60 s stale, and the copies of token images, keyed by the SHA-256 of their bytes (`PIPESCOPE-88`): Postgres records, per mint, the image's URI, hash, type, size and fetch outcome, and KV holds only bytes that a re-fetch could replace, so Postgres stays the only record ([ADR 0004](../adr/0004-postgres-on-neon-is-pipescopes-record.md)).
+- KV holds public caches up to 60 s stale, the keeper runner's newest heartbeat of each kind of pass (`SUITE-57`, a liveness signal a later heartbeat replaces, so Postgres stays the only record), and the copies of token images, keyed by the SHA-256 of their bytes (`PIPESCOPE-88`): Postgres records, per mint, the image's URI, hash, type, size and fetch outcome, and KV holds only bytes that a re-fetch could replace, so Postgres stays the only record ([ADR 0004](../adr/0004-postgres-on-neon-is-pipescopes-record.md)).
   Serving an image never wakes the database: the page gets the hash with the mint, and `terminal-api` serves `/images/<hash>` from KV.
   KV is already in the architecture and inside the account's allowance (devnet holds a few dozen images of at most 1 MB), so nothing new is bought or added.
 - D1 and R2 are not used.
@@ -160,7 +160,8 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
   - a quote while the trader types;
   - `POST` prepare for a swap, a custom action and a new market, each returning the unsigned transaction with its simulation's outcome and balance changes;
   - `POST` a trade's signature (the fast path);
-  - `POST` a "This is wrong" report against an explanation key.
+  - `POST` a "This is wrong" report against an explanation key;
+  - the keeper page's `GET /keeper`, and `POST /keeper/heartbeat`, which keeps only heartbeats the keeper wallet signed ([`keeper-runner.md`](keeper-runner.md), How Aviary shows it; `SUITE-57`, `PIPESCOPE-104`).
 - Owner-only operations are not in the API: the explainer's approve command and the reports list read and write Postgres directly from the owner's Mac.
 
 ## Trading path
@@ -260,8 +261,10 @@ Each is a named constant; the pages and the Telegram bot read what they show fro
 | Token image types and size | PNG, JPEG or WebP, at most 1 MB | `PIPESCOPE-82` |
 | Canary's schedule | as [`pipescope-canary.md`](pipescope-canary.md), When Canary runs | `CANARY-22`, `CANARY-23` |
 | Public caches | up to 60 s stale | `PIPESCOPE-32` |
+| Keeper page: "looks stopped" after the runner's `SWEEP_INTERVAL` plus, and the latest jobs shown | 5 minutes, 20 | `PIPESCOPE-104` |
+| Keeper heartbeats: largest clock difference, fewest seconds between two of one kind | 2 minutes, 30 s | `SUITE-57` |
 
-- Per-environment values are vars or bindings in `terminal-api`'s `wrangler.jsonc`: the integrator fee's settings (`PIPESCOPE-13`), the rate limits (`PIPESCOPE-90`) and the Telegram bot's handles and origin (`PIPESCOPE-62`).
+- Per-environment values are vars or bindings in `terminal-api`'s `wrangler.jsonc`: the integrator fee's settings (`PIPESCOPE-13`), the rate limits (`PIPESCOPE-90`), the Telegram bot's handles and origin (`PIPESCOPE-62`) and the keeper wallet, `KEEPER_WALLET` (`PIPESCOPE-104`).
 - The web app's own values are in its screens' config module, theme stylesheet and brand module ([`pipescope-screens.md`](pipescope-screens.md), One place for every value); Canary's are in `crates/canary/src/config.rs` ([`pipescope-canary.md`](pipescope-canary.md), One place for every value); the explainer's in `packages/terminal-explainer/src/rules.ts`; the bot's in `packages/terminal-telegram`'s config module.
 
 ## Copied from Top-pad

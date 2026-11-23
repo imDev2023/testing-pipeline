@@ -9,6 +9,7 @@ import type { ApiError } from "./contract";
 import { runDueJobs, type Job } from "./dispatcher";
 import type { Bindings } from "./env";
 import { health } from "./health";
+import { keeperRoutes } from "./keeper";
 import { limitReads } from "./rateLimits";
 
 export type AppEnv = { Bindings: Bindings };
@@ -31,6 +32,8 @@ app.get("/health", async (c) => {
   const body = await health(c.env, c.executionCtx);
   return c.json(body, body.ok ? 200 : 503);
 });
+
+keeperRoutes(app);
 
 /**
  * The jobs that have been built, by name. Empty until the indexer's ticket (#116) adds the first;

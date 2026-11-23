@@ -1,0 +1,65 @@
+/* The table's shape at each width comes from theme.css's table tokens, which change at the width
+   where tables become labelled blocks, so that width is written in one place. */
+.table {
+  display: var(--table-display);
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.table thead {
+  display: var(--table-head-display);
+}
+
+.table tbody {
+  display: var(--table-body-display);
+}
+
+.table tr {
+  display: var(--table-row-display);
+  gap: 4px 16px;
+  /* One label width for every block, so their values line up. */
+  grid-template-columns: 9.5em minmax(0, 1fr);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.table tbody tr:last-child {
+  border-bottom: 0;
+}
+
+.table th {
+  text-align: left;
+  font-weight: var(--text-weight);
+  color: var(--ink2);
+  padding: 0 16px 8px 0;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.table td {
+  display: var(--table-cell-display);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  padding: 8px 16px 8px 0;
+  vertical-align: top;
+}
+
+.table td::before {
+  content: attr(data-label);
+  display: var(--table-label-display);
+  color: var(--ink2);
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: 0;
+}

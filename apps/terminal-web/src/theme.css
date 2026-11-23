@@ -78,6 +78,14 @@
   /* The header: one row on wide screens. */
   --header-columns: auto 1fr auto;
   --header-areas: "brand links end";
+
+  /* Tables: rows and columns on wide screens (components/Table.tsx). */
+  --table-display: table;
+  --table-head-display: table-header-group;
+  --table-body-display: table-row-group;
+  --table-row-display: table-row;
+  --table-cell-display: table-cell;
+  --table-label-display: none;
 }
 
 :root[data-theme="light"] {
@@ -101,5 +109,12 @@
     --header-columns: 1fr auto;
     /* The search box takes a third row, at full width, when it lands (#120). */
     --header-areas: "brand end" "links links";
+    /* Tables become a list of small blocks, one a row, each value under its column's name. */
+    --table-display: block;
+    --table-head-display: none;
+    --table-body-display: block;
+    --table-row-display: grid;
+    --table-cell-display: grid;
+    --table-label-display: block;
   }
 }
