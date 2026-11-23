@@ -10,6 +10,7 @@
 import type { Address, GetAccountInfoApi, Instruction, ReadonlyUint8Array, Rpc, TransactionSigner } from '@solana/kit';
 
 import { buyWallAmm } from './buy-wall-amm.ts';
+import { lendingAmm } from './lending-amm.ts';
 import { taxAmm } from './tax-amm.ts';
 
 /** When the runner checks a job: after each transaction and in every sweep, hourly, or daily. */
@@ -64,19 +65,32 @@ export type KeeperJob<State> = {
     didNothing?(logs: readonly string[]): boolean;
 };
 
+/**
+ * The accounts a product's due rules read beyond a market's own state, by address, as the runner
+ * read them in the same request as the market; a missing one is null.
+ */
+export type Watched = ReadonlyMap<Address, Uint8Array | null>;
+
 export type KeeperProduct<State> = {
     name: string;
     programAddress: Address;
     /** Whether an account of the program is one of its market states. */
     isMarket(data: Uint8Array): boolean;
-    decode(data: Uint8Array): State;
+    /**
+     * The accounts beyond the market state its due rules read, such as the lending AMM's Kamino
+     * reserve and the clock: the runner reads them with the market in one request, so a due rule
+     * still sees one moment of the chain. A product without it reads only the market state.
+     */
+    watches?(data: Uint8Array): readonly Address[];
+    /** The market state as the jobs read it, with the accounts `watches` named. */
+    decode(data: Uint8Array, watched?: Watched): State;
     jobs: readonly KeeperJob<State>[];
 };
 
 // Each entry keeps its own state type; the runner only passes a product's state back to it.
 export type AnyKeeperProduct = KeeperProduct<any>;
 
-export const products: readonly AnyKeeperProduct[] = [taxAmm, buyWallAmm];
+export const products: readonly AnyKeeperProduct[] = [taxAmm, buyWallAmm, lendingAmm];
 
 /** What a simulation of a job's transaction means for the runner. */
 export type SimulationOutcome = 'send' | 'nothing-to-do' | 'later-slot' | 'failure';
@@ -99,4 +113,5 @@ export function outcomeOf(
 }
 
 export { buyWallAmm, buyWallAmmWith, converted, type BuyWallMarket } from './buy-wall-amm.ts';
+export { lendingAmm, decideRebalance, type LendingMarket } from './lending-amm.ts';
 export { taxAmm };

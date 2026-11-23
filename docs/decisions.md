@@ -637,6 +637,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-22 in [Aviary: the keeper page and the keeper runner's records](https://github.com/imDev2023/testing-pipeline/issues/129)
 
+### SUITE-59: Keeper runner: accounts a due rule reads beyond the market
+
+- Question: How does a due rule that depends on more than its market's state, as the lending AMM's withdraw mode depends on Kamino's reserve, read what it needs while staying a pure function in `packages/keeper-jobs`?
+- Answer: The product's entry names those accounts (`watches`), the runner reads them with the market in the same `getMultipleAccounts` (requests of at most 100 accounts never split a market from its watched ones), every pass and again just before a job is sent, and hands them to the entry's `decode`, so a due rule sees one moment of the chain; the lending AMM's entry watches the market's reserve, its lending market and the clock sysvar, and a market whose watched accounts are missing has nothing due.
+- Alternatives: Always due in withdraw mode with the simulation deciding, which would show Aviary's button on every market in withdraw mode; each entry reading the chain itself in its due rule, which would make the rule no longer pure and read the chain once per job.
+- Specified in: [`docs/spec/keeper-runner.md`, One definition of due](spec/keeper-runner.md#one-definition-of-due)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96)
+
+### SUITE-60: Keeper runner: when the lending AMM's `rebalance` is due
+
+- Question: Exactly when is the lending AMM's `rebalance` due, so the runner sends it and Aviary shows its button?
+- Answer: Whenever the program would act: the rule is the program's own (`decide_with_exit_delay` with the band, `MIN_REBALANCE`, what Kamino can pay with its rate headroom, withdraw mode's thresholds and its exit delay) written again in TypeScript on the market and the reserve at their stored state, with `WithinBand`, `BelowMinRebalance`, `KaminoStopped` and `KaminoDepositsBlocked` taken as nothing to do when a simulation still refuses; `MIN_REBALANCE` per reserve and `KAMINO_RATE_HEADROOM_BPS`, which the program does not export, are repeated in the entry and checked against `config.rs` by its tests; what the program does not model either, such as klend's deposit limit (finding H035, signed off), is left to the simulation, where klend's refusal is a failure, retried and then parked until the market changes.
+- Alternatives: Due whenever the buffer is outside its band or the market is in withdraw mode, leaving the rest to the simulation, which would keep a button up on markets with nothing the program would do; exporting the per-reserve values in the program's IDL, which waits for the lending AMM's next release.
+- Specified in: [`docs/spec/keeper-runner.md`, The jobs](spec/keeper-runner.md#the-jobs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96)
+
+### SUITE-61: Keeper runner: refreshing the lending AMM's reserves
+
+- Question: How does the runner keep a reserve fresh enough for quotes (`LENDING-95`), and whose cap pays for it?
+- Answer: As a keeper job of its own on each lending AMM market, klend's `refresh_reserve` alone, due after each transaction and in every sweep when the market holds cTokens and its reserve's last refresh is more than half of `TRADE_MAX_RESERVE_AGE_SLOTS` (4,500 slots) old, unless the lending market's emergency mode is on; once one market's refresh lands, the next market on the same reserve finds it no longer due; its transaction names no market, so its fee counts in today's total and against `DAILY_CAP` but against no market's cap.
+- Alternatives: A pass of its own over the reserves, which the runner would have to know about; a refresh in front of every rebalance only, which leaves a quiet market's reserve unquotable after an hour.
+- Specified in: [`docs/spec/keeper-runner.md`, The jobs](spec/keeper-runner.md#the-jobs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96)
+
+### SUITE-62: Keeper runner: whose refusal codes count
+
+- Question: When a job's transaction holds another program's instruction too, as the lending AMM's `rebalance` holds klend's `refresh_reserve`, which refusal codes may mean "nothing to do" or "try again in a later slot"?
+- Answer: Only those the product's own program raised, told by the first "failed: custom program error" line of the logs (the innermost failing program), or without logs by the instruction the transaction error names; the same number from klend inside the product's own call to it, or from any other program (klend's errors share the 6,000 range with ours) is a failure, retried and parked like any other.
+- Alternatives: Reading the code whichever program raised it, or by the failing instruction alone, which takes klend's code inside the product's own call for the product's, so a klend error that shared a number with `WithinBand` would be skipped silently instead of retried and parked.
+- Specified in: [`docs/spec/keeper-runner.md`, One definition of due](spec/keeper-runner.md#one-definition-of-due)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-23 in [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96)
+
 ## Engineering and security bar (BAR)
 
 ### BAR-01: Framework
@@ -5674,4 +5714,6 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-54` to `SUITE-56`: set by the session of [Keeper runner: the buy wall AMM's four jobs](https://github.com/imDev2023/testing-pipeline/issues/95) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-99` to `PIPESCOPE-103`: set by the session of [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113) while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted; Devnet help's wallet steps (`apps/terminal-web/src/content/devnet-help.ts`) follow each wallet's help pages of 2026-11-22 and were not tried in the wallets.
 - `BAR-45`, `LENDING-97` to `LENDING-103`, the 2026-11-22 change to `LENDING-82` and the 2026-11-23 change to `LENDING-40`: set by the session of [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `SUITE-60`: the lending AMM's `MIN_REBALANCE` of each reserve and its `KAMINO_RATE_HEADROOM_BPS` live in `programs/lending-amm/src/config.rs` and again in `packages/keeper-jobs/lending-amm.ts`, whose tests check the two agree; the program's next release can export them in its IDL, as it does the band, and the copy can go.
+- `SUITE-59` to `SUITE-62`: set by the session of [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `CANARY-47`: the check is the owner's answer 5a on [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) (`HOOK-50`); its rule, its 1-point threshold and its search were set by that session while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
