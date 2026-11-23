@@ -9,9 +9,24 @@ import { DEMO_MARKET, rpcUrl, swapOnDemoMarket, wallet } from "terminal-devnet/d
 import { LIVE_EMIT_PATH, RPC_PORT } from "./rpc";
 import { RPC_MODE } from "./target";
 
-export const LIVE_MARKET: string = DEMO_MARKET;
 const SWAPS = `${import.meta.dirname}/../fixtures/live-swaps.json`;
 type Landed = { signature: string; slot: number };
+/** The recording: the market its swaps were made on (the demo market of the day) and each swap by name. */
+type Recorded = { market: string; swaps: Record<string, Landed> };
+const recorded = (): Recorded | null => {
+  try {
+    return JSON.parse(readFileSync(SWAPS, "utf8")) as Recorded;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The market the live tests watch: on devnet, the tax AMM's demo market as `deployments/` names it
+ * today; on the recorded fixtures, the market the recording was made on, which a later redeploy of
+ * the demo market does not change.
+ */
+export const LIVE_MARKET: string = RPC_MODE === "fixtures" ? (recorded()?.market ?? DEMO_MARKET) : DEMO_MARKET;
 
 async function slotOf(signature: string): Promise<number> {
   const response = await fetch(rpcUrl(), {
@@ -32,7 +47,7 @@ async function announce({ signature, slot }: Landed) {
 /** Lands the swap named `label` (a 0.001 SOL buy of the demo token) and resolves once it is confirmed and announced. */
 export async function landSwap(label: string): Promise<Landed> {
   if (RPC_MODE === "fixtures") {
-    const landed = (JSON.parse(readFileSync(SWAPS, "utf8")) as Record<string, Landed>)[label];
+    const landed = recorded()?.swaps[label];
     if (!landed) throw new Error(`no swap "${label}" is recorded in fixtures/live-swaps.json: record it with pnpm --filter terminal-e2e record`);
     await announce(landed);
     return landed;
@@ -40,14 +55,10 @@ export async function landSwap(label: string): Promise<Landed> {
   const signature = await swapOnDemoMarket(await wallet(), "buy", 1_000_000n);
   const landed = { signature, slot: await slotOf(signature) };
   if (RPC_MODE === "record") {
-    const recorded = (() => {
-      try {
-        return JSON.parse(readFileSync(SWAPS, "utf8")) as Record<string, Landed>;
-      } catch {
-        return {};
-      }
-    })();
-    writeFileSync(SWAPS, `${JSON.stringify({ ...recorded, [label]: landed }, null, 2)}\n`);
+    // A recording starts afresh on today's demo market.
+    const kept = recorded();
+    const swaps = kept?.market === DEMO_MARKET ? kept.swaps : {};
+    writeFileSync(SWAPS, `${JSON.stringify({ market: DEMO_MARKET, swaps: { ...swaps, [label]: landed } }, null, 2)}\n`);
     await announce(landed);
   }
   return landed;
