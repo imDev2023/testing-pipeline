@@ -3948,6 +3948,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
 
+### HOOK-52: The quote mint at binding
+
+- Question: Does `bind` check the home market's quote mint, whose payouts every holder's exit depends on?
+- Answer: Yes: `bind` takes the quote mint, which must be the market's other mint, refuses one with a live transfer hook (any program's, this hook's included; a hook cleared for good passes), and refuses one with a mint or freeze authority unless it is on the tax AMM's quote list, by the tax AMM's own rule, so the list has one place.
+- Alternatives: Refusing any quote with a freeze authority or a hook, which rules out USDC; refusing only a quote with a hook; relying on the tax AMM's creation and seed rules alone, which a later tax AMM change could loosen after the hook is frozen.
+- Specified in: [`docs/spec/containment-hook.md`, Checks on the home market](spec/containment-hook.md#checks-on-the-home-market)
+- Changes by: fixed on-chain once deployed
+- Status: default
+- Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
 ## Buy wall AMM (POOL4)
 
 `POOL4-01` to `POOL4-21` keep the numbers their tickets proposed, which the buy wall AMM's build tickets already cite.
