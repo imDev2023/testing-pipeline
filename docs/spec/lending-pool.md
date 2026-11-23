@@ -531,7 +531,7 @@ On Pipeline 0.3 (2026-11-22) the Mac measured `rebalance` leaving withdraw mode 
 | Instruction | Measured (compute units) | Ceiling (compute units) | Main cost |
 | --- | --- | --- | --- |
 | `pipeline_quote` | 15,983 | 20,000 | Reserve checks and fixed-point maths; well under the quoter's 200,000 cap |
-| `pipeline_swap`, no redeem | 25,592 | 35,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
+| `pipeline_swap`, no redeem | 25,628 | 35,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
 | `pipeline_swap`, with a redeem | 60,156 | 80,000 | Kamino's redeem (mainnet median 29,670) |
 | `pipeline_resolve_accounts` | 26,316 | 35,000 | Runs the quote to decide on the redeem accounts |
 | `pipeline_init_market` | 61,354 | 80,000 | Creating two vaults, the cToken account and the LP mint |
