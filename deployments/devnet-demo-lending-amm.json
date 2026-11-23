@@ -132,10 +132,6 @@
       "3pm7c8prmLVqv9ipR2E3UnXXsDuym3tWHXhjnJoHpiFzMeY4ufB9T3mppyzPNEyHSrwLA9wed1K6UYNodqRKtUEj"
     ],
     [
-      "step 22: Kamino side, refresh the test borrower's obligation",
-      "2d5vmVpKxz1ovX1JdjiRC72Cf2j3c5fgz1jgYDGsW6E14kCFg62hcJu7qq7pMMV4Lg6wdLyt9ihBUgLvx7LNUVjr"
-    ],
-    [
       "step 22: refresh_reserve, the lending yield, first read",
       "3HMZiEkMiCjzfHZTV6kRZJ3HrUn3mQssgAqc8Hopes4Vpgmmp2ixHadXhXVCCXJ7yu3KQW18Z31A33ffwUFf7qR5"
     ],
@@ -158,6 +154,10 @@
     [
       "step 24: result",
       "a second rebalance in withdraw mode: refused with BelowMinRebalance, in simulation, so nothing was sent"
+    ],
+    [
+      "step 25: Kamino side, refresh the test borrower's obligation",
+      "2d5vmVpKxz1ovX1JdjiRC72Cf2j3c5fgz1jgYDGsW6E14kCFg62hcJu7qq7pMMV4Lg6wdLyt9ihBUgLvx7LNUVjr"
     ],
     [
       "step 25: Kamino side, test borrower repays in full",

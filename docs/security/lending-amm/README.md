@@ -8,6 +8,7 @@ It is an internal review with Stronghold of Security and Book of Knowledge from 
 | [`adversarial-review.md`](adversarial-review.md) | Round 1: Stronghold of Security's full review of commit `0ef0e06` (112 hypotheses, 19 confirmed, 17 potential), with the remediation made on the hardening branch |
 | [`verification.md`](verification.md) | Round 2: Stronghold's verify phase and a re-review of every line the fixes changed, its follow-up on the fixes made after it, and the table of every finding left open |
 | [`maths-properties.md`](maths-properties.md) | Book of Knowledge's 30 properties of the pricing, valuation, share and rebalancing maths, and the proof or test that establishes each |
+| [`release-0.1.1.md`](release-0.1.1.md) | The verify pass on release 0.1.1, the first upgrade on devnet: no behaviour changed, no finding reopened and no new one |
 
 ## Where it stands
 

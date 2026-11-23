@@ -2250,5 +2250,8 @@ async function hostedGet(path: string): Promise<{ ok: boolean; status: number; b
 
 main().catch((error) => {
     console.error(error);
+    // A thrown error, such as an RPC failure past every retry, stops the run as a failed check
+    // does, and leaves its record the same way.
+    writeRecord(`stopped: ${String(error)}`);
     process.exit(1);
 });

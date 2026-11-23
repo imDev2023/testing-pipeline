@@ -742,7 +742,7 @@ pnpm demo --cluster devnet --payer ... --upgrade-authority ... --record <scratch
 Before it, `npm run cli -- setup` and `status` in `scripts/kamino-devnet` must report our Kamino lending market unchanged, with the second depositor's 5 SOL in the WSOL reserve, and both reserves' Pyth price accounts must still exist, since klend's `refresh_reserve` reads them.
 On devnet the demo walks the whole product on one market, as on a local validator, and steps 28 to 30 (the launchpad) are skipped; step 25's wait is `WITHDRAW_MODE_EXIT_DELAY_SLOTS` of devnet's slots, about an hour, and step 31 asks Pipeline's hosted API to list and quote the market (`LENDING-98`).
 Step 27 ends with the buffer back at its target and prints two sales of the token whose output lands just inside and just beyond the buffer, which `pipeline-check --amounts` takes for the checks on both sides of the buffer's edge.
-`--hosted-api <router market>` runs step 31 alone on a market an earlier run made, and `--record` writes what a run did even when it stops part way.
+`--hosted-api <router market>` runs step 31 alone on a market an earlier run made, and `--record` writes what a run did even when it stops part way, by a failed check or a thrown error.
 
 The lending AMM went to devnet this way on 2026-11-22 and 2026-11-23:
 
@@ -751,7 +751,7 @@ The lending AMM went to devnet this way on 2026-11-22 and 2026-11-23:
   `lending-gate run --cluster devnet` found no market, made and traded one of its own with them, its sale beyond the buffer redeeming 6,000,169,061 lamports from Kamino, exactly its quote, and recorded the pass (`deployments/release-gate/lending-amm/devnet.json`).
 - **Deploy.** `deploy-devnet.sh lending-amm` built the commit again, the first try failing with `can't find crate` and the second building the same hash ("Known problems"); the pre-deploy check found the gate's pass, and the program was deployed over TPU in slot 525,242,911, signature `2rK27mtodhzgDZNKM8tSr8EpJJWBift2faAx8ARnk9CFg5io4ZH4P2CmA8gCwHQpV2MyF17RR4kyHzVN12nHQyKb`, with `solana-verify get-program-hash -u devnet` giving the build's hash.
 - **The demo.** Its first run registered the strategy and walked steps 4 to 21, then klend refused the test borrower's borrow with `PriceTooOld`: devnet's sponsored Pyth feeds had stopped updating for over 25 minutes, past our reserves' 600-second price max age, which `setup` then raised to a week (`LENDING-40` changed); the second run's borrow landed, and public devnet dropped a connection right after, which the demo now retries.
-  The third run passed every step, 28 to 30 skipped, in about 90 minutes, an hour of it withdraw mode's wait:
+  The third run passed every step from 4 to 30, 28 to 30 skipped, in about 90 minutes, an hour of it withdraw mode's wait, and stopped at step 31's sale, whose comparison then took the strategy's quote for what the trader keeps; with the comparison fixed, `--hosted-api` ran step 31 alone on the same market and passed (below):
   - the token held no authorities, and the market was created and funded with 0.5 SOL on its lent side in one transaction;
   - `rebalance` lent 447,949,380 lamports for 447,943,772 cTokens and a second one was refused with `WithinBand`;
   - a sale beyond the buffer built from a smaller sale's accounts was refused with `RedeemAccountsMissing`, and with its own accounts redeemed its shortfall inside the swap, the trader receiving exactly the quote;
