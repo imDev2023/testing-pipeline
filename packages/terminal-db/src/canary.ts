@@ -102,7 +102,7 @@ export async function storeCanaryMarket(
             kind: "canary_outcome_changed",
             subject: market,
             slot: BigInt(record.slot),
-            payload: { program: version.program, deploySlot, check: record.check, from: previous.outcome, to: record.outcome, record: record.id },
+            payload: { program: version.program, deploySlot, check: record.check, from: previous.outcome, to: record.outcome, reason: record.reason, record: record.id },
           });
         }
       }

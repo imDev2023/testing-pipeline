@@ -27,8 +27,11 @@ export type OutboxPayloads = {
   router_upgraded: { deploySlot: string; executableSha256: string | null; previousSlot: string | null };
   /** Canary's first results for a market (#124), under the strategy version named. */
   canary_first_results: { program: string; deploySlot: string };
-  /** A Canary check's outcome on a market changed from one run of a version to the next. */
-  canary_outcome_changed: { program: string; deploySlot: string; check: string; from: string; to: string; record: string };
+  /**
+   * A Canary check's outcome on a market changed from one run of a version to the next, with the new
+   * result's sentence; `record` names that result, which a later result of the same outcome replaces.
+   */
+  canary_outcome_changed: { program: string; deploySlot: string; check: string; from: string; to: string; reason: string; record: string };
   /** A Canary run of a strategy version ended: its trigger, how many markets it covered and how many Aviary could not run. */
   canary_run_finished: { deploySlot: string; runId: string; trigger: string; delayMs: number; markets: number; failed: number };
 };

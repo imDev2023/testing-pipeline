@@ -46,6 +46,7 @@ async function versionsOf(db: Db, program: string): Promise<VersionRow[]> {
 }
 
 const SLOT = /^\d{1,20}$/;
+const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 const resultView = (r: StoredCanaryResult): CanaryResult => ({
   id: r.id,
@@ -115,13 +116,14 @@ canaryRoutes.get("/v1/strategies/:program/versions/:slot/canary", async (c) => {
 canaryRoutes.get("/v1/strategies/:program/versions/:slot/canary/schedule", async (c) => {
   const program = c.req.param("program");
   const slot = c.req.param("slot");
+  if (!ADDRESS.test(program)) return c.json<ApiError>({ error: "This is not a strategy program's address." }, 400);
   if (!SLOT.test(slot)) return c.json<ApiError>({ error: "A version is the slot its strategy was deployed in, a whole number." }, 400);
-  const version = { program, deploySlot: slot };
+  const version = { program, deploySlot: String(BigInt(slot)) };
   const status = await c.env.CANARY_RUNS.get(c.env.CANARY_RUNS.idFromName(canaryRunName(version))).status();
   return c.json(
     CanarySchedule.parse({
       program,
-      deploy_slot: Number(slot),
+      deploy_slot: Number(version.deploySlot),
       runs: status.runs.map((r) => ({ trigger: r.trigger, delay_ms: r.delayMs, due_at: new Date(r.dueAt).toISOString(), markets: r.markets, done: r.done, started: r.started })),
     }),
   );

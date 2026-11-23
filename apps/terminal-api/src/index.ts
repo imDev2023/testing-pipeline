@@ -6,7 +6,7 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { createDb } from "terminal-db";
 import { canaryRoutes, startCanary } from "./canary";
-import { drainCanaryOutbox, sweepCanary } from "./canaryTriggers";
+import { sweepCanary } from "./canaryTriggers";
 import type { JobName } from "./config";
 import type { ApiError } from "./contract";
 import { runDueJobs, type Job } from "./dispatcher";
@@ -85,11 +85,14 @@ export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
   };
 }
 
-/** Canary's scheduled sweep (CANARY-23): what the outbox still holds, then every market on its strategy's current version. */
+/**
+ * Canary's scheduled sweep (CANARY-23): what the outbox still holds, drained by the indexer, which
+ * does every drain (./indexer), then every market on its strategy's current version.
+ */
 async function canarySweep(env: Bindings): Promise<void> {
+  await indexer(env).drainOutbox();
   const { db, close } = createDb(env.HYPERDRIVE.connectionString);
   try {
-    await drainCanaryOutbox(db, startCanary(env), Date.now());
     await sweepCanary(db, startCanary(env));
   } finally {
     await close();

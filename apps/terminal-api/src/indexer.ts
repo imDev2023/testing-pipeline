@@ -51,18 +51,25 @@ export class Indexer extends DurableObject<Bindings> {
 
   /**
    * After a job that woke Postgres, Canary's triggers read the outbox on from their cursor
-   * (./canaryTriggers), so the database is never woken only to look; one drain at a time.
+   * (./canaryTriggers), so the database is never woken only to look (PIPESCOPE-118). The drain runs
+   * behind the job, which returns (and publishes its trades) without waiting for it.
    */
   private async afterJob<T>(work: () => Promise<T>): Promise<T> {
     const before = this.indexer().databaseUses();
     try {
       return await work();
     } finally {
-      if (this.indexer().databaseUses() !== before) {
-        this.canaryDrain = this.canaryDrain.then(() => this.drainCanary());
-        await this.canaryDrain;
-      }
+      if (this.indexer().databaseUses() !== before) this.ctx.waitUntil(this.drainOutbox());
     }
+  }
+
+  /**
+   * Reads Canary's triggers from the outbox: every drain goes through this one object, one at a
+   * time, so no event is read by two drains at once (the sweep job asks for it here too).
+   */
+  async drainOutbox(): Promise<void> {
+    this.canaryDrain = this.canaryDrain.then(() => this.drainCanary());
+    await this.canaryDrain;
   }
 
   private async drainCanary(): Promise<void> {

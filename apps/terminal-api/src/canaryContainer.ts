@@ -26,7 +26,11 @@ export class CanaryContainer extends Container<Bindings> {
    * it. A failure is returned, not thrown, so the caller decides when to try again (its alarm).
    */
   async run(body: string): Promise<CanaryContainerAnswer> {
-    const mine = this.turn.then(() => this.post(body));
+    const queued = Date.now();
+    const mine = this.turn.then(() =>
+      // A run that waited past its turn's budget is given back, so its alarm stays within its time.
+      Date.now() - queued > CANARY.container.queueWaitMs ? { status: "failed" as const, error: `waited more than ${CANARY.container.queueWaitMs / 60_000} minutes for the container` } : this.post(body),
+    );
     this.turn = mine;
     return mine;
   }

@@ -109,8 +109,8 @@ describe("Canary's records", () => {
     ]);
     const changed = events.filter(([kind]) => kind === "canary_outcome_changed");
     expect(changed).toEqual([
-      ["canary_outcome_changed", MARKET, { program: STRATEGY, deploySlot: "500", check: "cost", from: "pass", to: "warn", record: `cost:${MARKET}:500:2` }],
-      ["canary_outcome_changed", MARKET, { program: STRATEGY, deploySlot: "500", check: "exit_sizes", from: "pass", to: "warn", record: `exit_sizes:${MARKET}:500:3` }],
+      ["canary_outcome_changed", MARKET, { program: STRATEGY, deploySlot: "500", check: "cost", from: "pass", to: "warn", reason: "cost is warn.", record: `cost:${MARKET}:500:2` }],
+      ["canary_outcome_changed", MARKET, { program: STRATEGY, deploySlot: "500", check: "exit_sizes", from: "pass", to: "warn", reason: "exit_sizes is warn.", record: `exit_sizes:${MARKET}:500:3` }],
     ]);
     const finished = events.filter(([kind]) => kind === "canary_run_finished");
     expect(finished).toHaveLength(6);

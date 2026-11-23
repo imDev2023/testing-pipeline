@@ -123,7 +123,6 @@ export function keeperRoutes(app: Hono<AppEnv>) {
   });
 }
 
-/** Whether `signature` (base58) is `wallet`'s signature of the heartbeat message of `payload`. */
 async function readBalance(rpcUrl: string, wallet: string): Promise<Keeper["balance"]> {
   try {
     const { value } = await createSolanaRpc(rpcUrl)

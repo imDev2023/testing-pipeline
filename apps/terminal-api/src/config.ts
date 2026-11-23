@@ -184,10 +184,17 @@ export const CANARY = {
   /** A market created or registered is run at once, and again this long after it was found (CANARY-22). */
   marketCreatedDelaysMs: [0, 10 * MINUTE, HOUR, DAY],
   /**
-   * The one container: asleep this long after its last run, answering on this port, each run given
-   * this long; after a start, its binary is asked for `/health` this often, this many times, before a run is posted.
+   * The one container: asleep this long after its last run, answering on this port; a run waits at
+   * most `queueWaitMs` for its turn and is given `answerTimeoutMs`; after a start, the binary is
+   * asked for `/health` every `readyEveryMs`, `readyAttempts` times, before a run is posted.
    */
-  container: { sleepAfter: "2m", port: 8080, answerTimeoutMs: 5 * MINUTE, readyEveryMs: 250, readyAttempts: 40 },
+  container: { sleepAfter: "2m", port: 8080, queueWaitMs: 3 * MINUTE, answerTimeoutMs: 4 * MINUTE, readyEveryMs: 250, readyAttempts: 40 },
+  /**
+   * No snapshot round of a market starts once its rounds have taken this long, so the worst round
+   * (a wait for the container's turn and its answer, 7 minutes) still ends within a Durable Object
+   * alarm's 15 minutes; the market is tried again on a later alarm.
+   */
+  marketBudgetMs: 6 * MINUTE,
   /**
    * A market whose snapshot or run failed (the RPC, or the container restarting) is tried again on
    * the run's alarm, after waits doubling from the first to the longest, up to this many attempts in

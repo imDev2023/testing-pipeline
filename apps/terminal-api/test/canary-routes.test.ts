@@ -178,6 +178,12 @@ describe("GET /v1/strategies/{program}/versions/{slot}/canary/schedule", () => {
       runs: [{ trigger: "market_created", delay_ms: 3_600_000, due_at: "2026-11-23T19:00:00.000Z", markets: 1, done: 0, started: false }],
     });
   });
+
+  it("reads the version's object by its slot written plainly, and refuses what is no address or slot", async () => {
+    expect(CanarySchedule.parse((await get(`/v1/strategies/${CURVE}/versions/0520151724/canary/schedule`)).body).deploy_slot).toBe(520_151_724);
+    expect((await get("/v1/strategies/notanaddress/versions/1/canary/schedule")).status).toBe(400);
+    expect((await get(`/v1/strategies/${CURVE}/versions/1e9/canary/schedule`)).status).toBe(400);
+  });
 });
 
 describe("POST /v1/canary/reruns", () => {

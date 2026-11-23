@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { createKeyPairSignerFromBytes, getBase58Decoder, signBytes } from "@solana/kit";
-import { canaryRerunMessage } from "../src/contract";
+import { canaryRerunMessage } from "../src/contract.ts";
 
 const { values } = parseArgs({
   options: {

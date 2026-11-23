@@ -105,9 +105,9 @@ export class CanaryRunCore {
   }
 
   /**
-   * Takes a trigger's request: one run per delay after `since`. A market that a run due already
-   * holds, and has yet to do, is left out of another run due now, so two triggers at once, or two
-   * delays already past, run it once.
+   * Takes a trigger's request: one run per delay after `since`. The same request taken twice is one,
+   * and a market that a run due or started already holds, and has yet to do, is left out of another
+   * run due now, so two triggers at once, or two delays already past, run it once.
    */
   async schedule(version: CanaryRunVersion, request: CanaryRunRequest): Promise<void> {
     const state = await this.load();
@@ -117,14 +117,16 @@ export class CanaryRunCore {
     }
     const now = this.deps.now();
     const since = request.since ?? now;
-    const waiting = new Set(state.runs.filter((r) => r.dueAt <= now).flatMap((r) => r.markets.slice(r.next)));
+    const left = (r: PendingRun) => r.markets.slice(r.next);
+    const holding = new Set(state.runs.filter((r) => r.dueAt <= now || r.runId !== null).flatMap(left));
     for (const delayMs of request.delaysMs ?? [0]) {
       const dueAt = since + delayMs;
-      const markets = [...new Set(request.markets)].filter((m) => dueAt > now || !waiting.has(m));
+      const same = state.runs.filter((r) => r.trigger === request.trigger && r.since === since && r.delayMs === delayMs).flatMap(left);
+      const markets = [...new Set(request.markets)].filter((m) => !same.includes(m) && (dueAt > now || !holding.has(m)));
       if (!markets.length) continue;
       state.runs.push({ id: crypto.randomUUID(), trigger: request.trigger, delayMs, since, dueAt, markets, next: 0, runId: null, attempts: 0, waits: 0 });
       // Of a request's runs already due, as a market found long after it was created has, the first is enough.
-      if (dueAt <= now) markets.forEach((m) => waiting.add(m));
+      if (dueAt <= now) markets.forEach((m) => holding.add(m));
     }
     state.runs.sort((a, b) => a.dueAt - b.dueAt);
     await this.save(state);
@@ -143,19 +145,25 @@ export class CanaryRunCore {
    * The alarm: one market of the earliest run that is due, then the alarm again for what is left.
    * A request can arrive while the market runs (the object takes calls while it waits on the RPC,
    * the container and Postgres), so the work is done on a copy of the run, and what it did is
-   * applied to the runs as they are when it ends.
+   * applied to the runs as they are when it ends. Whatever fails, the runs are saved and the alarm
+   * set again: a failure outside the market's own tries (Postgres unreachable, say) is one more try.
    */
   async alarm(): Promise<void> {
     const before = await this.load();
     const due = before.runs.find((r) => r.dueAt <= this.deps.now());
     if (!before.version || !due) return this.arm(before);
+    const version = before.version;
     const run = structuredClone(due);
     let outcome: Outcome;
-    const { db, close } = this.deps.openDb();
     try {
-      outcome = await this.work(db, before.version, run, before.runs);
-    } finally {
-      await close();
+      const { db, close } = this.deps.openDb();
+      try {
+        outcome = await this.work(db, version, run, before.runs);
+      } finally {
+        await close().catch(() => {});
+      }
+    } catch (e) {
+      outcome = this.later(run, version, e);
     }
     const state = await this.load();
     if (outcome === "finished") state.runs = state.runs.filter((r) => r.id !== run.id);
@@ -166,12 +174,32 @@ export class CanaryRunCore {
     await this.arm(state);
   }
 
+  /** One more failed try of the run's market: it is due again after a wait doubling with each try. */
+  private later(run: PendingRun, version: CanaryRunVersion, e: unknown): Outcome {
+    run.attempts++;
+    run.dueAt = this.deps.now() + Math.min(CANARY.retry.firstDelayMs * 2 ** (Math.min(run.attempts, 30) - 1), CANARY.retry.maxDelayMs);
+    this.deps.log(`canary: ${run.markets[run.next]} on version ${version.deploySlot} of ${version.program} failed (try ${run.attempts} of ${CANARY.retry.attempts}), again at ${new Date(run.dueAt).toISOString()}: ${errorText(e)}`);
+    return "going";
+  }
+
+  /** Writes a run's row id to storage at once, so a try that fails after it never writes a second row. */
+  private async remember(run: PendingRun): Promise<void> {
+    const state = await this.load();
+    const stored = state.runs.find((r) => r.id === run.id);
+    if (!stored) return;
+    stored.runId = run.runId;
+    await this.save(state);
+  }
+
   /** One market of `run`, which it changes; says whether the run goes on, finished, or handed runs to a newer version. */
   private async work(db: Db, version: CanaryRunVersion, run: PendingRun, runs: PendingRun[]): Promise<Outcome> {
-    const now = this.deps.now();
+    const started = this.deps.now();
     const deploySlot = BigInt(version.deploySlot);
     const ours = { program: version.program, deploySlot };
-    if (run.runId === null) run.runId = String(await startCanaryRun(db, { version: ours, trigger: run.trigger, delayMs: run.delayMs, markets: run.markets }));
+    if (run.runId === null) {
+      run.runId = String(await startCanaryRun(db, { version: ours, trigger: run.trigger, delayMs: run.delayMs, markets: run.markets }));
+      await this.remember(run);
+    }
     const runId = BigInt(run.runId);
     const market = run.markets[run.next]!;
     const reader = rpcAccountReader(this.deps.rpcUrl);
@@ -184,54 +212,54 @@ export class CanaryRunCore {
       await finishCanaryRun(db, runId);
       return "finished";
     };
+    const fail = async (error: string): Promise<Outcome> => {
+      this.deps.log(`canary: ${market} could not be run on version ${version.deploySlot} of ${version.program}: ${error}`);
+      await failCanaryMarket(db, { runId, market, error, rpcRequests: reader.requests() });
+      return await done();
+    };
     try {
       const first = await firstSnapshot(reader, market);
-      if (first.strategy !== version.program) {
-        await failCanaryMarket(db, { runId, market, error: `the market's strategy is ${first.strategy}, not ${version.program}`, rpcRequests: reader.requests() });
-        return done();
-      }
+      if (first.strategy !== version.program) return await fail(`the market's strategy is ${first.strategy}, not ${version.program}`);
       const [own] = await db
         .select({ executableSha256: programVersions.executableSha256 })
         .from(programVersions)
         .where(and(eq(programVersions.program, version.program), eq(programVersions.deploySlot, deploySlot)));
-      if (own?.executableSha256 && first.strategyExecutableSha256 !== own.executableSha256) {
+      if (!own?.executableSha256 || first.strategyExecutableSha256 !== own.executableSha256) {
         const [newest] = await db.select({ deploySlot: programVersions.deploySlot }).from(programVersions).where(eq(programVersions.program, version.program)).orderBy(desc(programVersions.deploySlot)).limit(1);
-        if (newest && newest.deploySlot > deploySlot) return this.handOver(db, runs.map((r) => (r.id === run.id ? run : r)), { program: version.program, deploySlot: String(newest.deploySlot) });
+        if (newest && newest.deploySlot > deploySlot) return await this.handOver(db, runs.map((r) => (r.id === run.id ? run : r)), { program: version.program, deploySlot: String(newest.deploySlot) });
+        if (!own?.executableSha256) return await fail("Aviary does not know this version's code, so it cannot tell whether the chain still runs it");
         run.waits++;
         if (run.waits < CANARY.versionWaits.attempts) {
-          run.dueAt = now + CANARY.versionWaits.delayMs;
+          run.dueAt = this.deps.now() + CANARY.versionWaits.delayMs;
           return "going";
         }
-        await failCanaryMarket(db, { runId, market, error: "the chain runs strategy code that is no version Aviary has recorded", rpcRequests: reader.requests() });
-        return done();
+        return await fail("the chain runs strategy code that is no version Aviary has recorded");
       }
 
       let snapshot: Snapshot = { ...first.snapshot };
       const instructions = await this.instructionsOf(db, version.program, deploySlot);
       if (instructions) snapshot.instructions = instructions;
       for (;;) {
-        const started = Date.now();
+        const posted = Date.now();
         const answer = await this.deps.container.run(snapshotBody(snapshot));
-        containerMs += Date.now() - started;
+        containerMs += Date.now() - posted;
         if (answer.status === "results") {
           await storeCanaryMarket(db, { runId, version: ours, market, records: answer.records, notes: answer.notes, rounds: snapshot.round, rpcRequests: reader.requests(), containerMs });
-          return done();
+          return await done();
         }
         if (answer.status === "refused") throw new CanaryRefused(`the binary refused the snapshot: ${answer.error}`);
         if (answer.status === "failed") throw new Error(answer.error);
         if (snapshot.round >= CANARY.roundsGuard) throw new CanaryRefused(`the binary still lacked accounts after ${snapshot.round} rounds`);
+        // Another round must still fit in this alarm with room for its worst case; else a later alarm starts the market again.
+        if (this.deps.now() - started > CANARY.marketBudgetMs) throw new Error(`the market's rounds took more than ${CANARY.marketBudgetMs / 60_000} minutes, more than one alarm allows`);
         snapshot = await addMissing(reader, snapshot, answer);
       }
     } catch (e) {
-      run.attempts++;
-      if (e instanceof CanaryRefused || run.attempts >= CANARY.retry.attempts) {
-        this.deps.log(`canary: ${market} could not be run on version ${version.deploySlot} of ${version.program}: ${errorText(e)}`);
-        await failCanaryMarket(db, { runId, market, error: errorText(e), rpcRequests: reader.requests() });
-        return done();
+      if (e instanceof CanaryRefused || run.attempts + 1 >= CANARY.retry.attempts) {
+        run.attempts++;
+        return await fail(errorText(e));
       }
-      run.dueAt = now + Math.min(CANARY.retry.firstDelayMs * 2 ** (run.attempts - 1), CANARY.retry.maxDelayMs);
-      this.deps.log(`canary: ${market} failed (try ${run.attempts} of ${CANARY.retry.attempts}), again at ${new Date(run.dueAt).toISOString()}: ${errorText(e)}`);
-      return "going";
+      return this.later(run, version, e);
     }
   }
 
@@ -249,7 +277,7 @@ export class CanaryRunCore {
   private async handOver(db: Db, runs: PendingRun[], to: CanaryRunVersion): Promise<Outcome> {
     for (const run of runs) {
       const left = run.markets.slice(run.next);
-      await this.deps.forward(to, { trigger: run.trigger, markets: left, delaysMs: [run.delayMs], since: run.since });
+      if (left.length) await this.deps.forward(to, { trigger: run.trigger, markets: left, delaysMs: [run.delayMs], since: run.since });
       if (run.runId !== null) {
         const runId = BigInt(run.runId);
         for (const market of left) {

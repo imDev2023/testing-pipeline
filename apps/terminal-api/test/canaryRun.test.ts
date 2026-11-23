@@ -103,7 +103,7 @@ function memoryStorage(): CanaryRunStorage & { alarm: number | null } {
   return storage;
 }
 
-function runner(chains: CanaryChain[], options: { exitSizes?: CanaryRecord["outcome"] } = {}) {
+function runner(chains: CanaryChain[], options: { exitSizes?: CanaryRecord["outcome"]; openDb?: () => ReturnType<typeof createDb> } = {}) {
   const clock = { now: 1_763_900_000_000 };
   const storage = memoryStorage();
   const box = container(chains, options);
@@ -112,7 +112,7 @@ function runner(chains: CanaryChain[], options: { exitSizes?: CanaryRecord["outc
     storage,
     now: () => clock.now,
     rpcUrl: rpc.url,
-    openDb: () => createDb(database.url),
+    openDb: options.openDb ?? (() => createDb(database.url)),
     container: { run: box.run },
     forward: async (version, request) => void forwarded.push({ version, ...request }),
     log: () => {},
@@ -275,6 +275,84 @@ describe("a Canary run of a strategy version", () => {
     box.state.beforeAnswer = () => core.schedule(versionOf(chains[0]!), { trigger: "market_created", markets: [chains[1]!.market] });
     await fireDue();
     expect((await client.db.select().from(canaryRunMarkets)).map((d) => d.market).sort()).toEqual(chains.map((c) => c.market).sort());
+  });
+
+  it("keeps its runs and tries again later when its alarm fails outside a market, as when Postgres cannot be reached", async () => {
+    const chain = await putMarket(rpc);
+    await index(chain);
+    let refuse = true;
+    const { core, clock, storage, box, fireDue } = runner([chain], {
+      openDb: () => {
+        if (refuse) throw new Error("connect ECONNREFUSED 127.0.0.1:5432");
+        return createDb(database.url);
+      },
+    });
+    await core.schedule(versionOf(chain), { trigger: "sweep", markets: [chain.market] });
+    await core.alarm();
+    expect(storage.alarm).toBe(clock.now + CANARY.retry.firstDelayMs);
+    expect((await core.status()).runs).toHaveLength(1);
+    refuse = false;
+    clock.now += CANARY.retry.firstDelayMs;
+    await fireDue();
+    expect(box.posted.filter((p) => p.round === 1)).toHaveLength(1);
+    expect(await client.db.select().from(canaryRuns)).toHaveLength(1);
+  });
+
+  it("stores a run's row once, however often its first market is tried", async () => {
+    const chain = await putMarket(rpc);
+    await index(chain);
+    const { core, clock, box, fireDue } = runner([chain]);
+    await core.schedule(versionOf(chain), { trigger: "sweep", markets: [chain.market] });
+    box.state.down = true;
+    await fireDue();
+    clock.now += CANARY.retry.firstDelayMs;
+    box.state.down = false;
+    await fireDue();
+    const runs = await client.db.select().from(canaryRuns);
+    expect(runs.map((r) => r.finishedAt !== null)).toEqual([true]);
+  });
+
+  it("never runs a version whose code it cannot tell, as one found only in the program's history", async () => {
+    const chain = await putMarket(rpc);
+    await index(chain);
+    await client.db.update(programVersions).set({ executableSha256: null, backfilled: true }).where(eq(programVersions.program, chain.strategy));
+    const { core, box, fireDue } = runner([chain]);
+    await core.schedule(versionOf(chain), { trigger: "rerun", markets: [chain.market] });
+    await fireDue();
+    expect(box.posted).toEqual([]);
+    expect((await client.db.select().from(canaryRunMarkets)).map((r) => [r.status, r.error])).toEqual([["failed", "Aviary does not know this version's code, so it cannot tell whether the chain still runs it"]]);
+  });
+
+  it("puts a market's run off to a later alarm when its rounds take too long for one", async () => {
+    const chain = await putMarket(rpc);
+    await index(chain);
+    const { core, clock, storage, box, fireDue } = runner([chain]);
+    await core.schedule(versionOf(chain), { trigger: "sweep", markets: [chain.market] });
+    // The first round's answer comes back after the market's whole budget.
+    box.state.beforeAnswer = async () => void (clock.now += CANARY.marketBudgetMs + 1);
+    await core.alarm();
+    expect(box.posted).toHaveLength(1);
+    expect(await client.db.select().from(canaryRunMarkets)).toEqual([]);
+    expect(storage.alarm).toBe(clock.now + CANARY.retry.firstDelayMs);
+    clock.now += CANARY.retry.firstDelayMs;
+    await fireDue();
+    expect((await client.db.select().from(canaryRunMarkets)).map((r) => r.status)).toEqual(["done"]);
+  });
+
+  it("takes the same request twice as once, and leaves a market out of a new run while a started run still holds it", async () => {
+    const chain = await putMarket(rpc);
+    await index(chain);
+    const { core, clock, box, fireDue } = runner([chain]);
+    const created = clock.now;
+    const request = { trigger: "market_created" as const, markets: [chain.market], delaysMs: CANARY.marketCreatedDelaysMs, since: created };
+    await core.schedule(versionOf(chain), request);
+    await core.schedule(versionOf(chain), request);
+    expect((await core.status()).runs).toHaveLength(4);
+    // The first run starts, and its market's try fails, putting the run 30 s on; a sweep then names it.
+    box.state.down = true;
+    await fireDue();
+    await core.schedule(versionOf(chain), { trigger: "sweep", markets: [chain.market] });
+    expect((await core.status()).runs.map((r) => r.trigger)).not.toContain("sweep");
   });
 
   it("does not run a market twice when a second trigger names it while it waits", async () => {
