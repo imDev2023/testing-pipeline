@@ -84,6 +84,8 @@ fn size_of(ty: &Value) -> usize {
 #[test]
 fn the_idl_is_this_programs() {
     assert_eq!(idl()["address"], strategy_id().to_string());
+    // Built from this release of the crate (`pnpm idl` after a version change).
+    assert_eq!(idl()["metadata"]["version"], env!("CARGO_PKG_VERSION"));
 }
 
 #[test]
@@ -213,6 +215,56 @@ fn its_market_state_has_the_programs_discriminator_and_layout() {
     assert_eq!(offsets["redeemed"], layout::REDEEMED);
     assert_eq!(offsets["reserved"], layout::RESERVED);
     assert_eq!(offset, layout::LEN);
+}
+
+/// The market state's layout, frozen from the program's first devnet deploy (docs/spec/lending-pool.md,
+/// "Market state"): every field's name and offset, in order, as `tests/layout.rs` pins them against
+/// the program itself. The IDL publishes exactly this, so a client decoding with the IDL reads every
+/// live market as the program does.
+const FROZEN_LAYOUT: [(&str, usize); 22] = [
+    ("version", 8),
+    ("bump", 9),
+    ("authority_bump", 10),
+    ("lent_index", 11),
+    ("lp_fee_bps", 12),
+    ("withdraw_mode", 14),
+    ("mints", 15),
+    ("vaults", 79),
+    ("market_signer", 143),
+    ("lp_mint", 175),
+    ("ctoken_account", 207),
+    ("reserve", 239),
+    ("collateral_mint", 271),
+    ("seeder", 303),
+    ("reserves", 335),
+    ("ctokens", 351),
+    ("deposited", 359),
+    ("redeemed", 375),
+    ("created_slot", 391),
+    ("created_at", 399),
+    ("exit_seen_slot", 407),
+    ("reserved", 415),
+];
+
+#[test]
+fn the_idl_publishes_the_frozen_layout_field_for_field() {
+    let idl = idl();
+    let mut offset = LendingAmmMarket::DISCRIMINATOR.len();
+    let mut published = vec![];
+    for field in idl_type(&idl, "LendingAmmMarket")["type"]["fields"]
+        .as_array()
+        .unwrap()
+    {
+        published.push((field["name"].as_str().unwrap().to_string(), offset));
+        offset += size_of(&field["type"]);
+    }
+    let frozen: Vec<(String, usize)> = FROZEN_LAYOUT
+        .iter()
+        .map(|(name, at)| (name.to_string(), *at))
+        .collect();
+    assert_eq!(published, frozen);
+    assert_eq!(offset, layout::LEN);
+    assert_eq!(layout::EXIT_SEEN_SLOT, 407);
 }
 
 #[test]

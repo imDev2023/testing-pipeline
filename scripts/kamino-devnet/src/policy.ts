@@ -60,7 +60,11 @@ export interface ReservePolicy {
   borrowLimit: bigint;
   loanToValuePct: number;
   liquidationThresholdPct: number;
-  /** Kamino refuses a price older than this. Devnet's Pyth feeds were seen updating about every 5 minutes. */
+  /**
+   * Kamino refuses a price older than this. Devnet's sponsored Pyth feeds were seen updating about every 5 minutes on
+   * 2026-11-10, and every second until they stopped for over 25 minutes on 2026-11-23, so our reserves accept a price a
+   * week old: on devnet it only gates the test borrower's loan (LENDING-40).
+   */
   maxPriceAgeSeconds: bigint;
   /** Net outflow (redeems minus deposits) allowed per interval. */
   depositWithdrawalCap: { capacity: bigint; intervalSeconds: bigint };
@@ -91,7 +95,7 @@ export const RESERVES = {
     borrowLimit: 10_000n * SOL,
     loanToValuePct: 75,
     liquidationThresholdPct: 85,
-    maxPriceAgeSeconds: 600n,
+    maxPriceAgeSeconds: 7n * 86_400n,
     depositWithdrawalCap: { capacity: 10_000n * SOL, intervalSeconds: 86_400n },
     borrowRateCurve: STEEP_CURVE,
   },
@@ -103,7 +107,7 @@ export const RESERVES = {
     borrowLimit: 100_000_000n * USDC,
     loanToValuePct: 75,
     liquidationThresholdPct: 85,
-    maxPriceAgeSeconds: 600n,
+    maxPriceAgeSeconds: 7n * 86_400n,
     depositWithdrawalCap: { capacity: 100_000_000n * USDC, intervalSeconds: 86_400n },
     borrowRateCurve: STEEP_CURVE,
   },

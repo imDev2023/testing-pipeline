@@ -134,7 +134,10 @@
 //   --register-only      steps 1 to 3 only: register the strategy, or point it at a new
 //                        metadata URI, as each later deploy does (docs/toolchain.md, "Deploy
 //                        to devnet")
-//   --record             also write what the run did (addresses and signatures) to a file
+//   --hosted-api         on devnet, step 31 alone, on an existing market (the router's Market): what
+//                        Pipeline's hosted API lists and quotes, against the program's own quotes
+//   --record             also write what the run did (addresses and signatures) to a file, and
+//                        how it ended, even when it stops part way
 //
 // On devnet the metadata URI must resolve and pass Pipeline's validator with zero warnings
 // before the script registers it or points the strategy at it.
@@ -305,6 +308,7 @@ const { values: options } = parseArgs({
         'metadata-uri': { type: 'string', default: DEFAULT_METADATA_URI },
         'program-id': { type: 'string', default: DEFAULT_PROGRAM_ID },
         'register-only': { type: 'boolean', default: false },
+        'hosted-api': { type: 'string' },
         record: { type: 'string' },
     },
     strict: true,
@@ -313,7 +317,7 @@ const { values: options } = parseArgs({
 function usage(message: string): never {
     console.error(`${message}\n`);
     console.error(
-        'Usage: node demo.ts --cluster <localnet|devnet|URL> --payer <keypair.json> --upgrade-authority <keypair.json> [--metadata-uri <URI>] [--program-id <address>] [--register-only] [--record <file>]',
+        'Usage: node demo.ts --cluster <localnet|devnet|URL> --payer <keypair.json> --upgrade-authority <keypair.json> [--metadata-uri <URI>] [--program-id <address>] [--register-only] [--hosted-api <router market>] [--record <file>]',
     );
     process.exit(2);
 }
@@ -341,14 +345,22 @@ const upgradeAuthorityPath = options['upgrade-authority'] ?? usage('--upgrade-au
 const metadataUri = options['metadata-uri'];
 const onDevnet = !cluster.local;
 
-// Public RPC endpoints rate-limit bursts (HTTP 429); retry those with back-off.
+// Public RPC endpoints rate-limit bursts (HTTP 429), answer with a passing 5xx and drop
+// connections (ECONNRESET, a socket closed mid-answer), most of all over the hour step 25 polls
+// devnet; retry those with back-off. Every call is safe to repeat: a read reads again, and a
+// signed transaction sent again keeps its signature, so it can land only once.
 const baseTransport = createDefaultRpcTransport({ url: cluster.url });
+/** Whether an RPC call failed on the way there or back, not because the cluster refused it. */
+function transient(error: unknown): boolean {
+    const text = `${String(error)} ${String((error as { cause?: unknown } | undefined)?.cause ?? '')}`;
+    return /\b429\b|\b50[234]\b|fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EPIPE|UND_ERR_SOCKET|socket hang up|other side closed/i.test(text);
+}
 const retryingTransport = (async (...args: Parameters<typeof baseTransport>) => {
     for (let attempt = 0; ; attempt++) {
         try {
             return await baseTransport(...args);
         } catch (error) {
-            if (attempt >= 8 || !String(error).includes('429')) throw error;
+            if (attempt >= 8 || !transient(error)) throw error;
             await sleep(500 * 2 ** attempt);
         }
     }
@@ -372,6 +384,9 @@ function info(message: string) {
 
 function fail(message: string): never {
     console.error(`\nStopped: ${message}`);
+    // A run stopped part way still leaves what it did, for a devnet run above all: its markets
+    // and signatures stay on the cluster.
+    writeRecord(`stopped: ${message}`);
     process.exit(1);
 }
 
@@ -420,7 +435,13 @@ async function send(label: string, feePayer: KeyPairSigner, instructions: Instru
     );
     const signed = await signTransactionMessageWithSigners(message);
     const signature = getSignatureFromTransaction(signed);
-    await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64' }).send();
+    try {
+        await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64' }).send();
+    } catch (error) {
+        // A send retried after a dropped answer finds its first copy landed: the same signature,
+        // which the wait below confirms.
+        if (!/already been processed|AlreadyProcessed/i.test(`${String(error)} ${JSON.stringify((error as { context?: unknown }).context ?? '')}`)) throw error;
+    }
     await waitFor(label, signature);
     info(`${label}: ${explorer('tx', signature)}`);
     record.push([label, signature]);
@@ -997,6 +1018,18 @@ async function main() {
     console.log(`Payer ${payer.address}, upgrade authority ${upgradeAuthority.address}`);
     record.push(['strategy program', programId]);
     await checkCluster();
+    if (options['hosted-api']) {
+        if (!onDevnet) fail("--hosted-api: Pipeline's hosted API reads devnet only");
+        const market = address(options['hosted-api']);
+        const decoded = pipeline.decodeMarket((await accountData(market)) ?? new Uint8Array()) ?? fail(`the router has no market at ${market}`);
+        const view = pipeline.marketViewFromMarket(market, decoded, [TOKEN_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS]);
+        if (view.strategyProgram !== programId) fail(`${market} is a market of ${view.strategyProgram}, not of ${programId}`);
+        const { data: state } = await fetchLendingAmmMarket(rpc, view.marketState!, { commitment: 'confirmed' });
+        step("31. Pipeline's hosted API listing and quoting the market");
+        await compareHostedQuotes(payer, view, async () => (await fetchLendingAmmMarket(rpc, view.marketState!, { commitment: 'confirmed' })).data.reserves[state.lentIndex]!, state.reserves[1 - state.lentIndex]!);
+        finish();
+        return;
+    }
 
     if (cluster.local) {
         step('0. Funding both keys on the local validator');
@@ -2106,15 +2139,20 @@ function finish() {
     step(`Done on ${cluster.url}`);
     const width = Math.max(...record.map(([label]) => label.length));
     for (const [label, value] of record) info(`${label.padEnd(width)}  ${value}`);
-    if (options.record) {
-        const run = {
-            cluster: cluster.local ? cluster.url : 'devnet',
-            at: new Date().toISOString(),
-            record: Object.fromEntries(record.map(([label, value], i) => [`${String(i).padStart(2, '0')} ${label}`, value])),
-        };
-        writeFileSync(options.record, `${JSON.stringify(run, null, 2)}\n`);
-        info(`written to ${options.record}`);
-    }
+    writeRecord('done');
+}
+
+/** With --record, writes what the run did to that file, and how it ended. */
+function writeRecord(outcome: string) {
+    if (!options.record) return;
+    const run = {
+        cluster: cluster.local ? cluster.url : 'devnet',
+        at: new Date().toISOString(),
+        outcome,
+        record: Object.fromEntries(record.map(([label, value], i) => [`${String(i).padStart(2, '0')} ${label}`, value])),
+    };
+    writeFileSync(options.record, `${JSON.stringify(run, null, 2)}\n`);
+    info(`written to ${options.record}`);
 }
 
 // Pipeline's hosted API on devnet (Pipeline's docs/API.md).
@@ -2152,6 +2190,10 @@ async function compareHostedQuotes(payer: KeyPairSigner, view: pipeline.MarketVi
             const request = { mode: pipeline.TradeMode.ExactIn, inputIndex: input, outputIndex: output, amount, trader: payer.address, extra: new Uint8Array() };
             const accounts = await pipeline.resolveAccounts(rpc, view, request, payer.address, simulation);
             const { quote } = await pipeline.quoteStrategy(rpc, view, request, accounts, payer.address, simulation);
+            // The API quotes what the trader keeps: since Pipeline 0.3 a trade into the market's fee
+            // mint, WSOL here, pays Pipeline's fee out of what arrives, so a sale keeps less than the
+            // strategy's own quote by exactly that fee.
+            const kept = pipeline.marketViewFeeSide(view, view.mints[output]!) === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
             if ((await snapshot()) !== before) {
                 if (attempt >= 5) fail('the market kept changing while its quotes were compared');
                 info('the market changed while its quotes were compared; again');
@@ -2159,8 +2201,8 @@ async function compareHostedQuotes(payer: KeyPairSigner, view: pipeline.MarketVi
             }
             if (!hosted.ok) {
                 // Its own refusal, not a busy server (hostedGet retries those): record it.
-                info(`${label} of ${amount}: the hosted API refused to quote it, HTTP ${hosted.status} ${JSON.stringify(hosted.body)}; the program quotes ${quote.amountOut}`);
-                record.push([`hosted API quote, ${label}`, `refused: HTTP ${hosted.status} ${JSON.stringify(hosted.body)}; the program quotes ${amount} in, ${quote.amountOut} out`]);
+                info(`${label} of ${amount}: the hosted API refused to quote it, HTTP ${hosted.status} ${JSON.stringify(hosted.body)}; the program quotes ${quote.amountOut}, ${kept} kept`);
+                record.push([`hosted API quote, ${label}`, `refused: HTTP ${hosted.status} ${JSON.stringify(hosted.body)}; the program quotes ${amount} in, ${quote.amountOut} out, ${kept} kept`]);
                 break;
             }
             const body = hosted.body as { amount_in: string; amount_out: string; slot: number; strategy_accounts: { address: string }[] };
@@ -2169,16 +2211,16 @@ async function compareHostedQuotes(payer: KeyPairSigner, view: pipeline.MarketVi
             if (body.strategy_accounts.map((account) => account.address).join() !== resolved) {
                 fail(`the hosted API resolved ${body.strategy_accounts.map((account) => account.address).join()} for the ${label}, not ${resolved}`);
             }
-            if (BigInt(body.amount_out) !== quote.amountOut) {
+            if (BigInt(body.amount_out) !== kept) {
                 // The hosted API reads the cluster through its own RPC, which can trail ours by a
                 // few slots after the demo's last write; it must catch up within the retries.
-                if (attempt >= 5) fail(`${label} of ${amount}: the hosted API quoted ${body.amount_out} at slot ${body.slot}, the program ${quote.amountOut}, on the same state`);
-                info(`the hosted API quoted ${body.amount_out} at slot ${body.slot}, not yet the program's ${quote.amountOut}; again`);
+                if (attempt >= 5) fail(`${label} of ${amount}: the hosted API quoted ${body.amount_out} at slot ${body.slot}, the program ${quote.amountOut} with ${kept} kept, on the same state`);
+                info(`the hosted API quoted ${body.amount_out} at slot ${body.slot}, not yet the program's ${kept} kept; again`);
                 await sleep(3_000);
                 continue;
             }
-            info(`${label} of ${amount}: the hosted API quoted ${body.amount_out} at slot ${body.slot}, exactly the program's quote on the same state`);
-            record.push([`hosted API quote, ${label}`, `${amount} in, ${body.amount_out} out, equal to the program's`]);
+            info(`${label} of ${amount}: the hosted API quoted ${body.amount_out} at slot ${body.slot}, exactly what the program's quote of ${quote.amountOut} leaves the trader on the same state`);
+            record.push([`hosted API quote, ${label}`, `${amount} in, ${body.amount_out} kept, equal to the program's quote of ${quote.amountOut} less Pipeline's fee where it is taken from the output`]);
             break;
         }
     }
