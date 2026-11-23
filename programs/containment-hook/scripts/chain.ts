@@ -122,7 +122,7 @@ export function connect(cluster: Cluster, record: [string, string][]) {
             try {
                 return await baseTransport(...args);
             } catch (error) {
-                if (attempt >= 8 || !String(error).includes('429')) throw error;
+                if (attempt >= 8 || !isTransientRpcError(error)) throw error;
                 await sleep(500 * 2 ** attempt);
             }
         }
@@ -386,4 +386,21 @@ export function connect(cluster: Cluster, record: [string, string][]) {
         swapInstruction,
         trade,
     };
+}
+
+/** The network error codes of a connection that dropped or never opened, which a retry can cure. */
+const DROPPED_CONNECTION_CODES = ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT'];
+
+/**
+ * Whether an RPC request's failure is worth retrying: a rate limit (HTTP 429) or a connection
+ * that dropped, which public devnet and some networks produce mid-run (a launch on devnet on
+ * 2026-11-23 stopped on an `ECONNRESET` while confirming a transaction that had landed). An
+ * answer the cluster gave is never retried. A retried send is safe: the cluster keeps one copy
+ * of a signed transaction, by its signature.
+ */
+export function isTransientRpcError(error: unknown): boolean {
+    if (String(error).includes('429')) return true;
+    const cause = (error as { cause?: { code?: unknown } } | undefined)?.cause;
+    if (typeof cause?.code === 'string' && DROPPED_CONNECTION_CODES.includes(cause.code)) return true;
+    return error instanceof TypeError && error.message === 'fetch failed';
 }
