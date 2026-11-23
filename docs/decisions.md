@@ -2314,7 +2314,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-118: How Canary's triggers reach its runs
 
 - Question: How do the outbox's events reach the `CanaryRun` objects without waking the database to look for them?
-- Answer: Canary's reader drains the outbox from its own cursor right after each indexer job that opened Postgres, and the 6-hourly sweep job drains it first; an event is acknowledged only once its runs were handed over, and a new market waits for its strategy's version to be recorded, for at most 30 minutes.
+- Answer: Canary's reader drains the outbox from its own cursor right after each indexer job that opened Postgres, one drain at a time in the `Indexer` object, which the 6-hourly sweep job asks to drain first; an event is acknowledged only once its runs were handed over, and a new market waits for its strategy's version to be recorded, for at most 30 minutes.
 - Alternatives: A job reading the outbox every minute, which keeps the free database awake all month.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Canary runner](spec/pipescope-architecture.md#canary-runner)
 - Changes by: spec only
@@ -2324,7 +2324,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-119: A Canary run that fails
 
 - Question: What happens when a market's snapshot or run fails, as when the RPC refuses or the container restarts?
-- Answer: The run's alarm tries the market again after waits doubling from 30 seconds to 10 minutes, six attempts in all, then records that Aviary could not run it, keeps its earlier results and goes on; a refusal by the binary (its 400) is recorded at once.
+- Answer: The run's alarm tries the market again after waits doubling from 30 seconds to 10 minutes, six attempts in all, then records that Aviary could not run it, keeps its earlier results and goes on; a refusal by the binary (its 400) is recorded at once, and a market whose rounds pass 6 minutes is put off to a later alarm, so an alarm stays within its 15 minutes.
 - Alternatives: Recording a "not run" result, which would replace a real result with one about Aviary's own trouble.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Canary runner](spec/pipescope-architecture.md#canary-runner)
 - Changes by: build-time constant
@@ -2344,10 +2344,10 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-121: One Canary run at a time in the container
 
 - Question: How do several versions' runs share the one container?
-- Answer: The container's object takes one market's run at a time, in the order asked, so a `basic` instance's quarter vCPU and 1 GiB serve one run at a time.
+- Answer: The container's object takes one market's run at a time, in the order asked, so a `basic` instance's quarter vCPU and 1 GiB serve one run at a time; a run that has waited 3 minutes for its turn is given back to be tried again, and each answer is given 4 minutes.
 - Alternatives: Letting runs share the instance at once, which risks its memory and slows each run alike.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Canary runner](spec/pipescope-architecture.md#canary-runner)
-- Changes by: spec only
+- Changes by: build-time constant
 - Status: default
 - Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
 
