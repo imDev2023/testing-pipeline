@@ -1,0 +1,54 @@
+# Known vulnerabilities in our Rust dependencies (hardening finding H075 of the containment
+# hook, #74): `cargo audit` reads both lock files, the on-chain workspace's and Aviary's
+# native crates', against the RustSec advisory database, and fails on any vulnerability.
+# Unmaintained-crate warnings are reported, not failed on: they come through Solana's and
+# LiteSVM's own dependencies, which we do not choose.
+# It runs when a lock file changes, every day (a new advisory can land on a lock file that
+# did not change), and on demand.
+name: advisories
+
+on:
+  pull_request:
+    paths:
+      - programs/Cargo.lock
+      - crates/Cargo.lock
+      - .github/workflows/advisories.yml
+  push:
+    branches: [main]
+    paths:
+      - programs/Cargo.lock
+      - crates/Cargo.lock
+      - .github/workflows/advisories.yml
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_AUDIT_VERSION: 0.22.0
+
+jobs:
+  audit:
+    name: audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cache cargo-audit
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ runner.os }}
+      - name: Install cargo-audit
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked --version "$CARGO_AUDIT_VERSION"
+      # The binary is called directly, not as `cargo audit`, so the workspaces' pinned Rust
+      # toolchains are not downloaded just to read their lock files.
+      - name: The on-chain workspace
+        working-directory: programs
+        run: ~/.cargo/bin/cargo-audit audit
+      - name: Aviary's native crates
+        working-directory: crates
+        run: ~/.cargo/bin/cargo-audit audit
