@@ -54,6 +54,16 @@ export const FEED_FILTERS = {
   createdWithinHours: [1, 24, 7 * 24],
 };
 
-/** Search. */
+/** Search (PIPESCOPE-81): the pause after the last keystroke before a search runs, and the results shown a group. */
 export const SEARCH_PAUSE_MS = 220;
 export const SEARCH_RESULTS_PER_GROUP = 20;
+
+/**
+ * The three examples shown when nothing is typed, each one that finds something on devnet (the
+ * end-to-end tests check they still do), with what it shows can be searched for.
+ */
+export const SEARCH_EXAMPLES = [
+  { query: "Sniper", what: "part of a strategy's name" },
+  { query: "7BctW", what: "the start of a market's address" },
+  { query: "dream", what: "part of a token's name, in any case" },
+] as const;

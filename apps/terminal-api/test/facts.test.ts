@@ -262,6 +262,7 @@ describe("GET /v1/markets/{market}/facts", () => {
       {
         mint: T1,
         symbol: null,
+        token: null,
         readable: true,
         token_program: "Token-2022",
         decimals: 6,

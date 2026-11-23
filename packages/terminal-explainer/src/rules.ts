@@ -5,8 +5,9 @@
 
 /**
  * The most characters (Unicode code points) of each kind of author text Aviary keeps, after
- * control and text-direction characters are stripped (EXPLAINER-08): a strategy's name; a
- * description, which caps the strategy's own and every other description in it (the create form's,
- * an argument's); and a label, which caps every label and tag.
+ * control and text-direction characters are stripped (EXPLAINER-08): a strategy's or a token's name;
+ * a description, which caps the strategy's own and every other description in it (the create form's,
+ * an argument's); a label, which caps every label and tag; and a token's symbol (PIPESCOPE-122),
+ * short enough to sit beside its short address in a table row.
  */
-export const AUTHOR_TEXT_CAPS = { name: 64, description: 600, label: 64 } as const;
+export const AUTHOR_TEXT_CAPS = { name: 64, description: 600, label: 64, symbol: 16 } as const;

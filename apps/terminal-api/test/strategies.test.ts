@@ -15,7 +15,7 @@ import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
 import { programDataAccount, UPGRADE_AUTHORITY, upgradeTransaction } from "terminal-indexer/testing/programs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IndexerCore } from "../src/indexerCore";
-import { metadataWeb } from "./fakes";
+import { memoryImages, metadataWeb } from "./fakes";
 
 const fixture = (name: string) => JSON.parse(readFileSync(`${import.meta.dirname}/../../../packages/terminal-indexer/test/fixtures/${name}.json`, "utf8")) as RawTransaction;
 const [registered, created, swap] = ["registered", "marketCreated", "swap"].map(fixture) as [RawTransaction, RawTransaction, RawTransaction];
@@ -52,7 +52,7 @@ afterEach(async () => {
 
 function core() {
   const openDb = vi.fn(() => createDb(database.url));
-  return { indexer: new IndexerCore({ rpcUrl: rpc.url, openDb, metadataFetch: metadataWeb().fetch }), openDb };
+  return { indexer: new IndexerCore({ rpcUrl: rpc.url, openDb, webFetch: metadataWeb().fetch, images: memoryImages() }), openDb };
 }
 
 const versionsOf = (program: string) => reader.db.select().from(programVersions).where(eq(programVersions.program, program)).orderBy(asc(programVersions.deploySlot));

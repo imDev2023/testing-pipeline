@@ -11,7 +11,8 @@ import { createDb } from "terminal-db";
 import { logsSubscribeRequest, parseLogsMessage, RpcError, type IndexResult } from "terminal-indexer";
 import type { Bindings } from "./env";
 import { IndexerCore, ROUTER } from "./indexerCore";
-import { metadataFetchFor } from "./metadataFetch";
+import { kvImageStore } from "./tokenImages";
+import { webFetchFor } from "./webFetch";
 import { LiveSocket, type LiveSocketState, type LiveStatus } from "./liveSocket";
 
 /** `GET /v1/indexer`: how the indexer stands, with no secret in it. */
@@ -47,7 +48,12 @@ export class Indexer extends DurableObject<Bindings> {
   private draining: Promise<void> | null = null;
 
   private indexer(): IndexerCore {
-    this.core ??= new IndexerCore({ rpcUrl: this.env.RPC_URL, openDb: () => createDb(this.env.HYPERDRIVE.connectionString), metadataFetch: metadataFetchFor(this.env) });
+    this.core ??= new IndexerCore({
+      rpcUrl: this.env.RPC_URL,
+      openDb: () => createDb(this.env.HYPERDRIVE.connectionString),
+      webFetch: webFetchFor(this.env),
+      images: kvImageStore(this.env.TERMINAL_CACHE),
+    });
     return this.core;
   }
 
@@ -202,11 +208,22 @@ export class Indexer extends DurableObject<Bindings> {
     return this.status();
   }
 
-  /** Fetches the metadata of the strategies indexing noted; a failure is reported, and they stay noted for the next run. */
+  /**
+   * Fetches the metadata of the strategies indexing noted, then the images of the tokens it read; a
+   * failure is reported, and what failed is looked for again on the next run.
+   */
   private async fetchMetadata(): Promise<void> {
     await this.indexer()
       .fetchPendingMetadata()
       .catch((e: unknown) => this.failed("fetching strategies' metadata", e));
+    await this.fetchImages();
+  }
+
+  /** Fetches the images of the tokens whose mints were read since the last look (./tokenImages). */
+  private async fetchImages(): Promise<void> {
+    await this.indexer()
+      .fetchPendingImages()
+      .catch((e: unknown) => this.failed("fetching tokens' images", e));
   }
 
   /** Fetches every strategy's metadata again, every hour. */
@@ -229,6 +246,7 @@ export class Indexer extends DurableObject<Bindings> {
       this.failed("reading every mint again", e);
       throw e;
     }
+    await this.fetchImages();
   }
 
   /** Drops candles past their retention, once a day. */

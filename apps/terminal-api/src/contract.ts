@@ -145,11 +145,26 @@ export type StrategyInstruction = z.infer<typeof StrategyInstruction>;
 export const StrategyInstructions = z.object({ program: Address, deploy_slot: z.number().int().nullable(), anchor: z.boolean().nullable(), instructions: z.array(StrategyInstruction) });
 export type StrategyInstructions = z.infer<typeof StrategyInstructions>;
 
+/**
+ * A token's own name and picture, from its mint's on-chain token metadata (PIPESCOPE-22, PIPESCOPE-82):
+ * author text, never Aviary's words, so a page sets it in the author's style beside the mint's short
+ * address. Its symbol and name as the author-text normaliser leaves them, at least one of them set,
+ * and `image`, the SHA-256 of the image Aviary keeps of it, served at `/images/<image>`, or null.
+ */
+export const TokenName = z.object({
+  symbol: z.string().nullable(),
+  name: z.string().nullable(),
+  image: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
+});
+export type TokenName = z.infer<typeof TokenName>;
+
 /** One of a market's mints, in the market's own order, with what its vault holds. */
 export const MarketMint = z.object({
   mint: Address,
-  /** Aviary's own name for the mint (SOL, USDC); null for every other mint until token names land (#120). */
+  /** Aviary's own name for the mint (SOL, USDC), set plainly; null for every other mint. */
   symbol: z.string().nullable(),
+  /** The token's own name, the author's claim; null for a mint that names none, and for SOL and USDC, which Aviary names. */
+  token: TokenName.nullable(),
   /** Null until the mint is read, or when its account is not a mint. */
   decimals: z.number().int().nullable(),
   vault: Address.nullable(),
@@ -214,6 +229,8 @@ export const MintFacts = z.object({
   mint: Address,
   /** Aviary's own name for it (SOL, USDC), or null: no other mint is named by Aviary. */
   symbol: z.string().nullable(),
+  /** The token's own name, as on a market's mints. */
+  token: TokenName.nullable(),
   readable: z.boolean(),
   /** "Token" or "Token-2022", or null for an unreadable mint. */
   token_program: z.enum(["Token", "Token-2022"]).nullable(),
@@ -241,6 +258,37 @@ export const MarketFacts = z.object({
   mints: z.array(MintFacts),
 });
 export type MarketFacts = z.infer<typeof MarketFacts>;
+
+/** A mint found by search: Aviary's name for it or its own, and every market it trades on. */
+export const SearchMint = z.object({
+  mint: Address,
+  /** Aviary's own name for it (SOL, USDC), or null. */
+  symbol: z.string().nullable(),
+  token: TokenName.nullable(),
+  /** Every market it trades on, newest first. */
+  markets: z.array(Address),
+});
+export type SearchMint = z.infer<typeof SearchMint>;
+
+/** One group of search results: how many match, and the first of them, at most the limit asked for. */
+const SearchGroup = <T extends z.ZodType>(result: T) => z.object({ total: z.number().int(), results: z.array(result) });
+
+/**
+ * `GET /v1/search?q=&limit=` (docs/spec/pipescope-screens.md, Search; PIPESCOPE-81): what is
+ * registered with Pipeline that matches `q`, grouped as strategies, markets and mints. Names match
+ * anywhere and in any case (a strategy's name from valid metadata, a token's symbol and name, and
+ * Aviary's own SOL and USDC); addresses match exactly as typed from their start or their end (a
+ * strategy's program, a market, a market state or a mint). Each group is ordered with a whole address
+ * typed first; then strategies by markets, markets newest first and mints by markets.
+ */
+export const SearchResults = z.object({
+  /** What was searched for, trimmed. */
+  query: z.string(),
+  strategies: SearchGroup(Strategy),
+  markets: SearchGroup(Market),
+  mints: SearchGroup(SearchMint),
+});
+export type SearchResults = z.infer<typeof SearchResults>;
 
 /** A swap through the router, from its `Swap` event. */
 export const Trade = z.object({

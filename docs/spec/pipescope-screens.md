@@ -47,6 +47,7 @@ Every value below is a default that can change, and each lives in exactly one pl
 | Feed filter, created | in the last hour, 24 hours or 7 days | Screens' config module |
 | Pause after the last keystroke before a search runs | 220 ms | Screens' config module |
 | Search results shown a group | 20 | Screens' config module |
+| Search examples shown when nothing is typed | "Sniper", "7BctW" and "dream", each checked to find something on devnet | Screens' config module |
 | Width at which the market page becomes one column | 1080 px | Theme stylesheet |
 | Width at which tables become labelled blocks | 720 px | Theme stylesheet |
 | Colours and typefaces | the tables under [Colour and theme](#colour-and-theme) | Theme stylesheet |
@@ -402,6 +403,8 @@ From top to bottom, with the explanation beside the facts at desktop width.
 - A token is shown by the symbol from its mint's own metadata, in the author's style, with the mint's short address beside it ([`pipescope.md`](pipescope.md), Tokens and prices).
   A mint with no metadata is shown by its short address alone.
 - SOL and USDC are named by Aviary, plainly, with marks that ship with the app.
+  As built (`PIPESCOPE-125`): marks Aviary draws itself in the page's ink at 20 px, three slanted bars for SOL and a ringed dollar sign for USDC, since the brands' own logos would bring colours the page never uses.
+- As built (`PIPESCOPE-122`): the name is read from the mint's Token-2022 token metadata extension, or else its Metaplex metadata account, and kept as the author-text normaliser leaves it, the symbol capped at 16 characters and the name at 64; a token that gives no symbol is shown by its name.
 - **A token's image is shown**, 20 px square, beside its symbol wherever the symbol appears.
   Its box has a fixed size, so no row's height depends on an author's file.
 - An image is an author's claim like the name: it gets no border, tick or mark of ours, and the short address stays beside it.
@@ -452,7 +455,7 @@ Each of these is specified above or in another file, and none was seen running, 
   - The public devnet RPC answers an airdrop request with 410, "The RPC faucet is closed on this cluster", so `solana airdrop` against it fails and Devnet help names the web faucet.
   - The dark theme was looked at on the feed at desktop and phone width, on a strategy page and on a market page; the wallet, create market, search and static pages were not opened in it.
 - **Open, for the build**:
-  - Whether any devnet mint's metadata names an image, and what the first real ones look like at 20 px.
+  - Whether any devnet mint's metadata names an image, and what the first real ones look like at 20 px: answered by [Aviary: token names and images, and search](https://github.com/imDev2023/testing-pipeline/issues/120), see its pull request.
   - How Phantom, Solflare and Backpack behave when asked to sign for devnet while set to mainnet; Devnet help's words about a mismatch wait on it.
   - Which faucets work on the day Devnet help ships.
 

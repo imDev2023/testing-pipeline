@@ -73,6 +73,15 @@ const PAGES = [
       await factsReady(page, ["Its program", "Its trust flags", "Instructions beyond Pipeline's own"]);
     },
   },
+  {
+    name: "search",
+    path: "/search?q=e",
+    status: 200,
+    ready: (page: Page) => expect(page.getByRole("region", { name: /^Mints/ }).getByText(/^The first 20 of [\d,]+\./)).toBeVisible(),
+  },
+  { name: "search-market", path: "/search?q=7BctW", status: 200, ready: (page: Page) => expect(page.getByRole("link", { name: "Market 7Bct...5CAK" })).toBeVisible() },
+  { name: "search-nothing-typed", path: "/search", status: 200, ready: (page: Page) => expect(page.getByRole("list", { name: "Examples" })).toBeVisible() },
+  { name: "search-no-match", path: "/search?q=Nothing0Here", status: 200, ready: (page: Page) => expect(page.getByText(/^Nothing registered with Pipeline on devnet matches/)).toBeVisible() },
   { name: "devnet-help", path: "/devnet", status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "Get devnet USDC" })).toBeVisible() },
   { name: "keeper", path: "/keeper", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Latest jobs" }).getByRole("table")).toBeVisible() },
   { name: "nothing-there", path: `/markets/${UNKNOWN_ADDRESS}`, status: 404, ready: (page: Page) => expect(page.getByText(UNKNOWN_ADDRESS)).toBeVisible() },
@@ -102,6 +111,7 @@ for (const { name, path, status, ready } of PAGES) {
     await expect(brand).toHaveAttribute("href", "/");
     await expect(brand).not.toHaveText("");
     await expect(header.getByText("devnet", { exact: true })).toBeVisible();
+    await expect(header.getByRole("searchbox", { name: "Search" })).toBeVisible();
 
     // The footer: the three styles of "Who is speaking", the devnet line, Devnet help and the theme control.
     const footer = page.getByRole("contentinfo");

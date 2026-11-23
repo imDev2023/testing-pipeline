@@ -25,7 +25,7 @@ feed.use(requestDb);
 const db = dbOf;
 
 /** The `limit` asked for, or the default; above the most served, a 400 that says what the most is. */
-function limitOf(c: Context<FeedEnv>, { default: fallback, max }: { default: number; max: number }): number {
+export function limitOf(c: Context<FeedEnv>, { default: fallback, max }: { default: number; max: number }): number {
   const raw = c.req.query("limit");
   if (raw === undefined) return fallback;
   const limit = Number(raw);

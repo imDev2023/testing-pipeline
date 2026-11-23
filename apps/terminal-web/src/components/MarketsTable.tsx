@@ -2,7 +2,7 @@
 // page, which leaves out the strategy column (Strategy page, "Its markets"). Each row's strategy is
 // named as every page names it, and its trust flags are the market's, Pipeline's SDK's words on hover.
 import Link from "next/link";
-import type { Market } from "terminal-api/contract";
+import type { Market, MarketMint } from "terminal-api/contract";
 import { formatAge, formatDate, formatInteger, formatTokenAmount } from "@/format";
 import { ROUTES } from "@/routes";
 import table from "./ListingTable.module.css";
@@ -14,10 +14,10 @@ import { StrategyName } from "./StrategyName";
 const plural = (n: number, one: string, many: string) => `${formatInteger(n)} ${n === 1 ? one : many}`;
 
 /** The amount a vault or a volume holds, in its mint's tokens, or a word when the mint is not read. */
-export function TokenAmount({ raw, decimals, mint, symbol }: { raw: string | null; decimals: number | null; mint: string; symbol: string | null }) {
+export function TokenAmount({ raw, decimals, mint, symbol, token }: { raw: string | null; decimals: number | null; mint: string; symbol: string | null; token: MarketMint["token"] }) {
   return (
     <span>
-      {raw === null || decimals === null ? "not read" : formatTokenAmount(BigInt(raw), decimals)} <MintLabel mint={mint} symbol={symbol} />
+      {raw === null || decimals === null ? "not read" : formatTokenAmount(BigInt(raw), decimals)} <MintLabel mint={mint} symbol={symbol} token={token} />
     </span>
   );
 }
@@ -73,7 +73,7 @@ export function MarketsTable({
               <tr key={m.address} className={[table.row, rowClass?.(m)].filter(Boolean).join(" ")}>
                 <td className={table.main}>
                   <Link href={ROUTES.market(m.address)} className={table.rowLink}>
-                    <MintLabel mint={base.mint} symbol={base.symbol} /> / <MintLabel mint={quote.mint} symbol={quote.symbol} />
+                    <MintLabel mint={base.mint} symbol={base.symbol} token={base.token} /> / <MintLabel mint={quote.mint} symbol={quote.symbol} token={quote.token} />
                   </Link>
                   <span className={table.sub}>
                     market <ShortAddress address={m.address} />
@@ -95,7 +95,7 @@ export function MarketsTable({
                   <span className={table.label}>Liquidity</span>
                   <span className={table.lines}>
                     {m.mints.map((x) => (
-                      <TokenAmount key={x.mint} raw={x.liquidity} decimals={x.decimals} mint={x.mint} symbol={x.symbol} />
+                      <TokenAmount key={x.mint} raw={x.liquidity} decimals={x.decimals} mint={x.mint} symbol={x.symbol} token={x.token} />
                     ))}
                   </span>
                 </td>
@@ -105,7 +105,7 @@ export function MarketsTable({
                     <span className={table.none}>none</span>
                   ) : (
                     <>
-                      <TokenAmount raw={m.stats_24h.volume_quote} decimals={quote.decimals} mint={quote.mint} symbol={quote.symbol} />
+                      <TokenAmount raw={m.stats_24h.volume_quote} decimals={quote.decimals} mint={quote.mint} symbol={quote.symbol} token={quote.token} />
                       <span className={table.sub}>{plural(m.stats_24h.trades, "trade", "trades")}</span>
                     </>
                   )}

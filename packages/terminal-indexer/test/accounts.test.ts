@@ -110,6 +110,10 @@ it("reads a new market's vaults, its state and what each vault holds, and each o
       readSlot: 525_200_000n,
       flags: ["token-2022", "mint-authority"],
       readEpoch: 812n,
+      // Its Metaplex account is three bytes, no metadata, so it names no token.
+      symbol: null,
+      name: null,
+      tokenUri: null,
     },
     expect.objectContaining({ address: WSOL, readable: true, tokenProgram: TOKEN_PROGRAM, decimals: 9, supply: "0", mintAuthority: null, metadataData: null, flags: [], readEpoch: 812n }),
   ]);

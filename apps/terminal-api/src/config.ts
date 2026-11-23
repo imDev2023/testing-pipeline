@@ -147,7 +147,12 @@ export const PAGE_LIMITS = {
   trades: { default: 40, max: 1000 },
   /** The newest candles of one length a chart is given, and the most asked for at once (PIPESCOPE-107). */
   candles: { default: 1000, max: 5000 },
+  /** Search results a group holds, the screens' 20 by default (PIPESCOPE-124). */
+  search: { default: 20, max: 100 },
 } as const;
+
+/** The longest search the API takes, in characters: past any address or name it keeps (PIPESCOPE-124). */
+export const SEARCH_QUERY_MAX = 100;
 
 /** The most signers an instruction lists in `GET /v1/strategies/{program}/instructions`, most calls first; the answer counts them all. */
 export const INSTRUCTION_SIGNERS_SHOWN = 100;
