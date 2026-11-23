@@ -9,13 +9,15 @@
 //! `FUZZ_STEPS` change that, and `FUZZ_INVARIANTS` checks only the invariants it names.
 
 mod common;
+#[path = "common/fuzz/harness.rs"]
+mod harness;
 
 use std::collections::BTreeMap;
 
 use common::ceilings;
-use common::fuzz::tax::*;
-use common::fuzz::{fuzz, replay, sizes, Product};
 use common::*;
+use harness::fuzz::tax::*;
+use harness::fuzz::{fuzz, replay, sizes, Product};
 use pipeline_client::Pubkey;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
@@ -56,34 +58,204 @@ fn the_invariants_hold_after_every_step_of_every_sequence() {
     for (name, ceiling) in ceilings::ALL {
         match max_costs.get(name) {
             Some(cost) => println!("{name}: at most {cost} CU of its {ceiling}"),
-            None => println!("{name}: not called on a market without a hooked mint"),
+            None => println!("{name}: not measured, never called without a transfer hook"),
         }
+    }
+    if cases >= DEFAULT_CASES && steps >= DEFAULT_STEPS {
+        every_shape_and_outcome_was_reached(&shapes, &tally, &max_costs);
+    } else {
+        println!("smaller than the default run: not checking every shape and outcome was reached");
     }
 }
 
+/// Every shape feature the fuzzer builds and every outcome of every step it takes, as the
+/// run's tally names them. A default run (1,000 sequences of up to 50 steps) reaches each
+/// at least 15 times (2026-11-20), so one missing means a shape or a refusal path became
+/// unreachable, which no invariant would notice.
+const SHAPES_REACHED: [&str; 22] = [
+    "1 tax recipients",
+    "2 tax recipients",
+    "3 tax recipients",
+    "4 tax recipients",
+    "ClearedHook at index 0",
+    "ClearedHook at index 1",
+    "NativeSol at index 0",
+    "NativeSol at index 1",
+    "SplToken at index 0",
+    "SplToken at index 1",
+    "Token2022 at index 0",
+    "Token2022 at index 1",
+    "a burn share",
+    "a tax authority",
+    "a virtual reserve on side 0",
+    "a virtual reserve on side 1",
+    "created by CreateAndSeed",
+    "created by CreateOnly",
+    "created by Launchpad",
+    "seeded single-sided",
+    "taxed on side 0",
+    "taxed on side 1",
+];
+const OUTCOMES_REACHED: [&str; 50] = [
+    "bypass: NotPipeline",
+    "clock jump: settled",
+    "distribute to the burn: NotSlotWallet",
+    "distribute to the burn: settled",
+    "distribute to the suite share: NotSlotWallet",
+    "distribute to the suite share: settled",
+    "distribute: NoSuchSlot",
+    "distribute: NotSlotWallet",
+    "distribute: UnusedSlot",
+    "distribute: settled",
+    "donation: settled",
+    "rates: a swap applied a due change",
+    "rates: a swap while a change waits",
+    "rates: renounce cancelled a pending change",
+    "rates: set_taxes cancelled a pending change",
+    "rates: set_taxes set a pending change",
+    "renounce_tax_authority: AlreadyRenounced",
+    "renounce_tax_authority: NoTaxAuthority",
+    "renounce_tax_authority: NotTaxAuthority",
+    "renounce_tax_authority: settled",
+    "seed: AlreadySeeded",
+    "seed: NotSeeder",
+    "seed: ZeroSeed",
+    "seed: settled",
+    "set_recipients: AlreadyRenounced",
+    "set_recipients: BurnOnNativeSol",
+    "set_recipients: NoRecipient",
+    "set_recipients: NoTaxAuthority",
+    "set_recipients: NotTaxAuthority",
+    "set_recipients: OwedSlotLeftEmpty",
+    "set_recipients: OwedSlotRedirected",
+    "set_recipients: RecipientsOutOfOrder",
+    "set_recipients: ShareWithoutRecipient",
+    "set_recipients: SharesNotWhole",
+    "set_recipients: ZeroShare",
+    "set_recipients: settled",
+    "set_taxes: AlreadyRenounced",
+    "set_taxes: NoTaxAuthority",
+    "set_taxes: NotTaxAuthority",
+    "set_taxes: RateOutsideRange",
+    "set_taxes: settled",
+    "skipped: settled",
+    "swap of a whole holding: InsufficientLiquidity",
+    "swap of a whole holding: MarketNotOpen",
+    "swap of a whole holding: ZeroOutput",
+    "swap of a whole holding: settled",
+    "swap: InsufficientLiquidity",
+    "swap: MarketNotOpen",
+    "swap: ZeroOutput",
+    "swap: settled",
+];
+
+/// Fails unless the run reached every shape in [`SHAPES_REACHED`] and every outcome in
+/// [`OUTCOMES_REACHED`], and measured every instruction against its compute ceiling
+/// (hardening finding T04, #67: the tallies were printed and never checked).
+fn every_shape_and_outcome_was_reached(
+    shapes: &BTreeMap<String, u32>,
+    tally: &BTreeMap<String, u32>,
+    max_costs: &BTreeMap<&'static str, u64>,
+) {
+    let missing: Vec<&str> = SHAPES_REACHED
+        .iter()
+        .filter(|feature| !shapes.contains_key(**feature))
+        .chain(
+            OUTCOMES_REACHED
+                .iter()
+                .filter(|outcome| !tally.contains_key(**outcome)),
+        )
+        .copied()
+        .chain(
+            ceilings::ALL
+                .iter()
+                .map(|(name, _)| *name)
+                .filter(|name| !max_costs.contains_key(name)),
+        )
+        .collect();
+    assert!(missing.is_empty(), "the run never reached: {missing:?}");
+}
+
+/// The ten invariants, each with the words that state it: the bar's three in
+/// docs/spec/README.md ("Test layers" 3), then the spec's seven in docs/spec/tax-amm.md
+/// ("Invariants"), in their order.
+const STATED: [(&str, &str); 10] = [
+    ("value_is_conserved", "value is conserved"),
+    ("every_holder_can_exit", "every holder can still exit"),
+    ("each_quote_equals_its_swap", "each quote equals its swap"),
+    (
+        "vaults_cover_the_market",
+        "Each vault holds at least the market's real reserve of its mint",
+    ),
+    (
+        "swaps_keep_the_curve",
+        "A swap never lowers the product of the effective reserves",
+    ),
+    ("every_tax_is_split_exactly", "Every tax is split exactly"),
+    (
+        "rates_stay_in_range_and_creation_is_fixed",
+        "No rate, in force or pending, ever leaves its range or passes `MAX_TAX_BPS`, the rates in force never change within a slot",
+    ),
+    (
+        "only_swaps_move_reserves_and_counters",
+        "After the seed, only router swaps change the real reserves",
+    ),
+    ("counters_never_fall", "The counters never fall"),
+    (
+        "a_renounced_market_never_changes",
+        "Once the tax authority has renounced",
+    ),
+];
+
+/// Hardening finding T06 (#67): this test compared `INVARIANTS` with the harness's list,
+/// which is built from `INVARIANTS`, and only counted the spec's numbered lines. Now each
+/// of the ten is tied to the words that state it, in the bar's and the spec's order, so a
+/// reworded, reordered, added or dropped invariant on either side fails.
 #[test]
-fn the_ten_invariants_are_the_specs() {
-    let names: Vec<&str> = TaxAmm::invariants().iter().map(|i| i.name).collect();
-    assert_eq!(
-        &names[..10],
-        &INVARIANTS[..],
-        "the ten come first, in order"
-    );
-    // The bar's three, then the spec's seven, by its "Invariants" list.
-    let spec = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/tax-amm.md"),
-    )
-    .unwrap();
-    let section = spec
-        .split("### Invariants")
-        .nth(1)
-        .and_then(|rest| rest.split("\n### ").next())
-        .unwrap();
-    let numbered = section
+fn sos_t06_each_of_the_ten_invariants_is_the_one_the_spec_states() {
+    let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec");
+    let read = |file: &str| std::fs::read_to_string(docs.join(file)).unwrap();
+    let section = |text: &str, heading: &str| -> String {
+        text.split(heading)
+            .nth(1)
+            .and_then(|rest| rest.split("\n### ").next())
+            .unwrap_or_else(|| panic!("no {heading}"))
+            .to_string()
+    };
+    // The bar's three, in the order its layer 3 names them.
+    let bar = section(&read("README.md"), "### Test layers");
+    let layer = bar
+        .lines()
+        .find(|line| line.starts_with("3. **Stateful invariant fuzzing**"))
+        .expect("the bar's layer 3");
+    let at: Vec<usize> = STATED[..3]
+        .iter()
+        .map(|(name, words)| {
+            layer
+                .find(words)
+                .unwrap_or_else(|| panic!("the bar's layer 3 no longer says {words:?} ({name})"))
+        })
+        .collect();
+    assert!(at.is_sorted(), "the bar names its three in this order");
+    // The spec's seven, one numbered line each, in order.
+    let spec = section(&read("tax-amm.md"), "### Invariants");
+    let numbered: Vec<&str> = spec
         .lines()
         .filter(|line| line.chars().next().is_some_and(|c| c.is_ascii_digit()))
-        .count();
-    assert_eq!(numbered, 7, "the spec lists seven of its own");
+        .collect();
+    assert_eq!(numbered.len(), 7, "the spec lists seven of its own");
+    for (i, (line, (name, words))) in numbered.iter().zip(&STATED[3..]).enumerate() {
+        assert!(
+            line.starts_with(&format!("{}. {words}", i + 1)),
+            "the spec's invariant {} is {line:?}, which {name} does not check",
+            i + 1
+        );
+    }
+    // The harness checks the ten first, in this order.
+    let names: Vec<&str> = TaxAmm::invariants().iter().map(|i| i.name).collect();
+    let stated: Vec<&str> = STATED.iter().map(|(name, _)| *name).collect();
+    assert_eq!(&names[..10], &stated[..], "the ten come first, in order");
+    assert_eq!(INVARIANTS, stated[..]);
 }
 
 /// What a market's shape covers, for the run's tally.
@@ -200,24 +372,41 @@ fn regression_a_market_created_without_its_seed() {
 /// this pins what it costs, so the rule a keeper sizes its compute by stays true.
 #[test]
 fn each_further_bump_of_the_slot_wallets_address_costs_a_payout_the_same() {
-    let mut env = Env::new();
-    let mints = [
-        (env.create_mint(&TOKEN), TOKEN),
-        (env.create_mint(&TOKEN), TOKEN),
-    ];
-    let tax_mint = mints[1].0;
-    // Two wallets whose token accounts for the tax-side mint need 1 bump and 6 bumps.
-    let wallet_with_bump = |bump: u8| loop {
+    each_further_bump_costs_a_payout_the_same(TOKEN);
+}
+
+/// Hardening finding T03 (#67): the three derivations a payout that creates the account
+/// spends were pinned only on SPL Token, though `ceilings::distribute_bump_search` assumes
+/// them for every token program; this pins them on Token-2022 too.
+#[test]
+fn sos_t03_each_further_bump_costs_a_token_2022_payout_the_same() {
+    each_further_bump_costs_a_payout_the_same(TOKEN_2022);
+}
+
+/// A wallet whose associated token account for `mint` of `token_program` takes `bump`.
+fn wallet_with_bump(mint: &Pubkey, token_program: &Pubkey, bump: u8) -> Pubkey {
+    loop {
         let wallet = Pubkey::new_unique();
         let (_, found) = Pubkey::find_program_address(
-            &[wallet.as_ref(), TOKEN.as_ref(), tax_mint.as_ref()],
+            &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
             &pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
         );
         if found == bump {
             break wallet;
         }
-    };
-    let (first, sixth) = (wallet_with_bump(255), wallet_with_bump(250));
+    }
+}
+
+fn each_further_bump_costs_a_payout_the_same(token_program: Pubkey) {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&token_program), token_program),
+        (env.create_mint(&token_program), token_program),
+    ];
+    let tax_mint = mints[1].0;
+    // Two wallets whose token accounts for the tax-side mint need 1 bump and 6 bumps.
+    let first = wallet_with_bump(&tax_mint, &token_program, 255);
+    let sixth = wallet_with_bump(&tax_mint, &token_program, 250);
     let mut params = valid_params(&Pubkey::new_unique());
     params.recipients[0] = ak(&first);
     params.recipients[1] = ak(&sixth);
@@ -227,8 +416,9 @@ fn each_further_bump_of_the_slot_wallets_address_costs_a_payout_the_same() {
     env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
     let payout = |env: &mut Env, slot: u8| {
         env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
+        let search = ceilings::distribute_bump_search(env, &market, slot);
         let meta = env.distribute(&market, &caller, slot).unwrap();
-        strategy_compute(&meta.logs)[0]
+        (strategy_compute(&meta.logs)[0], search)
     };
     let creating = [payout(&mut env, 0), payout(&mut env, 1)];
     let existing = [payout(&mut env, 0), payout(&mut env, 1)];
@@ -236,9 +426,273 @@ fn each_further_bump_of_the_slot_wallets_address_costs_a_payout_the_same() {
     // Comparing keys stops at their first differing byte, so a few units also depend on
     // the addresses.
     let near = |measured: u64, expected: u64| measured.abs_diff(expected) <= 100;
-    assert!(near(creating[1] - creating[0], 5 * 3 * ceilings::BUMP_TRY));
-    assert!(near(existing[1] - existing[0], 5 * ceilings::BUMP_TRY));
-    // Within the ceiling once the search beyond the first bump is left out.
-    assert!(creating[1] - 5 * 3 * ceilings::BUMP_TRY <= ceilings::DISTRIBUTE);
-    assert!(existing[1] - 5 * ceilings::BUMP_TRY <= ceilings::DISTRIBUTE);
+    assert!(near(
+        creating[1].0 - creating[0].0,
+        5 * 3 * ceilings::BUMP_TRY
+    ));
+    assert!(near(existing[1].0 - existing[0].0, 5 * ceilings::BUMP_TRY));
+    // The search the ceilings leave out is what the bumps cost, and within the ceiling
+    // once it is left out.
+    assert_eq!(
+        [creating[0].1, creating[1].1, existing[0].1, existing[1].1],
+        [0, 5 * 3 * ceilings::BUMP_TRY, 0, 5 * ceilings::BUMP_TRY]
+    );
+    for (cost, search) in creating.into_iter().chain(existing) {
+        assert!(cost - search <= ceilings::DISTRIBUTE);
+    }
+}
+
+/// Hardening finding T05 (#67): `ceilings::distribute_bump_search` took a slot wallet's
+/// token account address holding lamports but no data for an account that exists, which
+/// the program treats as missing (`data_is_empty`) and creates, so it counted one
+/// derivation where the payout spends three.
+#[test]
+fn sos_t05_a_token_account_address_holding_only_lamports_is_created_and_counted_so() {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN), TOKEN),
+    ];
+    let tax_mint = mints[1].0;
+    let sixth = wallet_with_bump(&tax_mint, &TOKEN, 250);
+    let mut params = valid_params(&Pubkey::new_unique());
+    params.recipients[0] = ak(&sixth);
+    let market = env.seeded_market(mints, &params, [100_000_000_000, 200_000_000_000]);
+    let trader = env.funded_wallet(&market, 1_000_000_000_000);
+    env.swap(&market, &trader, (1, 0), 10_000_000_000).unwrap();
+    // Someone sends lamports to the wallet's token account address before its payout.
+    let account = pipeline_client::pda::associated_token(&sixth, &tax_mint, &TOKEN);
+    env.svm.airdrop(&account, 1_000_000).unwrap();
+    assert!(env.svm.get_account(&account).unwrap().data.is_empty());
+    let search = ceilings::distribute_bump_search(&env, &market, 0);
+    let caller = Keypair::new();
+    env.svm.airdrop(&caller.pubkey(), SOL).unwrap();
+    let meta = env.distribute(&market, &caller, 0).unwrap();
+    assert!(
+        !env.svm.get_account(&account).unwrap().data.is_empty(),
+        "created"
+    );
+    assert_eq!(search, 5 * 3 * ceilings::BUMP_TRY);
+    assert!(strategy_compute(&meta.logs)[0] - search <= ceilings::DISTRIBUTE);
+}
+
+/// Hardening finding T01 (#67, docs/security/tax-amm/round-1.md): the fuzzer took the first
+/// `Error Code:` name in a failure's logs as the spec's refusal, whichever program raised it,
+/// so a refusal by the router or a hook under one of the spec's names would have passed as the
+/// tax AMM's. A refusal is now the spec's only when the tax AMM raised it with that error's
+/// number.
+#[test]
+fn sos_t01_a_refusal_raised_by_another_program_is_never_taken_for_the_strategys() {
+    let mut env = Env::new();
+    let mints = [
+        (env.create_mint(&TOKEN), TOKEN),
+        (env.create_mint(&TOKEN), TOKEN),
+    ];
+    let params = valid_params(&Pubkey::new_unique());
+    let market = env.seeded_market(mints, &params, [1_000_000_000, 1_000_000_000]);
+    let trader = env.funded_wallet(&market, 1_000_000_000);
+
+    // The router refuses a swap that would pay less than its minimum.
+    let quote = env.quote(&market, &exact_in(0, 1, 1_000_000)).unwrap();
+    let options = SwapOptions {
+        min_amount_out: quote.amount_out + 1,
+        ..SwapOptions::default()
+    };
+    let failure = env
+        .swap_with(&market, &trader, (0, 1), 1_000_000, &options)
+        .unwrap_err();
+    let named = failure
+        .split("Error Code: ")
+        .nth(1)
+        .and_then(|rest| rest.split('.').next())
+        .expect("the router names its error")
+        .to_string();
+    let router = pipeline_client::PROGRAM_ID.to_string();
+    assert_eq!(
+        refusal(&failure),
+        format!("{named} from {router}"),
+        "a refusal by the router names the router"
+    );
+
+    // The tax AMM's own refusal, raised inside the router's swap, keeps its bare name.
+    let dust = env
+        .swap_with(&market, &trader, (0, 1), 1, &SwapOptions::default())
+        .unwrap_err();
+    assert_eq!(refusal(&dust), "ZeroOutput");
+}
+
+/// A contained mint as the world's mint of kind `Outside`, bound to the world's market and
+/// its mint authority revoked before the seed, as a launch does: the one live transfer hook a
+/// market's mint may run (docs/spec/tax-amm.md, "Mint rules").
+struct Contained;
+
+impl Surroundings for Contained {
+    fn create_mint(&self, env: &mut Env, at: &Keypair) -> Pubkey {
+        env.create_contained_mint_at(at)
+    }
+
+    fn before_seed(&self, env: &mut Env, market: &Market) -> Result<(), String> {
+        env.contain(&market.mints[0], market);
+        Ok(())
+    }
+}
+
+/// Hardening finding T02 (#67): the fuzzer checked no compute on a market with a hooked mint,
+/// although most instructions there never call the hook (the tax authority's actions,
+/// quotes, a swap paying out the unhooked mint, `distribute` on the unhooked side), about a
+/// third of all shapes. Now only an invocation that called a program of the mint's own
+/// (its hook) goes unmeasured, since a hook's cost is the hook's own to bound.
+#[test]
+fn sos_t02_instructions_that_never_call_the_hook_are_measured_on_hooked_markets() {
+    let shape = Shape {
+        mints: [Outside, SplToken],
+        tax_side: 1,
+        ranges: [[0, 1_000], [0, 1_000]],
+        rates: [300, 300],
+        recipients: 1,
+        weights: [1, 1, 1, 1, 1],
+        burn: false,
+        tax_authority: true,
+        virtual_side: 0,
+        virtual_reserve: 0,
+        seed: [1_000_000_000, 1_000_000_000],
+        creation: CreateAndSeed,
+        keys: 0,
+    };
+    let mut world = TaxWorld::new_in(fresh_env(), &shape, &Contained).unwrap();
+    let measured = |world: &mut TaxWorld, step: Step| -> Vec<&'static str> {
+        let outcome = TaxAmm::apply(world, &step);
+        assert!(outcome.result.is_ok(), "{step:?}: {outcome:?}");
+        outcome.costs.iter().map(|&(name, _)| name).collect()
+    };
+    let set_taxes = SetTaxes {
+        who: TaxAuthority,
+        buy: Exactly(100),
+        sell: Exactly(200),
+    };
+    assert_eq!(measured(&mut world, set_taxes), ["set_taxes"]);
+    // Into the hooked mint, out of the unhooked one: the router moves the hooked input,
+    // the tax AMM's own transfer is of the unhooked mint.
+    let buy = Swap {
+        wallet: 0,
+        input: 0,
+        size: Part {
+            mantissa: 1,
+            exp: 4,
+        },
+    };
+    assert_eq!(
+        measured(&mut world, buy),
+        [
+            "pipeline_resolve_accounts",
+            "pipeline_quote",
+            "pipeline_swap"
+        ]
+    );
+    // Out of the hooked mint: the tax AMM's transfer calls the hook, so the swap goes
+    // unmeasured, and its quote does not.
+    let sell = Swap {
+        wallet: 0,
+        input: 1,
+        size: Part {
+            mantissa: 1,
+            exp: 4,
+        },
+    };
+    assert_eq!(
+        measured(&mut world, sell),
+        ["pipeline_resolve_accounts", "pipeline_quote"]
+    );
+    let payout = Distribute {
+        slot: 0,
+        caller: 0,
+        wrong_wallet: false,
+    };
+    assert_eq!(measured(&mut world, payout), ["distribute"]);
+    // The creation reads the hooked mint but calls nothing of it; the seed moves it in.
+    assert!(!world.max_costs.contains_key("seed"));
+    for name in [
+        "pipeline_init_market",
+        "pipeline_market_info",
+        "set_taxes",
+        "pipeline_resolve_accounts",
+        "pipeline_quote",
+        "pipeline_swap",
+        "distribute",
+    ] {
+        assert!(world.max_costs.contains_key(name), "{name} is recorded");
+    }
+}
+
+/// Hardening finding T08 (#67): `every_holder_can_exit` quoted every wallet's holding again
+/// after every step, the same quote for each wallet holding the same amount. Every quote
+/// in one check is of the same state, so each `(mint, amount)` is now simulated once.
+#[test]
+fn sos_t08_wallets_holding_the_same_amounts_share_one_quote_in_the_exit_check() {
+    let shape = Shape {
+        mints: [SplToken, SplToken],
+        tax_side: 1,
+        ranges: [[0, 1_000], [0, 1_000]],
+        rates: [300, 300],
+        recipients: 1,
+        weights: [1, 1, 1, 1, 1],
+        burn: false,
+        tax_authority: false,
+        virtual_side: 0,
+        virtual_reserve: 0,
+        seed: [1_000_000_000, 1_000_000_000],
+        creation: CreateAndSeed,
+        keys: 0,
+    };
+    let world = TaxAmm::world(&shape).unwrap();
+    let mut held: Vec<(usize, u64)> = vec![];
+    for wallet in world.wallets() {
+        for input in 0..2 {
+            let amount = world.holding(&wallet, input);
+            if amount > 0 {
+                held.push((input, amount));
+            }
+        }
+    }
+    let distinct: std::collections::BTreeSet<_> = held.iter().copied().collect();
+    assert!(
+        distinct.len() < held.len(),
+        "the traders start with the same holdings"
+    );
+    let snapshot = TaxAmm::snapshot(&world);
+    let outcome = TaxAmm::start(&world);
+    let exit = TaxAmm::invariants()
+        .into_iter()
+        .find(|i| i.name == "every_holder_can_exit")
+        .unwrap();
+    let before = world.quotes_simulated.get();
+    (exit.check)(&harness::fuzz::Checked {
+        world: &world,
+        before: &snapshot,
+        after: &snapshot,
+        outcome: &outcome,
+    })
+    .unwrap();
+    // Every holding sells whole on this market, so nothing quotes at an edge.
+    assert_eq!(world.quotes_simulated.get() - before, distinct.len() as u64);
+}
+
+/// Hardening finding T04 (#67): a default run's tallies are checked, so a shape, a step's
+/// outcome or an instruction's measurement that a change made unreachable fails the run.
+#[test]
+#[should_panic(
+    expected = "the run never reached: [\"seed: ZeroSeed\", \"pipeline_seed_liquidity\"]"
+)]
+fn sos_t04_a_path_the_fuzzer_stopped_reaching_fails_the_run() {
+    let shapes = SHAPES_REACHED
+        .map(|feature| (feature.to_string(), 1))
+        .into();
+    let mut tally: BTreeMap<String, u32> = OUTCOMES_REACHED
+        .map(|outcome| (outcome.to_string(), 1))
+        .into();
+    tally.remove("seed: ZeroSeed");
+    let mut max_costs: BTreeMap<&'static str, u64> =
+        ceilings::ALL.iter().map(|(name, _)| (*name, 1)).collect();
+    max_costs.remove("pipeline_seed_liquidity");
+    every_shape_and_outcome_was_reached(&shapes, &tally, &max_costs);
 }

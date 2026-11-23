@@ -64,4 +64,6 @@ fn the_built_program_embeds_its_security_txt() {
     // Internal reviews are never presented as audits (docs/spec/README.md, "Internal
     // adversarial review").
     assert_eq!(field("auditors"), "None");
+    // The release, the crate's version, so each deployed build says which release it is.
+    assert_eq!(field("source_release"), env!("CARGO_PKG_VERSION"));
 }

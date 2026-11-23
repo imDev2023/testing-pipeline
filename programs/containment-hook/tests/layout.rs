@@ -50,6 +50,9 @@ fn distinct_market(tax_side: u8) -> TaxMarket {
         swap_count: u64::MAX,
         created_slot: u64::MAX,
         created_at: i64::MIN,
+        pending_buy_tax_bps: u16::MAX,
+        pending_sell_tax_bps: u16::MAX,
+        pending_from_slot: u64::MAX,
         reserved: [0xFF; RESERVED_LEN],
     }
 }

@@ -150,7 +150,8 @@ fn the_seed_action_is_refused_on_a_seeded_market() {
     let market = &graduated.market;
 
     // Even signed by the seeder itself, from its escrows, the market is already seeded.
-    let seed = seed_instruction(market, &launch.seeder, [1_000, 1_000], vec![]);
+    let terms = terms_of(&env.tax_market(&market.market_state));
+    let seed = seed_instruction(market, &launch.seeder, [1_000, 1_000], terms, vec![]);
     assert_refused(
         env.call_as_seeder(&launch, seed),
         tax_amm::StrategyError::AlreadySeeded,
@@ -406,7 +407,7 @@ fn a_seed_larger_than_the_escrow_takes_nothing() {
 }
 
 #[test]
-fn token_2022_and_hooked_mints_graduate_and_trade() {
+fn token_2022_mints_and_mints_whose_hook_is_cleared_graduate_and_trade() {
     let cases: Vec<(&str, MintsOf)> = vec![
         (
             "two Token-2022 mints",
@@ -418,9 +419,9 @@ fn token_2022_and_hooked_mints_graduate_and_trade() {
             }),
         ),
         (
-            "SPL Token and a mint with Pipeline's test-hook",
+            "SPL Token and a mint whose transfer hook is cleared",
             Box::new(|env| {
-                let hooked = env.create_mint_with_test_hook();
+                let hooked = env.create_mint_with_cleared_hook();
                 [(env.create_mint(&TOKEN), TOKEN), (hooked, TOKEN_2022)]
             }),
         ),
@@ -501,10 +502,10 @@ fn the_graduation_transaction_fits_for_mints_of_one_token_program() {
             }),
         ),
         (
-            "an SPL Token mint and a hooked mint",
+            "an SPL Token mint and a mint whose transfer hook is cleared",
             false,
             Box::new(|env| {
-                let hooked = env.create_mint_with_test_hook();
+                let hooked = env.create_mint_with_cleared_hook();
                 [(env.create_mint(&TOKEN), TOKEN), (hooked, TOKEN_2022)]
             }),
         ),
@@ -544,4 +545,28 @@ fn the_graduation_transaction_fits_for_mints_of_one_token_program() {
             "{what}"
         );
     }
+}
+
+/// Hardening finding H064 (#67): nothing tested a seeded market whose address, which anyone
+/// can compute from the seeder and the mints, already held lamports before its graduation,
+/// nor its vaults'. The graduation still creates and opens the market, and the lamports stay
+/// with the accounts they were sent to.
+#[test]
+fn sos_h064_a_pre_funded_seeded_market_address_and_vaults_still_graduate() {
+    let mut env = Env::new();
+    let launch = launch_on_spl_token(&mut env);
+    let market_state = launch.market_state();
+    let (authority, vaults) = tax_market_addresses(&market_state, launch.mints);
+    for address in [market_state, authority, vaults[0], vaults[1]] {
+        env.svm.airdrop(&address, 1_000_000).unwrap();
+    }
+    let graduated = env
+        .graduate(&launch, &valid_params(&Pubkey::new_unique()), AMOUNTS)
+        .unwrap();
+    let state = env.tax_market(&graduated.market.market_state);
+    assert_eq!(state.status, MarketStatus::Open);
+    assert_eq!(state.reserves, AMOUNTS);
+    let trader = env.funded_wallet(&graduated.market, 10_000_000_000);
+    env.swap(&graduated.market, &trader, (0, 1), 1_000_000_000)
+        .unwrap();
 }

@@ -4,12 +4,18 @@
 //! property is about refusing them. The property list, with the IDs and the Kani and Z3
 //! proofs of the same statements, is docs/security/tax-amm/maths-properties.md.
 
+use anchor_lang::prelude::Pubkey;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
 use tax_amm::config::{MAX_TAX_BPS, SUITE_SHARE_BPS};
+use tax_amm::params::check_split;
 use tax_amm::pricing::{curve_out, exact_in, tax_of, Fill, MarketView, Sides, Tax};
 use tax_amm::split::split_tax;
 use tax_amm::StrategyError;
+
+#[path = "common/wide.rs"]
+mod wide;
+use wide::wide_mul;
 
 const CASES: u32 = 10_000;
 /// For properties of trades that must succeed for the property to say anything: about a
@@ -18,29 +24,10 @@ const CASES: u32 = 10_000;
 const PAIRED_CASES: u32 = 4 * CASES;
 const BPS: u128 = 10_000;
 
-/// `a × b` exactly, as eight 32-bit digits, most significant first, so products of
-/// effective reserves, which can pass 2^128, compare exactly. Schoolbook multiplication on
-/// small digits: deliberately not the program's own 256-bit product, so a mistake there
-/// can't hide behind the same mistake here.
-fn wide_mul(a: u128, b: u128) -> [u64; 8] {
-    let digits = |x: u128| -> [u64; 4] { std::array::from_fn(|i| ((x >> (32 * i)) as u32) as u64) };
-    let (a, b) = (digits(a), digits(b));
-    let mut product = [0u64; 8];
-    for i in 0..4 {
-        let mut carry = 0u64;
-        for j in 0..4 {
-            let column = product[i + j] + a[i] * b[j] + carry;
-            product[i + j] = column & 0xffff_ffff;
-            carry = column >> 32;
-        }
-        product[i + 4] += carry;
-    }
-    product.reverse();
-    product
-}
-
+/// The one reference product the tests compare reserves with (`common/wide.rs`), which the
+/// invariant fuzzer also uses since hardening finding T09 (#67) removed its untested copy.
 #[test]
-fn the_reference_product_is_exact() {
+fn sos_t09_the_one_reference_product_is_exact() {
     // (2^128 - 1)^2 = 2^256 - 2^129 + 1.
     let max = 0xffff_ffff;
     assert_eq!(
@@ -461,4 +448,284 @@ fn buying_and_selling_straight_back_never_returns_more_than_was_put_in() {
         prop_assert!(back.amount_out <= amount);
         Ok(true)
     });
+}
+
+/// Whole shares with their zeros anywhere, not only after the used slots: what
+/// `split_tax` itself accepts, so P2 is checked without leaning on `check_split`'s order.
+fn whole_shares_in_any_order() -> impl Strategy<Value = ([u16; 4], u16)> {
+    shares().prop_flat_map(|(shares, burn)| {
+        (Just(shares.to_vec()).prop_shuffle(), Just(burn))
+            .prop_map(|(shares, burn)| ([shares[0], shares[1], shares[2], shares[3]], burn))
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(CASES))]
+
+    /// P2: with whole shares, a recipient slot after the first whose share is 0 is booked
+    /// nothing, and so is the burn when its share is 0; slot 0 takes the remainder.
+    #[test]
+    fn an_unshared_slot_is_booked_nothing(tax in amount(), (shares, burn) in whole_shares_in_any_order()) {
+        let slots = split_tax(tax, &shares, burn).unwrap();
+        for i in 1..4 {
+            if shares[i] == 0 {
+                prop_assert_eq!(slots[i], 0, "slot {} booked with share 0", i);
+            }
+        }
+        if burn == 0 {
+            prop_assert_eq!(slots[4], 0, "the burn booked with share 0");
+        }
+    }
+}
+
+/// V2 on the compiled code: a swap's tax never exceeds what it adds to the tax side's
+/// volume, the input for a buy tax and what the trader gets for a sell tax.
+#[test]
+fn the_tax_never_exceeds_what_the_swap_adds_to_the_tax_sides_volume() {
+    run_paired((sides(), tax(), amount()), |(sides, tax, amount)| {
+        let Ok(fill) = exact_in(sides, tax, amount) else {
+            return Ok(false);
+        };
+        let counted = match tax {
+            Tax::Buy(_) => fill.amount_in,
+            Tax::Sell(_) => fill.amount_out,
+        };
+        prop_assert!(
+            fill.tax <= counted,
+            "tax {} above the {} counted",
+            fill.tax,
+            counted
+        );
+        Ok(true)
+    });
+}
+
+/// Sides whose output has no virtual reserve and at least 1 unit of real reserve, against an
+/// input side holding at least 1 unit, real or virtual: an open market's side without a
+/// virtual reserve, traded into.
+fn sides_without_a_virtual_output() -> impl Strategy<Value = Sides> {
+    let reserve = prop_oneof![1u64..1_000, 1u64..1_000_000_000, 1u64..=u64::MAX];
+    let maybe_empty = prop_oneof![Just(0u64), 0u64..1_000, any::<u64>()];
+    (reserve.clone(), maybe_empty.clone(), maybe_empty, reserve).prop_map(
+        |(reserve_out, reserve_in, virtual_in, fallback)| Sides {
+            reserve_in: if reserve_in == 0 && virtual_in == 0 {
+                fallback
+            } else {
+                reserve_in
+            },
+            reserve_out,
+            virtual_in,
+            virtual_out: 0,
+        },
+    )
+}
+
+/// S6 on the compiled code: a fill never takes the real reserve of an output side without a
+/// virtual reserve to 0, and the input side's real reserve never falls.
+#[test]
+fn a_side_without_a_virtual_reserve_never_empties() {
+    run_paired(
+        (sides_without_a_virtual_output(), tax(), amount()),
+        |(sides, tax, amount)| {
+            let Ok(fill) = exact_in(sides, tax, amount) else {
+                return Ok(false);
+            };
+            prop_assert!(fill.reserve_out >= 1, "the output side emptied");
+            prop_assert!(fill.reserve_in >= sides.reserve_in, "the input side fell");
+            Ok(true)
+        },
+    );
+}
+
+/// The native SOL mints, written out here so the rule below does not read the program's
+/// own list: SPL Token's and Token-2022's.
+fn native_sol_mints() -> [Pubkey; 2] {
+    [
+        "So11111111111111111111111111111111111111112"
+            .parse()
+            .unwrap(),
+        "9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP"
+            .parse()
+            .unwrap(),
+    ]
+}
+
+/// The spec's rule on the recipients, their shares and the burn share (docs/spec/tax-amm.md,
+/// "Creation parameters"), stated independently of `params::check_split`: the first rule
+/// broken, in the order at least one recipient, used slots first, each used share above 0,
+/// each unused slot's share 0, the shares and the burn share summing to 10,000, and no burn
+/// share when the tax side is native SOL. Used slots come first, so a slot is used when it
+/// and every slot before it name a wallet, and a market has a recipient when slot 0 is used.
+fn the_spec_rule_on_the_split(
+    recipients: &[Pubkey; 4],
+    shares: &[u16; 4],
+    burn: u16,
+    tax_mint: &Pubkey,
+) -> Result<(), StrategyError> {
+    let used = |i: usize| (0..=i).all(|j| recipients[j] != Pubkey::default());
+    if !used(0) {
+        return Err(StrategyError::NoRecipient);
+    }
+    // A wallet in a slot that is not used follows an empty one.
+    if (0..4).any(|i| !used(i) && recipients[i] != Pubkey::default()) {
+        return Err(StrategyError::RecipientsOutOfOrder);
+    }
+    if (0..4).any(|i| used(i) && shares[i] == 0) {
+        return Err(StrategyError::ZeroShare);
+    }
+    if (0..4).any(|i| !used(i) && shares[i] != 0) {
+        return Err(StrategyError::ShareWithoutRecipient);
+    }
+    let total = shares[0] as u64 + shares[1] as u64 + shares[2] as u64 + shares[3] as u64;
+    if total + burn as u64 != 10_000 {
+        return Err(StrategyError::SharesNotWhole);
+    }
+    if burn != 0 && native_sol_mints().contains(tax_mint) {
+        return Err(StrategyError::BurnOnNativeSol);
+    }
+    Ok(())
+}
+
+/// A split as a creator or a tax authority might submit it: a valid one, then possibly one
+/// rule broken (or several, or anything at all), against a native SOL tax mint or another.
+fn submitted_split() -> impl Strategy<Value = ([Pubkey; 4], [u16; 4], u16, Pubkey)> {
+    let keys = [1u8, 2, 3].map(|seed| Pubkey::new_from_array([seed; 32]));
+    (
+        0usize..=4,
+        prop_oneof![3 => Just(0u16), 2 => 0u16..=9_996, 1 => any::<u16>()],
+        any::<[u32; 4]>(),
+        any::<[u8; 4]>(),
+        // What breaks: 0 nothing, 1 a wallet after an unused slot, 2 a used share 0, 3 an
+        // unused slot shared, 4 the sum off by a little, 5 any shares and burn, 6 any wallets.
+        prop_oneof![4 => Just(0u8), 6 => 1u8..=6],
+        any::<[u16; 5]>(),
+        0usize..3,
+        any::<u8>(),
+    )
+        .prop_map(
+            move |(used, burn, cuts, picks, broken, noise, mint, which)| {
+                let mut recipients = [Pubkey::default(); 4];
+                for (i, recipient) in recipients.iter_mut().enumerate().take(used) {
+                    *recipient = keys[picks[i] as usize % 3];
+                }
+                // Whole shares for the used slots, each at least 1.
+                let mut shares = [0u16; 4];
+                let mut burn = burn;
+                if used > 0 {
+                    burn = burn.min(10_000 - used as u16);
+                    let mut left = 10_000 - burn;
+                    for (i, share) in shares.iter_mut().enumerate().take(used - 1) {
+                        let room = left - (used - 1 - i) as u16;
+                        *share = 1 + (cuts[i] % room as u32) as u16;
+                        left -= *share;
+                    }
+                    shares[used - 1] = left;
+                }
+                let slot = which as usize % 4;
+                match broken {
+                    1 if used < 3 => recipients[used + 1 + slot % (3 - used)] = keys[0],
+                    2 if used > 0 => shares[slot % used] = 0,
+                    3 if used < 4 => shares[used + slot % (4 - used)] = 1 + noise[0] % 10_000,
+                    4 => {
+                        let delta = 1 + noise[1] % 3;
+                        burn = if noise[2] % 2 == 0 {
+                            burn.wrapping_add(delta)
+                        } else {
+                            burn.wrapping_sub(delta)
+                        };
+                    }
+                    5 => {
+                        shares = [noise[0], noise[1], noise[2], noise[3]].map(|share| {
+                            if share % 3 == 0 {
+                                0
+                            } else {
+                                share
+                            }
+                        });
+                        burn = noise[4];
+                    }
+                    6 => {
+                        recipients = picks.map(|pick| match pick % 4 {
+                            0 => Pubkey::default(),
+                            k => keys[k as usize - 1],
+                        });
+                    }
+                    _ => {}
+                }
+                let tax_mint = match mint {
+                    0 | 1 => native_sol_mints()[mint],
+                    _ => Pubkey::new_from_array([9; 32]),
+                };
+                (recipients, shares, burn, tax_mint)
+            },
+        )
+}
+
+/// P3, the one case the spec's words read two ways: wallets named only after an empty slot 0
+/// break both "at least one recipient" (no slot is used) and "used slots first"; the first
+/// rule checked, and so the error, is `NoRecipient`.
+#[test]
+fn wallets_named_only_after_an_empty_first_slot_are_refused_as_no_recipient() {
+    let wallet = Pubkey::new_from_array([1; 32]);
+    let empty = Pubkey::default();
+    for recipients in [
+        [empty, empty, empty, wallet],
+        [empty, wallet, wallet, empty],
+    ] {
+        let shares = [0, 5_000, 5_000, 0];
+        let mint = Pubkey::new_from_array([9; 32]);
+        assert!(matches!(
+            check_split(&recipients, &shares, 0, &mint),
+            Err(StrategyError::NoRecipient)
+        ));
+    }
+}
+
+/// P3: `check_split`, the rule creation and `set_recipients` apply, accepts exactly the
+/// spec's splits and refuses every other one with the error of the first rule it breaks;
+/// the run fails unless acceptance and each refusal came up at least 200 times.
+#[test]
+fn check_split_accepts_exactly_the_specs_splits() {
+    let outcomes = std::sync::Mutex::new(std::collections::BTreeMap::<String, u32>::new());
+    let mut runner = TestRunner::new(Config::with_cases(CASES));
+    runner
+        .run(
+            &submitted_split(),
+            |(recipients, shares, burn, tax_mint)| {
+                let expected = the_spec_rule_on_the_split(&recipients, &shares, burn, &tax_mint);
+                let got = check_split(&recipients, &shares, burn, &tax_mint);
+                prop_assert_eq!(
+                    format!("{got:?}"),
+                    format!("{expected:?}"),
+                    "recipients {:?}, shares {:?}, burn {}, mint {}",
+                    recipients,
+                    shares,
+                    burn,
+                    tax_mint
+                );
+                *outcomes
+                    .lock()
+                    .unwrap()
+                    .entry(format!("{got:?}"))
+                    .or_default() += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+    let outcomes = outcomes.into_inner().unwrap();
+    for outcome in [
+        "Ok(())",
+        "Err(NoRecipient)",
+        "Err(RecipientsOutOfOrder)",
+        "Err(ZeroShare)",
+        "Err(ShareWithoutRecipient)",
+        "Err(SharesNotWhole)",
+        "Err(BurnOnNativeSol)",
+    ] {
+        let seen = outcomes.get(outcome).copied().unwrap_or(0);
+        assert!(
+            seen >= CASES / 50,
+            "{outcome} came up only {seen} times: {outcomes:?}"
+        );
+    }
 }

@@ -650,7 +650,8 @@
     {
       "name": "seed",
       "docs": [
-        "Custom action: the seeder funds the market once, before any swap, and opens it.",
+        "Custom action: the seeder funds the market once, before any swap, and opens it, if",
+        "`expected_terms` is the hash of the market's terms as stored ([`terms::terms_hash`]).",
         "Remaining accounts are transfer-hook accounts, for either mint."
       ],
       "discriminator": [
@@ -715,6 +716,15 @@
         {
           "name": "amount_1",
           "type": "u64"
+        },
+        {
+          "name": "expected_terms",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
         }
       ]
     },
@@ -777,7 +787,7 @@
       "name": "set_taxes",
       "docs": [
         "Custom action: the tax authority moves the buy and sell tax, each inside the range",
-        "fixed at creation. The next swap pays the new rates."
+        "fixed at creation. They apply from `RATE_CHANGE_DELAY_SLOTS` later (`config`)."
       ],
       "discriminator": [
         86,
@@ -1095,6 +1105,46 @@
       "code": 6036,
       "name": "BurnNeedsWritableMint",
       "msg": "The burn lowers the tax-side mint's supply, so it needs the mint writable"
+    },
+    {
+      "code": 6037,
+      "name": "NotAWallet",
+      "msg": "A tax recipient can't be one of the market's own addresses or programs, which could never move what it is paid"
+    },
+    {
+      "code": 6038,
+      "name": "NewerStateVersion",
+      "msg": "The market state was written by a newer version of this program than the one running"
+    },
+    {
+      "code": 6039,
+      "name": "Underflow",
+      "msg": "Arithmetic underflow"
+    },
+    {
+      "code": 6040,
+      "name": "TransferHookNotAllowed",
+      "msg": "A mint's transfer hook must be cleared, or be the containment hook with the mint's unlock PDA as its authority"
+    },
+    {
+      "code": 6041,
+      "name": "MintAuthoritySet",
+      "msg": "A mint other than a quote mint must have no mint authority when its market is seeded"
+    },
+    {
+      "code": 6042,
+      "name": "FreezeAuthoritySet",
+      "msg": "A mint other than a quote mint must have no freeze authority when its market is seeded"
+    },
+    {
+      "code": 6043,
+      "name": "OwedSlotRedirected",
+      "msg": "A recipient slot still owed tax keeps its wallet until it is paid out"
+    },
+    {
+      "code": 6044,
+      "name": "TermsChanged",
+      "msg": "The market's terms are not the ones the seeder agreed to"
     }
   ],
   "types": [
@@ -1666,11 +1716,30 @@
             "type": "i64"
           },
           {
+            "name": "pending_buy_tax_bps",
+            "docs": [
+              "The buy and sell tax `set_taxes` set, which apply from `pending_from_slot`",
+              "([`TaxMarket::rates_at`]; docs/spec/tax-amm.md, \"Rates\")."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "pending_sell_tax_bps",
+            "type": "u16"
+          },
+          {
+            "name": "pending_from_slot",
+            "docs": [
+              "The slot the pending rates apply from; 0 when no change is pending."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "reserved",
             "type": {
               "array": [
                 "u8",
-                64
+                52
               ]
             }
           }
@@ -1680,7 +1749,9 @@
     {
       "name": "TaxesChanged",
       "docs": [
-        "The tax authority changed the market's rates; the next swap pays them."
+        "The tax authority set the market's rates, which quotes and swaps apply from `from_slot`",
+        "(docs/spec/tax-amm.md, \"Rates\"). Rates equal to those in force cancel a pending change,",
+        "with `from_slot` the slot of the call."
       ],
       "type": {
         "kind": "struct",
@@ -1700,6 +1771,10 @@
           {
             "name": "sell_tax_bps",
             "type": "u16"
+          },
+          {
+            "name": "from_slot",
+            "type": "u64"
           }
         ]
       }
@@ -1778,11 +1853,28 @@
     {
       "name": "MAX_TAX_BPS",
       "docs": [
-        "The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so no",
-        "tax market can be a honeypot through its tax. Published in the IDL (`#[constant]`)."
+        "The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so the",
+        "tax alone can never stop a holder selling more than dust (it rounds up to the next unit).",
+        "It says nothing of the mints, whose own",
+        "authorities and transfer hooks the mint rules govern. Published in the IDL",
+        "(`#[constant]`)."
       ],
       "type": "u16",
       "value": "1000"
+    },
+    {
+      "name": "RATE_CHANGE_DELAY_SLOTS",
+      "docs": [
+        "How many slots after `set_taxes` its new rates apply: 300 slots, about two minutes. A",
+        "blockhash lasts 150 blocks and a slot holds at most one, so while fewer than half the",
+        "slots are skipped no swap signed with a blockhash before a change can land after it: the",
+        "tax authority can't put a change on either side of a victim's swap and take its slippage",
+        "allowance as tax (docs/spec/tax-amm.md, \"Rates\"; hardening finding H010, #67). A",
+        "durable-nonce transaction has no lifetime, so only its minimum output protects it.",
+        "Decreases wait too. Published in the IDL (`#[constant]`), for Aviary's tax panel."
+      ],
+      "type": "u64",
+      "value": "300"
     },
     {
       "name": "SUITE_SHARE_BPS",

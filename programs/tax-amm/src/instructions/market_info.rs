@@ -6,8 +6,9 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program::set_return_data;
 use pipeline_strategy_interface as psi;
 
+use crate::errors::StrategyError;
 use crate::pricing;
-use crate::state::TaxMarket;
+use crate::state::{TaxMarket, STATE_VERSION};
 
 /// `Account<TaxMarket>` checks that the account is owned by this program and carries the
 /// market state's discriminator. That matters: anyone can call the router's
@@ -15,6 +16,7 @@ use crate::state::TaxMarket;
 /// anything that isn't a tax market.
 #[derive(Accounts)]
 pub struct MarketInfoAccounts<'info> {
+    #[account(constraint = market_state.version <= STATE_VERSION @ StrategyError::NewerStateVersion)]
     pub market_state: Account<'info, TaxMarket>,
 }
 

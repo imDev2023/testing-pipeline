@@ -45,7 +45,7 @@ pub fn split_tax(
     slots[SUITE_SLOT as usize] = suite as u64;
     // Each part rounds down, so what is left over is under one unit per part; with whole
     // shares this never fails (proofs/pricing_z3.py, P1).
-    let remainder = rest.checked_sub(booked).ok_or(StrategyError::Overflow)?;
+    let remainder = rest.checked_sub(booked).ok_or(StrategyError::Underflow)?;
     slots[0] = slots[0]
         .checked_add(remainder as u64)
         .ok_or(StrategyError::Overflow)?;
@@ -90,9 +90,10 @@ mod tests {
 // Kani proofs of the split (`cargo kani`, docs/toolchain.md), in the pricing's tiers
 // (`crate::pricing`); the property IDs are docs/security/tax-amm/maths-properties.md's.
 // The arithmetic of the parts needs six 128-bit divisions by symbolic shares, which CBMC
-// did not finish in 30 minutes even for taxes below 2^8, so the default tier proves only the
-// refusal before it; Z3 proves the parts for every tax (`proofs/pricing_z3.py`), and Proptest
-// checks them on the compiled code.
+// did not finish in 30 minutes even for taxes below 2^8, so the default tier proves the
+// refusal before it and, for every tax, that an unshared slot is booked nothing (P2, whose
+// asserted parts are divisions of 0); Z3 proves the parts for every tax
+// (`proofs/pricing_z3.py`), and Proptest checks them on the compiled code.
 #[cfg(kani)]
 mod proofs {
     use super::*;
@@ -122,6 +123,28 @@ mod proofs {
             split_tax(kani::any(), &shares, burn),
             Err(StrategyError::SharesNotWhole)
         ));
+    }
+
+    /// P2: with whole shares, a recipient slot whose share is 0 is booked nothing, except
+    /// slot 0, which takes the remainder, and the burn is booked nothing when its share is 0;
+    /// so with the shares `check_split` accepts (slot 0 always used, unused slots shared 0),
+    /// tax is only ever owed to a slot with a wallet, the burn or the suite.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    fn an_unshared_slot_is_booked_nothing() {
+        let shares: [u16; MAX_RECIPIENTS] = kani::any();
+        let burn: u16 = kani::any();
+        kani::assume(shares_are_whole(&shares, burn));
+        if let Ok(slots) = split_tax(kani::any(), &shares, burn) {
+            for i in 1..MAX_RECIPIENTS {
+                if shares[i] == 0 {
+                    assert!(slots[i] == 0);
+                }
+            }
+            if burn == 0 {
+                assert!(slots[BURN_SLOT as usize] == 0);
+            }
+        }
     }
 
     /// P1: for every tax and any shares, when the split books the tax, the suite share, the

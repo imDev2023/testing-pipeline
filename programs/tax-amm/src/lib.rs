@@ -41,10 +41,12 @@ pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod interface;
+pub mod mint_levers;
 pub mod params;
 pub mod pricing;
 pub mod split;
 pub mod state;
+pub mod terms;
 pub mod token;
 
 pub use errors::StrategyError;
@@ -92,14 +94,16 @@ pub mod tax_amm {
         instructions::swap(ctx, request)
     }
 
-    /// Custom action: the seeder funds the market once, before any swap, and opens it.
+    /// Custom action: the seeder funds the market once, before any swap, and opens it, if
+    /// `expected_terms` is the hash of the market's terms as stored ([`terms::terms_hash`]).
     /// Remaining accounts are transfer-hook accounts, for either mint.
     pub fn seed<'info>(
         ctx: Context<'info, Seed<'info>>,
         amount_0: u64,
         amount_1: u64,
+        expected_terms: [u8; 32],
     ) -> Result<()> {
-        instructions::seed_market(ctx, amount_0, amount_1)
+        instructions::seed_market(ctx, amount_0, amount_1, expected_terms)
     }
 
     /// Custom action: anyone pays out what one tax slot is owed, a tax recipient or the
@@ -111,7 +115,7 @@ pub mod tax_amm {
     }
 
     /// Custom action: the tax authority moves the buy and sell tax, each inside the range
-    /// fixed at creation. The next swap pays the new rates.
+    /// fixed at creation. They apply from `RATE_CHANGE_DELAY_SLOTS` later (`config`).
     pub fn set_taxes(
         ctx: Context<TaxAuthorityAction>,
         buy_tax_bps: u16,

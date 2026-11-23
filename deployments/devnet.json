@@ -33,6 +33,16 @@
       "slot": 525139692,
       "deployedAt": "2026-11-22T17:02:06Z"
     },
+    "lending-amm": {
+      "programId": "Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG",
+      "executableHash": "34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c",
+      "commit": "25a209c62f1abed0ea1db1ba178e9b1bbbdd5e87",
+      "dockerImage": "solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd",
+      "upgradeAuthority": "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe",
+      "deployedBy": "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt",
+      "slot": 525242911,
+      "deployedAt": "2026-11-22T23:55:40Z"
+    },
     "tax-amm": {
       "programId": "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t",
       "executableHash": "a48b5e5962290aafe35ced955d0a8a8d6cb5cb63bd0be435fc87935d6c05db59",

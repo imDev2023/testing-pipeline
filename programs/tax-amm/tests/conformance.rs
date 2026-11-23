@@ -83,20 +83,16 @@ fn seeded_markets_pass_every_check() {
 }
 
 #[test]
-fn a_seeded_market_with_a_hooked_mint_passes_every_check() {
+fn a_seeded_market_with_a_contained_mint_passes_every_check() {
+    // The containment hook is the one transfer hook a market's mint may run, in its home
+    // market.
     let mut env = Env::new();
-    let hooked = env.create_mint_with_test_hook();
-    let plain = env.create_mint(&TOKEN);
-    let market = env.seeded_market(
-        [(plain, TOKEN), (hooked, TOKEN_2022)],
-        &params(0, 300, 500),
-        [100_000_000_000, 200_000_000_000],
-    );
+    let market = env.contained_market(1, [100_000_000_000, 200_000_000_000]);
     check(
         &env,
         &market,
         &CheckOptions::default(),
-        "a hooked mint on side 1",
+        "a contained mint on side 1",
     );
 }
 

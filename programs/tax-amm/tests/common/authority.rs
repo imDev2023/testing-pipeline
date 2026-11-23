@@ -86,8 +86,17 @@ pub fn each_action(
     signer: &Pubkey,
     state: &tax_amm::TaxMarket,
 ) -> [(&'static str, Instruction); 3] {
+    // A new recipient in the first unused slot, given one basis point of the first's share:
+    // a slot owed nothing may change hands whatever the others are owed.
     let mut split = Split::of_market(state);
-    split.recipients[0] = Pubkey::new_unique();
+    let unused = tax_amm::params::used_slots(&state.recipients);
+    assert!(
+        unused < MAX_RECIPIENTS,
+        "a market with an unused recipient slot"
+    );
+    split.recipients[unused] = Pubkey::new_unique();
+    split.shares[0] -= 1;
+    split.shares[unused] = 1;
     [
         (
             "set_taxes",

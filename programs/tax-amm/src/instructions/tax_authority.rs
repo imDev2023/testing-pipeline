@@ -6,7 +6,8 @@
 
 use anchor_lang::prelude::*;
 
-use crate::state::TaxMarket;
+use crate::errors::StrategyError;
+use crate::state::{TaxMarket, STATE_VERSION};
 
 /// The order is `metadata.json`'s for each of the three actions; keep them in step.
 #[derive(Accounts)]
@@ -14,7 +15,7 @@ pub struct TaxAuthorityAction<'info> {
     /// Checked against the market's tax authority by [`TaxAuthorityAction::authorize`], so a
     /// market that has none, or renounced, says so rather than naming the signer.
     pub tax_authority: Signer<'info>,
-    #[account(mut)]
+    #[account(mut, constraint = market_state.version <= STATE_VERSION @ StrategyError::NewerStateVersion)]
     pub market_state: Account<'info, TaxMarket>,
 }
 

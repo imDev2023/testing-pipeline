@@ -338,6 +338,12 @@
                     "type": "u64",
                     "label": "Amount of token 1",
                     "decimals_of": "mint:1"
+                },
+                {
+                    "name": "expected_terms",
+                    "type": "pubkey",
+                    "label": "Hash of the market's terms",
+                    "description": "The SHA-256 of the market's terms as the seeder agreed to them: the two mints, the creation parameters and any pending rate change, Borsh-encoded. The seed is refused if the market's terms hash otherwise, so nobody can make a seeder fund a look-alike market. It is 32 bytes, written in base58 as a key is, since metadata arguments have no fixed-size byte type."
                 }
             ],
             "accounts": [
@@ -517,7 +523,7 @@
             "name": "set_taxes",
             "label": "Change the taxes",
             "kind": "other",
-            "description": "The market's tax authority sets the buy and sell tax, each inside the range fixed at creation, which no tax can ever leave. The next swap pays the new rates; a trade quoted before the change is protected by its minimum output.",
+            "description": "The market's tax authority sets the buy and sell tax, each inside the range fixed at creation, which no tax can ever leave. The new rates apply only after a delay longer than any transaction's lifetime (RATE_CHANGE_DELAY_SLOTS, about two minutes), so a trade already signed always pays the rates it was quoted at.",
             "args": [
                 {
                     "name": "buy_tax_bps",

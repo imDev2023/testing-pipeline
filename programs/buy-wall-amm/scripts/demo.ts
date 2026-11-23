@@ -2121,6 +2121,10 @@ async function compareHostedQuotes(payer: KeyPairSigner, recorded: pipeline.Mark
             const simulation = { commitment: 'confirmed' } as const;
             const accounts = await pipeline.resolveAccounts(rpc, recorded, request, payer.address, simulation);
             const { quote } = await pipeline.quoteStrategy(rpc, recorded, request, accounts, payer.address, simulation);
+            // The API quotes what the trader keeps: since Pipeline 0.3 a sale into wrapped SOL, the
+            // market's fee mint, pays Pipeline's fee out of what arrives, so it keeps less than the
+            // strategy's own quote by exactly that fee.
+            const kept = pipeline.marketViewFeeSide(recorded, recorded.mints[output]!) === 'output' ? pipeline.keptAfterOutputFee(quote.amountOut) : quote.amountOut;
             if ((await snapshot()) !== before) {
                 if (attempt >= 5) fail('the market kept changing while its quotes were compared');
                 info('the market changed while its quotes were compared; again');
@@ -2128,16 +2132,16 @@ async function compareHostedQuotes(payer: KeyPairSigner, recorded: pipeline.Mark
             }
             const listed = hosted.strategyAccounts.join();
             if (listed !== [view.vaults[output], vaultAuthority].join()) fail(`the hosted API resolved ${listed} for the ${label}, not the output vault and the vault authority`);
-            if (hosted.amountOut !== quote.amountOut) {
+            if (hosted.amountOut !== kept) {
                 // The hosted API reads the cluster through its own RPC, which can trail ours by a
                 // few slots after the demo's last write; it must catch up within the retries.
-                if (attempt >= 5) fail(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, the program ${quote.amountOut}, on the same state`);
-                info(`the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, not yet the program's ${quote.amountOut}; again`);
+                if (attempt >= 5) fail(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, the program ${quote.amountOut} with ${kept} kept, on the same state`);
+                info(`the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, not yet the program's ${kept} kept; again`);
                 await sleep(3_000);
                 continue;
             }
-            info(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, exactly the program's quote on the same state`);
-            record.push([`hosted API quote, ${label}`, `${amount} in, ${hosted.amountOut} out, equal to the program's`]);
+            info(`${label} of ${amount}: the hosted API quoted ${hosted.amountOut} at slot ${hosted.slot}, exactly what the program's quote of ${quote.amountOut} leaves the trader on the same state`);
+            record.push([`hosted API quote, ${label}`, `${amount} in, ${hosted.amountOut} kept, equal to the program's quote of ${quote.amountOut} less Pipeline's fee where it is taken from the output`]);
             break;
         }
     }

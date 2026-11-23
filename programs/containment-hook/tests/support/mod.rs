@@ -14,7 +14,6 @@
 pub mod common;
 
 pub mod ceilings;
-pub mod fuzz;
 
 use std::path::PathBuf;
 
@@ -98,14 +97,36 @@ pub fn hook_env() -> Env {
 
 /// A contained mint as the launch script creates it: Token-2022, the hook as its transfer
 /// hook and its unlock PDA as hook authority, no freeze authority, the admin as mint
-/// authority, and nothing else.
+/// authority, which `bind` needs and a launch revokes before the seed
+/// ([`revoke_mint_authority`]), and nothing else.
 pub fn contained_mint(env: &mut Env) -> Pubkey {
     contained_mint_with(env, MintOptions::default())
 }
 
 /// [`contained_mint`] with other mint options, such as a freeze authority.
 pub fn contained_mint_with(env: &mut Env, options: MintOptions) -> Pubkey {
+    let options = MintOptions {
+        mint_authority: true,
+        ..options
+    };
     env.create_hooked_mint(&hook_id(), unlock_pda, options)
+}
+
+/// Revokes a mint's mint authority, the admin, as a launch does between `bind` and the seed:
+/// the tax AMM's seed refuses a mint that keeps one (docs/spec/tax-amm.md, "Mint rules").
+pub fn revoke_mint_authority(env: &mut Env, mint: &Pubkey) {
+    use spl_token_2022_interface::instruction::{set_authority, AuthorityType};
+    let admin = env.admin.pubkey();
+    let revoke = set_authority(
+        &TOKEN_2022,
+        mint,
+        None,
+        AuthorityType::MintTokens,
+        &admin,
+        &[],
+    )
+    .unwrap();
+    env.send(&[revoke], &[]).unwrap();
 }
 
 /// A home market for `contained`: a tax market trading it against a new SPL Token quote
@@ -326,22 +347,9 @@ pub fn edit_account(
 
 /// A wallet's associated token account for a Token-2022 mint, created by the admin.
 pub fn token_2022_account(env: &mut Env, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
-    let account = pda::associated_token(owner, mint, &TOKEN_2022);
-    let data = [1u8]; // CreateIdempotent
-    let create = Instruction::new_with_bytes(
-        client::ASSOCIATED_TOKEN_PROGRAM_ID,
-        &data,
-        vec![
-            AccountMeta::new(env.admin.pubkey(), true),
-            AccountMeta::new(account, false),
-            AccountMeta::new_readonly(*owner, false),
-            AccountMeta::new_readonly(*mint, false),
-            AccountMeta::new_readonly(client::SYSTEM_PROGRAM_ID, false),
-            AccountMeta::new_readonly(TOKEN_2022, false),
-        ],
-    );
+    let create = create_token_account_idempotent(&env.admin.pubkey(), owner, mint, &TOKEN_2022);
     env.send(&[create], &[]).unwrap();
-    account
+    pda::associated_token(owner, mint, &TOKEN_2022)
 }
 
 /// Mints `amount` of a Token-2022 `mint` into `account`, signed by the admin as mint
@@ -357,6 +365,19 @@ pub fn mint_to(env: &mut Env, mint: &Pubkey, account: &Pubkey, amount: u64) -> R
     )
     .unwrap();
     env.send(&[instruction], &[]).map(|_| ())
+}
+
+/// Credits `amount` of a contained `mint` to `account` after its launch, when nobody can
+/// mint it any more: the balance and the supply written straight into the VM, standing in
+/// for tokens bought through the home market, which tests that are not about the buy need
+/// in accounts the home market never pays.
+pub fn credit(env: &mut Env, mint: &Pubkey, account: &Pubkey, amount: u64) {
+    let balance = env.balance(account);
+    let mut token = env.svm.get_account(account).unwrap();
+    token.data[64..72].copy_from_slice(&(balance + amount).to_le_bytes());
+    env.svm.set_account(*account, token).unwrap();
+    let supply = env.supply(mint);
+    env.set_supply(mint, supply + amount);
 }
 
 /// The hook accounts every transfer of a contained token passes, after Token-2022's own:
@@ -438,8 +459,9 @@ impl Default for LaunchOptions {
 }
 
 /// Launches a contained token as the launch script does: the mint, the home market with its
-/// fee accounts, `bind`, the supply minted to the seeder (minting never calls the hook), then
-/// the tax AMM's `seed` with the hook tail after its own accounts.
+/// fee accounts, `bind`, the supply minted to the seeder (minting never calls the hook), the
+/// mint authority revoked, then the tax AMM's `seed` with the hook tail after its own
+/// accounts.
 pub fn launch(env: &mut Env) -> Launched {
     launch_with(env, LaunchOptions::default())
 }
@@ -463,6 +485,7 @@ pub fn launch_with(env: &mut Env, options: LaunchOptions) -> Launched {
     send_bind(env, &args, &[]).unwrap();
     let holder = token_2022_account(env, &seeder.pubkey(), &mint);
     mint_to(env, &mint, &holder, SUPPLY).unwrap();
+    revoke_mint_authority(env, &mint);
     env.write_token_account(&quote, &TOKEN, &seeder.pubkey(), SEED[QUOTE]);
     env.seed_with(&market, &seeder, SEED, hook_tail(&mint))
         .unwrap();

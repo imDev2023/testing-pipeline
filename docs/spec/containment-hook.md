@@ -50,7 +50,7 @@ The config is never closed, so it stays as the record of the token's containment
 - Its only extensions are on an allowlist: transfer hook, metadata pointer, token metadata, group pointer, group member pointer, token group and token group member (the tax AMM's own mint allowlist, none of which gives power over anyone's balance).
   Every other extension is refused, including permanent delegate (it can move or burn anyone's tokens), confidential transfer (the hook would see `u64::MAX` instead of the amount), default account state (accounts that start frozen), transfer fee (Token-2022 withdraws withheld fees without calling the hook, an escape route), pausable, and any extension Token-2022 adds later.
 - Its freeze authority is unset, because freezing the home market's vault would trap every holder with nowhere else to sell; this is stricter than the tax AMM, which allows freeze authorities.
-- The mint authority may stay set; the launcher can revoke it after binding, and Canary checks report it as they do for any mint.
+- The mint authority must still be set when the mint is bound, since `bind` needs its signature, and must be revoked before the home market's seed: the tax AMM's seed refuses any mint but a quote mint that keeps a mint authority or a freeze authority (`docs/spec/tax-amm.md`, "Mint rules"; hardening finding H008 of the tax AMM, [#67](https://github.com/imDev2023/testing-pipeline/issues/67)), so a launcher can never mint into its home market.
 
 ### Checks on the home market
 
@@ -144,11 +144,11 @@ Nothing breaks while an unlock waits, since sells into the home market keep work
 
 - A devnet CLI script in this repo launches a contained token.
   - Create the mint with only allowed extensions and no freeze authority, with the hook and its authority set as in "Lifecycle", and mint the supply.
-  - Then the tax AMM's market creation (`docs/spec/tax-amm.md`, "Creating a market") with `bind` inserted before the seed: the router's `create_market` with the tax side on the quote mint, `init_fee_account` for each mint, `bind` with the goal and deadline given as required flags (no defaults), then the tax AMM's `seed`.
+  - Then the tax AMM's market creation (`docs/spec/tax-amm.md`, "Creating a market") with `bind` and the mint authority's revocation inserted before the seed: the router's `create_market` with the tax side on the quote mint, `init_fee_account` for each mint, `bind` with the goal and deadline given as required flags (no defaults), `SetAuthority(MintTokens, None)`, then the tax AMM's `seed` with the hash of the market's terms (`docs/spec/tax-amm.md`, "The seed").
 - `bind` belongs in the same transaction as the market's creation, but may go in a later one with the seed if the transaction is too large: nothing can move the token before `bind`, the market is closed to swaps until its seed, and only the seeder can seed.
   Measured by [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) on 2026-11-12: it does not fit (see "Measured"), so the script sends `bind` in the next transaction, before the seed, and measures it again on every run.
   It does not create an address lookup table to make it fit, since the table would cost a transaction of its own and a slot's wait before it can be used.
-- Revoking the mint authority is an optional last step; it must come after `bind`, which needs the mint authority's signature, or the token can never be bound and never transfer.
+- Revoking the mint authority is required before the seed, and must come after `bind`, which needs the mint authority's signature, or the token can never be bound and never transfer.
 - Graduating a contained token from a launchpad through `pipeline_seed_liquidity` is not supported in v1, because the seed would move tokens before the `Market` account that `bind` reads exists.
 - Aviary v1 does not launch new tokens (`docs/spec/pipescope.md`), so the script is the only way to launch a contained token.
   The tax AMM's launch form in Aviary refuses a mint whose transfer hook is ours, since its seed would fail for a token not yet bound and a bound token already has its home market.
@@ -271,7 +271,7 @@ A contained token's home market is a tax market, so these add to the tax AMM's o
   - This replaces the fail in the `exit_transferred` row of `docs/spec/pipescope-canary.md`, which was written before this file fixed the allow rule.
     It follows that file's own rule that only what the ordinary trade meets can fail, and it gives our hook no exemption.
 - `contained_mint`: a warn while the hook program can still be upgraded, which is always the case on devnet; it passes only once the hook is frozen.
-- `token_authorities`: a warn while the launcher keeps the mint authority; revoking it after `bind` clears it.
+- `token_authorities`: a warn while the launcher keeps the mint authority, which a seeded home market never does, since the launch revokes it before the seed.
 
 ### Not applicable
 

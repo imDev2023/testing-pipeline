@@ -335,9 +335,15 @@ fn the_seed_action_is_exactly_the_programs_seed() {
         .create_tax_market(mints, &valid_params(&seeder))
         .unwrap();
     let amounts = [123_456_789, 987_654_321];
-    let expected = seed_instruction(&market, &seeder, amounts, vec![]);
+    let terms = terms_of(&env.tax_market(&market.market_state));
+    let expected = seed_instruction(&market, &seeder, amounts, terms, vec![]);
 
-    let values = [Value::from(amounts[0]), Value::from(amounts[1])];
+    // The hash of the terms is 32 bytes, which the metadata writes in base58 as a key.
+    let values = [
+        Value::from(amounts[0]),
+        Value::from(amounts[1]),
+        Value::from(Pubkey::new_from_array(terms).to_string()),
+    ];
     assert_action_is(&seed, &values, &expected, &market, &seeder);
     let args = seed["args"].as_array().unwrap();
     assert_eq!(args[0]["decimals_of"], "mint:0");

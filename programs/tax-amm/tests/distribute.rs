@@ -284,58 +284,53 @@ fn substituted_accounts_are_refused() {
 #[test]
 fn a_frozen_recipient_account_blocks_only_its_own_slot_until_it_is_thawed() {
     use spl_token_2022_interface::instruction::{freeze_account, thaw_account};
-    for token_program in [TOKEN, TOKEN_2022] {
-        let mut env = Env::new();
-        let taxed = env.create_mint_with(
-            &token_program,
-            MintOptions {
-                freeze_authority: true,
-                ..MintOptions::default()
-            },
-        );
-        let mints = [(env.create_mint(&TOKEN), TOKEN), (taxed, token_program)];
-        let market = traded_market(&mut env, mints);
-        env.set_supply(&taxed, 10 * SEED[1]);
-        let caller = caller(&mut env);
-        let recipient = ck(&env.tax_market(&market.market_state).recipients[0]);
-        let account = env.write_token_account(&taxed, &token_program, &recipient, 0);
-        let admin = env.admin.pubkey();
-        let freeze = freeze_account(&token_program, &account, &taxed, &admin, &[]).unwrap();
-        env.send(&[freeze], &[]).unwrap();
+    // Only a quote mint may keep a freeze authority once its market is seeded
+    // (docs/spec/tax-amm.md, "Mint rules"): the cluster's USDC, an SPL Token mint.
+    let token_program = TOKEN;
+    let mut env = Env::new();
+    let taxed = env.write_usdc_mint();
+    let mints = [(env.create_mint(&TOKEN), TOKEN), (taxed, token_program)];
+    let market = traded_market(&mut env, mints);
+    env.set_supply(&taxed, 10 * SEED[1]);
+    let caller = caller(&mut env);
+    let recipient = ck(&env.tax_market(&market.market_state).recipients[0]);
+    let account = env.write_token_account(&taxed, &token_program, &recipient, 0);
+    let admin = env.admin.pubkey();
+    let freeze = freeze_account(&token_program, &account, &taxed, &admin, &[]).unwrap();
+    env.send(&[freeze], &[]).unwrap();
 
-        // Only slot 0's payout fails; the other slots pay out.
-        let owed = env.tax_market(&market.market_state).owed;
-        let refused = env.distribute(&market, &caller, 0);
-        assert!(
-            refused
-                .as_ref()
-                .is_err_and(|logs| logs.contains("Account is frozen")),
-            "{token_program}: {refused:?}"
-        );
-        for slot in [1, BURN_SLOT, SUITE_SLOT] {
-            env.distribute(&market, &caller, slot).unwrap();
-        }
-        let state = env.tax_market(&market.market_state);
-        assert_eq!(state.owed, [owed[0], 0, 0, 0, 0, 0], "{token_program}");
-
-        // Swaps keep working, and keep booking tax to slot 0.
-        let trader = env.funded_wallet(&market, 1_000_000_000_000);
-        env.swap(&market, &trader, (1, 0), 1_000_000_000).unwrap();
-        env.swap(&market, &trader, (0, 1), 1_000_000_000).unwrap();
-        let owed_now = env.tax_market(&market.market_state).owed[0];
-        assert!(owed_now > owed[0], "{token_program}");
-
-        // Thawed, the slot pays out everything it is owed.
-        let thaw = thaw_account(&token_program, &account, &taxed, &admin, &[]).unwrap();
-        env.send(&[thaw], &[]).unwrap();
-        env.distribute(&market, &caller, 0).unwrap();
-        assert_eq!(env.balance(&account), owed_now, "{token_program}");
-        assert_eq!(
-            env.tax_market(&market.market_state).owed[0],
-            0,
-            "{token_program}"
-        );
+    // Only slot 0's payout fails; the other slots pay out.
+    let owed = env.tax_market(&market.market_state).owed;
+    let refused = env.distribute(&market, &caller, 0);
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|logs| logs.contains("Account is frozen")),
+        "{token_program}: {refused:?}"
+    );
+    for slot in [1, BURN_SLOT, SUITE_SLOT] {
+        env.distribute(&market, &caller, slot).unwrap();
     }
+    let state = env.tax_market(&market.market_state);
+    assert_eq!(state.owed, [owed[0], 0, 0, 0, 0, 0], "{token_program}");
+
+    // Swaps keep working, and keep booking tax to slot 0.
+    let trader = env.funded_wallet(&market, 1_000_000_000_000);
+    env.swap(&market, &trader, (1, 0), 1_000_000_000).unwrap();
+    env.swap(&market, &trader, (0, 1), 1_000_000_000).unwrap();
+    let owed_now = env.tax_market(&market.market_state).owed[0];
+    assert!(owed_now > owed[0], "{token_program}");
+
+    // Thawed, the slot pays out everything it is owed.
+    let thaw = thaw_account(&token_program, &account, &taxed, &admin, &[]).unwrap();
+    env.send(&[thaw], &[]).unwrap();
+    env.distribute(&market, &caller, 0).unwrap();
+    assert_eq!(env.balance(&account), owed_now, "{token_program}");
+    assert_eq!(
+        env.tax_market(&market.market_state).owed[0],
+        0,
+        "{token_program}"
+    );
 }
 
 /// The tax-side mints `distribute` must pay out in: a plain SPL Token mint, a plain
@@ -427,31 +422,21 @@ fn every_kind_of_slot_pays_out_in_each_kind_of_tax_side_mint_to_any_caller() {
 }
 
 #[test]
-fn a_hooked_tax_side_mint_is_paid_out_with_its_hook_accounts_after_distributes_own() {
+fn a_tax_side_mint_whose_transfer_hook_is_cleared_pays_out_with_no_hook_accounts() {
+    // A tax side can carry a transfer hook extension only cleared (docs/spec/tax-amm.md,
+    // "Mint rules"; a contained mint is never its home market's tax side), so no hook runs in
+    // a payout and `distribute` needs no accounts after its own.
     let mut env = Env::new();
-    let hooked = env.create_mint_with_test_hook();
+    let hooked = env.create_mint_with_cleared_hook();
     let mints = [(env.create_mint(&TOKEN), TOKEN), (hooked, TOKEN_2022)];
     let market = traded_market(&mut env, mints);
     env.set_supply(&hooked, 10 * SEED[1]);
     let caller = caller(&mut env);
     let owed = env.tax_market(&market.market_state).owed;
-
-    // Without the hook's accounts Token-2022 can't call the hook, so the payout fails.
-    assert!(distribute_with(&mut env, &market, &caller, 0, |_| {}).is_err());
-
     for slot in [0u8, 1, BURN_SLOT, SUITE_SLOT] {
         let account = slot_account(&env, &market, slot);
-        let meta = env.distribute(&market, &caller, slot).unwrap();
-        let hook_calls = meta
-            .logs
-            .iter()
-            .filter(|line| line.starts_with(&format!("Program {} invoke", test_hook_id())))
-            .count();
-        if slot == BURN_SLOT {
-            // A burn is no transfer, so the hook is not called.
-            assert_eq!(hook_calls, 0);
-        } else {
-            assert_eq!(hook_calls, 1, "slot {slot}");
+        distribute_with(&mut env, &market, &caller, slot, |_| {}).unwrap();
+        if slot != BURN_SLOT {
             assert_eq!(env.balance(&account), owed[slot as usize], "slot {slot}");
         }
     }

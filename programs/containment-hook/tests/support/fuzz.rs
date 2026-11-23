@@ -42,8 +42,8 @@ use solana_keypair::Keypair;
 use solana_signer::Signer;
 use tax_amm::state::MarketStatus;
 
-use super::common::fuzz::tax::{self, key, Size, Surroundings, TaxAmm, TaxWorld};
-use super::common::fuzz::{lift, Checked, Invariant, Product};
+use super::harness::fuzz::tax::{self, key, Size, Surroundings, TaxAmm, TaxWorld};
+use super::harness::fuzz::{lift, Checked, Invariant, Product};
 use super::*;
 
 /// The names of the hook's five invariants, in the spec's order. The bar's three shared ones
@@ -152,7 +152,7 @@ pub enum StateGiven {
 
 // The variants by their bare names, as the tax AMM's are: the harness prints a minimal
 // failing case with `{:#?}`, which pastes into a regression test under
-// `use support::fuzz::*` and `use support::common::fuzz::tax::*` as printed. None of these
+// `use fuzzing::fuzz::*` and `use fuzzing::harness::fuzz::tax::*` as printed. None of these
 // names is one of the tax AMM's.
 #[allow(unused_imports)]
 pub use {BindTo::*, Binder::*, HookStep::*, StateGiven::*, Tail::*, To::*};
@@ -387,12 +387,7 @@ struct Containment<'a> {
 
 impl Surroundings for Containment<'_> {
     fn create_mint(&self, env: &mut Env, at: &Keypair) -> Pubkey {
-        let options = MintOptions {
-            transfer_hook: Some(hook_id()),
-            transfer_hook_authority: Some(unlock_pda(&at.pubkey())),
-            ..MintOptions::default()
-        };
-        env.create_mint_at(at, &TOKEN_2022, options)
+        env.create_contained_mint_at(at)
     }
 
     fn before_seed(&self, env: &mut Env, market: &Market) -> Result<(), String> {
@@ -405,8 +400,14 @@ impl Surroundings for Containment<'_> {
         self.bind_cost.set(
             hook_compute(&meta.logs)
                 .first()
-                .map(|cost| cost.saturating_sub(search)),
+                // Never clamped: a search costing more than the whole call is a harness bug
+                // (as hardening finding T03 of #67 said of the tax AMM's).
+                .map(|cost| {
+                    cost.checked_sub(search)
+                        .expect("the bump search costs less than bind")
+                }),
         );
+        revoke_mint_authority(env, &mint);
         Ok(())
     }
 }
@@ -656,7 +657,7 @@ impl HookWorld {
     /// paid for by the admin, as a terminal puts it before a swap.
     fn create_account(&self, owner: &Pubkey, i: usize) -> Instruction {
         let market = &self.tax.market;
-        tax::create_token_account_idempotent(
+        create_token_account_idempotent(
             &self.tax.env.admin.pubkey(),
             owner,
             &market.mints[i],
@@ -778,7 +779,7 @@ impl HookWorld {
             |action, expected, sent: &Result<litesvm::types::TransactionMetadata, String>| {
                 let result = match sent {
                     Ok(_) => Ok(()),
-                    Err(failure) => Err(tax::refusal(failure)),
+                    Err(failure) => Err(tax::refusal_by(failure, &super::hook_id())),
                 };
                 let logs = sent.as_ref().map(|m| m.logs.clone()).unwrap_or_default();
                 (HookResult::of(action, expected, result), logs)

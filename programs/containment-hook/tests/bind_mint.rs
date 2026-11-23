@@ -133,12 +133,29 @@ fn a_mint_whose_mint_authority_is_revoked_cannot_be_bound() {
     assert_unbound(&env, &mint, result, HookError::NotMintAuthority);
 }
 
+/// Mint options with the admin kept as mint authority, so `bind`'s signer check passes and
+/// the check under test is the one that refuses.
+fn with_mint_authority() -> MintOptions {
+    MintOptions {
+        mint_authority: true,
+        ..MintOptions::default()
+    }
+}
+
+/// A valid home market of another contained mint. The tax AMM refuses to create a market of
+/// a mint whose hook is another program's or answers to another authority (its "Mint rules",
+/// since #67), so such a mint never has a home market of its own; `bind` checks the mint
+/// before the market, and still refuses it.
+fn market_of_another_mint(env: &mut Env) -> Market {
+    contained_market(env).1
+}
+
 #[test]
 fn a_mint_whose_hook_program_is_not_ours_is_refused() {
     let mut env = hook_env();
     let other_hook = Pubkey::new_unique();
-    let mint = env.create_hooked_mint(&other_hook, unlock_pda, MintOptions::default());
-    let market = home_market(&mut env, mint, 0);
+    let mint = env.create_hooked_mint(&other_hook, unlock_pda, with_mint_authority());
+    let market = market_of_another_mint(&mut env);
     let result = bind(&mut env, mint, &market);
     assert_unbound(&env, &mint, result, HookError::WrongHookProgram);
 }
@@ -148,8 +165,8 @@ fn a_mint_whose_hook_authority_is_not_its_unlock_pda_is_refused() {
     let mut env = hook_env();
     let admin = env.admin.pubkey();
     for authority in [admin, Pubkey::new_unique()] {
-        let mint = env.create_hooked_mint(&hook_id(), |_| authority, MintOptions::default());
-        let market = home_market(&mut env, mint, 0);
+        let mint = env.create_hooked_mint(&hook_id(), |_| authority, with_mint_authority());
+        let market = market_of_another_mint(&mut env);
         let result = bind(&mut env, mint, &market);
         assert_unbound(&env, &mint, result, HookError::WrongHookAuthority);
     }
@@ -158,9 +175,9 @@ fn a_mint_whose_hook_authority_is_not_its_unlock_pda_is_refused() {
     let mint = env.create_hooked_mint(
         &hook_id(),
         |_| unlock_pda(&someone_else),
-        MintOptions::default(),
+        with_mint_authority(),
     );
-    let market = home_market(&mut env, mint, 0);
+    let market = market_of_another_mint(&mut env);
     let result = bind(&mut env, mint, &market);
     assert_unbound(&env, &mint, result, HookError::WrongHookAuthority);
 }
@@ -168,7 +185,7 @@ fn a_mint_whose_hook_authority_is_not_its_unlock_pda_is_refused() {
 #[test]
 fn a_mint_without_a_transfer_hook_is_refused() {
     let mut env = hook_env();
-    let mint = env.create_mint(&TOKEN_2022);
+    let mint = env.create_mint_with(&TOKEN_2022, with_mint_authority());
     let market = home_market(&mut env, mint, 0);
     let result = bind(&mut env, mint, &market);
     assert_unbound(&env, &mint, result, HookError::WrongHookProgram);

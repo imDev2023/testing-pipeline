@@ -10,8 +10,11 @@
 
 use anchor_lang::prelude::*;
 
-/// The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so no
-/// tax market can be a honeypot through its tax. Published in the IDL (`#[constant]`).
+/// The highest buy or sell tax any tax market may ever charge, in basis points: 10%, so the
+/// tax alone can never stop a holder selling more than dust (it rounds up to the next unit).
+/// It says nothing of the mints, whose own
+/// authorities and transfer hooks the mint rules govern. Published in the IDL
+/// (`#[constant]`).
 #[constant]
 pub const MAX_TAX_BPS: u16 = 1_000;
 
@@ -27,8 +30,58 @@ pub const SUITE_SHARE_BPS: u16 = 1_000;
 #[constant]
 pub const SUITE_TREASURY: Pubkey = pubkey!("CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF");
 
+/// The containment hook, `programs/containment-hook`: the one transfer hook program a
+/// market's mint may name, and only with that mint's unlock PDA (`["unlock", mint]` under
+/// it, [`CONTAINMENT_UNLOCK_SEED`]) as its hook authority, which only ever clears the hook
+/// (docs/spec/tax-amm.md, "Mint rules"; hardening finding H007, #67). Every other hook
+/// program could refuse sells while buys still land. The containment hook depends on this
+/// crate, so its id is written here, and its tests pin it to its `declare_id!`.
+pub const CONTAINMENT_HOOK_ID: Pubkey = pubkey!("aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv");
+
+/// The seed of a mint's unlock PDA under [`CONTAINMENT_HOOK_ID`], the containment hook's
+/// `UNLOCK_SEED`.
+pub const CONTAINMENT_UNLOCK_SEED: &[u8] = b"unlock";
+
+/// The quote mints, which may keep a mint or a freeze authority when a market is seeded:
+/// both native SOL mints, whose authorities are none anyway, and the cluster's USDC, Circle's
+/// devnet mint. Nothing switches it by cluster: a mainnet build must replace it with Circle's
+/// mainnet USDC mint before it is frozen, a mainnet checklist
+/// item beside `SUITE_TREASURY` (hardening finding H071, signed off), or it would refuse every
+/// USDC market at the seed.
+/// Every other mint must have neither when its market is seeded, so nobody can mint into the
+/// curve or freeze a vault (docs/spec/tax-amm.md, "Mint rules"; hardening findings H008 and
+/// H016, #67).
+pub const QUOTE_MINTS: [Pubkey; 3] = [
+    crate::params::NATIVE_MINTS[0],
+    crate::params::NATIVE_MINTS[1],
+    pubkey!("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"),
+];
+
+/// How many slots after `set_taxes` its new rates apply: 300 slots, about two minutes. A
+/// blockhash lasts 150 blocks and a slot holds at most one, so while fewer than half the
+/// slots are skipped no swap signed with a blockhash before a change can land after it: the
+/// tax authority can't put a change on either side of a victim's swap and take its slippage
+/// allowance as tax (docs/spec/tax-amm.md, "Rates"; hardening finding H010, #67). A
+/// durable-nonce transaction has no lifetime, so only its minimum output protects it.
+/// Decreases wait too. Published in the IDL (`#[constant]`), for Aviary's tax panel.
+#[constant]
+pub const RATE_CHANGE_DELAY_SLOTS: u64 = 300;
+
 /// Tax recipients per market.
 pub const MAX_RECIPIENTS: usize = 4;
+
+// Each value's safe range, at compile time, so no build can carry one outside it
+// (hardening finding H047, #67): a tax rate of 10,000 basis points or more would leave a
+// buy nothing, a suite share above 10,000 would underflow the creator's part of every tax,
+// and the tax slots (the recipients, then the burn and the suite share) are numbered in a
+// `u8`.
+const _: () = assert!(MAX_TAX_BPS < 10_000);
+const _: () = assert!(SUITE_SHARE_BPS <= 10_000);
+const _: () = assert!(MAX_RECIPIENTS >= 1 && MAX_RECIPIENTS + 2 <= u8::MAX as usize);
+// A blockhash lasts 150 blocks, which take at least 150 slots, so a delay of 150 slots or fewer
+// could reach a swap signed before the change even with no slot skipped; 300 leaves room for
+// half the slots to be skipped.
+const _: () = assert!(RATE_CHANGE_DELAY_SLOTS > 150);
 
 // The `security.txt` every program of ours embeds (docs/spec/README.md, "Verified builds").
 // `name` is the program's public name, which lives only here and in `metadata.json`

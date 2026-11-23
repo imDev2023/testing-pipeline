@@ -31,7 +31,7 @@ use proptest::prelude::*;
 use proptest::strategy::BoxedStrategy;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
-use tax_amm::config::{MAX_RECIPIENTS, MAX_TAX_BPS, SUITE_TREASURY};
+use tax_amm::config::{MAX_RECIPIENTS, MAX_TAX_BPS, RATE_CHANGE_DELAY_SLOTS, SUITE_TREASURY};
 use tax_amm::params::NATIVE_MINTS;
 use tax_amm::state::{MarketStatus, BURN_SLOT, OWED_SLOTS, SUITE_SLOT};
 use tax_amm::{InitParams, TaxMarket};
@@ -75,8 +75,11 @@ pub struct TaxAmm;
 pub enum MintKind {
     SplToken,
     Token2022,
-    /// Token-2022 with Pipeline's `test-hook`, which approves every transfer, as its hook.
-    Hooked,
+    /// Token-2022 with a transfer hook extension that is cleared, as a contained mint's is
+    /// after its unlock: the one kind of hooked mint a market accepts besides a contained
+    /// mint (docs/spec/tax-amm.md, "Mint rules"), which runs no hook. Live contained mints
+    /// are the containment hook's fuzzer's, through [`MintKind::Outside`].
+    ClearedHook,
     /// SPL Token's native SOL mint, which can't be burned.
     NativeSol,
     /// A Token-2022 mint a product built on this one creates through its [`Surroundings`],
@@ -151,6 +154,9 @@ pub enum Rate {
     Within(u16),
     /// Exactly these basis points, inside the range or not.
     Exactly(u16),
+    /// The rate in force, which with the other in force cancels a pending change
+    /// (docs/spec/tax-amm.md, "Rates").
+    InForce,
 }
 
 /// How a `set_recipients` step breaks the split rules, if it does.
@@ -170,7 +176,7 @@ pub enum Flaw {
 
 // The variants by their bare names: the harness prints a minimal failing case with `{:#?}`,
 // which leaves enum paths out, so it pastes into a regression test under
-// `use common::fuzz::tax::*` as printed.
+// `use harness::fuzz::tax::*` as printed.
 #[allow(unused_imports)]
 pub use {Creation::*, Flaw::*, MintKind::*, Rate::*, Size::*, Step::*, Who::*};
 
@@ -366,6 +372,8 @@ impl Outcome {
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     pub state: TaxMarket,
+    /// The VM's slot, which decides the rates in force (docs/spec/tax-amm.md, "Rates").
+    pub slot: u64,
     pub vaults: [u64; 2],
     /// Everything every known account holds, by mint: wallets, vaults, Pipeline's fee
     /// accounts, the launchpad's escrows and [`TaxWorld::other_accounts`].
@@ -392,7 +400,6 @@ pub struct TaxWorld {
     /// The launchpad's seeder PDA, which owns its escrows.
     pub launch_seeder: Option<Pubkey>,
     pub pool: Vec<Keypair>,
-    pub hooked: bool,
     /// Every token the world wrote into accounts, by mint.
     pub created: [u128; 2],
     /// What the burn slot was owed each time it was paid out, by mint.
@@ -408,14 +415,17 @@ pub struct TaxWorld {
     pub other_accounts: Vec<(usize, Pubkey)>,
     /// The strategy accounts a swap in each direction needs, `[0 -> 1, 1 -> 0]`.
     resolved: [Vec<AccountMeta>; 2],
-    /// The most compute each instruction took, on markets without a hooked mint.
+    /// The most compute each instruction took, but for invocations that called a transfer
+    /// hook ([`own_compute`]).
     pub max_costs: BTreeMap<&'static str, u64>,
+    /// How many quotes [`TaxWorld::quote`] has simulated.
+    pub quotes_simulated: std::cell::Cell<u64>,
     /// How many steps did what, by [`Outcome::label`].
     pub tally: BTreeMap<String, u32>,
 }
 
 thread_local! {
-    /// The router configured and the tax AMM, `test-hook` and the stand-in launchpad loaded
+    /// The router configured and the tax AMM, the containment hook and the stand-in launchpad loaded
     /// and registered, once per thread; every world starts from a copy.
     static BASE: RefCell<Option<Env>> = const { RefCell::new(None) };
 }
@@ -426,7 +436,7 @@ pub fn fresh_env() -> Env {
         let mut base = base.borrow_mut();
         let base = base.get_or_insert_with(|| {
             let mut env = Env::new();
-            env.add_test_hook();
+            env.add_containment_hook();
             env.add_launchpad();
             env
         });
@@ -486,6 +496,7 @@ fn rate() -> impl Strategy<Value = Rate> {
     prop_oneof![
         4 => (0..=1_000u16).prop_map(Rate::Within),
         1 => (0..=MAX_TAX_BPS + 100).prop_map(Rate::Exactly),
+        1 => Just(Rate::InForce),
     ]
 }
 
@@ -526,20 +537,49 @@ fn shares_of(used: usize, weights: &[u16; 5], burn: bool) -> ([u16; MAX_RECIPIEN
     (shares, burn_share)
 }
 
-/// The error's name from a refused transaction's logs, or the whole failure. A token
-/// program's refusal of a transfer bigger than its source holds is `InsufficientFunds`.
+/// The tax AMM's refusal in a refused transaction, by the name the spec gives it
+/// ([`refusal_by`]).
 pub fn refusal(failure: &str) -> String {
-    failure
-        .split("Error Code: ")
-        .nth(1)
-        .and_then(|rest| rest.split('.').next())
-        .map(str::to_string)
-        .or_else(|| {
-            failure
-                .contains("Program log: Error: insufficient funds")
-                .then(|| "InsufficientFunds".to_string())
-        })
-        .unwrap_or_else(|| failure.to_string())
+    refusal_by(failure, &strategy_id())
+}
+
+/// The name of the error that refused a transaction, when `program` raised it: the program
+/// whose failure comes first in the logs, the innermost, failed with that error's number.
+/// An Anchor error another program raised is `<name> from <program>`, so it can never pass
+/// for one of `program`'s under the same name (hardening finding T01, #67). A token
+/// program's refusal of a transfer bigger than its source holds is `InsufficientFunds`;
+/// anything else is the whole failure.
+pub fn refusal_by(failure: &str, program: &Pubkey) -> String {
+    let anchor = failure.split("Error Code: ").nth(1).and_then(|rest| {
+        let name = rest.split('.').next()?;
+        let number = rest
+            .split("Error Number: ")
+            .nth(1)?
+            .split('.')
+            .next()?
+            .parse::<u32>()
+            .ok()?;
+        Some((name, number))
+    });
+    // `Program <id> failed: custom program error: 0x<code>`, from the innermost failure.
+    let raised = failure.lines().find_map(|line| {
+        let rest = line.strip_prefix("Program ")?;
+        let (id, code) = rest.split_once(" failed: custom program error: 0x")?;
+        Some((id, u32::from_str_radix(code.trim(), 16).ok()?))
+    });
+    match (anchor, raised) {
+        (Some((name, number)), Some((id, code))) if number == code => {
+            if id == program.to_string() {
+                name.to_string()
+            } else {
+                format!("{name} from {id}")
+            }
+        }
+        _ if failure.contains("Program log: Error: insufficient funds") => {
+            "InsufficientFunds".to_string()
+        }
+        _ => failure.to_string(),
+    }
 }
 
 fn named<T>(result: &Result<T, String>) -> Result<(), String> {
@@ -563,13 +603,15 @@ fn authorization(state: &TaxMarket, signer: &Pubkey) -> Result<(), String> {
 }
 
 /// The creation rules on a split, in the order "Creation parameters" and "Tax authority"
-/// give them, then `set_recipients`' own rule on emptied slots still owed tax.
+/// give them, then `set_recipients`' own rules on slots still owed tax: none emptied, and
+/// none handed from its `current` wallet to another (hardening finding H023, #67).
 fn split_refusal(
     recipients: &[Pubkey; MAX_RECIPIENTS],
     shares: &[u16; MAX_RECIPIENTS],
     burn_share_bps: u16,
     native_tax_mint: bool,
     owed: &[u64; OWED_SLOTS],
+    current: &[Pubkey; MAX_RECIPIENTS],
 ) -> Result<(), String> {
     let used = recipients
         .iter()
@@ -590,37 +632,34 @@ fn split_refusal(
         "BurnOnNativeSol"
     } else if owed[used..MAX_RECIPIENTS].iter().any(|&o| o > 0) {
         "OwedSlotLeftEmpty"
+    } else if (0..MAX_RECIPIENTS).any(|slot| owed[slot] > 0 && recipients[slot] != current[slot]) {
+        "OwedSlotRedirected"
     } else {
         return Ok(());
     };
     Err(refusal.into())
 }
 
-/// The spec's price of a trade, or the name of the error it refuses with.
-fn spec_price(state: &TaxMarket, input: usize, output: usize, amount: u64) -> Result<u64, String> {
+/// The spec's price of a trade at `slot`, or the name of the error it refuses with.
+fn spec_price(
+    state: &TaxMarket,
+    slot: u64,
+    input: usize,
+    output: usize,
+    amount: u64,
+) -> Result<u64, String> {
     if state.status != MarketStatus::Open {
         return Err("MarketNotOpen".into());
     }
-    match Model::of(state).price(input, output, amount) {
+    match Model::of(state).at(slot).price(input, output, amount) {
         Ok(trade) => Ok(trade.out),
         Err(Refusal::ZeroOutput) => Err("ZeroOutput".into()),
         Err(Refusal::BeyondRealReserve) => Err("InsufficientLiquidity".into()),
     }
 }
 
-/// `a × b` as a 256-bit number, high half first, so two products compare correctly.
-fn wide_mul(a: u128, b: u128) -> (u128, u128) {
-    let mask = u64::MAX as u128;
-    let (a1, a0) = (a >> 64, a & mask);
-    let (b1, b0) = (b >> 64, b & mask);
-    let (mid, mid_carry) = (a1 * b0).overflowing_add(a0 * b1);
-    let (lo, lo_carry) = (a0 * b0).overflowing_add(mid << 64);
-    let hi = a1 * b1 + (mid >> 64) + ((mid_carry as u128) << 64) + lo_carry as u128;
-    (hi, lo)
-}
-
 /// The product of a market's effective reserves, in 256 bits.
-fn curve_product(state: &TaxMarket) -> (u128, u128) {
+fn curve_product(state: &TaxMarket) -> [u64; 8] {
     let effective = |side: usize| {
         let virtual_part = if state.virtual_side as usize == side {
             state.virtual_reserve
@@ -629,7 +668,7 @@ fn curve_product(state: &TaxMarket) -> (u128, u128) {
         };
         state.reserves[side] as u128 + virtual_part as u128
     };
-    wide_mul(effective(0), effective(1))
+    super::super::wide::wide_mul(effective(0), effective(1))
 }
 
 fn total_owed(state: &TaxMarket) -> u128 {
@@ -664,7 +703,7 @@ impl TaxWorld {
                     env.create_mint_at(&at, &TOKEN_2022, MintOptions::default()),
                     TOKEN_2022,
                 ),
-                MintKind::Hooked => (env.create_mint_with_test_hook_at(&at), TOKEN_2022),
+                MintKind::ClearedHook => (env.create_mint_with_cleared_hook_at(&at), TOKEN_2022),
                 MintKind::NativeSol => (env.write_native_mint(&NATIVE_MINTS[0], &TOKEN), TOKEN),
                 MintKind::Outside => (surroundings.create_mint(&mut env, &at), TOKEN_2022),
             }
@@ -700,10 +739,6 @@ impl TaxWorld {
             virtual_side: shape.virtual_side,
             virtual_reserve: shape.virtual_reserve,
         };
-        let hooked = shape
-            .mints
-            .iter()
-            .any(|kind| matches!(kind, MintKind::Hooked | MintKind::Outside));
         let mut created = shape.seed.map(|seed| seed as u128);
         let mut costs = vec![];
         let mut launch_seeder = None;
@@ -719,11 +754,7 @@ impl TaxWorld {
                 env.fund(&seeder.pubkey(), &market, shape.seed);
                 if shape.creation == Creation::CreateAndSeed {
                     let seeded = env.seed(&market, &seeder, shape.seed)?;
-                    costs.extend(
-                        strategy_compute(&seeded.logs)
-                            .into_iter()
-                            .map(|c| ("seed", c)),
-                    );
+                    costs.extend(costs_of(&seeded.logs, "seed"));
                 }
                 market
             }
@@ -793,7 +824,6 @@ impl TaxWorld {
             seeder,
             launch_seeder,
             pool,
-            hooked,
             created,
             burned: [0, 0],
             donated: [0, 0],
@@ -802,6 +832,7 @@ impl TaxWorld {
             other_accounts: vec![],
             resolved,
             max_costs: BTreeMap::new(),
+            quotes_simulated: Default::default(),
             tally: BTreeMap::new(),
         };
         world.record(&costs);
@@ -866,6 +897,7 @@ impl TaxWorld {
 
     /// `pipeline_quote` of `amount` from `input`, in simulation, with its compute.
     pub fn quote(&self, input: usize, amount: u64) -> (Result<QuoteResult, String>, Option<u64>) {
+        self.quotes_simulated.set(self.quotes_simulated.get() + 1);
         let trade = exact_in(input, 1 - input, amount);
         let mut accounts = self.env.read_accounts(&self.market, &trade);
         accounts.extend(self.resolved[input].iter().cloned());
@@ -883,12 +915,9 @@ impl TaxWorld {
         }
     }
 
-    /// Records each instruction's compute in [`TaxWorld::max_costs`], on markets without a
-    /// hooked mint, whose hook's cost is the hook's own to bound.
+    /// Records each instruction's compute in [`TaxWorld::max_costs`]; an invocation that
+    /// called a transfer hook was never measured ([`own_compute`]).
     fn record(&mut self, costs: &[(&'static str, u64)]) {
-        if self.hooked {
-            return;
-        }
         for &(name, cost) in costs {
             let max = self.max_costs.entry(name).or_default();
             *max = (*max).max(cost);
@@ -1020,7 +1049,15 @@ impl TaxWorld {
                 if let Ok(meta) = &sent {
                     outcome.costs = costs_of(&meta.logs, "distribute")
                         .into_iter()
-                        .map(|(name, cost)| (name, cost.saturating_sub(search)))
+                        .map(|(name, cost)| {
+                            // A search counted beyond what the payout spent is a mistake in
+                            // `distribute_bump_search`, never something to clamp away
+                            // (hardening finding T03, #67).
+                            let left = cost.checked_sub(search).unwrap_or_else(|| {
+                                panic!("a bump search of {search} CU in a payout of {cost}")
+                            });
+                            (name, left)
+                        })
                         .collect();
                     outcome.bump_search = search;
                     outcome.logs = meta.logs.clone();
@@ -1035,13 +1072,15 @@ impl TaxWorld {
             Step::SetTaxes { who, buy, sell } => {
                 let signer = self.signer(who).insecure_clone();
                 let ranges = state.tax_ranges();
-                let bps = |rate: Rate, [min, max]: [u16; 2]| match rate {
+                let in_force = state.rates_at(self.env.slot());
+                let bps = |rate: Rate, [min, max]: [u16; 2], side: usize| match rate {
                     Rate::Within(thousandths) => {
                         min + ((max - min) as u32 * thousandths.min(1_000) as u32 / 1_000) as u16
                     }
                     Rate::Exactly(bps) => bps,
+                    Rate::InForce => in_force[side],
                 };
-                let (buy, sell) = (bps(buy, ranges[0]), bps(sell, ranges[1]));
+                let (buy, sell) = (bps(buy, ranges[0], 0), bps(sell, ranges[1], 1));
                 let expected = authorization(&state, &signer.pubkey()).and_then(|()| {
                     let outside = [buy, sell]
                         .iter()
@@ -1102,7 +1141,15 @@ impl TaxWorld {
                 let native = NATIVE_MINTS.iter().any(|native| ck(native) == tax_mint);
                 let burn_share_bps = if used == 0 { 10_000 } else { burn_share_bps };
                 let expected = authorization(&state, &signer.pubkey()).and_then(|()| {
-                    split_refusal(&recipients, &shares, burn_share_bps, native, &state.owed)
+                    let current = state.recipients.map(|recipient| ck(&recipient));
+                    split_refusal(
+                        &recipients,
+                        &shares,
+                        burn_share_bps,
+                        native,
+                        &state.owed,
+                        &current,
+                    )
                 });
                 let split = Split {
                     recipients,
@@ -1201,7 +1248,36 @@ impl TaxWorld {
         self.record(&costs);
         outcome.costs = costs;
         *self.tally.entry(outcome.label()).or_default() += 1;
+        if let Some(label) = self.rate_change_label(&state, &outcome) {
+            *self.tally.entry(label.into()).or_default() += 1;
+        }
         outcome
+    }
+
+    /// What a step that settled did to a pending rate change (docs/spec/tax-amm.md, "Rates"),
+    /// for the run's tally, so a run that never reached one of these states fails.
+    fn rate_change_label(&self, before: &TaxMarket, outcome: &Outcome) -> Option<&'static str> {
+        if outcome.result.is_err() {
+            return None;
+        }
+        let (slot, after) = (self.env.slot(), self.state());
+        let pending = before.pending_from_slot;
+        match outcome.action {
+            Action::Swap { .. } if pending != 0 && slot >= pending => {
+                Some("rates: a swap applied a due change")
+            }
+            Action::Swap { .. } if pending != 0 => Some("rates: a swap while a change waits"),
+            Action::SetTaxes if after.pending_from_slot != 0 => {
+                Some("rates: set_taxes set a pending change")
+            }
+            Action::SetTaxes if pending != 0 && slot < pending => {
+                Some("rates: set_taxes cancelled a pending change")
+            }
+            Action::Renounce if pending != 0 && slot < pending => {
+                Some("rates: renounce cancelled a pending change")
+            }
+            _ => None,
+        }
     }
 
     fn authority_action(
@@ -1230,7 +1306,7 @@ impl TaxWorld {
         if amount == 0 {
             return Outcome::of(Action::Skip, Ok(()), Ok(()));
         }
-        let model = spec_price(state, input, output, amount);
+        let model = spec_price(state, self.env.slot(), input, output, amount);
         let mut costs = vec![];
         if let Ok(meta) = self
             .env
@@ -1318,6 +1394,7 @@ impl TaxWorld {
         });
         Snapshot {
             state: self.state(),
+            slot: env.slot(),
             vaults,
             held,
             supply: [0, 1].map(|i| env.supply(&market.mints[i])),
@@ -1331,42 +1408,63 @@ impl TaxWorld {
     }
 }
 
-/// The associated token program's `CreateIdempotent`: `owner`'s token account for `mint`,
-/// paid for by `payer`, created unless it exists.
-pub fn create_token_account_idempotent(
-    payer: &Pubkey,
-    owner: &Pubkey,
-    mint: &Pubkey,
-    token_program: &Pubkey,
-) -> pipeline_client::Instruction {
-    pipeline_client::Instruction::new_with_bytes(
-        pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
-        &[1],
-        vec![
-            AccountMeta::new(*payer, true),
-            AccountMeta::new(pda::associated_token(owner, mint, token_program), false),
-            AccountMeta::new_readonly(*owner, false),
-            AccountMeta::new_readonly(*mint, false),
-            AccountMeta::new_readonly(pipeline_client::SYSTEM_PROGRAM_ID, false),
-            AccountMeta::new_readonly(*token_program, false),
-        ],
-    )
-}
-
 /// The two strategy invocations of a market's creation: `first`, then
-/// `pipeline_market_info`, which the router calls when it records the market.
+/// `pipeline_market_info`, which the router calls when it records the market; each left out
+/// when it called a transfer hook ([`own_compute`]).
 fn creation_costs(logs: &[String], first: &'static str) -> Vec<(&'static str, u64)> {
-    let costs = strategy_compute(logs);
+    let costs = own_compute(logs);
     assert_eq!(costs.len(), 2, "{logs:?}");
-    vec![(first, costs[0]), ("pipeline_market_info", costs[1])]
+    [first, "pipeline_market_info"]
+        .into_iter()
+        .zip(costs)
+        .filter_map(|(name, cost)| Some((name, cost?)))
+        .collect()
 }
 
-/// The compute of the one tax AMM instruction in a transaction.
+/// The compute of the one tax AMM instruction in a transaction, unless it called a transfer
+/// hook ([`own_compute`]).
 fn costs_of(logs: &[String], name: &'static str) -> Vec<(&'static str, u64)> {
-    strategy_compute(logs)
+    own_compute(logs)
         .into_iter()
+        .flatten()
         .map(|cost| (name, cost))
         .collect()
+}
+
+/// The compute each tax AMM invocation in a transaction consumed, in order, or `None` for
+/// one that called a program other than the token programs, the associated token program
+/// and the system program: a mint's transfer hook, whose cost is the hook's own to bound
+/// (docs/spec/tax-amm.md, "Compute ceilings"). So a market with a hooked mint has every
+/// instruction that never calls the hook measured (hardening finding T02, #67).
+pub fn own_compute(logs: &[String]) -> Vec<Option<u64>> {
+    let strategy = strategy_id().to_string();
+    let own_calls = [
+        TOKEN.to_string(),
+        TOKEN_2022.to_string(),
+        pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID.to_string(),
+        pipeline_client::SYSTEM_PROGRAM_ID.to_string(),
+    ];
+    let invoke = format!("Program {strategy} invoke [");
+    let consumed = format!("Program {strategy} consumed ");
+    let mut costs = vec![];
+    let mut inside: Option<bool> = None;
+    for line in logs {
+        if line.starts_with(&invoke) {
+            inside = Some(false);
+        } else if let Some(rest) = line.strip_prefix(&consumed) {
+            let cost = rest.split(' ').next().unwrap().parse().unwrap();
+            let called_outside = inside.take().expect("an invocation before its cost");
+            costs.push((!called_outside).then_some(cost));
+        } else if let Some(called) = inside.as_mut() {
+            if let Some((program, _)) = line
+                .strip_prefix("Program ")
+                .and_then(|rest| rest.split_once(" invoke ["))
+            {
+                *called |= !own_calls.iter().any(|own| own == program);
+            }
+        }
+    }
+    costs
 }
 
 impl Product for TaxAmm {
@@ -1380,7 +1478,7 @@ impl Product for TaxAmm {
         let mint = prop_oneof![
             3 => Just(MintKind::SplToken),
             3 => Just(MintKind::Token2022),
-            2 => Just(MintKind::Hooked),
+            2 => Just(MintKind::ClearedHook),
             2 => Just(MintKind::NativeSol),
         ];
         let split = (
@@ -1469,7 +1567,9 @@ impl Product for TaxAmm {
                 .prop_map(|(who, used, picks, weights, burn, flaw)| Step::SetRecipients { who, used, picks, weights, burn, flaw }),
             1 => who().prop_map(|who| Step::Renounce { who }),
             2 => (0..2u8, size()).prop_map(|(side, size)| Step::Donate { side, size }),
-            1 => (0..1_000_000u32, 0..10_000_000u32).prop_map(|(slots, seconds)| Step::Warp { slots, seconds }),
+            // Some warps land inside a pending rate change's delay, some past it.
+            1 => (prop_oneof![0..1_000_000u32, 0..2 * RATE_CHANGE_DELAY_SLOTS as u32], 0..10_000_000u32)
+                .prop_map(|(slots, seconds)| Step::Warp { slots, seconds }),
             1 => (0..2u8).prop_map(|input| Step::Bypass { input }),
         ]
         .boxed()
@@ -1540,6 +1640,18 @@ pub fn invariants() -> Vec<Invariant<TaxAmm>> {
             "compute_stays_under_its_ceilings",
             compute_stays_under_its_ceilings,
         ),
+        Invariant::new(
+            "every_owed_recipient_slot_names_a_wallet",
+            every_owed_recipient_slot_names_a_wallet,
+        ),
+        Invariant::new(
+            "tax_collected_never_passes_the_tax_sides_volume",
+            tax_collected_never_passes_the_tax_sides_volume,
+        ),
+        Invariant::new(
+            "a_side_without_a_virtual_reserve_never_empties",
+            a_side_without_a_virtual_reserve_never_empties,
+        ),
     ]
 }
 
@@ -1587,6 +1699,7 @@ fn value_is_conserved(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
 fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     let w = c.world;
     let state = &c.after.state;
+    let slot = c.after.slot;
     if let (Action::Swap { all: true, .. }, Some(swap)) = (c.outcome.action, &c.outcome.swap) {
         ensure!(
             swap.model.is_err() || swap.swap.is_ok(),
@@ -1597,13 +1710,25 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     if state.status != MarketStatus::Open {
         return Ok(());
     }
-    // What a holder can sell depends only on the market state and the holdings, so a step
-    // that changed neither leaves the last check standing.
-    let unchanged =
-        c.before.state_data == c.after.state_data && c.before.holdings == c.after.holdings;
+    // What a holder can sell depends only on the market state, the rates in force and the
+    // holdings, so a step that changed none of them leaves the last check standing; a warp
+    // can bring a pending rate change into force without touching the state.
+    let unchanged = c.before.state_data == c.after.state_data
+        && c.before.holdings == c.after.holdings
+        && c.before.state.rates_at(c.before.slot) == state.rates_at(slot);
     if unchanged && c.outcome.action != Action::Start {
         return Ok(());
     }
+    // Every quote is of the same state, so wallets holding the same amounts share theirs
+    // (hardening finding T08, #67).
+    let quotes: RefCell<BTreeMap<(usize, u64), Result<(), String>>> = RefCell::default();
+    let quote = |input: usize, amount: u64| -> Result<(), String> {
+        quotes
+            .borrow_mut()
+            .entry((input, amount))
+            .or_insert_with(|| w.quote(input, amount).0.map(|_| ()))
+            .clone()
+    };
     for wallet in w.wallets() {
         for input in 0..2 {
             let output = 1 - input;
@@ -1611,11 +1736,11 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
             if amount == 0 {
                 continue;
             }
-            let Err(failure) = w.quote(input, amount).0 else {
+            let Err(failure) = quote(input, amount) else {
                 continue;
             };
             let name = refusal(&failure);
-            let model = spec_price(state, input, output, amount);
+            let model = spec_price(state, slot, input, output, amount);
             ensure!(
                 model.as_ref().err() == Some(&name),
                 "{wallet} can't sell {amount} of mint {input}: {name}, where the spec gives {model:?}"
@@ -1629,7 +1754,9 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
                 // out more than the real reserve only grows with the amount, so a binary search
                 // finds where it starts.
                 let beyond = |amount: u64| {
-                    spec_price(state, input, output, amount).err().as_deref()
+                    spec_price(state, slot, input, output, amount)
+                        .err()
+                        .as_deref()
                         == Some("InsufficientLiquidity")
                 };
                 let (mut covered, mut refused) = (0u64, amount);
@@ -1641,14 +1768,14 @@ fn every_holder_can_exit(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
                         covered = middle;
                     }
                 }
-                let at_edge = refusal(&w.quote(input, refused).0.err().unwrap_or_default());
+                let at_edge = refusal(&quote(input, refused).err().unwrap_or_default());
                 ensure!(
                     at_edge == "InsufficientLiquidity",
                     "the spec refuses a sale of {refused} beyond the real reserve, the program gives {at_edge:?}"
                 );
-                if spec_price(state, input, output, covered).is_ok() {
+                if spec_price(state, slot, input, output, covered).is_ok() {
                     ensure!(
-                        w.quote(input, covered).0.is_ok(),
+                        quote(input, covered).is_ok(),
                         "{wallet} can't sell {covered} of mint {input}, the most the real reserve covers"
                     );
                 }
@@ -1750,17 +1877,53 @@ fn every_tax_is_split_exactly(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     Ok(())
 }
 
-/// Spec 4: no rate ever leaves its range or passes `MAX_TAX_BPS`, and nothing fixed at
-/// creation ever changes.
+/// Spec 4: no rate, in force or pending, ever leaves its range or passes `MAX_TAX_BPS`, the
+/// rates in force never change within a slot (a change applies only from its slot,
+/// `RATE_CHANGE_DELAY_SLOTS` after `set_taxes`; hardening finding H010, #67), and nothing
+/// fixed at creation ever changes.
 fn rates_stay_in_range_and_creation_is_fixed(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     let (state, created) = (&c.after.state, &c.world.created_state);
-    for (rate, [min, max]) in [state.buy_tax_bps, state.sell_tax_bps]
-        .into_iter()
-        .zip(state.tax_ranges())
-    {
+    let pending = [state.pending_buy_tax_bps, state.pending_sell_tax_bps];
+    let mut rates = vec![[state.buy_tax_bps, state.sell_tax_bps]];
+    if state.pending_from_slot != 0 {
+        rates.push(pending);
         ensure!(
-            min <= rate && rate <= max && max <= MAX_TAX_BPS,
-            "rate {rate} against its range [{min}, {max}] and the cap {MAX_TAX_BPS}"
+            state.pending_from_slot <= c.after.slot + RATE_CHANGE_DELAY_SLOTS,
+            "a change pending until slot {} at slot {}, more than the delay away",
+            state.pending_from_slot,
+            c.after.slot
+        );
+    } else {
+        ensure!(pending == [0, 0], "pending rates {pending:?} with no slot");
+    }
+    for [buy, sell] in rates {
+        for (rate, [min, max]) in [buy, sell].into_iter().zip(state.tax_ranges()) {
+            ensure!(
+                min <= rate && rate <= max && max <= MAX_TAX_BPS,
+                "rate {rate} against its range [{min}, {max}] and the cap {MAX_TAX_BPS}"
+            );
+        }
+    }
+    let before = &c.before.state;
+    // A change set by this step applies exactly `RATE_CHANGE_DELAY_SLOTS` after it.
+    let set_now = state.pending_from_slot != before.pending_from_slot
+        || [state.pending_buy_tax_bps, state.pending_sell_tax_bps]
+            != [before.pending_buy_tax_bps, before.pending_sell_tax_bps];
+    if set_now && state.pending_from_slot != 0 {
+        ensure!(
+            state.pending_from_slot == c.after.slot + RATE_CHANGE_DELAY_SLOTS,
+            "{:?} set a change from slot {} at slot {}, not {RATE_CHANGE_DELAY_SLOTS} later",
+            c.outcome.action,
+            state.pending_from_slot,
+            c.after.slot
+        );
+    }
+    if c.before.slot == c.after.slot {
+        ensure!(
+            state.rates_at(c.after.slot) == before.rates_at(c.before.slot),
+            "{:?} changed the rates in force within slot {}",
+            c.outcome.action,
+            c.after.slot
         );
     }
     let fixed = |m: &TaxMarket| {
@@ -1864,6 +2027,11 @@ fn a_renounced_market_never_changes(c: &Checked<'_, TaxAmm>) -> Result<(), Strin
         (
             m.buy_tax_bps,
             m.sell_tax_bps,
+            (
+                m.pending_buy_tax_bps,
+                m.pending_sell_tax_bps,
+                m.pending_from_slot,
+            ),
             m.recipients,
             m.shares,
             m.burn_share_bps,
@@ -1921,7 +2089,7 @@ fn each_step_is_the_specs(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
             "net_sent {} for {amount}",
             result.net_sent
         );
-        let mut model = Model::of(&c.before.state);
+        let mut model = Model::of(&c.before.state).at(c.before.slot);
         model
             .swap(input, output, result.net_sent)
             .map_err(|refused| format!("the spec refuses a swap that settled: {refused:?}"))?;
@@ -1934,17 +2102,63 @@ fn each_step_is_the_specs(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
     Ok(())
 }
 
-/// The limits layer: every instruction a step ran stayed under its compute ceiling, on
-/// markets without a hooked mint (a hook's cost is the hook's own to bound).
+/// The limits layer: every instruction a step ran stayed under its compute ceiling, but for
+/// an invocation that called a transfer hook, whose cost is the hook's own to bound
+/// ([`own_compute`]).
 fn compute_stays_under_its_ceilings(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
-    if c.world.hooked {
-        return Ok(());
-    }
     for &(name, cost) in &c.outcome.costs {
         let ceiling = super::super::ceilings::of(name);
         ensure!(
             cost <= ceiling,
             "{name} took {cost} CU, over its ceiling of {ceiling}"
+        );
+    }
+    Ok(())
+}
+
+/// Book of Knowledge INV-04 (#67): tax is only ever owed to a recipient slot that names a
+/// wallet, so no owed amount is ever stranded with nobody to pay it to, even once the tax
+/// authority renounces (docs/spec/tax-amm.md, "Payout").
+fn every_owed_recipient_slot_names_a_wallet(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
+    let state = &c.after.state;
+    for slot in 0..MAX_RECIPIENTS {
+        ensure!(
+            state.owed[slot] == 0 || state.recipients[slot] != Default::default(),
+            "recipient slot {slot} is owed {} with no wallet",
+            state.owed[slot]
+        );
+    }
+    Ok(())
+}
+
+/// Book of Knowledge INV-05 (#67): the tax collected never passes the tax side's volume,
+/// since every tax is taken out of what that side's volume counts (the credited input of a
+/// buy; a sell's tax is at most 10% of its curve output, so at most a ninth of what the
+/// trader receives); the counters' u128 adds can't overflow before `swap_count` does.
+fn tax_collected_never_passes_the_tax_sides_volume(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
+    let state = &c.after.state;
+    ensure!(
+        state.tax_collected <= state.volume[state.tax_side as usize],
+        "tax collected {} passes the tax side's volume {}",
+        state.tax_collected,
+        state.volume[state.tax_side as usize]
+    );
+    Ok(())
+}
+
+/// Book of Knowledge INV-06 (#67): once a market is open, a side without a virtual reserve
+/// always keeps some of its real reserve: the seed puts more than 0 there and the curve
+/// never pays out all of a side it alone prices.
+fn a_side_without_a_virtual_reserve_never_empties(c: &Checked<'_, TaxAmm>) -> Result<(), String> {
+    let state = &c.after.state;
+    if state.status != MarketStatus::Open {
+        return Ok(());
+    }
+    for side in 0..2 {
+        let virtual_side = state.virtual_side as usize == side && state.virtual_reserve > 0;
+        ensure!(
+            virtual_side || state.reserves[side] > 0,
+            "side {side}, which has no virtual reserve, emptied"
         );
     }
     Ok(())

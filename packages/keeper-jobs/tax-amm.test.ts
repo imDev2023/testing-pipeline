@@ -72,7 +72,10 @@ function marketBytes(owed: readonly bigint[], overrides: Partial<TaxMarketArgs> 
         swapCount: 0n,
         createdSlot: 1n,
         createdAt: 1n,
-        reserved: new Uint8Array(64),
+        pendingBuyTaxBps: 0,
+        pendingSellTaxBps: 0,
+        pendingFromSlot: 0n,
+        reserved: new Uint8Array(52),
         ...overrides,
     };
     return new Uint8Array(getTaxMarketEncoder().encode(args));

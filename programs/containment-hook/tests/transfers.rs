@@ -70,7 +70,7 @@ fn a_transfer_between_one_holders_own_accounts_is_refused() {
     let launched = launch(&mut env);
     let owner = launched.seeder.pubkey();
     let own = second_token_account(&mut env, &owner, &launched.mint);
-    mint_to(&mut env, &launched.mint, &own, AMOUNT).unwrap();
+    credit(&mut env, &launched.mint, &own, AMOUNT);
     for (from, to) in [(launched.holder, own), (own, launched.holder)] {
         let transfer = transfer_checked(
             &launched.mint,
@@ -115,11 +115,14 @@ fn a_transfer_into_the_home_vault_or_fee_account_passes_the_hook() {
 
 #[test]
 fn minting_after_the_binding_never_calls_the_hook() {
+    // A launch mints its supply after `bind` and revokes the mint authority before the seed,
+    // which the tax AMM requires (docs/spec/tax-amm.md, "Mint rules").
     let mut env = hook_env();
-    let launched = launch(&mut env);
+    let (mint, market) = contained_market(&mut env);
+    bind(&mut env, mint, &market).unwrap();
     let admin = env.admin.pubkey();
-    let account = token_2022_account(&mut env, &admin, &launched.mint);
-    mint_to(&mut env, &launched.mint, &account, AMOUNT).unwrap();
+    let account = token_2022_account(&mut env, &admin, &mint);
+    mint_to(&mut env, &mint, &account, AMOUNT).unwrap();
     assert_eq!(env.balance(&account), AMOUNT);
 }
 

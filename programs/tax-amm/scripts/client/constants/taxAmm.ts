@@ -12,6 +12,8 @@ export const BURN_SLOT: number = 4;
 
 export const MAX_TAX_BPS: number = 1000;
 
+export const RATE_CHANGE_DELAY_SLOTS: bigint = 300n;
+
 export const SUITE_SHARE_BPS: number = 1000;
 
 export const SUITE_SLOT: number = 5;

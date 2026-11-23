@@ -48,6 +48,8 @@ pipeline-client.workspace = true
 pipeline-events.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
+# The shared test support's hash of a market's terms, which the tax AMM's seed checks.
+sha2.workspace = true
 solana-account.workspace = true
 solana-clock.workspace = true
 solana-keypair.workspace = true

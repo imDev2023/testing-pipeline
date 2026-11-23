@@ -30,7 +30,9 @@ Each block in the register says what else was weighed, the one place the value l
 
 ## On devnet
 
-Its program id is `Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG`; [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87) deploys it there and records the deploy in [`deployments/devnet.json`](../../deployments/devnet.json).
+Deployed on 2026-11-22 at `Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG`, a solana-verify build of commit `25a209c` with executable hash `34f2e33cc46f64f72e065b81318050d94fd99cc9331f77e8a6348b5fa51bfc4c`, by [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87); [`deployments/devnet.json`](../../deployments/devnet.json) records each deploy, and [`deployments/release-gate/lending-amm/devnet.json`](../../deployments/release-gate/lending-amm/devnet.json) each pass of the gate that let one through.
+It is registered with Pipeline's router, and its demo market is router market `AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu` (market state `9M5mzsto7Wvj9tBNzAGwyFd84ASSFUh4kuPALhunkMJs`); every signature of the demo's run is in [`deployments/devnet-demo-lending-amm.json`](../../deployments/devnet-demo-lending-amm.json), and its `pipeline-check` report is [`conformance/devnet.json`](conformance/devnet.json).
+It stays upgradeable on devnet under one project upgrade authority, `Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe`, and Aviary shows it as upgradeable by a single key, like anyone else's strategy.
 It lends to our own Kamino lending market on devnet, whose addresses are in [`deployments/kamino-devnet.json`](../../deployments/kamino-devnet.json).
 Every deploy and upgrade there passes its [release gate](gate/) first, which replays every live market against the new build ([`docs/spec/lending-pool.md`, A release gate](../../docs/spec/lending-pool.md#a-release-gate)).
 
