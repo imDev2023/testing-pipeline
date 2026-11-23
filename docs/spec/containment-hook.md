@@ -68,6 +68,7 @@ The config is never closed, so it stays as the record of the token's containment
   This is defence in depth behind the tax AMM's own creation and seed rules (`docs/spec/tax-amm.md`, "Mint rules"), kept in the hook because the hook is frozen and the tax AMM may change; USDC's issuer keeps its freeze authority, a trust disclosed like any USDC market's.
   The hook compiles in the tax AMM's quote list and its rule from the tax AMM's crate, so a change to either changes the hook's bytes and reaches devnet only through the hook's own release gate, and never after the hook is frozen (hardening finding R2-08).
 - `bind` reads the token's vault from `Market.vaults` and derives the fee account (the Token-2022 associated token account of the router PDA `["fees", market]` for the contained mint), rather than taking either from the caller.
+  The fee account need not exist at binding: anyone may create it with the router's permissionless `init_fee_account`, and until it exists a sell that pays Pipeline's fee in the token fails and is repaired by creating it; the launch script creates both fee accounts with the market, before `bind` (hardening finding H097 of [#74](https://github.com/imDev2023/testing-pipeline/issues/74)).
 
 One home market per token: several would split the liquidity that containment exists to concentrate, and summing tax in different quote mints would need a price on chain.
 

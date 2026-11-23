@@ -1092,7 +1092,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### BAR-46: Dependency advisories
 
 - Question: How do we hear of a known vulnerability in a Rust crate our programs, tests or Canary depend on?
-- Answer: A workflow of its own runs `cargo audit` on `programs/Cargo.lock` and `crates/Cargo.lock` when either changes, every day and on demand, failing on any vulnerability and only reporting unmaintained crates, which come through Solana's and LiteSVM's own dependencies.
+- Answer: A workflow of its own runs `cargo audit` on every tracked `Cargo.lock` and `pnpm audit --prod` on `pnpm-lock.yaml` when a lock file changes, every day and on demand, failing on any vulnerability or unsound advisory, only reporting unmaintained crates, which come through Solana's and LiteSVM's own dependencies, and opening an issue when a daily run fails.
 - Alternatives: A step in `ci.yml`, which would check only when on-chain code changed and never on a quiet day; `cargo deny` with a licence and source policy as well, more than this finding asked for; failing on unmaintained crates, which would fail every run on crates we do not choose.
 - Specified in: [`docs/toolchain.md`, CI](toolchain.md#ci)
 - Changes by: spec only

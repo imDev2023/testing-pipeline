@@ -8,6 +8,7 @@ This is an internal verification, never presented as an audit.
 Every new Kani harness in the default tier is proven (five, each in under a minute); every Proptest property passes its cases (13 tests, 10,000 or 40,000 cases each); and the mutation run of `Execute`'s account checks shows which check refuses each substitution.
 One counterexample was found, on a byte layout Token-2022 never creates (a token account of a multisig's length, 355 bytes), and the hook now refuses that length too (TLV-5, review finding H034).
 No defect in the hook's maths or readers was found.
+The four properties deferred at the confirm gate (TLV-6, HA-1, ST-6, EC-3) were built later in this ticket and hold; round 2's re-review found one reader that failed open on bytes Token-2022 never writes (R2-02, below), fixed.
 
 ## How the properties were chosen
 
@@ -27,6 +28,7 @@ It proposed 30 properties in six families, 17 new and 13 already in the repo:
 | EC | The price of washing a home market to its goal | EC-1 to EC-3 |
 
 The confirm gate was decided by the session running #74 on 2026-11-22, not by the owner: 12 confirmed and built (TM-4, TM-5, TLV-1 to TLV-5, BR-1, BR-2, HA-2, EC-1, EC-2), 5 deferred with reasons ([Deferred](#deferred)), and the 13 existing ones checked against the code and left as they are.
+Four of the deferred five were built later in this ticket (TLV-6 in `d4c1a8c`; HA-1, ST-6 and EC-3 in `db0a270`), and the fifth, TM-6, became review finding H020, fixed in `bind`; none is still deferred.
 
 Out of scope here, because the router or another program owns them:
 
@@ -52,8 +54,9 @@ cargo kani -p containment-hook -j --output-format=terse        # the default tie
 cargo kani -p mint-rules -j --output-format=terse
 RUSTFLAGS="--cfg kani_full" cargo kani -p mint-rules \
   --harness proofs::check_mint_never_panics_and_accepts_only_allowed_entries
-cargo test -p mint-rules --test bok_tlv
+cargo test -p mint-rules --test bok_tlv --test account_layout     # with TLV-6
 cargo test -p containment-hook --test bok_readers --test bok_wash --test bok_ha2_substitutions
+cargo test -p containment-hook --test fuzz --test sos_goal_cost   # HA-1, ST-6, EC-3
 ```
 
 CI runs the Kani default tier of the whole workspace in the `kani` job, so the five new harnesses run there (about 90 seconds together), and the Proptest and LiteSVM tests in the `rust` job.
@@ -86,7 +89,7 @@ TM-5 is the spec's promise to holders stated end to end across both functions; i
 | TLV-3 | `check_mint` accepts exactly the Token-2022 mints whose listed extensions are all on the allowlist | Proptest `tlv_3_check_mint_accepts_exactly_token_2022_mints_with_allowed_extensions`, 40,000 cases, at least 2,500 accepted and 2,500 refused | Passed, both directions |
 | TLV-4 | `read_mint` reads the mint authority, the freeze authority and the transfer hook's authority and program exactly as Token-2022 does; `bind`'s gate (`check_mint`, then `read_mint`) accepts only bytes Token-2022 unpacks | Proptest `tlv_4_read_mint_reads_what_token_2022_reads` and `tlv_4_binds_gate_accepts_only_mints_token_2022_unpacks` (`bok_readers.rs`), 40,000 cases each | Passed (one Info note below) |
 | TLV-5 | The hook reads a source as mid-transfer only where Token-2022 unpacks a token account of the mint with its `transferring` flag set, and wherever Token-2022 wrote the flag as 1; a mint is never read as mid-transfer | Proptest `tlv_5_the_transferring_flag_is_token_2022s` and `tlv_5_a_mint_is_never_mid_transfer`, 40,000 cases each; LiteSVM `sos_h034_a_multisig_length_account_is_not_read_as_mid_transfer` (`tests/sos_token_account.rs`) | Passed after the H034 fix (below) |
-| TLV-6 | The layout constants are Token-2022's and defined once: an account's length (165), the transfer hook account extension (15), a mint's length (82), a multisig's length (355) and, with H001's rule, the immutable owner extension (7), in `mint-rules`, checked against `spl_token_2022`'s own values | Deferred to a refactor in this ticket (review note T03, finding H033) | PENDING(session, fix) |
+| TLV-6 | The layout constants are Token-2022's and defined once: an account's length (165), the account type of an account (2), the transfer hook account extension (15), a multisig's length (355) and, with H001's rule, the immutable owner extension (7), in `mint-rules`, checked against Token-2022's own values | Built after round 1 (review note T03, finding H033, `d4c1a8c`): the hook and `tests/hook_accounts.rs` import the constants from `mint-rules`, and `the_account_layout_constants_are_token_2022s` (`programs/mint-rules/tests/account_layout.rs`) checks each against Token-2022's interface | Holds |
 
 **The TLV-5 change.**
 TLV-5's first runs passed; a later run found a counterexample: a 355-byte token account (a multisig's length) with account type 2 and a transfer hook account entry `[1]`, which the hook read as mid-transfer while Token-2022's `StateWithExtensions::<Account>::unpack` refuses every account of `Multisig::LEN`.
@@ -99,6 +102,8 @@ Book of Knowledge first skipped that length in the property; the review then mad
   The tax AMM and the lending AMM call `check_mint` without `read_mint`; that is safe while the mint's owner is Token-2022 or SPL Token, which write only valid tags.
 - The hook reads the transferring flag only as byte 1, where Token-2022's `Bool` reads any non-zero byte as set (692 such accounts appeared in one run); stricter, so it fails closed, and Token-2022 writes only 0 or 1.
 - A mint whose own first 32 bytes are its key and whose account type byte were rewritten to 2 would read as mid-transfer; Token-2022 never writes such bytes (a mint's type byte is 1), so it is not reachable (found by reading the code, not by a test).
+- Round 2 found that `owner_is_immutable_data`, H001's destination reader, accepted an `ImmutableOwner` entry of any length, where Token-2022 counts only an empty one (R2-02, Info, unreachable on any account Token-2022 writes); since `961aa2e` only an empty entry counts, pinned by `sos_r2_02_only_an_empty_immutable_owner_entry_counts` (`tests/sos_token_account.rs`).
+  No Token-2022-paired Proptest of that reader, in TLV-5's shape, was added.
 
 ### Reading other programs' accounts (`src/router.rs`, `src/tax_market.rs`, `src/state.rs`, `bind`)
 
@@ -115,7 +120,7 @@ Book of Knowledge first skipped that length in the property; the review then mad
 
 | ID | Property | How | Result |
 | --- | --- | --- | --- |
-| HA-1 | Every hook-owned account sits at its PDA: at every fuzzer step, each account the hook owns is a `Config` at `["config", mint]` with its canonical bump or a validation account at `["extra-account-metas", mint]` holding exactly the validation data, for a mint that has a config | Deferred: it touches the shared fuzz harness (`tests/support/fuzz.rs`), which another session is changing; also review finding H007's recommendation | PENDING(session, fix) |
+| HA-1 | Every hook-owned account sits at its PDA: at every fuzzer step, each account the hook owns is a `Config` at `["config", mint]` with its canonical bump or a validation account at `["extra-account-metas", mint]` holding exactly the validation data, for a mint that has a config | Built after round 1 on the merged harness (review finding H007, `db0a270`): fuzzer invariant `every_hook_owned_account_sits_at_its_pda` (`tests/support/fuzz.rs`), which also checks the validation account's stored bump is canonical | Holds |
 | HA-2 | Which of `Execute`'s checks refuses each substituted hook account | LiteSVM mutation run (below); the case table is committed as `every_substituted_hook_account_is_refused_case_by_case` (`tests/bok_ha2_substitutions.rs`), which passes on the real program | Every case through Token-2022 refused by every build |
 | HA-3 | The allow rule: `Execute` passes exactly when the config and validation account are the mint's, the source is a Token-2022 account of the mint mid-transfer, and the source or the destination is the recorded vault or fee account (and, since H001's fix, any other destination's owner can never change) | Exists: fuzzer invariants `contained_tokens_move_only_through_the_home_market`, `a_transfer_missing_a_hook_account_is_refused`; `tests/transfers.rs`; `tests/second_market.rs`; H001's rule by `sos_h001_*` (`tests/sos_h001_account_owner.rs`) | Holds |
 
@@ -128,7 +133,7 @@ Book of Knowledge first skipped that length in the property; the review then mad
 | ST-3 | The config never changes after binding, except the unlock time, set once | Exists: fuzzer `the_config_never_changes_but_the_unlock_time`; `tests/unlock.rs`, `tests/bind.rs` | Holds |
 | ST-4 | `unlock` succeeds exactly when due and clears both hook fields for good | Exists: fuzzer `unlock_passes_exactly_when_due_and_clears_the_hook`; `tests/unlock.rs`; `tests/after_unlock.rs` | Holds |
 | ST-5 | Every holder can still sell into the home market | Exists: fuzzer `every_holder_can_sell_into_the_home_market` | Holds |
-| ST-6 | ST-1, ST-2 and ST-5 hold under Pipeline 0.3's paths: `route` through the home market and a second tax market, both fee mint kinds, `sweep_fees` and `init_fee_account` | Deferred: it adds fuzzer actions to the shared fuzz harness; the review covered the paths by reading (finding H027, not vulnerable) | PENDING(session, fix) |
+| ST-6 | ST-1, ST-2 and ST-5 hold under Pipeline 0.3's paths: `route` through the home market and a second tax market, both fee mint kinds, `sweep_fees` and `init_fee_account` | Built after round 1 on the merged harness (`db0a270`): fuzzer invariant `a_sell_pays_pipelines_fee_on_the_side_the_router_records`, over sales through `swap` and one-hop `route` through the home market with Pipeline's fee in the token and in wrapped SOL, every default-size run required to reach each; the fuzzer's existing `sweep_fees` step runs beside it; a second tax market stays with `tests/second_market.rs` rather than the fuzzer; the review covered the paths by reading as well (finding H027) | Holds |
 
 ### The price of the unlock goal (`tax_amm::pricing::exact_in`, `tax_amm::split::split_tax`, Pipeline's fees)
 
@@ -136,7 +141,7 @@ Book of Knowledge first skipped that length in the property; the review then mad
 | --- | --- | --- | --- |
 | EC-1 | An outsider never books tax for less than it costs: a buy of `x` and a sell of everything bought, through the router with Pipeline 0.3's fees on either fee side, leaves the trader at least the tax booked plus Pipeline's quote fees poorer, for every pool, virtual reserve, tax side and rate up to the cap | Proptest `ec_1_an_outsider_never_books_tax_for_less_than_it_costs` (`bok_wash.rs`), 40,000 cases, at least 10,000 priced both legs | Passed |
 | EC-2 | A recipient holding slot 0 with share `s` pays at least `(1 - 0.9 s)` of the tax plus Pipeline's fees, less 10 units of split rounding; a sole recipient pays exactly the suite share plus the fees plus the curve's rounding | Proptest `ec_2_a_recipient_pays_at_least_the_suite_share_plus_the_fees`, 40,000 cases, at least 1,000 sole-recipient cases | Passed |
-| EC-3 | On the hook's harness, a sole recipient at 10%/10% (and at the v1 range tops 8%/9%) washes to a goal, distributes and unlocks, at the model's cost to within a few lamports a leg; an outsider's same trades cost at least the goal | To be built on the merged shared harness, as review findings H023 and H024's test (`sos_h023_sole_recipient_washes_to_the_goal_and_unlocks`) once owner question 4 is answered | PENDING(session, fix) |
+| EC-3 | On the hook's harness, a sole recipient at 10%/10% (and at the v1 range tops 8%/9%) washes to a goal, distributes and unlocks, at the model's cost to within a few lamports a leg; an outsider's same trades cost at least the goal | Built after the owner's answer 4a (`db0a270`): `sos_h023_sole_recipient_washes_to_the_goal_and_unlocks` (`tests/sos_goal_cost.rs`), a sole recipient at 10%/10% washing to a 100 SOL goal in wrapped SOL from 50 SOL of working capital, in 12 round trips, for 12.38% of it, within 14 lamports of the closed form, then unlocking by the goal; the 8%/9% case and the outsider's cost rest on EC-1, EC-2 and the model | Passed |
 
 ## The T04 cost model
 
@@ -183,7 +188,7 @@ Measured on a home market of 50 SOL and 10^9 tokens, goal 100 SOL, burn share 0,
 On the same pool quoted in a mint other than wrapped SOL, a sole recipient pays 11.43% at 10%/10% in one trip (12.32% in 10 SOL legs), 12.68% at 5%/5%, and 29.01% at 1%/1% in 50 SOL legs (33.11% in 10 SOL legs).
 On wrapped SOL the pool's depth and a virtual reserve change nothing: 5 SOL, 500 SOL and a 30 SOL virtual reserve with no real quote all give 12.38%, since the curve has no LP fee and a buy then a sell of what it bought returns the curve's input to within a few units.
 
-What the figures mean for the product is the review's: findings H023 and H024, and owner question 4 in [round-1.md](round-1.md).
+What the figures mean for the product is the review's: findings H023 and H024 in [round-1.md](round-1.md), disclosed with these numbers by the owner's answer 4a (`HOOK-49`), and measured through the router on the hook's own harness by EC-3.
 
 ## The mutation run (HA-2)
 
@@ -205,13 +210,13 @@ The direct-call cases (D) need a source already mid-transfer, which only code ru
 The fuzzer caught none of the three mutants: its steps never build a hook-owned or look-alike account at the wrong place, which only the hand-built LiteSVM cases do.
 
 The review weighed this against the compute budget and kept both kinds of check, with the two address checks behind one shared helper so they cannot drift apart (`ac0899e`, `HOOK-45`; findings H007, H031 and H032 in [round-1.md](round-1.md)).
-HA-1, the property that would make dropping the address checks safe, is deferred with the fuzz harness.
+HA-1, the property that would make dropping the address checks safe, is now a fuzzer invariant (`db0a270`); the checks stay anyway (`HOOK-45`).
 
 ## Deferred
 
-- **TLV-6** (the layout constants defined once in `mint-rules` and checked against Token-2022): a refactor of `src`, done later in this ticket with review note T03 and finding H033. PENDING(session, fix)
-- **HA-1** and **ST-6**: both add to the shared fuzz harness, `tests/support/fuzz.rs`, which another session was changing; they land on the merged harness, HA-1 with finding H007 and ST-6 with the fuzzer ownership invariant of finding H092. PENDING(session, fix)
-- **EC-3**: built later on the merged harness, as the T04 test of findings H023 and H024. PENDING(session, fix)
+- **TLV-6** (the layout constants defined once in `mint-rules` and checked against Token-2022): a refactor of `src`, deferred at the confirm gate and built later in this ticket with review note T03 and finding H033 (`d4c1a8c`).
+- **HA-1** and **ST-6**: both add to the shared fuzz harness, `tests/support/fuzz.rs`, which another session was changing; they landed on the merged harness (`db0a270`), HA-1 with finding H007 and ST-6 beside the fuzzer ownership invariant of finding H092, `contained_balances_rest_only_where_the_owner_is_fixed`.
+- **EC-3**: built on the merged harness after the owner's answer 4a, as the T04 test of findings H023 and H024 (`db0a270`).
 - **TM-6**: sent to the review as a hypothesis; it became finding H020, and `bind` now refuses a market that has collected tax (`8482cc3`), which settles it.
 
 ## Harnesses in the full tier only
