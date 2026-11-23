@@ -10,7 +10,8 @@
         "demo": "node demo.ts",
         "idl": "bash build-idl.sh",
         "client": "node codama.ts",
-        "typecheck": "node codama.ts --check && tsc --noEmit"
+        "typecheck": "node codama.ts --check && tsc --noEmit",
+        "test": "node --test"
     },
     "dependencies": {
         "@pipeline-placeholder/sdk": "link:../../../fixtures/pipeline/sdk/ts",

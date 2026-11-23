@@ -27,7 +27,7 @@ fn market_with_authority(env: &mut Env, authority: &Keypair) -> Market {
 }
 
 #[test]
-fn set_taxes_changes_both_rates_and_the_next_swap_pays_them() {
+fn set_taxes_changes_both_rates_and_the_swaps_after_its_delay_pay_them() {
     let mut env = Env::new();
     let authority = Keypair::new();
     let market = market_with_authority(&mut env, &authority);
@@ -39,12 +39,17 @@ fn set_taxes_changes_both_rates_and_the_next_swap_pays_them() {
         &authority,
     )
     .unwrap();
-    let after = env.tax_market(&market.market_state);
-    assert_eq!((after.buy_tax_bps, after.sell_tax_bps), (800, 0));
+    let pending = env.tax_market(&market.market_state);
+    assert_eq!(
+        (pending.pending_buy_tax_bps, pending.pending_sell_tax_bps),
+        (800, 0)
+    );
 
-    // The next swap each way is priced, and taxed, at the new rates.
+    // Once the change applies, the next swap each way is priced, and taxed, at the new rates.
+    env.warp_slots(tax_amm::config::RATE_CHANGE_DELAY_SLOTS);
     let trader = env.funded_wallet(&market, 10_000_000_000_000);
-    let mut model = Model::of(&after);
+    let mut model = Model::of(&pending).at(env.slot());
+    assert_eq!((model.buy_tax_bps, model.sell_tax_bps), (800, 0));
     for (i, o) in [(1, 0), (0, 1)] {
         let trade = model.swap(i, o, 1_000_000_000).unwrap();
         let result = env.swap(&market, &trader, (i, o), 1_000_000_000).unwrap();
@@ -177,12 +182,18 @@ fn each_action_is_accepted_from_the_tax_authority_and_refused_from_every_other_s
             each_action(&market.market_state, &authority.pubkey(), &state)[action].clone();
         env.send_signed(instruction, &authority)
             .unwrap_or_else(|e| panic!("{name} from the tax authority: {e}"));
+        let after = env.tax_market(&market.market_state);
         assert_ne!(
             (
-                env.tax_market(&market.market_state).params(),
-                env.tax_market(&market.market_state).tax_authority_renounced
+                after.params(),
+                set_rates(&after),
+                after.tax_authority_renounced
             ),
-            (state.params(), state.tax_authority_renounced),
+            (
+                state.params(),
+                set_rates(&state),
+                state.tax_authority_renounced
+            ),
             "{name} changed the market"
         );
     }
@@ -220,7 +231,7 @@ fn set_taxes_refuses_a_rate_outside_its_range_on_either_side() {
         )
         .unwrap();
         let s = env.tax_market(&market.market_state);
-        assert_eq!((s.buy_tax_bps, s.sell_tax_bps), (buy, sell));
+        assert_eq!(set_rates(&s), (buy, sell));
     }
 }
 
@@ -268,11 +279,14 @@ fn no_sequence_of_set_taxes_takes_a_rate_past_its_range_or_the_cap() {
             expected = (buy, sell);
         }
         let s = env.tax_market(&market.market_state);
-        assert_eq!((s.buy_tax_bps, s.sell_tax_bps), expected);
-        assert!((buy_min..=buy_max).contains(&s.buy_tax_bps));
-        assert!((sell_min..=sell_max).contains(&s.sell_tax_bps));
-        assert!(s.buy_tax_bps <= tax_amm::config::MAX_TAX_BPS);
-        assert!(s.sell_tax_bps <= tax_amm::config::MAX_TAX_BPS);
+        assert_eq!(set_rates(&s), expected);
+        // Whatever is in force and whatever is pending stays inside its range and the cap.
+        for (buy, sell) in [(s.buy_tax_bps, s.sell_tax_bps), set_rates(&s)] {
+            assert!((buy_min..=buy_max).contains(&buy));
+            assert!((sell_min..=sell_max).contains(&sell));
+            assert!(buy <= tax_amm::config::MAX_TAX_BPS);
+            assert!(sell <= tax_amm::config::MAX_TAX_BPS);
+        }
     }
 }
 
@@ -311,7 +325,7 @@ fn a_range_fixed_at_a_single_value_never_moves() {
     )
     .unwrap();
     let s = env.tax_market(&market.market_state);
-    assert_eq!((s.buy_tax_bps, s.sell_tax_bps), (300, 200));
+    assert_eq!(set_rates(&s), (300, 200));
     assert_eq!(s.tax_ranges()[0], [300, 300]);
 }
 
@@ -464,7 +478,7 @@ fn set_recipients_refuses_a_burn_share_on_a_native_sol_tax_side() {
 }
 
 #[test]
-fn set_recipients_names_the_new_wallet_and_the_slot_keeps_what_it_is_owed() {
+fn set_recipients_names_a_new_wallet_once_its_slot_is_paid_out_and_moves_shares_of_owed_slots() {
     let mut env = Env::new();
     let authority = Keypair::new();
     let market = market_with_authority(&mut env, &authority);
@@ -477,24 +491,45 @@ fn set_recipients_names_the_new_wallet_and_the_slot_keeps_what_it_is_owed() {
         before.owed
     );
 
-    // Recipient 1 hands over to a new wallet, and the shares move.
+    // Recipient 1 is paid what it is owed, then hands over to a new wallet in the same
+    // transaction (hardening finding H023, #67), and the shares move, slot 0's although it
+    // is still owed.
     let new_wallet = Pubkey::new_unique();
     let mut split = Split::of_market(&before);
     split.recipients[1] = new_wallet;
     split.shares = [5_000, 4_000, 0, 0];
-    let meta = env
-        .send_signed(
-            set_recipients_instruction(&market.market_state, &authority.pubkey(), &split),
-            &authority,
-        )
-        .unwrap();
+    let tax_side = before.tax_side as usize;
+    let old_wallet = ck(&before.recipients[1]);
+    env.svm.airdrop(&authority.pubkey(), SOL).unwrap();
+    let payout = distribute_instruction(
+        &market,
+        tax_side,
+        &authority.pubkey(),
+        1,
+        &old_wallet,
+        vec![],
+    );
+    let handover = set_recipients_instruction(&market.market_state, &authority.pubkey(), &split);
+    let meta = env.send_meta(&[payout, handover], &[&authority]).unwrap();
 
     let after = env.tax_market(&market.market_state);
     assert_eq!(ck(&after.recipients[1]), new_wallet);
     assert_eq!(after.shares, [5_000, 4_000, 0, 0]);
+    let mut owed = before.owed;
+    owed[1] = 0;
     assert_eq!(
-        after.owed, before.owed,
-        "what each slot is owed stays with it"
+        after.owed, owed,
+        "what each other slot is owed stays with it"
+    );
+    let paid = pipeline_client::pda::associated_token(
+        &old_wallet,
+        &market.mints[tax_side],
+        &market.token_programs[tax_side],
+    );
+    assert_eq!(
+        env.balance(&paid),
+        before.owed[1],
+        "the old wallet was paid"
     );
     let events: Vec<tax_amm::events::RecipientsChanged> = strategy_events(&meta.logs);
     assert_eq!(
@@ -597,8 +632,11 @@ fn a_renounced_market_refuses_all_three_actions_for_good() {
 }
 
 #[test]
-fn a_swap_quoted_before_a_rate_change_is_protected_by_its_minimum_output() {
-    for (rates, higher) in [((1_000u16, 1_000u16), true), ((0, 0), false)] {
+fn a_swap_quoted_before_a_rate_change_is_priced_at_the_rates_it_was_quoted_at() {
+    // A change waits longer than any transaction's lifetime (docs/spec/tax-amm.md, "Rates"),
+    // so a swap quoted and signed before it lands at the quoted rates, whichever way the
+    // rates move; `tests/rate_changes.rs` has the rest.
+    for rates in [(1_000u16, 1_000u16), (0, 0)] {
         let mut env = Env::new();
         let authority = Keypair::new();
         let mints = [
@@ -614,10 +652,7 @@ fn a_swap_quoted_before_a_rate_change_is_protected_by_its_minimum_output() {
         let market = env.seeded_market(mints, &params, [100_000_000_000, 200_000_000_000]);
         let trader = env.funded_wallet(&market, 10_000_000_000_000);
         for (i, o) in [(1, 0), (0, 1)] {
-            // Quoted at the old rates, then the rates change, then the swap lands.
             let quote = env.quote(&market, &exact_in(i, o, 1_000_000_000)).unwrap();
-            let current = env.tax_market(&market.market_state);
-            let old = (current.buy_tax_bps, current.sell_tax_bps);
             env.send_signed(
                 set_taxes_instruction(&market.market_state, &authority.pubkey(), rates.0, rates.1),
                 &authority,
@@ -627,24 +662,21 @@ fn a_swap_quoted_before_a_rate_change_is_protected_by_its_minimum_output() {
                 min_amount_out: env.kept(&market, o, quote.amount_out),
                 ..SwapOptions::default()
             };
-            let result = env.swap_with(&market, &trader, (i, o), 1_000_000_000, &options);
-            if higher {
-                // A higher tax pays less than the quote, so the router refuses the swap.
-                let failure = result.unwrap_err();
-                assert!(
-                    failure.contains("InsufficientOutput"),
-                    "{i}->{o}: {failure}"
-                );
-            } else {
-                // A lower tax pays at least the quote.
-                let meta = result.unwrap();
-                let swapped: pipeline_client::SwapResult =
-                    borsh::from_slice(&meta.return_data.data).unwrap();
-                assert!(swapped.received >= quote.amount_out, "{i}->{o}");
-            }
-            // Put the old rates back for the other direction.
+            let meta = env
+                .swap_with(&market, &trader, (i, o), 1_000_000_000, &options)
+                .unwrap();
+            let swapped: pipeline_client::SwapResult =
+                borsh::from_slice(&meta.return_data.data).unwrap();
+            assert_eq!(swapped.received, quote.amount_out, "{rates:?} {i}->{o}");
+            // Put the rates in force back, which cancels the pending change.
+            let current = env.tax_market(&market.market_state);
             env.send_signed(
-                set_taxes_instruction(&market.market_state, &authority.pubkey(), old.0, old.1),
+                set_taxes_instruction(
+                    &market.market_state,
+                    &authority.pubkey(),
+                    current.buy_tax_bps,
+                    current.sell_tax_bps,
+                ),
                 &authority,
             )
             .unwrap();
@@ -671,10 +703,11 @@ fn none_of_the_three_actions_changes_a_reserve_an_owed_amount_or_a_counter() {
 }
 
 #[test]
-fn set_taxes_emits_the_new_rates() {
+fn set_taxes_emits_the_new_rates_and_the_slot_they_apply_from() {
     let mut env = Env::new();
     let authority = Keypair::new();
     let market = market_with_authority(&mut env, &authority);
+    let slot = env.slot();
     let meta = env
         .send_signed(
             set_taxes_instruction(&market.market_state, &authority.pubkey(), 450, 650),
@@ -689,6 +722,7 @@ fn set_taxes_emits_the_new_rates() {
             tax_authority: ak(&authority.pubkey()),
             buy_tax_bps: 450,
             sell_tax_bps: 650,
+            from_slot: slot + tax_amm::config::RATE_CHANGE_DELAY_SLOTS,
         }]
     );
 }
@@ -718,13 +752,13 @@ fn set_recipients_refuses_to_empty_a_slot_that_is_still_owed() {
         tax_amm::StrategyError::OwedSlotLeftEmpty,
     );
 
-    // Handing the slot to another wallet is fine, and so is dropping the burn share, since
-    // the burn slot needs no wallet to be paid out.
-    let mut handed_over = only_first;
-    handed_over.recipients[1] = Pubkey::new_unique();
-    handed_over.shares = [9_999, 1, 0, 0];
+    // Keeping the slot, its share cut to one basis point, is fine, and so is dropping the burn
+    // share, since the burn slot needs no wallet to be paid out.
+    let mut kept = only_first;
+    kept.recipients[1] = ck(&state.recipients[1]);
+    kept.shares = [9_999, 1, 0, 0];
     env.send_signed(
-        set_recipients_instruction(&market.market_state, &authority.pubkey(), &handed_over),
+        set_recipients_instruction(&market.market_state, &authority.pubkey(), &kept),
         &authority,
     )
     .unwrap();
@@ -753,4 +787,113 @@ fn set_recipients_may_empty_a_slot_that_is_owed_nothing() {
         Split::of_market(&env.tax_market(&market.market_state)),
         only_first
     );
+}
+
+/// Hardening finding H024 (#67): `set_recipients` follows the rules of creation, so it too
+/// refuses a recipient that is one of the market's own addresses.
+#[test]
+fn sos_h024_set_recipients_refuses_one_of_the_markets_own_addresses() {
+    let mut env = Env::new();
+    let authority = Keypair::new();
+    let market = market_with_authority(&mut env, &authority);
+    let signer = ck(&tax_amm::instructions::pipeline_market_signer(&ak(
+        &market.market_state
+    )));
+    let own = [
+        market.market_state,
+        market.authority,
+        market.vaults[0],
+        market.vaults[1],
+        market.mints[0],
+        market.mints[1],
+        strategy_id(),
+        signer,
+        market.market,
+        pipeline_client::PROGRAM_ID,
+        TOKEN,
+        TOKEN_2022,
+        pipeline_client::ASSOCIATED_TOKEN_PROGRAM_ID,
+        containment_hook_id(),
+    ];
+    let none = Pubkey::default();
+    for address in own {
+        let split = Split {
+            recipients: [Pubkey::new_unique(), address, none, none],
+            shares: [5_000, 5_000, 0, 0],
+            burn_share_bps: 0,
+        };
+        assert_refused(
+            env.send_signed(
+                set_recipients_instruction(&market.market_state, &authority.pubkey(), &split),
+                &authority,
+            ),
+            tax_amm::StrategyError::NotAWallet,
+        );
+    }
+}
+
+/// Hardening finding H023 (#67): the tax authority could send `[set_recipients(every slot to
+/// itself), distribute, distribute]` and take every recipient's unpaid tax. A slot still owed
+/// tax now keeps its wallet until it is paid out, whatever wallet the change names.
+#[test]
+fn sos_h023_set_recipients_refuses_to_hand_an_owed_slot_to_another_wallet() {
+    let mut env = Env::new();
+    let authority = Keypair::new();
+    let market = market_with_authority(&mut env, &authority);
+    trade_both_ways(&mut env, &market);
+    let before = env.tax_market(&market.market_state);
+    assert!(
+        before.owed[0] > 0 && before.owed[1] > 0,
+        "{:?}",
+        before.owed
+    );
+    let tax_side = before.tax_side as usize;
+    let own = Split::of_market(&before);
+    let thief = authority.pubkey();
+    // Enough SOL to create its own token account in the payouts.
+    env.svm.airdrop(&thief, SOL).unwrap();
+    let mut to_itself = own;
+    to_itself.recipients[0] = thief;
+    to_itself.recipients[1] = thief;
+    let mut swapped = own;
+    swapped.recipients.swap(0, 1);
+    for (what, split) in [
+        ("every slot to the authority", to_itself),
+        ("two slots swapped", swapped),
+    ] {
+        let mut sent = vec![set_recipients_instruction(
+            &market.market_state,
+            &thief,
+            &split,
+        )];
+        for slot in [0u8, 1] {
+            let wallet = split.recipients[slot as usize];
+            sent.push(distribute_instruction(
+                &market,
+                tax_side,
+                &thief,
+                slot,
+                &wallet,
+                vec![],
+            ));
+        }
+        assert_refused(
+            env.send_meta(&sent, &[&authority]),
+            tax_amm::StrategyError::OwedSlotRedirected,
+        );
+        assert_eq!(
+            env.tax_market(&market.market_state).owed,
+            before.owed,
+            "{what}"
+        );
+    }
+    // A slot that is owed nothing may change hands.
+    let mut third = own;
+    third.recipients[2] = Pubkey::new_unique();
+    third.shares = [own.shares[0], own.shares[1] - 1, 1, 0];
+    env.send_signed(
+        set_recipients_instruction(&market.market_state, &thief, &third),
+        &authority,
+    )
+    .unwrap();
 }

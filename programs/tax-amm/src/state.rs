@@ -36,8 +36,11 @@ pub const BURN_SLOT: u8 = MAX_RECIPIENTS as u8;
 pub const SUITE_SLOT: u8 = MAX_RECIPIENTS as u8 + 1;
 
 /// Room kept at the end of the account, all zeros, so a later version can add a field
-/// without moving any and without reallocating existing markets.
-pub const RESERVED_LEN: usize = 64;
+/// without moving any and without reallocating existing markets. It was 64 bytes in the
+/// first build; the pending rates took 12 of them in #67, without moving any field or
+/// changing the version byte, so markets created before read all zeros there: no pending
+/// change.
+pub const RESERVED_LEN: usize = 52;
 
 /// Byte offsets in the account, discriminator included. The containment hook reads these
 /// directly; they never change.
@@ -49,6 +52,13 @@ pub mod layout {
     /// The whole account.
     pub const LEN: usize = 596;
 }
+
+// The layout the containment hook reads is the account's real size, at compile time, so no
+// build can disagree with it (hardening finding H041, #67; `tests/layout.rs` pins every
+// field's offset and the discriminator).
+const _: () = assert!(TaxMarket::SPACE == layout::LEN);
+const _: () = assert!(layout::TAX_SIDE == TaxMarket::DISCRIMINATOR.len() + 2);
+const _: () = assert!(layout::TAX_COLLECTED + 16 <= layout::LEN - RESERVED_LEN);
 
 /// Where a market is in its life. New states are only ever added after the last.
 #[derive(AnchorSerialize, AnchorDeserialize, InitSpace, Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +115,12 @@ pub struct TaxMarket {
     /// When the market was created.
     pub created_slot: u64,
     pub created_at: i64,
+    /// The buy and sell tax `set_taxes` set, which apply from `pending_from_slot`
+    /// ([`TaxMarket::rates_at`]; docs/spec/tax-amm.md, "Rates").
+    pub pending_buy_tax_bps: u16,
+    pub pending_sell_tax_bps: u16,
+    /// The slot the pending rates apply from; 0 when no change is pending.
+    pub pending_from_slot: u64,
     pub reserved: [u8; RESERVED_LEN],
 }
 
@@ -151,6 +167,33 @@ impl TaxMarket {
         Ok(())
     }
 
+    /// The buy and sell tax quotes and swaps apply at `slot`: the pending rates once `slot`
+    /// reaches the slot they apply from, the market's rates before then.
+    pub fn rates_at(&self, slot: u64) -> [u16; 2] {
+        if self.pending_from_slot != 0 && slot >= self.pending_from_slot {
+            [self.pending_buy_tax_bps, self.pending_sell_tax_bps]
+        } else {
+            [self.buy_tax_bps, self.sell_tax_bps]
+        }
+    }
+
+    /// Makes due pending rates the market's rates, leaving nothing pending; a change not yet
+    /// due stays pending. Every instruction that writes the rates or the pending ones does
+    /// this first, so a due change is never lost and never undone at once.
+    pub fn apply_due_rates(&mut self, slot: u64) {
+        if self.pending_from_slot != 0 && slot >= self.pending_from_slot {
+            [self.buy_tax_bps, self.sell_tax_bps] = self.rates_at(slot);
+            self.clear_pending_rates();
+        }
+    }
+
+    /// Cancels any pending change.
+    pub fn clear_pending_rates(&mut self) {
+        self.pending_buy_tax_bps = 0;
+        self.pending_sell_tax_bps = 0;
+        self.pending_from_slot = 0;
+    }
+
     /// The fixed `[min, max]` range of the buy tax, then of the sell tax.
     pub fn tax_ranges(&self) -> [[u16; 2]; 2] {
         [
@@ -186,6 +229,18 @@ impl TaxMarket {
     pub fn trade_vaults(&self, input: u8, output: u8) -> Option<(Pubkey, Pubkey)> {
         let (i, o) = Self::direction(input, output)?;
         Some((self.vaults[i], self.vaults[o]))
+    }
+
+    /// The addresses of this market and the programs it runs on, which can't be tax
+    /// recipients ([`crate::params::own_addresses`]).
+    pub fn own_addresses(&self, market_state: &Pubkey, vault_authority: &Pubkey) -> [Pubkey; 13] {
+        crate::params::own_addresses(
+            market_state,
+            vault_authority,
+            &self.mints,
+            &self.vaults,
+            &self.market_signer,
+        )
     }
 }
 

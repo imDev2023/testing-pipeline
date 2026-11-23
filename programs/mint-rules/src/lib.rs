@@ -4,8 +4,11 @@
 //! A mint must belong to SPL Token or Token-2022, and a Token-2022 mint may carry only the
 //! extensions in [`ALLOWED_MINT_EXTENSIONS`]: every other one, including any Token-2022
 //! adds later, is refused, because an extension such as a permanent delegate or a transfer
-//! fee could take from a market's vaults or change what a trade delivers. Mint and freeze
-//! authorities are allowed, since USDC has both.
+//! fee could take from a market's vaults or change what a trade delivers. This crate says
+//! nothing of a mint's authorities or of which program its transfer hook names: those are
+//! each product's own stricter rules on top (the tax AMM admits only a cleared hook or the
+//! containment hook, and at the seed no mint or freeze authority but on a quote mint such as
+//! USDC, in its `mint_levers` module).
 //!
 //! The tax AMM, the containment hook and the lending AMM all depend on this crate, so there
 //! is one list and never a second copy; a product with a stricter rule adds it on top. The
@@ -39,8 +42,9 @@ pub mod extension {
     pub const TOKEN_GROUP_MEMBER: u16 = 23;
 }
 
-/// The only mint extensions a market's mint may carry: a transfer hook (any hook program),
-/// and the metadata and group extensions, which describe a token without acting on it.
+/// The only mint extensions a market's mint may carry: a transfer hook (which program it may
+/// name is each product's own rule), and the metadata and group extensions, which describe a
+/// token without acting on it.
 pub const ALLOWED_MINT_EXTENSIONS: [u16; 7] = [
     extension::TRANSFER_HOOK,
     extension::METADATA_POINTER,

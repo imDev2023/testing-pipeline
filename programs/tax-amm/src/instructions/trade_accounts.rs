@@ -4,7 +4,8 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenInterface};
 
-use crate::state::TaxMarket;
+use crate::errors::StrategyError;
+use crate::state::{TaxMarket, STATE_VERSION};
 
 /// For quotes and account resolution, which run in simulation: only the market state is
 /// read, and the other accounts may be placeholders.
@@ -12,6 +13,7 @@ use crate::state::TaxMarket;
 pub struct ReadTrade<'info> {
     /// CHECK: unused in reads.
     pub market_signer: UncheckedAccount<'info>,
+    #[account(constraint = market_state.version <= STATE_VERSION @ StrategyError::NewerStateVersion)]
     pub market_state: Account<'info, TaxMarket>,
     /// CHECK: unused in reads.
     pub trader: UncheckedAccount<'info>,
@@ -36,7 +38,7 @@ pub struct ReadTrade<'info> {
 pub struct SwapAccounts<'info> {
     /// The router's market PDA; compared with the market state's `market_signer`.
     pub market_signer: Signer<'info>,
-    #[account(mut)]
+    #[account(mut, constraint = market_state.version <= STATE_VERSION @ StrategyError::NewerStateVersion)]
     pub market_state: Account<'info, TaxMarket>,
     /// CHECK: the trader's wallet, for identity only. It never signs here.
     pub trader: UncheckedAccount<'info>,

@@ -21,6 +21,8 @@ import {
   getStructEncoder,
   getU16Decoder,
   getU16Encoder,
+  getU64Decoder,
+  getU64Encoder,
   type Address,
   type FixedSizeCodec,
   type FixedSizeDecoder,
@@ -43,6 +45,7 @@ export type TaxesChangedEvent = {
   taxAuthority: Address;
   buyTaxBps: number;
   sellTaxBps: number;
+  fromSlot: bigint;
 };
 
 export type TaxesChangedEventArgs = {
@@ -50,6 +53,7 @@ export type TaxesChangedEventArgs = {
   taxAuthority: Address | HasAddress;
   buyTaxBps: number;
   sellTaxBps: number;
+  fromSlot: number | bigint;
 };
 
 /** Gets the encoder for {@link TaxesChangedEventArgs} event data. */
@@ -60,6 +64,7 @@ export function getTaxesChangedEventEncoder(): FixedSizeEncoder<TaxesChangedEven
       ["taxAuthority", getAddressEncoder()],
       ["buyTaxBps", getU16Encoder()],
       ["sellTaxBps", getU16Encoder()],
+      ["fromSlot", getU64Encoder()],
     ]),
     [getConstantEncoder(TAXES_CHANGED_EVENT_DISCRIMINATOR)],
   );
@@ -73,6 +78,7 @@ export function getTaxesChangedEventDecoder(): FixedSizeDecoder<TaxesChangedEven
       ["taxAuthority", getAddressDecoder()],
       ["buyTaxBps", getU16Decoder()],
       ["sellTaxBps", getU16Decoder()],
+      ["fromSlot", getU64Decoder()],
     ]),
     [getConstantDecoder(TAXES_CHANGED_EVENT_DISCRIMINATOR)],
   );

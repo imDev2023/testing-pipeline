@@ -1,5 +1,5 @@
 //! One place for each policy value (owner, 2026-11-10; docs/spec/tax-amm.md, "Where its
-//! policy values live"): the four build-time constants are defined once, in the program's
+//! policy values live"): the build-time constants are defined once, in the program's
 //! config module, and the mint extension allowlist once, in the mint-rules crate, which
 //! depends on nothing, so another program can use it without pulling in the tax AMM. No
 //! other file of the on-chain workspace, the strategy metadata or the demo script repeats
@@ -68,12 +68,16 @@ fn files_containing(needle: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_four_constants_are_defined_once_in_the_config_module() {
+fn the_constants_are_defined_once_in_the_config_module() {
     for (name, published) in [
         ("MAX_TAX_BPS", true),
         ("SUITE_SHARE_BPS", true),
         ("SUITE_TREASURY", true),
         ("MAX_RECIPIENTS", false),
+        ("CONTAINMENT_HOOK_ID", false),
+        ("CONTAINMENT_UNLOCK_SEED", false),
+        ("QUOTE_MINTS", false),
+        ("RATE_CHANGE_DELAY_SLOTS", true),
     ] {
         let mut defined: Vec<String> = files_containing(&format!("const {name}"))
             .into_iter()

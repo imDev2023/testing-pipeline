@@ -18,9 +18,8 @@ use tax_amm::state::MarketStatus;
 const AMOUNT: u64 = 1_000_000_000_000;
 
 /// A second tax market for the contained token against a new quote mint, created by a
-/// fresh seeder who holds some of the token (sold to them through the home market would be
-/// the honest way; here the launcher's supply is minted to them, which never calls the hook)
-/// and the quote mint.
+/// fresh seeder who holds some of the token (bought through the home market would be the
+/// honest way; here it is credited to them, see `credit`) and the quote mint.
 fn second_tax_market(env: &mut Env, launched: &Launched) -> (Market, Keypair) {
     let seeder = Keypair::new();
     env.svm.airdrop(&seeder.pubkey(), SOL).unwrap();
@@ -30,7 +29,7 @@ fn second_tax_market(env: &mut Env, launched: &Launched) -> (Market, Keypair) {
         .create_tax_market([(launched.mint, TOKEN_2022), (quote, TOKEN)], &params)
         .unwrap();
     let holder = token_2022_account(env, &seeder.pubkey(), &launched.mint);
-    mint_to(env, &launched.mint, &holder, AMOUNT).unwrap();
+    credit(env, &launched.mint, &holder, AMOUNT);
     env.write_token_account(&quote, &TOKEN, &seeder.pubkey(), AMOUNT);
     (market, seeder)
 }
@@ -61,7 +60,7 @@ fn funding_a_market_on_another_strategy_is_refused() {
     let depositor = Keypair::new();
     env.svm.airdrop(&depositor.pubkey(), SOL).unwrap();
     let holder = token_2022_account(&mut env, &depositor.pubkey(), &launched.mint);
-    mint_to(&mut env, &launched.mint, &holder, AMOUNT).unwrap();
+    credit(&mut env, &launched.mint, &holder, AMOUNT);
     let quote_account = env.write_token_account(&quote, &TOKEN, &depositor.pubkey(), AMOUNT);
 
     let deposit = cp_deposit(
