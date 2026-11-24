@@ -1,0 +1,195 @@
+/* The strategy's forms (docs/spec/pipescope-screens.md, Explanation, actions and facts, and Create
+   market): one form an action, closed but the first, each with its result line, the line about
+   signing outside the router, its fields, every account it touches and its review. Colours and
+   typefaces are the theme's; nothing here is green or red. */
+.list {
+  display: grid;
+  gap: 10px;
+}
+
+.form {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  min-width: 0;
+}
+
+.form > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-height: var(--control-min-height);
+  list-style-position: inside;
+}
+
+.form > summary:focus-visible {
+  outline-offset: -2px;
+}
+
+.formTitle {
+  display: inline;
+  font-size: 1em;
+  font-weight: var(--strong-weight);
+}
+
+.calls {
+  color: var(--ink2);
+  overflow-wrap: anywhere;
+}
+
+.body {
+  display: grid;
+  gap: 14px;
+  padding: 4px 14px 16px;
+  min-width: 0;
+}
+
+.line {
+  margin: 0;
+  max-width: 70ch;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  color: var(--ink3);
+  max-width: 70ch;
+  overflow-wrap: anywhere;
+}
+
+/* The result line: an outcome's word beside its ink shape, never a colour. */
+.result {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  max-width: 70ch;
+  overflow-wrap: anywhere;
+}
+
+.outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: var(--strong-weight);
+  white-space: nowrap;
+}
+
+.shape {
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  flex: none;
+}
+
+.shape[data-outcome="warn"] {
+  background: linear-gradient(to top, var(--ink) 50%, transparent 50%);
+}
+
+.fields {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+}
+
+.identifier {
+  color: var(--ink2);
+  overflow-wrap: anywhere;
+}
+
+.control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.control input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  max-width: 34em;
+}
+
+.control input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+.reason {
+  color: var(--ink);
+  font-weight: var(--strong-weight);
+}
+
+.facts {
+  border-left: 2px solid var(--rule);
+  padding-left: 12px;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.disclosure summary {
+  cursor: pointer;
+  color: var(--ink2);
+}
+
+.errors {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.unavailable {
+  display: grid;
+  gap: 10px;
+  max-width: 70ch;
+}
+
+.productForms {
+  display: grid;
+  gap: 10px;
+}
+
+.resolved {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

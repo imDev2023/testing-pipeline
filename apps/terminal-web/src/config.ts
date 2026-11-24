@@ -29,6 +29,13 @@ export const SOL_KEPT_BACK = 0.01;
  * so an older one is built and simulated again before the wallet is asked.
  */
 export const PREPARED_SWAP_MAX_AGE_MS = 45_000;
+/**
+ * After a market is created in the create form (docs/spec/pipescope-screens.md, Create market): how
+ * long the page waits for the API to have read the new market before it links its page anyway, and how
+ * often it asks.
+ */
+export const NEW_MARKET_WAIT_MS = 60_000;
+export const NEW_MARKET_ASK_EVERY_MS = 1_000;
 /** How many of the program's last log lines a failed simulation shows behind its disclosure. */
 export const FAILED_SIMULATION_LOG_LINES = 12;
 
