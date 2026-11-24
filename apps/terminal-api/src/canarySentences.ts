@@ -38,10 +38,13 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const grouped = (n: number) => n.toLocaleString("en-US");
 const two = (n: number) => String(n).padStart(2, "0");
 
+/** "10 Nov 2026", in UTC. */
+export const dayOf = (at: Date): string => `${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}`;
+
 /** "Run on 10 Nov 2026, 04:54 UTC at slot 520,629,097, on the strategy version deployed in slot 520,151,724." */
 export function ranLine(record: CanaryRecord): string {
   const at = new Date(record.run_at * 1000);
-  const when = `${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}, ${two(at.getUTCHours())}:${two(at.getUTCMinutes())} UTC`;
+  const when = `${dayOf(at)}, ${two(at.getUTCHours())}:${two(at.getUTCMinutes())} UTC`;
   const deployed = record.strategy_version.deploy_slot;
   const version = deployed === null ? "on a strategy version whose deploy slot is unknown" : `on the strategy version deployed in slot ${grouped(deployed)}`;
   return `Run on ${when} at slot ${grouped(record.slot)}, ${version}.`;
@@ -54,10 +57,14 @@ export const SELL_BACK_CHECKS: readonly string[] = ["exit_sizes", "exit_hold", "
  * The "could not sell back" notice of a market (CANARY-21, CANARY-38): one sentence for each latest
  * exit result of the current version whose `could_not_sell_back` is true, a fail or a warn alike.
  * The sentence is the result's own reason, which states the size, the wait or the wallet's role and
- * the refusing program's error.
+ * the refusing program's error, after the day Canary saw it: "In Canary's test on 23 Nov 2026, a
+ * wallet that bought 1 SOL or more could not sell back (...)".
  */
 export function couldNotSellBack(latest: StoredCanaryResult[]): { check: string; sentence: string }[] {
   return latest
     .filter((r) => SELL_BACK_CHECKS.includes(r.check) && (r.record.numbers as { could_not_sell_back?: unknown } | null)?.could_not_sell_back === true)
-    .map((r) => ({ check: r.check, sentence: r.record.reason }));
+    .map((r) => ({ check: r.check, sentence: `In Canary's test on ${dayOf(new Date(r.record.run_at * 1000))}, ${continued(r.record.reason)}` }));
 }
+
+/** A sentence carried on after a comma: its first word lower-cased when it is an ordinary word ("A wallet", "The market creator"), never a name or a number. */
+const continued = (sentence: string) => (/^(A|An|The|All|Every|Each|One|Five|Some)\b/.test(sentence) ? sentence[0]!.toLowerCase() + sentence.slice(1) : sentence);

@@ -124,9 +124,9 @@ describe("GET /v1/markets/{market}/canary", () => {
     const results = CanaryResults.parse(body);
     expect(results.version).toEqual({ program: CURVE, deploy_slot: 520_151_724, executable_sha256: "bb".repeat(32), current: true });
     expect(results.results.map((r) => [r.check, r.outcome])).toEqual([
+      ["exit_sizes", "warn"],
       ["cost", "pass"],
       ["exit_late", "warn"],
-      ["exit_sizes", "warn"],
     ]);
     const sizes = results.results.find((r) => r.check === "exit_sizes")!;
     expect(sizes.reason).toBe(STUCK);
@@ -137,7 +137,7 @@ describe("GET /v1/markets/{market}/canary", () => {
 
   it("derives the market's \"could not sell back\" notice from its latest exit results, and none from another time or a low return", async () => {
     const { body } = await get(`/v1/markets/${OPEN}/canary`);
-    expect(CanaryResults.parse(body).could_not_sell_back).toEqual([{ check: "exit_sizes", sentence: STUCK }]);
+    expect(CanaryResults.parse(body).could_not_sell_back).toEqual([{ check: "exit_sizes", sentence: `In Canary's test on 10 Nov 2026, a${STUCK.slice(1)}` }]);
     const closed = CanaryResults.parse((await get(`/v1/markets/${CLOSED}/canary`)).body);
     expect(closed.could_not_sell_back).toEqual([]);
   });
@@ -163,7 +163,15 @@ describe("GET /v1/strategies/{program}/versions/{slot}/canary", () => {
     const rollup = CanaryRollup.parse(body);
     expect(rollup.markets).toBe(2);
     expect(rollup.current).toBe(true);
-    expect(rollup.checks.exit_sizes).toEqual({ about: "Check `exit_sizes`: buys each size and sells everything bought in the same slot.", outcomes: { warn: 1, "not run": 1 }, warn: [OPEN], fail: [] });
+    expect(rollup.checks.exit_sizes).toEqual({
+      name: "Buy, then sell straight back",
+      rank: 1,
+      about: "Check `exit_sizes`: buys each size and sells everything bought in the same slot.",
+      outcomes: { warn: 1, "not run": 1 },
+      warn: [OPEN],
+      fail: [],
+      held: [{ market: OPEN, outcome: "warn", reason: STUCK }],
+    });
     expect(rollup.last_run).toEqual(expect.objectContaining({ trigger: "strategy_version", markets: 2 }));
   });
 });

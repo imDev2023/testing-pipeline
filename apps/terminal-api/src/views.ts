@@ -4,7 +4,8 @@
 // last 24 hours, its strategy's name and its trust flags (./facts); each trade with its pair and side.
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { markets} from "terminal-db";
-import { marketMints, mints, strategies, trades, type Db } from "terminal-db";
+import { marketMints, mints, readCanaryCurrent, strategies, trades, type Db } from "terminal-db";
+import { byMarket, marketSummary } from "./canaryView";
 import { AVIARY_MINT_NAMES, VOLUME_WINDOW_SECONDS } from "./config";
 import type { Market, Trade } from "./contract";
 import { orderedFlags, strategyFacts } from "./facts";
@@ -48,6 +49,7 @@ export async function marketViews(database: Db, rows: MarketRow[]): Promise<Mark
     .where(and(inArray(trades.market, addresses), gte(trades.unixTimestamp, since)))
     .groupBy(trades.market, trades.inputMint, trades.outputMint);
   const images = await keptImages(database, held.map((h) => h.tokenUri));
+  const canary = byMarket(await readCanaryCurrent(database, { markets: addresses }));
   const owners = [...new Set(rows.map((m) => m.strategyProgram))];
   const facts = await strategyFacts(database, await database.select({ program: strategies.program, metadataUri: strategies.metadataUri }).from(strategies).where(inArray(strategies.program, owners)));
 
@@ -86,6 +88,7 @@ export async function marketViews(database: Db, rows: MarketRow[]): Promise<Mark
       strategy_name: strategy?.name ?? null,
       strategy_metadata: strategy?.metadata.status ?? "not-fetched",
       flags: orderedFlags([...(strategy?.flags ?? []), ...own.flatMap((h) => h.flags ?? [])]),
+      canary: marketSummary(canary.get(m.address) ?? []),
     };
   });
 }
