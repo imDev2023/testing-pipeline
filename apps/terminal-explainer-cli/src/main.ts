@@ -27,6 +27,8 @@ const { positionals, values } = parseArgs({
 const [command] = positionals;
 const log = (line: string) => console.log(line);
 const ledger = process.env.SPEND_LEDGER ?? join(homedir(), ".config/spend/ledger.csv");
+/** Who the ledger names as approving: the owner typing yes, or, with --yes, the owner as asked by the session first. */
+const approvedBy = values.yes ? "owner, asked in the session first (--yes)" : `owner at the explainer:${command} prompt`;
 
 /** The owner's yes: `--yes` given on the command line, or typed at the prompt. */
 async function confirm(question: string): Promise<boolean> {
@@ -66,7 +68,7 @@ async function main(): Promise<void> {
     case "approve": {
       const { db, close } = database();
       try {
-        await approve({ db, model: model(anthropic()), ledger, log, confirm, only: values.only?.split(",").map((s) => s.trim()).filter(Boolean) });
+        await approve({ db, model: model(anthropic()), ledger, approvedBy, log, confirm, only: values.only?.split(",").map((s) => s.trim()).filter(Boolean) });
       } finally {
         await close();
       }
@@ -83,7 +85,7 @@ async function main(): Promise<void> {
     }
     case "eval": {
       const report = values.report ?? join(process.cwd(), `explainer-eval-${new Date().toISOString().slice(0, 10)}.json`);
-      await evaluate({ model: model(anthropic()), ledger, report, log, confirm });
+      await evaluate({ model: model(anthropic()), ledger, approvedBy, report, log, confirm });
       return;
     }
     case "count": {

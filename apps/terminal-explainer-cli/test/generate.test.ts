@@ -4,7 +4,7 @@
 import { callCost } from "terminal-explainer";
 import { samples } from "terminal-explainer/fixtures";
 import { describe, expect, it } from "vitest";
-import { generate, type ModelClient, type ModelResponse } from "../src/generate";
+import { generate, RetryRequestFailed, type ModelClient, type ModelResponse } from "../src/generate";
 
 const sample = samples["constant-product"]!;
 const good = sample.outputs.pass;
@@ -70,9 +70,11 @@ describe("generate", () => {
     expect(result.validation.checks.find((c) => c.name === "schema")!.errors[0]).toMatch(/^the answer is not JSON/);
   });
 
-  it("records the first call's spend when the retry's request fails, rather than losing it", async () => {
-    const result = await generate(recorded(answer(bad), new Error("overloaded")), sample);
-    expect(result).toMatchObject({ status: "failed", attempts: 1, inputTokens: 2700, outputTokens: 3000, failure: "the retry's request failed: overloaded" });
+  it("throws when the retry's request fails, so the key stays pending, carrying the first call's spend for the ledger", async () => {
+    const failed = await generate(recorded(answer(bad), new Error("overloaded")), sample).catch((e: unknown) => e);
+    expect(failed).toBeInstanceOf(RetryRequestFailed);
+    expect((failed as RetryRequestFailed).message).toBe("the retry's request failed: overloaded");
+    expect((failed as RetryRequestFailed).spent).toEqual({ calls: 1, inputTokens: 2700, outputTokens: 3000, costUsd: callCost(2700, 3000) });
   });
 
   it("lets a first request that fails throw, so the key stays pending", async () => {

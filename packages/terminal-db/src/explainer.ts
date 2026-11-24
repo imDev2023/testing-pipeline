@@ -40,6 +40,26 @@ export async function recordExplainerKey(db: Db, key: NewExplainerKey): Promise<
   });
 }
 
+/**
+ * Makes a key recorded earlier the strategy's current one again, as when a Canary outcome flips
+ * back: a superseded key is pending again, and the strategy's other pending keys are superseded, so
+ * the queue holds only the key whose explanation would be shown. Says whether anything changed.
+ */
+export async function reviveExplainerKey(db: Db, key: string): Promise<boolean> {
+  return db.transaction(async (txn) => {
+    const tx = txn as unknown as Db;
+    const [row] = await tx.select({ program: explainerKeys.program, status: explainerKeys.status }).from(explainerKeys).where(eq(explainerKeys.key, key)).for("update");
+    if (!row) throw new Error(`there is no explainer key ${key}`);
+    const others = await tx
+      .update(explainerKeys)
+      .set({ status: "superseded" })
+      .where(and(eq(explainerKeys.program, row.program), eq(explainerKeys.status, "pending"), ne(explainerKeys.key, key)))
+      .returning({ key: explainerKeys.key });
+    if (row.status === "superseded") await tx.update(explainerKeys).set({ status: "pending" }).where(eq(explainerKeys.key, key));
+    return others.length > 0 || row.status === "superseded";
+  });
+}
+
 /** Whether a key has been recorded already, whatever its status. */
 export async function hasExplainerKey(db: Db, key: string): Promise<boolean> {
   const [row] = await db.select({ key: explainerKeys.key }).from(explainerKeys).where(eq(explainerKeys.key, key));

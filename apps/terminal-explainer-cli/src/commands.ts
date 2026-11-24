@@ -11,9 +11,13 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import { finishExplainerKey, pendingExplainerKeys, readExplainerReports, type Db } from "terminal-db";
 import { estimateCost, MODEL, type ExplainerInput } from "terminal-explainer";
 import { hostileInputs, samples } from "terminal-explainer/fixtures";
-import { generate, type Generation, type ModelClient } from "./generate";
+import { generate, RetryRequestFailed, type Generation, type ModelClient } from "./generate";
 
-type Io = { log: (line: string) => void; confirm: (question: string) => Promise<boolean>; ledger: string; today?: string };
+/**
+ * The commands' surroundings: where they write, how they ask, and who the ledger names as approving
+ * (`approvedBy`): the owner at the prompt, or, with `--yes`, the owner as asked by the session.
+ */
+type Io = { log: (line: string) => void; confirm: (question: string) => Promise<boolean>; ledger: string; approvedBy: string; today?: string };
 
 const usd = (n: number) => `$${n.toFixed(6)}`;
 const SERVICE = `Anthropic API (${MODEL.id})`;
@@ -26,8 +30,8 @@ function ledgerLine(io: Io, what: string, costUsd: number, approvedBy: string): 
 }
 
 type Totals = { calls: number; inputTokens: number; outputTokens: number; costUsd: number };
-function add(t: Totals, g: Generation): void {
-  t.calls += g.attempts;
+function add(t: Totals, g: Pick<Generation, "inputTokens" | "outputTokens" | "costUsd"> & { attempts?: number; calls?: number }): void {
+  t.calls += g.attempts ?? g.calls ?? 0;
   t.inputTokens += g.inputTokens;
   t.outputTokens += g.outputTokens;
   t.costUsd += g.costUsd;
@@ -60,7 +64,8 @@ export async function approve(io: Io & { db: Db; model: ModelClient; only?: stri
       try {
         g = await generate(io.model, { program: k.program, deploySlot: k.deploySlot, evidence: k.evidence as ExplainerInput["evidence"] });
       } catch (e) {
-        io.log(`${k.key.slice(0, 16)}  left pending: the request failed (${(e as Error).message})`);
+        if (e instanceof RetryRequestFailed) add(totals, e.spent);
+        io.log(`${k.key.slice(0, 16)}  left pending: ${e instanceof RetryRequestFailed ? e.message : `the request failed (${(e as Error).message})`}`);
         continue;
       }
       add(totals, g);
@@ -70,7 +75,7 @@ export async function approve(io: Io & { db: Db; model: ModelClient; only?: stri
       io.log(`${k.key.slice(0, 16)}  ${g.status}${g.failure ? ` (${g.failure})` : ""}  ${calls(g.attempts)}, ${usd(g.costUsd)}`);
     }
   } finally {
-    if (totals.calls) ledgerLine(io, `explainer:approve: ${done + failed} keys (${done} done, ${failed} failed), ${tokens(totals)}`, totals.costUsd, "owner at the explainer:approve prompt");
+    if (totals.calls) ledgerLine(io, `explainer:approve: ${done + failed} keys (${done} done, ${failed} failed), ${tokens(totals)}`, totals.costUsd, io.approvedBy);
   }
   io.log(`${done} done, ${failed} failed; ${tokens(totals)}; ${usd(totals.costUsd)} spent.`);
   return { approved: keys.length, done, failed, calls: totals.calls, costUsd: totals.costUsd };
@@ -114,12 +119,13 @@ export async function evaluate(io: Io & { model: ModelClient; report: string }):
         for (const error of g.firstErrors) io.log(`    first try: ${error}`);
       } catch (e) {
         failed++;
+        if (e instanceof RetryRequestFailed) add(totals, e.spent);
         results[name] = { error: (e as Error).message };
-        io.log(`${name}: the request failed (${(e as Error).message})`);
+        io.log(`${name}: ${e instanceof RetryRequestFailed ? e.message : `the request failed (${(e as Error).message})`}`);
       }
     }
   } finally {
-    if (totals.calls) ledgerLine(io, `explainer:eval: ${count} inputs (5 samples and the hostile fixture set), ${tokens(totals)}`, totals.costUsd, "owner, asked in the session first");
+    if (totals.calls) ledgerLine(io, `explainer:eval: ${count} inputs (5 samples and the hostile fixture set), ${tokens(totals)}`, totals.costUsd, io.approvedBy);
   }
   const summary: EvalSummary = { inputs: count, passedFirstTry, passedOnRetry, failed, ...totals };
   writeFileSync(io.report, `${JSON.stringify({ model: MODEL.id, summary, results }, null, 2)}\n`);

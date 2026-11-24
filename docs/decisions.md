@@ -3146,17 +3146,17 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### EXPLAINER-22: What the normaliser strips and caps
 
 - Question: Which characters does the author-text normaliser strip, and what does it cap besides the name, the description and the action labels?
-- Answer: Every control character and every format character (Unicode `Cc` and `Cf`, which take in each text-direction mark and zero-width character), after line breaks and tabs become a space; the create form's description and each argument's description are capped as a description, at 600 characters, and each argument's label and each tag as a label, at 64; links, the image, the source, the conformance report and the security contact are left out, and what it removed is counted.
-- Alternatives: Stripping only control and text-direction characters, which leaves other invisible characters in a name.
+- Answer: Every control character and every format character (Unicode `Cc` and `Cf`, which take in each text-direction mark and zero-width character), after line breaks and tabs become a space; the create form's description and each argument's description are capped as a description, at 600 characters, and each argument's label, each tag and the category as a label, at 64; links, the image, the source, the conformance report and the security contact are left out, and what it removed is counted.
+- Alternatives: The earlier default, the category passed through as written, since Pipeline's validator accepts a category it does not know; stripping only control and text-direction characters, which leaves other invisible characters in a name.
 - Specified in: [`docs/spec/pipescope-explainer.md`, Inputs](spec/pipescope-explainer.md#inputs)
 - Changes by: build-time constant
-- Status: default
+- Status: changed 2026-11-24
 - Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
 
 ### EXPLAINER-23: How keys are made and leave the queue
 
 - Question: What makes an explanation's key, and what happens to a pending key a newer one replaces?
-- Answer: `terminal-api`'s `explainerKeys` job works out each strategy's current key every 5 minutes and records a new one pending with its evidence, waiting while a changed metadata link is not fetched yet; a newer key of a strategy marks its older pending key superseded, so it leaves the queue unpaid.
+- Answer: `terminal-api`'s `explainerKeys` job works out each strategy's current key every 5 minutes (its author part also holds the metadata status and whether it has a seeding section) and records a new one pending with its evidence, waiting while a changed metadata link is not fetched yet; only the strategy's current key stays pending, so a newer key supersedes an older one and a key that becomes current again returns to the queue.
 - Alternatives: Making keys at once from the indexer, Canary's runs and the metadata fetcher; keeping every pending key in the queue for the owner to skip.
 - Specified in: [`docs/spec/pipescope-explainer.md`, When an explanation is made](spec/pipescope-explainer.md#when-an-explanation-is-made)
 - Changes by: build-time constant
@@ -3176,7 +3176,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### EXPLAINER-25: A pending key's estimated cost
 
 - Question: How is a pending key's cost estimated before the owner approves it?
-- Answer: Its request's characters at 2.4 a token (measured with the free token-counting endpoint), and 4,000 output tokens a call, for a first try and its retry, at the model's price in the rules module; the approve command asks with the sum and reports what was spent.
+- Answer: Its request's characters at 2.4 a token (measured with the free token-counting endpoint), and 8,000 output tokens a call (the first paid run measured about 7,480), for a first try and its retry, at the model's price in the rules module; the approve command asks with the sum and the most the calls could cost, and reports what was spent.
 - Alternatives: Counting each key's tokens with the token-counting endpoint, which needs the API key in Cloudflare; pricing one call only.
 - Specified in: [`docs/spec/pipescope-explainer.md`, Model and cost](spec/pipescope-explainer.md#model-and-cost)
 - Changes by: build-time constant

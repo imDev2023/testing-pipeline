@@ -101,5 +101,12 @@ export const AI_ADDRESSED_PATTERNS: readonly RegExp[] = [
   /\bjailbreak\b/i,
 ];
 
+/**
+ * How much of what Aviary holds goes into one item of evidence (EXPLAINER-28): a Canary record's
+ * inputs, written as JSON, are cut at `canaryInputsCharacters`, and each custom action names its
+ * `signersShown` most frequent callers.
+ */
+export const EVIDENCE_LIMITS = { canaryInputsCharacters: 400, signersShown: 3 } as const;
+
 /** The notice Aviary shows, in its own words, when author text addresses AI tools (EXPLAINER-14). */
 export const AI_ADDRESSED_NOTICE = "This strategy's metadata contains text addressed to AI tools.";

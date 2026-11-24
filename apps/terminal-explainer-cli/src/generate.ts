@@ -23,6 +23,19 @@ export type Generation = {
   firstErrors: string[];
 };
 
+/**
+ * The retry's request failed (the network, or the API refusing the request): nothing about the key
+ * is known, so it stays pending, and the first call's spend is carried here for the ledger.
+ */
+export class RetryRequestFailed extends Error {
+  constructor(
+    readonly cause: unknown,
+    readonly spent: { calls: number; inputTokens: number; outputTokens: number; costUsd: number },
+  ) {
+    super(`the retry's request failed: ${(cause as Error)?.message ?? String(cause)}`);
+  }
+}
+
 const textOf = (content: readonly unknown[]) =>
   content
     .filter((b): b is { type: "text"; text: string } => typeof b === "object" && b !== null && (b as { type?: unknown }).type === "text")
@@ -66,7 +79,7 @@ export async function generate(model: ModelClient, input: ExplainerInput): Promi
   try {
     second = await model.create(modelRequest(input, { previous: first.content, errors: firstErrors }));
   } catch (e) {
-    return result(1, { status: "failed", explanation: null, validation: firstCheck.validation, failure: `the retry's request failed: ${(e as Error).message}` });
+    throw new RetryRequestFailed(e, { calls: 1, inputTokens, outputTokens, costUsd: callCost(inputTokens, outputTokens) });
   }
   spent(second);
   const secondCheck = check(input, second);

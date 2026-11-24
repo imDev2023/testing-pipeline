@@ -18,6 +18,7 @@ import { and, asc, count, countDistinct, desc, eq, inArray, max, min, sql } from
 import {
   canaryResults,
   hasExplainerKey,
+  reviveExplainerKey,
   marketMints,
   markets,
   metadataSnapshots,
@@ -33,6 +34,7 @@ import {
 import {
   assembleEvidence,
   authorEvidence,
+  EVIDENCE_LIMITS,
   estimateCost,
   explainerKey,
   pipelineRules,
@@ -62,9 +64,6 @@ function units(raw: string, decimals: number): string {
 }
 const list = (items: string[]) => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 
-/** The most characters of a Canary record's inputs an item carries, written as JSON. */
-const CANARY_INPUTS_SHOWN = 400;
-
 type Version = typeof programVersions.$inferSelect;
 type Snapshot = typeof metadataSnapshots.$inferSelect;
 
@@ -86,6 +85,13 @@ async function current(db: Db, program: string, metadataUri: string): Promise<Cu
 
 const authorOf = (snapshot: Snapshot) => (snapshot.status === "valid" ? (snapshot.normalised as NormalisedMetadata) : null);
 
+/**
+ * The author part of the key (EXPLAINER-23): the normalised author text, and with it what else of
+ * the metadata the evidence states, its status and whether it has a seeding section, so a change of
+ * either makes a new key.
+ */
+const keyAuthorOf = (snapshot: Snapshot) => ({ status: snapshot.status, text: authorOf(snapshot), seed: snapshot.status === "valid" && Boolean((snapshot.document as StrategyMetadata | null)?.seed) });
+
 /** The program and its version: who can change it, this version and those before it, its build, its instructions. */
 async function programItems(db: Db, { program, version }: Current): Promise<{ facts: Fact[]; instructions: { name: string }[] | null; custom: Fact | null }> {
   const facts: Fact[] = [];
@@ -105,7 +111,7 @@ async function programItems(db: Db, { program, version }: Current): Promise<{ fa
   facts.push({ group: "Program", label: "Version history", value: `${plural(versions.length, "version")}: ${list(each)}.`, source: watch });
   facts.push({ group: "Program", label: "Verified build", value: "None: Aviary has not verified the deployed program against any source.", source: "Aviary's verified builds (none run on this version)" });
 
-  const read = await readStrategyInstructions(db, program, { deploySlot: version.deploySlot, signersShown: 3 });
+  const read = await readStrategyInstructions(db, program, { deploySlot: version.deploySlot, signersShown: EVIDENCE_LIMITS.signersShown });
   if (!read.anchor) {
     facts.push({ group: "Program", label: "Instructions in the deployed program", value: "Aviary could not read the instruction names in this version's code.", source: "names compiled into the program binary" });
     return { facts, instructions: null, custom: null };
@@ -168,7 +174,9 @@ async function marketItems(db: Db, { program, outcomes }: Current): Promise<{ fa
   for (const m of mints) {
     const name = m.mint === WRAPPED_SOL ? "Wrapped SOL" : `Token ${m.mint}`;
     if (!m.readable) {
-      facts.push({ group: "Market", label: name, value: "Its account is missing or is not a token mint.", source: "the mint account" });
+      // A mint with no read slot has not been read by Aviary yet, which says nothing of its account.
+      const value = m.read_slot === null ? "Not read by Aviary yet." : "Its account is missing or is not a token mint.";
+      facts.push({ group: "Market", label: name, value, source: "the mint account" });
       continue;
     }
     const extensions = m.extensions.length
@@ -177,7 +185,7 @@ async function marketItems(db: Db, { program, outcomes }: Current): Promise<{ fa
     facts.push({
       group: "Market",
       label: name,
-      value: `${m.token_program === "Token-2022" ? "Token-2022" : "SPL Token"}, ${m.decimals} decimals. Mint authority: ${m.mint_authority ?? "none"}. Freeze authority: ${m.freeze_authority ?? "none"}. ${extensions}`,
+      value: `${m.token_program === "Token-2022" ? "Token-2022" : "SPL Token"}${m.decimals === null ? "" : `, ${m.decimals} decimals`}. Mint authority: ${m.mint_authority ?? "none"}. Freeze authority: ${m.freeze_authority ?? "none"}. ${extensions}`,
       source: m.read_slot ? `the mint account, slot ${m.read_slot}` : "the mint account",
     });
     if (m.vault_amount !== null && m.decimals !== null) vaults.push(m.mint === WRAPPED_SOL ? `${units(m.vault_amount, m.decimals)} ${AVIARY_MINT_NAMES[WRAPPED_SOL]}` : `${units(m.vault_amount, m.decimals)} of token ${m.mint}`);
@@ -209,7 +217,7 @@ async function canaryItems(db: Db, { program, version, outcomes }: Current, repr
     items.push({
       group: "Canary",
       label: `Canary check ${r.check} on the sampled market`,
-      value: `Run on ${utc(new Date(record.run_at * 1000))} at slot ${record.slot}, on this version: ${record.outcome}. ${record.reason} Inputs: ${inputs.length > CANARY_INPUTS_SHOWN ? `${inputs.slice(0, CANARY_INPUTS_SHOWN)}...` : inputs}`,
+      value: `Run on ${utc(new Date(record.run_at * 1000))} at slot ${record.slot}, on this version: ${record.outcome}. ${record.reason} Inputs: ${inputs.length > EVIDENCE_LIMITS.canaryInputsCharacters ? `${inputs.slice(0, EVIDENCE_LIMITS.canaryInputsCharacters)}...` : inputs}`,
       source: `Canary record ${record.id}, harness ${record.harness}`,
     });
   }
@@ -256,9 +264,10 @@ async function buildEvidence(db: Db, at: Current): Promise<{ evidence: EvidenceI
  * each key not recorded yet builds its evidence and records it pending. Says which strategies got a
  * new key, and which wait for their metadata's new link to be fetched.
  */
-export async function makeExplainerKeys(db: Db, { programs }: { programs?: string[] } = {}): Promise<{ made: string[]; waiting: string[] }> {
+export async function makeExplainerKeys(db: Db, { programs }: { programs?: string[] } = {}): Promise<{ made: string[]; revived: string[]; waiting: string[] }> {
   const rows = await db.select({ program: strategies.program, metadataUri: strategies.metadataUri }).from(strategies).where(programs ? inArray(strategies.program, programs) : undefined);
   const made: string[] = [];
+  const revived: string[] = [];
   const waiting: string[] = [];
   for (const { program, metadataUri } of rows) {
     const at = await current(db, program, metadataUri);
@@ -267,12 +276,16 @@ export async function makeExplainerKeys(db: Db, { programs }: { programs?: strin
       waiting.push(program);
       continue;
     }
-    const key = await explainerKey({ program, deploySlot: at.version.deploySlot, author: authorOf(at.snapshot), canary: at.outcomes });
-    if (await hasExplainerKey(db, key.id)) continue;
+    const key = await explainerKey({ program, deploySlot: at.version.deploySlot, author: keyAuthorOf(at.snapshot), canary: at.outcomes });
+    // A key recorded before is current again (an outcome flipped back): it alone stays in the queue.
+    if (await hasExplainerKey(db, key.id)) {
+      if (await reviveExplainerKey(db, key.id)) revived.push(program);
+      continue;
+    }
     const { evidence, representative, addressesAi } = await buildEvidence(db, at);
     const cost = estimateCost({ program, deploySlot: at.version.deploySlot, evidence });
     const { id, ...parts } = key;
     if (await recordExplainerKey(db, { key: id, ...parts, evidence, representativeMarket: representative, authorTextAddressesAi: addressesAi, estimatedInputTokens: cost.inputTokens, estimatedCostUsd: cost.usd })) made.push(program);
   }
-  return { made: made.sort(), waiting: waiting.sort() };
+  return { made: made.sort(), revived: revived.sort(), waiting: waiting.sort() };
 }

@@ -31,7 +31,7 @@ const SHORT_ADDRESS = new RegExp(`\\b${B58}{4}\\.\\.\\.${B58}{4}\\b`, "g");
 const FULL_ADDRESS = new RegExp(`\\b${B58}{32,44}\\b`, "g");
 const DATE = /\b\d{4}-\d{2}-\d{2}\b/g;
 const TIME = /\b\d{1,2}:\d{2}\b/g;
-const LINK = /https?:\/\/|www\.|javascript:|data:|\b[a-z0-9-]+\.(?:com|io|xyz|fun|app|net|org|dev|so|ai|co|gg|me|finance|exchange)\b/i;
+const LINK = /https?:\/\/|www\.|(?<![\w-])(?:javascript|data|vbscript|file):|\b[a-z0-9-]+\.(?:com|io|xyz|fun|app|net|org|dev|so|ai|co|gg|me|finance|exchange)\b/i;
 const MARKUP = /[<>`]|\*\*|__|\]\(|^\s*(?:#|[-+*]\s)/m;
 const EVIDENCE_ID = /\b[PFCSA]\d+\b/;
 const BANNED = BANNED_TERMS.flat().map((term) => ({ term, pattern: new RegExp(`(?<![\\w-])${term.replace(/-/g, "\\-")}(?![\\w-])`, "i") }));
@@ -135,7 +135,8 @@ export function validate(evidence: readonly EvidenceItem[], output: Explanation 
 
     if (LINK.test(text)) problems.format.push(`${where} contains a link or domain`);
     if (MARKUP.test(text)) problems.format.push(`${where} contains Markdown or HTML characters`);
-    if (EVIDENCE_ID.test(text)) problems.format.push(`${where} writes an evidence id into its text`);
+    // An address shortened as the prompt asks ("C123...Wxyz") is no evidence id, so addresses are set aside first.
+    if (EVIDENCE_ID.test(text.replace(SHORT_ADDRESS, " ").replace(FULL_ADDRESS, " "))) problems.format.push(`${where} writes an evidence id into its text`);
 
     for (const { term, pattern } of BANNED) if (pattern.test(text)) problems.banned.push(`${where} uses the banned term "${term}"`);
     for (const phrase of ADVICE_PHRASES) {

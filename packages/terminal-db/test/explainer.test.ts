@@ -5,7 +5,7 @@
 // with the keys they refer to.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type Db } from "../src/index.ts";
-import { readExplainerReports, finishExplainerKey, pendingExplainerKeys, readExplainerKey, recordExplainerKey, type NewExplainerKey } from "../src/explainer.ts";
+import { readExplainerReports, finishExplainerKey, pendingExplainerKeys, readExplainerKey, recordExplainerKey, reviveExplainerKey, type NewExplainerKey } from "../src/explainer.ts";
 import { explainerReports as reportsTable } from "../src/schema.ts";
 import { createTestDatabase } from "../src/testing.ts";
 
@@ -65,6 +65,29 @@ describe("explainer keys", () => {
     expect([done.status, done.attempts, done.inputTokens, done.outputTokens, done.costUsd, done.explanation]).toEqual(["done", 1, 2800, 3100, 0.00183, explanation]);
     expect(done.finishedAt).toBeInstanceOf(Date);
     expect((await readExplainerKey(db, "2".repeat(64)))!.failure).toBe("the validator refused both answers");
+  });
+});
+
+describe("a key that becomes current again", () => {
+  const PROGRAM = "4ajWF6Y3wsxXUbvvaEu7ZcA2RosB1YfaXcqot8kguwJD";
+  it("puts a superseded key back in the queue and takes the strategy's other pending key out, as when an outcome flips back", async () => {
+    const { db } = client;
+    await recordExplainerKey(db, key("a", PROGRAM));
+    await recordExplainerKey(db, key("b", PROGRAM));
+    expect((await readExplainerKey(db, "a".repeat(64)))!.status).toBe("superseded");
+    expect(await reviveExplainerKey(db, "a".repeat(64))).toBe(true);
+    expect((await readExplainerKey(db, "a".repeat(64)))!.status).toBe("pending");
+    expect((await readExplainerKey(db, "b".repeat(64)))!.status).toBe("superseded");
+    expect(await reviveExplainerKey(db, "a".repeat(64))).toBe(false);
+  });
+
+  it("leaves a done key done, and still takes the strategy's other pending key out of the queue", async () => {
+    const { db } = client;
+    await finishExplainerKey(db, "a".repeat(64), { status: "done", explanation: {}, validation: {}, attempts: 1, inputTokens: 1, outputTokens: 1, costUsd: 0, failure: null });
+    await recordExplainerKey(db, key("d", PROGRAM));
+    expect(await reviveExplainerKey(db, "a".repeat(64))).toBe(true);
+    expect((await readExplainerKey(db, "a".repeat(64)))!.status).toBe("done");
+    expect((await readExplainerKey(db, "d".repeat(64)))!.status).toBe("superseded");
   });
 });
 

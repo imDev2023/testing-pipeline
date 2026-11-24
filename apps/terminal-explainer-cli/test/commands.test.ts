@@ -68,7 +68,7 @@ describe("approve", () => {
     let asked = "";
     const m = model(() => samples["iwao"]!.outputs.pass);
     const ledger = ledgerFile();
-    const out = await approve({ db, model: m, ledger, log: (l) => lines.push(l), confirm: async (q) => ((asked = q), false) });
+    const out = await approve({ db, model: m, ledger, approvedBy: "owner at the explainer:approve prompt", log: (l) => lines.push(l), confirm: async (q) => ((asked = q), false) });
     expect(out).toEqual({ approved: 0, done: 0, failed: 0, calls: 0, costUsd: 0 });
     expect(m.calls).toBe(0);
     expect(lines.join("\n")).toContain("2 pending keys, estimated $0.009200 in all");
@@ -81,7 +81,7 @@ describe("approve", () => {
     const ledger = ledgerFile();
     // iwao's evidence gets its own recorded explanation; bonding-curve's gets one that fails twice.
     const m = model((request) => (JSON.stringify(request.messages[0]!.content).includes("FWbhWcufRWM3CsVb6MixpwtNXWMYQbhQo3uWEfg4vrKq") ? samples["iwao"]!.outputs.pass : samples["hostile"]!.outputs.fooled));
-    const out = await approve({ db, model: m, ledger, log: quiet, confirm: async () => true, today: "2026-11-24" });
+    const out = await approve({ db, model: m, ledger, approvedBy: "owner at the explainer:approve prompt", log: quiet, confirm: async () => true, today: "2026-11-24" });
     expect(out).toMatchObject({ approved: 2, done: 1, failed: 1, calls: 3 });
     expect(await pendingExplainerKeys(db)).toEqual([]);
     expect((await readExplainerKey(db, "iwao".padEnd(64, "0")))!.status).toBe("done");
@@ -96,9 +96,29 @@ describe("approve", () => {
     await recordExplainerKey(db, sampleKey("constant-product", "yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx"));
     await recordExplainerKey(db, sampleKey("pool4-port", "4ajWF6Y3wsxXUbvvaEu7ZcA2RosB1YfaXcqot8kguwJD"));
     const m = model(() => samples["constant-product"]!.outputs.pass);
-    const out = await approve({ db, model: m, ledger: ledgerFile(), log: quiet, confirm: async () => true, only: ["constant"] });
+    const out = await approve({ db, model: m, ledger: ledgerFile(), approvedBy: "owner at the explainer:approve prompt", log: quiet, confirm: async () => true, only: ["constant"] });
     expect(out).toMatchObject({ approved: 1, done: 1 });
     expect((await pendingExplainerKeys(db)).map((k) => k.program)).toEqual(["4ajWF6Y3wsxXUbvvaEu7ZcA2RosB1YfaXcqot8kguwJD"]);
+  });
+});
+
+describe("approve when the retry's request fails", () => {
+  it("leaves the key pending, and still writes the first call's spend in the ledger", async () => {
+    const { db } = client;
+    await recordExplainerKey(db, sampleKey("hostile", "hostileFixture111111111111111111111111111111"));
+    let call = 0;
+    const flaky: ModelClient = {
+      create: async () => {
+        call++;
+        if (call === 1) return reply(samples["hostile"]!.outputs.fooled);
+        throw new Error("overloaded");
+      },
+    };
+    const ledger = ledgerFile();
+    const out = await approve({ db, model: flaky, ledger, approvedBy: "owner at the explainer:approve prompt", log: quiet, confirm: async () => true, only: ["hostile"], today: "2026-11-24" });
+    expect(out).toMatchObject({ approved: 1, done: 0, failed: 0, calls: 1 });
+    expect((await readExplainerKey(db, "hostile".padEnd(64, "0")))!.status).toBe("pending");
+    expect(readFileSync(ledger, "utf8").trim().split("\n")[1]).toContain('"explainer:approve: 0 keys (0 done, 0 failed), 1 calls, 3000 input and 2000 output tokens"');
   });
 });
 
@@ -114,17 +134,19 @@ describe("evaluate", () => {
       return sample?.sample === "hostile" || !sample ? hostileBase.good : sample.outputs.pass;
     });
     let asked = "";
-    const out = await evaluate({ model: m, ledger, report, log: quiet, confirm: async (q) => ((asked = q), true), today: "2026-11-24" });
+    const out = await evaluate({ model: m, ledger, approvedBy: "owner, asked in the session first (--yes)", report, log: quiet, confirm: async (q) => ((asked = q), true), today: "2026-11-24" });
     expect(asked).toMatch(/^Send 12 inputs to Anthropic \(claude-haiku-5-5\), estimated \$0\.\d{6}, at most \$0\.\d{6}\? \[y\/N\] $/);
     expect(out.inputs).toBe(12);
     expect(Object.keys(JSON.parse(readFileSync(report, "utf8")).results).sort()).toEqual(names.sort());
     expect(out.passedFirstTry + out.passedOnRetry + out.failed).toBe(12);
-    expect(readFileSync(ledger, "utf8").trim().split("\n")[1]).toMatch(/^2026-11-24,testing-pipeline,Anthropic API \(claude-haiku-5-5\),"explainer:eval: 12 inputs/);
+    const line = readFileSync(ledger, "utf8").trim().split("\n")[1]!;
+    expect(line).toMatch(/^2026-11-24,testing-pipeline,Anthropic API \(claude-haiku-5-5\),"explainer:eval: 12 inputs/);
+    expect(line.endsWith(',"owner, asked in the session first (--yes)"')).toBe(true);
   });
 
   it("sends nothing when the owner says no", async () => {
     const m = model(() => hostileBase.good);
-    const out = await evaluate({ model: m, ledger: ledgerFile(), report: join(tmpdir(), "never.json"), log: quiet, confirm: async () => false });
+    const out = await evaluate({ model: m, ledger: ledgerFile(), approvedBy: "owner", report: join(tmpdir(), "never.json"), log: quiet, confirm: async () => false });
     expect(out.inputs).toBe(0);
     expect(m.calls).toBe(0);
   });

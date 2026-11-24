@@ -70,6 +70,19 @@ describe("each check", () => {
     expect(failing(run((o) => ({ ...o, claims: [{ topic: "control", basis: "confirmed", text: "The key FWbh...vrKq can replace the program's code.", evidence: ["F2"] }] })))).toEqual([]);
   });
 
+  it("4: a word that ends in data before a colon is no link, but a data: or javascript: link is", () => {
+    const say = (text: string) => run((o) => ({ ...o, claims: [{ topic: "author", basis: "confirmed", text, evidence: ["F7"] }] }));
+    expect(failing(say("The strategy's metadata: its link returns an error."))).toEqual([]);
+    expect(failing(say("The metadata link holds data:text/html content."))).toEqual(["format"]);
+    expect(failing(say("The metadata link opens javascript:void content."))).toEqual(["format"]);
+  });
+
+  it("4: an address shortened as the prompt asks is no evidence id, even one that starts like one", () => {
+    const evidence = [{ id: "F1", group: "Program", label: "Upgrade authority", value: "C123BxyzKfQe8hJqLm3n4p5r6s7t8u9vW2xyzWxyz", source: "test" }];
+    const output = { summary: [{ text: "The key C123...Wxyz can replace the code.", evidence: ["F1"] }, { text: "Nothing else is known.", evidence: ["F1"] }], claims: [], unknowns: [], author_text_addresses_ai: false };
+    expect(failing(validate(evidence, output))).toEqual([]);
+  });
+
   it("4: an evidence id written into the text fails", () => {
     expect(failing(run((o) => ({ ...o, claims: [{ topic: "control", basis: "confirmed", text: "See F2 for who can replace the code.", evidence: ["F2"] }] })))).toContain("format");
   });

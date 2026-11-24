@@ -230,6 +230,27 @@ describe("makeExplainerKeys", () => {
     expect((await pendingExplainerKeys(db)).filter((k) => k.program === STRATEGY)).toHaveLength(1);
   });
 
+  it("puts a key back in the queue when an outcome flips back, and takes the newer key out", async () => {
+    const { db } = client;
+    const [flipped] = (await pendingExplainerKeys(db)).filter((k) => k.program === STRATEGY);
+    await canaryRun(db, BUSY, [record("exit_sizes", BUSY, 520_950_000, "pass", "Sold everything back again.")]);
+    const back = await makeExplainerKeys(db);
+    expect(back).toMatchObject({ made: [], revived: [STRATEGY] });
+    const pending = (await pendingExplainerKeys(db)).filter((k) => k.program === STRATEGY);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.key).not.toBe(flipped!.key);
+    expect((await keysOf(db)).find((k) => k.key === flipped!.key)!.status).toBe("superseded");
+    expect((await makeExplainerKeys(db)).revived).toEqual([]);
+  });
+
+  it("makes a new key when the metadata's status changes, though there is no author text either side", async () => {
+    const { db } = client;
+    await db.insert(metadataSnapshots).values({ program: PLAIN, uri: "", status: "unreachable", reason: "http-status", errors: [], warnings: [], fetchedAt: new Date(), checkedAt: new Date() });
+    expect((await makeExplainerKeys(db)).made).toEqual([PLAIN]);
+    const [plain] = (await pendingExplainerKeys(db)).filter((k) => k.program === PLAIN);
+    expect(item(plain!.evidence as EvidenceItem[], "Strategy metadata: flag metadata-unreachable")).toBeDefined();
+  });
+
   it("waits while a strategy's metadata link has changed and its new document is not fetched yet, then makes a key with it", async () => {
     const { db } = client;
     await db.update(strategies).set({ metadataUri: "https://example.org/new.json" }).where(eq(strategies.program, STRATEGY));
@@ -250,7 +271,7 @@ describe("makeExplainerKeys", () => {
     const output = {
       summary: [
         { text: `The key ${AUTHORITY.slice(0, 4)}...${AUTHORITY.slice(-4)} can replace this strategy's code at any time.`, evidence: [id("Upgrade authority")] },
-        { text: "In the sampled market, Canary saw a sale of 0.001 SOL refused.", evidence: [id("Canary check exit_sizes on the sampled market")] },
+        { text: "In the sampled market, Canary sold everything it bought back again.", evidence: [id("Canary check exit_sizes on the sampled market")] },
       ],
       claims: [{ topic: "control", basis: "confirmed", text: "This version was deployed on 2026-11-08 at 21:10 UTC.", evidence: [id("This version")] }],
       unknowns: [],
