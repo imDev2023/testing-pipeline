@@ -99,6 +99,12 @@ export async function finishExplainerKey(db: Db, key: string, outcome: Explainer
   if (!row) throw new Error(`explainer key ${key} is not waiting for an outcome`);
 }
 
+/** Files a "This is wrong" report against a key, with the reader's note if they wrote one; returns its id. */
+export async function recordExplainerReport(db: Db, report: { key: string; note: string | null }): Promise<bigint> {
+  const [row] = await db.insert(reports).values(report).returning({ id: reports.id });
+  return row!.id;
+}
+
 /** Every "This is wrong" report, newest first, with the key it refers to. */
 export async function readExplainerReports(db: Db): Promise<{ id: bigint; note: string | null; createdAt: Date; key: string; program: string; deploySlot: bigint; status: string }[]> {
   return db

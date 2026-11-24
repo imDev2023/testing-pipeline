@@ -3,7 +3,7 @@
 // its title read the API once.
 import { notFound } from "next/navigation";
 import { cache } from "react";
-import { CanaryResults, CanaryRollup, Market, StrategyDetail } from "terminal-api/contract";
+import { CanaryResults, CanaryRollup, Market, StrategyDetail, StrategyExplanation } from "terminal-api/contract";
 import { ApiFailure, getFromApi } from "./api";
 
 /** The thing at an address, the 404 page when the API knows none, or the failure to show. */
@@ -34,3 +34,9 @@ async function readOrFailure<T>(read: () => Promise<T>): Promise<{ ok: true; val
 
 export const readMarketCanary = cache((address: string) => readOrFailure(() => getFromApi(`/v1/markets/${encodeURIComponent(address)}/canary`, CanaryResults)));
 export const readVersionCanary = cache((program: string, deploySlot: number) => readOrFailure(() => getFromApi(`/v1/strategies/${encodeURIComponent(program)}/versions/${deploySlot}/canary`, CanaryRollup)));
+
+/**
+ * The explanation of a strategy's current version (#127), read with the page so the upgrade notice
+ * under the head knows whether the new version has one; on a failure the panel loads it on its own.
+ */
+export const readStrategyExplanation = cache((program: string) => readOrFailure(() => getFromApi(`/v1/strategies/${encodeURIComponent(program)}/explanation`, StrategyExplanation)));

@@ -1,0 +1,308 @@
+/* The explanation (docs/spec/pipescope-explainer.md, Presentation; PIPESCOPE-65): the AI's sentences
+   in the serif a size larger (Voice.module.css), at a reading measure; Aviary's own lines plainly;
+   an author's words in the author's colour. Every colour and typeface is a token of theme.css. */
+
+.label {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink2);
+  max-width: 78ch;
+}
+
+/* The notice about text addressed to AI tools: Aviary's own sentence, plainly, as its other notices. */
+.notice {
+  padding: 10px 12px;
+  border: 1px solid var(--rule2);
+  border-left: 4px solid var(--ink);
+  border-radius: 3px;
+  background: var(--sheet);
+  max-width: 84ch;
+}
+
+.summary {
+  max-width: 66ch;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  color: var(--ink3);
+  max-width: 78ch;
+}
+
+.none {
+  font-weight: var(--strong-weight);
+}
+
+.part {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.partTitle {
+  font-size: 1em;
+}
+
+/* The unknowns and the points: a list at a reading measure, each item after its own bullet. */
+.unknowns,
+.claims {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: 70ch;
+  overflow-wrap: anywhere;
+}
+
+.unknowns li,
+.claim {
+  position: relative;
+  padding: 4px 0 4px 20px;
+}
+
+/* An unknown's bullet is a short rule, so it reads as an open question rather than a point. */
+.unknowns li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: calc(4px + 0.8em);
+  width: 8px;
+  border-top: 1.5px solid var(--ink2);
+}
+
+/* A point's bullet: solid for what the evidence states, hollow for an inference, the author's colour
+   for what the author says; the key above the points uses the same three. */
+.claim::before,
+.keyItem::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: calc(4px + 0.65em);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: var(--ink);
+}
+
+.inferred::before {
+  background: transparent;
+  border: 1.5px solid var(--ink);
+}
+
+.author::before {
+  background: var(--author);
+}
+
+/* An author point's sentence is in the author's colour; the chips and the basis beside it are not. */
+.claim.author > :first-child {
+  color: var(--author);
+}
+
+.basis {
+  font-size: 12px;
+  color: var(--ink3);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+.key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 12px;
+  color: var(--ink2);
+  margin: 6px 0 2px;
+}
+
+.keyItem {
+  position: relative;
+  padding-left: 14px;
+}
+
+.keyItem::before {
+  top: 0.45em;
+  left: 0;
+}
+
+.topic {
+  display: grid;
+  gap: 2px;
+  margin-top: 10px;
+}
+
+.topicTitle {
+  margin: 0;
+  font-size: 1em;
+  line-height: 1.4;
+  color: var(--ink2);
+  font-weight: var(--strong-weight);
+}
+
+/* The two disclosures: the full explanation, and the evidence it was given. */
+.more {
+  border-top: 1px solid var(--rule);
+  padding-top: 2px;
+}
+
+.more > summary {
+  cursor: pointer;
+  font-weight: var(--strong-weight);
+  padding: 8px 0 4px;
+  min-height: var(--control-min-height);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.more > summary::marker {
+  content: "";
+}
+
+.more > summary::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  flex: none;
+}
+
+.more[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.more[open] {
+  padding-bottom: 6px;
+}
+
+/* A sentence's chips: small, plain, after the sentence, each naming the item it cites. */
+.chips {
+  display: inline;
+  white-space: normal;
+}
+
+.chip {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 16px;
+  min-height: 0;
+  padding: 0 4px;
+  margin-right: 3px;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--ink2);
+  vertical-align: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+/* The evidence: one row an item, its id, what it is and its value with where Aviary read it beneath;
+   the columns are theme.css's --evidence-columns, which stack the value under the rest when narrow. */
+.evidence {
+  display: grid;
+  margin-top: 6px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: var(--evidence-columns);
+  grid-template-areas: var(--evidence-areas);
+  gap: 2px 12px;
+  padding: 7px 6px;
+  border-top: 1px solid var(--rule);
+  overflow-wrap: anywhere;
+  scroll-margin: 80px;
+}
+
+.row:first-child {
+  border-top: 0;
+}
+
+/* The row a chip points at: washed and ruled in ink, so it stands out in both themes. */
+.row[data-marked] {
+  background: var(--wash);
+  box-shadow:
+    inset 0 2px 0 var(--ink),
+    inset 0 -2px 0 var(--ink);
+}
+
+.id {
+  grid-area: id;
+  justify-self: start;
+  align-self: start;
+}
+
+.rowLabel {
+  grid-area: label;
+  color: var(--ink2);
+}
+
+.value {
+  grid-area: value;
+  min-width: 0;
+}
+
+.source {
+  display: block;
+  color: var(--ink3);
+  font-size: 12px;
+}
+
+/* "This is wrong": a quiet button, or the form it opens. */
+.wrong {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  max-width: 520px;
+  margin-top: 4px;
+}
+
+.wrong textarea {
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule2);
+  border-radius: 4px;
+  background: var(--paper);
+  resize: vertical;
+}
+
+.wrongActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.primary {
+  font-weight: var(--strong-weight);
+  background: var(--ink);
+  color: var(--sheet);
+  border-color: var(--ink);
+}
+
+.primary:hover {
+  border-color: var(--ink);
+}
+
+.primary:disabled {
+  background: var(--wash);
+  color: var(--ink3);
+  border-color: var(--rule);
+  cursor: not-allowed;
+}
+
+.sent {
+  color: var(--ink2);
+  max-width: 78ch;
+}
+
+.failure {
+  max-width: 78ch;
+}

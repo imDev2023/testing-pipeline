@@ -11,12 +11,16 @@ import styles from "./Canary.module.css";
 /** Canary's results as a page read them: the API's answer, or why it could not be read. */
 export type CanaryRead = { ok: true; value: CanaryResults } | { ok: false; message: string };
 
-/** The notice under the head of a strategy page and its market pages, until the new version has results of its own. */
-export function UpgradeNotice({ upgrade }: { upgrade: CanaryUpgrade | null }) {
+/**
+ * The notice under the head of a strategy page and its market pages, until the new version has results
+ * of its own; once the new version has its explanation (#127), it says only the tests are pending, so
+ * it never contradicts the explanation shown below it.
+ */
+export function UpgradeNotice({ upgrade, explained = false }: { upgrade: CanaryUpgrade | null; explained?: boolean }) {
   if (!upgrade) return null;
   return (
     <p className={styles.plainNotice} role="status">
-      Upgraded on {formatDayOf(new Date(upgrade.upgraded_at))}; tests and explanation for this version are pending.
+      Upgraded on {formatDayOf(new Date(upgrade.upgraded_at))}; {explained ? "tests" : "tests and explanation"} for this version are pending.
     </p>
   );
 }

@@ -7,7 +7,7 @@ import type { AppEnv } from "./index";
  * Every read counts against the reader's IP in the READS binding (PIPESCOPE-90), whose limit lives
  * in `wrangler.jsonc`; over it, the answer is a 429 that names the wait, in words and as
  * `Retry-After`, so the panel that asked can say so. Quotes, prepares and trade signatures (TRADES)
- * and reports (REPORTS) are counted by their own routes as those land.
+ * and reports (REPORTS, ./explanation) are counted by their own routes.
  */
 export const limitReads: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD") return next();
@@ -33,7 +33,8 @@ export const countAsRead: MiddlewareHandler<AppEnv> = async (c, next) => {
   return refuse(c);
 };
 
-const refuse = (c: Context<AppEnv>) => {
+/** The 429 every limit answers with, naming the wait in words and as `Retry-After`. */
+export const refuse = <E extends AppEnv>(c: Context<E>) => {
   c.header("Retry-After", String(RATE_LIMIT_PERIOD_SECONDS));
   return c.json<ApiError>(
     { error: `Too many requests from your address. Try again in ${RATE_LIMIT_PERIOD_SECONDS} seconds.`, retryAfterSeconds: RATE_LIMIT_PERIOD_SECONDS },

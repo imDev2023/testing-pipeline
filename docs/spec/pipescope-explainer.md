@@ -170,6 +170,10 @@ The owner chose presentation A, short first (2026-11-10).
 - Under every explanation, a "This is wrong" control; a report reaches the owner with the key it refers to.
 - All model text is rendered as plain text through text nodes, never as Markdown or HTML.
 - The facts panel sits beside the explanation on desktop and below it on phones.
+- As built ([#127](https://github.com/imDev2023/testing-pipeline/issues/127)): `terminal-api` serves the explanation at `GET /v1/strategies/{program}/explanation` with the label written there, so the pages and the Telegram bot say the same; a page shows it only for the key the strategy's current version has when the page is read, worked out as the `explainerKeys` job works it out, and only once the approve command wrote it, and the AI-addressed notice whenever Aviary's detector finds such text in the current metadata or the shown explanation's flag is set (`PIPESCOPE-153`).
+- As built: the fact row a chip highlights is a row of the evidence the explanation was given, listed under it in a closed disclosure, "The evidence it was given (N items)", with each item's id, label, value and where Aviary read it, author text in the author's style; a chip opens the list, marks its row, brings it into view and moves the focus to it (`PIPESCOPE-152`).
+  The live facts panel describes the chain as it is now, not as the model read it, and has no evidence ids.
+- As built: "This is wrong" opens a short form with an optional note of up to 600 characters and posts `POST /v1/explanations/{key}/reports`, against any key with an explanation, 10 a minute per address; `pnpm explainer:reports` lists each with its key, the strategy version and the note (`PIPESCOPE-154`).
 
 ## Tone and length
 

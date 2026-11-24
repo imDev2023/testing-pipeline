@@ -12,6 +12,7 @@ import type { JobName } from "./config";
 import type { ApiError } from "./contract";
 import { runDueJobs, type Job } from "./dispatcher";
 import { makeExplainerKeys } from "./explainer";
+import { explanationRoutes } from "./explanation";
 import type { Bindings } from "./env";
 import { feed, notFound } from "./feed";
 import { formRoutes } from "./forms";
@@ -53,6 +54,7 @@ app.route("/", formRoutes);
 app.route("/", imageRoutes);
 app.route("/", searchRoutes);
 app.route("/", canaryRoutes);
+app.route("/", explanationRoutes);
 
 /**
  * The live rooms (./liveRoom): a page opens a WebSocket here and the Worker hands the upgrade to the

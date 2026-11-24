@@ -260,6 +260,29 @@ async function buildEvidence(db: Db, at: Current): Promise<{ evidence: EvidenceI
 }
 
 /**
+ * The key a strategy's current version has now, as the `explainerKeys` job makes it, with whether
+ * its author text addresses AI tools by Aviary's own detector (EXPLAINER-14); null with why there is
+ * none: no version read yet, or a changed metadata link not fetched yet. A page shows an explanation
+ * only for this key (#127), so an explanation made before the version, its author text or its Canary
+ * outcomes changed is never shown for the new state.
+ */
+export async function currentExplainerKey(db: Db, program: string, metadataUri: string): Promise<{ key: string; deploySlot: bigint; addressesAi: boolean } | { key: null; deploySlot: bigint | null; addressesAi: boolean }> {
+  const at = await current(db, program, metadataUri);
+  if (at === "no-version") return { key: null, deploySlot: null, addressesAi: false };
+  if (at === "metadata-not-fetched") {
+    const [version] = await db.select({ deploySlot: programVersions.deploySlot }).from(programVersions).where(and(eq(programVersions.program, program), eq(programVersions.role, "strategy"))).orderBy(desc(programVersions.deploySlot)).limit(1);
+    return { key: null, deploySlot: version!.deploySlot, addressesAi: false };
+  }
+  const key = await explainerKey({ program, deploySlot: at.version.deploySlot, author: keyAuthorOf(at.snapshot), canary: at.outcomes });
+  return { key: key.id, deploySlot: at.version.deploySlot, addressesAi: snapshotAddressesAi(at.snapshot) };
+}
+
+/** Whether a metadata snapshot's author text addresses AI tools, by the same detector the evidence runs. */
+const snapshotAddressesAi = (snapshot: Snapshot): boolean =>
+  snapshot.status === "valid" &&
+  authorEvidence({ status: "valid", metadata: snapshot.document as StrategyMetadata, normalised: authorOf(snapshot), removed: snapshot.removed as Removed, instructions: null }).addressesAi;
+
+/**
  * Makes the key of each strategy's current version (of `programs`, or of every strategy), and for
  * each key not recorded yet builds its evidence and records it pending. Says which strategies got a
  * new key, and which wait for their metadata's new link to be fetched.

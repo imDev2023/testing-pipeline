@@ -21,8 +21,7 @@
   grid-template-areas: var(--market-top-areas);
 }
 
-/* The lower band: the strategy's forms (and a product's panel, and the explanation once #127 lands) on
-   the left, the facts panel on the right; one column at the width theme.css names, left side first. */
+/* The lower band: a product's panel, the explanation and the strategy's forms on the left, the facts panel on the right; one column at the width theme.css names, left side first. */
 .low {
   display: grid;
   gap: 28px 24px;

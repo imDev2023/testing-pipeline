@@ -2650,6 +2650,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125)
 
+### PIPESCOPE-152: Where an evidence chip points
+
+- Question: Which fact row does an explanation's evidence chip highlight?
+- Answer: A row of the evidence the explanation was given, listed under it in a closed disclosure, "The evidence it was given (N items)", each row its id, what it is, its value as the model read it and where Aviary read it; a chip opens the list, marks that row, brings it into view and moves the focus to it.
+- Alternatives: A row of the live facts panel, which describes the chain as it is now rather than as the model read it, gives its rows no evidence ids, and has no rows for Pipeline's rules, Canary's roll-up or the author text.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Presentation](spec/pipescope-explainer.md#presentation)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-153: Which explanation a page shows
+
+- Question: Which explanation does a strategy page or a market page show, and when does the notice about text addressed to AI tools show?
+- Answer: The explanation of the key the strategy's current version has at the moment the page is read, worked out as the `explainerKeys` job works it out, once the approve command wrote it, and then the upgrade notice says only "tests for this version are pending"; otherwise "No explanation for this version yet.", and the notice about text addressed to AI tools whenever Aviary's detector finds such text in the current metadata or the shown explanation's own flag is set.
+- Alternatives: The newest explanation recorded for the strategy, which would keep showing one written before its author text or its Canary outcomes changed.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Presentation](spec/pipescope-explainer.md#presentation)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-154: A "This is wrong" report
+
+- Question: What does a "This is wrong" report carry, and what can be reported?
+- Answer: A report is `POST /v1/explanations/{key}/reports` against any key that has an explanation, with an optional note of up to 600 characters (`REPORT_NOTE_MAX` in the API's contract), counted against the 10 reports a minute per address of `PIPESCOPE-90`; `pnpm explainer:reports` lists it with its key, the strategy version and the note.
+- Alternatives: A report with no note; reports only against the version's current key, which would refuse a reader whose page was open while the key changed.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Presentation](spec/pipescope-explainer.md#presentation)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-155: How the explanation is set beside the facts
+
+- Question: How is the explanation laid out beside the facts, and how is a point marked by its basis?
+- Answer: On the strategy page the explanation sits beside the facts above 1080 px and above them at 1080 px and narrower, as on the market page; a point stated by the evidence has a solid bullet, an inferred one a hollow bullet and the word "inferred", and an author point a bullet and a sentence in the author's colour, upright since only Literata's upright face is served, with "the author's words" beside it, under a key to the three bullets.
+- Alternatives: The facts above the explanation on phones; author points in italic, which the browser would have to fake.
+- Specified in: [`docs/spec/pipescope-screens.md`, Strategy page](spec/pipescope-screens.md#strategy-page)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
