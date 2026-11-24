@@ -2503,7 +2503,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-137: Wrapped SOL on the wallet page
 
 - Question: How does the wallet page show the wrapped SOL a wallet holds?
-- Answer: Apart from the tokens it lists, as the offer to unwrap naming the amount, which closes every wrapped-SOL account the wallet owns into it in one transaction, simulated first and signed in the wallet; the wallet's SOL stands in the page's head.
+- Answer: Apart from the tokens it lists, as the offer to unwrap naming the amount, or the empty accounts whose rent comes back, which closes the wrapped-SOL accounts the wallet owns into it, as many as one transaction holds and the rest offered again after, simulated first and signed in the wallet; the wallet's SOL stands in the page's head.
 - Alternatives: Listing wrapped SOL among the tokens that trade on Pipeline, beside the offer, which would show the same SOL twice; closing only the wallet's associated wrapped-SOL account, leaving any other.
 - Specified in: [`docs/spec/pipescope-screens.md`, Wallet page](spec/pipescope-screens.md#wallet-page)
 - Changes by: spec only

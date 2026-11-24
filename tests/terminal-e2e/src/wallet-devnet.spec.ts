@@ -2,13 +2,15 @@
 // (~/.config/testing-pipeline/devnet/wallet.json). The swaps the page lists, every page of them, are
 // exactly the hosted API's `/v1/traders/{address}/trades` for that wallet, Pipeline's own record
 // (PIPESCOPE-93, a test oracle); then its wrapped SOL is unwrapped from the page, signed with the test
-// wallet, and the wallet holds no wrapped SOL after. It sends a real devnet transaction, so its project
-// exists only when asked for (`pnpm --filter terminal-e2e wallet:devnet`, E2E_WALLET_DEVNET), never in
-// CI; the signature goes to test-results/unwrap.json for the PR.
+// wallet, and the wallet holds no wrapped SOL after; then the same amount is wrapped back, since other
+// devnet tests and demos trade from that account (tests/devnet's swap on the demo market). It sends
+// real devnet transactions, so its project exists only when asked for (`pnpm --filter terminal-e2e
+// wallet:devnet`, E2E_WALLET_DEVNET), never in CI; the signatures go to test-results/unwrap.json.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { address, createSolanaRpc } from "@solana/kit";
 import { Holdings, TraderTradesPage, type Trade } from "terminal-api/contract";
+import { wrapSol } from "../demo/wrap-sol.ts";
 import { screenshot } from "./screenshot";
 import { API } from "./target";
 import { connectTestWallet, installTestWallet, projectWalletSigner } from "./wallet";
@@ -115,8 +117,10 @@ test.describe("the project's devnet wallet on the wallet page", () => {
     // On chain the wallet holds no wrapped SOL any more.
     const { value: left } = await rpc.getTokenAccountsByOwner(address(signer.address), { mint: address(WSOL) }, { encoding: "jsonParsed", commitment: "confirmed" }).send();
     expect(left).toHaveLength(0);
+    // Put back what was unwrapped, as one associated account, for the devnet tests and demos that trade from it.
+    const restored = await wrapSol(process.env.RPC_URL ?? "", signer, BigInt(before.wrapped_sol!.amount));
     mkdirSync(`${import.meta.dirname}/../test-results`, { recursive: true });
-    writeFileSync(`${import.meta.dirname}/../test-results/unwrap.json`, `${JSON.stringify({ wallet: signer.address, wrapped: before.wrapped_sol!.amount, accounts: before.wrapped_sol!.accounts, signature }, null, 2)}\n`);
-    console.log(JSON.stringify({ unwrap: signature }));
+    writeFileSync(`${import.meta.dirname}/../test-results/unwrap.json`, `${JSON.stringify({ wallet: signer.address, wrapped: before.wrapped_sol!.amount, accounts: before.wrapped_sol!.accounts, signature, restored: restored.signature }, null, 2)}\n`);
+    console.log(JSON.stringify({ unwrap: signature, restored: restored.signature }));
   });
 });

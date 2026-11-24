@@ -34,7 +34,19 @@ type Step =
   | { status: "sent"; signature: string }
   | { status: "unsettled"; signature: string; message: string; failure: Failure | null };
 
-export function Unwrap({ trader, wrapped, onConfirmed }: { trader: string; wrapped: string; onConfirmed: (done: { signature: string; slot: number }) => void }) {
+type UnwrapProps = {
+  trader: string;
+  /** What the wallet's wrapped-SOL accounts hold, and how many there are. */
+  wrapped: string;
+  accounts: number;
+  /** An unwrap is being built: any earlier one's confirmation is no longer the news. */
+  onStart: () => void;
+  onConfirmed: (done: { signature: string; slot: number }) => void;
+  /** The balances are read again, as after a confirmation that could not be read back. */
+  onReload: () => void;
+};
+
+export function Unwrap({ trader, wrapped, accounts, onStart, onConfirmed, onReload }: UnwrapProps) {
   const { account, chain } = useWallet();
   const [step, setStep] = useState<Step>({ status: "offer" });
   // Each build is one generation: an answer for an earlier one (the trader went back meanwhile) is thrown away.
@@ -43,6 +55,7 @@ export function Unwrap({ trader, wrapped, onConfirmed }: { trader: string; wrapp
   const build = useCallback(
     async (rebuilt: boolean) => {
       const mine = ++generation.current;
+      onStart();
       setStep({ status: "building", rebuilt });
       try {
         const prepared = await postToApi("/v1/unwrap/prepare", { trader }, PreparedUnwrap);
@@ -52,7 +65,7 @@ export function Unwrap({ trader, wrapped, onConfirmed }: { trader: string; wrapp
         if (mine === generation.current) setStep({ status: "error", message: failureOf(e) });
       }
     },
-    [trader],
+    [trader, onStart],
   );
   const back = () => {
     generation.current++;
@@ -78,10 +91,7 @@ export function Unwrap({ trader, wrapped, onConfirmed }: { trader: string; wrapp
       </h2>
       {step.status === "offer" && (
         <>
-          <p>
-            This wallet holds {sol(wrapped)} as wrapped SOL, the form tax payouts arrive in. Unwrapping closes its wrapped SOL account and gives it back as SOL, with the
-            account&apos;s rent.
-          </p>
+          <p>{offerText(wrapped, accounts)}</p>
           <div>
             <button type="button" className={review.primary} onClick={() => void build(false)}>
               Unwrap
@@ -162,12 +172,35 @@ export function Unwrap({ trader, wrapped, onConfirmed }: { trader: string; wrapp
                   Transaction <code>{shortAddress(step.signature)}</code> on the explorer
                 </a>
               </p>
+              {step.status === "unsettled" && (
+                <div className={review.reviewActions}>
+                  {/* Whether it landed or not, the balances read again say what the wallet holds now. */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      back();
+                      onReload();
+                    }}
+                  >
+                    Back
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
       )}
     </section>
   );
+}
+
+/** The offer: the wrapped SOL the wallet holds, or its empty accounts, and what unwrapping gives back. */
+function offerText(wrapped: string, accounts: number): string {
+  const them = accounts === 1 ? "its wrapped SOL account" : `its ${accounts} wrapped SOL accounts`;
+  if (BigInt(wrapped) === 0n) {
+    return `This wallet has ${accounts === 1 ? "an empty wrapped SOL account" : `${accounts} empty wrapped SOL accounts`}. Unwrapping closes ${accounts === 1 ? "it" : "them"} and gives back ${accounts === 1 ? "its" : "their"} rent as SOL.`;
+  }
+  return `This wallet holds ${sol(wrapped)} as wrapped SOL, the form tax payouts arrive in. Unwrapping closes ${them} and gives it back as SOL, with ${accounts === 1 ? "the account's" : "each account's"} rent.`;
 }
 
 /** What the simulation used and what signing would change in the wallet. */
@@ -178,6 +211,11 @@ function Changes({ prepared }: { prepared: PreparedUnwrap }) {
       <p>
         The simulation went through.{sim.compute_units === null ? "" : ` It used ${formatInteger(sim.compute_units)} compute units.`} This is what signing would change in your wallet:
       </p>
+      {prepared.left > 0 && (
+        <p className={review.note}>
+          One transaction closes {prepared.accounts.length} of this wallet&apos;s wrapped SOL accounts; the other {prepared.left} are offered again once it has.
+        </p>
+      )}
       <dl className={review.rows}>
         <div>
           <dt>Wrapped SOL unwrapped</dt>

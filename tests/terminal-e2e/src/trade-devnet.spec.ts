@@ -130,8 +130,14 @@ test.describe("swaps through the trade box on devnet", () => {
   test("a market of three mints traded between each pair, in all six directions (#122)", async ({ page }) => {
     test.setTimeout(600_000);
     await installTestWallet(page, await testTraderSigner());
-    await page.goto(`/markets/${THREE_MINT_MARKET}`);
+    // The market's QUOTE is Pipeline's example token: bought first with 0.05 SOL on the example market, through the trade box too.
+    await page.goto(`/markets/${CP_MARKET}`);
     await connectTestWallet(page, page.getByRole("banner").getByRole("button", { name: "Connect wallet" }));
+    await box(page).getByLabel("You pay, fees included").fill("0.05");
+    await expect(box(page).getByRole("button", { name: "Review swap" })).toBeEnabled();
+    const quoteBought = await swap(page, "three-buy-quote");
+    await page.goto(`/markets/${THREE_MINT_MARKET}`);
+    await expect(page.getByRole("banner").getByRole("button", { name: /E69P\.\.\.JnAW/ })).toBeVisible();
     const done: { from: string; to: string; signature: string; seconds: number; trade: Trade }[] = [];
     for (const [i, { from, to, amount }] of THREE_MINT_PAIRS.entries()) {
       if (i > 0) await box(page).getByRole("button", { name: "Make another swap" }).click();
@@ -144,7 +150,7 @@ test.describe("swaps through the trade box on devnet", () => {
       expect(trade).toMatchObject({ input_mint: THREE_MINTS[from], output_mint: THREE_MINTS[to], integrator_fee: "0" });
       done.push({ from, to, ...traded, trade });
     }
-    swaps.three_mints = { market: THREE_MINT_MARKET, trader: TEST_TRADER, swaps: done };
+    swaps.three_mints = { market: THREE_MINT_MARKET, trader: TEST_TRADER, quote_bought: quoteBought, swaps: done };
     save();
     console.log(JSON.stringify(done.map((d) => ({ [`${d.from}->${d.to}`]: d.signature, seconds: d.seconds }))));
   });

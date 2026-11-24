@@ -63,6 +63,7 @@ function Connected({ address, onDisconnect }: { address: string; onDisconnect: (
     },
     [retry],
   );
+  const clearUnwrapped = useCallback(() => setUnwrapped(null), []);
   const held = holdings.state.status === "loaded" ? holdings.state.data : null;
 
   return (
@@ -82,8 +83,7 @@ function Connected({ address, onDisconnect }: { address: string; onDisconnect: (
         </div>
       </section>
 
-      {held?.wrapped_sol && <Unwrap trader={address} wrapped={held.wrapped_sol.amount} onConfirmed={confirmed} />}
-      {unwrapped && !held?.wrapped_sol && (
+      {unwrapped && (
         <section className={styles.panel} aria-label="Unwrapped" role="status">
           <p>Your wrapped SOL is SOL again: confirmed in slot {formatInteger(unwrapped.slot)}.</p>
           <p>
@@ -92,6 +92,9 @@ function Connected({ address, onDisconnect }: { address: string; onDisconnect: (
             </a>
           </p>
         </section>
+      )}
+      {held?.wrapped_sol && (
+        <Unwrap trader={address} wrapped={held.wrapped_sol.amount} accounts={held.wrapped_sol.accounts.length} onStart={clearUnwrapped} onConfirmed={confirmed} onReload={retry} />
       )}
 
       <PanelFrame title="What you hold that trades on Pipeline" what="what this wallet holds" state={holdings.state} retry={holdings.retry}>

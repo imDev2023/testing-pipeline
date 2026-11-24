@@ -105,7 +105,8 @@ export function tradingRoutes(app: Hono<AppEnv>) {
     };
     try {
       const [known] = market ? await withDb((db) => db.select({ strategy: markets.strategyProgram }).from(markets).where(eq(markets.address, market))) : [];
-      const raw = await awaitTrade(c.env.RPC_URL, signature, { strategy: known?.strategy ?? null });
+      const hooks = async () => (market ? (await readTradeMarket(createSolanaRpc(c.env.RPC_URL), market)).mints.flatMap((m) => (m.transferHook ? [m.transferHook] : [])) : []);
+      const raw = await awaitTrade(c.env.RPC_URL, signature, { strategy: known?.strategy ?? null, hooks });
       // The indexer writes it with its place in its block and tells the market's room.
       c.executionCtx.waitUntil(indexer(c.env).fastPath([signature]).catch((e: unknown) => console.error(`handing ${signature} to the indexer failed; reconciliation will index it`, e)));
       return c.json(TradeReport.parse({ signature, slot: raw.slot, trades: await withDb((db) => tradeViews(db, provisionalTrades(raw))) }));

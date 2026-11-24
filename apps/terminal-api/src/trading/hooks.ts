@@ -17,6 +17,7 @@ import { getBase64Encoder, getAddressDecoder, mergeRoles, type AccountMeta, type
 import { resolveExtraAccountMetasForExecute } from "@solana-program/token-2022";
 import type { FeeSide } from "@pipeline-sol/sdk";
 import type { TradeMint } from "./market";
+import { Refused } from "./quote";
 
 /** One transfer of a mint: from `source` to `destination`, signed for by `owner`, of `amount` base units. */
 export type Transfer = { source: Address; destination: Address; owner: Address; amount: bigint };
@@ -37,18 +38,18 @@ function merged(existing: readonly AccountMeta[], more: readonly AccountMeta[]):
  * program and validation account, each once; none for a mint with no transfer hook program.
  */
 export async function hookAccounts(rpc: Rpc<SolanaRpcApi>, mint: TradeMint, transfers: readonly Transfer[]): Promise<AccountMeta[]> {
-  if (!mint.transferHook) return [];
+  const hook = mint.transferHook;
+  if (!hook) return [];
   let accounts: AccountMeta[] = [];
   for (const t of transfers) {
-    const resolved = await resolveExtraAccountMetasForExecute({
-      rpc,
-      transferHookProgramAddress: mint.transferHook,
-      source: t.source,
-      mint: mint.address,
-      destination: t.destination,
-      owner: t.owner,
-      amount: t.amount,
-    });
+    let resolved: AccountMeta[];
+    try {
+      resolved = await resolveExtraAccountMetasForExecute({ rpc, transferHookProgramAddress: hook, source: t.source, mint: mint.address, destination: t.destination, owner: t.owner, amount: t.amount });
+    } catch (e) {
+      // A list naming an account that does not exist yet, or data the hook's seeds cannot read: told as the hook's, never a bare failure.
+      const raw = (e instanceof Error ? e.message : String(e)).replace(/https?:\/\/\S+/g, "the RPC");
+      throw new Refused({ class: "hook_refused", sentence: `The token's transfer hook needs accounts Aviary could not work out, so there is no swap to build: ${raw.replace(/\.$/, "")}.`, name: null, number: null, message: null, program: hook, raw });
+    }
     accounts = merged(accounts, resolved);
   }
   return accounts;
@@ -60,7 +61,10 @@ const OWNER_OFFSET = 32;
 /** Who signs for a token account's transfers: its owner, read from the account. */
 async function ownerOf(rpc: Rpc<SolanaRpcApi>, tokenAccount: Address): Promise<Address> {
   const { value } = await rpc.getAccountInfo(tokenAccount, { encoding: "base64", commitment: "confirmed" }).send();
-  if (!value) throw new Error(`the market's vault ${tokenAccount} could not be read`);
+  if (!value) {
+    const sentence = `The market's vault ${tokenAccount} could not be read, so the accounts its token's transfer hook needs cannot be worked out.`;
+    throw new Refused({ class: "unavailable", sentence, name: null, number: null, message: null, program: null, raw: sentence });
+  }
   const bytes = new Uint8Array(getBase64Encoder().encode(value.data[0]));
   return getAddressDecoder().decode(bytes.subarray(OWNER_OFFSET, OWNER_OFFSET + 32));
 }

@@ -9,6 +9,7 @@ import { TOKEN_2022_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { AccountRole, address, createSolanaRpc, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, type Address } from "@solana/kit";
 import { afterEach, describe, expect, it } from "vitest";
 import { hookAccounts, swapHookAccounts } from "../src/trading/hooks";
+import { Refused } from "../src/trading/quote";
 import type { TradeMint } from "../src/trading/market";
 
 const HOOK = at(1);
@@ -191,5 +192,24 @@ describe("a swap's hook accounts, where the router and the strategy look for the
     const { rpc, asked } = await chain({});
     expect(await swapHookAccounts(rpc, { ...base, inputMint: plain, outputMint: { ...plain, address: MINT }, inputVault: VAULT, outputVault: POOL, feeSide: "input" })).toEqual({ input: [], output: [] });
     expect(asked).toEqual([]);
+  });
+
+  it("refuses, decoded and naming the hook, a swap whose hook's accounts cannot be worked out, rather than failing the request", async () => {
+    const list = await validationPda();
+    // The hook's list derives an account from the data of the trader's output account, which this swap is still to create.
+    const fromData = pda([...literal("held"), 4, 2, 32, 32]);
+    const { rpc } = await chain({ [list]: { owner: HOOK, data: validation([fromData]) }, [VAULT]: { owner: TOKEN_2022_PROGRAM_ADDRESS, data: tokenAccount(POOL) } });
+    const refused = await swapHookAccounts(rpc, { ...base, inputMint: plain, outputMint: hooked, inputVault: at(13), outputVault: VAULT, feeSide: "input" }).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(Refused);
+    expect((refused as Refused).failure).toMatchObject({ class: "hook_refused", program: HOOK });
+    expect((refused as Refused).failure.sentence).toMatch(/^The token's transfer hook needs accounts Aviary could not work out, so there is no swap to build: /);
+  });
+
+  it("refuses a buy whose vault cannot be read, naming the vault", async () => {
+    const list = await validationPda();
+    const { rpc } = await chain({ [list]: { owner: HOOK, data: validation([]) } });
+    const refused = await swapHookAccounts(rpc, { ...base, inputMint: plain, outputMint: hooked, inputVault: at(13), outputVault: VAULT, feeSide: "input" }).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(Refused);
+    expect((refused as Refused).failure.sentence).toContain(VAULT);
   });
 });

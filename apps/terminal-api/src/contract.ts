@@ -666,14 +666,16 @@ export const PrepareUnwrapRequest = z.object({ trader: Address }).strict();
 export type PrepareUnwrapRequest = z.infer<typeof PrepareUnwrapRequest>;
 
 /**
- * The unwrap prepared: the wrapped-SOL accounts it closes and what they hold, the unsigned transaction
- * only when its simulation passed, and the simulation: the wallet's SOL before and after, the network
- * fee, and the SOL that comes back (`returned`, null when it failed), the wrapped SOL and its rent.
+ * The unwrap prepared: the wrapped-SOL accounts it closes, as many as one transaction holds, what they
+ * hold, and how many are `left` for another; the unsigned transaction only when its simulation passed;
+ * and the simulation: the network fee and the SOL that comes back (`returned`, every lamport the closed
+ * accounts held, the wrapped SOL and their rent; null when it failed).
  */
 export const PreparedUnwrap = z.object({
   trader: Address,
   accounts: z.array(Address),
   wrapped: Amount,
+  left: z.number().int(),
   transaction: z.string().nullable(),
   simulation: z.object({
     ok: z.boolean(),
@@ -681,8 +683,6 @@ export const PreparedUnwrap = z.object({
     logs: z.array(z.string()),
     compute_units: z.number().int().nullable(),
     network_fee: Amount,
-    sol_before: Amount,
-    sol_after: Amount.nullable(),
     returned: Amount.nullable(),
   }),
 });

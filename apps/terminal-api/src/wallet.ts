@@ -5,8 +5,8 @@
 // - Holdings: the wallet's SOL and every token account it owns under both token programs, read through
 //   RPC; each token a Pipeline market trades is listed with those markets, from Postgres, and the rest
 //   are only counted. Wrapped SOL is not listed with them: the page offers to unwrap it (PIPESCOPE-137).
-// - Unwrap: every wrapped-SOL account the wallet owns closed into it, in one transaction the wallet
-//   pays for, simulated exactly as it is returned, as a swap is (docs/spec/pipescope-architecture.md,
+// - Unwrap: the wrapped-SOL accounts the wallet owns closed into it, as many as one transaction the
+//   wallet pays for holds, simulated exactly as it is returned, as a swap is (docs/spec/pipescope-architecture.md,
 //   Simulation before every signature); the wallet signs it, and nothing here signs anything.
 // - Confirmations: the page posts the signature its wallet sent, and the API waits on it as the fast path does.
 import { NATIVE_MINT_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
@@ -23,7 +23,7 @@ import { limitTrades } from "./rateLimits";
 import { dbOf, requestDb, type DbEnv } from "./requestDb";
 import { decodeFailure } from "./trading/failure";
 import { awaitConfirmation } from "./trading/fastPath";
-import { fitTransaction } from "./trading/prepare";
+import { fitTransaction, TooLarge } from "./trading/prepare";
 import { COMMITMENT, Refused } from "./trading/quote";
 import { mintNames } from "./views";
 
@@ -107,7 +107,8 @@ walletRoutes.get("/v1/traders/:trader/holdings", async (c) => {
     Holdings.parse({
       trader,
       sol: String(sol),
-      wrapped_sol: wrapped.length && wrappedAmount > 0n ? { amount: String(wrappedAmount), accounts: wrapped.map((o) => o.account) } : null,
+      // Empty wrapped-SOL accounts are offered too: closing them gives back their rent.
+      wrapped_sol: wrapped.length ? { amount: String(wrappedAmount), accounts: wrapped.map((o) => o.account) } : null,
       holdings: listed.map((mint) => ({ ...nameOf(mint), decimals: held.get(mint)!.decimals, amount: String(held.get(mint)!.amount), markets: trading.filter((t) => t.mint === mint).map((t) => t.market) })),
       markets: pairs,
       mints: names,
@@ -116,19 +117,32 @@ walletRoutes.get("/v1/traders/:trader/holdings", async (c) => {
   );
 });
 
-/** Closes every wrapped-SOL account `trader` owns into it, in one transaction it pays for, and simulates exactly that. */
+/**
+ * Closes the wrapped-SOL accounts `trader` owns into it, as many as one transaction it pays for holds
+ * (the rest are `left` for another), and simulates exactly that transaction.
+ */
 export async function prepareUnwrap(rpc: Rpc<SolanaRpcApi>, trader: Address): Promise<PreparedUnwrap> {
-  const wrapped = await tokenAccounts(rpc, trader, { mint: NATIVE_MINT_ADDRESS });
-  if (!wrapped.length) throw new HTTPException(404, { message: "This wallet holds no wrapped SOL to unwrap." });
+  const owned = await tokenAccounts(rpc, trader, { mint: NATIVE_MINT_ADDRESS });
+  if (!owned.length) throw new HTTPException(404, { message: "This wallet holds no wrapped SOL to unwrap." });
   const signer = createNoopSigner(trader);
-  const instructions = wrapped.map((o) => getCloseAccountInstruction({ account: o.account, destination: trader, owner: signer }));
-  const [{ value: lifetime }, { value: before }] = await Promise.all([rpc.getLatestBlockhash({ commitment: COMMITMENT }).send(), rpc.getBalance(trader, { commitment: COMMITMENT }).send()]);
-  const { wire, messageBytes } = fitTransaction(instructions, trader, lifetime, null);
-  const watched = [trader, ...wrapped.map((o) => o.account)];
+  const { value: lifetime } = await rpc.getLatestBlockhash({ commitment: COMMITMENT }).send();
+  // The most accounts one transaction closes: one fewer each time it does not fit.
+  let wrapped = owned;
+  let fitted: ReturnType<typeof fitTransaction> | null = null;
+  while (!fitted && wrapped.length) {
+    try {
+      fitted = fitTransaction(wrapped.map((o) => getCloseAccountInstruction({ account: o.account, destination: trader, owner: signer })), trader, lifetime, null);
+    } catch (e) {
+      if (!(e instanceof TooLarge)) throw e;
+      wrapped = wrapped.slice(0, -1);
+    }
+  }
+  if (!fitted) throw new Refused({ class: "too_large", sentence: "Not even one wrapped-SOL account can be closed in a transaction.", name: null, number: null, message: null, program: null, raw: "too large" });
+  const { wire, messageBytes } = fitted;
   let answers;
   try {
     answers = await Promise.all([
-      rpc.simulateTransaction(wire, { encoding: "base64", sigVerify: false, replaceRecentBlockhash: true, commitment: COMMITMENT, accounts: { addresses: watched, encoding: "base64" } }).send(),
+      rpc.simulateTransaction(wire, { encoding: "base64", sigVerify: false, replaceRecentBlockhash: true, commitment: COMMITMENT, accounts: { addresses: [trader, ...wrapped.map((o) => o.account)], encoding: "base64" } }).send(),
       rpc.getFeeForMessage(getBase64Decoder().decode(messageBytes) as TransactionMessageBytesBase64, { commitment: COMMITMENT }).send(),
     ]);
   } catch (e) {
@@ -136,25 +150,22 @@ export async function prepareUnwrap(rpc: Rpc<SolanaRpcApi>, trader: Address): Pr
     throw new Refused({ class: "unavailable", sentence: "The unwrap could not be simulated, so there is nothing to sign. Try again in a moment.", name: null, number: null, message: null, program: null, raw });
   }
   const [{ value }, fee] = answers;
-  const networkFee = fee.value ?? 0n;
   const logs = [...(value.logs ?? [])];
-  const units = value.unitsConsumed === undefined ? null : Number(value.unitsConsumed);
-  const after = value.err === null ? (value.accounts?.[0]?.lamports ?? null) : null;
+  const ok = value.err === null;
   return {
     trader,
     accounts: wrapped.map((o) => o.account),
     wrapped: String(wrapped.reduce((n, o) => n + o.amount, 0n)),
-    transaction: value.err === null ? wire : null,
+    left: owned.length - wrapped.length,
+    transaction: ok ? wire : null,
     simulation: {
-      ok: value.err === null,
-      failure: value.err === null ? null : decodeFailure(value.err, logs, { strategy: "", act: "transaction" }),
+      ok,
+      failure: ok ? null : decodeFailure(value.err, logs, { strategy: "", act: "transaction" }),
       logs,
-      compute_units: units,
-      network_fee: String(networkFee),
-      sol_before: String(before),
-      sol_after: after === null ? null : String(after),
-      // What comes back: the wrapped SOL and each account's rent, measured as the change in the wallet's SOL before the fee.
-      returned: after === null ? null : String(after - before + networkFee),
+      compute_units: value.unitsConsumed === undefined ? null : Number(value.unitsConsumed),
+      network_fee: String(fee.value ?? 0n),
+      // Closing an account hands its every lamport to the wallet: the wrapped SOL and its rent.
+      returned: ok ? String(wrapped.reduce((n, o) => n + o.lamports, 0n)) : null,
     },
   };
 }

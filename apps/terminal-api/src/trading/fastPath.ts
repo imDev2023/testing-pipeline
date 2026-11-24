@@ -17,12 +17,12 @@ type Status = { slot: number; err: unknown; confirmationStatus: "processed" | "c
 type RawWithLogs = RawTransaction & { meta: (RawTransaction["meta"] & { logMessages?: string[] | null }) | null };
 
 /** A transaction the RPC serves late, asked for again for a while (devnet can answer null just after a confirmed status). */
-async function readBack(rpcUrl: string, signature: string): Promise<RawWithLogs> {
+async function readBack(rpcUrl: string, signature: string, late = "The swap confirmed, but the chain has not served it yet. It joins Trades as soon as Aviary reads it."): Promise<RawWithLogs> {
   const until = Date.now() + RPC_WAITS.transaction.waitMs;
   for (;;) {
     const raw = await rpcCall<RawWithLogs | null>(rpcUrl, "getTransaction", [signature, { encoding: "json", commitment: "confirmed", maxSupportedTransactionVersion: 0 }]);
     if (raw) return raw;
-    if (Date.now() >= until) throw new HTTPException(504, { message: "The swap confirmed, but the chain has not served it yet. It joins Trades as soon as Aviary reads it." });
+    if (Date.now() >= until) throw new HTTPException(504, { message: late });
     await sleep(RPC_WAITS.transaction.everyMs);
   }
 }
@@ -53,12 +53,18 @@ function failedOnChain(err: unknown, raw: RawWithLogs, prefix: string, context: 
 export async function awaitTrade(
   rpcUrl: string,
   signature: string,
-  { pollMs = FAST_PATH_CONFIRMATION_POLL_MS, waitMs = FAST_PATH_WAIT_MS, strategy = null }: { pollMs?: number; waitMs?: number; strategy?: string | null } = {},
+  {
+    pollMs = FAST_PATH_CONFIRMATION_POLL_MS,
+    waitMs = FAST_PATH_WAIT_MS,
+    strategy = null,
+    hooks = async () => [],
+  }: { pollMs?: number; waitMs?: number; strategy?: string | null; hooks?: () => Promise<readonly string[]> } = {},
 ): Promise<RawWithLogs> {
   const status = await confirmedStatus(rpcUrl, signature, pollMs, waitMs);
   if (!status) throw new HTTPException(504, { message: "The swap has not confirmed yet. If it lands, it joins Trades as soon as Aviary reads it." });
   const raw = await readBack(rpcUrl, signature);
-  if (status.err !== null || raw.meta?.err) throw failedOnChain(status.err ?? raw.meta?.err, raw, "The swap failed on chain:", { strategy: strategy ?? "" });
+  // The mints' transfer hooks are read only for a swap that failed, so a refusal by one is named as the hook's.
+  if (status.err !== null || raw.meta?.err) throw failedOnChain(status.err ?? raw.meta?.err, raw, "The swap failed on chain:", { strategy: strategy ?? "", hooks: await hooks().catch(() => []) });
   return raw;
 }
 
@@ -73,7 +79,10 @@ export async function awaitConfirmation(
 ): Promise<{ signature: string; slot: number }> {
   const status = await confirmedStatus(rpcUrl, signature, pollMs, waitMs);
   if (!status) throw new HTTPException(504, { message: "It has not confirmed yet. If it lands, this page shows it once reloaded." });
-  if (status.err !== null) throw failedOnChain(status.err, await readBack(rpcUrl, signature), "It failed on chain:", { strategy: "", act: "transaction" });
+  if (status.err !== null) {
+    const raw = await readBack(rpcUrl, signature, "It failed on chain, and the chain has not served it yet to say why. Its explorer link shows it.");
+    throw failedOnChain(status.err, raw, "It failed on chain:", { strategy: "", act: "transaction" });
+  }
   return { signature, slot: status.slot };
 }
 

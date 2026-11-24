@@ -366,7 +366,7 @@ From top to bottom, with the explanation beside the facts at desktop width.
 - **"Your swaps through Pipeline"**: when, the market, paid, received, the fees and a link to the transaction.
   Beneath: "Every swap this wallet made through Pipeline's router, on Aviary or anywhere else. Trades that bypass the router leave no swap event and are not here."
 - As built ([#122](https://github.com/imDev2023/testing-pipeline/issues/122)):
-  - wrapped SOL is not listed among the tokens: the offer names it, "Wrapped SOL" its panel, and "Unwrap" closes every wrapped-SOL account the wallet owns into it in one transaction (`PIPESCOPE-137`);
+  - wrapped SOL is not listed among the tokens: the offer names it, "Wrapped SOL" its panel, and "Unwrap" closes the wrapped-SOL accounts the wallet owns into it, empty ones too for their rent, as many as one transaction holds, the rest offered again after (`PIPESCOPE-137`);
   - the tokens listed are those the wallet holds a non-zero balance of that a market Aviary has indexed trades, ordered by the name shown, each with its markets as pairs, base first, newest first; tokens no market trades are counted, empty token accounts not at all (`PIPESCOPE-138`);
   - each swap's market is its pair, base first, linked; its fees are Pipeline's in the fee mint and, when charged, the integrator's in the input, named "Aviary" when it is Aviary's fee wallet; 40 swaps show, with "Show earlier swaps" beneath.
 

@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
-import { getBase64Encoder, getCompiledTransactionMessageDecoder, getTransactionDecoder } from "@solana/kit";
+import { getAddressDecoder, getBase64Encoder, getCompiledTransactionMessageDecoder, getTransactionDecoder } from "@solana/kit";
 import { eq } from "drizzle-orm";
 import { createDb, marketMints, mints } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
@@ -120,6 +120,14 @@ describe("GET /v1/traders/{trader}/holdings", () => {
     });
   });
 
+  it("offers to unwrap wrapped-SOL accounts that hold nothing, whose rent comes back", async () => {
+    const { url } = await rpc({
+      getBalance: () => ({ context: { slot: 1 }, value: 5 }),
+      getTokenAccountsByOwner: ownedBy({ [TOKEN_PROGRAM_ADDRESS]: [parsed(WRAPPED_ACCOUNT, WSOL, 0n, 9, TOKEN_PROGRAM_ADDRESS)] }),
+    });
+    expect(Holdings.parse((await call(url, `/v1/traders/${WALLET}/holdings`)).body).wrapped_sol).toEqual({ amount: "0", accounts: [WRAPPED_ACCOUNT] });
+  });
+
   it("answers a wallet that holds nothing with no wrapped SOL, no holdings and nothing unlisted", async () => {
     const { url } = await rpc({ getBalance: () => ({ context: { slot: 1 }, value: 0 }), getTokenAccountsByOwner: ownedBy({}) });
     expect(Holdings.parse((await call(url, `/v1/traders/${WALLET}/holdings`)).body)).toEqual({ trader: WALLET, sol: "0", wrapped_sol: null, holdings: [], markets: [], mints: [], not_listed: 0 });
@@ -158,7 +166,8 @@ describe("POST /v1/unwrap/prepare", () => {
       trader: WALLET,
       accounts: [WRAPPED_ACCOUNT],
       wrapped: "40000000",
-      simulation: { ok: true, failure: null, compute_units: 2_950, network_fee: "5000", sol_before: String(before), sol_after: String(before + 40_000_000n + RENT - 5000n), returned: String(40_000_000n + RENT) },
+      left: 0,
+      simulation: { ok: true, failure: null, compute_units: 2_950, network_fee: "5000", returned: String(40_000_000n + RENT) },
     });
     // What was simulated is what is returned to sign: the wallet pays, and one instruction closes the account into it.
     const simulated = asked.find((a) => a.method === "simulateTransaction")!;
@@ -183,6 +192,22 @@ describe("POST /v1/unwrap/prepare", () => {
     const prepared = PreparedUnwrap.parse((await call(url, "/v1/unwrap/prepare", { method: "POST", body: JSON.stringify({ trader: WALLET }) })).body);
     expect(prepared.transaction).toBeNull();
     expect(prepared.simulation).toMatchObject({ ok: false, failure: { class: "too_little", sentence: "Your wallet holds too little for this transaction: it has never held SOL, so it cannot pay the network fee." }, returned: null });
+  });
+
+  it("closes as many wrapped-SOL accounts as one transaction holds, and says how many are left for another", async () => {
+    const many = Array.from({ length: 40 }, (_, i) => parsed(getAddressDecoder().decode(new Uint8Array(32).fill(7).fill(i + 1, 0, 1)), WSOL, 1_000n, 9, TOKEN_PROGRAM_ADDRESS, 1_000n + RENT));
+    const { url } = await rpc({
+      getTokenAccountsByOwner: () => ({ context: { slot: 1 }, value: many }),
+      getLatestBlockhash: () => blockhash,
+      getFeeForMessage: () => ({ context: { slot: 1 }, value: 5000 }),
+      simulateTransaction: (params) => ({ context: { slot: 1 }, value: { err: null, logs: [], unitsConsumed: 9_000, accounts: (params[1] as { accounts: { addresses: string[] } }).accounts.addresses.map(() => null) } }),
+    });
+    const prepared = PreparedUnwrap.parse((await call(url, "/v1/unwrap/prepare", { method: "POST", body: JSON.stringify({ trader: WALLET }) })).body);
+    expect(prepared.accounts.length).toBeGreaterThan(10);
+    expect(prepared.accounts.length).toBeLessThan(40);
+    expect(prepared.left).toBe(40 - prepared.accounts.length);
+    expect(prepared.simulation.returned).toBe(String(BigInt(prepared.accounts.length) * (1_000n + RENT)));
+    expect(getBase64Encoder().encode(prepared.transaction!).length).toBeLessThanOrEqual(1232);
   });
 
   it("says so when the wallet holds no wrapped SOL", async () => {
