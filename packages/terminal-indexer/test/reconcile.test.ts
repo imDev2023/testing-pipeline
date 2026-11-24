@@ -41,7 +41,7 @@ for (const [name, source] of [
 ] as const) {
   describe(`reconciliation through ${name}`, () => {
     it("indexes the whole history from no cursor, oldest first, and leaves the cursor at the newest transaction", async () => {
-      const { result, cursor, complete } = await reconcileAccount(client.db, source(), pipelineHandler(), ROUTER);
+      const { result, cursor, complete } = await reconcileAccount(client.db, source(), pipelineHandler({ candleSeconds: [] }), ROUTER);
       expect(result.counts).toEqual({ strategies: 1, markets: 1 });
       expect(complete).toBe(true);
       expect(cursor).toEqual({ signature: sig(created), slot: created.slot, blockIndex: created.transactionIndex });
@@ -49,19 +49,19 @@ for (const [name, source] of [
     });
 
     it("goes on from its cursor: only what is new is indexed, with its place in the block", async () => {
-      await reconcileAccount(client.db, source(), pipelineHandler(), ROUTER);
+      await reconcileAccount(client.db, source(), pipelineHandler({ candleSeconds: [] }), ROUTER);
       rpc.history.push(swap);
-      const { result, cursor } = await reconcileAccount(client.db, source(), pipelineHandler(), ROUTER);
+      const { result, cursor } = await reconcileAccount(client.db, source(), pipelineHandler({ candleSeconds: [] }), ROUTER);
       expect(result.counts).toEqual({ trades: 1 });
       expect(cursor?.signature).toBe(sig(swap));
       expect(await client.db.select({ signature: trades.signature, blockIndex: trades.blockIndex }).from(trades)).toEqual([{ signature: sig(swap), blockIndex: swap.transactionIndex }]);
     });
 
     it("stops after `limit` transactions, and the next run goes on from there", async () => {
-      const first = await reconcileAccount(client.db, source(), pipelineHandler(), ROUTER, { limit: 2 });
+      const first = await reconcileAccount(client.db, source(), pipelineHandler({ candleSeconds: [] }), ROUTER, { limit: 2 });
       expect(first.complete).toBe(false);
       expect(first.cursor?.signature).toBe(sig(failed));
-      const second = await reconcileAccount(client.db, source(), pipelineHandler(), ROUTER, { limit: 2 });
+      const second = await reconcileAccount(client.db, source(), pipelineHandler({ candleSeconds: [] }), ROUTER, { limit: 2 });
       expect(second).toMatchObject({ complete: true, result: { counts: { markets: 1 } } });
     });
   });
@@ -71,12 +71,12 @@ describe("a transaction listed before it is served", () => {
   it("stops reconciliation there, so the cursor never passes it, and is indexed on the next run", async () => {
     rpc.history.push(swap);
     rpc.unserved.add(sig(created));
-    const first = await reconcileAccount(client.db, rpcSource(rpc.url, WAITS), pipelineHandler(), ROUTER);
+    const first = await reconcileAccount(client.db, rpcSource(rpc.url, WAITS), pipelineHandler({ candleSeconds: [] }), ROUTER);
     expect(first.complete).toBe(false);
     expect(first.cursor?.signature).toBe(sig(failed));
     expect(await client.db.select().from(trades)).toEqual([]);
     rpc.unserved.clear();
-    const second = await reconcileAccount(client.db, rpcSource(rpc.url, WAITS), pipelineHandler(), ROUTER);
+    const second = await reconcileAccount(client.db, rpcSource(rpc.url, WAITS), pipelineHandler({ candleSeconds: [] }), ROUTER);
     expect(second).toMatchObject({ complete: true, result: { counts: { markets: 1, trades: 1 } } });
     expect((await client.db.select({ s: trades.signature }).from(trades).orderBy(asc(trades.slot))).map((r) => r.s)).toEqual([sig(swap)]);
   });

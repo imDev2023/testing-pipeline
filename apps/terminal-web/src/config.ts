@@ -49,10 +49,11 @@ export const CHART_OPENS_AT = "15m";
 export const CHART_CANDLE_SPACING_PX = 16;
 
 /**
- * Live updates (docs/spec/pipescope-architecture.md, Live rooms; PIPESCOPE-111): the longest wait before a dropped
- * live room is joined again (each try waits twice the last, from a second), and the shortest gap
- * between two reads of the forming candle while trades land.
+ * Live updates (docs/spec/pipescope-architecture.md, Live rooms; PIPESCOPE-111): the first and the
+ * longest wait before a dropped live room is joined again (each try waits twice the last), and the
+ * shortest gap between two reads of the forming candle while trades land.
  */
+export const LIVE_RECONNECT_FIRST_MS = 1_000;
 export const LIVE_RECONNECT_MAX_MS = 15_000;
 export const LIVE_CANDLE_REFRESH_MS = 1_000;
 

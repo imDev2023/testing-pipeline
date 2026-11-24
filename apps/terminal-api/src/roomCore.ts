@@ -4,7 +4,7 @@
 // tested in Node: the indexer's events gathered for LIVE_ROOM_BATCH_MS and sent in one message, and
 // the indexer told as viewers arrive and when the last one leaves, which opens and closes its socket
 // (PIPESCOPE-27).
-import { LIVE_ROOM_BATCH_MS, ROOM_ANNOUNCE_RETRY_MS } from "./config";
+import { LIVE_ROOM_BATCH_MS, ROOM_ANNOUNCE_RETRIES, ROOM_ANNOUNCE_RETRY_MS } from "./config";
 import type { LiveEvent, LiveMessage } from "./contract";
 
 /** The header the Worker names the room with as it hands the room a browser's upgrade. */
@@ -32,14 +32,14 @@ export class RoomCore {
   /**
    * A browser joined: the indexer hears of it each time, which costs it nothing when it already
    * counts the room, so a room it never heard of (an announcement lost in a deploy) is counted at the
-   * next join; a refused announcement is tried twice more, after ROOM_ANNOUNCE_RETRY_MS and twice it.
+   * next join; a refused announcement is tried ROOM_ANNOUNCE_RETRIES times more, after ROOM_ANNOUNCE_RETRY_MS and twice the last wait each time.
    */
   async joined(): Promise<void> {
     for (let attempt = 0; ; attempt++) {
       try {
         return await this.deps.arrived();
       } catch (e) {
-        if (attempt === 2) throw e;
+        if (attempt === ROOM_ANNOUNCE_RETRIES) throw e;
         await new Promise((done) => setTimeout(done, ROOM_ANNOUNCE_RETRY_MS * 2 ** attempt));
       }
     }

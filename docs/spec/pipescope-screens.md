@@ -437,7 +437,7 @@ Each of these is specified above or in another file, and none was seen running, 
 
 - Live updates: new rows arriving on the feed and on Trades, and a candle that moves as trades land.
   New rows are added at the top, the row under the pointer never moves, and nothing flashes for a reader who has asked for reduced motion.
-  As built (`PIPESCOPE-111`): while the pointer or the keyboard focus is on the table, new rows wait behind a "Show 2 new trades" button beside the table's heading and join the top as soon as it leaves; a row already shown is updated in place; a new row is washed for a moment only for a reader who allows motion; the forming candle is read again from the API at most once a second; and a dropped room is joined again after a wait that doubles from a second up to 15 s.
+  As built (`PIPESCOPE-111`): while the pointer or the keyboard focus is on the table, new rows wait behind a "Show 2 new trades" button beside the table's heading and join the top as soon as it leaves, and a resync that brings more than a page waits there too, as "Show 40+ new trades", replacing the list on leaving; a row already shown is updated in place; a new row is washed for a moment only for a reader who allows motion; the forming candle is read again from the API at most once a second; and a dropped room is joined again after a wait that doubles from a second (`LIVE_RECONNECT_FIRST_MS`) up to 15 s (`LIVE_RECONNECT_MAX_MS`).
 - A real wallet: connecting, the wallet's own prompt, a declined signature, and a wallet set to another cluster.
 - The steps after signing: sent, confirmed, and the trade appearing.
 - A form from valid metadata, simulated and signed, and the create form end to end.
