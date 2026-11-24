@@ -46,9 +46,6 @@ export class Indexer extends DurableObject<Bindings> {
   private watchedAt: string | null = null;
   private lastError: string | null = null;
 
-  private queue: string[] = [];
-  private draining: Promise<void> | null = null;
-
   private canaryDrain: Promise<void> = Promise.resolve();
 
   /**
@@ -134,21 +131,31 @@ export class Indexer extends DurableObject<Bindings> {
     await this.live.alarm();
   }
 
-  /** The RPC's WebSocket, a `logsSubscribe` on each account, reporting each successful transaction. */
-  private async openSocket(accounts: string[], on: { transaction: (signature: string) => void; dropped: () => void }): Promise<{ close: () => void }> {
+  /**
+   * The RPC's WebSocket, a `logsSubscribe` on each account, reporting each successful transaction, and
+   * saying once the RPC has confirmed every subscription, or refused one.
+   */
+  private async openSocket(
+    accounts: string[],
+    on: { transaction: (signature: string) => void; subscribed: () => void; refused: (error: string) => void; dropped: () => void },
+  ): Promise<{ close: () => void }> {
     const response = await fetch(this.env.RPC_URL, { headers: { upgrade: "websocket" } });
     const socket = response.webSocket;
     // The RPC's URL carries its key, so only the status is named.
     if (!socket) throw new Error(`the RPC answered ${response.status} to a WebSocket upgrade`);
     socket.accept();
+    const confirmed = new Set<number>();
     socket.addEventListener("message", (event) => {
       const message = parseLogsMessage(typeof event.data === "string" ? event.data : "");
       if (message.kind === "transaction" && !message.failed) on.transaction(message.signature);
-      else if (message.kind === "refused") {
-        // A socket without its subscription reports nothing: closed and counted as dropped, so the alarm opens it again.
+      else if (message.kind === "subscribed") {
+        confirmed.add(message.id);
+        if (confirmed.size === accounts.length) on.subscribed();
+      } else if (message.kind === "refused") {
+        // A socket without its subscription reports nothing: closed, and tried again after a wait that grows while it is refused (./liveSocket).
         this.failed("subscribing on the live socket", new Error(message.error));
         socket.close(1011, "subscription refused");
-        on.dropped();
+        on.refused(message.error);
       }
     });
     socket.addEventListener("close", () => on.dropped());
@@ -157,21 +164,14 @@ export class Indexer extends DurableObject<Bindings> {
     return { close: () => socket.close(1000, "no viewer") };
   }
 
-  /** Transactions the socket reported, indexed in turn as each is served, and published. */
+  /**
+   * Transactions the socket or the fast path reported, each indexed and published as soon as it is
+   * served; a batch starts at once, never waiting on an earlier one the RPC is slow to serve (#214).
+   */
   private reported(signatures: string[]) {
-    this.queue.push(...signatures);
-    this.draining ??= this.drain().finally(() => (this.draining = null));
-  }
-
-  private async drain() {
-    while (this.queue.length) {
-      const batch = this.queue.splice(0, this.queue.length);
-      try {
-        await this.publish(await this.afterJob(() => this.indexer().indexSignatures(batch)));
-      } catch (e) {
-        this.failed("indexing what the live socket reported", e);
-      }
-    }
+    void this.afterJob(() => this.indexer().indexSignatures(signatures, (one) => this.publish(one))).catch((e: unknown) =>
+      this.failed("indexing what the live socket reported", e),
+    );
   }
 
   /** Sends what was indexed to the rooms with a viewer; with none, nothing is read or sent. */

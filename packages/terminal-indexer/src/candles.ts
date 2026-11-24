@@ -10,7 +10,7 @@
 // integrator guide), kept exactly as a reduced fraction: an amount of `mint_a` (the pair's first mint
 // by address) for an amount of `mint_b`. So a candle reads exactly either way round and at any
 // decimals, which the API works out for the pair a page asks for.
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { candles, trades, type Db } from "terminal-db";
 
 /** An exact price: `a` of the pair's first mint for `b` of its second, in their smallest units, in lowest terms. */
@@ -194,10 +194,11 @@ export async function writtenCandles(
   return rows.reverse().map(rowOf);
 }
 
-/** A market's candles of one length for a pair, rebuilt from its trades alone, oldest first, in the shape the indexer writes them. */
-export async function rebuildCandles(db: Db, market: string, pair: readonly [string, string], seconds: number): Promise<CandleRow[]> {
-  const [mintA, mintB] = pairOrder(pair[0], pair[1]);
-  const rows = await db
+type TradeRow = typeof trades.$inferSelect;
+
+/** A pair's trades on a market, read once for every length a rebuild or repair writes. */
+async function pairTrades(db: Db, market: string, [mintA, mintB]: readonly [string, string]): Promise<TradeRow[]> {
+  return db
     .select()
     .from(trades)
     .where(
@@ -206,6 +207,10 @@ export async function rebuildCandles(db: Db, market: string, pair: readonly [str
         sql`((${trades.inputMint} = ${mintA} and ${trades.outputMint} = ${mintB}) or (${trades.inputMint} = ${mintB} and ${trades.outputMint} = ${mintA}))`,
       ),
     );
+}
+
+/** Candles of one length built from a pair's trades alone, oldest first, in the shape the indexer writes them. */
+function buildCandles(rows: readonly TradeRow[], market: string, [mintA, mintB]: readonly [string, string], seconds: number): CandleRow[] {
   const built = new Map<number, CandleRow>();
   const ordered = rows
     .map((t) => ({ t, key: tradeKey(t.slot, t.blockIndex, t.eventIndex) }))
@@ -244,6 +249,109 @@ export async function rebuildCandles(db: Db, market: string, pair: readonly [str
   }
   return [...built.values()].sort((x, y) => x.start - y.start);
 }
+
+/** A market's candles of one length for a pair, rebuilt from its trades alone, oldest first, in the shape the indexer writes them. */
+export async function rebuildCandles(db: Db, market: string, pair: readonly [string, string], seconds: number): Promise<CandleRow[]> {
+  const ordered = pairOrder(pair[0], pair[1]);
+  return buildCandles(await pairTrades(db, market, ordered), market, ordered, seconds);
+}
+
+/** A market's mint pair, its mints in address order, as candles are kept. */
+export type CandlePair = { market: string; mintA: string; mintB: string };
+
+/** How many rows one insert of candles writes: 18 columns each, well inside Postgres's 65,535 parameters a query. */
+const CANDLE_INSERT_ROWS = 1_000;
+
+/**
+ * Writes again, from the trades, the candles of every pair whose candles do not hold all its swaps
+ * (#214): the trades a database held before migration 0003 made the table, which no fold ever
+ * reached, or any candle lost since. A pair is compared at each length kept forever, where its
+ * candles' trade counts must add up to its priced swaps, once the totals of every pair disagree
+ * there (a pair over by as many as another is short, which no fold makes, passes); one that disagrees is rebuilt whole at every
+ * length in `retention`, leaving out candles already past their length's retention, and the others
+ * are not touched. Each rebuild holds the candles table's lock, so a swap folded meanwhile waits for
+ * it and lands on the rebuilt candles, or was committed before it and is in them. Returns the pairs
+ * it wrote again.
+ */
+export async function repairCandles(db: Db, retention: CandleRetention, now: number = Math.floor(Date.now() / 1000)): Promise<CandlePair[]> {
+  const forever = retention.filter((r) => r.keepDays === null).map((r) => r.seconds);
+  if (!forever.length) return [];
+  const priced = sql`${trades.netSent} > 0 and ${trades.received} > 0 and ${trades.inputMint} <> ${trades.outputMint}`;
+  // Two totals first, so a run where every swap is in its candles, as on almost every run, reads one
+  // row from each table rather than one per pair.
+  const [{ swaps: allSwaps }] = (await db.select({ swaps: sql<number>`count(*)::int` }).from(trades).where(priced)) as [{ swaps: number }];
+  const totals = await db
+    .select({ seconds: candles.seconds, n: sql<number>`coalesce(sum(${candles.trades}), 0)::int` })
+    .from(candles)
+    .where(inArray(candles.seconds, forever))
+    .groupBy(candles.seconds);
+  if (forever.every((seconds) => (totals.find((t) => t.seconds === seconds)?.n ?? 0) === allSwaps)) return [];
+  // Grouped by input and output and put in pair order here, since Postgres's collation need not sort addresses as `pairOrder` does.
+  const swapCounts = await db
+    .select({ market: trades.market, inputMint: trades.inputMint, outputMint: trades.outputMint, n: sql<number>`count(*)::int` })
+    .from(trades)
+    .where(priced)
+    .groupBy(trades.market, trades.inputMint, trades.outputMint);
+  const keyOf = (market: string, mintA: string, mintB: string) => `${market} ${mintA} ${mintB}`;
+  const pairs = new Map<string, CandlePair>();
+  const swaps = new Map<string, number>();
+  for (const { market, inputMint, outputMint, n } of swapCounts) {
+    const [mintA, mintB] = pairOrder(inputMint, outputMint);
+    const key = keyOf(market, mintA, mintB);
+    pairs.set(key, { market, mintA, mintB });
+    swaps.set(key, (swaps.get(key) ?? 0) + n);
+  }
+  const candleCounts = await db
+    .select({ market: candles.market, mintA: candles.mintA, mintB: candles.mintB, seconds: candles.seconds, n: sql<number>`sum(${candles.trades})::int` })
+    .from(candles)
+    .where(inArray(candles.seconds, forever))
+    .groupBy(candles.market, candles.mintA, candles.mintB, candles.seconds);
+  const counted = new Map<string, number>();
+  for (const { market, mintA, mintB, seconds, n } of candleCounts) {
+    const key = keyOf(market, mintA, mintB);
+    pairs.set(key, { market, mintA, mintB });
+    counted.set(`${key} ${seconds}`, n);
+  }
+  const due = [...pairs].filter(([key]) => forever.some((seconds) => (counted.get(`${key} ${seconds}`) ?? 0) !== (swaps.get(key) ?? 0))).map(([, pair]) => pair);
+  for (const pair of due) await writeRebuilt(db, pair, retention, now);
+  return due.sort((x, y) => keyOf(x.market, x.mintA, x.mintB).localeCompare(keyOf(y.market, y.mintA, y.mintB)));
+}
+
+/** Replaces a pair's candles at every length in `retention` with those rebuilt from its trades, in one transaction under the table's lock. */
+async function writeRebuilt(db: Db, { market, mintA, mintB }: CandlePair, retention: CandleRetention, now: number): Promise<void> {
+  await db.transaction(async (tx) => {
+    const t = tx as unknown as Db;
+    // Taken before the trades are read: a fold's insert waits for this transaction, and a fold already running holds it off until it commits.
+    await t.execute(sql`lock table ${candles} in share row exclusive mode`);
+    const rows = await pairTrades(t, market, [mintA, mintB]);
+    await t.delete(candles).where(and(eq(candles.market, market), eq(candles.mintA, mintA), eq(candles.mintB, mintB)));
+    const written = retention.flatMap(({ seconds, keepDays }) =>
+      buildCandles(rows, market, [mintA, mintB], seconds).filter((c) => keepDays === null || c.start >= now - keepDays * 86_400),
+    );
+    for (let i = 0; i < written.length; i += CANDLE_INSERT_ROWS) await t.insert(candles).values(written.slice(i, i + CANDLE_INSERT_ROWS).map(storedOf));
+  });
+}
+
+const storedOf = (c: CandleRow): Stored => ({
+  market: c.market,
+  mintA: c.mintA,
+  mintB: c.mintB,
+  seconds: c.seconds,
+  start: BigInt(c.start),
+  openA: String(c.open.a),
+  openB: String(c.open.b),
+  highA: String(c.high.a),
+  highB: String(c.high.b),
+  lowA: String(c.low.a),
+  lowB: String(c.low.b),
+  closeA: String(c.close.a),
+  closeB: String(c.close.b),
+  openKey: c.openKey,
+  closeKey: c.closeKey,
+  volumeA: String(c.volumeA),
+  volumeB: String(c.volumeB),
+  trades: c.trades,
+});
 
 /** Deletes candles past their length's retention (PIPESCOPE-30); they can always be rebuilt from the trades. Returns how many went. */
 export async function pruneCandles(db: Db, retention: CandleRetention, now: number = Math.floor(Date.now() / 1000)): Promise<number> {
