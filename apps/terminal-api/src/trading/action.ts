@@ -10,7 +10,7 @@
 // plain SOL as in a swap (PIPESCOPE-145). Nothing is prepared that needs a signature the wallet cannot
 // give: a new market's fresh state keypair is made and kept in the page, which signs with it
 // (PIPESCOPE-144). Aviary holds no keys.
-import { buildCreateMarketFromMetadata, NATIVE_MINT_ADDRESS, resolveAccountSource, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, type ArgValue, type MarketView, type MetadataInit, type SourceContext } from "@pipeline-sol/sdk";
+import { buildCreateMarketFromMetadata, decodeMarket, initFeeAccount, marketViewFromMarket, NATIVE_MINT_ADDRESS, resolveAccountSource, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, type ArgValue, type MarketView, type MetadataInit, type SourceContext } from "@pipeline-sol/sdk";
 import { getTransferSolInstruction } from "@solana-program/system";
 import { findAssociatedTokenPda, getCloseAccountInstruction, getCreateAssociatedTokenIdempotentInstruction, getSyncNativeInstruction } from "@solana-program/token";
 import { AccountRole, createNoopSigner, getAddressDecoder, getBase64Encoder, type Address, type GetAccountInfoApi, type Instruction, type Rpc, type SolanaRpcApi } from "@solana/kit";
@@ -127,6 +127,45 @@ export async function createMarketTransaction(input: CreateInput) {
   return { ...(await aroundWrappedSol(instruction, trader, wrap, input.walletWrappedSol ?? "missing")), market: resolved.market, marketState: resolved.marketState, marketStateSigns: resolved.marketStateSigns };
 }
 
+/**
+ * The market `create_market` makes, as the router's Market account at `market` reads once its
+ * simulation has run: the strategy's mints and vaults as its `pipeline_init_market` reported them.
+ * Null when the account is no router Market (the simulation failed, or wrote no market there).
+ */
+export function marketViewAfterCreate(market: Address, data: Uint8Array, tokenPrograms: Record<string, Address>): MarketView | null {
+  const decoded = decodeMarket(data);
+  if (!decoded) return null;
+  const mints = decoded.mints.slice(0, decoded.mintCount);
+  if (mints.some((m) => !tokenPrograms[m])) return null;
+  return marketViewFromMarket(market, decoded, mints.map((m) => tokenPrograms[m]!));
+}
+
+/**
+ * A new market created and seeded in one transaction (Pipeline's guide; docs/spec/pool4-for-solana.md,
+ * Creating a market): the router's `create_market`, `init_fee_account` for each of the market's mints,
+ * then the strategy's seed action from its metadata, built against `view`, the market as
+ * `create_market` leaves it, with the seed's wrapped SOL handled around them all as for any action.
+ */
+export async function createAndSeedTransaction(input: FormValues & {
+  create: Awaited<ReturnType<typeof createMarketTransaction>>;
+  view: MarketView;
+  seed: AviaryAction;
+  trader: Address;
+  tokenPrograms?: Record<string, Address>;
+  rpc?: Rpc<GetAccountInfoApi>;
+  walletWrappedSol?: WrappedSol;
+}): Promise<{ instructions: Instruction[]; seed: Instruction; wrapped: bigint }> {
+  const { create, view, seed, trader } = input;
+  if (seed.kind !== "add_liquidity") throw refusal("bad_input", `${seed.name} is not a seed: only an add_liquidity action can follow a new market's creation.`);
+  // A create form that wraps SOL of its own would need a second wrapping around the seed's; none of our strategies' does.
+  if (create.wrapped > 0n) throw refusal("bad_input", "This create form takes wrapped SOL itself, so Aviary cannot seed the market in the same transaction.");
+  const [createMarket] = create.instructions;
+  const fees = await Promise.all(view.mints.map((mint, i) => initFeeAccount({ payer: trader, market: view.market, mint, tokenProgram: view.tokenPrograms[i]! })));
+  const seeded = await actionTransaction({ action: seed, market: view, trader, args: input.args, inputs: input.inputs, tokenPrograms: input.tokenPrograms, rpc: input.rpc, walletWrappedSol: input.walletWrappedSol });
+  const at = seeded.instructions.indexOf(seeded.action);
+  return { instructions: [...seeded.instructions.slice(0, at), createMarket!, ...fees, ...seeded.instructions.slice(at)], seed: seeded.action, wrapped: seeded.wrapped };
+}
+
 type Held = { lamports: bigint; owner: string; data: readonly [string, string] } | null;
 
 const base64 = getBase64Encoder();
@@ -162,6 +201,43 @@ export function measureWallet(input: { trader: Address; watched: readonly Addres
     if (!was && now) created.push({ account, mint, rent: String(now.lamports) });
   });
   return { changes, new_accounts: created };
+}
+
+/**
+ * The market a create transaction makes, learnt by simulating it alone with the router's Market
+ * account watched (`marketViewAfterCreate`), the token program of each of its mints read from the
+ * mints' owners; or the simulation, when it fails or leaves no market to read.
+ */
+export async function newMarketView(
+  rpc: Rpc<SolanaRpcApi>,
+  input: { instructions: Instruction[]; trader: Address; market: Address; strategy: string },
+): Promise<{ ok: true; view: MarketView } | { ok: false; simulation: TransactionSimulation }> {
+  const { value: lifetime } = await rpc.getLatestBlockhash({ commitment: COMMITMENT }).send();
+  let fitted;
+  try {
+    fitted = fitTransaction(input.instructions, input.trader, lifetime, null);
+  } catch (e) {
+    if (e instanceof TooLarge) throw refusal("too_large", "Creating this market needs more accounts than one transaction can carry.");
+    throw e;
+  }
+  const { value, networkFee } = await runSimulation(rpc, fitted.wire, fitted.messageBytes, [input.market], "Creating this market");
+  const logs = [...(value.logs ?? [])];
+  const failed = (failure: TransactionSimulation["failure"]) => ({
+    ok: false as const,
+    simulation: { ok: false, failure, changes: [], new_accounts: [], logs, compute_units: value.unitsConsumed === undefined ? null : Number(value.unitsConsumed), network_fee: String(networkFee) },
+  });
+  if (value.err !== null) return failed(decodeFailure(value.err, logs, { strategy: input.strategy, hooks: [], act: "transaction" }));
+  const account = value.accounts?.[0];
+  const data = account ? new Uint8Array(base64.encode((account.data as readonly [string, string])[0])) : null;
+  const decoded = data ? decodeMarket(data) : null;
+  const unreadable = refusal("bad_input", "Creating this market left no market Aviary could read, so it cannot build the seed on it.");
+  if (!decoded) throw unreadable;
+  const mints = decoded.mints.slice(0, decoded.mintCount);
+  const { value: owners } = await rpc.getMultipleAccounts(mints, { encoding: "base64", commitment: COMMITMENT, dataSlice: { offset: 0, length: 0 } }).send();
+  const tokenPrograms = Object.fromEntries(mints.flatMap((m, i) => (owners[i] ? [[m, owners[i]!.owner]] : [])));
+  const view = marketViewAfterCreate(input.market, data!, tokenPrograms);
+  if (!view) throw unreadable;
+  return { ok: true, view };
 }
 
 /**

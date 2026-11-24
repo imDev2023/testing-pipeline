@@ -190,3 +190,41 @@ export async function readKeeperRecords(db: Db, options: { wallet: string; now: 
 
 const strings = <K extends string>(values: Record<K, bigint>) => Object.fromEntries(Object.entries<bigint>(values).map(([k, v]) => [k, v.toString()])) as Record<K, string>;
 const bigints = <K extends string>(values: Record<K, string>) => Object.fromEntries(Object.entries<string>(values).map(([k, v]) => [k, BigInt(v)])) as Record<K, bigint>;
+
+/** The keeper runner's records of one job unit on one market, newest first. */
+export type KeeperUnitRead = { job: string; slot: number | null; rows: Omit<KeeperJobRead, "pass">[] };
+
+/**
+ * One keeper wallet's records on one market, grouped by job unit (job and slot), each newest first:
+ * for a product panel's due jobs, the runner's last attempt at each and since when it has seen it due.
+ */
+export async function readKeeperUnits(db: Db, options: { wallet: string; market: string; limit: number }): Promise<KeeperUnitRead[]> {
+  const rows = await db
+    .select({
+      at: keeperRunJobs.at,
+      market: keeperRunJobs.market,
+      product: keeperRunJobs.product,
+      job: keeperRunJobs.job,
+      slot: keeperRunJobs.slot,
+      outcome: keeperRunJobs.outcome,
+      signature: keeperRunJobs.signature,
+      cost: keeperRunJobs.cost,
+      estimate: keeperRunJobs.estimate,
+      cap: keeperRunJobs.cap,
+      error: keeperRunJobs.error,
+      attempt: keeperRunJobs.attempt,
+    })
+    .from(keeperRunJobs)
+    .innerJoin(keeperRuns, eq(keeperRuns.id, keeperRunJobs.runId))
+    .where(and(eq(keeperRuns.wallet, options.wallet), eq(keeperRunJobs.market, options.market)))
+    .orderBy(desc(keeperRunJobs.at), desc(keeperRunJobs.id))
+    .limit(options.limit);
+  const units = new Map<string, KeeperUnitRead>();
+  for (const row of rows) {
+    const key = `${row.job}:${row.slot ?? ""}`;
+    const unit = units.get(key) ?? { job: row.job, slot: row.slot, rows: [] };
+    unit.rows.push(row);
+    units.set(key, unit);
+  }
+  return [...units.values()];
+}

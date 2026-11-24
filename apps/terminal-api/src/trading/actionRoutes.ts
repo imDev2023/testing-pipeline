@@ -18,7 +18,7 @@ import type { AppEnv } from "../index";
 import { indexer } from "../index";
 import { limitTrades } from "../rateLimits";
 import { keptImages } from "../tokenImages";
-import { actionTransaction, createMarketTransaction, prepareTransaction, walletWrappedSol } from "./action";
+import { actionTransaction, createAndSeedTransaction, createMarketTransaction, newMarketView, prepareTransaction, walletWrappedSol } from "./action";
 import { awaitTrade, TRANSACTION_WORDS } from "./fastPath";
 import { actionHookAccounts } from "./hooks";
 import { readMarketOnChain } from "./market";
@@ -50,6 +50,15 @@ const accountsOf = (instruction: Instruction) =>
   }));
 
 const unprocessable = (message: string) => new HTTPException(422, { message });
+
+/** The strategy's add_liquidity action named to seed a new market, from its validated metadata actions. */
+function seedActionOf(source: NonNullable<Awaited<ReturnType<typeof readFormSource>>>, name: string) {
+  if (!source.actions?.result.ok) throw unprocessable("This strategy's metadata describes no valid actions, so no seed can be sent with a new market.");
+  const action = source.actions.result.actions.find((a) => a.name === name);
+  if (!action) throw new HTTPException(404, { message: `This strategy describes no action named ${name} in its metadata.` });
+  if (action.kind !== "add_liquidity") throw unprocessable(`${name} is not a seed: only an add_liquidity action can be sent with a new market.`);
+  return action;
+}
 
 export function actionRoutes(app: Hono<AppEnv>) {
   app.post("/v1/actions/prepare", limitTrades, async (c) => {
@@ -105,6 +114,10 @@ export function actionRoutes(app: Hono<AppEnv>) {
     if (!source.document) throw unprocessable("This strategy has no create form: its metadata is unavailable.");
     if (!source.init) throw unprocessable("This strategy has no create form: its metadata describes none.");
 
+    // A seed sent with the new market is the strategy's own add_liquidity action, from its validated actions.
+    const seedAction = request.seed ? seedActionOf(source, request.seed.action) : null;
+    const seedInputs = request.seed ? checkedInputs(request.seed.inputs) : {};
+
     const rpc = createSolanaRpc(c.env.RPC_URL);
     try {
       const trader = address(request.trader);
@@ -120,21 +133,29 @@ export function actionRoutes(app: Hono<AppEnv>) {
         walletWrappedSol: await walletWrappedSol(rpc, trader),
         maxCreatorLamports: CREATE_MARKET_MAX_CREATOR_LAMPORTS,
       });
-      const prepared = await prepareTransaction(rpc, { instructions: built.instructions, trader, strategy, market: null, what: "Creating this market" });
       const create = built.instructions.find((i) => i.programAddress === PIPELINE_PROGRAM_ADDRESS)!;
-      return c.json(
-        PreparedMarket.parse({
-          strategy,
-          market: built.market,
-          market_state: built.marketState,
-          market_state_signs: built.marketStateSigns,
-          check: checkForm(await initDiscriminator(), source.list),
-          accounts: accountsOf(create),
-          wrapped_sol: String(built.wrapped),
-          max_creator_lamports: String(CREATE_MARKET_MAX_CREATOR_LAMPORTS),
-          ...prepared,
-        }),
-      );
+      const check = checkForm(await initDiscriminator(), source.list);
+      const marketBase = () => ({
+        strategy,
+        market: built.market,
+        market_state: built.marketState,
+        market_state_signs: built.marketStateSigns,
+        check,
+        accounts: accountsOf(create),
+        wrapped_sol: String(built.wrapped),
+        max_creator_lamports: String(CREATE_MARKET_MAX_CREATOR_LAMPORTS),
+      });
+      let instructions = built.instructions;
+      if (seedAction && request.seed) {
+        // The market the seed is built on, as create_market leaves it: simulated alone first, its failure the answer when it fails.
+        const alone = await newMarketView(rpc, { instructions: built.instructions, trader, market: built.market, strategy });
+        if (!alone.ok) {
+          return c.json(PreparedMarket.parse({ ...marketBase(), seed: seedAction.name, transaction: null, simulation: alone.simulation }));
+        }
+        instructions = (await createAndSeedTransaction({ create: built, view: alone.view, seed: seedAction, trader, args: request.seed.args, inputs: seedInputs, rpc, walletWrappedSol: await walletWrappedSol(rpc, trader) })).instructions;
+      }
+      const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: null, what: seedAction ? "Creating and seeding this market" : "Creating this market" });
+      return c.json(PreparedMarket.parse({ ...marketBase(), seed: seedAction?.name ?? null, ...prepared }));
     } catch (e) {
       if (e instanceof Refused) return refused(c, e);
       throw e;

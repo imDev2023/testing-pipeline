@@ -204,6 +204,8 @@ export const HEALTH_TIMEOUT_MS = 5 * SECOND;
  */
 export const KEEPER_STOPPED_GRACE_MS = 5 * MINUTE;
 export const KEEPER_RECENT_JOBS = 20;
+/** A product panel's due jobs (`GET /v1/markets/{market}/keeper`, #57) look back over this many of the runner's latest records on the market. */
+export const KEEPER_MARKET_RECORDS = 200;
 
 /**
  * The keeper runner's heartbeats (SUITE-57): one is kept only if its time is within this much of

@@ -18,6 +18,7 @@ import { formRoutes } from "./forms";
 import { dbOf, requestDb } from "./requestDb";
 import { health } from "./health";
 import { keeperRoutes } from "./keeper";
+import { marketKeeperRoutes } from "./marketKeeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
 import { actionRoutes } from "./trading/actionRoutes";
@@ -91,6 +92,7 @@ app.get("/v1/indexer", async (c) => c.json(await indexer(c.env).status()));
 /** The one indexer, by name, so every caller reaches the same instance. */
 export const indexer = (env: Bindings) => env.INDEXER.get(env.INDEXER.idFromName("router"));
 keeperRoutes(app);
+marketKeeperRoutes(app);
 tradingRoutes(app);
 actionRoutes(app);
 

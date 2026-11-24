@@ -105,12 +105,18 @@ importers:
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@6.0.3)
+      buy-wall-amm-scripts:
+        specifier: workspace:*
+        version: link:../../programs/buy-wall-amm/scripts
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@cloudflare/workers-types@5.20261121.1)(@opentelemetry/api@1.10.0)(postgres@3.4.9)
       hono:
         specifier: 4.13.20
         version: 4.13.20
+      keeper-jobs:
+        specifier: workspace:*
+        version: link:../../packages/keeper-jobs
       strategy-actions:
         specifier: workspace:*
         version: link:../../packages/strategy-actions
