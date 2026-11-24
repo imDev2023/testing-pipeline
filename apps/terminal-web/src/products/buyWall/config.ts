@@ -1,13 +1,13 @@
 // The buy wall AMM's values in Aviary, in one place (docs/spec/pool4-for-solana.md, Constants, "each
 // policy value lives in exactly one place"; #57): the create form's pre-filled values and how often
-// the panel reads the market again. Each is a default MetalLegBob may change (POOL4-53, POOL4-54).
+// the panel reads the market again. Each is a default MetalLegBob may change (POOL4-57, POOL4-58).
 
 /**
  * What the create form starts with, in the units of the strategy's create form (basis points). The
  * fee, the reward share, the cap floor and the cap decay are IMD's own launch values for Pool4: a 1%
- * fee, a 15% reward share, a cap floor of 20% and a cap decay of 20% a day (POOL4-53). The buy wall
+ * fee, a 15% reward share, a cap floor of 20% and a cap decay of 20% a day. The buy wall
  * split has no IMD value, since IMD's hook sends the market's part elsewhere; half to the wall is the
- * worked example's (POOL4-54). The recipients and the seeder start as the connected wallet.
+ * worked example's (POOL4-57). The recipients and the seeder start as the connected wallet.
  */
 export const CREATE_FORM_DEFAULTS = {
   fee_bps: 100,

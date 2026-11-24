@@ -196,7 +196,7 @@ function ParametersPart({ reading, state, token, decimals }: { reading: BuyWallR
             value:
               state.status === 2 ? (
                 <>
-                  <Tokens raw={state.seededTokens} token={token} decimals={decimals} /> by <ShortAddress address={state.seeder} />, {formatDate(new Date(Number(state.seedTime) * 1000))}
+                  <Tokens raw={state.seededTokens} token={token} decimals={decimals} /> by <ShortAddress address={state.seeder} /> on {formatDate(new Date(Number(state.seedTime) * 1000))}
                 </>
               ) : (
                 <>

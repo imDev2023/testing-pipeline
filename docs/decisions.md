@@ -2710,6 +2710,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
+### PIPESCOPE-158: A market's due keeper jobs
+
+- Question: How does a product panel learn which keeper jobs are due on its market?
+- Answer: `GET /v1/markets/{market}/keeper` reads the market's state, and any account its product's due rules watch, at one slot, asks `packages/keeper-jobs` what is due, and gives each unit with the keeper runner's latest record of it and, when every record since the runner last landed it is a hold, a park, a failure or a wait, the time of the first of them as how long it has been due; a market of another strategy has nothing due.
+- Alternatives: Computing the due rules in the browser, which would put every product's client in the page; a time it fell due read from the chain's history, which the indexer does not keep per market.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57)
+
+### PIPESCOPE-159: Creating and seeding a market in one transaction
+
+- Question: How does Aviary send a new market's seed with its creation, as Pipeline's guide recommends?
+- Answer: `POST /v1/markets/prepare` takes an optional `seed`, the strategy's own add_liquidity action: `create_market`, `init_fee_account` for each mint and the seed in one transaction, the seed built against the market `create_market` would record, learnt by simulating `create_market` alone and reading the router's Market account; any strategy's metadata can use it.
+- Alternatives: Seeding from the market page in a second transaction, which leaves a created market open to nobody until its seeder returns; product code that knows each strategy's vaults.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57)
+
+### PIPESCOPE-160: A product's own create form
+
+- Question: Where does one of our products put a create form of its own?
+- Answer: In the product registry beside its panel and forms, as `Create`, which the create page shows in place of the generic form for that program.
+- Alternatives: The generic create form for every strategy, which cannot pre-fill values or show a product's fee split.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
@@ -3472,6 +3502,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-24 in [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126)
+
+### EXPLAINER-29: Our products' facts and risks as evidence
+
+- Question: What does the evidence add for a strategy that is one of our products?
+- Answer: F items of what its panel shows of the representative market, read from its market state and the accounts it names at one slot, each giving that slot as its source, and the risks of every market of it from its spec; a product with no representative market gets its risks alone, and a read that fails says so.
+- Alternatives: Leaving the products to the generic chain facts, which read vault balances and miss the cap, the wall and the ledgers.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Inputs](spec/pipescope-explainer.md#inputs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57)
 
 ## Tax AMM (TAX)
 
@@ -5151,6 +5191,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-20 in [Buy wall AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/56)
 
+### POOL4-57: The create form's pre-filled values
+
+- Question: What does Aviary's buy wall create form start with?
+- Answer: IMD's launch values, a 1% fee, a 15% reward share, a cap floor of 20% and a cap decay of 20% a day, with half the market's part of the fee to the buy wall (the worked example's and the devnet demo's split, since IMD's hook has none) and the connected wallet as fee recipient, rewards recipient and seeder, all in `CREATE_FORM_DEFAULTS` in `apps/terminal-web/src/products/buyWall/config.ts`; the creator may change any before signing.
+- Alternatives: An empty form; the whole market's part of the fee to the wall, which leaves the fee recipient nothing.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Aviary's panel](spec/pool4-for-solana.md#aviarys-panel)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57)
+
+### POOL4-58: What the panel reads and how it reads it
+
+- Question: Where does the buy wall panel read each value, and how fresh is it?
+- Answer: From the market state and the token's mint, read in one request at one slot through the API and decoded at the spec's offsets by the program's generated client in one module the explainer shares; read again every 30 seconds while the page is in view, 1.5 seconds after a burst of the market's trades and after each of its own transactions (`BUY_WALL_REFRESH_MS`, `BUY_WALL_TRADE_PAUSE_MS`); the allowance is brought up to the page's clock, and the tokens burned are a share of the mint's supply plus the tokens burned.
+- Alternatives: Pipeline's API and the vault balances, which count retired tokens, the wall, idle SOL and unpaid fees as liquidity; the market's events; reading only on load.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Aviary's panel](spec/pool4-for-solana.md#aviarys-panel)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57)
+
+### POOL4-59: The keeper job buttons and the handover forms
+
+- Question: How does the panel offer the keeper jobs and the recipients' handovers?
+- Answer: Each job due by `packages/keeper-jobs`, from the API, is a button that prepares the job's own metadata action for the viewer's wallet, filled from the market state so nobody types a recipient, with what it would move and the keeper runner's last attempt; a pressed job stays with its confirmation until its review is left; each handover form is offered only to the connected wallet holding that role, and stays while its review is open after the role has moved.
+- Alternatives: The generic metadata forms alone, where a payer types the recipient's wallet; a handover form offered to every wallet, which the program refuses for all but the holder.
+- Specified in: [`docs/spec/pool4-for-solana.md`, Aviary's panel](spec/pool4-for-solana.md#aviarys-panel)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57)
+
 ## Lending AMM (LENDING)
 
 ### LENDING-01: What it is
@@ -6249,3 +6319,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-59` to `SUITE-62`: set by the session of [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `CANARY-47`: the check is the owner's answer 5a on [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) (`HOOK-50`); its rule, its 1-point threshold and its search were set by that session while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
 - `PIPESCOPE-137` to `PIPESCOPE-140`: set by the session of [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `POOL4-57` to `POOL4-59`, `PIPESCOPE-158` to `PIPESCOPE-160`, `EXPLAINER-29`: set by the session of [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `POOL4-57`'s IMD values are the spec's.

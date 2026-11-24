@@ -82,10 +82,27 @@ export function BuyWallFormsBody({ market, read, keeper, wallet, now }: { market
   const token = market.mints.find((m) => m.mint === tokenOf(market));
   const tokens = (raw: string) => `${formatTokenAmount(BigInt(raw), mint.decimals)}`;
   const tokenLabel = token ? <TokenName market={market} /> : <ShortAddress address={state.tokenMint} />;
-  const roles = [
-    wallet && wallet === wallets.fee ? ({ action: "set_fee_recipient", role: "fee recipient" } as const) : null,
-    wallet && wallet === wallets.rewards ? ({ action: "set_rewards_recipient", role: "rewards recipient" } as const) : null,
-  ].filter((r) => r !== null);
+  // A job pressed here stays on screen until its review is left, so its confirmation and link are
+  // not lost when the next read of the market finds it done.
+  const [pressed, setPressed] = useState<Record<string, Due>>({});
+  const due = keeper.status === "loaded" ? keeper.data.due : [];
+  const shown = [...due, ...Object.values(pressed).filter((p) => !due.some((d) => d.key === p.key))];
+  // A handover is offered only to the wallet holding the role, and stays on screen while its review is open, after the role has moved.
+  const [handing, setHanding] = useState<Record<string, true>>({});
+  const roles = (
+    [
+      { action: "set_fee_recipient", role: "fee recipient", holds: wallet !== null && wallet === wallets.fee },
+      { action: "set_rewards_recipient", role: "rewards recipient", holds: wallet !== null && wallet === wallets.rewards },
+    ] as const
+  ).filter((r) => wallet && (r.holds || handing[r.action]));
+  const handingOf = (action: string) => ({
+    onStart: () => setHanding((now) => ({ ...now, [action]: true })),
+    onLeave: () =>
+      setHanding((now) => {
+        const { [action]: _left, ...rest } = now;
+        return rest;
+      }),
+  });
 
   return (
     <div className={styles.forms}>
@@ -101,17 +118,30 @@ export function BuyWallFormsBody({ market, read, keeper, wallet, now }: { market
         {keeper.status === "loaded" && (
           <>
             {!keeper.data.records.ok && <p className={forms.note}>The keeper runner&apos;s records could not be read: {keeper.data.records.error}.</p>}
-            {keeper.data.due.length === 0 ? (
+            {shown.length === 0 ? (
               <p>No keeper job is due on this market now.</p>
             ) : (
               <ul className={styles.jobs}>
-                {keeper.data.due.map((unit) => {
+                {shown.map((unit) => {
                   const values = jobFormValues(unit, wallets);
                   return (
                     <li key={unit.key} className={styles.job}>
-                      <JobLine unit={unit} wallets={wallets} tokens={tokens} tokenLabel={tokenLabel} now={now} />
+                      <JobLine id={`${market.address}-${unit.key}`} unit={unit} wallets={wallets} tokens={tokens} tokenLabel={tokenLabel} now={now} />
                       {values ? (
-                        <ActionButton market={market} action={unit.job} values={values} label={`Simulate ${TITLES[unit.job]?.toLowerCase() ?? unit.job}`} />
+                        <ActionButton
+                          market={market}
+                          action={unit.job}
+                          values={values}
+                          label="Simulate this job"
+                          describedBy={`${market.address}-${unit.key}`}
+                          onStart={() => setPressed((now) => ({ ...now, [unit.key]: unit }))}
+                          onLeave={() =>
+                            setPressed((now) => {
+                              const { [unit.key]: _left, ...rest } = now;
+                              return rest;
+                            })
+                          }
+                        />
                       ) : (
                         <p className={forms.note}>It waits: there is no wallet to pay yet.</p>
                       )}
@@ -123,8 +153,8 @@ export function BuyWallFormsBody({ market, read, keeper, wallet, now }: { market
           </>
         )}
       </section>
-      {roles.map(({ action, role }) => (
-        <Handover key={action} market={market} action={action} role={role} current={wallet!} />
+      {roles.map(({ action, role, holds }) => (
+        <Handover key={action} market={market} action={action} role={role} current={wallet!} holds={holds} {...handingOf(action)} />
       ))}
     </div>
   );
@@ -145,7 +175,7 @@ function attempt(last: NonNullable<Due["last"]>): string {
 }
 
 /** What a due job is, what it would move, and the keeper runner's last attempt at it. */
-function JobLine({ unit, wallets, tokens, tokenLabel, now }: { unit: Due; wallets: PayoutWallets; tokens: (raw: string) => string; tokenLabel: React.ReactNode; now: Date }) {
+function JobLine({ id, unit, wallets, tokens, tokenLabel, now }: { id: string; unit: Due; wallets: PayoutWallets; tokens: (raw: string) => string; tokenLabel: React.ReactNode; now: Date }) {
   const owed = unit.owed ?? "0";
   const title = unit.job === "sweep_fees" ? (SLOT_TITLES[unit.slot ?? -1] ?? `Sweep fee slot ${unit.slot}`) : (TITLES[unit.job] ?? unit.job);
   const slotWallet = unit.slot === 0 ? wallets.fee : unit.slot === 1 ? wallets.designer : wallets.suite;
@@ -168,7 +198,9 @@ function JobLine({ unit, wallets, tokens, tokenLabel, now }: { unit: Due; wallet
   const last = unit.last;
   return (
     <div className={styles.jobText}>
-      <h4 className={forms.subheading}>{title}</h4>
+      <h4 id={id} className={forms.subheading}>
+        {title}
+      </h4>
       {what && <p className={forms.line}>{what}</p>}
       <p className={forms.note}>
         {last ? `${BRAND.name}'s keeper runner, ${formatAge(new Date(last.at), now)}: ${attempt(last)}.` : `${BRAND.name}'s keeper runner has not tried it yet.`}
@@ -179,7 +211,7 @@ function JobLine({ unit, wallets, tokens, tokenLabel, now }: { unit: Due; wallet
 }
 
 /** A custom action of the market's strategy, filled in, as a button that prepares and simulates it for the connected wallet and leads to its review. */
-function ActionButton({ market, action, values, label, disabled = false }: { market: Market; action: string; values: FormValues; label: string; disabled?: boolean }) {
+function ActionButton({ market, action, values, label, describedBy, disabled = false, onStart, onLeave }: { market: Market; action: string; values: FormValues; label: string; describedBy?: string; disabled?: boolean; onStart?: () => void; onLeave?: () => void }) {
   const { account, openMenu } = useWallet();
   const trader = account?.address ?? null;
   const mints: MintInfo[] = useMemo(() => market.mints.map((m) => ({ mint: m.mint, symbol: m.symbol, token: m.token, decimals: m.decimals })), [market.mints]);
@@ -187,11 +219,24 @@ function ActionButton({ market, action, values, label, disabled = false }: { mar
   const prepare = useCallback(() => postToApi("/v1/actions/prepare", { market: market.address, action, ...values, trader }, PreparedAction), [market.address, action, values, trader]);
   const { review, start, handlers } = useReview({ prepare, about: { market: market.address, strategy: market.strategy }, version: hashOf(version), trader, onConfirmed: () => refreshBuyWall(market.address) });
   const mintOf = (mint: string) => mints.find((m) => m.mint === mint) ?? null;
-  if (review) return <TransactionReview title="Review this action" building="Building it and simulating it, exactly as it would be signed." review={review} mintOf={mintOf} {...handlers} />;
+  const leave = () => {
+    handlers.onBack();
+    onLeave?.();
+  };
+  if (review) return <TransactionReview title="Review this action" building="Building it and simulating it, exactly as it would be signed." review={review} mintOf={mintOf} {...handlers} onBack={leave} />;
   return (
     <div className={forms.actions}>
       {account ? (
-        <button type="button" className={forms.simulate} disabled={disabled} onClick={start}>
+        <button
+          type="button"
+          className={forms.simulate}
+          disabled={disabled}
+          aria-describedby={describedBy}
+          onClick={() => {
+            onStart?.();
+            start();
+          }}
+        >
           {label}
         </button>
       ) : (
@@ -211,7 +256,7 @@ function hashOf(text: string): number {
 }
 
 /** The handover of a recipient role, for the wallet holding it: the new wallet, then simulate and review. */
-function Handover({ market, action, role, current }: { market: Market; action: "set_fee_recipient" | "set_rewards_recipient"; role: string; current: string }) {
+function Handover({ market, action, role, current, holds, onStart, onLeave }: { market: Market; action: "set_fee_recipient" | "set_rewards_recipient"; role: string; current: string; holds: boolean; onStart: () => void; onLeave: () => void }) {
   const id = useId();
   const [typed, setTyped] = useState("");
   const next = typed.trim();
@@ -222,7 +267,9 @@ function Handover({ market, action, role, current }: { market: Market; action: "
         Hand over the {role} role
       </h3>
       <p className={forms.line}>
-        Your wallet is this market&apos;s {role}. You can hand the role, and everything it is owed, to another wallet in one step; nobody else can, and it cannot be undone except by the new holder. Check the address: a mistyped wallet keeps the role for good.
+        {holds
+          ? `Your wallet is this market's ${role}. You can hand the role, and everything it is owed, to another wallet in one step; nobody else can, and it cannot be undone except by the new holder. Check the address: a mistyped wallet keeps the role for good.`
+          : `The role has left your wallet.`}
       </p>
       <div className={forms.field}>
         <label htmlFor={`${id}-new`} className={forms.fieldLabel}>
@@ -237,7 +284,7 @@ function Handover({ market, action, role, current }: { market: Market; action: "
           </span>
         )}
       </div>
-      <ActionButton market={market} action={action} values={{ args: { new: next }, inputs: {} }} label="Simulate the handover" disabled={problem !== null} />
+      <ActionButton market={market} action={action} values={{ args: { new: next }, inputs: {} }} label="Simulate the handover" disabled={problem !== null} onStart={onStart} onLeave={onLeave} />
     </section>
   );
 }

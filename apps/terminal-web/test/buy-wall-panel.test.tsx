@@ -68,7 +68,7 @@ describe("the buy wall AMM's panel", () => {
   it("shows the parameters and both recipients", () => {
     const text = render();
     expect(text).toContain("Reward share 15% of the trimmed tokens the cap's fall matched");
-    expect(text).toContain("Seeded 1M 9qTA...mbd7 by 9rYt...ywCt, 20 Nov 2026, 04:13 UTC");
+    expect(text).toContain("Seeded 1M 9qTA...mbd7 by 9rYt...ywCt on 20 Nov 2026, 04:13 UTC");
     expect(text).toContain("Fee recipient 4Q3D...bUzu");
     expect(text).toContain("Rewards recipient 7GDw...ibjd");
   });

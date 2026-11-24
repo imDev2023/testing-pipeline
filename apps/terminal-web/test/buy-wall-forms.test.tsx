@@ -48,6 +48,7 @@ describe("the buy wall AMM's keeper jobs", () => {
     // Each one a button; anyone may press it, so it asks for a wallet first.
     expect(text.match(/Connect wallet/g)).toHaveLength(5);
     expect(text).toContain("Anyone may run them, and Aviary's keeper runner does");
+    expect(text).not.toContain("sweep_fees");
   });
 
   it("links to the keeper page", () => {
