@@ -948,6 +948,12 @@ DATABASE_URL=<a fresh migrated database> E2E_API_PORT=8871 E2E_WEB_PORT=3171 pnp
 The wallet page's tests on the recorded fixtures (`src/wallet.spec.ts`) review an unwrap for the test trader, so before recording give it wrapped SOL with `pnpm --filter terminal-e2e wrap-sol` (0.01 SOL of `e2e-trader.json`'s, by default), after any `swaps:devnet` run, since a sale into SOL through the trade box closes that account.
 The three-mint market's tests (`src/trade.spec.ts`, #122) review a swap in each direction on devnet's Counterflow market `FNdAWctS...` for the test trader, so it must hold all three mints when recording: `swaps:devnet` trades them first.
 
+### The lending AMM in Aviary on devnet
+
+`pnpm --filter terminal-e2e lending:devnet` (`E2E_LENDING_DEVNET`, never in CI) is the lending AMM panel's devnet run (#88): the Playwright test wallet holds `e2e-trader.json` and, through the local run's pages, creates a lending AMM market from the create form, adds, rebalances, removes in cash and in kind and locks; checks the panel's two largest sells against the strategy's own quote; turns the WSOL reserve's emergency mode on and off and has the test borrower borrow and repay with `scripts/kamino-devnet` (run `npm ci` there first); and creates a market of a token our containment hook binds with the project wallet.
+It moves our shared devnet Kamino reserve for a few minutes and puts it back after, whatever happens; the signatures go to `tests/terminal-e2e/test-results/lending.json`.
+Creating the market spends about 1.6 SOL of the test trader's, so `LENDING_MARKET=<market>` reruns the later steps on a market an earlier run made.
+
 ## Known problems
 
 - **Node 26 and public devnet WebSockets.**

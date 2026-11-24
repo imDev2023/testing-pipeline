@@ -46,18 +46,18 @@ export function SaidBehind({ forms }: { forms: StrategyForms }) {
  * strategy is one of ours; or the unavailable state, saying why there are no forms, what the
  * validator said behind a disclosure, and how many instructions the program has beyond Pipeline's own.
  */
-export function Actions({ market, productForms }: { market: Market; productForms: ReactNode }) {
+export function Actions({ market, productForms, replaced = [] }: { market: Market; productForms: ReactNode; replaced?: readonly string[] }) {
   const load = useCallback((signal: AbortSignal) => getFromApi(`/v1/strategies/${market.strategy}/forms`, StrategyForms, { signal }), [market.strategy]);
   const { state, retry } = useLoad(load);
   return (
     <PanelFrame title="Actions" what="the strategy's forms" state={state} retry={retry} after={productForms ? <div className={styles.productForms}>{productForms}</div> : null}>
-      {(forms) => <ActionsBody forms={forms} market={market} />}
+      {(forms) => <ActionsBody forms={forms} market={market} replaced={replaced} />}
     </PanelFrame>
   );
 }
 
 /** What Actions holds once the strategy's forms are read: its forms, or why it has none. */
-export function ActionsBody({ forms, market }: { forms: StrategyForms; market: Market }) {
+export function ActionsBody({ forms, market, replaced = [] }: { forms: StrategyForms; market: Market; replaced?: readonly string[] }) {
   if (forms.unavailable) {
     return (
       <div className={styles.unavailable}>
@@ -85,11 +85,14 @@ export function ActionsBody({ forms, market }: { forms: StrategyForms; market: M
       </div>
     );
   }
+  // A product's own forms fill some of these in (PIPESCOPE-147), and stand in for them below.
+  const shown = forms.actions.filter((form) => !replaced.includes(form.name));
+  if (!shown.length) return null;
   return (
     <div className={styles.list}>
       {forms.actions_section === "actions" && <p className={styles.note}>These forms come from the metadata&apos;s older actions section, which Pipeline no longer reads.</p>}
-      {forms.actions.map((form, i) => (
-        <ActionForm key={form.name} form={form} market={market} deploySlot={forms.deploy_slot} open={i === 0} />
+      {shown.map((form, i) => (
+        <ActionForm key={form.name} form={form} market={market} deploySlot={forms.deploy_slot} open={i === 0 && !replaced.length} />
       ))}
     </div>
   );

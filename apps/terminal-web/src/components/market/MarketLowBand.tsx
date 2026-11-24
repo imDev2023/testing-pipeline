@@ -17,7 +17,7 @@ export function MarketLowBand({ market, facts, registry = PRODUCT_PANELS }: { ma
     <div className={`${bands.low} ${bands.withForms}`}>
       <div className={bands.lowMain}>
         {product?.Panel && <product.Panel market={market} />}
-        <Actions market={market} productForms={product?.Forms ? <product.Forms market={market} /> : null} />
+        <Actions market={market} productForms={product?.Forms ? <product.Forms market={market} /> : null} replaced={product?.replaces} />
       </div>
       {facts}
     </div>

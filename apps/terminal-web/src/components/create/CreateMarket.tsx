@@ -15,6 +15,7 @@ import { getFromApi, postToApi } from "@/api";
 import { BRAND } from "@/brand";
 import { CLUSTER, NEW_MARKET_ASK_EVERY_MS, NEW_MARKET_WAIT_MS } from "@/config";
 import { formatInteger, formatTokenAmount } from "@/format";
+import { PRODUCT_PANELS } from "@/products/registry";
 import { ROUTES } from "@/routes";
 import { PanelFrame, useLoad } from "../Panel";
 import { ShortAddress } from "../ShortAddress";
@@ -102,6 +103,13 @@ export function StrategyChooser({ strategies, chosen, onChoose }: { strategies: 
 }
 
 function CreateFormPanel({ program }: { program: string }) {
+  // One of our products builds its own create form, with what its markets need in the same transaction (PIPESCOPE-147).
+  const Product = PRODUCT_PANELS[program]?.Create;
+  if (Product) return <Product program={program} />;
+  return <MetadataCreateFormPanel program={program} />;
+}
+
+function MetadataCreateFormPanel({ program }: { program: string }) {
   const load = useCallback((signal: AbortSignal) => getFromApi(`/v1/strategies/${program}/forms`, StrategyForms, { signal }), [program]);
   const { state, retry } = useLoad(load);
   return (
@@ -188,7 +196,7 @@ const NO_MINTS: never[] = [];
 const SOL_DECIMALS = 9;
 
 /** The new market's page, linked once Aviary has read the market, or after the wait in any case. */
-function NewMarket({ market }: { market: string }) {
+export function NewMarket({ market }: { market: string }) {
   const [ready, setReady] = useState(false);
   useEffect(() => {
     let stopped = false;

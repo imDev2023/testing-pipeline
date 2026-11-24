@@ -5,6 +5,7 @@
 // and signatures count with quotes against the TRADES limit (PIPESCOPE-90); the reads are reads.
 import { PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { AccountRole, address, createSolanaRpc, isAddress, type Address, type Instruction } from "@solana/kit";
+import type { AviaryAction } from "strategy-actions";
 import { eq } from "drizzle-orm";
 import type { Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -51,49 +52,61 @@ const accountsOf = (instruction: Instruction) =>
 
 const unprocessable = (message: string) => new HTTPException(422, { message });
 
-export function actionRoutes(app: Hono<AppEnv>) {
-  app.post("/v1/actions/prepare", limitTrades, async (c) => {
-    const request = await bodyOf(c, PrepareActionRequest);
-    for (const [name, value] of [["market", request.market], ["trader", request.trader]] as const) addressOf(value, name);
-    const inputs = checkedInputs(request.inputs);
-    const { strategy, source } = await withDb(c, async (db) => {
-      const [row] = await db.select({ strategy: markets.strategyProgram }).from(markets).where(eq(markets.address, request.market));
-      if (!row) throw new HTTPException(404, { message: "Aviary knows no market created through Pipeline at this address." });
-      return { strategy: row.strategy, source: await readFormSource(db, row.strategy) };
-    });
-    if (!source?.actions) throw unprocessable("This market's strategy has no forms: its metadata is unavailable.");
-    if (!source.actions.result.ok) throw unprocessable("This market's strategy has no action forms: the actions its metadata describes failed their validator.");
-    const action = source.actions.result.actions.find((a) => a.name === request.action);
-    if (!action) throw new HTTPException(404, { message: `This market's strategy describes no action named ${request.action} in its metadata.` });
+/**
+ * What `before` adds ahead of an action in its transaction, given the market read on chain, such as
+ * klend's `refresh_reserve` ahead of a lending AMM deposit (#88); none for any other strategy.
+ */
+export type BeforeAction = (input: { rpc: ReturnType<typeof createSolanaRpc>; market: Awaited<ReturnType<typeof readMarketOnChain>>; action: AviaryAction }) => Promise<Instruction[]>;
 
-    const rpc = createSolanaRpc(c.env.RPC_URL);
-    try {
-      const market = await readMarketOnChain(rpc, request.market);
-      if (market.view.strategyProgram !== strategy) throw unprocessable("This market's strategy on chain is not the one Aviary recorded for it.");
-      const trader = address(request.trader);
-      const tokenPrograms = Object.fromEntries(market.mints.map((m) => [m.address, m.tokenProgram]));
-      const built = await actionTransaction({ action, market: market.view, trader, args: request.args, inputs, tokenPrograms, rpc, walletWrappedSol: await walletWrappedSol(rpc, trader) });
-      // A hooked mint's transfers carry its hook's accounts, after the action's own (PIPESCOPE-154).
-      const hooks = await actionHookAccounts(rpc, { market, trader, action: built.action });
-      const instruction = hooks.length ? { ...built.action, accounts: [...(built.action.accounts ?? []), ...hooks] } : built.action;
-      const instructions = built.instructions.map((i) => (i === built.action ? instruction : i));
-      const hookPrograms = market.mints.flatMap((m) => (m.transferHook ? [m.transferHook] : []));
-      const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: market.address, what: "This action", hooks: hookPrograms });
-      return c.json(
-        PreparedAction.parse({
-          market: request.market,
-          action: action.name,
-          check: checkForm(await actionDiscriminator(action), source.list),
-          accounts: accountsOf(instruction),
-          wrapped_sol: String(built.wrapped),
-          ...prepared,
-        }),
-      );
-    } catch (e) {
-      if (e instanceof Refused) return refused(c, e);
-      throw e;
-    }
+/**
+ * A custom action of a market's strategy, from its metadata, built, simulated and answered as
+ * `POST /v1/actions/prepare` answers it; a product's own endpoint passes `before` (./products).
+ */
+export async function prepareActionResponse(c: Context<AppEnv>, request: PrepareActionRequest, { before, strategyIs }: { before?: BeforeAction; strategyIs?: string } = {}) {
+  for (const [name, value] of [["market", request.market], ["trader", request.trader]] as const) addressOf(value, name);
+  const inputs = checkedInputs(request.inputs);
+  const { strategy, source } = await withDb(c, async (db) => {
+    const [row] = await db.select({ strategy: markets.strategyProgram }).from(markets).where(eq(markets.address, request.market));
+    if (!row) throw new HTTPException(404, { message: "Aviary knows no market created through Pipeline at this address." });
+    if (strategyIs && row.strategy !== strategyIs) throw new HTTPException(404, { message: "This market is not one of this product's markets." });
+    return { strategy: row.strategy, source: await readFormSource(db, row.strategy) };
   });
+  if (!source?.actions) throw unprocessable("This market's strategy has no forms: its metadata is unavailable.");
+  if (!source.actions.result.ok) throw unprocessable("This market's strategy has no action forms: the actions its metadata describes failed their validator.");
+  const action = source.actions.result.actions.find((a) => a.name === request.action);
+  if (!action) throw new HTTPException(404, { message: `This market's strategy describes no action named ${request.action} in its metadata.` });
+
+  const rpc = createSolanaRpc(c.env.RPC_URL);
+  try {
+    const market = await readMarketOnChain(rpc, request.market);
+    if (market.view.strategyProgram !== strategy) throw unprocessable("This market's strategy on chain is not the one Aviary recorded for it.");
+    const trader = address(request.trader);
+    const tokenPrograms = Object.fromEntries(market.mints.map((m) => [m.address, m.tokenProgram]));
+    const built = await actionTransaction({ action, market: market.view, trader, args: request.args, inputs, tokenPrograms, rpc, walletWrappedSol: await walletWrappedSol(rpc, trader) });
+    // A hooked mint's transfers carry its hook's accounts, after the action's own (PIPESCOPE-154).
+    const hooks = await actionHookAccounts(rpc, { market, trader, action: built.action });
+    const instruction = hooks.length ? { ...built.action, accounts: [...(built.action.accounts ?? []), ...hooks] } : built.action;
+    const instructions = [...(before ? await before({ rpc, market, action }) : []), ...built.instructions.map((i) => (i === built.action ? instruction : i))];
+    const hookPrograms = market.mints.flatMap((m) => (m.transferHook ? [m.transferHook] : []));
+    const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: market.address, what: "This action", hooks: hookPrograms });
+    return c.json(
+      PreparedAction.parse({
+        market: request.market,
+        action: action.name,
+        check: checkForm(await actionDiscriminator(action), source.list),
+        accounts: accountsOf(instruction),
+        wrapped_sol: String(built.wrapped),
+        ...prepared,
+      }),
+    );
+  } catch (e) {
+    if (e instanceof Refused) return refused(c, e);
+    throw e;
+  }
+}
+
+export function actionRoutes(app: Hono<AppEnv>) {
+  app.post("/v1/actions/prepare", limitTrades, async (c) => prepareActionResponse(c, await bodyOf(c, PrepareActionRequest)));
 
   app.post("/v1/markets/prepare", limitTrades, async (c) => {
     const request = await bodyOf(c, PrepareMarketRequest);

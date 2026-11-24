@@ -39,8 +39,8 @@ const registry: ProductRegistry = {
 const facts = <section aria-label="Facts">The facts panel</section>;
 
 describe("the product panels' registry", () => {
-  it("is empty until the products' Aviary tickets fill it", () => {
-    expect(PRODUCT_PANELS).toEqual({});
+  it("holds the products whose Aviary tickets filled it, keyed by their programs", () => {
+    expect(Object.keys(PRODUCT_PANELS)).toEqual(["Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG"]);
   });
 
   it("puts a registered product's panel before the forms, and its forms under Actions, on its program's markets", () => {

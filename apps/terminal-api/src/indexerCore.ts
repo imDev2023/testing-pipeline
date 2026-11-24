@@ -28,6 +28,7 @@ import {
   recordVersion,
   signVersion,
   strategyCallsHandler,
+  strategyEventsHandler,
   pipelineHandler,
   pruneCandles,
   readCursor,
@@ -272,6 +273,8 @@ export class IndexerCore {
         (await chunked(wanted, (part) => db.select({ signature: indexedTransactions.signature }).from(indexedTransactions).where(inArray(indexedTransactions.signature, part)))).map((r) => r.signature),
       );
       const all = emptyResult();
+      // A custom action confirmed through Aviary reaches its market's history now, not at the next reconciliation of its strategy.
+      const handle = this.withStrategies(await this.watchedStrategies(db));
       const until = Date.now() + RPC_WAITS.transaction.waitMs;
       // Indexed one at a time across every batch, in the order they are served: each is committed on
       // its own, so one that cannot be served or indexed never loses the others, which reconciliation
@@ -280,7 +283,7 @@ export class IndexerCore {
         const signature = raw.transaction.signatures[0]!;
         const one = emptyResult();
         try {
-          addResult(one, await indexTransactions(db, this.handle, [raw]));
+          addResult(one, await indexTransactions(db, handle, [raw]));
         } catch (e) {
           if (e instanceof IndexBatchError) addResult(one, e.result);
           console.error(`indexing ${signature} from the live socket failed; reconciliation will index it`, e);
@@ -462,6 +465,15 @@ export class IndexerCore {
     }
   }
 
+  /**
+   * The handler with the strategy programs' own handlers after the router's: every call on a watched
+   * strategy program and every event it logs (#88), so a custom action shows in a market's history.
+   */
+  private withStrategies(watched: ReadonlySet<string>): TransactionHandler {
+    const isWatched = (program: string) => watched.has(program);
+    return combineHandlers(this.handle, strategyCallsHandler(isWatched), strategyEventsHandler(isWatched));
+  }
+
   /** The strategy programs watched, read from Postgres when this instance does not know them. */
   private async watchedStrategies(db?: Db): Promise<Set<string>> {
     if (this.watched) return this.watched;
@@ -490,7 +502,7 @@ export class IndexerCore {
     }
     const indexed = emptyResult();
     if (!due.length) return { quiet: true, indexed };
-    const handle = combineHandlers(this.handle, strategyCallsHandler((program) => watched.has(program)));
+    const handle = this.withStrategies(watched);
     return this.withDb(async (db) => {
       const failed: { program: string; error: unknown }[] = [];
       for (const program of due) {
