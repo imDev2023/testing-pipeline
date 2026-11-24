@@ -22,6 +22,7 @@ const strategy = (program: string, status: Strategy["metadata"]["status"], name:
   upgrade_authority: "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe",
   current_version: null,
   verified_build: null,
+  canary: null,
   ...over,
 });
 const textOf = (html: string) => html.replace(/<[^>]+>/g, " ").replaceAll("&#x27;", "'").replace(/\s+/g, " ").replace(/ ([.,;:)])/g, "$1").trim();

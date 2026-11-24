@@ -32,6 +32,7 @@ const market: Market = {
   strategy_name: "Aviary Tax AMM",
   strategy_metadata: "valid",
   flags: [],
+  canary: null,
 };
 
 const form = (over: Partial<Form>): Form => ({
