@@ -109,7 +109,9 @@ test.describe("the feed", () => {
     const created = (await first.getByText(/ago$/).boundingBox())!;
     await page.mouse.click(created.x + created.width / 2, created.y + created.height / 2);
     await expect(page).toHaveURL(`/markets/${markets[0]!.address}`);
-    await expect(page.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${markets[0]!.address}?cluster=devnet`);
+    // The head's link: the facts panel below carries its own Explorer links for the market and its mints.
+    const head = page.getByRole("main").locator("header").first();
+    await expect(head.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${markets[0]!.address}?cluster=devnet`);
   });
 
   test("a market's strategy opens the strategy, from inside the market's row", async ({ page, request }) => {
