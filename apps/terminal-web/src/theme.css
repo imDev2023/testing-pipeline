@@ -103,6 +103,10 @@
   --market-top-columns: minmax(0, 1fr) 388px;
   --market-top-areas: "chart trade" "trades trade";
   --chart-height: 380px;
+  /* Create market's strategy chooser: a strategy beside its button; one under the other at 720 px and narrower. */
+  --create-choice-columns: minmax(0, 1fr) auto;
+  /* Its lower band: the forms beside the facts panel. */
+  --market-low-columns: minmax(0, 1fr) minmax(0, 1fr);
   /* The trade box stays in view while the page scrolls, at desktop width only. */
   --trade-box-position: sticky;
 
@@ -142,6 +146,7 @@
   :root {
     --market-top-columns: minmax(0, 1fr);
     --market-top-areas: "chart" "trade" "trades";
+    --market-low-columns: minmax(0, 1fr);
     --chart-height: 320px;
     --trade-box-position: static;
   }
@@ -175,6 +180,7 @@
     --chart-height: 280px;
     --flag-fact-columns: minmax(0, 1fr);
     --fact-columns: minmax(0, 1fr);
+    --create-choice-columns: minmax(0, 1fr);
     --canary-detail-indent: 0;
     --canary-bar-width: 30%;
     --canary-label-wrap: normal;

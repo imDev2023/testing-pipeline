@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { AccountRole, address, getAddressEncoder, type Address } from '@solana/kit';
-import * as pipeline from '@pipeline-placeholder/sdk';
+import * as pipeline from '@pipeline-sol/sdk';
 
 import { AVIARY_ACTIONS_KEY, actionNamed, buildActionInstruction, findAction, parseAviaryActions } from './index.ts';
 

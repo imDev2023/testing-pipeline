@@ -107,7 +107,7 @@ export function MarketFacts({ market, canary }: { market: string; canary: Canary
 /** A number of a mint's smallest units, in its tokens. */
 const tokens = (raw: string, decimals: number | null) => (decimals === null ? `${raw} of its smallest units` : formatTokenAmount(BigInt(raw), decimals));
 
-function MintFactList({ mint }: { mint: MintFacts }) {
+export function MintFactList({ mint }: { mint: MintFacts }) {
   return (
     <div className={styles.mint}>
       <h4 className={styles.mintTitle}>

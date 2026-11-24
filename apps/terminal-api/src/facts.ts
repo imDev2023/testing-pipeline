@@ -14,6 +14,7 @@ import { marketMints, metadataSnapshots, mints, programFacts, programVersions, r
 import { strategySummary } from "./canaryView";
 import { AVIARY_MINT_NAMES } from "./config";
 import type { FlagFact, MetadataStatus, MintExtension, MintFacts, Strategy } from "./contract";
+import type { MintRow } from "terminal-indexer";
 import { keptImages, tokenNameOf } from "./tokenImages";
 
 /** Flags in Pipeline's SDK's stable order, each once; any the SDK does not know is left out. */
@@ -43,7 +44,7 @@ export const marketFlagsSql: SQL = sql`(
 
 type StrategyRow = { program: string; metadataUri: string; feePaid: string | null; registeredAt: Date; registeredSignature: string | null; marketCount: number };
 type SnapshotRow = typeof metadataSnapshots.$inferSelect;
-type Normalised = { name?: string; description?: string | null } | null;
+type Normalised = { name?: string; description?: string | null; init?: unknown } | null;
 
 /** The newest metadata snapshot of each program named. */
 async function newestSnapshots(db: Db, programs: string[]): Promise<Map<string, SnapshotRow>> {
@@ -73,7 +74,7 @@ function metadataStatus(uri: string, snapshot: SnapshotRow | undefined): Metadat
 }
 
 /** What a strategy's facts rest on, read for several strategies at once: its newest metadata, its program's facts and its version in force. */
-export type StrategyFacts = { name: string | null; description: string | null; metadata: MetadataStatus; flags: Flag[]; upgradeAuthority: string | null; currentVersion: Strategy["current_version"] };
+export type StrategyFacts = { name: string | null; description: string | null; createForm: boolean; metadata: MetadataStatus; flags: Flag[]; upgradeAuthority: string | null; currentVersion: Strategy["current_version"] };
 
 export async function strategyFacts(db: Db, programs: { program: string; metadataUri: string }[]): Promise<Map<string, StrategyFacts>> {
   const names = programs.map((p) => p.program);
@@ -97,6 +98,7 @@ export async function strategyFacts(db: Db, programs: { program: string; metadat
         {
           name: normalised?.name || null,
           description: normalised?.description ?? null,
+          createForm: normalised?.init != null,
           metadata,
           flags: orderedFlags([...(facts?.flags ?? []), ...(metadataFlag ? [metadataFlag] : [])]),
           upgradeAuthority: facts?.upgradeAuthority ?? null,
@@ -123,6 +125,7 @@ export async function strategyViews(db: Db, rows: StrategyRow[]): Promise<Strate
       name: f.name,
       description: f.description,
       metadata: f.metadata,
+      create_form: f.createForm,
       flags: f.flags,
       upgrade_authority: f.upgradeAuthority,
       canary: strategySummary(canary.filter((r) => r.program === s.program)),
@@ -180,6 +183,30 @@ export function extensionsInWords(e: MintExtensions, unknown: number[]): MintExt
   return out;
 }
 
+type MintRead = typeof mints.$inferSelect | MintRow | null;
+
+/** One mint as the facts panel shows it, from its row as read (or none yet), with what a market's vault holds of it. */
+export function mintFactOf(mint: string, read: MintRead, images: Awaited<ReturnType<typeof keptImages>>, vaultAmount: string | null): MintFacts {
+  const decoded = read?.readable && read.data && read.tokenProgram ? decodeMint(address(mint), address(read.tokenProgram), Uint8Array.from(Buffer.from(read.data, "base64")), read.readEpoch ?? 0n) : null;
+  const supply = read?.supply ? BigInt(read.supply) : null;
+  return {
+    mint,
+    symbol: AVIARY_MINT_NAMES[mint] ?? null,
+    token: tokenNameOf(mint, read ? { symbol: read.symbol ?? null, name: read.name ?? null, tokenUri: read.tokenUri ?? null } : null, images),
+    readable: read?.readable ?? false,
+    token_program: read?.tokenProgram ? (read.tokenProgram === TOKEN_2022 ? "Token-2022" : "Token") : null,
+    decimals: read?.decimals ?? null,
+    supply: read?.supply ?? null,
+    mint_authority: read?.mintAuthority ?? null,
+    freeze_authority: read?.freezeAuthority ?? null,
+    extensions: decoded ? extensionsInWords(decoded.extensions, decoded.unknownExtensions) : [],
+    vault_amount: vaultAmount,
+    vault_share_percent: supply && vaultAmount !== null ? Number(((Number(BigInt(vaultAmount)) / Number(supply)) * 100).toPrecision(4)) : null,
+    flags: flagFacts(read?.flags ?? []),
+    read_slot: read?.readSlot === null || read?.readSlot === undefined ? null : Number(read.readSlot),
+  };
+}
+
 /** Each mint of a market as the facts panel shows it, in the market's order. */
 export async function mintFacts(db: Db, market: string): Promise<MintFacts[]> {
   const rows = await db
@@ -189,24 +216,5 @@ export async function mintFacts(db: Db, market: string): Promise<MintFacts[]> {
     .where(eq(marketMints.market, market))
     .orderBy(marketMints.position);
   const images = await keptImages(db, rows.map((r) => r.read?.tokenUri ?? null));
-  return rows.map(({ mint, vaultAmount, read }) => {
-    const decoded = read?.readable && read.data && read.tokenProgram ? decodeMint(address(mint), address(read.tokenProgram), Uint8Array.from(Buffer.from(read.data, "base64")), read.readEpoch ?? 0n) : null;
-    const supply = read?.supply ? BigInt(read.supply) : null;
-    return {
-      mint,
-      symbol: AVIARY_MINT_NAMES[mint] ?? null,
-      token: tokenNameOf(mint, read, images),
-      readable: read?.readable ?? false,
-      token_program: read?.tokenProgram ? (read.tokenProgram === TOKEN_2022 ? "Token-2022" : "Token") : null,
-      decimals: read?.decimals ?? null,
-      supply: read?.supply ?? null,
-      mint_authority: read?.mintAuthority ?? null,
-      freeze_authority: read?.freezeAuthority ?? null,
-      extensions: decoded ? extensionsInWords(decoded.extensions, decoded.unknownExtensions) : [],
-      vault_amount: vaultAmount,
-      vault_share_percent: supply && vaultAmount !== null ? Number(((Number(BigInt(vaultAmount)) / Number(supply)) * 100).toPrecision(4)) : null,
-      flags: flagFacts(read?.flags ?? []),
-      read_slot: read?.readSlot === null || read?.readSlot === undefined ? null : Number(read.readSlot),
-    };
-  });
+  return rows.map(({ mint, vaultAmount, read }) => mintFactOf(mint, read, images, vaultAmount));
 }

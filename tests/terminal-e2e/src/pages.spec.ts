@@ -19,6 +19,16 @@ const STRATEGY_UNAVAILABLE = "yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx";
 const MARKET_HOOKED = "8XUe71aQTkUrP8SZfL2Z6PuXgdzYe9szTLEqiExrVyMW";
 // Aviary's token-image check market on devnet (deployments/devnet-demo-token-image.json): its token names an image Aviary keeps.
 const MARKET_TOKEN_IMAGE = "4DZbJgcdZyZUoYxKsN8atmMjTipBQ3zd6Yjzkp2i5HsR";
+// Markets whose strategy's metadata is unreachable, fails Pipeline's validator, or holds Pipeline's old
+// `actions` section (PIPESCOPE-141); and the tax AMM's demo market (deployments/devnet-demo-tax-amm.json),
+// whose tax side is wrapped SOL, and the suite share's wallet, whose slot anyone may pay out.
+const MARKET_METADATA_UNREACHABLE = "ChLMN5jumUA3E9WBmoXUNma3SJk4sgUmWpzhAS2ifv69";
+const MARKET_METADATA_INVALID = "CmDa9bCsmeDHNUp2KYv9DEGMA2nhQcxCkwQoZ7GfagVh";
+const MARKET_OLD_ACTIONS = "EdMom6pkDgCgXZFSmrEadPRnZDEyqbAg9xDVKrnusSQT";
+const TAX_MARKET = "4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c";
+const SUITE_TREASURY = "CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF";
+const TAX_AMM = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t";
+const WSOL_MINT = "So11111111111111111111111111111111111111112";
 // A market no swap has gone through, and one with a single swap, whose lone candle the chart still draws.
 const MARKET_WITHOUT_TRADES = "DH7QCdTHGsjHcsm7SgXYRgdQvX34VT8oMQkFWVoCe3SQ";
 const MARKET_WITH_ONE_TRADE = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
@@ -32,10 +42,14 @@ const factsReady = async (page: Page, parts: string[]) => {
   for (const part of parts) await expect(facts.getByRole("heading", { name: part, exact: true })).toBeVisible();
 };
 
-/** A market page is ready once its chart, or the panel that stands in for it, its trades and its facts have loaded. */
+/** The strategy's forms under Actions have loaded: its forms, or why it has none. */
+const actionsReady = (page: Page) => expect(page.getByRole("region", { name: "Actions" })).toHaveAttribute("aria-busy", "false");
+
+/** A market page is ready once its chart, or the panel that stands in for it, its trades, its forms and its facts have loaded. */
 const marketReady = (chart: "chart" | "none") => async (page: Page) => {
   await expect(page.getByRole("link", { name: "Explorer" }).first()).toBeVisible();
   await factsReady(page, ["This market", "Its strategy", "Its mints"]);
+  await actionsReady(page);
   const trades = page.getByRole("region", { name: "Trades" });
   if (chart === "chart") {
     await expect(page.getByText(/^Built from Pipeline's swap events on this market: [\d,]+ swaps? so far\./)).toBeVisible();
@@ -72,6 +86,32 @@ const canaryReady = async (page: Page) => {
   await expect(saw.getByRole("heading", { name: "What Canary saw" }).locator('[data-canary="mark"]')).toBeVisible();
 };
 
+/** One of a market page's action forms, by its author's label, opened. */
+const actionForm = async (page: Page, label: string) => {
+  const form = page.locator("details").filter({ has: page.locator("summary").getByText(label, { exact: true }) });
+  if ((await form.getAttribute("open")) === null) await form.locator("summary").click();
+  return form;
+};
+
+/** The tax AMM's demo market with the test wallet: an action's form filled and simulated, its review passed or refused. */
+const actionReviewed = (label: string, inputs: Record<string, string>, args: Record<string, string>, then: "passed" | "refused") => async (page: Page) => {
+  await marketReady("chart")(page);
+  await connectTestWallet(page, page.getByRole("banner").getByRole("button", { name: "Connect wallet" }));
+  const form = await actionForm(page, label);
+  for (const [name, value] of Object.entries(inputs)) await form.getByRole("textbox", { name: new RegExp(`^${name} an? `) }).fill(value);
+  for (const [name, value] of Object.entries(args)) await form.getByRole("textbox", { name: new RegExp(` ${name} (u8|u16|u64|pubkey)`) }).fill(value);
+  await form.getByRole("button", { name: "Simulate this action" }).click();
+  const review = form.getByRole("region", { name: "Review this action" });
+  if (then === "passed") {
+    await expect(review.getByText(/This is what signing would change in your wallet:$/)).toBeVisible({ timeout: 30_000 });
+    await expect(review.getByRole("button", { name: "Sign in wallet" })).toBeEnabled();
+  } else {
+    await expect(review.getByText("The simulation failed, so there is nothing to sign.")).toBeVisible({ timeout: 30_000 });
+    await review.getByText(/^The program's last \d+ log lines?$/).click();
+  }
+  await form.scrollIntoViewIfNeeded();
+};
+
 const PAGES: { name: string; path: string; status: number; ready: (page: Page) => Promise<unknown>; wallet?: boolean }[] = [
   { name: "feed", path: "/", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1)).toBeVisible() },
   {
@@ -92,6 +132,60 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
     ready: async (page: Page) => {
       await marketReady("chart")(page);
       await imageLoaded(page.getByRole("heading", { level: 1 }).locator("img"));
+    },
+  },
+  {
+    name: "market-forms-unavailable",
+    path: `/markets/${MARKET_METADATA_UNREACHABLE}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await marketReady("chart")(page);
+      await expect(page.getByText("No forms. Aviary builds a strategy's forms from its metadata, and this strategy's metadata is unavailable: the link could not be fetched.")).toBeVisible();
+      await page.getByRole("region", { name: "Actions" }).getByText("What fetching the link found").click();
+    },
+  },
+  {
+    name: "market-forms-invalid",
+    path: `/markets/${MARKET_METADATA_INVALID}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await marketReady("chart")(page);
+      await expect(page.getByText(/this strategy's metadata is unavailable: the document did not pass Pipeline's validator\.$/)).toBeVisible();
+      await page.getByRole("region", { name: "Actions" }).getByText("What Pipeline's validator said").click();
+    },
+  },
+  {
+    name: "market-forms-old-actions",
+    path: `/markets/${MARKET_OLD_ACTIONS}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await marketReady("chart")(page);
+      await expect(page.getByText("These forms come from the metadata's older actions section, which Pipeline no longer reads.")).toBeVisible();
+    },
+  },
+  {
+    name: "market-forms-review",
+    path: `/markets/${TAX_MARKET}`,
+    status: 200,
+    ready: actionReviewed("Pay out a tax slot", { tax_mint: WSOL_MINT, recipient: SUITE_TREASURY }, { slot: "5" }, "passed"),
+    wallet: true,
+  },
+  {
+    name: "market-forms-refused",
+    path: `/markets/${TAX_MARKET}`,
+    status: 200,
+    ready: actionReviewed("Change the taxes", {}, { buy_tax_bps: "600", sell_tax_bps: "900" }, "refused"),
+    wallet: true,
+  },
+  { name: "create", path: "/create", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Choose a strategy" }).getByRole("listitem").first()).toBeVisible() },
+  {
+    name: "create-form",
+    path: `/create?strategy=${TAX_AMM}`,
+    status: 200,
+    ready: async (page: Page) => {
+      const form = page.getByRole("region", { name: "The create form" });
+      await form.getByRole("textbox", { name: /^mint_0 a mint/ }).fill(WSOL_MINT);
+      await expect(form.getByLabel("The facts of mint_0")).toBeVisible();
     },
   },
   { name: "market-no-trades", path: `/markets/${MARKET_WITHOUT_TRADES}`, status: 200, ready: marketReady("none") },

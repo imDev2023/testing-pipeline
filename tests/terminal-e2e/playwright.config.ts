@@ -15,7 +15,7 @@
 //
 // Every page test runs at 1440, 390 and 360 px wide in the light and the dark theme, and saves a
 // screenshot of each page to screenshots/<width>-<theme>/.
-import { defineConfig, devices } from "@playwright/test";
+import { defineConfig, devices, type PlaywrightTestOptions, type Project } from "@playwright/test";
 import { API, API_PORT, RPC_MODE, WEB, WEB_PORT } from "./src/target";
 import { TEST_KEEPER_WALLET } from "./src/keeper";
 import { METADATA_PATH, RPC_PORT } from "./src/rpc";
@@ -37,6 +37,36 @@ const WIDTHS = [
 ];
 const THEMES = ["light", "dark"] as const;
 
+/**
+ * The suite's projects. Each reads the API as a reader of its own, under a client address of its own
+ * (`cf-connecting-ip`, which the API's per-IP limits key on, PIPESCOPE-90), so one project's reads
+ * never spend another's 300 a minute: the suite is many readers on one machine, and how fast a
+ * runner gets through the pages must not decide whether a later project is refused. The API spec's
+ * own limit test names an address of its own on each request.
+ */
+const PROJECTS: Project<PlaywrightTestOptions>[] = [
+  ...WIDTHS.flatMap((viewport) =>
+    THEMES.map((colorScheme) => ({
+      name: `${viewport.width}-${colorScheme}`,
+      testMatch: /pages\.spec\.ts/,
+      use: { viewport, colorScheme, isMobile: false },
+    })),
+  ),
+  { name: "behaviour", testMatch: /behaviour\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
+  // Search and token names and images (#120).
+  { name: "search", testMatch: /search\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
+  // Live updates: swaps landed on devnet, or announced on the fixture socket (src/live.ts).
+  { name: "live", testMatch: /live\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
+  { name: "api", testMatch: /api\.spec\.ts/ },
+  // The trade box with the Playwright test wallet: quotes, reviews and refusals, never sending (src/trade.spec.ts).
+  { name: "trade", testMatch: /trade\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
+  // Real swaps on devnet through the trade box (src/trade-devnet.spec.ts): only when asked for, never in CI.
+  ...(SWAPS ? [{ name: "swaps", testMatch: /trade-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
+];
+
+/** A project with a client address of its own, in the range set aside for tests (198.18.0.0/15). */
+const ownReader = (project: Project<PlaywrightTestOptions>, i: number): Project<PlaywrightTestOptions> => ({ ...project, use: { ...project.use, extraHTTPHeaders: { ...project.use?.extraHTTPHeaders, "cf-connecting-ip": `198.18.0.${i + 1}` } } });
+
 export default defineConfig({
   testDir: "./src",
   // The indexer runs once the Workers are up, so the pages have devnet's markets to show.
@@ -50,25 +80,7 @@ export default defineConfig({
   reporter: [["list"]],
   outputDir: "./test-results",
   use: { baseURL: WEB, trace: "retain-on-failure", ...devices["Desktop Chrome"] },
-  projects: [
-    ...WIDTHS.flatMap((viewport) =>
-      THEMES.map((colorScheme) => ({
-        name: `${viewport.width}-${colorScheme}`,
-        testMatch: /pages\.spec\.ts/,
-        use: { viewport, colorScheme, isMobile: false },
-      })),
-    ),
-    { name: "behaviour", testMatch: /behaviour\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
-    // Search and token names and images (#120).
-    { name: "search", testMatch: /search\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
-    // Live updates: swaps landed on devnet, or announced on the fixture socket (src/live.ts).
-    { name: "live", testMatch: /live\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
-    { name: "api", testMatch: /api\.spec\.ts/ },
-    // The trade box with the Playwright test wallet: quotes, reviews and refusals, never sending (src/trade.spec.ts).
-    { name: "trade", testMatch: /trade\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
-    // Real swaps on devnet through the trade box (src/trade-devnet.spec.ts): only when asked for, never in CI.
-    ...(SWAPS ? [{ name: "swaps", testMatch: /trade-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
-  ],
+  projects: PROJECTS.map(ownReader),
   webServer: [
     // The fixture RPC, first, so the API can read it from its first request.
     ...(RPC_MODE === "devnet"

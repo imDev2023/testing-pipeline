@@ -1,0 +1,70 @@
+/* Create market (docs/spec/pipescope-screens.md, Create market): the head, the strategy chooser and
+   the create form below it, one column at every width. */
+.page {
+  display: grid;
+  gap: 24px;
+  max-width: 980px;
+}
+
+.lede {
+  color: var(--ink2);
+  max-width: 70ch;
+}
+
+.choices {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.choice {
+  display: grid;
+  grid-template-columns: var(--create-choice-columns);
+  gap: 6px 16px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.choice:first-child {
+  border-top: 0;
+}
+
+.choice[data-chosen] {
+  background: var(--wash);
+  margin: 0 -12px;
+  padding: 10px 12px;
+  border-radius: 4px;
+}
+
+.who {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.meta {
+  color: var(--ink2);
+  overflow-wrap: anywhere;
+}
+
+.why {
+  color: var(--ink3);
+  grid-column: 1 / -1;
+}
+
+.notice {
+  max-width: 70ch;
+}
+
+.form {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.choice button {
+  justify-self: start;
+}

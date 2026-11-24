@@ -255,3 +255,18 @@ export const CANARY = {
   /** An operator's re-run (`pnpm canary:rerun`) is taken only if its time is within this much of the Worker's clock, so an old one cannot be replayed. */
   rerunMaxSkewMs: 2 * MINUTE,
 } as const;
+
+/**
+ * A market's state read with named outside accounts at one slot, for the products' panels in Aviary
+ * (PIPESCOPE-146; docs/spec/README.md, Our products live inside Aviary): the most accounts a read may
+ * name besides the market's state, and the most bytes of one account's data it returns (a larger
+ * account comes back with its size and no data), so the public read is no general RPC on Aviary's key.
+ */
+export const MARKET_READ = { maxAccounts: 8, maxAccountBytes: 64 * 1024 } as const;
+
+/**
+ * The most SOL, in lamports, a strategy's setup may take from the creator of a new market made in
+ * Aviary's create form, which `create_market` carries as its `max_creator_lamports` (PIPESCOPE-144):
+ * 0.1 SOL, the cap our own demos create markets with; what the setup takes is shown by the simulation.
+ */
+export const CREATE_MARKET_MAX_CREATOR_LAMPORTS = 100_000_000n;

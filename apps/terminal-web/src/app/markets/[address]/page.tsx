@@ -6,6 +6,7 @@ import styles from "@/components/heads/Head.module.css";
 import bands from "@/components/market/Market.module.css";
 import { MarketFacts } from "@/components/facts/MarketFacts";
 import { MarketLive } from "@/components/market/MarketLive";
+import { MarketLowBand } from "@/components/market/MarketLowBand";
 import { StrategyName } from "@/components/StrategyName";
 import { MintLabel } from "@/components/MintLabel";
 import { formatDate, shortAddress } from "@/format";
@@ -27,7 +28,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 /**
  * A market's page (docs/spec/pipescope-screens.md, Market page): its head, then the top band, the
  * chart with the trades beneath it, live, and the trade box in the column beside them; then the lower
- * band, the facts panel, with the explanation and forms beside it as their tickets land. What Canary
+ * band, a product's panel and the strategy's forms beside the facts panel, with the explanation joining them (#127). What Canary
  * saw is read with the page: a stranded market's head carries its fail and it gets no trade box, the
  * trade box repeats a failed exit test, and after an upgrade the notice sits under the head (#125).
  */
@@ -56,9 +57,7 @@ export default async function MarketPage({ params }: Props) {
           <MarketLive market={value} canary={canary} />
         </Suspense>
       </div>
-      <div className={bands.low}>
-        <MarketFacts market={value.address} canary={canary} />
-      </div>
+      <MarketLowBand market={value} facts={<MarketFacts market={value.address} canary={canary} />} />
     </div>
   );
 }
