@@ -40,7 +40,6 @@ export async function bodyOf<T extends z.ZodType>(c: Context<AppEnv>, schema: T)
   return parsed.data;
 }
 
-/** A refusal from the strategy or the chain, as a 422 with the failure decoded. */
 /** Aviary's own lookup table, when this deployment names one (`AVIARY_LOOKUP_TABLE`, PIPESCOPE-160). */
 export function aviaryTableOf(env: { AVIARY_LOOKUP_TABLE?: string }): Address | null {
   const named = env.AVIARY_LOOKUP_TABLE?.trim();
@@ -49,6 +48,7 @@ export function aviaryTableOf(env: { AVIARY_LOOKUP_TABLE?: string }): Address | 
   return named;
 }
 
+/** A refusal from the strategy or the chain, as a 422 with the failure decoded. */
 export const refused = (c: Context<AppEnv>, e: Refused) => c.json<Refusal>({ error: e.failure.sentence, failure: e.failure, logs: [...e.logs] }, 422);
 
 export function tradingRoutes(app: Hono<AppEnv>) {

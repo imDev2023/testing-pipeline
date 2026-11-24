@@ -21,7 +21,7 @@ import { TransactionReview } from "@/components/forms/TransactionReview";
 import { useReview } from "@/components/forms/useReview";
 import { StaticPanel } from "@/components/Panel";
 import { useWallet } from "@/components/wallet/WalletProvider";
-import { launchRequest, readLaunch, type LaunchValues } from "./launch";
+import { launchRequest, MAX_RECIPIENTS, readLaunch, type LaunchValues } from "./launch";
 import { mintRuleRefusal } from "./refusal";
 import { SplitTable } from "./SplitTable";
 import styles from "./TaxAmm.module.css";
@@ -68,8 +68,9 @@ export function TaxLaunch({ program }: { program: string }) {
     setTyped((now) => ({ ...now, ...change }));
     setVersion((n) => n + 1);
   };
-  // The first recipient is the connected wallet while its field is left empty.
-  const values: LaunchValues = { ...typed, recipients: typed.recipients.map((r, i) => (i === 0 && r.wallet === "" && trader ? { ...r, wallet: trader } : r)) };
+  // The first recipient is the connected wallet while its field is left empty; a market taxed in SOL has no burn share, whatever was typed before.
+  const solTax = typed.taxedIn === "quote" && typed.quote === "sol";
+  const values: LaunchValues = { ...typed, burnShare: solTax ? "0" : typed.burnShare, recipients: typed.recipients.map((r, i) => (i === 0 && r.wallet === "" && trader ? { ...r, wallet: trader } : r)) };
 
   const token = values.token.trim();
   const { read, retry } = useTokenFacts(token);
@@ -79,7 +80,8 @@ export function TaxLaunch({ program }: { program: string }) {
   const tokenName = tokenSymbol ?? "the token";
   const taxName = values.taxedIn === "quote" ? quote.name : tokenName;
 
-  const { launch, missing } = readLaunch(values, { wallet: trader, token: tokenFacts && tokenFacts.decimals !== null ? { mint: address(tokenFacts.mint), decimals: tokenFacts.decimals } : null, quotes: QUOTES });
+  const tokenProblem = read?.status === "failed" ? "Could not read the token's mint: read it again." : read?.status === "read" && (!read.facts.readable || read.facts.decimals === null) ? "The token's address is no mint." : null;
+  const { launch, missing } = readLaunch(values, { wallet: trader, token: tokenFacts && tokenFacts.decimals !== null ? { mint: address(tokenFacts.mint), decimals: tokenFacts.decimals } : null, tokenProblem, quotes: QUOTES });
 
   // A new market state's keypair, made in the page for each review and never sent anywhere (PIPESCOPE-144).
   const state = useRef<KeyPairSigner | null>(null);
@@ -101,7 +103,6 @@ export function TaxLaunch({ program }: { program: string }) {
   const refusal = review?.status === "failed" ? mintRuleRefusal(review.prepared.simulation.failure, review.prepared.simulation.logs, (mint) => (tokenFacts && mint === tokenFacts.mint ? (tokenFacts.token?.symbol ?? null) : null)) : null;
 
   const setRecipient = (i: number, change: Partial<LaunchValues["recipients"][number]>) => set({ recipients: typed.recipients.map((r, j) => (j === i ? { ...r, ...change } : r)) });
-  const solTax = values.taxedIn === "quote" && values.quote === "sol";
 
   return (
     <StaticPanel title="Launch a tax market">
@@ -163,7 +164,7 @@ export function TaxLaunch({ program }: { program: string }) {
         <fieldset className={styles.group}>
           <legend className={styles.legend}>Taxes</legend>
           <p className={forms.note}>
-            Every tax is taken in {taxName}. The tax authority can move a rate inside its range, each change waiting about two minutes before it applies.
+            Every tax is taken in {taxName}. Each rate stays between its lowest and highest for the market&apos;s life, and the tax authority can move it there, each change waiting about two minutes before it applies.
           </p>
           <Rate id={`${id}-buy`} label="Buy tax" what={`Taken when ${taxName} is paid in: when someone ${values.taxedIn === "quote" ? "buys the token" : `sells the token for ${quote.name}`}`} rate={values.buyTax} min={values.buyMin} max={values.buyMax} onChange={(rate, min, max) => set({ buyTax: rate, buyMin: min, buyMax: max })} />
           <Rate id={`${id}-sell`} label="Sell tax" what={`Taken when ${taxName} is paid out: when someone ${values.taxedIn === "quote" ? "sells the token" : `buys the token with ${quote.name}`}`} rate={values.sellTax} min={values.sellMin} max={values.sellMax} onChange={(rate, min, max) => set({ sellTax: rate, sellMin: min, sellMax: max })} />
@@ -208,7 +209,7 @@ export function TaxLaunch({ program }: { program: string }) {
               </div>
             </div>
           ))}
-          {values.recipients.length < 4 && (
+          {values.recipients.length < MAX_RECIPIENTS && (
             <div>
               <button type="button" onClick={() => set({ recipients: [...typed.recipients, { wallet: "", share: "" }] })}>
                 Add a recipient
@@ -320,7 +321,6 @@ function Rate({ id, label, what, rate, min, max, onChange }: { id: string; label
             <input type="text" inputMode="decimal" autoComplete="off" aria-label={`${label}'s highest rate, in percent`} value={max} onChange={(e) => onChange(rate, min, e.target.value)} />
             <span aria-hidden="true">%</span>
           </div>
-          <span>for the market&apos;s life</span>
         </div>
       </div>
     </div>

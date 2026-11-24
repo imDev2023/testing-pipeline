@@ -167,14 +167,14 @@ async function currentList(db: Db, program: string): Promise<{ deploySlot: bigin
   return { deploySlot: current.deploySlot, list };
 }
 
+/** What a strategy's forms are built from, as `readFormSource` reads it. */
+export type FormSource = NonNullable<Awaited<ReturnType<typeof readFormSource>>>;
+
 /**
  * What a strategy's forms are built from: its newest metadata (not fetched when there is none, or
  * when it was fetched for a URI the strategy no longer names), the document when valid, its actions
  * and in which section, and its current version's instruction list. Null for no strategy.
  */
-/** What a strategy's forms are built from, as `readFormSource` reads it. */
-export type FormSource = NonNullable<Awaited<ReturnType<typeof readFormSource>>>;
-
 export async function readFormSource(db: Db, program: string) {
   const [known] = await db.select({ program: strategies.program, uri: strategies.metadataUri }).from(strategies).where(eq(strategies.program, program));
   if (!known) return null;

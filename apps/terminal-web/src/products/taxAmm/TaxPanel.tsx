@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useCallback, useState } from "react";
 import { MarketKeeper, MarketRead, type Market, type MarketMint } from "terminal-api/contract";
 import { getFromApi } from "@/api";
+import { BRAND } from "@/brand";
 import { SLOT_MS_ESTIMATE } from "@/config";
 import { formatAge, formatInteger } from "@/format";
 import { outcomeText, waitingReason } from "@/keeperText";
@@ -168,7 +169,10 @@ export function TaxPanelBody({ market, view, slot, keeper, vaultsRead, onPaid }:
               value: (
                 <>
                   <span className={styles.lines}>{view.vaults.map((v, i) => <span key={i}>{v === null ? "Not read" : amount(v, mints[i] ?? null)}</span>)}</span>
-                  <span className={styles.sub}>The tax owed waits in the {taxName} vault beside the reserve, and anything sent to a vault outside a trade stays there, so {`Aviary's`} liquidity for this market is its real reserves.</span>
+                  <span className={styles.sub}>
+                    {view.owedTotal > 0n ? <>Of what the {taxName} vault holds, {amount(view.owedTotal, taxMint ?? null)} is tax owed and not yet paid out. </> : null}
+                    Anything sent to a vault outside a trade stays there too, so {BRAND.name}&apos;s liquidity for this market is its real reserves.
+                  </span>
                 </>
               ),
             },

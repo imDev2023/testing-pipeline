@@ -13,14 +13,19 @@ import { TRANSACTION_LIFETIME_SLOTS } from "../config";
 
 export type PendingTrade = { inputIndex: number; outputIndex: number; credited: bigint };
 
-/** What the strategy would send at its pending rates, and the slot they apply from; null when no change falls due within a transaction's lifetime. */
-export function pendingRateQuote(strategy: string, state: Uint8Array, slot: bigint, trade: PendingTrade): { fromSlot: bigint; strategyOut: bigint } | null {
+/**
+ * What the strategy would send at its pending rates, the slot they apply from, and whether that slot is
+ * still to come; null when the state holds no change, or one due only after a transaction's lifetime.
+ * A change whose slot has come is priced too: the chain's quote, simulated a moment before the state was
+ * read, may still have applied the earlier rates, and when it did not, both quotes are the same.
+ */
+export function pendingRateQuote(strategy: string, state: Uint8Array, slot: bigint, trade: PendingTrade): { fromSlot: bigint; strategyOut: bigint; upcoming: boolean } | null {
   if (strategy !== TAX_AMM_PROGRAM_ADDRESS) return null;
   if (state.length !== getTaxMarketSize() || !TAX_MARKET_DISCRIMINATOR.every((byte, i) => state[i] === byte)) return null;
   const market = getTaxMarketDecoder().decode(state);
   const from = market.pendingFromSlot;
-  // A change already due is what the chain's own quote applies; one past the lifetime cannot reach a swap signed now.
-  if (from === 0n || from <= slot || from > slot + BigInt(TRANSACTION_LIFETIME_SLOTS)) return null;
+  // One past the lifetime cannot reach a swap signed now.
+  if (from === 0n || from > slot + BigInt(TRANSACTION_LIFETIME_SLOTS)) return null;
   const priced = price(
     {
       suiteShareBps: SUITE_SHARE_BPS,
@@ -42,5 +47,5 @@ export function pendingRateQuote(strategy: string, state: Uint8Array, slot: bigi
     trade.credited,
   );
   // A trade the pending rates refuse would fail on chain after the change, taking nothing, so the minimum stays the one in force.
-  return typeof priced === "string" ? null : { fromSlot: from, strategyOut: priced.out };
+  return typeof priced === "string" ? null : { fromSlot: from, strategyOut: priced.out, upcoming: from > slot };
 }

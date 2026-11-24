@@ -61,14 +61,17 @@ describe("pendingRateQuote", () => {
     const due = state({ pendingBuyTaxBps: 900, pendingSellTaxBps: 500, pendingFromSlot: SLOT + 100n });
     const quoted = pendingRateQuote(TAX_AMM_PROGRAM_ADDRESS, due, SLOT, buy);
     // At 9%: tax = ceil(50,000,000 × 900 / 10,000) = 4,500,000; c = 45,500,000; out = floor(100e9 × c / (500e6 + c)).
-    expect(quoted).toEqual({ fromSlot: SLOT + 100n, strategyOut: (100_000_000_000n * 45_500_000n) / (500_000_000n + 45_500_000n) });
+    expect(quoted).toEqual({ fromSlot: SLOT + 100n, strategyOut: (100_000_000_000n * 45_500_000n) / (500_000_000n + 45_500_000n), upcoming: true });
   });
 
-  it("asks nothing of a change due after the transaction's lifetime, of one already in force, of no change, or of another strategy", () => {
+  it("prices a change whose slot has come too, since the chain's quote may have been simulated just before it, saying it is no longer to come", () => {
+    const inForce = state({ pendingBuyTaxBps: 900, pendingSellTaxBps: 500, pendingFromSlot: SLOT });
+    expect(pendingRateQuote(TAX_AMM_PROGRAM_ADDRESS, inForce, SLOT, buy)).toEqual({ fromSlot: SLOT, strategyOut: (100_000_000_000n * 45_500_000n) / (500_000_000n + 45_500_000n), upcoming: false });
+  });
+
+  it("asks nothing of a change due after the transaction's lifetime, of no change, or of another strategy", () => {
     const later = state({ pendingBuyTaxBps: 900, pendingSellTaxBps: 500, pendingFromSlot: SLOT + BigInt(TRANSACTION_LIFETIME_SLOTS) + 1n });
     expect(pendingRateQuote(TAX_AMM_PROGRAM_ADDRESS, later, SLOT, buy)).toBeNull();
-    const inForce = state({ pendingBuyTaxBps: 900, pendingSellTaxBps: 500, pendingFromSlot: SLOT });
-    expect(pendingRateQuote(TAX_AMM_PROGRAM_ADDRESS, inForce, SLOT, buy)).toBeNull();
     expect(pendingRateQuote(TAX_AMM_PROGRAM_ADDRESS, state({}), SLOT, buy)).toBeNull();
     expect(pendingRateQuote(ONE, state({ pendingBuyTaxBps: 900, pendingSellTaxBps: 500, pendingFromSlot: SLOT + 1n }), SLOT, buy)).toBeNull();
     expect(pendingRateQuote(TAX_AMM_PROGRAM_ADDRESS, Uint8Array.from([1, 2, 3]), SLOT, buy)).toBeNull();
@@ -78,6 +81,6 @@ describe("pendingRateQuote", () => {
     const due = state({ pendingBuyTaxBps: 300, pendingSellTaxBps: 1000, pendingFromSlot: SLOT + 10n });
     const sell = { inputIndex: 0, outputIndex: 1, credited: 1_000_000_000n };
     const g = (500_000_000n * 1_000_000_000n) / (100_000_000_000n + 1_000_000_000n);
-    expect(pendingRateQuote(TAX_AMM_PROGRAM_ADDRESS, due, SLOT, sell)).toEqual({ fromSlot: SLOT + 10n, strategyOut: g - (g * 1000n + 9_999n) / 10_000n });
+    expect(pendingRateQuote(TAX_AMM_PROGRAM_ADDRESS, due, SLOT, sell)).toEqual({ fromSlot: SLOT + 10n, strategyOut: g - (g * 1000n + 9_999n) / 10_000n, upcoming: true });
   });
 });

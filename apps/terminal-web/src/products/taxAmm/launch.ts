@@ -42,8 +42,9 @@ type MintRead = { mint: Address; decimals: number };
 export type LaunchContext = {
   /** The connected wallet, which creates and seeds the market. */
   wallet: Address | null;
-  /** The token's mint once read, else null. */
+  /** The token's mint once read, else null, with why when its read is over: it failed, or the address is no mint. */
   token: MintRead | null;
+  tokenProblem?: string | null;
   /** SOL and USDC, which Aviary names itself. */
   quotes: { sol: MintRead; usdc: MintRead };
 };
@@ -53,7 +54,7 @@ export type ValidLaunch = { mints: [Address, Address]; params: InitParams; seed:
 
 const QUOTE_NAMES = { sol: "SOL", usdc: "USDC" } as const;
 /** Tax recipients a market can name: their slots come before the burn's, as the IDL numbers them. */
-const MAX_RECIPIENTS = BURN_SLOT;
+export const MAX_RECIPIENTS = BURN_SLOT;
 const percent = (bps: number) => `${bps / 100}%`;
 
 /** A percentage typed to two places, as basis points; null when it is no such percentage. */
@@ -81,6 +82,7 @@ export function readLaunch(values: LaunchValues, context: LaunchContext): { laun
   if (!isAddress(token)) return no("Enter the token's mint address.");
   if (token === quote.mint) return no(`The token must be another mint than the ${quoteName} it is paired with.`);
   if (!context.wallet) return no("Connect your wallet: it creates and seeds the market.");
+  if (context.tokenProblem) return no(context.tokenProblem);
   if (!context.token || context.token.mint !== token) return no("Waiting for the token's mint to be read.");
 
   const rates: Record<"buy" | "sell", { rate: number; min: number; max: number }> = { buy: { rate: 0, min: 0, max: 0 }, sell: { rate: 0, min: 0, max: 0 } };

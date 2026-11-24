@@ -87,9 +87,11 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
   // A change of the strategy's own rates due within the transaction's lifetime: the minimum is set from the worse of the two quotes (./pendingRates).
   const state = read.value[watched.length];
   const atPending = state ? pendingRateQuote(market.view.strategyProgram, new Uint8Array(base64.encode(state.data[0])), BigInt(read.context.slot), { inputIndex: trade.inputIndex, outputIndex: trade.outputIndex, credited: BigInt(quote.net_sent) }) : null;
-  const pending = atPending && { from_slot: Number(atPending.fromSlot), expected_out: String(feeSide === "output" ? keptAfterOutputFee(atPending.strategyOut, quote.pipeline_fee_bps) : atPending.strategyOut) };
-  const worse = pending && BigInt(pending.expected_out) < BigInt(quote.expected_out) ? BigInt(pending.expected_out) : BigInt(quote.expected_out);
+  const atPendingOut = atPending && (feeSide === "output" ? keptAfterOutputFee(atPending.strategyOut, quote.pipeline_fee_bps) : atPending.strategyOut);
+  const worse = atPendingOut !== null && atPendingOut < BigInt(quote.expected_out) ? atPendingOut : BigInt(quote.expected_out);
   const minAmountOut = minimumReceived(worse, input.slippageBps);
+  // The review says so only for a change still to come; one already due is the rates the quote shows.
+  const pending = atPending?.upcoming ? { from_slot: Number(atPending.fromSlot), expected_out: String(atPendingOut) } : null;
 
   const instructions: Instruction[] = [
     getCreateAssociatedTokenIdempotentInstruction({ payer: signer, ata: traderOutput, owner: trader, mint: outputMint.address, tokenProgram: outputMint.tokenProgram }),

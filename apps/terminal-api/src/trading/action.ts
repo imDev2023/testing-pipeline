@@ -165,6 +165,13 @@ export async function createMarketTransaction(input: CreateInput) {
   const filled = new Set(Object.values(inputs));
   const mint = then.mints.find((m) => !filled.has(m));
   if (mint) throw refusal("bad_input", `The new market's mint ${mint} is not one the create form was filled with.`);
+  // The market's order: the vaults, and the mints the create form passes as accounts, in the order its accounts name them.
+  const accountOrder = resolved.strategyAccounts.map((a) => a.address);
+  const outOfOrder = (list: readonly Address[]) => {
+    const at = list.map((a) => accountOrder.indexOf(a)).filter((i) => i >= 0);
+    return at.some((i, k) => k > 0 && i < at[k - 1]!);
+  };
+  if (outOfOrder(then.vaults) || outOfOrder(then.mints)) throw refusal("bad_input", "The new market's mints and vaults are not in the order its create form names them.");
 
   const programsOfMints = await Promise.all(then.mints.map((m) => tokenProgramOf(m, tokenPrograms, rpc)));
   const view: MarketView = { market: resolved.market, strategyProgram: strategy, marketState: resolved.marketState, mints: then.mints, vaults: then.vaults, tokenPrograms: programsOfMints, supportsExactOut: false };

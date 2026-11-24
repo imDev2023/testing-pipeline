@@ -3,8 +3,8 @@
 // their signatures waited on until they confirm; a mint typed into a create form, read for its facts;
 // and a market's state with named outside accounts read at one slot, for a product's panel. Prepares
 // and signatures count with quotes against the TRADES limit (PIPESCOPE-90); the reads are reads.
-import { PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
-import { AccountRole, address, createSolanaRpc, isAddress, type Address, type Instruction } from "@solana/kit";
+import { PIPELINE_PROGRAM_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
+import { AccountRole, address, createSolanaRpc, getBase64Encoder, isAddress, type Address, type Instruction, type Rpc, type SolanaRpcApi } from "@solana/kit";
 import { eq } from "drizzle-orm";
 import type { Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -21,8 +21,8 @@ import { keptImages } from "../tokenImages";
 import { actionTransaction, createMarketTransaction, prepareTransaction, walletWrappedSol, type Opening } from "./action";
 import { awaitTrade, TRANSACTION_WORDS } from "./fastPath";
 import { actionHookAccounts } from "./hooks";
-import { readMarketOnChain } from "./market";
-import { Refused } from "./quote";
+import { readMarketOnChain, transferHookProgram } from "./market";
+import { COMMITMENT, Refused } from "./quote";
 import { addressOf, aviaryTableOf, bodyOf, refused } from "./routes";
 
 /** The database, opened only around its reads and never held while the chain is asked or waited on. */
@@ -51,20 +51,38 @@ const accountsOf = (instruction: Instruction) =>
 
 const unprocessable = (message: string) => new HTTPException(422, { message });
 
-/** A new market's opening with each action found by name in the strategy's validated metadata, or refused as an action form would be. */
-function openingOf(opening: MarketOpening, actions: FormSource["actions"]): Opening {
+/**
+ * A new market's opening with each action found by name in the strategy's validated metadata, or
+ * refused as an action form would be; an action whose instruction the deployed program does not hold
+ * is refused before anything is built, since it could only fail.
+ */
+async function openingOf(opening: MarketOpening, source: FormSource): Promise<Opening> {
+  const { actions } = source;
   if (!actions) throw unprocessable("This strategy has no action forms: its metadata is unavailable.");
   if (!actions.result.ok) throw unprocessable("This strategy has no action forms: the actions its metadata describes failed their validator.");
   const { actions: described } = actions.result;
-  return {
-    mints: opening.mints.map((m) => address(m)),
-    vaults: opening.vaults.map((v) => address(v)),
-    actions: opening.actions.map((step) => {
-      const action = described.find((a) => a.name === step.action);
-      if (!action) throw new HTTPException(404, { message: `This strategy describes no action named ${step.action} in its metadata.` });
-      return { action, args: step.args, inputs: checkedInputs(step.inputs) };
-    }),
-  };
+  const steps = [];
+  for (const step of opening.actions) {
+    const action = described.find((a) => a.name === step.action);
+    if (!action) throw new HTTPException(404, { message: `This strategy describes no action named ${step.action} in its metadata.` });
+    if (checkForm(await actionDiscriminator(action), source.list).reason === "not-in-program") throw unprocessable(`The deployed program has no instruction for the ${step.action} action its metadata describes, so the new market cannot run it as it opens.`);
+    steps.push({ action, args: step.args, inputs: checkedInputs(step.inputs) });
+  }
+  return { mints: opening.mints.map((m) => address(m)), vaults: opening.vaults.map((v) => address(v)), actions: steps };
+}
+
+/**
+ * Refuses to open a new market in its create transaction when one of its mints has a transfer hook: an
+ * opening action's transfers would need the hook's accounts, which are resolved from a market that
+ * exists (PIPESCOPE-154), and a hooked token is launched in steps of its own, such as a contained
+ * token's bind between its creation and its seed.
+ */
+async function refuseHookedOpening(rpc: Rpc<SolanaRpcApi>, mints: readonly Address[]) {
+  const { value } = await rpc.getMultipleAccounts([...mints], { encoding: "base64", commitment: COMMITMENT }).send();
+  value.forEach((account, i) => {
+    const hook = account && account.owner === TOKEN_2022_PROGRAM_ADDRESS ? transferHookProgram(new Uint8Array(getBase64Encoder().encode(account.data[0]))) : null;
+    if (hook) throw unprocessable(`The new market's mint ${mints[i]} has a transfer hook, ${hook}, so the market cannot be opened in the transaction that creates it: create it, then run its actions in transactions of their own.`);
+  });
 }
 
 export function actionRoutes(app: Hono<AppEnv>) {
@@ -122,9 +140,10 @@ export function actionRoutes(app: Hono<AppEnv>) {
     if (!source.init) throw unprocessable("This strategy has no create form: its metadata describes none.");
 
     // The actions a new market runs as it opens, from the strategy's validated metadata like any action form's.
-    const then = request.then && openingOf(request.then, source.actions);
+    const then = request.then && (await openingOf(request.then, source));
 
     const rpc = createSolanaRpc(c.env.RPC_URL);
+    if (then) await refuseHookedOpening(rpc, then.mints);
     try {
       const trader = address(request.trader);
       const strategy = address(request.strategy);

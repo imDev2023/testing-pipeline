@@ -154,6 +154,10 @@ describe("createMarketTransaction", () => {
       expect((wrongVault as Refused).failure).toMatchObject({ class: "bad_input", sentence: `The new market's vault ${OTHER} is not one of the accounts its create form names.` });
       const wrongMint = await build({ ...then, mints: [NATIVE_MINT_ADDRESS, OTHER] });
       expect((wrongMint as Refused).failure).toMatchObject({ class: "bad_input", sentence: `The new market's mint ${OTHER} is not one the create form was filled with.` });
+      const swapped = await build({ ...then, vaults: [then.vaults[1]!, then.vaults[0]!] });
+      expect((swapped as Refused).failure).toMatchObject({ class: "bad_input", sentence: "The new market's mints and vaults are not in the order its create form names them." });
+      const reversed = await build({ ...then, mints: [TOKEN, NATIVE_MINT_ADDRESS] });
+      expect((reversed as Refused).failure).toMatchObject({ class: "bad_input" });
       const uneven = await build({ ...then, vaults: [then.vaults[0]!] });
       expect((uneven as Refused).failure).toMatchObject({ class: "bad_input", sentence: "The new market needs one vault for each of its mints." });
     });

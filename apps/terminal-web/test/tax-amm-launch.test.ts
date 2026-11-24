@@ -94,6 +94,10 @@ describe("readLaunch", () => {
     expect(readLaunch(values(over), context)).toEqual({ launch: null, missing: said });
   });
 
+  it("says when the token's read is over without a mint: it failed, or the address is no mint", () => {
+    expect(readLaunch(values(), { ...context, token: null, tokenProblem: "The token's address is no mint." }).missing).toBe("The token's address is no mint.");
+  });
+
   it("waits for the token's mint to be read, and for a wallet", () => {
     expect(readLaunch(values(), { ...context, token: null }).missing).toBe("Waiting for the token's mint to be read.");
     expect(readLaunch(values(), { ...context, wallet: null }).missing).toBe("Connect your wallet: it creates and seeds the market.");
