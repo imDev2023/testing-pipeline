@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { getAddressEncoder, type Address } from "@solana/kit";
 import { describe, expect, it } from "vitest";
-import { readBuyWallState, readBuyWall, type BuyWallState } from "../src/products/buyWall";
+import { BUY_WALL_RISKS, buyWallFacts, readBuyWallState, readBuyWall, type BuyWallState } from "../src/products/buyWall";
 
 const SPEC = readFileSync(`${import.meta.dirname}/../../../docs/spec/pool4-for-solana.md`, "utf8");
 const DEMO = JSON.parse(readFileSync(`${import.meta.dirname}/fixtures/buy-wall-demo-market.json`, "utf8")) as { market_state: { data: string }; token_mint: { data: string } };
@@ -116,5 +116,28 @@ describe("what the panel and the explainer read of a buy wall market", () => {
   it("names a recipient left unset at creation as none", () => {
     const { recipients } = readBuyWall({ ...demo, rewardsRecipient: "11111111111111111111111111111111" as BuyWallState["rewardsRecipient"] }, { supply, now: 0n });
     expect(recipients).toEqual({ fee: demo.feeRecipient, rewards: null });
+  });
+});
+
+describe("the explainer's facts of a buy wall market", () => {
+  const facts = buyWallFacts({ state: bytesOf(DEMO.market_state.data), mint: bytesOf(DEMO.token_mint.data), slot: 525_833_592, now: 1_795_228_910n });
+  const value = (label: string) => facts.find((f) => f.label === label)?.value;
+
+  it("carries what the panel shows, each read from the market state at one slot", () => {
+    expect(facts.map((f) => f.label)).toEqual(["Price", "Buy wall", "Inventory cap", "Retired, owed and burned tokens", "Fee and its split", "Fee ledgers", "Parameters", "Recipients"]);
+    for (const f of facts) expect(f).toMatchObject({ group: "Buy wall AMM", source: "the sampled market's state, read at slot 525833592" });
+    expect(value("Price")).toBe("0.00000890267 SOL per token.");
+    expect(value("Buy wall")).toBe("Placed, its top at 0.00000890267 SOL per token. It holds 1.781987355 SOL and has bought 0 tokens, spending 0 SOL, since it was placed. Its floor is 0.00000890267 SOL per token. 0 SOL is idle, waiting to be placed as the wall.");
+    expect(value("Inventory cap")).toBe("864268.710755 tokens, against 864268.710744 tokens the curve holds. The cap floor is 200000 tokens (20% of the 1000000 tokens seeded); the cap decay is 200000 tokens a day (20% of the tokens seeded); 51479.358903 tokens of cap decay allowance are built up.");
+    expect(value("Retired, owed and burned tokens")).toBe("0 tokens retired, waiting to be burned or kept for rewards; 0 tokens of rewards owed; 175371.59587 tokens burned so far, 13.49% of the supply before these burns.");
+    expect(value("Fee and its split")).toBe("1% of every swap, taken in SOL on top of Pipeline's fee: 10% of it is the designer share for IMD and Adam, 10% the suite share, and the rest is the market's, 50% of it to the buy wall and 50% to the fee recipient.");
+    expect(value("Fee ledgers")).toBe("Fee recipient: 0 SOL. Designer share: 0.012506103 SOL, waiting in the market, since its wallet is not set yet. Suite share: 0 SOL, paid to CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF.");
+    expect(value("Parameters")).toBe("Fee 100 bps, buy wall split 5000 bps, reward share 1500 bps, cap floor 2000 bps and cap decay 2000 bps a day, none of which can change. 1000000 tokens seeded by 9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt; created 2026-11-20 04:13 UTC, seeded 2026-11-20 04:13 UTC.");
+    expect(value("Recipients")).toBe("Fee recipient: 4Q3DcWHTGaN6d6vVdTUxW4KEsD5iZky5wtgxNzf3bUzu. Rewards recipient: 7GDwQsJpPZTR6CwgPZkuHQakhziAs1xRoYzdrmQyibjd. Each may hand its own role to another wallet; nobody else can change either.");
+  });
+
+  it("names the three risks of every buy wall market", () => {
+    expect(BUY_WALL_RISKS.map((r) => r.label)).toEqual(["Risk: the curve thins as the cap falls", "Risk: the buy wall can sit well below the price", "Risk: the rewards recipient can trade the cap down"]);
+    expect(BUY_WALL_RISKS.map((r) => r.value).join(" ")).toMatch(/about 4% a day/);
   });
 });

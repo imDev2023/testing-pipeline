@@ -11,9 +11,12 @@
 // The evidence: P items, Pipeline's rules (terminal-explainer); F items, the program and its version,
 // its instructions, its markets and the markets this version cannot read, the representative market
 // (most swaps through Pipeline, then the largest SOL vault; EXPLAINER-03) with its mints and vaults,
-// and the transactions observed; C items, Canary's records; A items, the normalised metadata, with
-// the F items of what code checked of it. S items wait for verified builds (#128).
+// and the transactions observed; for one of our products, what its panel shows of the representative
+// market, read from the chain at one slot, and its risks (./products, #57); C items, Canary's
+// records; A items, the normalised metadata, with the F items of what code checked of it. S items
+// wait for verified builds (#128).
 import { FLAG_DESCRIPTIONS } from "@pipeline-sol/sdk";
+import { address, createSolanaRpc } from "@solana/kit";
 import { and, asc, count, countDistinct, desc, eq, inArray, max, min, sql } from "drizzle-orm";
 import {
   canaryResults,
@@ -49,6 +52,7 @@ import { CHECK_ABOUT } from "./canarySentences";
 import { AVIARY_MINT_NAMES, WRAPPED_SOL } from "./config";
 import { mintFacts } from "./facts";
 import { ROUTER } from "./indexerCore";
+import { PRODUCT_EVIDENCE, type ReadAccounts } from "./products";
 import { readStrategyInstructions } from "./strategies";
 
 const MONTH_PAD = (n: number) => String(n).padStart(2, "0");
@@ -240,8 +244,38 @@ async function canaryItems(db: Db, { program, version, outcomes }: Current, repr
   return items;
 }
 
+/**
+ * One of our products' facts (./products): what its panel shows of the sampled market, read from the
+ * chain at one slot, and the risks of every market of it; nothing for any other strategy.
+ */
+async function productItems(db: Db, program: string, representative: string | null, read: ReadAccounts | null): Promise<Fact[]> {
+  const product = PRODUCT_EVIDENCE[program];
+  if (!product) return [];
+  if (!representative) return [...product.risks];
+  const [row] = await db.select({ marketState: markets.marketState }).from(markets).where(eq(markets.address, representative));
+  const mintRows = await db.select({ mint: marketMints.mint }).from(marketMints).where(eq(marketMints.market, representative)).orderBy(asc(marketMints.position));
+  const unread = (why: string): Fact => ({ group: "Market", label: "Sampled market's state", value: why, source: "the sampled market's state account" });
+  if (!row || !read) return [unread("Not read by Aviary for this explanation."), ...product.risks];
+  try {
+    return [...(await product.facts({ marketState: row.marketState, mints: mintRows.map((m) => m.mint) }, read)), ...product.risks];
+  } catch (e) {
+    console.error("explainer: reading the sampled market's state failed", e instanceof Error ? e.name : typeof e);
+    return [unread("Aviary could not read it: the RPC did not answer."), ...product.risks];
+  }
+}
+
+/** Reads accounts through the RPC at one slot, for a product's facts. */
+const rpcReader =
+  (rpcUrl: string): ReadAccounts =>
+  async (addresses) => {
+    const { context, value } = await createSolanaRpc(rpcUrl)
+      .getMultipleAccounts(addresses.map((a) => address(a)), { encoding: "base64", commitment: "confirmed" })
+      .send();
+    return { slot: Number(context.slot), data: value.map((a) => (a ? new Uint8Array(Buffer.from(a.data[0], "base64")) : null)) };
+  };
+
 /** The evidence of a strategy's current version, and what its key row records beside it. */
-async function buildEvidence(db: Db, at: Current): Promise<{ evidence: EvidenceItem[]; representative: string | null; addressesAi: boolean }> {
+async function buildEvidence(db: Db, at: Current, read: ReadAccounts | null): Promise<{ evidence: EvidenceItem[]; representative: string | null; addressesAi: boolean }> {
   const [router] = await db.select({ upgradeAuthority: programFacts.upgradeAuthority }).from(programFacts).where(eq(programFacts.program, ROUTER));
   const program = await programItems(db, at);
   const market = await marketItems(db, at);
@@ -254,7 +288,8 @@ async function buildEvidence(db: Db, at: Current): Promise<{ evidence: EvidenceI
     removed: snapshot.status === "valid" ? (snapshot.removed as Removed) : null,
     instructions: program.instructions,
   });
-  const facts = [...program.facts, ...author.facts, ...market.facts, ...(program.custom ? [program.custom] : [])];
+  const product = await productItems(db, at.program, market.representative, read);
+  const facts = [...program.facts, ...author.facts, ...market.facts, ...product, ...(program.custom ? [program.custom] : [])];
   const evidence = assembleEvidence({ pipeline: pipelineRules({ routerUpgradeAuthority: router?.upgradeAuthority ?? null }), facts, canary, author: author.author });
   return { evidence, representative: market.representative, addressesAi: author.addressesAi };
 }
@@ -264,7 +299,7 @@ async function buildEvidence(db: Db, at: Current): Promise<{ evidence: EvidenceI
  * each key not recorded yet builds its evidence and records it pending. Says which strategies got a
  * new key, and which wait for their metadata's new link to be fetched.
  */
-export async function makeExplainerKeys(db: Db, { programs }: { programs?: string[] } = {}): Promise<{ made: string[]; revived: string[]; waiting: string[] }> {
+export async function makeExplainerKeys(db: Db, { programs, rpcUrl }: { programs?: string[]; rpcUrl?: string } = {}): Promise<{ made: string[]; revived: string[]; waiting: string[] }> {
   const rows = await db.select({ program: strategies.program, metadataUri: strategies.metadataUri }).from(strategies).where(programs ? inArray(strategies.program, programs) : undefined);
   const made: string[] = [];
   const revived: string[] = [];
@@ -282,7 +317,7 @@ export async function makeExplainerKeys(db: Db, { programs }: { programs?: strin
       if (await reviveExplainerKey(db, key.id)) revived.push(program);
       continue;
     }
-    const { evidence, representative, addressesAi } = await buildEvidence(db, at);
+    const { evidence, representative, addressesAi } = await buildEvidence(db, at, rpcUrl ? rpcReader(rpcUrl) : null);
     const cost = estimateCost({ program, deploySlot: at.version.deploySlot, evidence });
     const { id, ...parts } = key;
     if (await recordExplainerKey(db, { key: id, ...parts, evidence, representativeMarket: representative, authorTextAddressesAi: addressesAi, estimatedInputTokens: cost.inputTokens, estimatedCostUsd: cost.usd })) made.push(program);
