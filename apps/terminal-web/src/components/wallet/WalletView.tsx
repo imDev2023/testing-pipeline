@@ -113,11 +113,12 @@ function Label({ names, mint }: { names: readonly MintName[]; mint: string }) {
   return <MintLabel mint={mint} symbol={named.symbol} token={named.token} />;
 }
 
-/** A market as a list names it: its pair, base first, linked to its page. */
-function MarketLink({ names, market, base, quote }: { names: readonly MintName[]; market: string; base: string; quote: string }) {
+/** A market as a list names it: its pair, base first, linked to its page; with `address`, its short address too, where another market of the list trades the same pair. */
+function MarketLink({ names, market, base, quote, address = false }: { names: readonly MintName[]; market: string; base: string; quote: string; address?: boolean }) {
   return (
     <Link href={ROUTES.market(market)} className={styles.marketLink}>
       <Label names={names} mint={base} /> / <Label names={names} mint={quote} />
+      {address && <code className={styles.marketAddress}> {shortAddress(market)}</code>}
     </Link>
   );
 }
@@ -156,9 +157,13 @@ function HoldingsTable({ holdings }: { holdings: Holdings }) {
                   <ul className={styles.markets}>
                     {h.markets.map((address) => {
                       const pair = markets.find((m) => m.address === address)!;
+                      const same = h.markets.filter((other) => {
+                        const p = markets.find((m) => m.address === other)!;
+                        return p.base_mint === pair.base_mint && p.quote_mint === pair.quote_mint;
+                      }).length;
                       return (
                         <li key={address}>
-                          <MarketLink names={mints} market={address} base={pair.base_mint} quote={pair.quote_mint} />
+                          <MarketLink names={mints} market={address} base={pair.base_mint} quote={pair.quote_mint} address={same > 1} />
                         </li>
                       );
                     })}
@@ -268,7 +273,9 @@ function SwapRow({ trade: t, names, integratorName }: { trade: Trade; names: rea
     const decimals = nameOf(names, mint).decimals;
     return (
       <span className={styles.amount}>
-        {decimals === null ? <span className={table.none}>not read</span> : formatTokenAmount(BigInt(raw), decimals)} <Label names={names} mint={mint} />
+        {/* The space stays in the text, so the amount reads as two words; the gap draws it. */}
+        <span>{decimals === null ? <span className={table.none}>not read</span> : formatTokenAmount(BigInt(raw), decimals)} </span>
+        <Label names={names} mint={mint} />
       </span>
     );
   };

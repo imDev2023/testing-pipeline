@@ -125,8 +125,19 @@
   text-decoration-color: var(--ink);
 }
 
+/* The market's own short address, where two markets of one list trade the same pair. */
+.marketAddress {
+  color: var(--ink3);
+}
+
+/* An amount: its number and its mint on one line when the column has room, else the mint on the next,
+   so a narrow column never runs into the one beside it. */
 .amount {
-  white-space: nowrap;
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: var(--listing-number-align);
+  column-gap: 0.3em;
+  max-width: 100%;
 }
 
 .fees {
