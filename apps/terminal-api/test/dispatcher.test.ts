@@ -9,7 +9,7 @@ describe("the every-minute dispatcher (PIPESCOPE-89)", () => {
   });
 
   it("adds a job on the minutes its interval divides", () => {
-    expect(dueJobs(at("2026-11-22T10:05:00Z"))).toEqual(["reconcileRouter", "reconcileStrategies", "programDataWatch", "verifiedBuilds"]);
+    expect(dueJobs(at("2026-11-22T10:05:00Z"))).toEqual(["reconcileRouter", "reconcileStrategies", "programDataWatch", "verifiedBuilds", "explainerKeys"]);
     expect(dueJobs(at("2026-11-22T10:10:00Z"))).toContain("registrySnapshot");
     expect(dueJobs(at("2026-11-22T10:30:00Z"))).not.toContain("metadataRefetch");
   });
@@ -28,6 +28,7 @@ describe("the every-minute dispatcher (PIPESCOPE-89)", () => {
       "verifiedBuilds",
       "metadataRefetch",
       "mintRefresh",
+      "explainerKeys",
     ]);
   });
 

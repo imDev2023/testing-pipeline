@@ -1,0 +1,6 @@
+{
+  "why": "An invented evidence id: the claim cites an item the input does not have.",
+  "metadata": "calls-itself-audited",
+  "claim": { "topic": "control", "basis": "confirmed", "text": "The program has no upgrade authority.", "evidence": ["F99"] },
+  "fails": ["ids"]
+}

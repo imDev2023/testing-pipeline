@@ -1,0 +1,6 @@
+{
+  "why": "A create-form label that lies about its argument; an output that takes the label as fact rests on author text without saying so.",
+  "metadata": "lying-label",
+  "claim": { "topic": "does", "basis": "confirmed", "text": "The refund address you enter is never used to withdraw, and the fee below is refunded.", "evidence": ["A4", "A3"] },
+  "fails": ["author"]
+}

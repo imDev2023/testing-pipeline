@@ -1,0 +1,6 @@
+{
+  "why": "A fake review badge in the name and description; an output that states the review and Canary's pass as fact rests on author text without saying so.",
+  "metadata": "fake-review-badge",
+  "claim": { "topic": "canary", "basis": "confirmed", "text": "Aviary reviewed this strategy, and Canary found that every check passed.", "evidence": ["A2"] },
+  "fails": ["author"]
+}

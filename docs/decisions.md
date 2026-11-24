@@ -3153,6 +3153,66 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: strategy metadata, trust facts and the facts panel, with the feed's filters](https://github.com/imDev2023/testing-pipeline/issues/119)
 
+### EXPLAINER-23: How keys are made and leave the queue
+
+- Question: What makes an explanation's key, and what happens to a pending key a newer one replaces?
+- Answer: `terminal-api`'s `explainerKeys` job works out each strategy's current key every 5 minutes and records a new one pending with its evidence, waiting while a changed metadata link is not fetched yet; a newer key of a strategy marks its older pending key superseded, so it leaves the queue unpaid.
+- Alternatives: Making keys at once from the indexer, Canary's runs and the metadata fetcher; keeping every pending key in the queue for the owner to skip.
+- Specified in: [`docs/spec/pipescope-explainer.md`, When an explanation is made](spec/pipescope-explainer.md#when-an-explanation-is-made)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126)
+
+### EXPLAINER-24: What of the author text is evidence and what code checks
+
+- Question: Which author text reaches the model, and what does code check of it now that Pipeline's metadata has no custom actions?
+- Answer: A items are the name, description, category, tags, the create form's description and its arguments' labels and descriptions, and the outside reviews listed; code checks the create form and seeding against the version's instructions (`PipelineInitMarket`, `PipelineSeedLiquidity`) and ties each label to its argument in an F item that names the label by its A item's id.
+- Alternatives: Cross-checking each action's discriminator, as the spec said before Pipeline's SDK 0.3 dropped custom actions; quoting the labels inside the F items.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Inputs](spec/pipescope-explainer.md#inputs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126)
+
+### EXPLAINER-25: A pending key's estimated cost
+
+- Question: How is a pending key's cost estimated before the owner approves it?
+- Answer: Its request's characters at 2.4 a token (measured with the free token-counting endpoint), and 4,000 output tokens a call, for a first try and its retry, at the model's price in the rules module; the approve command asks with the sum and reports what was spent.
+- Alternatives: Counting each key's tokens with the token-counting endpoint, which needs the API key in Cloudflare; pricing one call only.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Model and cost](spec/pipescope-explainer.md#model-and-cost)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126)
+
+### EXPLAINER-26: What the number check reads
+
+- Question: Which text of the cited evidence does the validator's number check look in?
+- Answer: Each cited item's label and value, which is what the model read; where Aviary read an item is never sent, so it is no evidence, and a Canary item carries its run date in its value.
+- Alternatives: The label, the value and the source, as the prototype checked.
+- Specified in: [`docs/spec/pipescope-explainer.md`, The validator](spec/pipescope-explainer.md#the-validator)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126)
+
+### EXPLAINER-27: The owner's explainer commands
+
+- Question: Where do the owner's paid commands live, and how is the first paid run made?
+- Answer: In `apps/terminal-explainer-cli`, the only package that imports the Anthropic SDK: `pnpm explainer:approve` and `pnpm explainer:reports`, `pnpm explainer:eval` for the five samples and the hostile fixture set, and `pnpm explainer:count` for exact input tokens from the free endpoint; each paid command asks first and appends one ledger line.
+- Alternatives: The commands inside `terminal-explainer`, whose package `terminal-api` imports.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Explainer jobs](spec/pipescope-architecture.md#explainer-jobs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126)
+
+### EXPLAINER-28: Canary's records as evidence
+
+- Question: Which Canary records does an explanation read?
+- Answer: The representative market's latest result of each check with its run date, slot, outcome, reason and inputs, one item with each check's outcomes across the version's markets, and one naming the checks not run on the representative market; the representative market's tie after swaps and SOL vault goes to the first by address.
+- Alternatives: Every market's records; one item per check not run.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Inputs](spec/pipescope-explainer.md#inputs)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126)
+
 ## Tax AMM (TAX)
 
 ### TAX-01: Pricing, and where the tax is taken
@@ -5897,6 +5957,8 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `HOOK-35` to `HOOK-37`: set by the session of [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `EXPLAINER-23` to `EXPLAINER-28`: set by the session of [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `PIPESCOPE-91`: since Pipeline 0.3 the router's config account holds no swap fee: the fee is a constant of the router, which the SDK mirrors as `PIPELINE_FEE_BPS`, and the explainer's P item reads that constant; the decision should name the SDK's constant, not the config account.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.
 - `PIPESCOPE-65` to `PIPESCOPE-85`: set by the session of [Pipescope screens](https://github.com/imDev2023/testing-pipeline/issues/16) from a clickable prototype; the owner was asked about `PIPESCOPE-65` to `PIPESCOPE-70`, `PIPESCOPE-73`, `PIPESCOPE-76`, `PIPESCOPE-80` and `PIPESCOPE-82` and told the session to go ahead with its recommended answers without reacting to the screens one by one, and the rest were listed on the prototype's decisions page or follow from other tickets' inputs and were not asked, so all are that session's defaults until the owner or MetalLegBob has reacted.
 - `POOL4-22`, `POOL4-23`: set by the session of [Buy wall AMM: a market opens (the program from the template, the fixed-size market state, creation and the seed)](https://github.com/imDev2023/testing-pipeline/issues/47) and not yet put to the owner, so they are that session's defaults until the owner has been asked.

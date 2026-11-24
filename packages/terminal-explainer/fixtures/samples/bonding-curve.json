@@ -1,0 +1,338 @@
+{
+  "sample": "bonding-curve",
+  "title": "Strategy ETrm...5zAb",
+  "program": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+  "deploySlot": 520151724,
+  "evidence": [
+    {
+      "id": "P1",
+      "group": "Pipeline",
+      "label": "Pipeline fee",
+      "value": "0.25% of each swap's input, charged by the router on every hop and paid to Pipeline's treasury.",
+      "source": "Pipeline docs/INTEGRATOR-GUIDE.md; constant text kept by Aviary"
+    },
+    {
+      "id": "P2",
+      "group": "Pipeline",
+      "label": "Router protections on swaps",
+      "value": "The router moves your input into the strategy's vault, refuses the swap if you would receive less than your minimum, and never takes more than the amount you signed. You do not sign the call to the strategy, so it can pay you but cannot take from your accounts.",
+      "source": "Pipeline docs/ROUTER.md; constant text"
+    },
+    {
+      "id": "P3",
+      "group": "Pipeline",
+      "label": "Custom actions",
+      "value": "Any strategy instruction other than a swap is signed directly on the strategy; the router's protections and fee do not apply to it.",
+      "source": "Pipeline docs/STRATEGY-GUIDE.md section 5; constant text"
+    },
+    {
+      "id": "P4",
+      "group": "Pipeline",
+      "label": "Bypass",
+      "value": "A strategy may allow trades that skip the router; those pay no Pipeline fee and leave no swap event.",
+      "source": "Pipeline docs/STRATEGY-GUIDE.md rule 4; constant text"
+    },
+    {
+      "id": "P5",
+      "group": "Pipeline",
+      "label": "Vetting",
+      "value": "Pipeline does not vet strategies; anyone can register one.",
+      "source": "Pipeline docs/INTEGRATOR-GUIDE.md section 5; constant text"
+    },
+    {
+      "id": "P6",
+      "group": "Pipeline",
+      "label": "Router control on devnet",
+      "value": "The router is upgradeable. Its upgrade authority 2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ is also its admin, who can pause swaps, market creation and registration.",
+      "source": "Router ProgramData 3dpKiLED... and Config BmdeX3kW... read 2026-11-09 at slot 520324283"
+    },
+    {
+      "id": "F1",
+      "group": "Program",
+      "label": "Program",
+      "value": "ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb",
+      "source": "read 2026-11-09, slot 520324311"
+    },
+    {
+      "id": "F2",
+      "group": "Program",
+      "label": "Upgrade authority",
+      "value": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ; not frozen, so this key can replace the code",
+      "source": "ProgramData AhH83hnA..., slot 520324312"
+    },
+    {
+      "id": "F3",
+      "group": "Program",
+      "label": "This version",
+      "value": "Deployed in slot 520151724, 2026-11-08 21:10 UTC; hash 74fca48e...c3923",
+      "source": "ProgramData header; solana-verify get-program-hash"
+    },
+    {
+      "id": "F4",
+      "group": "Program",
+      "label": "Version history",
+      "value": "Third version: deployed 2026-11-08 10:38 UTC, upgraded twice that day, at 13:20 and 21:10 UTC, all by 2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ",
+      "source": "loader transactions 5FahLFcs..., 5MqT6Ety..., 6CKqmfqF..."
+    },
+    {
+      "id": "F5",
+      "group": "Program",
+      "label": "Verified build",
+      "value": "None, and no public source was found.",
+      "source": "no verification record; not in Pipeline's or its author's public repositories"
+    },
+    {
+      "id": "F6",
+      "group": "Program",
+      "label": "Instructions in the deployed program",
+      "value": "The 5 Pipeline requires, plus fund_curve, graduate, claim_allocation, claim_creator_fees, claim_leftover and set_fee_recipient. set_fee_recipient has never been called.",
+      "source": "names compiled into the program binary; every transaction since 2026-11-08"
+    },
+    {
+      "id": "F7",
+      "group": "Program",
+      "label": "Strategy metadata",
+      "value": "None usable: the link stored in the router returns HTTP 404 (a placeholder).",
+      "source": "Strategy account iHv1eQKm...; fetched 2026-11-09 08:39 UTC"
+    },
+    {
+      "id": "F8",
+      "group": "Program",
+      "label": "Markets",
+      "value": "12: 9 have graduated and refuse quotes; 3 are open and have never traded.",
+      "source": "simulated quotes on all 12, slots 520328352 to 520328451"
+    },
+    {
+      "id": "F9",
+      "group": "Market",
+      "label": "Sampled market",
+      "value": "24UgWpWcjGxAT5L6fNMvWsUjvs1UWtWvycGozWMEwKiq, the most trades of the 12; created 2026-11-08 11:30 UTC by B1dQr5PSH9BB6vnZc8LGaGjyx4oPYBibWZ2x8pREjiZE; graduated, refuses quotes",
+      "source": "Market account; tx 58wcGcqx..."
+    },
+    {
+      "id": "F10",
+      "group": "Market",
+      "label": "Token FW8z4fjAh8TUJzkQM8qrWPn8KuctjiYuca5urj3aKsw7",
+      "value": "Created in the market's first transaction, with 1,000,000,000 minted into the curve's vault. Token-2022; mint authority: none; freeze authority: none; no transfer fee, hook or delegate.",
+      "source": "tx 58wcGcqx...; mint account, slot 520327026"
+    },
+    {
+      "id": "F11",
+      "group": "Market",
+      "label": "Vaults now",
+      "value": "23,750,000 tokens and 0 SOL",
+      "source": "vault accounts 8D2N27WT..., 7LoMb7Hr..., slot 520327026"
+    },
+    {
+      "id": "F12",
+      "group": "Observed",
+      "label": "Trading",
+      "value": "4 buys with 5.762495914 SOL in and 1 sale for 0.642778244 SOL, through Pipeline, 2026-11-08 11:30 to 11:31 UTC",
+      "source": "every router transaction since 2026-11-07"
+    },
+    {
+      "id": "F13",
+      "group": "Observed",
+      "label": "Creator fee",
+      "value": "claim_creator_fees paid B1dQr5PSH9BB6vnZc8LGaGjyx4oPYBibWZ2x8pREjiZE 0.064118 SOL: 1.0% of the SOL that crossed the curve in both directions.",
+      "source": "tx 5bfmTzLi..."
+    },
+    {
+      "id": "F14",
+      "group": "Observed",
+      "label": "Creator allocation",
+      "value": "claim_allocation moved 26,250,000 tokens to the creator; 23,750,000 remain in the curve's vault; together 5% of the supply.",
+      "source": "txs GtrormKT..., 3bwXkZdy..."
+    },
+    {
+      "id": "F15",
+      "group": "Observed",
+      "label": "Graduation",
+      "value": "graduate, called by 39zx59wehvSfocr5VY6KfesDJD2Bpto5BQ5mH4L6218o (not the creator) at 2026-11-08 11:31 UTC, moved 5.0456 SOL and 211,111,111.111112 tokens into a new market on strategy 4ajWF6Y3wsxXUbvvaEu7ZcA2RosB1YfaXcqot8kguwJD and paid the caller 0.01 SOL.",
+      "source": "tx 3QxDnmP9..."
+    },
+    {
+      "id": "F16",
+      "group": "Observed",
+      "label": "Who traded",
+      "value": "Every wallet that touched this market was first funded by 2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ, in one transaction at 2026-11-08 11:30 UTC.",
+      "source": "oldest transaction of each wallet"
+    },
+    {
+      "id": "C1",
+      "group": "Canary",
+      "label": "Quote on an open curve",
+      "value": "Run on 2026-11-09: On 6efYzb4yWss5gpEmEjZxF7WkDL5Kzj4Pt6nHj1dednYp, 0.01 SOL buys 101,807,639.836289 tokens; a sale quote was refused because that curve holds no SOL yet.",
+      "source": "simulated quotes, slots 520328903 and 520329041, 2026-11-09"
+    },
+    {
+      "id": "C2",
+      "group": "Canary",
+      "label": "Bypass",
+      "value": "Run on 2026-11-09: Calling the strategy's swap directly, with another key in place of the router's market signer, was refused.",
+      "source": "simulation, slot 520328103, 2026-11-09"
+    },
+    {
+      "id": "C3",
+      "group": "Canary",
+      "label": "Exit test",
+      "value": "Not run yet: buying then selling from the same wallet with committed trades, at several sizes, after moving the clock forward, and after each authority uses its powers.",
+      "source": "Canary checks ticket"
+    }
+  ],
+  "outputs": {
+    "pass": {
+      "summary": [
+        {
+          "text": "This strategy appears to run token launches: each market mints a token, sells it from a curve for SOL, then moves the liquidity to another strategy.",
+          "evidence": [
+            "F6",
+            "F10",
+            "F15"
+          ]
+        },
+        {
+          "text": "In the sampled market the creator received 1.0% of the SOL traded and 5% of the token supply, and the curve no longer trades.",
+          "evidence": [
+            "F13",
+            "F14",
+            "F9"
+          ]
+        },
+        {
+          "text": "The key 2yJJ...vUHZ can replace the code at any time, and with no verified source the price rule is unknown.",
+          "evidence": [
+            "F2",
+            "F5"
+          ]
+        }
+      ],
+      "claims": [
+        {
+          "topic": "does",
+          "basis": "inferred",
+          "text": "Each market appears to create its own token: the sampled one was minted in the market's first transaction, 1,000,000,000 of it, into the curve's vault.",
+          "evidence": [
+            "F10"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "Of its 12 markets, 9 have graduated and refuse new trades, and the other 3 have never traded.",
+          "evidence": [
+            "F8"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "At graduation, 5.0456 SOL and 211,111,111.111112 tokens moved into a new market on strategy 4ajW...uwJD, and the wallet that triggered it was paid 0.01 SOL.",
+          "evidence": [
+            "F15"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "Every wallet that traded in the sampled market was first funded by 2yJJ...vUHZ, in one transaction at 11:30 UTC on 2026-11-08.",
+          "evidence": [
+            "F16"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The key 2yJJ...vUHZ can replace the program's code at any time, for every market; it did so twice on 2026-11-08.",
+          "evidence": [
+            "F2",
+            "F4"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The same key is the router's upgrade authority and admin, who can pause swaps.",
+          "evidence": [
+            "F2",
+            "P6"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The sampled token has no mint or freeze authority, so nobody can mint more of it or freeze your tokens.",
+          "evidence": [
+            "F10"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "inferred",
+          "text": "An instruction named set_fee_recipient appears to let someone redirect the creator fee; it has never been called.",
+          "evidence": [
+            "F6"
+          ]
+        },
+        {
+          "topic": "canary",
+          "basis": "confirmed",
+          "text": "On 2026-11-09, an open curve quoted 101,807,639.836289 tokens for 0.01 SOL, and refused a sale quote because it held no SOL yet.",
+          "evidence": [
+            "C1"
+          ]
+        },
+        {
+          "topic": "canary",
+          "basis": "confirmed",
+          "text": "A call to the strategy's swap that skipped the router was refused.",
+          "evidence": [
+            "C2"
+          ]
+        },
+        {
+          "topic": "protection",
+          "basis": "confirmed",
+          "text": "Trades through Pipeline get the router's minimum-output check and pay its 0.25% fee.",
+          "evidence": [
+            "P1",
+            "P2"
+          ]
+        },
+        {
+          "topic": "protection",
+          "basis": "confirmed",
+          "text": "Claiming fees, claiming the allocation and graduating are signed directly on the strategy, outside the router's protections.",
+          "evidence": [
+            "P3",
+            "F6"
+          ]
+        },
+        {
+          "topic": "author",
+          "basis": "confirmed",
+          "text": "Its author has published no description: the metadata link returns an error.",
+          "evidence": [
+            "F7"
+          ]
+        }
+      ],
+      "unknowns": [
+        {
+          "text": "With no public or verified source, the price curve, the graduation rule and who may call each custom action are unknown.",
+          "evidence": [
+            "F5",
+            "F6"
+          ]
+        },
+        {
+          "text": "Whether a sale works at larger sizes or after time passes: the full exit test has not run.",
+          "evidence": [
+            "C3"
+          ]
+        }
+      ],
+      "author_text_addresses_ai": false
+    }
+  }
+}

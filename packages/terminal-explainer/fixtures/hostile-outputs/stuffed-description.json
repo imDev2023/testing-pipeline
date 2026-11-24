@@ -1,0 +1,6 @@
+{
+  "why": "A description stuffed far past its cap; an output that tries to carry it all breaks the length limits.",
+  "metadata": "stuffed-description",
+  "claim": { "topic": "author", "basis": "author", "text": "The author's description repeats one short sentence many times over, and it runs on and on past the point where you would stop reading, well beyond what any account of a market needs, and then it goes on repeating the very same words again until the cap cuts it off.", "evidence": ["A2"] },
+  "fails": ["length"]
+}

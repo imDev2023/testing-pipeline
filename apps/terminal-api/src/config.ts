@@ -34,6 +34,11 @@ export const JOB_INTERVAL_MINUTES = {
   pruneCandles: 24 * 60,
   /** Canary's scheduled sweep of every market (CANARY-23; docs/spec/pipescope-canary.md, When Canary runs). */
   canarySweep: 6 * 60,
+  /**
+   * Making each strategy's explainer key (EXPLAINER-23): a new version, a metadata change, changed
+   * Canary outcomes or a new prompt or model each make a key within this interval; no model is called.
+   */
+  explainerKeys: 5,
 } as const;
 
 export type JobName = keyof typeof JOB_INTERVAL_MINUTES;
