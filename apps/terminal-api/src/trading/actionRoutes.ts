@@ -11,19 +11,19 @@ import { HTTPException } from "hono/http-exception";
 import { createDb, markets, type Db } from "terminal-db";
 import { readMintRows } from "terminal-indexer";
 import { CREATE_MARKET_MAX_CREATOR_LAMPORTS, MARKET_READ } from "../config";
-import { MarketRead, MintFacts, PrepareActionRequest, PreparedAction, PreparedMarket, PrepareMarketRequest, TransactionReport, TransactionSignature } from "../contract";
+import { MarketRead, MintFacts, PrepareActionRequest, PreparedAction, PreparedMarket, PrepareMarketRequest, TransactionReport, TransactionSignature, type MarketOpening } from "../contract";
 import { mintFactOf } from "../facts";
-import { actionDiscriminator, checkForm, initDiscriminator, readFormSource } from "../forms";
+import { actionDiscriminator, checkForm, initDiscriminator, readFormSource, type FormSource } from "../forms";
 import type { AppEnv } from "../index";
 import { indexer } from "../index";
 import { limitTrades } from "../rateLimits";
 import { keptImages } from "../tokenImages";
-import { actionTransaction, createMarketTransaction, prepareTransaction, walletWrappedSol } from "./action";
+import { actionTransaction, createMarketTransaction, prepareTransaction, walletWrappedSol, type Opening } from "./action";
 import { awaitTrade, TRANSACTION_WORDS } from "./fastPath";
 import { actionHookAccounts } from "./hooks";
 import { readMarketOnChain } from "./market";
 import { Refused } from "./quote";
-import { addressOf, bodyOf, refused } from "./routes";
+import { addressOf, aviaryTableOf, bodyOf, refused } from "./routes";
 
 /** The database, opened only around its reads and never held while the chain is asked or waited on. */
 async function withDb<T>(c: Context<AppEnv>, read: (db: Db) => Promise<T>): Promise<T> {
@@ -50,6 +50,22 @@ const accountsOf = (instruction: Instruction) =>
   }));
 
 const unprocessable = (message: string) => new HTTPException(422, { message });
+
+/** A new market's opening with each action found by name in the strategy's validated metadata, or refused as an action form would be. */
+function openingOf(opening: MarketOpening, actions: FormSource["actions"]): Opening {
+  if (!actions) throw unprocessable("This strategy has no action forms: its metadata is unavailable.");
+  if (!actions.result.ok) throw unprocessable("This strategy has no action forms: the actions its metadata describes failed their validator.");
+  const { actions: described } = actions.result;
+  return {
+    mints: opening.mints.map((m) => address(m)),
+    vaults: opening.vaults.map((v) => address(v)),
+    actions: opening.actions.map((step) => {
+      const action = described.find((a) => a.name === step.action);
+      if (!action) throw new HTTPException(404, { message: `This strategy describes no action named ${step.action} in its metadata.` });
+      return { action, args: step.args, inputs: checkedInputs(step.inputs) };
+    }),
+  };
+}
 
 export function actionRoutes(app: Hono<AppEnv>) {
   app.post("/v1/actions/prepare", limitTrades, async (c) => {
@@ -78,7 +94,7 @@ export function actionRoutes(app: Hono<AppEnv>) {
       const instruction = hooks.length ? { ...built.action, accounts: [...(built.action.accounts ?? []), ...hooks] } : built.action;
       const instructions = built.instructions.map((i) => (i === built.action ? instruction : i));
       const hookPrograms = market.mints.flatMap((m) => (m.transferHook ? [m.transferHook] : []));
-      const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: market.address, what: "This action", hooks: hookPrograms });
+      const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: market.address, what: "This action", hooks: hookPrograms, aviaryTable: aviaryTableOf(c.env) });
       return c.json(
         PreparedAction.parse({
           market: request.market,
@@ -105,11 +121,15 @@ export function actionRoutes(app: Hono<AppEnv>) {
     if (!source.document) throw unprocessable("This strategy has no create form: its metadata is unavailable.");
     if (!source.init) throw unprocessable("This strategy has no create form: its metadata describes none.");
 
+    // The actions a new market runs as it opens, from the strategy's validated metadata like any action form's.
+    const then = request.then && openingOf(request.then, source.actions);
+
     const rpc = createSolanaRpc(c.env.RPC_URL);
     try {
       const trader = address(request.trader);
       const strategy = address(request.strategy);
       const built = await createMarketTransaction({
+        then,
         init: source.init,
         strategy,
         trader,
@@ -120,7 +140,7 @@ export function actionRoutes(app: Hono<AppEnv>) {
         walletWrappedSol: await walletWrappedSol(rpc, trader),
         maxCreatorLamports: CREATE_MARKET_MAX_CREATOR_LAMPORTS,
       });
-      const prepared = await prepareTransaction(rpc, { instructions: built.instructions, trader, strategy, market: null, what: "Creating this market" });
+      const prepared = await prepareTransaction(rpc, { instructions: built.instructions, trader, strategy, market: null, what: "Creating this market", aviaryTable: aviaryTableOf(c.env) });
       const create = built.instructions.find((i) => i.programAddress === PIPELINE_PROGRAM_ADDRESS)!;
       return c.json(
         PreparedMarket.parse({

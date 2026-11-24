@@ -3,7 +3,7 @@ import { createDb, recordKeeperPass, type KeeperPassRecord } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KEEPER_STOPPED_GRACE_MS } from "../src/config";
-import { Keeper, keeperHeartbeatMessage, type KeeperHeartbeatPayload } from "../src/contract";
+import { Keeper, keeperHeartbeatMessage, MarketKeeper, type KeeperHeartbeatPayload } from "../src/contract";
 import { app } from "../src/index";
 import { bindings, executionContext, fakeRpc, memoryKv, rateLimiter } from "./fakes";
 
@@ -240,5 +240,41 @@ describe("GET /keeper", () => {
       await down.close();
     }
     // Closing a client whose connections were refused takes the driver's 5 s end timeout, after the answer.
+  }, 30_000);
+});
+
+describe("GET /v1/markets/{market}/keeper", () => {
+  async function marketJobs(e: ReturnType<typeof env>, market: string) {
+    const { ctx, settle } = executionContext();
+    const response = await app.request(`/v1/markets/${market}/keeper`, {}, e, ctx);
+    await settle();
+    return { status: response.status, body: (await response.json()) as unknown };
+  }
+
+  it("answers the runner's latest record of each job and slot on the market, for its panel's due jobs (PIPESCOPE-162)", async () => {
+    const { status, body } = await marketJobs(env(), MARKET);
+    expect(status).toBe(200);
+    const { market, wallet, jobs } = MarketKeeper.parse(body);
+    expect([market, wallet]).toEqual([MARKET, keeper.address]);
+    expect(jobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ job: "distribute", slot: 0, outcome: "sent", signature: "5jobSignature", at: minutesAgo(60).toISOString() }),
+        expect.objectContaining({ job: "distribute", slot: 2, outcome: "sent", signature: "5otherSignature" }),
+        expect.objectContaining({ job: "distribute", slot: 3, outcome: "held", cap: "MARKET_DAILY_CAP" }),
+      ]),
+    );
+    // One record a job and slot: the latest.
+    expect(new Set(jobs.map((j) => `${j.job}:${j.slot}`)).size).toBe(jobs.length);
+  });
+
+  it("answers no jobs for a market the runner never recorded, and refuses what is no address", async () => {
+    expect(MarketKeeper.parse((await marketJobs(env(), "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz")).body).jobs).toEqual([]);
+    expect((await marketJobs(env(), "nowhere")).status).toBe(400);
+  });
+
+  it("says when the database does not answer, without its URL", async () => {
+    const { status, body } = await marketJobs(env({ HYPERDRIVE: { connectionString: "postgres://terminal:hunter2@127.0.0.1:1/nowhere" } as Hyperdrive }), MARKET);
+    expect(status).toBe(503);
+    expect(JSON.stringify(body)).not.toMatch(/hunter2/);
   }, 30_000);
 });

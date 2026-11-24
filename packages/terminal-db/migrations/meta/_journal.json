@@ -64,6 +64,13 @@
       "when": 1795479592359,
       "tag": "0008_explainer",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795534294943,
+      "tag": "0009_reserves",
+      "breakpoints": true
     }
   ]
 }

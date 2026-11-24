@@ -10,9 +10,11 @@
 //   last heartbeat older than its SWEEP_INTERVAL plus KEEPER_STOPPED_GRACE_MS), the last pass of
 //   each kind, and from Postgres today's spend, the latest jobs and the held and parked ones. A
 //   database or an RPC that does not answer leaves the rest standing.
+// - `GET /v1/markets/{market}/keeper`: the runner's latest record of each job and slot on one market,
+//   which the market's panel shows beside its due jobs (PIPESCOPE-162).
 import { address, createSolanaRpc } from "@solana/kit";
 import type { Hono } from "hono";
-import { createDb, readKeeperRecords, type KeeperJobRead, type KeeperRecords } from "terminal-db";
+import { createDb, readKeeperRecords, readMarketKeeperJobs, type KeeperJobRead, type KeeperRecords } from "terminal-db";
 import { HEALTH_TIMEOUT_MS, KEEPER_HEARTBEAT_MAX_SKEW_MS, KEEPER_HEARTBEAT_MIN_GAP_MS, KEEPER_RECENT_JOBS, KEEPER_STOPPED_GRACE_MS } from "./config";
 import {
   Keeper,
@@ -20,6 +22,7 @@ import {
   KeeperHeartbeatPayload,
   KeeperPassKind,
   keeperHeartbeatMessage,
+  MarketKeeper,
   type ApiError,
   type KeeperCaps,
   type KeeperJob,
@@ -27,6 +30,7 @@ import {
 import type { AppEnv } from "./index";
 import { countAsRead } from "./rateLimits";
 import { signedBy } from "./signed";
+import { addressOf } from "./trading/routes";
 
 /**
  * What KV holds for the keeper wallet: when each kind of pass last sent a heartbeat, the newest
@@ -40,6 +44,7 @@ const newer = (a: KeeperHeartbeatPayload | undefined, b: KeeperHeartbeatPayload)
 const heartbeatKey = (wallet: string) => `keeper-heartbeat:${wallet}`;
 
 export function keeperRoutes(app: Hono<AppEnv>) {
+  marketKeeperRoute(app);
   app.post("/keeper/heartbeat", countAsRead, async (c) => {
     const refuse = (status: 400 | 401 | 403 | 409, error: string) => c.json<ApiError>({ error }, status);
     const body = KeeperHeartbeat.safeParse(await c.req.json().catch(() => null));
@@ -120,6 +125,26 @@ export function keeperRoutes(app: Hono<AppEnv>) {
       records: records.ok ? { ok: true, error: null } : { ok: false, error: records.error },
     };
     return c.json(Keeper.parse(body));
+  });
+}
+
+/** `GET /v1/markets/{market}/keeper`: the runner's latest record of each job and slot on one market (PIPESCOPE-162). */
+function marketKeeperRoute(app: Hono<AppEnv>) {
+  app.get("/v1/markets/:market/keeper", async (c) => {
+    const market = addressOf(c.req.param("market"), "market");
+    const wallet = c.env.KEEPER_WALLET;
+    let client: ReturnType<typeof createDb> | undefined;
+    try {
+      client = createDb(c.env.HYPERDRIVE.connectionString);
+      const jobs = await readMarketKeeperJobs(client.db, { wallet, market });
+      return c.json(MarketKeeper.parse({ market, wallet, jobs: jobs.map(job) }));
+    } catch (e) {
+      // The error can quote the connection string: log only what kind of failure it was.
+      console.error("keeper: the database query failed", e instanceof Error ? e.name : typeof e);
+      return c.json({ error: "The keeper runner's records could not be read: the database did not answer." }, 503);
+    } finally {
+      if (client) c.executionCtx.waitUntil(client.close());
+    }
   });
 }
 

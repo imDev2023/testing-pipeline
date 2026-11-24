@@ -52,7 +52,16 @@ const tokenAmount = (data: readonly [string, string] | undefined): bigint => {
   return bytes.length >= AMOUNT_OFFSET + 8 ? new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(AMOUNT_OFFSET, true) : 0n;
 };
 
-export type PrepareInput = { market: TradeMarket; inputMint: string; outputMint: string; typed: bigint; slippageBps: number; trader: Address };
+export type PrepareInput = {
+  market: TradeMarket;
+  inputMint: string;
+  outputMint: string;
+  typed: bigint;
+  slippageBps: number;
+  trader: Address;
+  /** Aviary's own lookup table, when this deployment names one (PIPESCOPE-160). */
+  aviaryTable: Address | null;
+};
 
 export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFeeVar, input: PrepareInput): Promise<PreparedSwap> {
   const { market, trader } = input;
@@ -127,10 +136,10 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
   // SOL in and out is plain SOL: the wrapped-SOL account is closed back into the wallet.
   if (paysSol || receivesSol) instructions.push(getCloseAccountInstruction({ account: paysSol ? traderInput : traderOutput, destination: trader, owner: signer }));
 
-  const [{ value: lifetime }, table] = await Promise.all([rpc.getLatestBlockhash({ commitment: COMMITMENT }).send(), marketLookupTable(rpc, market.address)]);
+  const [{ value: lifetime }, tables] = await Promise.all([rpc.getLatestBlockhash({ commitment: COMMITMENT }).send(), lookupTables(rpc, { market: market.address, aviary: input.aviaryTable })]);
   let fitted: Fitted;
   try {
-    fitted = fitTransaction(instructions, trader, lifetime, table);
+    fitted = fitTransaction(instructions, trader, lifetime, tables);
   } catch (e) {
     if (e instanceof TooLarge) throw new Refused({ class: "too_large", sentence: e.message, name: null, number: null, message: null, program: null, raw: e.message });
     throw e;
@@ -161,15 +170,29 @@ const TRANSACTION_MAX_BYTES = 1232;
 /** A swap that does not fit in one transaction. */
 export class TooLarge extends Error {}
 
-export type LookupTable = { address: Address; addresses: readonly Address[] };
+/**
+ * An address lookup table a transaction may be shortened by, with whose it is: the market's own,
+ * recorded with Pipeline's router, or Aviary's, a frozen table of addresses every market shares
+ * (PIPESCOPE-160).
+ */
+export type LookupTable = { address: Address; addresses: readonly Address[]; whose: "market" | "aviary" };
 type Fitted = { wire: Base64EncodedWireTransaction; messageBytes: ReadonlyUint8Array; version: "legacy" | 0 };
+
+/** The tables a refusal names, as words: "its market's address lookup table and Aviary's". */
+function tablesNamed(tables: readonly LookupTable[]): string {
+  const market = tables.some((t) => t.whose === "market");
+  const aviary = tables.some((t) => t.whose === "aviary");
+  if (market && aviary) return "its market's address lookup table and Aviary's";
+  return market ? "its market's address lookup table" : "Aviary's address lookup table";
+}
 
 /**
  * The swap as one transaction, paid by the trader: a legacy transaction when it fits, as Pipeline's own
- * builder makes it, else a version 0 one shortened by the market's recorded address lookup table
- * (Pipeline 0.3's `record_lookup_table`); a swap that fits neither way is refused.
+ * builder makes it, else a version 0 one shortened by every lookup table given at once, the market's
+ * recorded one (Pipeline 0.3's `record_lookup_table`) and Aviary's; a swap that fits neither way is
+ * refused.
  */
-export function fitTransaction(instructions: readonly Instruction[], trader: Address, lifetime: { blockhash: Blockhash; lastValidBlockHeight: bigint }, table: LookupTable | null): Fitted {
+export function fitTransaction(instructions: readonly Instruction[], trader: Address, lifetime: { blockhash: Blockhash; lastValidBlockHeight: bigint }, tables: readonly LookupTable[]): Fitted {
   const signer = createNoopSigner(trader);
   const legacyMessage = () =>
     pipe(
@@ -197,27 +220,44 @@ export function fitTransaction(instructions: readonly Instruction[], trader: Add
   };
   const legacy = attempt(() => compileTransaction(legacyMessage()));
   if (legacy) return { wire: getBase64EncodedWireTransaction(legacy), messageBytes: legacy.messageBytes, version: "legacy" };
-  if (!table) throw new TooLarge("This swap needs more accounts than one transaction can carry, and its market has recorded no address lookup table to shorten it.");
-  const shortened = attempt(() => compileTransaction(compressTransactionMessageUsingAddressLookupTables(versionedMessage(), { [table.address]: [...table.addresses] })));
+  if (!tables.length) throw new TooLarge("This swap needs more accounts than one transaction can carry, and its market has recorded no address lookup table to shorten it.");
+  const byAddress = Object.fromEntries(tables.map((t) => [t.address, [...t.addresses]]));
+  const shortened = attempt(() => compileTransaction(compressTransactionMessageUsingAddressLookupTables(versionedMessage(), byAddress)));
   if (shortened) return { wire: getBase64EncodedWireTransaction(shortened), messageBytes: shortened.messageBytes, version: 0 };
-  throw new TooLarge("This swap needs more accounts than one transaction can carry, even with its market's address lookup table.");
+  throw new TooLarge(`This swap needs more accounts than one transaction can carry, even with ${tablesNamed(tables)}.`);
 }
 
 /** An address lookup table's addresses follow its 56-byte header, 32 bytes each. */
 const LOOKUP_TABLE_HEADER = 56;
 
-/** The market's recorded address lookup table and its addresses, or null when it has none. */
-export async function marketLookupTable(rpc: Rpc<SolanaRpcApi>, market: Address): Promise<LookupTable | null> {
-  const [record] = (await rpc.getMultipleAccounts([await lookupTableRecordPda(market)], { encoding: "base64", commitment: COMMITMENT }).send()).value;
-  const decoded = record ? decodeMarketLookupTable(new Uint8Array(base64.encode(record.data[0]))) : null;
-  if (!decoded) return null;
-  const [tableAccount] = (await rpc.getMultipleAccounts([decoded.table], { encoding: "base64", commitment: COMMITMENT }).send()).value;
-  if (!tableAccount) return null;
-  const bytes = new Uint8Array(base64.encode(tableAccount.data[0]));
+/** A lookup table account's addresses. */
+function tableAddresses(data: readonly [string, string]): Address[] {
+  const bytes = new Uint8Array(base64.encode(data[0]));
   const decoder = getAddressDecoder();
   const addresses: Address[] = [];
   for (let at = LOOKUP_TABLE_HEADER; at + 32 <= bytes.length; at += 32) addresses.push(decoder.decode(bytes.subarray(at, at + 32)));
-  return { address: decoded.table, addresses };
+  return addresses;
+}
+
+/**
+ * The lookup tables a transaction may be shortened by: the market's recorded table when it has one,
+ * and Aviary's own when this deployment names one (`AVIARY_LOOKUP_TABLE`), each read with its
+ * addresses; one that does not exist on the cluster is left out.
+ */
+export async function lookupTables(rpc: Rpc<SolanaRpcApi>, { market, aviary }: { market: Address | null; aviary: Address | null }): Promise<LookupTable[]> {
+  const wanted = [...(market ? [await lookupTableRecordPda(market)] : []), ...(aviary ? [aviary] : [])];
+  if (!wanted.length) return [];
+  const read = (await rpc.getMultipleAccounts(wanted, { encoding: "base64", commitment: COMMITMENT }).send()).value;
+  const tables: LookupTable[] = [];
+  const record = market ? read[0] : null;
+  const decoded = record ? decodeMarketLookupTable(new Uint8Array(base64.encode(record.data[0]))) : null;
+  if (decoded) {
+    const [tableAccount] = (await rpc.getMultipleAccounts([decoded.table], { encoding: "base64", commitment: COMMITMENT }).send()).value;
+    if (tableAccount) tables.push({ address: decoded.table, addresses: tableAddresses(tableAccount.data), whose: "market" });
+  }
+  const own = aviary ? read[wanted.length - 1] : null;
+  if (aviary && own) tables.push({ address: aviary, addresses: tableAddresses(own.data), whose: "aviary" });
+  return tables;
 }
 
 type Held = { lamports: bigint; data: readonly [string, string] } | null;

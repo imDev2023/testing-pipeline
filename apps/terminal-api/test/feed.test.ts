@@ -195,3 +195,27 @@ describe("trades", () => {
     expect((await get(`/v1/markets/${TRADER}/trades`)).status).toBe(404);
   });
 });
+
+describe("a strategy's own reserves as its liquidity (PIPESCOPE-161)", () => {
+  it("shows a tax market's real reserves as its liquidity, not what its vaults hold with the tax owed, and filters on them", async () => {
+    const { db, close } = createDb(database.url);
+    try {
+      // The SOL vault holds 31 SOL, of which 2 SOL is tax booked and not yet paid out.
+      await db.update(marketMints).set({ reserve: "770000000000000" }).where(eq(marketMints.mint, TOKEN));
+      await db.update(marketMints).set({ reserve: "29000000000" }).where(eq(marketMints.mint, WSOL));
+      const market = Market.parse((await get(`/v1/markets/${MARKET}`)).body);
+      expect(market.mints.map((m) => [m.mint, m.liquidity])).toEqual([
+        [TOKEN, "770000000000000"],
+        [WSOL, "29000000000"],
+      ]);
+      const listed = MarketsPage.parse((await get("/v1/markets")).body).markets.find((m) => m.address === MARKET);
+      expect(listed?.mints.map((m) => m.liquidity)).toEqual(["770000000000000", "29000000000"]);
+      // At least 30 SOL: the vault holds 31, the market 29, so it is left out.
+      expect(MarketsPage.parse((await get("/v1/markets?min_sol_liquidity=30000000000")).body).markets.map((m) => m.address)).not.toContain(MARKET);
+      expect(MarketsPage.parse((await get("/v1/markets?min_sol_liquidity=29000000000")).body).markets.map((m) => m.address)).toContain(MARKET);
+    } finally {
+      await db.update(marketMints).set({ reserve: null }).where(eq(marketMints.market, MARKET));
+      await close();
+    }
+  });
+});

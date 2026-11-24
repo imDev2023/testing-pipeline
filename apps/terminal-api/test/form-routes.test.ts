@@ -197,4 +197,26 @@ describe("POST /v1/markets/prepare", () => {
   it("answers 404 for an address that is no strategy", async () => {
     expect((await post("/v1/markets/prepare", { strategy: MISSING, args: {}, inputs: {}, trader: TRADER })).status).toBe(404);
   });
+
+  describe("opening the new market in the same transaction (PIPESCOPE-159)", () => {
+    const then = (actions: unknown[]) => ({ mints: [MINT, MISSING], vaults: [RESERVE, ORACLE], actions });
+
+    it("answers 404 for an action the strategy's metadata does not describe, before anything is built", async () => {
+      const { status, body } = await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: then([{ action: "launch", args: {}, inputs: {} }]) });
+      expect(status).toBe(404);
+      expect((body as ApiError).error).toBe("This strategy describes no action named launch in its metadata.");
+    });
+
+    it("refuses more actions than a new market may run as it opens, and an opening without its vaults", async () => {
+      const seed = { action: "seed", args: {}, inputs: {} };
+      expect((await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: then([seed, seed, seed]) })).status).toBe(400);
+      expect((await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: { mints: [MINT, MISSING], actions: [] } })).status).toBe(400);
+    });
+
+    it("refuses an action input that is no address", async () => {
+      const { status, body } = await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: then([{ action: "distribute", args: {}, inputs: { recipient: "nobody" } }]) });
+      expect(status).toBe(400);
+      expect(JSON.stringify(body)).toContain("recipient");
+    });
+  });
 });

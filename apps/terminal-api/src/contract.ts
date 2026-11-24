@@ -691,6 +691,19 @@ export const Keeper = z.object({
 });
 export type Keeper = z.infer<typeof Keeper>;
 
+/**
+ * `GET /v1/markets/{market}/keeper`: the keeper runner's latest record of each job and slot on one
+ * market, newest first, so the market's panel shows beside each due job what the runner last did about
+ * it (docs/spec/keeper-runner.md, "How Aviary shows it"; PIPESCOPE-162).
+ */
+export const MarketKeeper = z.object({
+  market: Address,
+  /** The keeper wallet whose runner's records these are. */
+  wallet: z.string(),
+  jobs: z.array(KeeperJob),
+});
+export type MarketKeeper = z.infer<typeof MarketKeeper>;
+
 // ---- Trading (docs/spec/pipescope-architecture.md, Trading path) ----
 
 /** A fee mint: the integrator fee is charged only on swaps paying in one, into the fee wallet's account for it. */
@@ -853,7 +866,24 @@ export type PreparedAction = z.infer<typeof PreparedAction>;
  * market state's address when the form makes one: its keypair is made in the page, which signs with
  * it after the wallet's prompt is built, so no key leaves the page (PIPESCOPE-144).
  */
-export const PrepareMarketRequest = z.object({ strategy: Address, ...FormValues, market_state: Address.optional(), trader: Address }).strict();
+/** The most actions a new market may run in the transaction that creates it. */
+export const OPENING_ACTIONS_MAX = 2;
+
+/**
+ * A new market opened in the transaction that creates it (PIPESCOPE-159): its mints and their vaults in
+ * the market's order, as the product's own form works them out before the market exists, so the router's
+ * fee account for each mint is created, and then the actions of its metadata, by name, run on it.
+ */
+export const MarketOpening = z
+  .object({
+    mints: z.array(Address).min(2).max(4),
+    vaults: z.array(Address).min(2).max(4),
+    actions: z.array(z.object({ action: z.string().min(1).max(64), ...FormValues }).strict()).max(OPENING_ACTIONS_MAX),
+  })
+  .strict();
+export type MarketOpening = z.infer<typeof MarketOpening>;
+
+export const PrepareMarketRequest = z.object({ strategy: Address, ...FormValues, market_state: Address.optional(), trader: Address, then: MarketOpening.optional() }).strict();
 export type PrepareMarketRequest = z.infer<typeof PrepareMarketRequest>;
 
 /** A prepared new market: its address and market state, whether that state must sign, the create form's check, and the unsigned transaction when its simulation passed. */

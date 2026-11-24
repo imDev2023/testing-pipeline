@@ -130,7 +130,7 @@ export async function prepareUnwrap(rpc: Rpc<SolanaRpcApi>, trader: Address): Pr
   let fitted: ReturnType<typeof fitTransaction> | null = null;
   while (!fitted && wrapped.length) {
     try {
-      fitted = fitTransaction(wrapped.map((o) => getCloseAccountInstruction({ account: o.account, destination: trader, owner: signer })), trader, lifetime, null);
+      fitted = fitTransaction(wrapped.map((o) => getCloseAccountInstruction({ account: o.account, destination: trader, owner: signer })), trader, lifetime, []);
     } catch (e) {
       if (!(e instanceof TooLarge)) throw e;
       wrapped = wrapped.slice(0, -1);

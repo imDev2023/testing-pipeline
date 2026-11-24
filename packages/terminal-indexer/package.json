@@ -20,6 +20,7 @@
         "@pipeline-sol/sdk": "catalog:",
         "@solana/kit": "8.6.0",
         "drizzle-orm": "0.45.4",
+        "tax-amm-scripts": "workspace:*",
         "terminal-db": "workspace:*",
         "terminal-explainer": "workspace:*"
     },

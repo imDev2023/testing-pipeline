@@ -29,6 +29,7 @@ export function bindings(overrides: Partial<Bindings> & { databaseUrl: string; r
   const { databaseUrl, rpcUrl, ...rest } = overrides;
   return {
     CLUSTER: "devnet",
+    AVIARY_LOOKUP_TABLE: "",
     HYPERDRIVE: { connectionString: databaseUrl } as Hyperdrive,
     RPC_URL: rpcUrl,
     CF_VERSION_METADATA: { id: "7f0c1a5e-0000-4000-8000-000000000001", tag: "", timestamp: "2026-11-22T10:00:00.000Z" },
