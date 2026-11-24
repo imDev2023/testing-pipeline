@@ -288,6 +288,8 @@ What the explainer is, its key, prompt, validator and presentation are in `pipes
 - `pnpm explainer:approve`, run by the owner on their Mac, lists the pending keys with their estimated cost; for the keys the owner approves it calls the model named in the explainer's rules module ([`pipescope-explainer.md`](pipescope-explainer.md), One place for every value) with the `ANTHROPIC_API_KEY` from `~/.config/env/global.env`, runs the validator, retries once with the validator's errors, writes the explanation or the failed status to Postgres through the project's database URL, and appends one line per batch to `~/.config/spend/ledger.csv`.
 - No LLM key is in Cloudflare, so nothing paid can run from the deployed product, whatever its code does.
 - `pnpm explainer:reports` lists the "This is wrong" reports with the keys they refer to.
+- The owner's commands are `apps/terminal-explainer-cli`, the one package that imports the Anthropic SDK (`EXPLAINER-27`): `approve` asks before it sends anything, naming the service, how many explanations and their estimated cost, and takes `--only` with the start of a key's id; `eval` sends the five recorded samples and the hostile fixture set through the model, writes nothing to Postgres, reports the pass rate, tokens and cost, and appends its own ledger line; `count` gets each eval input's exact input tokens from the free token-counting endpoint, with no model call.
+- Keys and reports live in `explainer_keys` and `explainer_reports`; a key is `pending`, `done`, `failed` or `superseded`, and keeps its evidence, its estimated cost and, once generated, the explanation, the last attempt's checks, the calls made and what they cost.
 - Until a key's explanation exists, the strategy page shows the facts panel alone, with "No explanation for this version yet."
 
 ## One place for every value
@@ -316,6 +318,7 @@ Each is a named constant; the pages and the Telegram bot read what they show fro
 | Public caches | up to 60 s stale | `PIPESCOPE-32` |
 | Keeper page: "looks stopped" after the runner's `SWEEP_INTERVAL` plus, and the latest jobs shown | 5 minutes, 20 | `PIPESCOPE-104` |
 | Keeper heartbeats: largest clock difference, fewest seconds between two of one kind | 2 minutes, 30 s | `SUITE-57` |
+| Explainer keys made | every 5 minutes | `EXPLAINER-23` |
 
 - Per-environment values are vars or bindings in `terminal-api`'s `wrangler.jsonc`: the integrator fee's settings (`PIPESCOPE-13`), the rate limits (`PIPESCOPE-90`), the Telegram bot's handles and origin (`PIPESCOPE-62`) and the keeper wallet, `KEEPER_WALLET` (`PIPESCOPE-104`).
 - The web app's own values are in its screens' config module, theme stylesheet and brand module ([`pipescope-screens.md`](pipescope-screens.md), One place for every value); Canary's are in `crates/canary/src/config.rs` ([`pipescope-canary.md`](pipescope-canary.md), One place for every value); the explainer's in `packages/terminal-explainer/src/rules.ts`; the bot's in `packages/terminal-telegram`'s config module.

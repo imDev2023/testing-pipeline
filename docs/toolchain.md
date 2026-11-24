@@ -895,6 +895,21 @@ Its header has the steps: `demo/build-test-strategy.sh` builds the two versions 
 Passed on 2026-11-23: version 2 recorded 55.6 s after its upgrade landed, the router's upgrade 52.4 s after.
 `wrangler dev`'s `workerd` reaches devnet only once LuLu allows its path, which differs in every worktree (`node_modules/.pnpm/@cloudflare+workerd-darwin-64@<version>/node_modules/@cloudflare/workerd-darwin-64/bin/workerd`, unsigned, so LuLu cannot allow it by signature).
 
+### Aviary's explainer commands
+
+The explainer's paid model calls run only from the owner's Mac, from `apps/terminal-explainer-cli`, the one package that imports the Anthropic SDK (#126; `docs/spec/pipescope-architecture.md`, "Explainer jobs").
+They read `ANTHROPIC_API_KEY` from `~/.config/env/global.env` and `DATABASE_URL` from the project's `.env`, and append one line per batch to `~/.config/spend/ledger.csv` (`SPEND_LEDGER` names another file).
+Each paid command asks first, naming the service, how many explanations and their estimated and highest cost; `--yes` answers for the owner, so a session passes it only after the owner said yes.
+
+```sh
+pnpm explainer:approve [--only <key start>,...]   # the pending keys, then the model for those approved
+pnpm explainer:reports                           # "This is wrong" reports with their keys
+pnpm explainer:eval [--report <file>]            # the five samples and the hostile fixture set, measured
+pnpm explainer:count                             # exact input tokens from the free token-counting endpoint
+```
+
+`terminal-api`'s `explainerKeys` job makes the keys every 5 minutes on the local run; `select key, program, status, estimated_cost_usd from explainer_keys` shows the queue.
+
 ### Aviary's token-image check token
 
 No devnet token named an image Aviary could keep on 2026-11-23, so `tests/terminal-e2e/demo/token-image-check.ts` (#120) launched one: a Token-2022 mint whose token metadata names `tests/terminal-e2e/demo/token-image-check/token.json` at a commit of this repository, which names `token.png` beside it, traded in a tax market against wrapped SOL; its addresses and transactions are in `deployments/devnet-demo-token-image.json`.

@@ -1,0 +1,28 @@
+{
+    "name": "terminal-explainer-cli",
+    "private": true,
+    "type": "module",
+    "description": "The owner's explainer commands, run on their Mac (docs/spec/pipescope-architecture.md, \"Explainer jobs\"): approve pending keys and pay for their explanations, list \"This is wrong\" reports, and evaluate the model on the recorded samples. The only package that imports the Anthropic SDK; no LLM key is in Cloudflare (PIPESCOPE-37)",
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "scripts": {
+        "approve": "tsx src/main.ts approve",
+        "reports": "tsx src/main.ts reports",
+        "eval": "tsx src/main.ts eval",
+        "typecheck": "tsc -p .",
+        "test": "vitest run",
+        "count": "tsx src/main.ts count"
+    },
+    "dependencies": {
+        "@anthropic-ai/sdk": "1.13.0",
+        "terminal-db": "workspace:*",
+        "terminal-explainer": "workspace:*"
+    },
+    "devDependencies": {
+        "@types/node": "24.19.2",
+        "tsx": "4.23.15",
+        "typescript": "6.0.3",
+        "vitest": "5.1.1"
+    }
+}

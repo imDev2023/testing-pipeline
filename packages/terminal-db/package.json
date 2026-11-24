@@ -12,7 +12,8 @@
         "./migrate": "./src/migrate.ts",
         "./testing": "./src/testing.ts",
         "./outbox": "./src/outbox.ts",
-        "./canary": "./src/canary.ts"
+        "./canary": "./src/canary.ts",
+        "./explainer": "./src/explainer.ts"
     },
     "scripts": {
         "typecheck": "tsc -p .",

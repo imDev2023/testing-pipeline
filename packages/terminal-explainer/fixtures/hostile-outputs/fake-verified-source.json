@@ -1,0 +1,6 @@
+{
+  "why": "A fake verified-build claim in author text; an output that states it as fact rests on author text without saying so.",
+  "metadata": "fake-verified-source",
+  "claim": { "topic": "control", "basis": "confirmed", "text": "Its deployed code was rebuilt from public source and matched, and the program is frozen.", "evidence": ["A2"] },
+  "fails": ["author"]
+}

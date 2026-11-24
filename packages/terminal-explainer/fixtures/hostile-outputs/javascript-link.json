@@ -1,0 +1,6 @@
+{
+  "why": "H053's javascript: string with a text-direction override and a bell character; an output that passes the link on is not plain text.",
+  "metadata": "javascript-link",
+  "claim": { "topic": "author", "basis": "author", "text": "The author asks you to open javascript:alert(document.cookie) to claim a reward.", "evidence": ["A2"] },
+  "fails": ["format"]
+}

@@ -529,3 +529,64 @@ export const canaryResults = pgTable(
     index("canary_results_latest_version").on(t.program, t.deploySlot).where(sql`latest`),
   ],
 );
+
+/**
+ * Explainer keys (docs/spec/pipescope-explainer.md, "When an explanation is made"; docs/spec/pipescope-architecture.md,
+ * "Explainer jobs"; EXPLAINER-04, EXPLAINER-05; #126): one row per key, made by `terminal-api` with
+ * the evidence the model is to read and its estimated cost, pending until the owner's approve
+ * command (`pnpm explainer:approve`) writes the explanation or the failure. A pending key a newer key
+ * of the same strategy has replaced is `superseded` and leaves the queue (EXPLAINER-23).
+ */
+export const explainerKeys = pgTable(
+  "explainer_keys",
+  {
+    /** The SHA-256 of the key's parts, in hex (terminal-explainer's `explainerKey`). */
+    key: text("key").primaryKey(),
+    program: text("program").notNull(),
+    deploySlot: bigint("deploy_slot", { mode: "bigint" }).notNull(),
+    authorTextSha256: text("author_text_sha256").notNull(),
+    canaryOutcomesSha256: text("canary_outcomes_sha256").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    model: text("model").notNull(),
+    /** pending, done, failed or superseded. */
+    status: text("status").notNull(),
+    /** The evidence items the model reads, each with where Aviary read it (`source`), which is never sent. */
+    evidence: jsonb("evidence").notNull(),
+    /** The market the version's market-level facts come from (EXPLAINER-03), or null when it has none. */
+    representativeMarket: text("representative_market"),
+    /** Whether Aviary's own detector found author text addressed to AI tools (EXPLAINER-14). */
+    authorTextAddressesAi: boolean("author_text_addresses_ai").notNull(),
+    estimatedInputTokens: integer("estimated_input_tokens").notNull(),
+    /** The estimated cost in US dollars, a first try and its retry. */
+    estimatedCostUsd: numeric("estimated_cost_usd", { precision: 12, scale: 6 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    /** The explanation as the model returned it and the validator passed it; null unless done. */
+    explanation: jsonb("explanation"),
+    /** The last attempt's checks, as the validator ran them. */
+    validation: jsonb("validation"),
+    /** Calls made, 1 or 2, and what they read and wrote and cost, as the API reported. */
+    attempts: smallint("attempts"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    costUsd: numeric("cost_usd", { precision: 12, scale: 6 }),
+    /** Why a failed key failed: the validator twice, a refusal, a cut-off answer or an error. */
+    failure: text("failure"),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("explainer_keys_program").on(t.program, t.createdAt.desc()), index("explainer_keys_pending").on(t.createdAt).where(sql`status = 'pending'`)],
+);
+
+/** "This is wrong" reports (docs/spec/pipescope-explainer.md, Presentation): each against the key it refers to, for `pnpm explainer:reports`. */
+export const explainerReports = pgTable(
+  "explainer_reports",
+  {
+    id: bigint("id", { mode: "bigint" }).primaryKey().generatedAlwaysAsIdentity(),
+    key: text("key")
+      .notNull()
+      .references(() => explainerKeys.key),
+    /** What the reader wrote, if anything: untrusted, shown to the owner as plain text. */
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("explainer_reports_newest").on(t.createdAt.desc())],
+);

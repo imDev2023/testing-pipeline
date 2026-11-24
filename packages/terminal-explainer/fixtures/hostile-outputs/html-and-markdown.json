@@ -1,0 +1,6 @@
+{
+  "why": "Markup and Markdown in the name; an output that repeats them is not plain text.",
+  "metadata": "html-and-markdown",
+  "claim": { "topic": "author", "basis": "author", "text": "The author names it <script>alert(1)</script>**Bold**.", "evidence": ["A1"] },
+  "fails": ["format"]
+}

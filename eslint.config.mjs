@@ -6,7 +6,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
-const TERMINAL = ["apps/terminal-api/**/*.ts", "apps/terminal-web/**/*.{ts,tsx}", "packages/terminal-db/**/*.ts", "packages/terminal-explainer/**/*.ts", "packages/terminal-indexer/**/*.ts", "tests/terminal-e2e/**/*.ts", "tests/devnet/**/*.ts"];
+const TERMINAL = ["apps/terminal-api/**/*.ts", "apps/terminal-web/**/*.{ts,tsx}", "packages/terminal-db/**/*.ts", "packages/terminal-explainer/**/*.ts", "apps/terminal-explainer-cli/**/*.ts", "packages/terminal-indexer/**/*.ts", "tests/terminal-e2e/**/*.ts", "tests/devnet/**/*.ts"];
 
 export default tseslint.config(
   { ignores: ["**/node_modules/**", "**/.next/**", "**/.open-next/**", "**/.wrangler/**", "**/test-results/**", "**/next-env.d.ts"] },

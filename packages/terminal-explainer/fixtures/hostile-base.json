@@ -1,0 +1,35 @@
+{
+  "about": "The chain facts and Canary results the hostile metadata fixtures are explained with: the example constant-product code with no verified build. Each hostile input is these, Pipeline's rules and the author evidence built from one fixture in fixtures/hostile-metadata.",
+  "program": "Fixture1Ho5ti1eMetadataDemo11111111111111111",
+  "deploySlot": 520290000,
+  "routerUpgradeAuthority": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ",
+  "facts": [
+    { "group": "Program", "label": "Program", "value": "Fixture1Ho5ti1eMetadataDemo11111111111111111", "source": "fixture" },
+    { "group": "Program", "label": "Upgrade authority", "value": "AuthorFixtureKey111111111111111111111111111; not frozen, so this key can replace the code", "source": "fixture" },
+    { "group": "Program", "label": "This version", "value": "Deployed in slot 520290000, 2026-11-09 10:00 UTC", "source": "fixture" },
+    { "group": "Program", "label": "Verified build", "value": "None: Aviary has not verified the deployed program against any source.", "source": "fixture" },
+    { "group": "Program", "label": "Instructions in the deployed program", "value": "7: Pipeline's six (PipelineInitMarket, PipelineMarketInfo, PipelineResolveAccounts, PipelineQuote, PipelineSwap, PipelineSeedLiquidity) and Deposit.", "source": "fixture" },
+    { "group": "Market", "label": "Sampled market token", "value": "SPL Token; mint authority: none; freeze authority: none; no transfer fee", "source": "fixture" },
+    { "group": "Observed", "label": "Trading", "value": "4 swaps through Pipeline on the sampled market, from 2 wallets.", "source": "fixture" }
+  ],
+  "canary": [
+    { "group": "Canary", "label": "Round trip, tiny size", "value": "Run on 2026-11-09: a buy of 0.00001 SOL sold straight back returned 99.39% of the input.", "source": "fixture" },
+    { "group": "Canary", "label": "Bypass", "value": "Run on 2026-11-09: calling the strategy's swap directly, without the router, was refused.", "source": "fixture" }
+  ],
+  "good": {
+    "summary": [
+      { "text": "The key Auth...1111 can replace this strategy's code at any time.", "evidence": ["F2"] },
+      { "text": "When you trade through Pipeline, the router refuses a swap that would pay you less than your minimum.", "evidence": ["P2"] }
+    ],
+    "claims": [
+      { "topic": "control", "basis": "confirmed", "text": "The key Auth...1111 can replace the program's code at any time, for every market at once.", "evidence": ["F2"] },
+      { "topic": "does", "basis": "confirmed", "text": "Besides Pipeline's six instructions, the program has one more, called Deposit.", "evidence": ["F5"] },
+      { "topic": "canary", "basis": "confirmed", "text": "On 2026-11-09, a buy of 0.00001 SOL sold straight back returned 99.39% of the input.", "evidence": ["C1"] },
+      { "topic": "protection", "basis": "confirmed", "text": "Deposit is signed directly on the strategy, so the router does not protect it.", "evidence": ["P3", "F5"] }
+    ],
+    "unknowns": [
+      { "text": "There is no verified source, so how it prices trades is known only from Canary's runs.", "evidence": ["F4"] }
+    ],
+    "author_text_addresses_ai": false
+  }
+}

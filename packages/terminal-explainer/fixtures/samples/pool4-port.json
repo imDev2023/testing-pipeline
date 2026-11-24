@@ -1,0 +1,374 @@
+{
+  "sample": "pool4-port",
+  "title": "Strategy 4ajW...uwJD",
+  "program": "4ajWF6Y3wsxXUbvvaEu7ZcA2RosB1YfaXcqot8kguwJD",
+  "deploySlot": 520151758,
+  "evidence": [
+    {
+      "id": "P1",
+      "group": "Pipeline",
+      "label": "Pipeline fee",
+      "value": "0.25% of each swap's input, charged by the router on every hop and paid to Pipeline's treasury.",
+      "source": "Pipeline docs/INTEGRATOR-GUIDE.md; constant text kept by Aviary"
+    },
+    {
+      "id": "P2",
+      "group": "Pipeline",
+      "label": "Router protections on swaps",
+      "value": "The router moves your input into the strategy's vault, refuses the swap if you would receive less than your minimum, and never takes more than the amount you signed. You do not sign the call to the strategy, so it can pay you but cannot take from your accounts.",
+      "source": "Pipeline docs/ROUTER.md; constant text"
+    },
+    {
+      "id": "P3",
+      "group": "Pipeline",
+      "label": "Custom actions",
+      "value": "Any strategy instruction other than a swap is signed directly on the strategy; the router's protections and fee do not apply to it.",
+      "source": "Pipeline docs/STRATEGY-GUIDE.md section 5; constant text"
+    },
+    {
+      "id": "P4",
+      "group": "Pipeline",
+      "label": "Bypass",
+      "value": "A strategy may allow trades that skip the router; those pay no Pipeline fee and leave no swap event.",
+      "source": "Pipeline docs/STRATEGY-GUIDE.md rule 4; constant text"
+    },
+    {
+      "id": "P5",
+      "group": "Pipeline",
+      "label": "Vetting",
+      "value": "Pipeline does not vet strategies; anyone can register one.",
+      "source": "Pipeline docs/INTEGRATOR-GUIDE.md section 5; constant text"
+    },
+    {
+      "id": "P6",
+      "group": "Pipeline",
+      "label": "Router control on devnet",
+      "value": "The router is upgradeable. Its upgrade authority 2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ is also its admin, who can pause swaps, market creation and registration.",
+      "source": "Router ProgramData 3dpKiLED... and Config BmdeX3kW... read 2026-11-09 at slot 520324283"
+    },
+    {
+      "id": "F1",
+      "group": "Program",
+      "label": "Program",
+      "value": "4ajWF6Y3wsxXUbvvaEu7ZcA2RosB1YfaXcqot8kguwJD",
+      "source": "read 2026-11-09, slot 520324315"
+    },
+    {
+      "id": "F2",
+      "group": "Program",
+      "label": "Upgrade authority",
+      "value": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ; not frozen, so this key can replace the code",
+      "source": "ProgramData DQvdNeTF..., slot 520324316"
+    },
+    {
+      "id": "F3",
+      "group": "Program",
+      "label": "This version",
+      "value": "Deployed in slot 520151758, 2026-11-08 21:10 UTC; hash 534a2494...c5d63",
+      "source": "ProgramData header; solana-verify get-program-hash"
+    },
+    {
+      "id": "F4",
+      "group": "Program",
+      "label": "Version history",
+      "value": "3 versions, all on 2026-11-08: deployed 10:38 UTC, upgraded at 13:20 and 21:10 UTC, all by 2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ",
+      "source": "loader transactions 2s6ht9UQ..., 5RbTTFXm..., 2eTiKf2z..."
+    },
+    {
+      "id": "F5",
+      "group": "Program",
+      "label": "Verified build",
+      "value": "None, and no public source was found. The binary names its source file pool4/src/lib.rs.",
+      "source": "no verification record; strings in the program binary"
+    },
+    {
+      "id": "F6",
+      "group": "Program",
+      "label": "Instructions in the deployed program",
+      "value": "The 5 Pipeline requires and pipeline_seed_liquidity, plus seed_pool, rebalance_wall, settle_retired and sweep_fees. None is named for migrating old markets.",
+      "source": "names compiled into the program binary"
+    },
+    {
+      "id": "F7",
+      "group": "Program",
+      "label": "Strategy metadata",
+      "value": "None usable: the link stored in the router returns HTTP 404 (a placeholder).",
+      "source": "Strategy account DHrDdeG2...; fetched 2026-11-09 08:39 UTC"
+    },
+    {
+      "id": "F8",
+      "group": "Program",
+      "label": "Markets",
+      "value": "8, all created when launches on strategy ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb graduated; none supports exact-out trades.",
+      "source": "router Market accounts; every transaction since 2026-11-08"
+    },
+    {
+      "id": "F9",
+      "group": "Program",
+      "label": "Markets this version cannot read",
+      "value": "6 of 8: their state uses layouts from earlier versions, and since the upgrade of 2026-11-08 21:10 UTC every quote and swap on them fails.",
+      "source": "simulated quotes on all 8, slots 520328352 to 520328451"
+    },
+    {
+      "id": "F10",
+      "group": "Market",
+      "label": "Sampled market",
+      "value": "2g5T3r4LmRtgzPvdybenUMTehJ9HxM7fT7SVMszq8KCV, the most trades of the 8; created 2026-11-08 11:31 UTC; one of the 6 this version cannot read",
+      "source": "Market account; tx 3QxDnmP9..."
+    },
+    {
+      "id": "F11",
+      "group": "Market",
+      "label": "Vaults",
+      "value": "211,053,102.669032 tokens and 4.889389322 SOL, which cannot be traded through Pipeline now",
+      "source": "vault accounts GuCnZ5aS..., 43s1TNok..., slot 520327026"
+    },
+    {
+      "id": "F12",
+      "group": "Market",
+      "label": "Token FW8z4fjAh8TUJzkQM8qrWPn8KuctjiYuca5urj3aKsw7",
+      "value": "Token-2022; mint authority: none; freeze authority: none; no transfer fee, hook or delegate",
+      "source": "mint account, slot 520327026"
+    },
+    {
+      "id": "F13",
+      "group": "Market",
+      "label": "Newest market, used for probes",
+      "value": "eeuwZDiVP9QKmQFSWGowrHEhiec3jR5q4VMqDKwJx6u, created 2026-11-08 21:10 UTC; vaults 251,903,988.326261 tokens and 0.081278063 SOL",
+      "source": "Market account; vaults, slot 520327026"
+    },
+    {
+      "id": "F14",
+      "group": "Observed",
+      "label": "rebalance_wall",
+      "value": "Called twice on the sampled market by 39zx59wehvSfocr5VY6KfesDJD2Bpto5BQ5mH4L6218o; each call paid the caller a tip from the market's SOL vault, 0.000307025 and 0.000030635 SOL.",
+      "source": "txs 5NDTC4ij..., 5PhVCpuR..."
+    },
+    {
+      "id": "F15",
+      "group": "Observed",
+      "label": "settle_retired",
+      "value": "Took 6,803,005.463489 tokens from the sampled market's token vault, paid the caller 14,966.612019 (0.22%) and burned the other 6,788,038.851470; the token's supply fell by exactly that.",
+      "source": "tx cVEHucgU..."
+    },
+    {
+      "id": "F16",
+      "group": "Observed",
+      "label": "sweep_fees",
+      "value": "Paid 44,845.206080 tokens and 0.00025 SOL from the sampled market's vaults to accounts of B1dQr5PSH9BB6vnZc8LGaGjyx4oPYBibWZ2x8pREjiZE, the creator of the launch it graduated from; that key did not sign.",
+      "source": "tx 2JLPsh1v..."
+    },
+    {
+      "id": "F17",
+      "group": "Observed",
+      "label": "Trading",
+      "value": "12 swaps through Pipeline across all markets (7 buys, 5 sales) by 3 wallets, all on 2026-11-08; none since",
+      "source": "every router transaction since 2026-11-07"
+    },
+    {
+      "id": "C1",
+      "group": "Canary",
+      "label": "Round trip, tiny size",
+      "value": "Run on 2026-11-09: On the newest market, 0.00001 SOL bought tokens that, quoted back as a sale against the same state, returned 98.64% of the input.",
+      "source": "simulated quotes, slots 520329035 to 520329037, 2026-11-09"
+    },
+    {
+      "id": "C2",
+      "group": "Canary",
+      "label": "Exact-out",
+      "value": "Run on 2026-11-09: Refused: the strategy trades exact-in only.",
+      "source": "simulation, slot 520328905, 2026-11-09"
+    },
+    {
+      "id": "C3",
+      "group": "Canary",
+      "label": "Bypass",
+      "value": "Run on 2026-11-09: Calling the strategy's swap directly, with another key in place of the router's market signer, was refused.",
+      "source": "simulation, slot 520328907, 2026-11-09"
+    },
+    {
+      "id": "C4",
+      "group": "Canary",
+      "label": "Exit test",
+      "value": "Not run yet: buying then selling from the same wallet with committed trades, at several sizes, after moving the clock forward, and after each authority uses its powers.",
+      "source": "Canary checks ticket"
+    }
+  ],
+  "outputs": {
+    "pass": {
+      "summary": [
+        {
+          "text": "This strategy appears to manage its token inventory itself: in the sampled market, custom actions burned tokens, paid tips to callers and sent fees to the launch creator.",
+          "evidence": [
+            "F14",
+            "F15",
+            "F16"
+          ]
+        },
+        {
+          "text": "Since its upgrade on 2026-11-08, 6 of its 8 markets, the sampled one included, cannot be traded through Pipeline.",
+          "evidence": [
+            "F9",
+            "F10"
+          ]
+        },
+        {
+          "text": "The key 2yJJ...vUHZ can replace the code at any time, and there is no verified source.",
+          "evidence": [
+            "F2",
+            "F5"
+          ]
+        }
+      ],
+      "claims": [
+        {
+          "topic": "does",
+          "basis": "inferred",
+          "text": "Its binary names its source pool4, and instructions named rebalance_wall, settle_retired and sweep_fees appear to run a buy wall, retire surplus tokens and pay out fees.",
+          "evidence": [
+            "F5",
+            "F6"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "In the sampled market, settle_retired took 6,803,005.463489 tokens from the vault, paid the caller 0.22% and burned the rest.",
+          "evidence": [
+            "F15"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "sweep_fees paid 44,845.206080 tokens and 0.00025 SOL from the market's vaults to accounts of B1dQ...jiZE, without that key signing.",
+          "evidence": [
+            "F16"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "rebalance_wall paid its caller tips of 0.000307025 and 0.000030635 SOL from the market's SOL vault.",
+          "evidence": [
+            "F14"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "All 8 markets were created when launches on strategy ETrm...5zAb graduated, and none of them supports exact-out trades.",
+          "evidence": [
+            "F8"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The key 2yJJ...vUHZ can replace the program's code at any time; it released 3 versions on 2026-11-08.",
+          "evidence": [
+            "F2",
+            "F4"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "Since the last upgrade, 6 of the 8 markets fail every quote and swap; the sampled one holds 4.889389322 SOL that cannot be traded through Pipeline now.",
+          "evidence": [
+            "F9",
+            "F11"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The same key is the router's upgrade authority and admin, who can pause swaps.",
+          "evidence": [
+            "F2",
+            "P6"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The sampled token has no mint or freeze authority and no transfer fee.",
+          "evidence": [
+            "F12"
+          ]
+        },
+        {
+          "topic": "canary",
+          "basis": "confirmed",
+          "text": "On 2026-11-09, on the newest market, a tiny buy of 0.00001 SOL quoted back as a sale returned 98.64% of the input.",
+          "evidence": [
+            "C1"
+          ]
+        },
+        {
+          "topic": "canary",
+          "basis": "confirmed",
+          "text": "It refused exact-out quotes, and refused a swap call that skipped the router.",
+          "evidence": [
+            "C2",
+            "C3"
+          ]
+        },
+        {
+          "topic": "protection",
+          "basis": "confirmed",
+          "text": "rebalance_wall, settle_retired and sweep_fees are called directly on the strategy, outside the router's protections and fee.",
+          "evidence": [
+            "P3",
+            "F6"
+          ]
+        },
+        {
+          "topic": "protection",
+          "basis": "confirmed",
+          "text": "Trades through Pipeline get the router's minimum-output check and pay its 0.25% fee.",
+          "evidence": [
+            "P1",
+            "P2"
+          ]
+        },
+        {
+          "topic": "author",
+          "basis": "confirmed",
+          "text": "Its author has published no description: the metadata link returns an error.",
+          "evidence": [
+            "F7"
+          ]
+        }
+      ],
+      "unknowns": [
+        {
+          "text": "With no public or verified source, its fee rates, inventory rules and buy-wall rule are unknown.",
+          "evidence": [
+            "F5"
+          ]
+        },
+        {
+          "text": "Whether the 6 unreadable markets, and the funds in them, will become tradable again.",
+          "evidence": [
+            "F9"
+          ]
+        },
+        {
+          "text": "Who may call its custom actions; the callers seen so far were not the fee recipient.",
+          "evidence": [
+            "F14",
+            "F16"
+          ]
+        },
+        {
+          "text": "Whether a sale works later or at larger sizes: the full exit test has not run.",
+          "evidence": [
+            "C4"
+          ]
+        }
+      ],
+      "author_text_addresses_ai": false
+    }
+  }
+}

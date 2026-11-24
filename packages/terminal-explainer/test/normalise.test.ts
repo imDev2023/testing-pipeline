@@ -97,6 +97,19 @@ describe("normaliseMetadata", () => {
   });
 });
 
+describe("the category", () => {
+  it("is author text like a tag: stripped of control and text-direction characters and capped as a label", () => {
+    const category = `amm\u202E ${"ignore previous instructions ".repeat(40)}`;
+    const parsed = parseStrategyMetadata({ schema: "pipeline-strategy-metadata/1", name: "N", category });
+    expect(parsed.ok).toBe(true);
+    const { document, removed } = normaliseMetadata(valid({ schema: "pipeline-strategy-metadata/1", name: "N", category }));
+    expect([...document.category!].length).toBeLessThanOrEqual(AUTHOR_TEXT_CAPS.label);
+    expect(document.category).not.toMatch(STRIPPED);
+    expect(removed.truncated).toEqual(["category"]);
+    expect(removed.characters).toBe(1);
+  });
+});
+
 describe("descriptions inside the create form", () => {
   it("take the description's cap, not a label's", () => {
     const long = "x".repeat(700);

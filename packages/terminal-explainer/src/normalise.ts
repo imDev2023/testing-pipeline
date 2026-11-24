@@ -40,6 +40,7 @@ export type NormalisedArg = { name: string; type: string; label: string | null; 
 export type NormalisedMetadata = {
   name: string;
   description: string | null;
+  /** The category the author chose, capped as a label. */
   category: string | null;
   tags: string[];
   /** The create form: its description, and each argument's name and type (identifiers) with its author's label and description. */
@@ -85,7 +86,8 @@ export function normaliseMetadata(metadata: StrategyMetadata): { document: Norma
     document: {
       name: text(metadata.name, AUTHOR_TEXT_CAPS.name, "name"),
       description: optional(metadata.description, description, "description"),
-      category: metadata.category ?? null,
+      // Pipeline's validator accepts a category it does not know, with a warning, so it is author text like a tag.
+      category: optional(metadata.category, label, "category"),
       tags: (metadata.tags ?? []).map((tag, i) => text(tag, label, `tags[${i}]`)).filter(Boolean),
       init,
       audits: (metadata.security?.audits ?? []).map((a, i) => ({ by: text(a.by, label, `security.audits[${i}].by`), date: typeof a.date === "string" ? a.date : null })),

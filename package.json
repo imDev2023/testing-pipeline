@@ -15,9 +15,13 @@
         "terminal:dev:api": "pnpm --filter terminal-api dev",
         "terminal:dev:web": "pnpm --filter terminal-web preview",
         "terminal:db:migrate": "pnpm --filter terminal-db migrate",
-        "terminal:lint": "eslint apps/terminal-api apps/terminal-web packages/terminal-db packages/terminal-explainer packages/terminal-indexer tests/terminal-e2e tests/devnet",
+        "terminal:lint": "eslint apps/terminal-api apps/terminal-web packages/terminal-db packages/terminal-explainer apps/terminal-explainer-cli packages/terminal-indexer tests/terminal-e2e tests/devnet",
         "terminal:e2e": "pnpm --filter terminal-e2e e2e",
-        "canary:rerun": "node apps/terminal-api/scripts/canary-rerun.ts"
+        "canary:rerun": "node apps/terminal-api/scripts/canary-rerun.ts",
+        "explainer:approve": "pnpm --filter terminal-explainer-cli approve",
+        "explainer:reports": "pnpm --filter terminal-explainer-cli reports",
+        "explainer:eval": "pnpm --filter terminal-explainer-cli eval",
+        "explainer:count": "pnpm --filter terminal-explainer-cli count"
     },
     "devDependencies": {
         "@eslint/js": "10.0.1",
