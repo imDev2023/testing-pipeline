@@ -27,6 +27,7 @@
         "drizzle-orm": "0.45.4",
         "hono": "4.13.20",
         "strategy-actions": "workspace:*",
+        "tax-amm-scripts": "workspace:*",
         "terminal-db": "workspace:*",
         "terminal-explainer": "workspace:*",
         "terminal-indexer": "workspace:*",

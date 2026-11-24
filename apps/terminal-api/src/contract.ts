@@ -819,6 +819,13 @@ export const PreparedSwap = z.object({
   quote: Quote,
   slippage_bps: z.number().int(),
   min_amount_out: Amount,
+  /**
+   * A change of the strategy's own rates due within the transaction's lifetime, which a swap signed now
+   * may land after (a tax market's, docs/spec/tax-amm.md "In Aviary"): the slot it applies from and the
+   * expected output at the new rates; the minimum is then set from the worse of the two quotes. Null
+   * when no such change is due.
+   */
+  pending_rates: z.object({ from_slot: z.number().int(), expected_out: Amount }).nullable(),
   /** The unsigned transaction, base64, exactly as simulated; null when the simulation failed, so there is nothing to sign. */
   transaction: z.string().nullable(),
   simulation: Simulation,

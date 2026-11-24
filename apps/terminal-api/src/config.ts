@@ -270,3 +270,10 @@ export const MARKET_READ = { maxAccounts: 8, maxAccountBytes: 64 * 1024 } as con
  * 0.1 SOL, the cap our own demos create markets with; what the setup takes is shown by the simulation.
  */
 export const CREATE_MARKET_MAX_CREATOR_LAMPORTS = 100_000_000n;
+
+/**
+ * How many slots a transaction can still land in after it is built: a blockhash lasts 150 blocks, at most
+ * one a slot. A tax market's change of rates due within it sets the trade box's minimum output from the
+ * worse of the two quotes (docs/spec/tax-amm.md, "In Aviary"; ./trading/pendingRates).
+ */
+export const TRANSACTION_LIFETIME_SLOTS = 150;

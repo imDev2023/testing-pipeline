@@ -36,9 +36,10 @@ import {
 } from "@solana/kit";
 import type { BalanceChange, PreparedSwap, Simulation } from "../contract";
 import type { IntegratorFeeVar } from "../env";
-import { minimumReceived } from "./amounts";
+import { keptAfterOutputFee, minimumReceived } from "./amounts";
 import { decodeFailure } from "./failure";
 import { swapHookAccounts } from "./hooks";
+import { pendingRateQuote } from "./pendingRates";
 import type { TradeMarket } from "./market";
 import { COMMITMENT, quoteTyped, Refused } from "./quote";
 
@@ -75,13 +76,20 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
   const receivesSol = outputMint.address === NATIVE_MINT_ADDRESS;
   const feeMint = feeSide === "output" ? outputMint : inputMint;
   const feeAccount = await feeAccountPda(market.address, feeMint.address, feeMint.tokenProgram);
-  const minAmountOut = minimumReceived(BigInt(quote.expected_out), input.slippageBps);
   const signer = createNoopSigner(trader);
 
-  // What the wallet holds before, and whether the market's fee account exists, in one read.
+  // What the wallet holds before, whether the market's fee account exists, and the market's state, in one read.
   const watched = [trader, traderInput, traderOutput, feeAccount] as const;
-  const before = (await rpc.getMultipleAccounts([...watched], { encoding: "base64", commitment: COMMITMENT }).send()).value;
+  const read = await rpc.getMultipleAccounts([...watched, market.view.marketState], { encoding: "base64", commitment: COMMITMENT }).send();
+  const before = read.value.slice(0, watched.length);
   const feeAccountMissing = before[3] === null;
+
+  // A change of the strategy's own rates due within the transaction's lifetime: the minimum is set from the worse of the two quotes (./pendingRates).
+  const state = read.value[watched.length];
+  const atPending = state ? pendingRateQuote(market.view.strategyProgram, new Uint8Array(base64.encode(state.data[0])), BigInt(read.context.slot), { inputIndex: trade.inputIndex, outputIndex: trade.outputIndex, credited: BigInt(quote.net_sent) }) : null;
+  const pending = atPending && { from_slot: Number(atPending.fromSlot), expected_out: String(feeSide === "output" ? keptAfterOutputFee(atPending.strategyOut, quote.pipeline_fee_bps) : atPending.strategyOut) };
+  const worse = pending && BigInt(pending.expected_out) < BigInt(quote.expected_out) ? BigInt(pending.expected_out) : BigInt(quote.expected_out);
+  const minAmountOut = minimumReceived(worse, input.slippageBps);
 
   const instructions: Instruction[] = [
     getCreateAssociatedTokenIdempotentInstruction({ payer: signer, ata: traderOutput, owner: trader, mint: outputMint.address, tokenProgram: outputMint.tokenProgram }),
@@ -161,7 +169,7 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
     const short = paysSol ? sol < BigInt(quote.total_spend) : tokenAmount(before[1]?.data) < BigInt(quote.total_spend);
     if (short) simulation.failure = { ...simulation.failure, class: "too_little", sentence: "Your wallet holds too little for this swap." };
   }
-  return { quote, slippage_bps: input.slippageBps, min_amount_out: String(minAmountOut), transaction: simulation.ok ? wire : null, simulation };
+  return { quote, slippage_bps: input.slippageBps, min_amount_out: String(minAmountOut), pending_rates: pending, transaction: simulation.ok ? wire : null, simulation };
 }
 
 /** The most bytes one transaction may be on the wire. */

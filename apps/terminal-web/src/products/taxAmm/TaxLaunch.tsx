@@ -75,7 +75,8 @@ export function TaxLaunch({ program }: { program: string }) {
   const { read, retry } = useTokenFacts(token);
   const tokenFacts = read?.status === "read" && read.facts.readable ? read.facts : null;
   const quote = QUOTES[values.quote];
-  const tokenName = tokenFacts?.token?.symbol ?? tokenFacts?.token?.name ?? "the token";
+  const tokenSymbol = tokenFacts?.token?.symbol ?? tokenFacts?.token?.name ?? null;
+  const tokenName = tokenSymbol ?? "the token";
   const taxName = values.taxedIn === "quote" ? quote.name : tokenName;
 
   const { launch, missing } = readLaunch(values, { wallet: trader, token: tokenFacts && tokenFacts.decimals !== null ? { mint: address(tokenFacts.mint), decimals: tokenFacts.decimals } : null, quotes: QUOTES });
@@ -153,7 +154,7 @@ export function TaxLaunch({ program }: { program: string }) {
             value={values.taxedIn}
             options={[
               ["quote", `${quote.name}, so recipients are paid in ${quote.name}`],
-              ["token", `The token, ${tokenName}`],
+              ["token", tokenSymbol ? `The token, ${tokenSymbol}` : "The token"],
             ]}
             onChange={(taxedIn) => set({ taxedIn })}
           />
@@ -162,10 +163,10 @@ export function TaxLaunch({ program }: { program: string }) {
         <fieldset className={styles.group}>
           <legend className={styles.legend}>Taxes</legend>
           <p className={forms.note}>
-            Each in percent. Every tax is taken in {taxName}, and stays inside its range for the market&apos;s life; the tax authority can move it there, each change waiting about two minutes before it applies.
+            Every tax is taken in {taxName}. The tax authority can move a rate inside its range, each change waiting about two minutes before it applies.
           </p>
-          <Rate id={`${id}-buy`} label="Buy tax" what={`taken when ${taxName} is paid in, ${values.taxedIn === "quote" ? "that is, when someone buys the token" : `that is, when someone sells the token for ${quote.name}`}`} rate={values.buyTax} min={values.buyMin} max={values.buyMax} onChange={(rate, min, max) => set({ buyTax: rate, buyMin: min, buyMax: max })} />
-          <Rate id={`${id}-sell`} label="Sell tax" what={`taken when ${taxName} is paid out, ${values.taxedIn === "quote" ? "that is, when someone sells the token" : `that is, when someone buys the token with ${quote.name}`}`} rate={values.sellTax} min={values.sellMin} max={values.sellMax} onChange={(rate, min, max) => set({ sellTax: rate, sellMin: min, sellMax: max })} />
+          <Rate id={`${id}-buy`} label="Buy tax" what={`Taken when ${taxName} is paid in: when someone ${values.taxedIn === "quote" ? "buys the token" : `sells the token for ${quote.name}`}`} rate={values.buyTax} min={values.buyMin} max={values.buyMax} onChange={(rate, min, max) => set({ buyTax: rate, buyMin: min, buyMax: max })} />
+          <Rate id={`${id}-sell`} label="Sell tax" what={`Taken when ${taxName} is paid out: when someone ${values.taxedIn === "quote" ? "sells the token" : `buys the token with ${quote.name}`}`} rate={values.sellTax} min={values.sellMin} max={values.sellMax} onChange={(rate, min, max) => set({ sellTax: rate, sellMin: min, sellMax: max })} />
           <Choice
             legend="Tax authority"
             name={`${id}-authority`}
@@ -300,23 +301,26 @@ function Rate({ id, label, what, rate, min, max, onChange }: { id: string; label
   return (
     <div className={styles.rate}>
       <label htmlFor={id} className={styles.rateLabel}>
-        {label}
+        {label}, in percent
       </label>
       <p className={`${forms.note} ${styles.rateWhat}`}>{what}.</p>
-      <div className={`${forms.control} ${styles.percent}`}>
-        <input id={id} type="text" inputMode="decimal" autoComplete="off" value={rate} onChange={(e) => onChange(e.target.value, min, max)} />
-        <span aria-hidden="true">%</span>
-      </div>
-      <div className={styles.range}>
-        <label htmlFor={`${id}-min`}>from</label>
+      <div className={styles.rateRow}>
         <div className={`${forms.control} ${styles.percent}`}>
-          <input id={`${id}-min`} type="text" inputMode="decimal" autoComplete="off" aria-label={`${label}'s lowest rate`} value={min} onChange={(e) => onChange(rate, e.target.value, max)} />
+          <input id={id} type="text" inputMode="decimal" autoComplete="off" value={rate} onChange={(e) => onChange(e.target.value, min, max)} />
           <span aria-hidden="true">%</span>
         </div>
-        <label htmlFor={`${id}-max`}>to</label>
-        <div className={`${forms.control} ${styles.percent}`}>
-          <input id={`${id}-max`} type="text" inputMode="decimal" autoComplete="off" aria-label={`${label}'s highest rate`} value={max} onChange={(e) => onChange(rate, min, e.target.value)} />
-          <span aria-hidden="true">%</span>
+        <div className={styles.range}>
+          <span>between</span>
+          <div className={`${forms.control} ${styles.percent}`}>
+            <input type="text" inputMode="decimal" autoComplete="off" aria-label={`${label}'s lowest rate, in percent`} value={min} onChange={(e) => onChange(rate, e.target.value, max)} />
+            <span aria-hidden="true">%</span>
+          </div>
+          <span>and</span>
+          <div className={`${forms.control} ${styles.percent}`}>
+            <input type="text" inputMode="decimal" autoComplete="off" aria-label={`${label}'s highest rate, in percent`} value={max} onChange={(e) => onChange(rate, min, e.target.value)} />
+            <span aria-hidden="true">%</span>
+          </div>
+          <span>for the market&apos;s life</span>
         </div>
       </div>
     </div>

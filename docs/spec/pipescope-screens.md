@@ -391,6 +391,7 @@ From top to bottom, with the explanation beside the facts at desktop width.
 - A mint is entered by address, and its facts appear beneath the field as soon as it is read, so a creator sees what they are about to list.
 - After the market is created, the page links to its market page.
 - When no strategy has valid metadata, as on devnet on 2026-11-10, the page says so above the list: "No strategy on devnet has valid metadata today, so none offers a create form here. Their markets were created from their authors' own tools."
+- As built in [#75](https://github.com/imDev2023/testing-pipeline/issues/75) (`PIPESCOPE-158`): when the chosen strategy is one of our products with its own create form in the registry of product panels (`Create`), that form shows first, under its own heading, and the strategy's generic create form stays beneath it; the tax AMM's is its launch form ([`tax-amm.md`](tax-amm.md), In Aviary).
 
 ## Search
 

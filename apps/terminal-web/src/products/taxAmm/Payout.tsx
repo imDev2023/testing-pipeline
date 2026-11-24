@@ -52,7 +52,7 @@ export function Payout({ market, slot, taxMint, onPaid }: { market: Market; slot
           </button>
         )}
         {slot.owed === 0n && <span className={forms.note}>Owed nothing now.</span>}
-        {slot.owed > 0n && slot.action === "distribute" && taxMint && <span className={forms.note}>Paid to its wallet&apos;s {taxMint.symbol ?? "token"} account, which the payout creates if it is missing.</span>}
+        {slot.owed > 0n && slot.action === "distribute" && taxMint && <span className={forms.note}>Paid to its wallet&apos;s {taxMint.symbol === "SOL" ? "wrapped-SOL" : `${taxMint.symbol ?? taxMint.token?.symbol ?? "token"}`} account, which the payout creates if it is missing.</span>}
       </div>
     );
   }

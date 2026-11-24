@@ -13,7 +13,8 @@
 // and `AVIARY_LOOKUP_TABLE` names it to the API.
 import { configPda, eventAuthorityPda, NATIVE_MINT_ADDRESS, strategyPda, TOKEN_2022_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { address, type Address } from "@solana/kit";
-import { CLUSTER_USDC } from "../config";
+// With its extension, since scripts/lookup-table.ts runs this module under Node, which resolves no bare paths.
+import { CLUSTER_USDC } from "../config.ts";
 
 const RENT_SYSVAR = address("SysvarRent111111111111111111111111111111111");
 

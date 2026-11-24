@@ -83,7 +83,8 @@ export function TaxPanel({ market }: { market: Market }) {
 export function TaxPanelBody({ market, view, slot, keeper, vaultsRead, onPaid }: { market: Market; view: TaxPanelView; slot: number; keeper: Loaded<MarketKeeper>; vaultsRead: boolean; onPaid: () => void }) {
   const mints = view.state.mints.map((address) => market.mints.find((m) => m.mint === address) ?? null);
   const taxMint = mints[view.taxSide];
-  const amount = (raw: bigint, mint: MarketMint | null) => (mint ? <TokenAmount raw={String(raw)} decimals={mint.decimals} mint={mint.mint} symbol={mint.symbol} token={mint.token} /> : formatInteger(raw));
+  // Each amount carries its base units, as read from the chain, beside the four figures shown.
+  const amount = (raw: bigint, mint: MarketMint | null) => <span data-raw={String(raw)}>{mint ? <TokenAmount raw={String(raw)} decimals={mint.decimals} mint={mint.mint} symbol={mint.symbol} token={mint.token} /> : formatInteger(raw)}</span>;
   const label = (mint: MarketMint | null) => (mint ? <MintLabel mint={mint.mint} symbol={mint.symbol} token={mint.token} /> : "its mint");
   const taxName = taxMint?.symbol ?? taxMint?.token?.symbol ?? "the tax side";
 

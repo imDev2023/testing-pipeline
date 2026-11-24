@@ -43,19 +43,27 @@
   margin-bottom: 2px;
 }
 
-.option {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  min-height: var(--control-min-height);
-  max-width: 70ch;
+.choice {
+  gap: 0;
 }
 
+.option {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: var(--control-min-height);
+  max-width: 70ch;
+  cursor: pointer;
+}
+
+/* A radio's own box, drawn in the page's ink, at the size of the text beside it. */
 .option input {
   flex: none;
   width: 16px;
   height: 16px;
-  transform: translateY(2px);
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--ink);
 }
 
 .rate {
@@ -72,16 +80,20 @@
   margin: 0;
 }
 
+/* A rate, then its range on the same line, which wraps on a narrow screen. */
+.rateRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
 .range {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 8px;
   color: var(--ink2);
-}
-
-.rate > .percent {
-  margin-bottom: 2px;
 }
 
 .launch .percent {
@@ -101,6 +113,7 @@
 }
 
 .recipientRow {
+  max-width: 46em;
   display: grid;
   grid-template-columns: var(--tax-recipient-columns);
   gap: 8px;
@@ -117,6 +130,10 @@
 
 .recipientActions:empty {
   display: none;
+}
+
+.launch .recipientRow input[type="text"] {
+  max-width: none;
 }
 
 .launch .recipientRow .percent input[type="text"] {

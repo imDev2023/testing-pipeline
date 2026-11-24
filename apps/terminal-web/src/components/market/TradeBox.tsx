@@ -582,7 +582,15 @@ function Changes({ prepared, market }: { prepared: PreparedSwap; market: Market 
           </dd>
         </div>
         <div>
-          <dt>Arrives, at least</dt>
+          <dt>
+            Arrives, at least
+            {prepared.pending_rates && (
+              <span className={styles.rowNote}>
+                The market&apos;s own rates change from slot {formatInteger(prepared.pending_rates.from_slot)}, while this swap can still land, so this allows for the new rates, at which{" "}
+                <Amount raw={prepared.pending_rates.expected_out} mint={quote.output_mint} market={market} /> would arrive.
+              </span>
+            )}
+          </dt>
           <dd>
             <Amount raw={prepared.min_amount_out} mint={quote.output_mint} market={market} />
           </dd>
