@@ -2,12 +2,12 @@
   "market": "4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c",
   "swaps": {
     "live": {
-      "signature": "4qxJG45ZkHKqYi2dGEhtLJFphEYsYff2djJK51d6ZsvCxyPW4ruyM8E13iLDWosPPF9iNQ21J9k11apmdY1Pj63i",
-      "slot": 525826308
+      "signature": "Zp1vbEpysYsKfJYX4HsJydtqT8GXc6jMVjGadXNUEkayUgGuzoQfY9jdXChHbaqx4WmikoaVdLQFKGoSLrExH36",
+      "slot": 525860046
     },
     "missed": {
-      "signature": "5LTWJbbXWMLQXHPiBmCwuHoF85zLvsFZV4tF8krDTKQEXJTe4ymzyJB1ucoQSVfb647GjsgA2vYwAi4VGDmFpLPi",
-      "slot": 525826331
+      "signature": "2weTYoFNJMfFtcvbRVW6AwiNWBxn7EUufREFLv7pWA3KHnUNXvZeNgAxvjAswEJdBjGBzFQK7vAUogfW9pWqAzpF",
+      "slot": 525860066
     }
   }
 }

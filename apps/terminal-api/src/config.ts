@@ -194,6 +194,15 @@ export const PUBLIC_CACHE_MAX_AGE_SECONDS = 60;
  */
 export const RATE_LIMIT_PERIOD_SECONDS = 60;
 
+/**
+ * The network fee a review shows (#57): `getFeeForMessage` is asked this many times while it answers
+ * null, which a load-balanced RPC does for a blockhash one of its nodes has not seen yet, this long
+ * apart; when it never answers, the fee is Solana's base fee for each required signature.
+ */
+export const NETWORK_FEE_ASKS = 3;
+export const NETWORK_FEE_PAUSE_MS = 400;
+export const BASE_FEE_LAMPORTS_PER_SIGNATURE = 5_000n;
+
 /** How long `/health` waits for the RPC and for the database before calling them unreachable. */
 export const HEALTH_TIMEOUT_MS = 5 * SECOND;
 
