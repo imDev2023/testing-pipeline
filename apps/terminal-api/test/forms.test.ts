@@ -1,6 +1,6 @@
 // A strategy's forms (docs/spec/pipescope.md, Custom-action and create-market forms; #123): every
 // action its validated metadata describes under `aviary_actions` (BAR-41), or under the `actions`
-// section Pipeline no longer reads (PIPESCOPE-137), and its create form, each checked against the
+// section Pipeline no longer reads (PIPESCOPE-141), and its create form, each checked against the
 // instruction list of the strategy's current version (PIPESCOPE-92) by the discriminator it sends.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";

@@ -14,7 +14,7 @@ export const callsOf = (form: Form) => form.check.instruction ?? form.name;
 /**
  * A form's result line (docs/spec/pipescope-screens.md, Explanation, actions and facts): which
  * instruction of which program it calls and whether an instruction with the discriminator it sends is
- * in the deployed program (PIPESCOPE-92, PIPESCOPE-139): a pass naming the instruction the program
+ * in the deployed program (PIPESCOPE-92, PIPESCOPE-143): a pass naming the instruction the program
  * runs, with the metadata's own name beside it when that differs, or a warn, "what this form calls
  * could not be checked".
  */

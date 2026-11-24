@@ -126,7 +126,7 @@ function CreateForm({ form, view }: { form: Form; view: StrategyForms }) {
   const trader = account?.address ?? null;
   const fields = useFormFields(form, NO_MINTS);
   const { request } = fields;
-  // A new market state's keypair, made in the page for each review and never sent anywhere (PIPESCOPE-140).
+  // A new market state's keypair, made in the page for each review and never sent anywhere (PIPESCOPE-144).
   const state = useRef<KeyPairSigner | null>(null);
   const prepare = useCallback(async () => {
     state.current = form.market_state === "new_keypair" ? await generateKeyPairSigner() : null;

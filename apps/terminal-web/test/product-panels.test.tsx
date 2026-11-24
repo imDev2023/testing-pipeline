@@ -1,5 +1,5 @@
 // The place each of our products hangs its panel (docs/spec/README.md, Our products live inside Aviary;
-// SUITE-15, PIPESCOPE-143): a registry keyed by strategy program puts a product's panel on the market
+// SUITE-15, PIPESCOPE-147): a registry keyed by strategy program puts a product's panel on the market
 // page's lower band, after the trades and before the explanation and the forms, and its own forms
 // under Actions with the strategy's others, on that program's markets and nowhere else.
 import { renderToStaticMarkup } from "react-dom/server";

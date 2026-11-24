@@ -6,7 +6,7 @@
 // Pipeline 0.2 dropped custom actions from its metadata standard, so our strategies describe theirs
 // under `aviary_actions` (BAR-41), which the `strategy-actions` package validates and builds; other
 // strategies may still carry Pipeline's old `actions` section, the same shape, which Aviary reads
-// when there is no `aviary_actions` (PIPESCOPE-137). Every author text is normalised as the pages
+// when there is no `aviary_actions` (PIPESCOPE-141). Every author text is normalised as the pages
 // and the explainer see it (EXPLAINER-08) and is never more than plain text.
 import { anchorDiscriminator, parseAccountSource, type AccountSource as SdkSource, type MetadataAccount, type MetadataArg, type MetadataInit } from "@pipeline-sol/sdk";
 import { and, asc, desc, eq } from "drizzle-orm";
@@ -204,7 +204,7 @@ export async function readStrategyForms(db: Db, program: string): Promise<Strate
   return { ...base, metadata: "valid", actions_section: section, unavailable: null, errors: [], actions: await Promise.all(result.actions.map((a) => actionForm(a, list))), init };
 }
 
-/** The check of a form that sends `discriminator` against a strategy's current version (PIPESCOPE-139). */
+/** The check of a form that sends `discriminator` against a strategy's current version (PIPESCOPE-143). */
 export const checkForm = check;
 
 /** Anchor's discriminator of the create form's instruction, in hex. */

@@ -178,7 +178,7 @@ export const PdaSeed: z.ZodType<PdaSeed> = z.lazy(() =>
 
 /**
  * Whether the instruction a form sends is in the strategy's current version (PIPESCOPE-92,
- * PIPESCOPE-139): looked up by the discriminator it sends in the version's instruction list, so
+ * PIPESCOPE-143): looked up by the discriminator it sends in the version's instruction list, so
  * `instruction` is the name the program itself gives the instruction that runs, whatever the form's
  * label or name say; a warn when no instruction with that discriminator was found in the program, or
  * no list is recorded for it.
@@ -233,7 +233,7 @@ export type Form = z.infer<typeof Form>;
  * `GET /v1/strategies/{program}/forms`: a strategy's forms, from its newest metadata as Pipeline's
  * validator accepted it (PIPESCOPE-20, PIPESCOPE-21). Its actions come from `aviary_actions` (BAR-41)
  * or, when the metadata has none, from the `actions` section Pipeline's validator now ignores
- * (PIPESCOPE-137). `unavailable` says why there are no forms: the metadata is unavailable (no
+ * (PIPESCOPE-141). `unavailable` says why there are no forms: the metadata is unavailable (no
  * forms at all), or the actions section failed its validator (no action forms; the create form
  * stays); `errors` is what the fetcher or the validator said, untrusted text, since it can quote the
  * document. `instructions_beyond_pipeline` counts the current version's instructions that are not
@@ -370,7 +370,7 @@ export type MarketFacts = z.infer<typeof MarketFacts>;
 /**
  * `GET /v1/markets/{market}/state?accounts=`: the market's state and the outside accounts a product's
  * panel names (a comma-separated list, at most MARKET_READ.maxAccounts), all read in one request at
- * one slot, so a panel never mixes two moments of the chain (PIPESCOPE-142). Each account's data is
+ * one slot, so a panel never mixes two moments of the chain (PIPESCOPE-146). Each account's data is
  * base64; an account larger than MARKET_READ.maxAccountBytes comes back with its size and no data.
  */
 export const MarketRead = z.object({
@@ -766,7 +766,7 @@ export const ResolvedAccount = z.object({ address: Address, writable: z.boolean(
 
 /**
  * A prepared custom action: the strategy's instruction as built (its accounts resolved), the SOL
- * wrapped for it (PIPESCOPE-141), and the unsigned transaction, only when its simulation passed. It is
+ * wrapped for it (PIPESCOPE-145), and the unsigned transaction, only when its simulation passed. It is
  * signed directly on the strategy, outside the router's swap protections.
  */
 export const PreparedAction = z.object({
@@ -783,7 +783,7 @@ export type PreparedAction = z.infer<typeof PreparedAction>;
 /**
  * `POST /v1/markets/prepare`: a new market from a strategy's create form. `market_state` is the new
  * market state's address when the form makes one: its keypair is made in the page, which signs with
- * it after the wallet's prompt is built, so no key leaves the page (PIPESCOPE-140).
+ * it after the wallet's prompt is built, so no key leaves the page (PIPESCOPE-144).
  */
 export const PrepareMarketRequest = z.object({ strategy: Address, ...FormValues, market_state: Address.optional(), trader: Address }).strict();
 export type PrepareMarketRequest = z.infer<typeof PrepareMarketRequest>;
@@ -797,7 +797,7 @@ export const PreparedMarket = z.object({
   check: FormCheck,
   accounts: z.array(ResolvedAccount),
   wrapped_sol: Amount,
-  /** The most SOL the strategy's setup may take from the creator, which `create_market` carries (PIPESCOPE-140). */
+  /** The most SOL the strategy's setup may take from the creator, which `create_market` carries (PIPESCOPE-144). */
   max_creator_lamports: Amount,
   transaction: z.string().nullable(),
   simulation: TransactionSimulation,

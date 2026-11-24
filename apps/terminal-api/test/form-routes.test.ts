@@ -1,6 +1,6 @@
 // The endpoints behind the forms and the product panels (#123): a mint typed into a create form, read
 // for its facts before any market holds it; a market's state with named outside accounts, read at
-// one slot for a product's panel (PIPESCOPE-142); and the refusals a custom action's or a new
+// one slot for a product's panel (PIPESCOPE-146); and the refusals a custom action's or a new
 // market's prepare answers before anything is simulated. Building and simulating them for real is
 // the local demo's (tests/terminal-e2e/demo/forms.ts).
 import { readFileSync } from "node:fs";

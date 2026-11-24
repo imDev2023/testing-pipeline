@@ -51,7 +51,7 @@ export type ReviewProps<P extends Prepared> = {
   onSigning: () => void;
   onDeclined: (note: string) => void;
   onSent: (prepared: P, signature: string) => void;
-  /** Signs in the page before the wallet does, as a new market's state keypair does (PIPESCOPE-140). */
+  /** Signs in the page before the wallet does, as a new market's state keypair does (PIPESCOPE-144). */
   presign?: (transaction: Uint8Array) => Promise<Uint8Array>;
   /** What the panel adds once the transaction confirmed. */
   confirmed?: (slot: number) => ReactNode;

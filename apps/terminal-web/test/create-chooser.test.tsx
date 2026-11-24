@@ -1,4 +1,4 @@
-// Create market's strategy chooser (docs/spec/pipescope-screens.md, Create market; PIPESCOPE-138):
+// Create market's strategy chooser (docs/spec/pipescope-screens.md, Create market; PIPESCOPE-142):
 // every registered strategy with its markets and who can upgrade it, one whose metadata is valid
 // offering its create form and one without saying why; and the line above the list only while no
 // strategy has valid metadata, as on devnet on 2026-11-10.

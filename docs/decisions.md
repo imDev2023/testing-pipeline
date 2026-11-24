@@ -2500,7 +2500,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
 
-### PIPESCOPE-137: Forms from Pipeline's old actions section
+### PIPESCOPE-141: Forms from Pipeline's old actions section
 
 - Question: Does Aviary render forms from the `actions` section that Pipeline 0.2 dropped from its metadata standard, which other strategies still publish?
 - Answer: Yes: when a strategy's valid metadata has no `aviary_actions`, its `actions` section, the same shape, is read by the same validator and builder (the `strategy-actions` package) and each form carries the same instruction check, outside-the-router line and accounts; `aviary_actions` wins when a document has both.
@@ -2510,7 +2510,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
 
-### PIPESCOPE-138: Forms on devnet while some metadata is valid
+### PIPESCOPE-142: Forms on devnet while some metadata is valid
 
 - Question: What does devnet show now that some strategies, our own among them, publish valid metadata?
 - Answer: Every strategy with valid metadata shows its forms and every other one the unavailable state with its reason; the create-market page lists the create forms, and its no-valid-metadata line appears only while no strategy has valid metadata, which tests check on a database where none does.
@@ -2520,7 +2520,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
 
-### PIPESCOPE-139: How a form's instruction is checked
+### PIPESCOPE-143: How a form's instruction is checked
 
 - Question: How does a form's result line decide whether the instruction it calls is in the deployed program?
 - Answer: By the discriminator the form sends (the metadata's own, or Anchor's from its name), looked up in the instruction list of the strategy's current version; a pass names the instruction the program runs, with the metadata's own name beside it when that differs, and a warn says "what this form calls could not be checked" when no instruction has that discriminator or no list is recorded.
@@ -2530,7 +2530,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
 
-### PIPESCOPE-140: A new market's state keypair and its creator cap
+### PIPESCOPE-144: A new market's state keypair and its creator cap
 
 - Question: Who makes and signs with a new market's fresh state keypair, and how much SOL may the strategy's setup take from the creator?
 - Answer: The page makes the keypair for each review and signs with it after the API built and simulated the transaction, so no key reaches the API; `create_market` carries a cap of 0.1 SOL, `CREATE_MARKET_MAX_CREATOR_LAMPORTS` in `terminal-api`'s config module, and the simulation shows what the setup takes.
@@ -2540,7 +2540,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
 
-### PIPESCOPE-141: SOL around a custom action, and who signs it
+### PIPESCOPE-145: SOL around a custom action, and who signs it
 
 - Question: When does Aviary wrap and unwrap SOL around a custom action or a new market, and what may it ask to be signed?
 - Answer: When the instruction writes to the wallet's own wrapped-SOL account, that account is created if missing and the sum of the amount arguments the metadata writes in wrapped SOL moved in before it, and the account is closed back into the wallet after it, in the same transaction; an instruction that needs a signature from anyone but the wallet (and a new market's state) is refused before it is simulated.
@@ -2550,7 +2550,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
 
-### PIPESCOPE-142: The one-slot read for product panels
+### PIPESCOPE-146: The one-slot read for product panels
 
 - Question: How does a product's panel read a market's state and the outside accounts it needs?
 - Answer: `GET /v1/markets/{market}/state?accounts=` reads the market's state and at most 8 named accounts in one request at one slot, each account's data returned up to 64 KiB, `MARKET_READ` in `terminal-api`'s config module, so the public read is no general RPC on Aviary's key.
@@ -2560,7 +2560,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
 
-### PIPESCOPE-143: Where a product's panel and forms go
+### PIPESCOPE-147: Where a product's panel and forms go
 
 - Question: Where does each of our products put its panel and its own forms in Aviary?
 - Answer: In a registry in `terminal-web` (`apps/terminal-web/src/products/registry.ts`) keyed by the product's strategy program: its panel on the market page's lower band after the trades and before the explanation, its forms under Actions after the strategy's metadata forms, on that program's markets and nowhere else; empty until the products' Aviary tickets fill it.
@@ -6076,7 +6076,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `HOOK-35` to `HOOK-37`: set by the session of [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
-- `PIPESCOPE-139` to `PIPESCOPE-143`: set by the session of [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `PIPESCOPE-137` and `PIPESCOPE-138` are the owner's answers of 2026-11-24 on that ticket.
+- `PIPESCOPE-143` to `PIPESCOPE-147`: set by the session of [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `PIPESCOPE-141` and `PIPESCOPE-142` are the owner's answers of 2026-11-24 on that ticket.
 - `EXPLAINER-23` to `EXPLAINER-28`: set by the session of [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `PIPESCOPE-91`: since Pipeline 0.3 the router's config account holds no swap fee: the fee is a constant of the router, which the SDK mirrors as `PIPELINE_FEE_BPS`, and the explainer's P item reads that constant; the decision should name the SDK's constant, not the config account.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.

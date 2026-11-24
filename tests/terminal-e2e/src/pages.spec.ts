@@ -19,7 +19,7 @@ const MARKET_HOOKED = "8XUe71aQTkUrP8SZfL2Z6PuXgdzYe9szTLEqiExrVyMW";
 // Aviary's token-image check market on devnet (deployments/devnet-demo-token-image.json): its token names an image Aviary keeps.
 const MARKET_TOKEN_IMAGE = "4DZbJgcdZyZUoYxKsN8atmMjTipBQ3zd6Yjzkp2i5HsR";
 // Markets whose strategy's metadata is unreachable, fails Pipeline's validator, or holds Pipeline's old
-// `actions` section (PIPESCOPE-137); and the tax AMM's demo market (deployments/devnet-demo-tax-amm.json),
+// `actions` section (PIPESCOPE-141); and the tax AMM's demo market (deployments/devnet-demo-tax-amm.json),
 // with its demo token, the tax side, and the suite share's wallet, whose slot anyone may pay out.
 const MARKET_METADATA_UNREACHABLE = "ChLMN5jumUA3E9WBmoXUNma3SJk4sgUmWpzhAS2ifv69";
 const MARKET_METADATA_INVALID = "CmDa9bCsmeDHNUp2KYv9DEGMA2nhQcxCkwQoZ7GfagVh";

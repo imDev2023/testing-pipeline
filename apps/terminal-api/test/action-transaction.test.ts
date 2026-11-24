@@ -1,7 +1,7 @@
 // A custom action and a new market as the transactions Aviary prepares (docs/spec/pipescope-architecture.md,
 // Trading path; #123): the strategy's instruction built from its metadata with the `strategy-actions`
 // package or Pipeline's SDK, SOL wrapped before an action that takes wrapped SOL from the wallet and
-// unwrapped after it in the same transaction (PIPESCOPE-141), and nothing prepared that needs a
+// unwrapped after it in the same transaction (PIPESCOPE-145), and nothing prepared that needs a
 // signature the wallet cannot give. Then what a simulation says signing would change in the wallet.
 import { readFileSync } from "node:fs";
 import { anchorDiscriminator, NATIVE_MINT_ADDRESS, PIPELINE_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, type MarketView, type MetadataInit } from "@pipeline-sol/sdk";

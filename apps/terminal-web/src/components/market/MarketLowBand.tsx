@@ -6,7 +6,7 @@ import bands from "./Market.module.css";
 
 /**
  * The market page's lower band (docs/spec/pipescope-screens.md, Market page): on the left a product's
- * panel when the market's strategy is one of ours (PIPESCOPE-143), then the explanation (#127) and the
+ * panel when the market's strategy is one of ours (PIPESCOPE-147), then the explanation (#127) and the
  * strategy's forms under Actions, with the product's own forms after them; on the right the facts
  * panel. At one column the left side comes first, so the order is trades, panel, explanation,
  * actions, facts.

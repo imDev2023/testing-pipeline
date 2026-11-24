@@ -7,9 +7,9 @@
 // A custom action is signed directly on the strategy, outside the router's swap protections. When it
 // takes wrapped SOL from the wallet's own wrapped-SOL account, or pays into it, SOL is wrapped before it
 // and the account closed back into the wallet after it, in the same transaction, so SOL in and out is
-// plain SOL as in a swap (PIPESCOPE-141). Nothing is prepared that needs a signature the wallet cannot
+// plain SOL as in a swap (PIPESCOPE-145). Nothing is prepared that needs a signature the wallet cannot
 // give: a new market's fresh state keypair is made and kept in the page, which signs with it
-// (PIPESCOPE-140). Aviary holds no keys.
+// (PIPESCOPE-144). Aviary holds no keys.
 import { buildCreateMarketFromMetadata, NATIVE_MINT_ADDRESS, resolveAccountSource, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, type ArgValue, type MarketView, type MetadataInit, type SourceContext } from "@pipeline-sol/sdk";
 import { getTransferSolInstruction } from "@solana-program/system";
 import { findAssociatedTokenPda, getCloseAccountInstruction, getCreateAssociatedTokenIdempotentInstruction, getSyncNativeInstruction } from "@solana-program/token";
