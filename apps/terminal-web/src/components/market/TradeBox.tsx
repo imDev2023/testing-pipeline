@@ -50,7 +50,6 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
   const ids = useId();
   const { account, chain, openMenu } = useWallet();
   const mintOf = useCallback((address: string) => market.mints.find((m) => m.mint === address)!, [market.mints]);
-  const label = (address: string) => mintOf(address).symbol ?? shortAddress(address);
   const decimalsOf = (address: string) => mintOf(address).decimals;
 
   // The box opens paying the quote mint and receiving the base mint.
@@ -203,7 +202,6 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
     [market.address, onTraded, setReview],
   );
 
-  const symbolOfPay = label(pay);
   const balance = (balancesFor && balancesFor.trader === trader ? balancesFor.balances[pay] : undefined) ?? null;
   const showsBreakdown = review === null;
 
@@ -240,7 +238,7 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
           ) : account && balance !== null && payDecimals !== null ? (
             <>
               <span>
-                Balance {formatTokenAmount(balance, payDecimals)} {symbolOfPay}
+                Balance {formatTokenAmount(balance, payDecimals)} <MintLabel mint={pay} symbol={mintOf(pay).symbol} token={mintOf(pay).token} />
               </span>
               <button
                 type="button"
@@ -391,6 +389,7 @@ function MintSelect({ id, label, value, market, onChange }: { id: string; label:
       </label>
       <select id={id} className={styles.mint} value={value} onChange={(e) => onChange(e.target.value)}>
         {market.mints.map((m) => (
+          // An option is plain text, where an author's name cannot be set in its own style, so a token Aviary does not name shows its short address.
           <option key={m.mint} value={m.mint}>
             {m.symbol ?? shortAddress(m.mint)}
           </option>
@@ -405,7 +404,7 @@ function Amount({ raw, mint, market }: { raw: string; mint: string; market: Mark
   const held = market.mints.find((m) => m.mint === mint)!;
   return (
     <>
-      {held.decimals === null ? raw : formatTokenAmount(BigInt(raw), held.decimals)} <MintLabel mint={mint} symbol={held.symbol} />
+      {held.decimals === null ? raw : formatTokenAmount(BigInt(raw), held.decimals)} <MintLabel mint={mint} symbol={held.symbol} token={held.token} />
     </>
   );
 }

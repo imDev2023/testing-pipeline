@@ -2490,6 +2490,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
 
+### PIPESCOPE-136: The trade box's real-wallet check
+
+- Question: How is the trade box's criterion of a buy signed once in a real wallet met?
+- Answer: By the Playwright test wallet, which registers through the Wallet Standard as Phantom does and signs with the project's devnet key `e2e-trader.json`, connecting, reviewing and signing one buy on devnet through the real page of the local run, with no human step; what Phantom, Solflare or Backpack show when set to mainnet is no longer part of the ticket.
+- Alternatives: The earlier criterion: the same buy signed once in a real wallet extension in the owner's Chrome, with screenshots, and a note of what Phantom, Solflare or Backpack do when set to mainnet, as `PIPESCOPE-94` asks of each signing flow.
+- Specified in: [the ticket, Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
