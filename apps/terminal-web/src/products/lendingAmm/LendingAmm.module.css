@@ -1,0 +1,181 @@
+/* The lending AMM's panel, history and forms (#88): Aviary's own reading, set plainly in the theme's
+   colours, with no green or red (docs/spec/pipescope-screens.md, For other tickets). The buffer's
+   scale is drawn in ink and wash: its band shaded, its target a tick, the buffer's share a marker. */
+.body {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.read {
+  margin: 0;
+  color: var(--ink3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+/* Set like a link, but as high as every control (44 px at phone width). */
+.again {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-min-height);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink2);
+  text-decoration: underline;
+  text-decoration-color: var(--rule2);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.again:hover {
+  color: var(--ink);
+}
+
+/* What the reading shows now: each a sentence, marked by a hairline on its left rather than a colour. */
+.notices {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.notices li {
+  border-left: 3px solid var(--ink);
+  padding: 2px 0 2px 10px;
+  font-weight: var(--strong-weight);
+  max-width: 70ch;
+}
+
+.parts {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.amount {
+  white-space: nowrap;
+}
+
+.amount :global(*) {
+  white-space: normal;
+}
+
+.share {
+  display: grid;
+  gap: 6px;
+}
+
+/* The scale runs from 0% to 100% of the lent side. */
+.scale {
+  position: relative;
+  display: block;
+  height: 10px;
+  max-width: 22em;
+  background: var(--wash);
+  border: 1px solid var(--rule2);
+  border-radius: 2px;
+}
+
+.band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--ink3);
+  opacity: 0.5;
+}
+
+.target {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 0;
+  border-left: 1px dashed var(--ink2);
+}
+
+.marker {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 3px;
+  margin-left: -1.5px;
+  background: var(--ink);
+  border-radius: 1px;
+}
+
+.choice {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+/* A legend has its own padding by default; this one lines up with the fields' labels. */
+.choice legend {
+  padding: 0;
+  margin-bottom: 2px;
+}
+
+.choice label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--control-min-height);
+}
+
+.choice input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.quiet {
+  color: var(--ink3);
+}
+
+.history {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.events {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+}
+
+/* An event: its time beside what happened and who did it, one under the other at the width theme.css
+   names for facts (--fact-columns). */
+.event {
+  display: grid;
+  grid-template-columns: var(--fact-columns);
+  gap: 2px 16px;
+  padding: 8px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.event:first-child {
+  border-top: 0;
+}
+
+.when {
+  color: var(--ink2);
+}
+
+.detail {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.who {
+  color: var(--ink3);
+}

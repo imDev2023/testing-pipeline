@@ -49,6 +49,8 @@ import { CHECK_ABOUT } from "./canarySentences";
 import { AVIARY_MINT_NAMES, WRAPPED_SOL } from "./config";
 import { mintFacts } from "./facts";
 import { ROUTER } from "./indexerCore";
+import { lendingEvidence } from "./products/lendingAmm/facts";
+import { LENDING_AMM_PROGRAM } from "./products/lendingAmm/read";
 import { readStrategyInstructions } from "./strategies";
 
 const MONTH_PAD = (n: number) => String(n).padStart(2, "0");
@@ -241,7 +243,7 @@ async function canaryItems(db: Db, { program, version, outcomes }: Current, repr
 }
 
 /** The evidence of a strategy's current version, and what its key row records beside it. */
-async function buildEvidence(db: Db, at: Current): Promise<{ evidence: EvidenceItem[]; representative: string | null; addressesAi: boolean }> {
+async function buildEvidence(db: Db, at: Current, rpcUrl: string | undefined): Promise<{ evidence: EvidenceItem[]; representative: string | null; addressesAi: boolean }> {
   const [router] = await db.select({ upgradeAuthority: programFacts.upgradeAuthority }).from(programFacts).where(eq(programFacts.program, ROUTER));
   const program = await programItems(db, at);
   const market = await marketItems(db, at);
@@ -254,7 +256,9 @@ async function buildEvidence(db: Db, at: Current): Promise<{ evidence: EvidenceI
     removed: snapshot.status === "valid" ? (snapshot.removed as Removed) : null,
     instructions: program.instructions,
   });
-  const facts = [...program.facts, ...author.facts, ...market.facts, ...(program.custom ? [program.custom] : [])];
+  // Our own products add what their panels show, read for the sampled market (#88).
+  const product = at.program === LENDING_AMM_PROGRAM ? await lendingEvidence(db, market.representative, rpcUrl) : [];
+  const facts = [...program.facts, ...author.facts, ...market.facts, ...product, ...(program.custom ? [program.custom] : [])];
   const evidence = assembleEvidence({ pipeline: pipelineRules({ routerUpgradeAuthority: router?.upgradeAuthority ?? null }), facts, canary, author: author.author });
   return { evidence, representative: market.representative, addressesAi: author.addressesAi };
 }
@@ -287,7 +291,7 @@ const snapshotAddressesAi = (snapshot: Snapshot): boolean =>
  * each key not recorded yet builds its evidence and records it pending. Says which strategies got a
  * new key, and which wait for their metadata's new link to be fetched.
  */
-export async function makeExplainerKeys(db: Db, { programs }: { programs?: string[] } = {}): Promise<{ made: string[]; revived: string[]; waiting: string[] }> {
+export async function makeExplainerKeys(db: Db, { programs, rpcUrl }: { programs?: string[]; rpcUrl?: string } = {}): Promise<{ made: string[]; revived: string[]; waiting: string[] }> {
   const rows = await db.select({ program: strategies.program, metadataUri: strategies.metadataUri }).from(strategies).where(programs ? inArray(strategies.program, programs) : undefined);
   const made: string[] = [];
   const revived: string[] = [];
@@ -305,7 +309,7 @@ export async function makeExplainerKeys(db: Db, { programs }: { programs?: strin
       if (await reviveExplainerKey(db, key.id)) revived.push(program);
       continue;
     }
-    const { evidence, representative, addressesAi } = await buildEvidence(db, at);
+    const { evidence, representative, addressesAi } = await buildEvidence(db, at, rpcUrl);
     const cost = estimateCost({ program, deploySlot: at.version.deploySlot, evidence });
     const { id, ...parts } = key;
     if (await recordExplainerKey(db, { key: id, ...parts, evidence, representativeMarket: representative, authorTextAddressesAi: addressesAi, estimatedInputTokens: cost.inputTokens, estimatedCostUsd: cost.usd })) made.push(program);

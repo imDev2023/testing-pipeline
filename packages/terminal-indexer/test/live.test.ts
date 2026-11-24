@@ -15,6 +15,15 @@ afterEach(async () => {
   rpc = null;
 });
 
+/** Runs `then` once the fake RPC has been asked `method` at least once. */
+function afterFirstAsk(fake: FakeRpc, method: string, then: () => void) {
+  const poll = setInterval(() => {
+    if (!fake.requests.some((r) => r.method === method)) return;
+    clearInterval(poll);
+    then();
+  }, 10);
+}
+
 describe("the logs subscription", () => {
   it("runs over the RPC's own URL as a WebSocket", () => {
     expect(webSocketUrlOf("https://devnet.helius-rpc.com/?api-key=k")).toBe("wss://devnet.helius-rpc.com/?api-key=k");
@@ -39,18 +48,11 @@ describe("the logs subscription", () => {
 describe("a reported transaction", () => {
   const raw = swapTransaction({ id: 1, slot: 300, blockIndex: 2, at: 1_795_366_800, input: WSOL, output: SWAP_TOKEN, netSent: 5n, received: 7n });
 
-  /** Runs `then` once the RPC has been asked for the transaction at least once, however slow the machine is. */
-  const afterFirstAsk = (served: FakeRpc, then: () => void) =>
-    void (async () => {
-      while (!served.requests.some((r) => r.method === "getTransaction")) await new Promise((done) => setTimeout(done, 10));
-      then();
-    })();
-
   it("is asked for until the RPC serves it, and comes with its place in its block", async () => {
     rpc = await fakeRpc([raw]);
     rpc.unserved.add(raw.transaction.signatures[0]!);
-    const slow = rpc;
-    afterFirstAsk(slow, () => slow.unserved.clear());
+    // Served only once it has been asked for at least once, whatever the machine's load: a timer could fire before the first ask.
+    afterFirstAsk(rpc, "getTransaction", () => rpc!.unserved.clear());
     const served = await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { until: Date.now() + 5_000, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) });
     expect(served).toEqual(raw);
     expect(rpc.requests.filter((r) => r.method === "getTransaction").length).toBeGreaterThan(1);
@@ -72,8 +74,7 @@ describe("a reported transaction", () => {
   it("is asked for again through a rate limit, which passes, within the wait (#214)", async () => {
     rpc = await fakeRpc([raw]);
     rpc.limited.add("getTransaction");
-    const limited = rpc;
-    afterFirstAsk(limited, () => limited.limited.clear());
+    afterFirstAsk(rpc, "getTransaction", () => rpc!.limited.clear());
     expect(await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { until: Date.now() + 5_000, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) })).toEqual(raw);
   });
 });

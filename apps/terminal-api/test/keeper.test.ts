@@ -251,7 +251,7 @@ describe("GET /v1/markets/{market}/keeper", () => {
     return { status: response.status, body: (await response.json()) as unknown };
   }
 
-  it("answers the runner's latest record of each job and slot on the market, for its panel's due jobs (PIPESCOPE-166)", async () => {
+  it("answers the runner's latest record of each job and slot on the market, for its panel's due jobs (PIPESCOPE-167)", async () => {
     const { status, body } = await marketJobs(env(), MARKET);
     expect(status).toBe(200);
     const { market, wallet, jobs } = MarketKeeper.parse(body);

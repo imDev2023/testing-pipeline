@@ -35,6 +35,8 @@ const TOKEN_IMAGE_CHECK = "6jtEmUreNsX6B7xwnqjB4D3bSASwTZTweL16bk8xHD7D";
 // A market no swap has gone through, and one with a single swap, whose lone candle the chart still draws.
 const MARKET_WITHOUT_TRADES = "DH7QCdTHGsjHcsm7SgXYRgdQvX34VT8oMQkFWVoCe3SQ";
 const MARKET_WITH_ONE_TRADE = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
+// The lending AMM's demo market (#87), with its panel and its history (#88).
+const MARKET_LENDING = "AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu";
 
 /** A token image has loaded and has a picture: one that failed is complete too, so its width says. */
 const imageLoaded = (img: Locator) => expect.poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
@@ -225,6 +227,20 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
     ready: async (page: Page) => {
       await marketReady("chart")(page);
       await imageLoaded(page.getByRole("heading", { level: 1 }).locator("img"));
+    },
+  },
+  {
+    name: "market-lending",
+    path: `/markets/${MARKET_LENDING}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await marketReady("chart")(page);
+      const panel = page.getByRole("region", { name: "Lending AMM", exact: true });
+      await expect(panel.getByText(/^Read from the market state and Kamino's reserve at slot [\d,]+\./)).toBeVisible();
+      for (const part of ["Lent side", "Buffer", "Kamino reserve", "LP shares"]) await expect(panel.getByRole("heading", { name: part, exact: true })).toBeVisible();
+      // Its events are stored by the strategies' reconciliation, every five minutes, which the suite's setup does not wait for; the API's tests and the devnet run check what it lists.
+      await expect(page.getByRole("region", { name: "Lending AMM history" })).toHaveAttribute("aria-busy", "false");
+      await expect(page.getByRole("region", { name: "Actions" }).getByRole("heading", { name: "Add liquidity", exact: true })).toBeVisible();
     },
   },
   {

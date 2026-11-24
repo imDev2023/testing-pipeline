@@ -111,6 +111,12 @@ importers:
       hono:
         specifier: 4.13.20
         version: 4.13.20
+      keeper-jobs:
+        specifier: workspace:*
+        version: link:../../packages/keeper-jobs
+      lending-amm-scripts:
+        specifier: workspace:*
+        version: link:../../programs/lending-amm/scripts
       strategy-actions:
         specifier: workspace:*
         version: link:../../packages/strategy-actions

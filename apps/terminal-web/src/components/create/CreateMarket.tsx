@@ -13,7 +13,8 @@ import { PreparedMarket, StrategiesList, StrategyForms, type Form, type Strategy
 import { getFromApi, postToApi } from "@/api";
 import { CLUSTER } from "@/config";
 import { formatInteger, formatTokenAmount } from "@/format";
-import { PRODUCT_PANELS, type ProductRegistry } from "@/products/registry";
+import { PRODUCT_PANELS } from "@/products/registry";
+import { NewMarket } from "./NewMarket";
 import { ROUTES } from "@/routes";
 import { PanelFrame, useLoad } from "../Panel";
 import { ShortAddress } from "../ShortAddress";
@@ -29,7 +30,6 @@ import { TransactionReview } from "../forms/TransactionReview";
 import { useFormFields } from "../forms/useFormFields";
 import { useReview } from "../forms/useReview";
 import styles from "./Create.module.css";
-import { NewMarket } from "./NewMarket";
 
 /** Why a strategy offers no create form, from its listed metadata status, or null when its forms may hold one. */
 function noCreateForm(strategy: Strategy): string | null {
@@ -37,7 +37,7 @@ function noCreateForm(strategy: Strategy): string | null {
   return strategy.create_form ? null : "No create form: its metadata describes none.";
 }
 
-export function CreateMarket({ registry = PRODUCT_PANELS }: { registry?: ProductRegistry }) {
+export function CreateMarket() {
   const params = useSearchParams();
   const router = useRouter();
   const chosen = params.get("strategy");
@@ -50,7 +50,7 @@ export function CreateMarket({ registry = PRODUCT_PANELS }: { registry?: Product
       <PanelFrame title="Choose a strategy" what="the registered strategies" state={state} retry={retry}>
         {({ strategies }) => <StrategyChooser strategies={strategies} chosen={chosen} onChoose={choose} />}
       </PanelFrame>
-      {chosen && state.status === "loaded" && <ChosenForms key={chosen} program={chosen} strategies={state.data.strategies} registry={registry} />}
+      {chosen && state.status === "loaded" && state.data.strategies.some((s) => s.program === chosen && s.create_form) && <CreateFormPanel key={chosen} program={chosen} />}
     </>
   );
 }
@@ -101,22 +101,14 @@ export function StrategyChooser({ strategies, chosen, onChoose }: { strategies: 
   );
 }
 
-/**
- * The chosen strategy's forms: one of our products' own create form when it has one (PIPESCOPE-162),
- * then the strategy's generic create form from its metadata, when its metadata may hold one.
- */
-export function ChosenForms({ program, strategies, registry }: { program: string; strategies: Strategy[]; registry: ProductRegistry }) {
-  const Product = registry[program]?.Create;
-  const generic = strategies.some((s) => s.program === program && s.create_form);
-  return (
-    <>
-      {Product && <Product program={program} />}
-      {generic && <CreateFormPanel program={program} />}
-    </>
-  );
+function CreateFormPanel({ program }: { program: string }) {
+  // One of our products builds its own create form, with what its markets need in the same transaction (PIPESCOPE-147).
+  const Product = PRODUCT_PANELS[program]?.Create;
+  if (Product) return <Product program={program} />;
+  return <MetadataCreateFormPanel program={program} />;
 }
 
-function CreateFormPanel({ program }: { program: string }) {
+function MetadataCreateFormPanel({ program }: { program: string }) {
   const load = useCallback((signal: AbortSignal) => getFromApi(`/v1/strategies/${program}/forms`, StrategyForms, { signal }), [program]);
   const { state, retry } = useLoad(load);
   return (

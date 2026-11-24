@@ -694,7 +694,7 @@ export type Keeper = z.infer<typeof Keeper>;
 /**
  * `GET /v1/markets/{market}/keeper`: the keeper runner's latest record of each job and slot on one
  * market, newest first, so the market's panel shows beside each due job what the runner last did about
- * it (docs/spec/keeper-runner.md, "How Aviary shows it"; PIPESCOPE-166).
+ * it (docs/spec/keeper-runner.md, "How Aviary shows it"; PIPESCOPE-167).
  */
 export const MarketKeeper = z.object({
   market: Address,
@@ -872,7 +872,7 @@ export type PreparedAction = z.infer<typeof PreparedAction>;
 export const OPENING_ACTIONS_MAX = 2;
 
 /**
- * A new market opened in the transaction that creates it (PIPESCOPE-163): its mints and their vaults in
+ * A new market opened in the transaction that creates it (PIPESCOPE-164): its mints and their vaults in
  * the market's order, as the product's own form works them out before the market exists, so the router's
  * fee account for each mint is created, and then the actions of its metadata, by name, run on it.
  */

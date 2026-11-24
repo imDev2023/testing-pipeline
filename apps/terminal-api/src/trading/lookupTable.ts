@@ -1,4 +1,4 @@
-// Aviary's own address lookup table (PIPESCOPE-164): one table per cluster of the addresses every
+// Aviary's own address lookup table (PIPESCOPE-165): one table per cluster of the addresses every
 // market's transactions share and no wallet signs for, so a transaction too large as a legacy one fits
 // as a version 0 one, such as a tax market's launch, which creates the market, its fee accounts and its
 // seed in one transaction (docs/spec/tax-amm.md, "Creating a market"). A market's own recorded table

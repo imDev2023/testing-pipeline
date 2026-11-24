@@ -42,8 +42,8 @@ const registry: ProductRegistry = {
 const facts = <section aria-label="Facts">The facts panel</section>;
 
 describe("the product panels' registry", () => {
-  it("holds the tax AMM's panel and launch form under its program, and nothing for a program not ours (#75)", () => {
-    expect(Object.keys(PRODUCT_PANELS)).toEqual([OTHER_PROGRAM]);
+  it("holds the products whose Aviary tickets filled it, keyed by their programs: the lending AMM's and the tax AMM's (#75)", () => {
+    expect(Object.keys(PRODUCT_PANELS)).toEqual(["Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG", OTHER_PROGRAM]);
     expect(PRODUCT_PANELS[OTHER_PROGRAM]).toEqual({ Panel: TaxPanel, Create: TaxLaunch });
     expect(PRODUCT_PANELS[TEST_PROGRAM]).toBeUndefined();
   });

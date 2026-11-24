@@ -1,5 +1,5 @@
 {
-  "id": "d29baf13-9e34-45ca-ba95-cd55897a1307",
+  "id": "01b69ba3-8154-49de-b49c-d6d95e8a8455",
   "prevId": "3d5f2425-d984-42c0-97c6-124ef5a98d0c",
   "version": "7",
   "dialect": "postgresql",
@@ -1250,12 +1250,6 @@
           "type": "numeric(20, 0)",
           "primaryKey": false,
           "notNull": false
-        },
-        "reserve": {
-          "name": "reserve",
-          "type": "numeric(20, 0)",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -2031,6 +2025,109 @@
             "signature",
             "instruction_index",
             "inner_index"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.strategy_events": {
+      "name": "strategy_events",
+      "schema": "",
+      "columns": {
+        "signature": {
+          "name": "signature",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "program": {
+          "name": "program",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "discriminator": {
+          "name": "discriminator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "data": {
+          "name": "data",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slot": {
+          "name": "slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "block_index": {
+          "name": "block_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "block_time": {
+          "name": "block_time",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "strategy_events_subject": {
+          "name": "strategy_events_subject",
+          "columns": [
+            {
+              "expression": "program",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "subject",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "slot",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "strategy_events_signature_position_pk": {
+          "name": "strategy_events_signature_position_pk",
+          "columns": [
+            "signature",
+            "position"
           ]
         }
       },

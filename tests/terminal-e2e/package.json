@@ -13,6 +13,7 @@
         "swaps:devnet": "E2E_SWAPS=1 E2E_RPC=devnet playwright test --project swaps",
         "wallet:devnet": "E2E_WALLET_DEVNET=1 E2E_RPC=devnet playwright test --project wallet-devnet",
         "tax:devnet": "E2E_TAX_DEVNET=1 E2E_RPC=devnet playwright test --project tax-devnet",
+        "lending:devnet": "E2E_LENDING_DEVNET=1 E2E_RPC=devnet playwright test --project lending-devnet",
         "wrap-sol": "node demo/wrap-sol.ts",
         "hooked:setup": "node demo/hooked-mints.ts",
         "hooked:local": "E2E_RPC=local playwright test --project hooked",

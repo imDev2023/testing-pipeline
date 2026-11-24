@@ -5,7 +5,7 @@
 // taxed in it unless the creator chooses the token; the buy and sell tax with their ranges; the tax
 // authority; the tax recipients, the burn and the seed. The whole split shows before signing, the suite
 // share first. It builds `create_market`, both `init_fee_account` instructions and the seed as one
-// transaction (PIPESCOPE-163), simulated before the wallet signs like every transaction Aviary builds,
+// transaction (PIPESCOPE-164), simulated before the wallet signs like every transaction Aviary builds,
 // and a mint the program's mint rules refuse is refused there, with the rule it breaks.
 import { address, generateKeyPairSigner, getTransactionDecoder, getTransactionEncoder, isAddress, partiallySignTransaction, type Address, type KeyPairSigner } from "@solana/kit";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
@@ -109,7 +109,7 @@ export function TaxLaunch({ program }: { program: string }) {
       <div className={styles.launch}>
         <p className={forms.line}>
           The tax AMM&apos;s own launch form. It creates the market, its fee accounts and its seed in one transaction, so the market opens for trading as it is created. You sign it in your own wallet, after a simulation you see first; the
-          liquidity you seed is locked for good. The strategy&apos;s create form below makes the market alone, which then waits for its seed.
+          liquidity you seed is locked for good.
         </p>
 
         <fieldset className={styles.group}>

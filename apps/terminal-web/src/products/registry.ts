@@ -7,14 +7,15 @@
 // other tickets). It reads the chain through the API's one-slot read of a market's state with the
 // outside accounts it names (`GET /v1/markets/{market}/state`, PIPESCOPE-146).
 //
-// A product may also add its own create form to the create-market page (PIPESCOPE-162), shown above
-// the strategy's generic create form when its strategy is chosen, which stays beneath it.
-//
-// Filled by the products' Aviary tickets: the tax AMM's (#75); the containment hook's (#76), the buy
-// wall AMM's (#57) and the lending AMM's (#88) add theirs.
+// Filled by the products' Aviary tickets: the lending AMM's (#88) and the tax AMM's (#75); the
+// containment hook's (#76) and the buy wall AMM's (#57) add theirs.
 import type { ComponentType } from "react";
 import { TAX_AMM_PROGRAM_ADDRESS } from "tax-amm-scripts/client/index.ts";
 import type { Market } from "terminal-api/contract";
+import { LendingAmmCreate } from "./lendingAmm/LendingCreate";
+import { LENDING_FORMS, LendingAmmForms } from "./lendingAmm/LendingForms";
+import { LendingAmmPanel } from "./lendingAmm/LendingPanel";
+import { LENDING_AMM_PROGRAM } from "./lendingAmm/program";
 import { TaxLaunch } from "./taxAmm/TaxLaunch";
 import { TaxPanel } from "./taxAmm/TaxPanel";
 
@@ -24,7 +25,9 @@ export type ProductPlace = {
   Panel?: ComponentType<{ market: Market }>;
   /** Its own forms, under Actions after the strategy's metadata forms. */
   Forms?: ComponentType<{ market: Market }>;
-  /** Its own create form, on the create-market page above the strategy's generic one, when its strategy is chosen. */
+  /** The metadata forms its own forms fill in, which Actions then leaves out of the strategy's list. */
+  replaces?: readonly string[];
+  /** Its own create form on the create-market page, in place of the metadata's. */
   Create?: ComponentType<{ program: string }>;
 };
 
@@ -32,6 +35,7 @@ export type ProductPlace = {
 export type ProductRegistry = Readonly<Record<string, ProductPlace>>;
 
 export const PRODUCT_PANELS: ProductRegistry = {
+  [LENDING_AMM_PROGRAM]: { Panel: LendingAmmPanel, Forms: LendingAmmForms, replaces: LENDING_FORMS, Create: LendingAmmCreate },
   // The tax AMM (docs/spec/tax-amm.md, "In Aviary"): the tax panel and the launch form; its five custom actions are the generic forms'.
   [TAX_AMM_PROGRAM_ADDRESS]: { Panel: TaxPanel, Create: TaxLaunch },
 };

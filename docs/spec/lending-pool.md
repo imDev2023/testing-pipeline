@@ -459,6 +459,22 @@ Aviary's lending AMM panel shows, per market:
 
 The explainer's fact table carries the same facts, and its risks for every lending AMM market are: Kamino's owner and emergency council can stop redeems, as they did on the ETH reserve for 16 hours; LPs bear Kamino's written-off losses, and bad debt not yet written off is not shown in the rate; swaps larger than the buffer plus Kamino's free liquidity fail.
 
+How it is built ([Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88), 2026-11-24):
+
+- `terminal-api` works the panel out in `src/products/lendingAmm/`, from one `getMultipleAccounts` at one slot of the market state, the reserve, its lending market, the clock, the LP mint, the lock account and the viewing wallet's shares account, after a first read of the market state alone for the addresses it names (LENDING-105).
+  Every rule is the program's own through the keeper runner's copy of it (`packages/keeper-jobs/lending-amm.ts`), so `rebalance` shows as due exactly when the runner would send it, and the API serves the result at `GET /v1/markets/{market}/lending-amm`.
+- The two largest sells are found by binary search on the program's pricing over the other mint's credited input: the largest whose output the buffer pays, and the largest whose output the buffer plus what a swap's redeem may plan to take covers; each is then stated as the amount typed in the trade box, the fees taken on the input counted, and as "every sell the market can take" when no input reaches the edge (LENDING-106).
+  No sell is offered while the market has no liquidity, while the program refuses to read the reserve, or while the reserve is older than `TRADE_MAX_RESERVE_AGE_SLOTS` and the market holds cTokens.
+- Kamino's utilisation and supply rate are its SDK's at the reserve's stored state: borrowed over total supply, the curve's borrow rate there, linear between its points, and the supply rate as utilisation times that rate times one less the protocol take rate, without the reward distribution's part (LENDING-107).
+- The forms are the strategy's own metadata actions, filled in from the panel's read: a deposit at the current ratio with each maximum the amount the ratio asks for plus the trade box's slippage, never a whole balance; a removal in cash or in kind, in kind already chosen whenever the read shows a cash removal of that many shares would fail; a lock into the lock account; and `rebalance`, a button anyone may press (LENDING-109).
+  They stand in for the metadata's own forms of the same actions, which Aviary's Actions then leaves out; `remove_lent_side` stays a metadata form.
+  `terminal-api` builds them as every custom action, with klend's `refresh_reserve` first for a deposit into a market holding cTokens and for `rebalance`, as the keeper does, and offers the refresh alone once the reserve is older than half the trade bound (LENDING-108).
+- SOL is wrapped around a deposit and unwrapped after a cash removal in the same transaction when the wallet holds no wrapped-SOL account of its own; one it holds keeps what the removal pays, as for every custom action (`PIPESCOPE-145`, LENDING-110).
+- The create form on the create-market page builds the router's `create_market` from the metadata's `init`, both `init_fee_account` calls and the first `add_liquidity` in one transaction; its defaults, an LP fee of 30 bps and `lent_index` 1, are in `terminal-api`'s config module (`LENDING_AMM.create`) and reach the page through `GET /v1/lending-amm/create` (LENDING-104).
+  A hooked token's deposit carries its hook's accounts; on 2026-11-24 a market of a token our containment hook binds fitted a legacy transaction.
+- The market's history is a second panel under the panel, the strategy's own events on the market newest first, 25 a page, from the indexer's `strategy_events` (`PIPESCOPE-163`, LENDING-111).
+- The explainer's evidence for a lending AMM version adds the sampled market's panel facts, read when its key is made, and the three risks above, as F items written by `src/products/lendingAmm/facts.ts` (LENDING-112).
+
 ## Upgrades and freezing
 
 - On devnet the program stays upgradeable under the project's upgrade-authority key, `~/.config/testing-pipeline/devnet/upgrade-authority.json`, as `docs/spec/README.md` sets for every program.

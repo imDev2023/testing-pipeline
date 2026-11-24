@@ -42,6 +42,8 @@ export type RawTransaction = {
     err: unknown;
     innerInstructions?: { index: number; instructions: (CompiledInstruction & { stackHeight?: number | null })[] }[] | null;
     loadedAddresses?: { writable: string[]; readonly: string[] } | null;
+    /** The programs' log lines, which hold their `sol_log_data` events (./events). */
+    logMessages?: string[] | null;
   } | null;
 };
 

@@ -105,7 +105,7 @@ export async function actionTransaction(input: ActionInput): Promise<{ instructi
 }
 
 /**
- * The new market opened in the same transaction as it is created (PIPESCOPE-163): its mints and their
+ * The new market opened in the same transaction as it is created (PIPESCOPE-164): its mints and their
  * vaults in the market's order, which the product's own form works out before the market exists, and
  * the actions of its metadata to run on it once the router has created it and its fee accounts, such
  * as the seed that opens a tax market for trading.
@@ -231,7 +231,7 @@ export function measureWallet(input: { trader: Address; watched: readonly Addres
  */
 export async function prepareTransaction(
   rpc: Rpc<SolanaRpcApi>,
-  input: { instructions: Instruction[]; trader: Address; strategy: string; market: Address | null; what: string; hooks?: readonly string[]; aviaryTable: Address | null },
+  input: { instructions: Instruction[]; trader: Address; strategy: string; market: Address | null; what: string; hooks?: readonly string[]; /** Aviary's own lookup table, when the deployment names one (PIPESCOPE-165); none when left out. */ aviaryTable?: Address | null },
 ): Promise<{ transaction: string | null; simulation: TransactionSimulation }> {
   const { instructions, trader } = input;
   const writable = instructions.flatMap((i) => (i.accounts ?? []).filter((a) => a.role === AccountRole.WRITABLE || a.role === AccountRole.WRITABLE_SIGNER).map((a) => a.address));
@@ -239,7 +239,7 @@ export async function prepareTransaction(
   const [before, { value: lifetime }, tables] = await Promise.all([
     rpc.getMultipleAccounts(watched, { encoding: "base64", commitment: COMMITMENT }).send(),
     rpc.getLatestBlockhash({ commitment: COMMITMENT }).send(),
-    lookupTables(rpc, { market: input.market, aviary: input.aviaryTable }),
+    lookupTables(rpc, { market: input.market, aviary: input.aviaryTable ?? null }),
   ]);
   let fitted;
   try {

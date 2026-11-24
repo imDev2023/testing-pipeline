@@ -169,7 +169,7 @@ it("reads the state and vaults again after the next event, and never the mints o
   expect(asked).toEqual([STATE, ...VAULTS].sort());
 });
 
-it("keeps a tax market's real reserves beside what its vaults hold, since its tax-side vault also holds tax not yet paid out (PIPESCOPE-165)", async () => {
+it("keeps a tax market's real reserves beside what its vaults hold, since its tax-side vault also holds tax not yet paid out (PIPESCOPE-166)", async () => {
   const state = getTaxMarketEncoder().encode(taxMarket({ reserves: [770_000_000_000_000n, 29_000_000_000n], owed: [400_000_000n, 0n, 0n, 0n, 0n, 100_000_000n] }));
   rpc.accounts.set(STATE, { owner: STRATEGY, data: new Uint8Array(state) });
   await refreshMarkets(client.db, rpc.url, [MARKET]);
