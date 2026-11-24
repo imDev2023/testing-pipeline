@@ -274,6 +274,7 @@ Each check on each market produces one **Canary result**, a record the facts pan
 - **A strategy's ProgramData changes** (a new strategy version): every market of that strategy, at once.
 - **The router's ProgramData changes**: every market, at once.
 - **A market is created or registered**: that market at once, and again 10 minutes, 1 hour and 1 day later, because launch-time rules are live then and fade.
+  The later runs count from the market's creation, so a market the indexer finds after one of them has passed, as its first backfill finds every market, runs once at once and then at the times still ahead (`CANARY-48`).
 - **Every 6 hours**: every market (owner, 2026-11-10).
   A change in a market's own state, or in a mint's authorities or extensions, shows within 6 hours; v1 has no separate watch on mints.
 - This section is the only place in the spec that states the schedule (`CANARY-22`, `CANARY-23`); in code its delays and the sweep's interval live in `terminal-api`'s config module ([`pipescope-architecture.md`](pipescope-architecture.md#one-place-for-every-value)), the code that starts runs, not in `crates/canary`.

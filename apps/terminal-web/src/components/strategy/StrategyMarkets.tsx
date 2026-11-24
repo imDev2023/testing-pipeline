@@ -7,6 +7,7 @@ import { MarketsPage } from "terminal-api/contract";
 import { ApiFailure, getFromApi } from "@/api";
 import { FEED_ROWS_PER_LOAD } from "@/config";
 import { formatInteger } from "@/format";
+import { descriptionsOf } from "../Flags";
 import { MarketsTable } from "../MarketsTable";
 import { useLoad } from "../Panel";
 import styles from "./Strategy.module.css";
@@ -52,7 +53,7 @@ export function StrategyMarkets({ program }: { program: string }) {
           <p className={styles.note}>No market has been created from this strategy yet.</p>
         ) : (
           <>
-            <MarketsTable markets={[...state.data.markets, ...(later?.markets ?? [])]} strategyColumn={false} />
+            <MarketsTable markets={[...state.data.markets, ...(later?.markets ?? [])]} strategyColumn={false} flagDescriptions={descriptionsOf(state.data.flags_present)} />
             {next && (
               <div className={styles.more}>
                 <button type="button" onClick={loadMore} disabled={more.status === "loading"}>

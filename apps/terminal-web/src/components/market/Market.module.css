@@ -21,6 +21,14 @@
   grid-template-areas: var(--market-top-areas);
 }
 
+/* The lower band: the facts panel, which the explanation and the strategy's forms join beside it (#123, #127). */
+.low {
+  display: grid;
+  gap: 28px 24px;
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .chartArea {
   grid-area: chart;
 }

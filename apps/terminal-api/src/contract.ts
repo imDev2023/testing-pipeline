@@ -34,6 +34,36 @@ const Amount = z.string().regex(/^\d+$/);
 const Address = z.string().min(32).max(44);
 const Time = z.iso.datetime({ offset: true });
 
+/**
+ * One of Pipeline's trust flags with its fixed description, as Pipeline's SDK words it
+ * (`FLAG_DESCRIPTIONS`), so Aviary's wording is the SDK's and the hosted API's (PIPESCOPE-16).
+ */
+export const FlagFact = z.object({ flag: z.string(), description: z.string() });
+export type FlagFact = z.infer<typeof FlagFact>;
+
+/**
+ * A strategy's metadata as the fetcher last found it (docs/spec/pipescope-architecture.md, Metadata
+ * fetcher): Pipeline's SDK's status, or `not-fetched` before the first fetch. Errors and warnings are
+ * the fetch's or Pipeline's validator's words, which can quote the document, so a page shows them as
+ * plain text.
+ */
+export const MetadataStatus = z.object({
+  status: z.enum(["not-fetched", "missing", "unreachable", "invalid", "valid"]),
+  /** The URI the strategy's account names. */
+  uri: z.string(),
+  /** The URL the document was read from, after redirects. */
+  url: z.string().nullable(),
+  fetched_at: Time.nullable(),
+  checked_at: Time.nullable(),
+  errors: z.array(z.string()),
+  warnings: z.array(z.string()),
+  /** The SHA-256 of the document's bytes, in hex. */
+  sha256: z.string().nullable(),
+  /** What the explainer's normaliser removed from its author text (EXPLAINER-08). */
+  removed: z.object({ characters: z.number().int(), truncated: z.array(z.string()), images: z.number().int(), links: z.number().int() }).nullable(),
+});
+export type MetadataStatus = z.infer<typeof MetadataStatus>;
+
 /** A strategy registered with the router (`GET /v1/strategies`, `GET /v1/strategies/{program}`). */
 export const Strategy = z.object({
   program: Address,
@@ -43,10 +73,28 @@ export const Strategy = z.object({
   registered_at: Time,
   registered_signature: z.string().nullable(),
   market_count: z.number().int(),
+  /** The name its valid metadata gives, as the normaliser left it: author text, shown as plain text in the author's style. Null without valid metadata. */
+  name: z.string().nullable(),
+  /** Its valid metadata's description, normalised and capped (EXPLAINER-08); author text too. */
+  description: z.string().nullable(),
+  metadata: MetadataStatus,
+  /** Pipeline's trust flags for the strategy, in the SDK's order: its program's and its metadata's. */
+  flags: z.array(z.string()),
+  /** Who can upgrade its program, or null when it is frozen (or not read yet: then `flags` holds neither `upgradeable` nor `frozen`). */
+  upgrade_authority: Address.nullable(),
+  /** Its program's version in force, or null before the ProgramData watch has read it. */
+  current_version: z.object({ deploy_slot: z.number().int(), executable_sha256: z.string().nullable(), deployed_at: Time.nullable() }).nullable(),
+  /** A verified build of the current version: none until verified builds exist (#128). */
+  verified_build: z.null(),
 });
 export type Strategy = z.infer<typeof Strategy>;
 
-export const StrategiesList = z.object({ strategies: z.array(Strategy) });
+/** One strategy (`GET /v1/strategies/{program}`), with each of its flags' fixed description for its facts. */
+export const StrategyDetail = Strategy.extend({ flag_facts: z.array(FlagFact) });
+export type StrategyDetail = z.infer<typeof StrategyDetail>;
+
+/** Every strategy, newest first, with each flag any of them has and its description. */
+export const StrategiesList = z.object({ strategies: z.array(Strategy), flags_present: z.array(FlagFact) });
 export type StrategiesList = z.infer<typeof StrategiesList>;
 
 /** One version of a program: the program as of one deploy, keyed by the slot of that deploy (docs/spec/pipescope-architecture.md, Indexer, "ProgramData watch"). */
@@ -98,16 +146,33 @@ export type StrategyInstruction = z.infer<typeof StrategyInstruction>;
 export const StrategyInstructions = z.object({ program: Address, deploy_slot: z.number().int().nullable(), anchor: z.boolean().nullable(), instructions: z.array(StrategyInstruction) });
 export type StrategyInstructions = z.infer<typeof StrategyInstructions>;
 
+/**
+ * A token's own name and picture, from its mint's on-chain token metadata (PIPESCOPE-22, PIPESCOPE-82):
+ * author text, never Aviary's words, so a page sets it in the author's style beside the mint's short
+ * address. Its symbol and name as the author-text normaliser leaves them, at least one of them set,
+ * and `image`, the SHA-256 of the image Aviary keeps of it, served at `/images/<image>`, or null.
+ */
+export const TokenName = z.object({
+  symbol: z.string().nullable(),
+  name: z.string().nullable(),
+  image: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
+});
+export type TokenName = z.infer<typeof TokenName>;
+
 /** One of a market's mints, in the market's own order, with what its vault holds. */
 export const MarketMint = z.object({
   mint: Address,
-  /** Aviary's own name for the mint (SOL, USDC); null for every other mint until token names land (#120). */
+  /** Aviary's own name for the mint (SOL, USDC), set plainly; null for every other mint. */
   symbol: z.string().nullable(),
+  /** The token's own name, the author's claim; null for a mint that names none, and for SOL and USDC, which Aviary names. */
+  token: TokenName.nullable(),
   /** Null until the mint is read, or when its account is not a mint. */
   decimals: z.number().int().nullable(),
   vault: Address.nullable(),
   /** What the vault held when last read, in the mint's smallest units. */
   liquidity: Amount.nullable(),
+  /** Pipeline's trust flags for the mint, in the SDK's order; null until the mint is read. */
+  flags: z.array(z.string()).nullable(),
 });
 export type MarketMint = z.infer<typeof MarketMint>;
 
@@ -127,12 +192,104 @@ export const Market = z.object({
   base_mint: Address,
   /** The last 24 hours: every trade counted, and the volume of those in the quote mint, in its smallest units. */
   stats_24h: z.object({ trades: z.number().int(), volume_quote: Amount }),
+  /** Its strategy's name from valid metadata (author text), or null when its metadata is unavailable. */
+  strategy_name: z.string().nullable(),
+  /** Its strategy's metadata status, for "Metadata unavailable". */
+  strategy_metadata: MetadataStatus.shape.status,
+  /** Pipeline's trust flags for the market: its strategy's and every mint's, in the SDK's order, as Pipeline's SDK and hosted API give them. */
+  flags: z.array(z.string()),
 });
 export type Market = z.infer<typeof Market>;
 
-/** Markets, newest first; `next` is the `before` of the following page, or null after the last. */
-export const MarketsPage = z.object({ markets: z.array(Market), total: z.number().int(), next: z.string().nullable() });
+/**
+ * `GET /v1/markets?min_sol_liquidity=&min_sol_volume_24h=&created_within=&hide=`: markets newest
+ * first, all of them or those the filters keep (PIPESCOPE-05, PIPESCOPE-72): at least that much SOL
+ * in the market's SOL vault and of SOL traded in the last 24 hours (lamports), created within that
+ * many seconds, and none of the trust flags in `hide` (a comma-separated list). Liquidity and volume
+ * are measured on the SOL side, so either leaves out a market with no SOL side.
+ * `total` counts every market (of the strategy asked for), `matching` those the filters keep, and
+ * `no_sol_side` those with no SOL side; `flags_present` is every flag any of the markets has, with
+ * its description. `next` is the `before` of the following page, or null after the last.
+ */
+export const MarketsPage = z.object({
+  markets: z.array(Market),
+  total: z.number().int(),
+  matching: z.number().int(),
+  no_sol_side: z.number().int(),
+  flags_present: z.array(FlagFact),
+  next: z.string().nullable(),
+});
 export type MarketsPage = z.infer<typeof MarketsPage>;
+
+/** A Token-2022 extension of a mint, in words: its name, what it is set to, the address it names (a hook's program, a delegate), and who can change it. */
+export const MintExtension = z.object({ name: z.string(), detail: z.string().nullable(), address: Address.nullable(), authority: Address.nullable() });
+export type MintExtension = z.infer<typeof MintExtension>;
+
+/** A mint as the facts panel shows it (docs/spec/pipescope-screens.md, Explanation, actions and facts: "Its mints"). */
+export const MintFacts = z.object({
+  mint: Address,
+  /** Aviary's own name for it (SOL, USDC), or null: no other mint is named by Aviary. */
+  symbol: z.string().nullable(),
+  /** The token's own name, as on a market's mints. */
+  token: TokenName.nullable(),
+  readable: z.boolean(),
+  /** "Token" or "Token-2022", or null for an unreadable mint. */
+  token_program: z.enum(["Token", "Token-2022"]).nullable(),
+  decimals: z.number().int().nullable(),
+  supply: Amount.nullable(),
+  mint_authority: Address.nullable(),
+  freeze_authority: Address.nullable(),
+  extensions: z.array(MintExtension),
+  /** What this market's vault holds of it, and that as a share of the supply in percent (null with no supply). */
+  vault_amount: Amount.nullable(),
+  vault_share_percent: z.number().nullable(),
+  flags: z.array(FlagFact),
+  /** When it was last read. */
+  read_slot: z.number().int().nullable(),
+});
+export type MintFacts = z.infer<typeof MintFacts>;
+
+/**
+ * `GET /v1/markets/{market}/facts`: the facts panel's three parts of Aviary's own (PIPESCOPE-16):
+ * this market, its strategy, and its mints in the market's order. Canary's part joins with #125.
+ */
+export const MarketFacts = z.object({
+  market: Market,
+  strategy: StrategyDetail,
+  mints: z.array(MintFacts),
+});
+export type MarketFacts = z.infer<typeof MarketFacts>;
+
+/** A mint found by search: Aviary's name for it or its own, and every market it trades on. */
+export const SearchMint = z.object({
+  mint: Address,
+  /** Aviary's own name for it (SOL, USDC), or null. */
+  symbol: z.string().nullable(),
+  token: TokenName.nullable(),
+  /** Every market it trades on, newest first. */
+  markets: z.array(Address),
+});
+export type SearchMint = z.infer<typeof SearchMint>;
+
+/** One group of search results: how many match, and the first of them, at most the limit asked for. */
+const SearchGroup = <T extends z.ZodType>(result: T) => z.object({ total: z.number().int(), results: z.array(result) });
+
+/**
+ * `GET /v1/search?q=&limit=` (docs/spec/pipescope-screens.md, Search; PIPESCOPE-81): what is
+ * registered with Pipeline that matches `q`, grouped as strategies, markets and mints. Names match
+ * anywhere and in any case (a strategy's name from valid metadata, a token's symbol and name, and
+ * Aviary's own SOL and USDC); addresses match exactly as typed from their start or their end (a
+ * strategy's program, a market, a market state or a mint). Each group is ordered with a whole address
+ * typed first; then strategies by markets, markets newest first and mints by markets.
+ */
+export const SearchResults = z.object({
+  /** What was searched for, trimmed. */
+  query: z.string(),
+  strategies: SearchGroup(Strategy),
+  markets: SearchGroup(Market),
+  mints: SearchGroup(SearchMint),
+});
+export type SearchResults = z.infer<typeof SearchResults>;
 
 /** A swap through the router, from its `Swap` event. */
 export const Trade = z.object({
@@ -476,3 +633,93 @@ export type TradeReport = z.infer<typeof TradeReport>;
 /** `GET /v1/traders/{trader}/balances?mints=`: what the wallet holds in each mint asked; for wrapped SOL, its plain SOL, which a swap wraps. */
 export const Balances = z.object({ trader: Address, balances: z.array(z.object({ mint: Address, amount: Amount })) });
 export type Balances = z.infer<typeof Balances>;
+
+// ---- Canary (#124) ----
+
+/** One of Canary's five outcomes (docs/spec/pipescope-canary.md, Outcomes). */
+export const CanaryOutcome = z.enum(["pass", "warn", "fail", "not run", "noted"]);
+export type CanaryOutcome = z.infer<typeof CanaryOutcome>;
+
+/** A program as of one deploy, as a Canary result names it. */
+const CanaryRecordVersion = z.object({ deploy_slot: z.number().int().nullable(), executable_sha256: z.string().nullable() });
+
+/**
+ * One Canary result (docs/spec/pipescope-canary.md, Records), with the sentences code writes for it
+ * (docs/spec/pipescope-screens.md, Canary outcomes), so the page, the trade box and the Telegram bot
+ * show the same words: `reason`, the binary's sentence; `about`, what the check does; `ran`, when and
+ * on which version it ran.
+ */
+export const CanaryResult = z.object({
+  id: z.string(),
+  check: z.string(),
+  outcome: CanaryOutcome,
+  reason: z.string(),
+  about: z.string(),
+  ran: z.string(),
+  harness: z.string(),
+  slot: z.number().int(),
+  run_at: Time,
+  strategy_version: CanaryRecordVersion,
+  router_version: CanaryRecordVersion,
+  inputs: z.unknown(),
+  numbers: z.unknown(),
+});
+export type CanaryResult = z.infer<typeof CanaryResult>;
+
+/** A strategy version, as Canary's endpoints name it. */
+const CanaryVersion = z.object({ program: Address, deploy_slot: z.number().int(), executable_sha256: z.string().nullable(), current: z.boolean() });
+
+/**
+ * `GET /v1/markets/{market}/canary[?version=<deploy slot>]`: the market's latest result of each check
+ * under its strategy's current version, or the version asked for, and the "could not sell back"
+ * notice of the current version's results (CANARY-21), one sentence per result it rests on, each
+ * stating its condition; empty when none does.
+ */
+export const CanaryResults = z.object({
+  market: Address,
+  version: CanaryVersion,
+  results: z.array(CanaryResult),
+  could_not_sell_back: z.array(z.object({ check: z.string(), sentence: z.string() })),
+});
+export type CanaryResults = z.infer<typeof CanaryResults>;
+
+/**
+ * `GET /v1/strategies/{program}/versions/{slot}/canary`: the version's roll-up from its markets'
+ * latest results, per check how many markets got each outcome and which warn or fail (a count for
+ * one check, never a score), and its newest run.
+ */
+export const CanaryRollup = z.object({
+  program: Address,
+  deploy_slot: z.number().int(),
+  current: z.boolean(),
+  markets: z.number().int(),
+  checks: z.record(z.string(), z.object({ about: z.string(), outcomes: z.partialRecord(CanaryOutcome, z.number().int()), warn: z.array(Address), fail: z.array(Address) })),
+  last_run: z
+    .object({ trigger: z.string(), delay_ms: z.number().int(), markets: z.number().int(), started_at: Time, finished_at: Time.nullable() })
+    .nullable(),
+});
+export type CanaryRollup = z.infer<typeof CanaryRollup>;
+
+/**
+ * `GET /v1/strategies/{program}/versions/{slot}/canary/schedule`: the runs the version's
+ * `CanaryRun` still holds, earliest first, such as a new market's runs 1 hour and 1 day on.
+ */
+export const CanarySchedule = z.object({
+  program: Address,
+  deploy_slot: z.number().int(),
+  runs: z.array(z.object({ trigger: z.string(), delay_ms: z.number().int(), due_at: Time, markets: z.number().int(), done: z.number().int(), started: z.boolean() })),
+});
+export type CanarySchedule = z.infer<typeof CanarySchedule>;
+
+/**
+ * `POST /v1/canary/reruns`: the owner's re-run (`pnpm canary:rerun`), a payload naming a market or a
+ * strategy, signed by the operator wallet (`CANARY_OPERATOR`) over `canaryRerunMessage(payload)`.
+ */
+export const CanaryRerun = z.object({ payload: z.string().max(1024), signature: z.string().min(64).max(100) }).strict();
+export const CanaryRerunPayload = z
+  .object({ market: Address.optional(), strategy: Address.optional(), wallet: Address, at: Time })
+  .strict()
+  .refine((p) => (p.market === undefined) !== (p.strategy === undefined), "A re-run names a market or a strategy.");
+export type CanaryRerunPayload = z.infer<typeof CanaryRerunPayload>;
+export const CANARY_RERUN_DOMAIN = "canary-rerun/v1";
+export const canaryRerunMessage = (payload: string): Uint8Array => new TextEncoder().encode(`${CANARY_RERUN_DOMAIN}\n${payload}`);

@@ -1,0 +1,25 @@
+.name {
+  overflow-wrap: anywhere;
+}
+
+.note {
+  color: var(--ink3);
+}
+
+/* Lines in a table: each an inline block, so a link around them underlines none; the name or the
+   address on the first line is underlined on its own, as the link it is. */
+.lines {
+  display: inline-grid;
+  justify-items: start;
+  overflow-wrap: anywhere;
+}
+
+.line {
+  display: inline-block;
+}
+
+.line:first-child {
+  text-decoration: underline;
+  text-decoration-color: var(--rule2);
+  text-underline-offset: 3px;
+}

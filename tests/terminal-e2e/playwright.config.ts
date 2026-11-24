@@ -5,8 +5,9 @@
 //
 // Where the API's RPC goes, by E2E_RPC:
 // - `devnet` (the default outside CI): RPC_URL from the project's .env, live devnet.
-// - `fixtures` (the default in CI): recorded devnet answers from fixtures/devnet-rpc.json, no network.
-// - `record`: live devnet through the fixture server, which records every answer it passes on.
+// - `fixtures` (the default in CI): recorded devnet answers from fixtures/devnet-rpc.json, and the
+//   strategies' metadata documents from fixtures/metadata.json, no network.
+// - `record`: live devnet and the web through the fixture server, which records every answer it passes on.
 //
 // Before the tests, src/global-setup.ts fires the cron and waits for the indexer's first run.
 //
@@ -17,7 +18,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { API, API_PORT, RPC_MODE, WEB, WEB_PORT } from "./src/target";
 import { TEST_KEEPER_WALLET } from "./src/keeper";
-import { RPC_PORT } from "./src/rpc";
+import { METADATA_PATH, RPC_PORT } from "./src/rpc";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is not set: it names the Docker Postgres (docs/toolchain.md, \"Aviary's local run\").");
@@ -58,6 +59,8 @@ export default defineConfig({
       })),
     ),
     { name: "behaviour", testMatch: /behaviour\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
+    // Search and token names and images (#120).
+    { name: "search", testMatch: /search\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
     // Live updates: swaps landed on devnet, or announced on the fixture socket (src/live.ts).
     { name: "live", testMatch: /live\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
     { name: "api", testMatch: /api\.spec\.ts/ },
@@ -80,7 +83,10 @@ export default defineConfig({
         ]),
     {
       // The keeper page's wallet is the tests' own, whose heartbeats they can sign (src/keeper.ts).
-      command: `node scripts/dev.ts --var KEEPER_WALLET:${TEST_KEEPER_WALLET}`,
+      // Off devnet, strategies' metadata documents are read through the fixture server too. Canary's
+      // container is not built: no page these tests check shows its results yet (#125), and its runs
+      // are checked by Canary's own demo and devnet tests.
+      command: `node scripts/dev.ts --var KEEPER_WALLET:${TEST_KEEPER_WALLET}${RPC_MODE === "devnet" ? "" : ` --var TEST_METADATA_FIXTURES:http://127.0.0.1:${RPC_PORT}${METADATA_PATH}`} --enable-containers=false`,
       cwd: "../../apps/terminal-api",
       env: { RPC_URL: rpcUrl, DATABASE_URL, TERMINAL_API_PORT: String(API_PORT) },
       url: `${API}/health`,

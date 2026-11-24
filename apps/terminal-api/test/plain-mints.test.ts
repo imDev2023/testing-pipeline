@@ -16,7 +16,7 @@ function mint(...extensions: { type: number; length: number }[]) {
   return data;
 }
 
-describe("which mints are plain (PIPESCOPE-120)", () => {
+describe("which mints are plain (PIPESCOPE-135)", () => {
   it("reads a mint's extensions in order", () => {
     expect(extensionTypes(mint({ type: 18, length: 64 }, { type: 19, length: 90 }))).toEqual([18, 19]);
     expect(extensionTypes(new Uint8Array(82))).toEqual([]);

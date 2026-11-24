@@ -1,12 +1,14 @@
 // Market accounts and mints (docs/spec/pipescope-architecture.md, Indexer, "Market accounts" and
 // "Mints"). There are no account subscriptions: after each event that touches a market, its state
 // and its vaults are read again; the router's `Market` account, which names the vaults, is read
-// once; and each mint is read once, when a market first brings it, with its Metaplex metadata
-// account, as raw bytes for the facts and the token names that later tickets read from them.
-import { decodeMarket, marketFeeMint } from "@pipeline-sol/sdk";
+// once; and each mint is read when a market first brings it, with its Metaplex metadata account, as
+// raw bytes for the token names that later read them and with Pipeline's trust flags, then again
+// every hour (`refreshMints`), since a mint's authorities, supply and extensions can change.
+import { decodeMarket, decodeMint, marketFeeMint, type Flag } from "@pipeline-sol/sdk";
 import { address, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, getUtf8Encoder } from "@solana/kit";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { marketMints, markets, mints, type Db } from "terminal-db";
+import { AUTHOR_TEXT_CAPS, authorText } from "terminal-explainer";
 import { rpcCall } from "./rpc";
 
 /** Metaplex's Token Metadata program, whose PDA per mint holds most classic tokens' names. */
@@ -14,6 +16,8 @@ export const METADATA_PROGRAM = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 const TOKEN_PROGRAMS = new Set(["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]);
 /** The most accounts one `getMultipleAccounts` reads. */
 const ACCOUNTS_PER_CALL = 100;
+/** The most mints one statement writes: 16 columns each, well inside Postgres's 65,535 parameters. */
+const MINTS_PER_WRITE = 500;
 
 type AccountInfo = { owner: string; data: [string, "base64"] } | null;
 
@@ -51,15 +55,48 @@ const addressDecoder = getAddressDecoder();
 /** A `COption<Pubkey>`: a four-byte tag, then the address. */
 const optionalAddressAt = (data: Uint8Array, offset: number) => (data[offset] === 1 ? addressDecoder.decode(data.subarray(offset + 4, offset + 36)) : null);
 
+/** A Borsh string (a little-endian u32 length, then UTF-8) at `offset`, with where the next field starts; null past the end. */
+function borshStringAt(data: Uint8Array, offset: number): { value: string; next: number } | null {
+  if (offset + 4 > data.length) return null;
+  const length = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(offset, true);
+  const end = offset + 4 + length;
+  if (end > data.length) return null;
+  return { value: new TextDecoder().decode(data.subarray(offset + 4, end)), next: end };
+}
+
+/** A Metaplex metadata account's name, symbol and URI: after its key, update authority and mint, each a Borsh string Metaplex pads with NULs. */
+function metaplexName(data: Uint8Array): { name: string; symbol: string; uri: string } | null {
+  const name = borshStringAt(data, 65);
+  const symbol = name && borshStringAt(data, name.next);
+  const uri = symbol && borshStringAt(data, symbol.next);
+  return uri ? { name: name.value, symbol: symbol.value, uri: uri.value } : null;
+}
+
+/**
+ * A token's own name, as Aviary keeps it: from its Token-2022 token metadata extension, or else its
+ * Metaplex metadata account; the symbol and name as the author-text normaliser leaves them, since
+ * they are an author's claim (EXPLAINER-08, PIPESCOPE-122), and the URI without the NULs and spaces
+ * around it. Each is null when empty.
+ */
+export function tokenName(fromMint: { name: string; symbol: string; uri: string } | undefined, metaplex: Uint8Array | null): { symbol: string | null; name: string | null; tokenUri: string | null } {
+  const found = fromMint ?? (metaplex ? metaplexName(metaplex) : null);
+  if (!found) return { symbol: null, name: null, tokenUri: null };
+  const clean = (value: string) => value.replaceAll("\0", "");
+  const symbol = authorText(clean(found.symbol), AUTHOR_TEXT_CAPS.symbol).text;
+  const name = authorText(clean(found.name), AUTHOR_TEXT_CAPS.name).text;
+  const uri = clean(found.uri).trim();
+  return { symbol: symbol || null, name: name || null, tokenUri: uri || null };
+}
+
 /**
  * Reads again the state and vaults of each market named, after events touched them; the first time,
  * the router's `Market` account too, for the vaults, the fee mint and exact-out support. Then reads
- * every mint of those markets not read before.
+ * every mint of those markets not read before. Returns how many mints it read.
  */
-export async function refreshMarkets(db: Db, rpcUrl: string, marketAddresses: string[]): Promise<void> {
-  if (!marketAddresses.length) return;
+export async function refreshMarkets(db: Db, rpcUrl: string, marketAddresses: string[]): Promise<{ mintsRead: number }> {
+  if (!marketAddresses.length) return { mintsRead: 0 };
   const known = await db.select({ address: markets.address, marketState: markets.marketState }).from(markets).where(inArray(markets.address, marketAddresses));
-  if (!known.length) return;
+  if (!known.length) return { mintsRead: 0 };
   const addresses = known.map((m) => m.address);
 
   // The router's Market account, once per market: it names the vaults.
@@ -99,22 +136,50 @@ export async function refreshMarkets(db: Db, rpcUrl: string, marketAddresses: st
     }
   });
 
-  await readNewMints(db, rpcUrl, [...new Set(held.map((h) => h.mint))]);
+  return { mintsRead: await readNewMints(db, rpcUrl, [...new Set(held.map((h) => h.mint))]) };
 }
 
-/** Reads each mint not read before, with its Metaplex metadata account, once. */
-export async function readNewMints(db: Db, rpcUrl: string, mintAddresses: string[]): Promise<void> {
-  if (!mintAddresses.length) return;
-  const seen = new Set((await db.select({ address: mints.address }).from(mints).where(inArray(mints.address, mintAddresses))).map((r) => r.address));
-  const fresh = mintAddresses.filter((m) => !seen.has(m));
+/**
+ * Reads each mint not read before, with its Metaplex metadata account, and any read before its
+ * trust flags were kept; the hourly `refreshMints` reads them all again. Returns how many it read.
+ */
+export async function readNewMints(db: Db, rpcUrl: string, mintAddresses: string[]): Promise<number> {
+  if (!mintAddresses.length) return 0;
+  const seen = new Set((await db.select({ address: mints.address }).from(mints).where(and(inArray(mints.address, mintAddresses), isNotNull(mints.flags)))).map((r) => r.address));
+  const due = [...new Set(mintAddresses.filter((m) => !seen.has(m)))];
+  await readMints(db, rpcUrl, due);
+  return due.length;
+}
+
+/**
+ * Reads every mint again (the hourly job), so what can change after a mint is made shows on the
+ * pages: an authority given up or handed on, a supply minted or burned, a transfer fee or a pause
+ * set. Returns how many it read.
+ */
+export async function refreshMints(db: Db, rpcUrl: string): Promise<number> {
+  const all = (await db.select({ address: mints.address }).from(mints)).map((r) => r.address);
+  await readMints(db, rpcUrl, all);
+  return all.length;
+}
+
+/**
+ * Reads mints with their Metaplex metadata accounts in as few requests as it can, and keeps each
+ * with Pipeline's trust flags, as its SDK's `decodeMint` gives them at the current epoch (which picks
+ * a transfer fee in force), and with its token's own name; an account that is no mint is kept
+ * unreadable, with `mint-unreadable`.
+ */
+async function readMints(db: Db, rpcUrl: string, wanted: string[]): Promise<void> {
+  const fresh = [...new Set(wanted)];
   if (!fresh.length) return;
   const metadata = await Promise.all(fresh.map(metadataAddress));
-  const { slot, accounts } = await readAccounts(rpcUrl, [...fresh, ...metadata]);
+  const [{ slot, accounts }, { epoch }] = await Promise.all([readAccounts(rpcUrl, [...fresh, ...metadata]), rpcCall<{ epoch: number }>(rpcUrl, "getEpochInfo", [{ commitment: "confirmed" }])]);
   const rows = fresh.map((mint, i) => {
     const info = accounts.get(mint) ?? null;
     const data = bytesOf(info);
     const metadataInfo = accounts.get(metadata[i]!) ?? null;
     const readable = !!info && !!data && TOKEN_PROGRAMS.has(info.owner) && data.length >= 82 && data[45] === 1;
+    const decoded = readable ? decodeMint(address(mint), address(info!.owner), data!, BigInt(epoch)) : null;
+    const metadataBytes = metadataInfo && metadataInfo.owner === METADATA_PROGRAM ? bytesOf(metadataInfo) : null;
     return {
       address: mint,
       readable,
@@ -126,7 +191,16 @@ export async function readNewMints(db: Db, rpcUrl: string, mintAddresses: string
       data: info ? info.data[0] : null,
       metadataData: metadataInfo && metadataInfo.owner === METADATA_PROGRAM ? metadataInfo.data[0] : null,
       readSlot: slot,
+      flags: decoded ? decoded.flags : (["mint-unreadable"] satisfies Flag[]),
+      readEpoch: BigInt(epoch),
+      ...(readable ? tokenName(decoded?.extensions.tokenMetadata, metadataBytes) : { symbol: null, name: null, tokenUri: null }),
     };
   });
-  await db.insert(mints).values(rows).onConflictDoNothing();
+  const set = Object.fromEntries(
+    (["readable", "tokenProgram", "decimals", "supply", "mintAuthority", "freezeAuthority", "data", "metadataData", "readSlot", "flags", "readEpoch", "symbol", "name", "tokenUri"] as const).map((k) => [k, sql.raw(`excluded.${mints[k].name}`)]),
+  );
+  // In parts, so a refresh of every mint never makes one statement too large to build or to send.
+  for (let i = 0; i < rows.length; i += MINTS_PER_WRITE) {
+    await db.insert(mints).values(rows.slice(i, i + MINTS_PER_WRITE)).onConflictDoUpdate({ target: mints.address, set });
+  }
 }

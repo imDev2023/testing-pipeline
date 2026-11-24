@@ -4,3 +4,5 @@
 export { default } from "./index";
 export { Indexer } from "./indexer";
 export { LiveRoom } from "./liveRoom";
+export { CanaryRun } from "./canaryRun";
+export { CanaryContainer } from "./canaryContainer";

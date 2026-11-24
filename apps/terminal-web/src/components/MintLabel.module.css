@@ -1,0 +1,31 @@
+/* A mint's name with its picture: the picture a fixed square centred on the line, so no row's
+   height depends on an author's file (docs/spec/pipescope-screens.md, "Token names and
+   images"). */
+.label {
+  overflow-wrap: anywhere;
+}
+
+/* A picture or mark never parts from its name: a line may break only between the name and the
+   short address. A symbol is at most 16 characters, so it always fits a line. */
+.unit {
+  white-space: nowrap;
+}
+
+.image,
+.mark {
+  display: inline-block;
+  width: var(--token-image-size);
+  height: var(--token-image-size);
+  margin-right: 0.35em;
+  vertical-align: var(--token-image-align);
+  flex: none;
+}
+
+/* An author's file is drawn whole inside its square, whatever its shape. */
+.image {
+  object-fit: contain;
+}
+
+.mark {
+  color: var(--ink);
+}

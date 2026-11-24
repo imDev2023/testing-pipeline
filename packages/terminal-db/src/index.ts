@@ -42,3 +42,4 @@ export async function probe(db: Db): Promise<{ serverTime: Date; migrations: num
 }
 export * from "./keeper.ts";
 export * from "./outbox.ts";
+export * from "./canary.ts";

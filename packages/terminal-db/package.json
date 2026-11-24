@@ -11,7 +11,8 @@
         "./keeper": "./src/keeper.ts",
         "./migrate": "./src/migrate.ts",
         "./testing": "./src/testing.ts",
-        "./outbox": "./src/outbox.ts"
+        "./outbox": "./src/outbox.ts",
+        "./canary": "./src/canary.ts"
     },
     "scripts": {
         "typecheck": "tsc -p .",

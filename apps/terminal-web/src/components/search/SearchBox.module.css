@@ -1,0 +1,56 @@
+/* The header's search box and the results beneath it (docs/spec/pipescope-screens.md, Search): a
+   field in the header's search area, and a sheet under it as wide as the box allows, which scrolls
+   on its own rather than the page. */
+.search {
+  grid-area: search;
+  position: relative;
+  min-width: 0;
+}
+
+.label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.input {
+  width: 100%;
+  padding: 0 10px;
+  background: var(--paper);
+  border: 1px solid var(--rule2);
+  border-radius: 4px;
+}
+
+.input::placeholder {
+  color: var(--ink3);
+  opacity: 1;
+}
+
+.popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  width: var(--search-popover-width);
+  max-width: calc(100vw - 2 * var(--gutter));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 16px 16px;
+  background: var(--sheet);
+  border: 1px solid var(--rule2);
+  border-radius: 6px;
+}
+
+.note {
+  color: var(--ink3);
+}
+
+.failed {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}

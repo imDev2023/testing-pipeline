@@ -13,7 +13,7 @@ import type { Candle, Trade } from "terminal-api/contract";
 import { createDb, trades as tradesTable } from "terminal-db";
 import { decodeRouterEvents, heliusSource, rebuildCandles, writtenCandles, type RawTransaction } from "terminal-indexer";
 import { rpcUrl } from "./devnet";
-import { LocalApi } from "./localApi";
+import { LocalApi, oneMinuteJobsOnly } from "./localApi";
 
 const HOSTED = "https://pipeline-devnet.up.railway.app";
 const ROUTER = "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34";
@@ -153,6 +153,56 @@ describe.skipIf(!ready)("parity with Pipeline's hosted devnet API", () => {
     expect(ours.length).toBeGreaterThan(0);
     expect(sorted(ours.filter((t) => t.slot <= cutoff).map(fields))).toEqual(sorted(theirs.filter((t) => t.slot <= cutoff).map(fields)));
     console.log(`the project's devnet wallet: ${ours.length} swaps, equal to the hosted API's`);
+  });
+});
+
+/**
+ * The hosted API's flags that Aviary does not show (PIPESCOPE-93): `checks-*` record its own
+ * `pipeline-check` runs, which Canary's `conformance` result stands for, and `conformance-*` would
+ * need the report a document links fetched, a URL found inside a document (PIPESCOPE-36).
+ */
+const NOT_AVIARYS = /^(checks|conformance)-/;
+const shown = (flags: string[]) => flags.filter((f) => !NOT_AVIARYS.test(f));
+
+type HostedStrategy = { program_id: string; flags: string[]; metadata_status: string; upgrade_authority: string | null };
+type HostedMarket = { address: string; flags: string[]; mints: { mint: string; flags: string[] }[] };
+
+describe.skipIf(!ready)("trust flags and metadata, as the hosted API has them (PIPESCOPE-93)", () => {
+  const api = new LocalApi(8838);
+  beforeAll(async () => {
+    await api.start();
+    // The backfill fetches every strategy's metadata as it indexes its registration; the watch reads who can upgrade each program.
+    await api.runJobs({ minute: oneMinuteJobsOnly, wait: ["reconciledAt", "watchedAt"] });
+  });
+  afterAll(() => api.dispose());
+
+  it("gives every strategy the hosted API's metadata status, flags and upgrade authority", async () => {
+    const [ours, theirs] = await Promise.all([api.strategies(), hosted<{ strategies: HostedStrategy[] }>("/v1/strategies?include_hidden=true")]);
+    expect(ours.map((s) => s.program).sort()).toEqual(theirs.strategies.map((s) => s.program_id).sort());
+    for (const s of theirs.strategies) {
+      const own = ours.find((o) => o.program === s.program_id)!;
+      expect({ status: own.metadata.status, flags: own.flags, upgradeAuthority: own.upgrade_authority }, s.program_id).toEqual({ status: s.metadata_status, flags: shown(s.flags), upgradeAuthority: s.upgrade_authority });
+    }
+    const count = (status: string) => ours.filter((s) => s.metadata.status === status).length;
+    // On 2026-11-12 five links could not be fetched and three documents were invalid; the hosted API says how many today.
+    expect(count("invalid")).toBe(theirs.strategies.filter((s) => s.metadata_status === "invalid").length);
+    expect(count("unreachable")).toBe(theirs.strategies.filter((s) => s.metadata_status === "unreachable").length);
+    console.log(`${ours.length} strategies: metadata valid for ${count("valid")}, invalid for ${count("invalid")}, unreachable for ${count("unreachable")}, missing for ${count("missing")}; every status, flag and upgrade authority the hosted API's`);
+  });
+
+  it("gives every market and every mint the hosted API's flags", async () => {
+    const [ours, theirs] = await Promise.all([api.markets(), hosted<{ markets: HostedMarket[] }>("/v1/markets?limit=500&include_hidden=true")]);
+    expect(ours.map((m) => m.address).sort()).toEqual(theirs.markets.map((m) => m.address).sort());
+    let mints = 0;
+    for (const m of theirs.markets) {
+      const own = ours.find((o) => o.address === m.address)!;
+      expect(own.flags, m.address).toEqual(shown(m.flags));
+      for (const mint of m.mints) {
+        expect(own.mints.find((x) => x.mint === mint.mint)?.flags, `${m.address} ${mint.mint}`).toEqual(mint.flags);
+        mints++;
+      }
+    }
+    console.log(`${ours.length} markets and ${mints} market mints: every flag the hosted API's, less its checks-* and conformance-*`);
   });
 });
 

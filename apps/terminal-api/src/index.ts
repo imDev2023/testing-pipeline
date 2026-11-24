@@ -4,6 +4,9 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
+import { createDb } from "terminal-db";
+import { canaryRoutes, startCanary } from "./canary";
+import { sweepCanary } from "./canaryTriggers";
 import type { JobName } from "./config";
 import type { ApiError } from "./contract";
 import { runDueJobs, type Job } from "./dispatcher";
@@ -15,6 +18,8 @@ import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
 import { tradingRoutes } from "./trading/routes";
 import { strategyRoutes } from "./strategies";
+import { imageRoutes } from "./tokenImages";
+import { searchRoutes } from "./search";
 
 export type AppEnv = { Bindings: Bindings };
 
@@ -39,6 +44,9 @@ app.get("/health", async (c) => {
 
 app.route("/", feed);
 app.route("/", strategyRoutes);
+app.route("/", imageRoutes);
+app.route("/", searchRoutes);
+app.route("/", canaryRoutes);
 
 /**
  * The live rooms (./liveRoom): a page opens a WebSocket here and the Worker hands the upgrade to the
@@ -79,7 +87,24 @@ export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
     registrySnapshot: async () => void (await indexer(env).snapshot(version)),
     programDataWatch: async () => void (await indexer(env).watchPrograms(version)),
     pruneCandles: async () => void (await indexer(env).prune(version)),
+    metadataRefetch: async () => void (await indexer(env).refetchMetadata(version)),
+    mintRefresh: async () => void (await indexer(env).refreshMints(version)),
+    canarySweep: () => canarySweep(env),
   };
+}
+
+/**
+ * Canary's scheduled sweep (CANARY-23): what the outbox still holds, drained by the indexer, which
+ * does every drain (./indexer), then every market on its strategy's current version.
+ */
+async function canarySweep(env: Bindings): Promise<void> {
+  await indexer(env).drainOutbox();
+  const { db, close } = createDb(env.HYPERDRIVE.connectionString);
+  try {
+    await sweepCanary(db, startCanary(env));
+  } finally {
+    await close();
+  }
 }
 
 export default {

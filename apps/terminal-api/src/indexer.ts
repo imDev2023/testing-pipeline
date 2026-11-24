@@ -8,9 +8,13 @@
 // indexes is published to the rooms with a viewer (./liveRoom).
 import { DurableObject } from "cloudflare:workers";
 import { createDb } from "terminal-db";
+import { startCanary } from "./canary";
+import { drainCanaryOutbox } from "./canaryTriggers";
 import { logsSubscribeRequest, parseLogsMessage, RpcError, type IndexResult } from "terminal-indexer";
 import type { Bindings } from "./env";
 import { IndexerCore, ROUTER } from "./indexerCore";
+import { kvImageStore } from "./tokenImages";
+import { webFetchFor } from "./webFetch";
 import { LiveSocket, type LiveSocketState, type LiveStatus } from "./liveSocket";
 
 /** `GET /v1/indexer`: how the indexer stands, with no secret in it. */
@@ -45,8 +49,49 @@ export class Indexer extends DurableObject<Bindings> {
   private queue: string[] = [];
   private draining: Promise<void> | null = null;
 
+  private canaryDrain: Promise<void> = Promise.resolve();
+
+  /**
+   * After a job that woke Postgres, Canary's triggers read the outbox on from their cursor
+   * (./canaryTriggers), so the database is never woken only to look (PIPESCOPE-127). The drain runs
+   * behind the job, which returns (and publishes its trades) without waiting for it.
+   */
+  private async afterJob<T>(work: () => Promise<T>): Promise<T> {
+    const before = this.indexer().databaseUses();
+    try {
+      return await work();
+    } finally {
+      if (this.indexer().databaseUses() !== before) this.ctx.waitUntil(this.drainOutbox());
+    }
+  }
+
+  /**
+   * Reads Canary's triggers from the outbox: every drain goes through this one object, one at a
+   * time, so no event is read by two drains at once (the sweep job asks for it here too).
+   */
+  async drainOutbox(): Promise<void> {
+    this.canaryDrain = this.canaryDrain.then(() => this.drainCanary());
+    await this.canaryDrain;
+  }
+
+  private async drainCanary(): Promise<void> {
+    const { db, close } = createDb(this.env.HYPERDRIVE.connectionString);
+    try {
+      await drainCanaryOutbox(db, startCanary(this.env), Date.now());
+    } catch (e) {
+      this.failed("starting Canary's runs from the outbox", e);
+    } finally {
+      await close();
+    }
+  }
+
   private indexer(): IndexerCore {
-    this.core ??= new IndexerCore({ rpcUrl: this.env.RPC_URL, openDb: () => createDb(this.env.HYPERDRIVE.connectionString) });
+    this.core ??= new IndexerCore({
+      rpcUrl: this.env.RPC_URL,
+      openDb: () => createDb(this.env.HYPERDRIVE.connectionString),
+      webFetch: webFetchFor(this.env),
+      images: kvImageStore(this.env.TERMINAL_CACHE),
+    });
     return this.core;
   }
 
@@ -122,7 +167,7 @@ export class Indexer extends DurableObject<Bindings> {
     while (this.queue.length) {
       const batch = this.queue.splice(0, this.queue.length);
       try {
-        await this.publish(await this.indexer().indexSignatures(batch));
+        await this.publish(await this.afterJob(() => this.indexer().indexSignatures(batch)));
       } catch (e) {
         this.failed("indexing what the live socket reported", e);
       }
@@ -157,10 +202,12 @@ export class Indexer extends DurableObject<Bindings> {
   async reconcile(version?: string): Promise<IndexerStatus> {
     this.checkVersion(version);
     try {
-      const { indexed } = await this.indexer().reconcile();
+      const { indexed } = await this.afterJob(() => this.indexer().reconcile());
       this.reconciledAt = new Date().toISOString();
       // What reconciliation found reaches the pages too: the socket's misses, and every trade while it is closed.
       await this.publish(indexed).catch((e: unknown) => this.failed("publishing what reconciliation indexed", e));
+      // Then the metadata of every strategy a run noted, this one's or the live socket's since.
+      await this.fetchMetadata();
     } catch (e) {
       this.failed("reconciling the router", e);
       throw e;
@@ -172,8 +219,9 @@ export class Indexer extends DurableObject<Bindings> {
   async snapshot(version?: string): Promise<IndexerStatus> {
     this.checkVersion(version);
     try {
-      await this.indexer().snapshot();
+      await this.afterJob(() => this.indexer().snapshot());
       this.snapshotAt = new Date().toISOString();
+      await this.fetchMetadata();
     } catch (e) {
       this.failed("taking the registry snapshot", e);
       throw e;
@@ -185,7 +233,7 @@ export class Indexer extends DurableObject<Bindings> {
   async reconcileStrategies(version?: string): Promise<IndexerStatus> {
     this.checkVersion(version);
     try {
-      await this.indexer().reconcileStrategies();
+      await this.afterJob(() => this.indexer().reconcileStrategies());
       this.strategiesReconciledAt = new Date().toISOString();
     } catch (e) {
       this.failed("reconciling the strategy programs", e);
@@ -198,13 +246,54 @@ export class Indexer extends DurableObject<Bindings> {
   async watchPrograms(version?: string): Promise<IndexerStatus> {
     this.checkVersion(version);
     try {
-      await this.indexer().watchPrograms();
+      await this.afterJob(() => this.indexer().watchPrograms());
       this.watchedAt = new Date().toISOString();
     } catch (e) {
       this.failed("watching the programs' deploys", e);
       throw e;
     }
     return this.status();
+  }
+
+  /**
+   * Fetches the metadata of the strategies indexing noted, then the images of the tokens it read; a
+   * failure is reported, and what failed is looked for again on the next run.
+   */
+  private async fetchMetadata(): Promise<void> {
+    await this.indexer()
+      .fetchPendingMetadata()
+      .catch((e: unknown) => this.failed("fetching strategies' metadata", e));
+    await this.fetchImages();
+  }
+
+  /** Fetches the images of the tokens whose mints were read since the last look (./tokenImages). */
+  private async fetchImages(): Promise<void> {
+    await this.indexer()
+      .fetchPendingImages()
+      .catch((e: unknown) => this.failed("fetching tokens' images", e));
+  }
+
+  /** Fetches every strategy's metadata again, every hour. */
+  async refetchMetadata(version?: string): Promise<void> {
+    this.checkVersion(version);
+    try {
+      await this.indexer().refetchMetadata();
+    } catch (e) {
+      this.failed("fetching every strategy's metadata again", e);
+      throw e;
+    }
+  }
+
+  /** Reads every mint again, every hour. */
+  async refreshMints(version?: string): Promise<void> {
+    this.checkVersion(version);
+    try {
+      await this.indexer().refreshMints();
+    } catch (e) {
+      this.failed("reading every mint again", e);
+      throw e;
+    }
+    await this.fetchImages();
   }
 
   /** Drops candles past their retention, once a day. */

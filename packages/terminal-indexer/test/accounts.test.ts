@@ -3,12 +3,13 @@
 import { readFileSync } from "node:fs";
 import { encodeAccount, getMarketCodec, PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { address, getAddressEncoder } from "@solana/kit";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createDb, marketMints, markets, mints, type Db } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { indexTransactions, metadataAddress, pipelineHandler, refreshMarkets, type RawTransaction } from "../src/index";
+import { indexTransactions, metadataAddress, pipelineHandler, refreshMarkets, refreshMints, type RawTransaction } from "../src/index";
 import { fakeRpc, type FakeRpc } from "./fakeRpc";
+import { programAddress } from "./programs";
 
 const created = JSON.parse(readFileSync(`${import.meta.dirname}/fixtures/marketCreated.json`, "utf8")) as RawTransaction;
 const MARKET = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
@@ -107,8 +108,14 @@ it("reads a new market's vaults, its state and what each vault holds, and each o
       data: Buffer.from(rpc.accounts.get(TOKEN)!.data).toString("base64"),
       metadataData: Buffer.from([4, 5, 6]).toString("base64"),
       readSlot: 525_200_000n,
+      flags: ["token-2022", "mint-authority"],
+      readEpoch: 812n,
+      // Its Metaplex account is three bytes, no metadata, so it names no token.
+      symbol: null,
+      name: null,
+      tokenUri: null,
     },
-    expect.objectContaining({ address: WSOL, readable: true, tokenProgram: TOKEN_PROGRAM, decimals: 9, supply: "0", mintAuthority: null, metadataData: null }),
+    expect.objectContaining({ address: WSOL, readable: true, tokenProgram: TOKEN_PROGRAM, decimals: 9, supply: "0", mintAuthority: null, metadataData: null, flags: [], readEpoch: 812n }),
   ]);
 });
 
@@ -127,5 +134,33 @@ it("keeps a mint whose account is missing as unreadable", async () => {
   await client.db.update(marketMints).set({ mint: missing }).where(eq(marketMints.mint, TOKEN));
   await refreshMarkets(client.db, rpc.url, [MARKET]);
   const [row] = await client.db.select().from(mints).where(eq(mints.address, missing));
-  expect(row).toMatchObject({ readable: false, tokenProgram: null, decimals: null });
+  expect(row).toMatchObject({ readable: false, tokenProgram: null, decimals: null, flags: ["mint-unreadable"] });
 });
+
+it("reads again a mint read before its flags were kept", async () => {
+  await client.db.update(mints).set({ flags: null }).where(eq(mints.address, WSOL));
+  await refreshMarkets(client.db, rpc.url, [MARKET]);
+  const [row] = await client.db.select().from(mints).where(eq(mints.address, WSOL));
+  expect(row?.flags).toEqual([]);
+});
+
+it("reads every mint again on the hourly refresh, so an authority given up or a freeze authority set shows", async () => {
+  rpc.accounts.set(WSOL, { owner: TOKEN_PROGRAM, data: mintAccount({ supply: 5n, decimals: 9, mintAuthority: null, freezeAuthority: AUTHORITY }) });
+  rpc.epoch = 813;
+  rpc.slot = 525_300_000;
+  rpc.requests.length = 0;
+  expect(await refreshMints(client.db, rpc.url)).toBe(3);
+  const [row] = await client.db.select().from(mints).where(eq(mints.address, WSOL));
+  expect(row).toMatchObject({ supply: "5", freezeAuthority: AUTHORITY, flags: ["freeze-authority"], readEpoch: 813n, readSlot: 525_300_000n });
+  // One read of the mints and their metadata accounts, and one of the epoch.
+  expect(rpc.requests.map((r) => r.method).sort()).toEqual(["getEpochInfo", "getMultipleAccounts"]);
+});
+
+it("reads more mints than one statement of Postgres can write, in parts", async () => {
+  // 12,000 mints of 13 columns each are past what one statement can be built with, or sent as (65,535 parameters).
+  const many = await Promise.all(Array.from({ length: 12_000 }, (_, i) => programAddress(10_000 + i)));
+  for (let i = 0; i < many.length; i += 1_000) await client.db.insert(mints).values(many.slice(i, i + 1_000).map((address) => ({ address, readable: false })));
+  expect(await refreshMints(client.db, rpc.url)).toBe(12_000 + 3);
+  const [{ count }] = (await client.db.execute<{ count: number }>(sql`select count(*)::int as count from mints where flags = array['mint-unreadable']`)) as unknown as [{ count: number }];
+  expect(count).toBeGreaterThanOrEqual(12_000);
+}, 60_000);

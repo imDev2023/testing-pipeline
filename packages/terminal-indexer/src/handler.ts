@@ -13,9 +13,10 @@ export type TradeKey = { signature: string; eventIndex: number };
 
 /**
  * What indexing wrote, counted by kind; the markets whose accounts are to be read again because an
- * event touched them; and the trades written now, for the live rooms.
+ * event touched them; the trades written now, for the live rooms; and the strategies whose
+ * registration or metadata URI an event wrote, whose metadata is to be fetched.
  */
-export type IndexResult = { counts: Record<string, number>; markets: string[]; trades: TradeKey[] };
+export type IndexResult = { counts: Record<string, number>; markets: string[]; trades: TradeKey[]; strategies: string[] };
 
 /** Indexes one transaction. Idempotent: a transaction already indexed writes nothing. */
 export type TransactionHandler = (db: Db, tx: RawTransaction) => Promise<IndexResult>;
@@ -44,6 +45,7 @@ export function pipelineHandler({
     const { events, unknown } = decodeRouterEvents(raw, decode);
     const count = (kind: string) => (result.counts[kind] = (result.counts[kind] ?? 0) + 1);
     const touched = new Set<string>();
+    const named = new Set<string>();
 
     await db.transaction(async (tx) => {
       // It may write a new strategy or market to the outbox, so it holds the outbox's lock from its first write.
@@ -66,6 +68,7 @@ export function pipelineHandler({
               // Found first by the registry snapshot: the event adds what only it knows.
               .onConflictDoUpdate({ target: strategies.program, set: { feePaid: String(feePaid), registeredSlot: slot, registeredSignature: signature } });
             await appendOutbox(tx as unknown as Db, { kind: "strategy_registered", subject: strategy, slot, payload: { metadataUri } });
+            named.add(strategy);
             count("strategies");
             break;
           }
@@ -75,6 +78,7 @@ export function pipelineHandler({
               .update(strategies)
               .set({ metadataUri, metadataSlot: slot })
               .where(sql`${strategies.program} = ${strategy} and (${strategies.metadataSlot} is null or ${strategies.metadataSlot} <= ${slot})`);
+            named.add(strategy);
             count("metadataUpdates");
             break;
           }
@@ -139,6 +143,7 @@ export function pipelineHandler({
       }
     });
     result.markets = [...touched];
+    result.strategies = [...named];
     return result;
   };
 }

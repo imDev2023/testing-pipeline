@@ -18,7 +18,7 @@ const DECIMALS_OFFSET = 44;
 /** Token-2022 lays extensions after the 165 bytes of an account, its account type, then type-length-value entries. */
 const EXTENSIONS_START = 166;
 /**
- * The Token-2022 extensions that make a mint other than plain (PIPESCOPE-120): a transfer moves less
+ * The Token-2022 extensions that make a mint other than plain (PIPESCOPE-135): a transfer moves less
  * than was sent, or needs accounts Aviary does not resolve yet, or may be refused outright. A quote
  * and its review promise exactly what leaves the wallet and what arrives, so such a mint gets none.
  */
@@ -48,7 +48,7 @@ export function notPlain(data: Uint8Array): string | null {
 
 const notTradable = (message: string) => new HTTPException(422, { message });
 
-/** Reads `market` and its mints; refuses a market that is no market, a mint not read, and a mint that is not plain (PIPESCOPE-120). */
+/** Reads `market` and its mints; refuses a market that is no market, a mint not read, and a mint that is not plain (PIPESCOPE-135). */
 export async function readTradeMarket(rpc: Rpc<SolanaRpcApi>, marketAddress: string): Promise<TradeMarket> {
   const at = address(marketAddress);
   const [account] = (await rpc.getMultipleAccounts([at], { encoding: "base64", commitment: "confirmed" }).send()).value;

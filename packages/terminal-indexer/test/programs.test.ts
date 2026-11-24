@@ -6,9 +6,9 @@ import { createHash } from "node:crypto";
 import { BPF_LOADER_UPGRADEABLE_PROGRAM_ADDRESS, programDataPda } from "@pipeline-sol/sdk";
 import { address, getAddressEncoder, getBase58Decoder } from "@solana/kit";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { deployHistory, readDeploySlots, readExecutable, type RawTransaction } from "../src/index";
+import { deployHistory, readDeploySlots, readExecutable, readProgramFacts, type RawTransaction } from "../src/index";
 import { fakeRpc, type FakeRpc } from "./fakeRpc";
-import { programAddress, programDataAccount, programReader, upgradeTransaction } from "./programs";
+import { programAddress, programDataAccount, programReader, UPGRADE_AUTHORITY, upgradeTransaction } from "./programs";
 
 let rpc: FakeRpc;
 beforeEach(async () => {
@@ -25,7 +25,7 @@ describe("readDeploySlots", () => {
 
     const slots = await readDeploySlots(rpc.url, programs.slice(0, 100));
     expect(rpc.requests).toEqual([{ method: "getMultipleAccounts", params: [expect.any(Array), { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: 45 } }] }]);
-    expect(slots.get(programs[42]!)).toEqual({ programData: await programDataPda(address(programs[42]!)), deploySlot: 500_000_042n });
+    expect(slots.get(programs[42]!)).toEqual({ programData: await programDataPda(address(programs[42]!)), deploySlot: 500_000_042n, upgradeAuthority: UPGRADE_AUTHORITY });
 
     rpc.requests.length = 0;
     await readDeploySlots(rpc.url, programs);
@@ -35,6 +35,28 @@ describe("readDeploySlots", () => {
   it("gives null for a program with no ProgramData account, such as one not deployed by the upgradeable loader or closed", async () => {
     const program = await programAddress(0);
     expect((await readDeploySlots(rpc.url, [program])).get(program)).toBeNull();
+  });
+});
+
+describe("readProgramFacts", () => {
+  it("gives each program's upgrade authority and flag from the header the watch read, asking nothing more", async () => {
+    const [open, frozen] = await Promise.all([programAddress(0), programAddress(1)]);
+    rpc.accounts.set(await programDataPda(address(open)), programDataAccount(10n, Uint8Array.of(1)));
+    rpc.accounts.set(await programDataPda(address(frozen)), programDataAccount(11n, Uint8Array.of(1), null));
+    const slots = await readDeploySlots(rpc.url, [open, frozen]);
+    rpc.requests.length = 0;
+    const facts = await readProgramFacts(rpc.url, slots);
+    expect(facts.get(open)).toEqual({ upgradeAuthority: UPGRADE_AUTHORITY, flags: ["upgradeable"] });
+    expect(facts.get(frozen)).toEqual({ upgradeAuthority: null, flags: ["frozen"] });
+    expect(rpc.requests).toEqual([]);
+  });
+
+  it("asks Pipeline's SDK about a program with no ProgramData account: missing, or deployed by another loader", async () => {
+    const [missing, old] = await Promise.all([programAddress(2), programAddress(3)]);
+    rpc.accounts.set(old, { owner: "BPFLoader2111111111111111111111111111111111", data: Uint8Array.of(0x7f, 0x45), executable: true });
+    const facts = await readProgramFacts(rpc.url, await readDeploySlots(rpc.url, [missing, old]));
+    expect(facts.get(missing)).toEqual({ upgradeAuthority: null, flags: ["program-missing"] });
+    expect(facts.get(old)).toEqual({ upgradeAuthority: null, flags: ["frozen"] });
   });
 });
 

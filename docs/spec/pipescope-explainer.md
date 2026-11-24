@@ -42,6 +42,7 @@ The model receives evidence items, each with an id, a label and a value; Aviary 
 - None of the four devnet strategies has a verified build (2026-11-09), so none gets S items, even the constant product, whose source is public and consistent with the deployed program.
 - Instruction names compiled into a binary are facts about the binary, but what an instruction does, read from its name, is inference: such claims are "inferred" and say "appears to".
 - Author text is normalised in code before the model sees it: control and text-direction characters stripped, each field capped (name 64 characters, description 600, action label 64), images dropped, and links neither passed to the model nor fetched; what the normaliser removed is reported as an F item.
+  The normaliser, in `packages/terminal-explainer`, strips every control and format character (Unicode `Cc` and `Cf`), caps the create form's and each argument's description as a description and each label and tag as a label, and leaves out the source, the conformance report and the security contact (`EXPLAINER-22`); the pages show the author text it leaves, so what Aviary shows and what the model reads are the same.
 - Each metadata action's discriminator is cross-checked in code against the program's instruction list, and the result is an F item ("The action labelled X calls the instruction deposit"), so a lying label is caught by code, not left to the model.
 - Author text reaches the model JSON-encoded in a tool result labelled with its origin; everything else is in the user message.
 

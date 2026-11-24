@@ -274,7 +274,7 @@ export function MarketLive({ market }: { market: Market }) {
               <p className={styles.price}>
                 <span className={styles.priceValue}>{formatPrice(Number(last.close))}</span>{" "}
                 <span className={styles.priceUnit}>
-                  <MintLabel mint={quoteMint.mint} symbol={quoteMint.symbol} /> for one <MintLabel mint={baseMint.mint} symbol={baseMint.symbol} />
+                  <MintLabel mint={quoteMint.mint} symbol={quoteMint.symbol} token={quoteMint.token} /> for one <MintLabel mint={baseMint.mint} symbol={baseMint.symbol} token={baseMint.token} />
                 </span>{" "}
                 <Link className={styles.flip} href={hrefWith({ flip: flipped ? null : "1" })} scroll={false} replace title="Show the price the other way round">
                   Flip
@@ -378,7 +378,10 @@ function TradesTable({
   symbols: Market["mints"];
   fresh: ReadonlySet<string>;
 }) {
-  const label = (mint: string) => <MintLabel mint={mint} symbol={symbols.find((m) => m.mint === mint)?.symbol ?? null} />;
+  const label = (mint: string) => {
+    const named = symbols.find((m) => m.mint === mint);
+    return <MintLabel mint={mint} symbol={named?.symbol ?? null} token={named?.token ?? null} />;
+  };
   const amount = (value: number | null, mint: string) => (
     <span>
       {value === null ? "not read" : formatAmount(value)} {label(mint)}

@@ -87,6 +87,9 @@ importers:
 
   apps/terminal-api:
     dependencies:
+      '@cloudflare/containers':
+        specifier: 0.3.7
+        version: 0.3.7
       '@pipeline-sol/sdk':
         specifier: 'catalog:'
         version: 0.3.0(typescript@6.0.3)
@@ -108,6 +111,9 @@ importers:
       terminal-db:
         specifier: workspace:*
         version: link:../../packages/terminal-db
+      terminal-explainer:
+        specifier: workspace:*
+        version: link:../../packages/terminal-explainer
       terminal-indexer:
         specifier: workspace:*
         version: link:../../packages/terminal-indexer
@@ -130,6 +136,9 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+      undici:
+        specifier: 7.30.2
+        version: 7.30.2
       vitest:
         specifier: 5.1.1
         version: 5.1.1(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(terser@5.46.0)(tsx@4.23.15)(yaml@2.9.1))
@@ -139,6 +148,9 @@ importers:
 
   apps/terminal-web:
     dependencies:
+      '@pipeline-sol/sdk':
+        specifier: 'catalog:'
+        version: 0.3.0(typescript@6.0.3)
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@6.0.3)
@@ -179,6 +191,9 @@ importers:
       '@types/react-dom':
         specifier: 19.3.0
         version: 19.3.0(@types/react@19.3.0)
+      terminal-explainer:
+        specifier: workspace:*
+        version: link:../../packages/terminal-explainer
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -277,6 +292,22 @@ importers:
         specifier: 5.1.1
         version: 5.1.1(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(terser@5.46.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  packages/terminal-explainer:
+    dependencies:
+      '@pipeline-sol/sdk':
+        specifier: 'catalog:'
+        version: 0.3.0(typescript@6.0.3)
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.1.1
+        version: 5.1.1(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(terser@5.46.0)(tsx@4.23.15)(yaml@2.9.1))
+
   packages/terminal-indexer:
     dependencies:
       '@pipeline-sol/sdk':
@@ -291,6 +322,9 @@ importers:
       terminal-db:
         specifier: workspace:*
         version: link:../terminal-db
+      terminal-explainer:
+        specifier: workspace:*
+        version: link:../terminal-explainer
     devDependencies:
       '@types/node':
         specifier: 24.19.2
@@ -455,6 +489,9 @@ importers:
       '@pipeline-sol/sdk':
         specifier: 'catalog:'
         version: 0.3.0(typescript@6.0.3)
+      '@solana-program/system':
+        specifier: 0.16.0
+        version: 0.16.0(@solana/kit@8.6.0(typescript@6.0.3))
       '@solana-program/token':
         specifier: 0.18.0
         version: 0.18.0(@solana/kit@8.6.0(typescript@6.0.3))
@@ -464,6 +501,9 @@ importers:
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@cloudflare/workers-types@5.20261121.1)(postgres@3.4.9)
       terminal-api:
         specifier: workspace:*
         version: link:../../apps/terminal-api
@@ -488,6 +528,12 @@ importers:
       '@playwright/test':
         specifier: 1.65.1
         version: 1.65.1
+      '@solana-program/system':
+        specifier: 0.16.0
+        version: 0.16.0(@solana/kit@8.6.0(typescript@6.0.3))
+      '@solana-program/token':
+        specifier: 0.18.0
+        version: 0.18.0(@solana/kit@8.6.0(typescript@6.0.3))
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@6.0.3)
@@ -497,6 +543,9 @@ importers:
       '@types/ws':
         specifier: 8.18.1
         version: 8.18.1
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@cloudflare/workers-types@5.20261121.1)(postgres@3.4.9)
       postgres:
         specifier: 3.4.9
         version: 3.4.9
@@ -834,6 +883,9 @@ packages:
 
   '@cacheable/utils@2.5.0':
     resolution: {integrity: sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA==}
+
+  '@cloudflare/containers@0.3.7':
+    resolution: {integrity: sha512-DM9dm3FnIBSyiSJ1FLavKwl/lk3oAmTaynCzZQ9pZR0ncRPquSxkxd8Nu2MFILxmDDsPkxKsSNEh9mHHMty4Fw==}
 
   '@cloudflare/kv-asset-handler@0.5.1':
     resolution: {integrity: sha512-48OysfSW3MkQY1XjkhkpPkgrEkOvgfoyHzA2eyX5wpzFpijC02uWigv3hkNdJdT3C7ybW/U17yYHXeR68pLeww==}
@@ -5025,6 +5077,8 @@ snapshots:
     dependencies:
       hashery: 1.5.1
       keyv: 5.6.0
+
+  '@cloudflare/containers@0.3.7': {}
 
   '@cloudflare/kv-asset-handler@0.5.1': {}
 

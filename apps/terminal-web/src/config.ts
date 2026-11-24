@@ -53,13 +53,26 @@ export const LIVE_CANDLE_REFRESH_MS = 1_000;
 export const TRADES_SHOWN = 40;
 export const FEED_ROWS_PER_LOAD = 50;
 
-/** The feed's filters: each offers these thresholds, measured on a market's SOL side. */
+/**
+ * The feed's filters (PIPESCOPE-72): each offers these steps, liquidity and volume measured on a
+ * market's SOL side, in SOL; every filter starts off (PIPESCOPE-05).
+ */
 export const FEED_FILTERS = {
   liquiditySol: [0.1, 1, 10],
   volume24hSol: [0.01, 0.1, 1],
   createdWithinHours: [1, 24, 7 * 24],
 };
 
-/** Search. */
+/** Search (PIPESCOPE-81): the pause after the last keystroke before a search runs, and the results shown a group. */
 export const SEARCH_PAUSE_MS = 220;
 export const SEARCH_RESULTS_PER_GROUP = 20;
+
+/**
+ * The three examples shown when nothing is typed, each one that finds something on devnet (the
+ * end-to-end tests check they still do), with what it shows can be searched for.
+ */
+export const SEARCH_EXAMPLES = [
+  { query: "Sniper", what: "part of a strategy's name" },
+  { query: "7BctW", what: "the start of a market's address" },
+  { query: "dream", what: "part of a token's name, in any case" },
+] as const;

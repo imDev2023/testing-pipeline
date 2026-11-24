@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Bindings } from "../src/env";
+import type { TokenImageType } from "../src/tokenImageFetch";
 
 /** What a Worker's request handler is given besides its bindings; `waitUntil` work is awaited by `settle`. */
 export function executionContext() {
@@ -46,6 +47,9 @@ export function bindings(overrides: Partial<Bindings> & { databaseUrl: string; r
         "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU": "6DEijYZbuMg7nQSvYD6KzFuB6jytvCGGmSbtarErySwC",
       },
     },
+    CANARY_RUNS: {} as Bindings["CANARY_RUNS"],
+    CANARY_CONTAINER: {} as Bindings["CANARY_CONTAINER"],
+    CANARY_OPERATOR: "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
     ...rest,
   };
 }
@@ -86,4 +90,29 @@ export async function fakeRpc(answer: { slot: number; balance?: number } | { sta
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
   const { port } = server.address() as AddressInfo;
   return { url: `http://127.0.0.1:${port}/?api-key=secret-in-the-url`, close: () => new Promise((done) => server.close(() => done())) };
+}
+
+/**
+ * The web as the metadata fetcher sees it in a test: `documents` served as JSON by URL, anything
+ * else 404, and every URL asked kept in `asked`.
+ */
+export function metadataWeb(documents: Record<string, string> = {}) {
+  const asked: string[] = [];
+  const fetch = async (url: string) => {
+    asked.push(url);
+    const body = documents[url];
+    return body === undefined ? new Response("not found", { status: 404 }) : new Response(body, { headers: { "content-type": "application/json" } });
+  };
+  return { fetch, asked, documents };
+}
+
+/** An image store in memory (../src/tokenImages's `ImageStore`), with what it was given to keep. */
+export function memoryImages() {
+  const kept = new Map<string, { bytes: ArrayBuffer; type: TokenImageType }>();
+  return {
+    put: async (sha256: string, bytes: Uint8Array, type: TokenImageType) => void kept.set(sha256, { bytes: new Uint8Array(bytes).buffer, type }),
+    get: async (sha256: string) => kept.get(sha256) ?? null,
+    /** The type and size of each image kept. */
+    kept: () => [...kept.values()].map(({ bytes, type }) => ({ type, size: bytes.byteLength })),
+  };
 }

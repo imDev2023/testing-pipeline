@@ -104,7 +104,7 @@ All under `~/.config/testing-pipeline/devnet/` (directory 700, files 600), never
 | Buy wall AMM program | `buy-wall-amm.json` | `BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6` | The program's address, for its first devnet deploy |
 | Containment hook program | `containment-hook.json` | `aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv` | The hook's address, for its first devnet deploy |
 | Lending AMM program | `lending-amm.json` | `Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG` | The program's address, for its first devnet deploy |
-| Aviary's fee wallet | `fee-wallet.json` | `9QyvxvMQQcDhRJG8qbrSL7KaXtfoMnfX37ny6XFRL3Eg` | Receives the integrator fee in its wrapped-SOL account `2aCTxP…vThn` and devnet-USDC account `6DEijY…ySwC` (`INTEGRATOR_FEE` in `apps/terminal-api/wrangler.jsonc`), and pays for quotes' simulations without signing (`PIPESCOPE-117`); Aviary never holds its key |
+| Aviary's fee wallet | `fee-wallet.json` | `9QyvxvMQQcDhRJG8qbrSL7KaXtfoMnfX37ny6XFRL3Eg` | Receives the integrator fee in its wrapped-SOL account `2aCTxP…vThn` and devnet-USDC account `6DEijY…ySwC` (`INTEGRATOR_FEE` in `apps/terminal-api/wrangler.jsonc`), and pays for quotes' simulations without signing (`PIPESCOPE-132`); Aviary never holds its key |
 | Aviary's test trader | `e2e-trader.json` | `E69PqdUigwXRBdCBR5LfkACb9f342QsRK8oRGGdtJnAW` | The Playwright test wallet's key (`PIPESCOPE-94`), read only by `pnpm --filter terminal-e2e swaps:devnet` |
 
 Each program keypair was passed to `new-strategy.sh`, so nothing went into `~/.config/pipeline/keys/`.
@@ -399,7 +399,7 @@ Release 0.1.1, the hardening of [#74](https://github.com/imDev2023/testing-pipel
 | `rust` | on-chain changes | The toolchain from `scripts/install-toolchain.sh solana`, the router fixture's test and fetch, the devnet deploy script's test, Pipeline's test programs from `scripts/fetch-pipeline.sh programs` (its clone cached by the pinned `rev`), `cargo fmt --check`, each program's SBF build by its manifest, the buy wall AMM release gate's seven stranding test builds (`cargo run -p buy-wall-gate -- test-builds`, `POOL4-44`), clippy with `-D warnings`, the tests, the lending AMM's `mainnet` build with its clippy and unit tests, and the buy wall AMM built with `test-designer-recipient` (a test key as `DESIGNER_RECIPIENT`, `POOL4-39`) into `programs/target/deploy-designer`, with its clippy, unit tests and payout tests |
 | `typescript` | on-chain changes | Pipeline's SDK from `scripts/fetch-pipeline.sh sdk`, `pnpm install --frozen-lockfile`, `pnpm typecheck`, and the shared packages' tests (`pnpm --recursive --if-present test`) |
 | `kani` | on-chain changes | Every program's Z3 proofs (`programs/*/proofs/*_z3.py`, with `z3-solver` 5.4.1.0), then Kani from `scripts/install-toolchain.sh kani` and `cargo kani --workspace -j --output-format=terse` |
-| `canary` | changes to `crates/`, the containment hook (`programs/containment-hook/`, whose rules Canary's checks meet on contained tokens) or any of its build inputs (`programs/mint-rules/`, `programs/tax-amm/`, `programs/Cargo.toml`, `programs/Cargo.lock`, `programs/rust-toolchain.toml`, `scripts/build-programs.sh`, `scripts/workspace-programs.py`), the fixtures' pins or scripts, or the workflow | `scripts/check-canary-paths.py`, which fails when `CANARY_PATHS` misses a build input of the hook, then the toolchain, the router fixture and Pipeline's test programs as `rust` gets them, and Canary's own fixture programs (`crates/canary/tests/fixtures/build.sh`), then `cargo fmt --check`, clippy with `-D warnings` and the tests in `crates/` |
+| `canary` | changes to `crates/`, the containment hook (`programs/containment-hook/`, whose rules Canary's checks meet on contained tokens) or any of its build inputs (`programs/mint-rules/`, `programs/tax-amm/`, `programs/Cargo.toml`, `programs/Cargo.lock`, `programs/rust-toolchain.toml`, `scripts/build-programs.sh`, `scripts/workspace-programs.py`), the fixtures' pins or scripts, or the workflow | `scripts/check-canary-paths.py`, which fails when `CANARY_PATHS` misses a build input of the hook, then the toolchain, the router fixture and Pipeline's test programs as `rust` gets them, and Canary's own fixture programs (`crates/canary/tests/fixtures/build.sh`), then `cargo fmt --check`, clippy with `-D warnings` and the tests in `crates/`, and Canary's container image built and its binary started with no network |
 | `gate` | always | Passes only if `changes` and `no keypairs` passed and, when on-chain code changed, every heavy job passed too, and `canary` likewise when Canary changed; when none changed, they must have been skipped |
 
 `gate` is the one check `main` requires, so a pull request that touches no on-chain code still gets a passing result in a minute.
@@ -862,6 +862,20 @@ A second worktree runs the suite beside a local run already up by naming other p
 Before the tests, `src/global-setup.ts` fires the cron and waits for the indexer's first run, which backfills the router's whole history into the database and records every strategy's versions, so the pages have devnet's markets and strategies to show; on the recorded fixtures that history is the one recorded, so a run on an empty database draws the same pages.
 `wrangler dev` fires the cron at the real time and ignores a time passed to `/__scheduled`, so the setup waits for a minute on which only the one-minute jobs are due, and every run asks the RPC the same questions.
 
+### Canary's container
+
+`terminal-api` runs Canary's binary as a Cloudflare Container (`CanaryContainer`, `crates/canary/Dockerfile`, built from `crates/`), driven by one `CanaryRun` Durable Object per strategy version (#124; `docs/spec/pipescope-architecture.md`, "Canary runner").
+`pnpm terminal:dev:api` builds the image with Docker and runs it; Docker must be running.
+The Playwright suite and the devnet tests that do not run Canary pass `--enable-containers=false`, so they need no Docker, and CI builds no image for them.
+
+- `docker build --platform linux/amd64 -t terminal-canary:dev -f crates/canary/Dockerfile crates` builds the image alone (59 MB on 2026-11-23, a distroless base with the binary).
+- `pnpm canary:rerun --market <m> | --strategy <s> [--api http://localhost:8841]` re-runs Canary on the local run, signed with the project's devnet wallet, `CANARY_OPERATOR` in `wrangler.jsonc`.
+- `GET /v1/markets/<m>/canary`, `GET /v1/strategies/<s>/versions/<slot>/canary` and `.../canary/schedule` show a market's results, a version's roll-up and the runs its object still holds.
+- `tests/terminal-e2e/demo/canary-runs.ts` is the local demo: a strategy and two markets on a local validator running devnet's router, an upgrade run on both, and the container killed under the run and resumed by the alarm; its header has the steps (its strategy comes from `demo/build-test-strategy.sh fixtures/canary-demo`).
+- `tests/devnet/src/canary.test.ts` runs the container against devnet: a sweep of every market measured, conformance against Pipeline's hosted checks, the container's lack of network, and a new market's runs.
+- `crates/canary/scripts/measure-instances.sh` times the image capped at the `basic`, `lite` and `standard-1` sizes on recorded snapshots, with no network.
+- Locally the container's port takes a connection before the binary listens (Docker's port proxy), so `CanaryContainer` waits for the binary's `/health` after each start before it posts a run.
+
 ### Aviary's devnet tests
 
 `tests/devnet` holds the indexer's restart test and the parity checks against Pipeline's hosted devnet API (`docs/spec/pipescope-architecture.md`, Indexer).
@@ -880,6 +894,11 @@ They read devnet, so they never run in CI.
 Its header has the steps: `demo/build-test-strategy.sh` builds the two versions from a copy of Pipeline's clone at a fresh local address, `scripts/local-validator.sh` loads the router upgradeable by the demo's own key when `ROUTER_UPGRADE_AUTHORITY` names it, and the demo fires the API's cron each minute as Cloudflare would.
 Passed on 2026-11-23: version 2 recorded 55.6 s after its upgrade landed, the router's upgrade 52.4 s after.
 `wrangler dev`'s `workerd` reaches devnet only once LuLu allows its path, which differs in every worktree (`node_modules/.pnpm/@cloudflare+workerd-darwin-64@<version>/node_modules/@cloudflare/workerd-darwin-64/bin/workerd`, unsigned, so LuLu cannot allow it by signature).
+
+### Aviary's token-image check token
+
+No devnet token named an image Aviary could keep on 2026-11-23, so `tests/terminal-e2e/demo/token-image-check.ts` (#120) launched one: a Token-2022 mint whose token metadata names `tests/terminal-e2e/demo/token-image-check/token.json` at a commit of this repository, which names `token.png` beside it, traded in a tax market against wrapped SOL; its addresses and transactions are in `deployments/devnet-demo-token-image.json`.
+The end-to-end tests show its image on the market and search pages, and `--update-uri` moves its URI, since the project's devnet wallet keeps the metadata's update authority.
 
 Passed on 2026-11-22 with Node 24.4.1 (#113): 36 tests, in 1.4 minutes against devnet and 1.2 minutes on the recorded fixtures.
 
