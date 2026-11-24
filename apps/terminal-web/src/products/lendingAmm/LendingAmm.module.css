@@ -116,6 +116,12 @@
   gap: 6px 18px;
 }
 
+/* A legend has its own padding by default; this one lines up with the fields' labels. */
+.choice legend {
+  padding: 0;
+  margin-bottom: 2px;
+}
+
 .choice label {
   display: inline-flex;
   align-items: center;
