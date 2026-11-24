@@ -87,7 +87,7 @@ function jsonOrEmpty(text: string): unknown {
 
 explanationRoutes.post("/v1/explanations/:key/reports", limitReports, async (c) => {
   const body = ExplanationReport.safeParse(jsonOrEmpty(await c.req.text()));
-  if (!body.success) return c.json<ApiError>({ error: `A report is JSON with at most a note of up to ${REPORT_NOTE_MAX} characters.` }, 400);
+  if (!body.success || [...(body.data.note ?? "")].length > REPORT_NOTE_MAX) return c.json<ApiError>({ error: `A report is JSON with at most a note of up to ${REPORT_NOTE_MAX} characters.` }, 400);
   const db = dbOf(c);
   const key = c.req.param("key");
   const [row] = await db.select({ status: explainerKeys.status, explanation: explainerKeys.explanation }).from(explainerKeys).where(eq(explainerKeys.key, key));
