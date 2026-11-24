@@ -951,7 +951,7 @@ The three-mint market's tests (`src/trade.spec.ts`, #122) review a swap in each 
 ### The buy wall AMM's panel on devnet
 
 The devnet run of [#57](https://github.com/imDev2023/testing-pipeline/issues/57), `tests/terminal-e2e/demo/buy-wall.ts`, never in CI: with the Playwright test wallet holding the test trader's key, it makes a Token-2022 token with a cleared transfer hook, creates and seeds a market of it from the create page's buy wall form, trades it through the trade box, presses each keeper job that falls due from the panel's buttons, hands the fee recipient role to the project wallet, then trades the demo market and presses its due jobs, with screenshots at 1440 and 390 px in both themes.
-It spends about 3.1 SOL of the test trader's (the seed's 1 SOL stays in the new market for good), so fund it first with `devnet-airdrop`, or from the project wallet when the faucets refuse.
+It spends about 0.7 SOL of the test trader's (the seed's 0.5 SOL stays in the new market for good) and needs about 1.2 SOL at its peak, so fund it first with `devnet-airdrop`, or from the project wallet when the faucets refuse.
 Start Aviary's local run on ports of its own (with `MINIFLARE_WORKERD_PATH` set as above), then from the repo's root:
 
 ```sh

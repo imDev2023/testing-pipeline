@@ -13,7 +13,8 @@
 //   5. on the demo market (#56) a buy and a sell go through the trade box and each keeper job that
 //      falls due is pressed;
 //
-// with screenshots at 1440 and 390 px in both themes. It sends real devnet transactions, so it runs
+// with screenshots at 1440 and 390 px in both themes. It sends real devnet transactions and spends
+// about 0.7 SOL of the test trader's (the seed's 0.5 SOL stays in the new market for good), so it runs
 // only when asked:
 //
 //   node tests/terminal-e2e/demo/buy-wall.ts
@@ -66,6 +67,10 @@ const RESULTS = join(ROOT, "tests/terminal-e2e/test-results/buy-wall-demo.json")
 const DEMO_MARKET = "7BctWoaSumdxkMBCXxMum59NV5CZJBvC33SCrcGa5CAK";
 const DECIMALS = 6;
 const UNSET = "11111111111111111111111111111111" as Address;
+/** The new market's seed in SOL, and the buy-and-sell rounds traded on it. */
+const SEED_SOL = "0.5";
+const BUY_SOL = "0.6";
+const ROUNDS = 3;
 const SUPPLY = 1_000_000n * 10n ** BigInt(DECIMALS);
 
 const rpc = createSolanaRpc(RPC);
@@ -262,7 +267,7 @@ try {
   await createPanel.getByRole("textbox", { name: /^token_mint a mint, by its address$/ }).fill(token.mint);
   await createPanel.getByLabel("The facts of token_mint").waitFor({ timeout: 60_000 });
   await createPanel.getByRole("textbox", { name: /\btoken_amount u64\b/ }).fill("1000000");
-  await createPanel.getByRole("textbox", { name: /\bsol_amount u64\b/ }).fill("1");
+  await createPanel.getByRole("textbox", { name: /\bsol_amount u64\b/ }).fill(SEED_SOL);
   await shot(page, "create-filled");
   const created = await simulateAndSign(page, createPanel, "Simulate creating and seeding the market", "Review the new market", "create-and-seed");
   await createPanel.getByRole("link", { name: "Open the new market's page" }).click({ timeout: 120_000 });
@@ -276,11 +281,15 @@ try {
   await page.getByRole("region", { name: "Buy wall AMM" }).getByText("Read from the market's state at slot").waitFor({ timeout: 60_000 });
   await shot(page, "market-new");
   await photograph(browser, trader, `/markets/${market}`, "market-new", async (p) => void (await p.getByRole("region", { name: "Buy wall AMM" }).getByText("Read from the market's state").waitFor({ timeout: 60_000 })));
-  await page.getByRole("region", { name: "Swap", exact: true }).waitFor();
-  await swap(page, "1.5", "new-buy");
-  const bought = await until("the bought tokens", async () => (await tokenBalance(trader.address, token.mint, TOKEN_2022_PROGRAM_ADDRESS)) || null, 60_000);
-  await page.getByRole("region", { name: "Swap", exact: true }).getByRole("button", { name: "Switch the two sides" }).click();
-  await swap(page, String(Number(bought) / 10 ** DECIMALS), "new-sell");
+  // Rounds of a buy and a sell back: the wall's share of their fees, and the trims as the cap falls, build idle SOL past WALL_THRESHOLD.
+  for (let round = 1; round <= ROUNDS; round++) {
+    await page.getByRole("region", { name: "Swap", exact: true }).waitFor();
+    await swap(page, BUY_SOL, `new-buy-${round}`);
+    const bought = await until("the bought tokens", async () => (await tokenBalance(trader.address, token.mint, TOKEN_2022_PROGRAM_ADDRESS)) || null, 60_000);
+    await page.getByRole("region", { name: "Swap", exact: true }).getByRole("button", { name: "Switch the two sides" }).click();
+    await swap(page, String(Number(bought) / 10 ** DECIMALS), `new-sell-${round}`);
+    await page.getByRole("region", { name: "Swap", exact: true }).getByRole("button", { name: "Switch the two sides" }).click();
+  }
   const due = await until("the jobs the trades made due", async () => {
     const keys = (await keeperOf(market)).due.map((d) => d.key);
     return keys.includes("settle") && keys.includes("place_wall") && keys;
@@ -294,7 +303,7 @@ try {
   const handover = productForms(page).getByRole("region", { name: "Hand over the fee recipient role" });
   await handover.getByRole("textbox", { name: "New fee recipient" }).fill(project.address);
   await simulateAndSign(page, handover, "Simulate the handover", "Review this action", "handover-fee-recipient");
-  await handover.getByText("The role has left your wallet.").waitFor({ timeout: 60_000 });
+  await handover.getByText(/^The role has left your wallet for /).waitFor({ timeout: 60_000 });
   await shot(page, "handover-confirmed-kept");
   await handover.getByRole("button", { name: "Done" }).click();
   await until("the handover form to leave", async () => {

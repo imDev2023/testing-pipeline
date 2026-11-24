@@ -25,7 +25,7 @@ import { PanelFrame, useLoad, type Loaded } from "@/components/Panel";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { BRAND } from "@/brand";
 import type { MintInfo } from "@/formValues";
-import { formatAge, formatTokenAmount } from "@/format";
+import { formatAge, formatTokenAmount, shortAddress } from "@/format";
 import { formatSol, outcomeText, waitingReason } from "@/keeperText";
 import { ROUTES } from "@/routes";
 import { decodedRead, UNREADABLE } from "./BuyWallPanel";
@@ -268,21 +268,23 @@ function Handover({ market, action, role, current, holds, onStart, onLeave }: { 
       <p className={forms.line}>
         {holds
           ? `Your wallet is this market's ${role}. You can hand the role, and everything it is owed, to another wallet in one step; nobody else can, and it cannot be undone except by the new holder. Check the address: a mistyped wallet keeps the role for good.`
-          : `The role has left your wallet.`}
+          : `The role has left your wallet for ${shortAddress(next)}.`}
       </p>
-      <div className={forms.field}>
-        <label htmlFor={`${id}-new`} className={forms.fieldLabel}>
-          New {role}
-        </label>
-        <div className={forms.control}>
-          <input id={`${id}-new`} type="text" value={typed} onChange={(e) => setTyped(e.target.value)} spellCheck={false} autoComplete="off" aria-invalid={next && problem ? true : undefined} aria-describedby={`${id}-problem`} />
+      {holds && (
+        <div className={forms.field}>
+          <label htmlFor={`${id}-new`} className={forms.fieldLabel}>
+            New {role}
+          </label>
+          <div className={forms.control}>
+            <input id={`${id}-new`} type="text" value={typed} onChange={(e) => setTyped(e.target.value)} spellCheck={false} autoComplete="off" aria-invalid={next && problem ? true : undefined} aria-describedby={`${id}-problem`} />
+          </div>
+          {next && problem && (
+            <span id={`${id}-problem`} className={forms.reason}>
+              {problem}
+            </span>
+          )}
         </div>
-        {next && problem && (
-          <span id={`${id}-problem`} className={forms.reason}>
-            {problem}
-          </span>
-        )}
-      </div>
+      )}
       <ActionButton market={market} action={action} values={{ args: { new: next }, inputs: {} }} label="Simulate the handover" disabled={problem !== null} onStart={onStart} onLeave={onLeave} />
     </section>
   );
