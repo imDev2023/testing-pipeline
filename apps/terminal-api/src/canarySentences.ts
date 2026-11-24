@@ -66,5 +66,5 @@ export function couldNotSellBack(latest: StoredCanaryResult[]): { check: string;
     .map((r) => ({ check: r.check, sentence: `In Canary's test on ${dayOf(new Date(r.record.run_at * 1000))}, ${continued(r.record.reason)}` }));
 }
 
-/** A sentence carried on after a comma: its first word lower-cased when it is an ordinary word ("A wallet", "The market creator"), never a name or a number. */
-const continued = (sentence: string) => (/^(A|An|The|All|Every|Each|One|Five|Some)\b/.test(sentence) ? sentence[0]!.toLowerCase() + sentence.slice(1) : sentence);
+/** A sentence carried on after a comma: its first word lower-cased when it is an ordinary word ("A wallet", "The market creator", a pair's "Buying mint 2:"), never a name or a number. */
+const continued = (sentence: string) => (/^(A|An|The|All|Every|Each|One|Five|Some|Buying)\b/.test(sentence) ? sentence[0]!.toLowerCase() + sentence.slice(1) : sentence);

@@ -330,7 +330,7 @@ Asking to swap never opens the wallet straight away; the trader first sees what 
      SOL and USDC read "Named by Aviary. It names SOL and USDC itself, and no other token."
 - Until the explanation and the forms land beside it, the facts panel has the lower band to itself, at its full width, its parts side by side and one under another on narrow screens (`PIPESCOPE-121`).
 - **After an upgrade** ([`pipescope.md`](pipescope.md), When a strategy is upgraded): the notice "Upgraded on <date>; tests and explanation for this version are pending." sits under the page's head, and Canary's part and the explanation each read as pending until the new version has its own.
-  As built (`PIPESCOPE-139`): the notice is shown while the strategy's current version has no Canary result of its own and an older version is recorded: on a market page until that market has one, on the strategy page until any of its markets has one; the date is the day the upgrade's transaction landed, or the day Aviary first saw the version when that transaction is not found yet.
+  As built (`PIPESCOPE-139`): the notice is shown while the strategy's current version has no Canary result of its own and an older version is recorded: on a market page created before the upgrade until that market has one, since a market made since never saw the version before, and on the strategy page until any of its markets has one; the date is the day the upgrade's transaction landed, or the day Aviary first saw the version when that transaction is not found yet.
   The explanation's own part reads as pending until it exists ([Aviary: the explanation on the pages](https://github.com/imDev2023/testing-pipeline/issues/127)).
 
 ### Arriving from Telegram

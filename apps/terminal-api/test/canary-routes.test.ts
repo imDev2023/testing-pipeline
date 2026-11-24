@@ -144,7 +144,7 @@ describe("GET /v1/markets/{market}/canary", () => {
 
   it("keeps an older version's results attached to it, served only when that version is asked for, with no notice", async () => {
     const results = CanaryResults.parse((await get(`/v1/markets/${OPEN}/canary?version=520000000`)).body);
-    expect(results.version.current).toBe(false);
+    expect(results.version?.current).toBe(false);
     expect(results.results.map((r) => [r.check, r.outcome, r.slot])).toEqual([["exit_sizes", "pass", 520_100_000]]);
     expect(results.could_not_sell_back).toEqual([]);
   });

@@ -136,7 +136,15 @@ function Steps({ group, mints, pairs }: { group: CanaryResult["steps"][number]; 
               </span>
             </td>
             <td className={step.state === "back" ? styles.value : `${styles.value} ${styles.stuck}`}>
-              {step.state === "back" ? (step.return_ppm === null ? "sold back" : `${formatPercentPpm(step.return_ppm)} back`) : step.state === "stuck" ? "could not sell back" : "could not be bought"}
+              {step.state === "back"
+                ? step.return_ppm === null
+                  ? "sold back"
+                  : `${formatPercentPpm(step.return_ppm)} back`
+                : step.state === "stuck"
+                  ? "could not sell back"
+                  : step.state === "not bought"
+                    ? "could not be bought"
+                    : "did not round-trip"}
             </td>
           </tr>
         ))}

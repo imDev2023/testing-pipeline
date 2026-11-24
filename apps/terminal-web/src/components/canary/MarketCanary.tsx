@@ -32,12 +32,14 @@ export function StrandedHead() {
 
 /** In place of a stranded market's trade box: why it cannot trade, and what its vaults still hold. */
 export function StrandedPanel({ market, canary }: { market: Market; canary: CanaryResults }) {
-  const deployedAt = canary.version.deployed_at;
+  // A stranded market has results, so its strategy's version is recorded.
+  const version = canary.version!;
+  const deployedAt = version.deployed_at;
   const leftBehind = deployedAt !== null && new Date(market.created_at) < new Date(deployedAt);
   return (
     <section className={styles.stranded} aria-label="This market cannot be traded">
       <p>
-        This market cannot be traded through Pipeline. The current version of its strategy, deployed in slot {formatInteger(canary.version.deploy_slot)}, cannot read this market&apos;s state, so it can give no quote and take no swap.
+        This market cannot be traded through Pipeline. The current version of its strategy, deployed in slot {formatInteger(version.deploy_slot)}, cannot read this market&apos;s state, so it can give no quote and take no swap.
         {leftBehind && " The market was left behind by an upgrade of the strategy."}
       </p>
       <div className={styles.holdings}>

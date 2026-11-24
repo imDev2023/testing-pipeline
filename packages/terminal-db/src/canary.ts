@@ -249,7 +249,7 @@ export type CanaryRollup = { program: string; deploySlot: bigint; markets: numbe
 
 export async function readCanaryRollup(db: Db, version: CanaryVersion): Promise<CanaryRollup> {
   const rows = await db
-    .select({ market: canaryResults.market, check: canaryResults.check, outcome: canaryResults.outcome, reason: sql<string>`${canaryResults.record}->>'reason'` })
+    .select({ market: canaryResults.market, check: canaryResults.check, outcome: canaryResults.outcome, reason: sql<string>`coalesce(${canaryResults.record}->>'reason', '')` })
     .from(canaryResults)
     .where(and(eq(canaryResults.program, version.program), eq(canaryResults.deploySlot, version.deploySlot), eq(canaryResults.latest, true)))
     .orderBy(asc(canaryResults.check), asc(canaryResults.market));

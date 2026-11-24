@@ -203,7 +203,7 @@ test.describe("a strategy's page", () => {
     await page.goto(`/strategies/${STRATEGY}`);
     const section = page.getByRole("region", { name: /^Its markets/ });
     await expect(section.getByRole("heading")).toHaveText(`Its markets ${total}`);
-    await expect(section.getByRole("columnheader")).toHaveText(["Market", "Created", "Liquidity", "Volume, 24h", "Trust flags"]);
+    await expect(section.getByRole("columnheader")).toHaveText(["Market", "Created", "Liquidity", "Volume, 24h", "Canary", "Trust flags"]);
     await expect(section.getByRole("row")).toHaveCount(markets.length + 1);
     await section.getByRole("row").nth(1).getByRole("link").first().click();
     await expect(page).toHaveURL(`/markets/${markets[0]!.address}`);

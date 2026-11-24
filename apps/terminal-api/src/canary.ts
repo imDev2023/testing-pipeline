@@ -51,12 +51,16 @@ const SLOT = /^\d{1,20}$/;
 /**
  * The upgrade the pages announce while the current version has no results of its own (PIPESCOPE-19):
  * when an older version is recorded, the current one and when it was deployed, or first seen when its
- * transaction is not found yet. A strategy with one version recorded was never upgraded under Aviary.
+ * transaction is not found yet. A strategy with one version recorded was never upgraded under Aviary,
+ * and a market created since the upgrade (`marketCreatedAt`) never saw it.
  */
-export function upgradeOf(versions: readonly VersionRow[]): { deploy_slot: number; upgraded_at: string } | null {
+export function upgradeOf(versions: readonly VersionRow[], marketCreatedAt?: Date): { deploy_slot: number; upgraded_at: string } | null {
   const [current, older] = versions;
   if (!current || !older) return null;
-  return { deploy_slot: Number(current.deploySlot), upgraded_at: (current.blockTime ?? current.seenAt).toISOString() };
+  const upgradedAt = current.blockTime ?? current.seenAt;
+  // A market made on the new version never saw the one before it: nothing of it was upgraded.
+  if (marketCreatedAt && marketCreatedAt >= upgradedAt) return null;
+  return { deploy_slot: Number(current.deploySlot), upgraded_at: upgradedAt.toISOString() };
 }
 const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -82,13 +86,15 @@ const resultView = (r: StoredCanaryResult): CanaryResult => ({
 canaryRoutes.get("/v1/markets/:market/canary", async (c) => {
   const db = dbOf(c);
   const market = c.req.param("market");
-  const [row] = await db.select({ strategy: markets.strategyProgram }).from(markets).where(eq(markets.address, market));
+  const [row] = await db.select({ strategy: markets.strategyProgram, createdAt: markets.createdAt }).from(markets).where(eq(markets.address, market));
   if (!row) throw notFound("market");
   const versions = await versionsOf(db, row.strategy);
   const asked = c.req.query("version");
   if (asked !== undefined && !SLOT.test(asked)) return c.json<ApiError>({ error: "A version is the slot its strategy was deployed in, a whole number." }, 400);
+  // Before the watch records the strategy's version Canary cannot have run the market: not run yet, not a failure.
+  if (asked === undefined && !versions.length) return c.json(CanaryResults.parse({ market, version: null, results: [], could_not_sell_back: [], summary: null, upgrade: null }));
   const version = asked === undefined ? versions[0] : versions.find((v) => v.deploySlot === BigInt(asked));
-  if (!version) throw notFound(asked === undefined ? "recorded version of this market's strategy" : "version of this market's strategy deployed in that slot");
+  if (!version) throw notFound("version of this market's strategy deployed in that slot");
   const current = version === versions[0];
   const latest = inCheckOrder(await readCanaryLatest(db, { market, version: { program: version.program, deploySlot: version.deploySlot } }));
   return c.json(
@@ -98,10 +104,13 @@ canaryRoutes.get("/v1/markets/:market/canary", async (c) => {
       results: latest.map(resultView),
       could_not_sell_back: current ? couldNotSellBack(latest) : [],
       summary: marketSummary(latest),
-      upgrade: current && !latest.length ? upgradeOf(versions) : null,
+      upgrade: current && !latest.length ? upgradeOf(versions, row.createdAt) : null,
     }),
   );
 });
+
+/** The version's summary, counting its markets as its lines do: every market with any result. */
+const summaryOf = <T extends { markets: number }>(summary: T | null, markets: number): T | null => (summary ? { ...summary, markets } : null);
 
 canaryRoutes.get("/v1/strategies/:program/versions/:slot/canary", async (c) => {
   const db = dbOf(c);
@@ -125,7 +134,7 @@ canaryRoutes.get("/v1/strategies/:program/versions/:slot/canary", async (c) => {
       current: version === versions[0],
       markets: rollup.markets,
       checks: Object.fromEntries(inCheckOrder(Object.keys(rollup.checks).map((check) => ({ check }))).map(({ check }) => [check, { name: checkName(check), rank: checkRank(check), about: aboutCheck(check), ...rollup.checks[check]! }])),
-      summary: strategySummary(await readCanaryOfVersion(db, { program, deploySlot: version.deploySlot }, ["readable", "cost"])),
+      summary: summaryOf(strategySummary(await readCanaryOfVersion(db, { program, deploySlot: version.deploySlot }, ["readable", "cost"])), rollup.markets),
       upgrade: version === versions[0] && rollup.markets === 0 ? upgradeOf(versions) : null,
       last_run: run ? { trigger: run.trigger, delay_ms: run.delayMs, markets: run.markets, started_at: run.startedAt.toISOString(), finished_at: run.finishedAt?.toISOString() ?? null } : null,
     }),

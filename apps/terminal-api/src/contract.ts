@@ -721,7 +721,7 @@ export const CanaryResult = z.object({
   /** The check's plain name, as the pages list it ("Buy, then sell straight back"). */
   name: z.string(),
   /** A check that runs one round trip a step: each size, wait, wallet or buyer, grouped by the mint traded against the money side (its place in the market's mints). */
-  steps: z.array(z.object({ pair: z.number().int().nullable(), steps: z.array(z.object({ label: z.string(), state: z.enum(["back", "stuck", "not bought"]), return_ppm: z.number().int().nullable() })) })),
+  steps: z.array(z.object({ pair: z.number().int().nullable(), steps: z.array(z.object({ label: z.string(), state: z.enum(["back", "stuck", "not bought", "no round trip"]), return_ppm: z.number().int().nullable() })) })),
   /** Every distinct step the record names as refused. */
   refusals: z.array(CanaryRefusal),
   harness: z.string(),
@@ -746,7 +746,8 @@ const CanaryVersion = z.object({ program: Address, deploy_slot: z.number().int()
  */
 export const CanaryResults = z.object({
   market: Address,
-  version: CanaryVersion,
+  /** Null before the watch has recorded any version of the market's strategy: Canary has not run it. */
+  version: CanaryVersion.nullable(),
   /** In the checks' fixed order (PIPESCOPE-137). */
   results: z.array(CanaryResult),
   could_not_sell_back: z.array(z.object({ check: z.string(), sentence: z.string() })),

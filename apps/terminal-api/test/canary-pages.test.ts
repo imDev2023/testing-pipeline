@@ -21,6 +21,12 @@ const UPGRADED_MARKET = "UpgradedMarket11111111111111111111111111111";
 const FRESH = "Fresh11111111111111111111111111111111111111";
 const FRESH_MARKET = "FreshMarket1111111111111111111111111111111";
 const UPGRADED_AT = new Date("2026-11-24T10:00:00Z");
+// A market made on the upgraded strategy after its upgrade, a market of a strategy whose version is not
+// recorded yet, and a second market of the sniper strategy with only its conformance report.
+const AFTER_MARKET = "AfterUpgradeMarket111111111111111111111111";
+const UNWATCHED = "Unwatched1111111111111111111111111111111111";
+const UNWATCHED_MARKET = "UnwatchedMarket111111111111111111111111111";
+const PARTIAL_MARKET = "PartialMarket11111111111111111111111111111";
 
 let database: Awaited<ReturnType<typeof createTestDatabase>>;
 
@@ -60,6 +66,23 @@ beforeAll(async () => {
         { market: address, position: 1, mint: WSOL, vault: null, vaultAmount: "2000" },
       ]);
     }
+    await db.insert(strategies).values({ program: UNWATCHED, metadataUri: "https://example.org/unwatched.json", registeredAt: new Date("2026-11-01T00:00:00Z") });
+    for (const [address, program, createdAt] of [
+      [AFTER_MARKET, UPGRADED, new Date("2026-11-24T12:00:00Z")],
+      [UNWATCHED_MARKET, UNWATCHED, new Date("2026-11-10T00:00:00Z")],
+      [PARTIAL_MARKET, RECORDS.sniper![0]!.strategy!, new Date("2026-11-10T00:00:00Z")],
+    ] as const) {
+      await db.insert(markets).values({ address, strategyProgram: program, marketState: address, createdBy: CREATOR, createdAt });
+      await db.insert(marketMints).values([
+        { market: address, position: 0, mint: `Tok${address.slice(3)}`, vault: null, vaultAmount: "1000" },
+        { market: address, position: 1, mint: WSOL, vault: null, vaultAmount: "2000" },
+      ]);
+    }
+    const sniper = RECORDS.sniper![0]!;
+    const sniperVersion = { program: sniper.strategy!, deploySlot: BigInt(sniper.strategy_version.deploy_slot!) };
+    const partialRun = await startCanaryRun(db, { version: sniperVersion, trigger: "sweep", delayMs: 0, markets: [PARTIAL_MARKET] });
+    const conformance = { ...RECORDS.sniper!.find((r) => r.check === "conformance")!, market: PARTIAL_MARKET };
+    await storeCanaryMarket(db, { runId: partialRun, version: sniperVersion, market: PARTIAL_MARKET, records: [{ ...conformance, id: `conformance:${PARTIAL_MARKET}` }], notes: [], rounds: 1, rpcRequests: 7, containerMs: 1000 });
     // The first version's results, which the pages no longer show as the strategy's.
     const old = { program: UPGRADED, deploySlot: 100n };
     const oldRun = await startCanaryRun(db, { version: old, trigger: "sweep", delayMs: 0, markets: [UPGRADED_MARKET] });
@@ -189,6 +212,18 @@ describe("after an upgrade", () => {
     expect(rollup.summary).toBeNull();
   });
 
+  it("announces nothing on a market made after the upgrade, which never saw the version before", async () => {
+    const canary = CanaryResults.parse((await get(`/v1/markets/${AFTER_MARKET}/canary`)).body);
+    expect(canary.summary).toBeNull();
+    expect(canary.upgrade).toBeNull();
+  });
+
+  it("answers a market whose strategy's version is not recorded yet as not run, never as a failure", async () => {
+    const { status, body } = await get(`/v1/markets/${UNWATCHED_MARKET}/canary`);
+    expect(status).toBe(200);
+    expect(CanaryResults.parse(body)).toEqual(expect.objectContaining({ version: null, results: [], summary: null, upgrade: null, could_not_sell_back: [] }));
+  });
+
   it("announces nothing for a strategy never upgraded, nor for one whose new version has results", async () => {
     expect(CanaryResults.parse((await get(`/v1/markets/${FRESH_MARKET}/canary`)).body).upgrade).toBeNull();
     expect(CanaryResults.parse((await get(`/v1/markets/${market("open_curve")}/canary`)).body).upgrade).toBeNull();
@@ -221,6 +256,13 @@ describe("the feed's rows", () => {
 });
 
 describe("a strategy version's roll-up", () => {
+  it("counts the version's markets the same way in its sentence and in its lines", async () => {
+    const sniper = RECORDS.sniper![0]!;
+    const rollup = CanaryRollup.parse((await get(`/v1/strategies/${sniper.strategy}/versions/${sniper.strategy_version.deploy_slot}/canary`)).body);
+    expect(rollup.markets).toBe(2);
+    expect(rollup.summary?.markets).toBe(2);
+  });
+
   it("names each check plainly, in the fixed order, with the markets that warn or fail and each one's sentence", async () => {
     const rollup = CanaryRollup.parse((await get(`/v1/strategies/ETrmUegraeyB7B6fXBfANmV7w9aEwM3wUEUzFHqo5zAb/versions/525565903/canary`)).body);
     const lines = Object.entries(rollup.checks).sort(([, a], [, b]) => a.rank - b.rank);

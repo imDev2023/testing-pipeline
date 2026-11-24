@@ -2523,7 +2523,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-139: When the upgrade notice shows
 
 - Question: When do the strategy page and its market pages carry "Upgraded on <date>; tests and explanation for this version are pending.", and what date does it name?
-- Answer: While the strategy's current version has no Canary result of its own and an older version is recorded: on a market page until that market has one, on the strategy page until any of its markets has one; the date is the day the upgrade's transaction landed, or the day Aviary first saw the version; the explanation's own part reads as pending until it exists (#127).
+- Answer: While the strategy's current version has no Canary result of its own and an older version is recorded: on a market page created before the upgrade until that market has one (a market made since never saw the version before), on the strategy page until any of its markets has one; a market whose strategy has no version recorded yet reads as not run, never as a failure; the date is the day the upgrade's transaction landed, or the day Aviary first saw the version; the explanation's own part reads as pending until it exists (#127).
 - Alternatives: Keeping the notice until the explanation exists too, which waits on the owner's approval of a paid call and could hold it for days after the tests are in.
 - Specified in: [`docs/spec/pipescope-screens.md`, Explanation, actions and facts](spec/pipescope-screens.md#explanation-actions-and-facts)
 - Changes by: spec only

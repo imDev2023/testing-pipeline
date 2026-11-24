@@ -171,7 +171,7 @@ try {
   for (const market of markets) {
     await until(`${market}'s first results on version ${seen.version}`, async () => {
       const r = await canaryOf(market);
-      return r.version.deploy_slot === seen.version && r.summary !== null;
+      return r.version?.deploy_slot === seen.version && r.summary !== null;
     }, 300_000, 2_000);
     const now = await says(`/markets/${market}`);
     log(`/markets/${market} with version ${seen.version}'s results: notice ${now.notice ? "shown" : "none"}; Canary's results ${now.results ? "shown" : "not shown"}`);

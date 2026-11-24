@@ -65,6 +65,8 @@ type RecordedRoundTrip = {
   position?: string;
   who?: string;
   fresh?: boolean;
+  /** A `cost` row, which records only a return. */
+  cost?: boolean;
 };
 
 const isFailure = (value: unknown): value is RecordedFailure => typeof value === "object" && value !== null && "class" in value && "stage" in value && "program" in value;
@@ -127,7 +129,7 @@ export function refusalsIn(numbers: unknown): Refusal[] {
     if (Array.isArray(value)) return value.forEach(walk);
     if (typeof value !== "object" || value === null) return;
     if (isFailure(value)) {
-      const key = `${value.program}:${value.code}:${value.stage}:${value.class}`;
+      const key = `${value.program}:${value.code}:${value.stage}:${value.class}:${value.anchor?.number ?? ""}:${value.error ?? ""}`;
       if (!seen.has(key)) {
         seen.add(key);
         found.push(refusalOf(value));
@@ -218,7 +220,8 @@ function roundTrips(r: StoredCanaryResult): { pair: number | null; rows: { label
       case "exit_queue":
         return { pair: token, rows: list("buyers").map((trip, i) => ({ label: `buyer ${i + 1}`, trip })) };
       case "cost":
-        return { pair: token, rows: list("returns").map((trip) => ({ label: trip.amount_words ?? "a size", trip: { ...trip, bought: true, sold_back: true } })) };
+        // `cost` records only what came back: a size with no return did not round-trip, its failure named by `exit_sizes`.
+        return { pair: token, rows: list("returns").map((trip) => ({ label: trip.amount_words ?? "a size", trip: { ...trip, cost: true } })) };
       default:
         return { pair: token, rows: [] };
     }
@@ -228,8 +231,8 @@ function roundTrips(r: StoredCanaryResult): { pair: number | null; rows: { label
 /** One step of a result: a size, a wait, a wallet or a buyer, with what came back. */
 export type Step = {
   label: string;
-  /** Sold back with this much of what was put in; could not sell back what it bought; or could not buy. */
-  state: "back" | "stuck" | "not bought";
+  /** Sold back with this much of what was put in; could not sell back what it bought; could not buy; or, in `cost`, did not round-trip. */
+  state: "back" | "stuck" | "not bought" | "no round trip";
   return_ppm: number | null;
 };
 
@@ -239,6 +242,7 @@ export function stepsOf(r: StoredCanaryResult): { pair: number | null; steps: St
     .map(({ pair, rows }) => ({
       pair,
       steps: rows.map(({ label, trip }): Step => {
+        if (trip.cost) return trip.return_ppm == null ? { label, state: "no round trip", return_ppm: null } : { label, state: "back", return_ppm: trip.return_ppm };
         if (trip.bought === false) return { label, state: "not bought", return_ppm: null };
         if (trip.sold_back === false) return { label, state: "stuck", return_ppm: null };
         return { label, state: "back", return_ppm: trip.return_ppm ?? null };
@@ -257,14 +261,19 @@ export function phraseOf(r: StoredCanaryResult): string {
       break;
     }
     case "exit_sizes": {
-      const stuck = groups.findIndex((s) => s.state === "stuck");
-      if (stuck === 0) return "a buy of the smallest size could not be sold back";
-      if (stuck > 0) return `buys of ${groups[stuck]!.label} or more could not sell back`;
+      // Per pair, the first size that could not sell back; the pair that traps the smallest size is named.
+      const stuckAt = stepsOf(r)
+        .map((g) => ({ steps: g.steps, at: g.steps.findIndex((step) => step.state === "stuck") }))
+        .filter((g) => g.at >= 0)
+        .sort((a, b) => a.at - b.at)[0];
+      if (stuckAt?.at === 0) return "a buy of the smallest size could not be sold back";
+      if (stuckAt) return `buys of ${stuckAt.steps[stuckAt.at]!.label} or more could not sell back`;
       break;
     }
     case "exit_queue": {
       const trips = roundTrips(r).flatMap((g) => g.rows.map((row) => row.trip as RecordedRoundTrip & { put_in?: number; got_back?: number | null }));
-      if (trips.some((t) => t.sold_back === false)) return "one of five buyers leaving in turn could not sell back";
+      if (trips.some((t) => t.bought !== false && t.sold_back === false)) return "one of five buyers leaving in turn could not sell back";
+      if (trips.some((t) => t.bought === false)) return "one of five buyers leaving in turn could not buy";
       const putIn = trips.reduce((n, t) => n + (t.put_in ?? 0), 0);
       const back = trips.reduce((n, t) => n + (t.got_back ?? 0), 0);
       if (putIn > 0) return `five buyers leaving in turn got back ${percentOf((back / putIn) * 1_000_000)} together`;
@@ -279,7 +288,7 @@ export function phraseOf(r: StoredCanaryResult): string {
     case "exit_hold":
     case "exit_late": {
       const bad = groups.find((s) => s.state !== "back");
-      if (bad) return `${bad.label}, the tokens could not be sold back`;
+      if (bad) return `${bad.label}, ${bad.state === "stuck" ? "the tokens could not be sold back" : "the buy failed"}`;
       break;
     }
   }
