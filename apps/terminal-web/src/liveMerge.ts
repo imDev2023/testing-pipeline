@@ -55,9 +55,15 @@ export type ReadTrade = {
   received: { mint: string; amount: number | null };
   /** The quote mint for one of the base mint, or null when a mint's decimals are not read. */
   price: number | null;
+  /**
+   * The pair the side and price are read for: the pair on show (`onShow`), flipped or not, when the
+   * trade is between its two mints; else, on a market of three or four mints, the trade's own pair,
+   * as the API gives it, so a trade is never priced in mints the pair on show does not hold.
+   */
+  pricedIn: { base: string; quote: string; onShow: boolean };
 };
 
-/** A trade read for the pair on show (the API's, or flipped): its side, what it paid and received in tokens, and its price. */
+/** A trade read for the pair on show (the API's, or flipped), or by its own pair when it is between two other mints: its side, what it paid and received in tokens, and its price. */
 export function readTrade(trade: Trade, pair: { base: string; quote: string }, decimals: Readonly<Record<string, number | null>>): ReadTrade {
   const tokens = (raw: string, mint: string) => {
     const d = decimals[mint];
@@ -65,9 +71,11 @@ export function readTrade(trade: Trade, pair: { base: string; quote: string }, d
   };
   const paid = { mint: trade.input_mint, amount: tokens(trade.net_sent, trade.input_mint) };
   const received = { mint: trade.output_mint, amount: tokens(trade.received, trade.output_mint) };
-  const side = trade.input_mint === pair.quote ? "Buy" : "Sell";
+  const onShow = [trade.input_mint, trade.output_mint].every((m) => m === pair.base || m === pair.quote);
+  const pricedIn = onShow ? { ...pair, onShow } : { base: trade.base_mint, quote: trade.quote_mint, onShow };
+  const side = trade.input_mint === pricedIn.quote ? "Buy" : "Sell";
   const [quote, base] = side === "Buy" ? [paid.amount, received.amount] : [received.amount, paid.amount];
-  return { side, paid, received, price: quote === null || base === null || base === 0 ? null : quote / base };
+  return { side, paid, received, price: quote === null || base === null || base === 0 ? null : quote / base, pricedIn };
 }
 
 /** Newest first, as the feed lists markets: by when they were created, then by address. */

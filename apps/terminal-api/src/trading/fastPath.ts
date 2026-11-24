@@ -43,12 +43,19 @@ async function readBack(rpcUrl: string, signature: string, words: Words): Promis
 
 /**
  * Waits until `signature` confirms, asking every `pollMs` for up to `waitMs`, and reads it back.
- * A transaction that failed on chain is a refusal, decoded from its error and logs.
+ * A transaction that failed on chain is a refusal, decoded from its error and logs; `hooks` names the
+ * transfer hook programs of the mints it moved, asked only then.
  */
 export async function awaitTrade(
   rpcUrl: string,
   signature: string,
-  { pollMs = FAST_PATH_CONFIRMATION_POLL_MS, waitMs = FAST_PATH_WAIT_MS, strategy = null, words = SWAP_WORDS }: { pollMs?: number; waitMs?: number; strategy?: string | null; words?: Words } = {},
+  {
+    pollMs = FAST_PATH_CONFIRMATION_POLL_MS,
+    waitMs = FAST_PATH_WAIT_MS,
+    strategy = null,
+    words = SWAP_WORDS,
+    hooks = async () => [],
+  }: { pollMs?: number; waitMs?: number; strategy?: string | null; words?: Words; hooks?: () => Promise<readonly string[]> } = {},
 ): Promise<RawWithLogs> {
   const until = Date.now() + waitMs;
   for (;;) {
@@ -57,7 +64,12 @@ export async function awaitTrade(
     if (status && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) {
       const raw = await readBack(rpcUrl, signature, words);
       if (status.err !== null || raw.meta?.err) {
-        const failure = decodeFailure(status.err ?? raw.meta?.err, raw.meta?.logMessages ?? [], { strategy: strategy ?? "" });
+        // The mints' transfer hooks are read only for a transaction that failed, so a refusal by one is named as the hook's.
+        const failure = decodeFailure(status.err ?? raw.meta?.err, raw.meta?.logMessages ?? [], {
+          strategy: strategy ?? "",
+          hooks: await hooks().catch(() => []),
+          act: words === SWAP_WORDS ? "swap" : "transaction",
+        });
         throw new Refused({ ...failure, sentence: `${words.failed} ${continued(failure.sentence)}` }, raw.meta?.logMessages ?? []);
       }
       return raw;

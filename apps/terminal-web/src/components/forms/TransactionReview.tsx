@@ -12,7 +12,7 @@ import type { ReactNode } from "react";
 import { TransactionReport, type Failure, type TransactionSimulation } from "terminal-api/contract";
 import { ApiFailure, postToApi } from "@/api";
 import { BRAND } from "@/brand";
-import { EXPLORER, FAILED_SIMULATION_LOG_LINES, PREPARED_SWAP_MAX_AGE_MS } from "@/config";
+import { EXPLORER, FAILED_SIMULATION_LOG_LINES, PREPARED_TRANSACTION_MAX_AGE_MS } from "@/config";
 import { formatInteger, formatTokenAmount, shortAddress } from "@/format";
 import type { MintInfo } from "@/formValues";
 import { MintLabel } from "../MintLabel";
@@ -225,7 +225,7 @@ function SignControls<P extends Prepared>({ account, prepared, at, signing, onBa
   const signAndSend = useSignAndSendTransaction(account, chain);
   const sign = async () => {
     // A blockhash lasts about a minute: an older build is made and simulated again before the wallet is asked.
-    if (Date.now() - at > PREPARED_SWAP_MAX_AGE_MS) return onRebuild();
+    if (Date.now() - at > PREPARED_TRANSACTION_MAX_AGE_MS) return onRebuild();
     onSigning();
     let signature: string;
     try {

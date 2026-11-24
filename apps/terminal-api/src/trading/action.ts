@@ -171,7 +171,7 @@ export function measureWallet(input: { trader: Address; watched: readonly Addres
  */
 export async function prepareTransaction(
   rpc: Rpc<SolanaRpcApi>,
-  input: { instructions: Instruction[]; trader: Address; strategy: string; market: Address | null; what: string },
+  input: { instructions: Instruction[]; trader: Address; strategy: string; market: Address | null; what: string; hooks?: readonly string[] },
 ): Promise<{ transaction: string | null; simulation: TransactionSimulation }> {
   const { instructions, trader } = input;
   const writable = instructions.flatMap((i) => (i.accounts ?? []).filter((a) => a.role === AccountRole.WRITABLE || a.role === AccountRole.WRITABLE_SIGNER).map((a) => a.address));
@@ -193,7 +193,7 @@ export async function prepareTransaction(
   const logs = [...(value.logs ?? [])];
   const units = value.unitsConsumed === undefined ? null : Number(value.unitsConsumed);
   const common = { logs, compute_units: units, network_fee: String(networkFee) };
-  if (value.err !== null) return { transaction: null, simulation: { ok: false, failure: decodeFailure(value.err, logs, { strategy: input.strategy }), changes: [], new_accounts: [], ...common } };
+  if (value.err !== null) return { transaction: null, simulation: { ok: false, failure: decodeFailure(value.err, logs, { strategy: input.strategy, hooks: input.hooks ?? [], act: "transaction" }), changes: [], new_accounts: [], ...common } };
   const held = (a: { lamports: bigint; owner: string; data: unknown } | null): Held => (a && a.lamports > 0n ? { lamports: a.lamports, owner: a.owner, data: a.data as readonly [string, string] } : null);
   const measured = measureWallet({ trader, watched, before: before.value.map(held), after: (value.accounts ?? []).map(held) });
   return { transaction: fitted.wire, simulation: { ok: true, failure: null, ...measured, ...common } };

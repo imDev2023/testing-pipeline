@@ -1,0 +1,153 @@
+/* The wallet page (docs/spec/pipescope-screens.md, Wallet page): its head, then one column of panels.
+   Its tables are the listings' (../ListingTable.module.css), rows on wide screens and labelled blocks
+   at 720 px and narrower, by the tokens in theme.css that hold that width. */
+.page {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.panel {
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 16px 20px 20px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  min-width: 0;
+}
+
+.panel p {
+  max-width: 760px;
+}
+
+.title {
+  font-size: 1.05em;
+}
+
+/* The connected wallet: its whole address with Copy and the explorer, its SOL, and Disconnect. */
+.walletHead {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  min-width: 0;
+}
+
+.primary {
+  min-height: 44px;
+  font-weight: var(--strong-weight);
+  background: var(--ink);
+  color: var(--sheet);
+  border-color: var(--ink);
+}
+
+.primary:hover {
+  border-color: var(--ink);
+}
+
+/* The review of an unwrap reads at the trade box's width, whatever the page's. */
+.unwrapReview {
+  max-width: 560px;
+}
+
+.note {
+  color: var(--ink3);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.holdings th,
+.swaps th {
+  font-weight: var(--strong-weight);
+}
+
+/* A row: as a table row on wide screens; at 720 px and narrower a block of two columns, the markets
+   and the fees across both. */
+.row {
+  display: var(--table-row-display);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px 16px;
+  padding: var(--listing-row-padding);
+}
+
+.row + .row {
+  border-top: var(--listing-row-rule) solid var(--rule);
+}
+
+.row td {
+  display: var(--table-cell-display);
+  align-content: start;
+  padding: var(--listing-cell-padding);
+  vertical-align: top;
+  min-width: 0;
+}
+
+.row + .row td {
+  border-top: var(--listing-cell-rule) solid var(--rule);
+}
+
+.holdings th:first-child,
+.holdings td:first-child,
+.swaps th:first-child,
+.swaps td:first-child {
+  padding-left: 0;
+}
+
+.holdings th:last-child,
+.holdings td:last-child,
+.swaps th:last-child,
+.swaps td:last-child {
+  padding-right: 0;
+}
+
+.markets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.marketLink {
+  text-decoration-color: var(--rule2);
+  text-underline-offset: 3px;
+}
+
+.marketLink:hover {
+  text-decoration-color: var(--ink);
+}
+
+/* The market's own short address, where two markets of one list trade the same pair. */
+.marketAddress {
+  color: var(--ink3);
+}
+
+/* An amount: its number and its mint on one line when the column has room, else the mint on the next,
+   so a narrow column never runs into the one beside it. */
+.amount {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: var(--listing-number-align);
+  column-gap: 0.3em;
+  max-width: 100%;
+}
+
+.fees {
+  display: grid;
+  gap: 2px;
+  justify-items: var(--listing-number-align);
+}
+
+.more {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}

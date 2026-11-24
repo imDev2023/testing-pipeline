@@ -99,6 +99,9 @@ importers:
       '@solana-program/token':
         specifier: 0.18.0
         version: 0.18.0(@solana/kit@8.6.0(typescript@6.0.3))
+      '@solana-program/token-2022':
+        specifier: 0.20.0
+        version: 0.20.0(@solana/kit@8.6.0(typescript@6.0.3))(@solana/sysvars@8.6.0(typescript@6.0.3))
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@6.0.3)
@@ -562,6 +565,9 @@ importers:
       '@solana-program/token':
         specifier: 0.18.0
         version: 0.18.0(@solana/kit@8.6.0(typescript@6.0.3))
+      '@solana-program/token-2022':
+        specifier: 0.20.0
+        version: 0.20.0(@solana/kit@8.6.0(typescript@6.0.3))(@solana/sysvars@8.6.0(typescript@6.0.3))
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@6.0.3)
@@ -574,6 +580,9 @@ importers:
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@cloudflare/workers-types@5.20261121.1)(@opentelemetry/api@1.10.0)(postgres@3.4.9)
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
       postgres:
         specifier: 3.4.9
         version: 3.4.9
@@ -6138,6 +6147,11 @@ snapshots:
       '@smithy/core': 3.41.0
       tslib: 2.9.1
 
+  '@solana-program/record@0.6.0(@solana/kit@8.6.0(typescript@6.0.3))':
+    dependencies:
+      '@solana-program/system': 0.16.0(@solana/kit@8.6.0(typescript@6.0.3))
+      '@solana/kit': 8.6.0(typescript@6.0.3)
+
   '@solana-program/record@0.6.0(@solana/kit@8.6.0(typescript@7.0.2))':
     dependencies:
       '@solana-program/system': 0.16.0(@solana/kit@8.6.0(typescript@7.0.2))
@@ -6150,6 +6164,14 @@ snapshots:
   '@solana-program/system@0.16.0(@solana/kit@8.6.0(typescript@7.0.2))':
     dependencies:
       '@solana/kit': 8.6.0(typescript@7.0.2)
+
+  '@solana-program/token-2022@0.20.0(@solana/kit@8.6.0(typescript@6.0.3))(@solana/sysvars@8.6.0(typescript@6.0.3))':
+    dependencies:
+      '@solana-program/record': 0.6.0(@solana/kit@8.6.0(typescript@6.0.3))
+      '@solana-program/system': 0.16.0(@solana/kit@8.6.0(typescript@6.0.3))
+      '@solana-program/zk-elgamal-proof': 0.5.0(@solana/kit@8.6.0(typescript@6.0.3))
+      '@solana/kit': 8.6.0(typescript@6.0.3)
+      '@solana/sysvars': 8.6.0(typescript@6.0.3)
 
   '@solana-program/token-2022@0.20.0(@solana/kit@8.6.0(typescript@7.0.2))(@solana/sysvars@8.6.0(typescript@7.0.2))':
     dependencies:
@@ -6168,6 +6190,11 @@ snapshots:
     dependencies:
       '@solana-program/system': 0.16.0(@solana/kit@8.6.0(typescript@7.0.2))
       '@solana/kit': 8.6.0(typescript@7.0.2)
+
+  '@solana-program/zk-elgamal-proof@0.5.0(@solana/kit@8.6.0(typescript@6.0.3))':
+    dependencies:
+      '@solana-program/system': 0.16.0(@solana/kit@8.6.0(typescript@6.0.3))
+      '@solana/kit': 8.6.0(typescript@6.0.3)
 
   '@solana-program/zk-elgamal-proof@0.5.0(@solana/kit@8.6.0(typescript@7.0.2))':
     dependencies:

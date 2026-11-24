@@ -53,6 +53,24 @@ const pinnedToSlot = (params: unknown) => Array.isArray(params) && params.some((
 /** A request's key: its method and parameters, which is all a recorded answer depends on. */
 const keyOf = (method: string, params: unknown) => `${method} ${JSON.stringify(params ?? [])}`;
 
+type HistoryParams = [string, { transactionDetails?: string; sortOrder?: string; limit?: number; commitment?: string; paginationToken?: string }];
+
+/**
+ * The answer a recording implies without holding it: a page of an account's history after a cursor,
+ * when the recording's own check of that cursor (terminal-indexer's `hasAfter`, signatures, a limit of
+ * one) found nothing after it. The indexer asks one or the other after its backfill depending on
+ * whether every market has been read yet, which a recording cannot promise to match, so the empty page
+ * the check implies is served rather than failing a replay on timing.
+ */
+function impliedAnswer(recording: Recording, method: string, params: unknown): { result: unknown } | null {
+  if (method !== "getTransactionsForAddress" || !Array.isArray(params)) return null;
+  const [account, options] = params as HistoryParams;
+  if (options?.transactionDetails !== "full" || !options.paginationToken) return null;
+  const check = recording[keyOf(method, [account, { transactionDetails: "signatures", sortOrder: options.sortOrder, limit: 1, commitment: options.commitment, paginationToken: options.paginationToken }])];
+  const found = (check?.result as { data?: unknown[] } | undefined)?.data;
+  return found && found.length === 0 ? { result: { data: [], paginationToken: null } } : null;
+}
+
 type Recording = Record<string, { result?: unknown; error?: unknown }>;
 
 /**
@@ -134,7 +152,7 @@ export function serveRpc(options: { upstream?: string } = {}): Promise<Server> {
       }
       const { id, method, params } = JSON.parse(body) as { id: number; method: string; params?: unknown };
       const key = keyOf(method, params);
-      let answer = recording[key];
+      let answer = recording[key] ?? (options.upstream ? undefined : (impliedAnswer(recording, method, params) ?? undefined));
       if (!answer && options.upstream) {
         // Only a result is recorded: a refusal (a rate limit, a node behind) is passed on and asked again next time.
         try {

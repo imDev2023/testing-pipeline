@@ -7,6 +7,7 @@ export const ROUTES = {
   create: "/create",
   createWith: (strategy: string) => `/create?strategy=${encodeURIComponent(strategy)}`,
   keeper: "/keeper",
+  wallet: "/wallet",
   search: (query: string) => `/search?q=${encodeURIComponent(query)}`,
   market: (address: string) => `/markets/${address}`,
   strategy: (address: string) => `/strategies/${address}`,
