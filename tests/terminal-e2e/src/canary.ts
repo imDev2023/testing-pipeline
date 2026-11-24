@@ -6,9 +6,10 @@
 //
 // On the recorded fixtures every one of those versions is the market's strategy's current version, so
 // a market whose version differs means the recording moved on: take the records again from a sweep of
-// the new recording's moment. On live devnet a strategy upgraded since is skipped, and says so.
+// the new recording's moment. On live devnet a strategy upgraded since is skipped, and says so, and a
+// market that already has results of its own, as on a local run with Canary's container, keeps them.
 import { readFileSync } from "node:fs";
-import { createDb, finishCanaryRun, programVersions, startCanaryRun, storeCanaryMarket, type CanaryRecord } from "terminal-db";
+import { createDb, finishCanaryRun, programVersions, readCanaryLatest, startCanaryRun, storeCanaryMarket, type CanaryRecord } from "terminal-db";
 import { desc, eq } from "drizzle-orm";
 import { RPC_MODE } from "./target";
 
@@ -38,6 +39,8 @@ export async function seedCanaryResults(): Promise<void> {
         continue;
       }
       const version = { program: first.strategy!, deploySlot: current.deploySlot };
+      // A market Canary has already run under this version (a live run with the container) keeps its own results.
+      if ((await readCanaryLatest(db, { market: first.market, version })).length) continue;
       const runId = await startCanaryRun(db, { version, trigger: "sweep", delayMs: 0, markets: [first.market] });
       // A record already stored (a database reused from an earlier run) is skipped by its id.
       await storeCanaryMarket(db, { runId, version, market: first.market, records, notes: ["seeded by the end-to-end tests"], rounds: 1, rpcRequests: 0, containerMs: 0 });
