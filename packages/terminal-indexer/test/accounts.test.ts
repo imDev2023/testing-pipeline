@@ -78,7 +78,7 @@ beforeAll(async () => {
   rpc.accounts.set(TOKEN, { owner: TOKEN_2022, data: mintAccount({ supply: 10n ** 15n, decimals: 6, mintAuthority: AUTHORITY, freezeAuthority: null }) });
   rpc.accounts.set(WSOL, { owner: TOKEN_PROGRAM, data: mintAccount({ supply: 0n, decimals: 9, mintAuthority: null, freezeAuthority: null }) });
   rpc.accounts.set(await metadataAddress(TOKEN), { owner: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s", data: Uint8Array.from([4, 5, 6]) });
-  await indexTransactions(client.db, pipelineHandler(), [created]);
+  await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [created]);
 });
 afterAll(async () => {
   await rpc?.close();

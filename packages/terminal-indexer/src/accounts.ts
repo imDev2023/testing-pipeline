@@ -169,11 +169,30 @@ export async function refreshMints(db: Db, rpcUrl: string): Promise<number> {
  * unreadable, with `mint-unreadable`.
  */
 async function readMints(db: Db, rpcUrl: string, wanted: string[]): Promise<void> {
+  const rows = await readMintRows(rpcUrl, wanted);
+  if (!rows.length) return;
+  const set = Object.fromEntries(
+    (["readable", "tokenProgram", "decimals", "supply", "mintAuthority", "freezeAuthority", "data", "metadataData", "readSlot", "flags", "readEpoch", "symbol", "name", "tokenUri"] as const).map((k) => [k, sql.raw(`excluded.${mints[k].name}`)]),
+  );
+  // In parts, so a refresh of every mint never makes one statement too large to build or to send.
+  for (let i = 0; i < rows.length; i += MINTS_PER_WRITE) {
+    await db.insert(mints).values(rows.slice(i, i + MINTS_PER_WRITE)).onConflictDoUpdate({ target: mints.address, set });
+  }
+}
+
+export type MintRow = typeof mints.$inferInsert;
+
+/**
+ * Mints as rows of `mints`, read with their Metaplex metadata accounts in as few requests as it can,
+ * and written nowhere: for the indexer's writes above, and for a mint someone types into a create
+ * form, whose facts are shown before any market holds it.
+ */
+export async function readMintRows(rpcUrl: string, wanted: string[]): Promise<MintRow[]> {
   const fresh = [...new Set(wanted)];
-  if (!fresh.length) return;
+  if (!fresh.length) return [];
   const metadata = await Promise.all(fresh.map(metadataAddress));
   const [{ slot, accounts }, { epoch }] = await Promise.all([readAccounts(rpcUrl, [...fresh, ...metadata]), rpcCall<{ epoch: number }>(rpcUrl, "getEpochInfo", [{ commitment: "confirmed" }])]);
-  const rows = fresh.map((mint, i) => {
+  const rows = fresh.map((mint, i): MintRow => {
     const info = accounts.get(mint) ?? null;
     const data = bytesOf(info);
     const metadataInfo = accounts.get(metadata[i]!) ?? null;
@@ -196,11 +215,5 @@ async function readMints(db: Db, rpcUrl: string, wanted: string[]): Promise<void
       ...(readable ? tokenName(decoded?.extensions.tokenMetadata, metadataBytes) : { symbol: null, name: null, tokenUri: null }),
     };
   });
-  const set = Object.fromEntries(
-    (["readable", "tokenProgram", "decimals", "supply", "mintAuthority", "freezeAuthority", "data", "metadataData", "readSlot", "flags", "readEpoch", "symbol", "name", "tokenUri"] as const).map((k) => [k, sql.raw(`excluded.${mints[k].name}`)]),
-  );
-  // In parts, so a refresh of every mint never makes one statement too large to build or to send.
-  for (let i = 0; i < rows.length; i += MINTS_PER_WRITE) {
-    await db.insert(mints).values(rows.slice(i, i + MINTS_PER_WRITE)).onConflictDoUpdate({ target: mints.address, set });
-  }
+  return rows;
 }

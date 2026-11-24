@@ -1,14 +1,14 @@
 // The wallet page's endpoints (docs/spec/pipescope-screens.md, Wallet page; docs/spec/pipescope-architecture.md,
 // API: a wallet's balances "read through RPC"; #122). A wallet's swaps are the feed's trader page
-// (./feed); here are what it holds, its wrapped SOL unwrapped, and a signature waited on.
+// (./feed); here are what it holds and its wrapped SOL unwrapped, whose signature the page hands to
+// `POST /v1/transactions` (./trading/actionRoutes) to be waited on.
 //
 // - Holdings: the wallet's SOL and every token account it owns under both token programs, read through
 //   RPC; each token a Pipeline market trades is listed with those markets, from Postgres, and the rest
-//   are only counted. Wrapped SOL is not listed with them: the page offers to unwrap it (PIPESCOPE-137).
+//   are only counted. Wrapped SOL is not listed with them: the page offers to unwrap it (PIPESCOPE-148).
 // - Unwrap: the wrapped-SOL accounts the wallet owns closed into it, as many as one transaction the
 //   wallet pays for holds, simulated exactly as it is returned, as a swap is (docs/spec/pipescope-architecture.md,
 //   Simulation before every signature); the wallet signs it, and nothing here signs anything.
-// - Confirmations: the page posts the signature its wallet sent, and the API waits on it as the fast path does.
 import { NATIVE_MINT_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { getCloseAccountInstruction } from "@solana-program/token";
 import { address, createNoopSigner, createSolanaRpc, getBase64Decoder, isAddress, type Address, type Rpc, type SolanaRpcApi, type TransactionMessageBytesBase64 } from "@solana/kit";
@@ -17,12 +17,11 @@ import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { marketMints, markets } from "terminal-db";
 import type { z } from "zod";
-import { Confirmation, ConfirmationRequest, Holdings, PreparedUnwrap, PrepareUnwrapRequest, type Refusal } from "./contract";
+import { Holdings, PreparedUnwrap, PrepareUnwrapRequest, type Refusal } from "./contract";
 import { marketPair } from "./pairs";
 import { limitTrades } from "./rateLimits";
 import { dbOf, requestDb, type DbEnv } from "./requestDb";
 import { decodeFailure } from "./trading/failure";
-import { awaitConfirmation } from "./trading/fastPath";
 import { fitTransaction, TooLarge } from "./trading/prepare";
 import { COMMITMENT, Refused } from "./trading/quote";
 import { mintNames } from "./views";
@@ -174,16 +173,6 @@ walletRoutes.post("/v1/unwrap/prepare", limitTrades, async (c) => {
   const { trader } = await bodyOf(c, PrepareUnwrapRequest);
   try {
     return c.json(PreparedUnwrap.parse(await prepareUnwrap(createSolanaRpc(c.env.RPC_URL), address(trader))));
-  } catch (e) {
-    if (e instanceof Refused) return refused(c, e);
-    throw e;
-  }
-});
-
-walletRoutes.post("/v1/confirmations", limitTrades, async (c) => {
-  const { signature } = await bodyOf(c, ConfirmationRequest);
-  try {
-    return c.json(Confirmation.parse(await awaitConfirmation(c.env.RPC_URL, signature)));
   } catch (e) {
     if (e instanceof Refused) return refused(c, e);
     throw e;

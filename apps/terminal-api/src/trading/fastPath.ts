@@ -13,42 +13,38 @@ import { Refused } from "./quote";
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
+/** What the fast path says when a transaction fails, has not confirmed in time, or confirmed but is not served yet. */
+export type Words = { failed: string; notYet: string; notServed: string };
+const SWAP_WORDS: Words = {
+  failed: "The swap failed on chain:",
+  notYet: "The swap has not confirmed yet. If it lands, it joins Trades as soon as Aviary reads it.",
+  notServed: "The swap confirmed, but the chain has not served it yet. It joins Trades as soon as Aviary reads it.",
+};
+/** The same for a custom action or a new market, which joins no list on the page. */
+export const TRANSACTION_WORDS: Words = {
+  failed: "It failed on chain:",
+  notYet: "It has not confirmed yet. If it lands, the explorer shows it.",
+  notServed: "It confirmed, but the chain has not served it yet; the explorer shows it.",
+};
+
 type Status = { slot: number; err: unknown; confirmationStatus: "processed" | "confirmed" | "finalized" | null } | null;
 type RawWithLogs = RawTransaction & { meta: (RawTransaction["meta"] & { logMessages?: string[] | null }) | null };
 
 /** A transaction the RPC serves late, asked for again for a while (devnet can answer null just after a confirmed status). */
-async function readBack(rpcUrl: string, signature: string, late = "The swap confirmed, but the chain has not served it yet. It joins Trades as soon as Aviary reads it."): Promise<RawWithLogs> {
+async function readBack(rpcUrl: string, signature: string, words: Words): Promise<RawWithLogs> {
   const until = Date.now() + RPC_WAITS.transaction.waitMs;
   for (;;) {
     const raw = await rpcCall<RawWithLogs | null>(rpcUrl, "getTransaction", [signature, { encoding: "json", commitment: "confirmed", maxSupportedTransactionVersion: 0 }]);
     if (raw) return raw;
-    if (Date.now() >= until) throw new HTTPException(504, { message: late });
+    if (Date.now() >= until) throw new HTTPException(504, { message: words.notServed });
     await sleep(RPC_WAITS.transaction.everyMs);
   }
 }
 
-/** The signature's status once it has confirmed, asking every `pollMs` for up to `waitMs`; null when it has not by then. */
-async function confirmedStatus(rpcUrl: string, signature: string, pollMs: number, waitMs: number): Promise<NonNullable<Status> | null> {
-  const until = Date.now() + waitMs;
-  for (;;) {
-    const { value } = await rpcCall<{ value: Status[] }>(rpcUrl, "getSignatureStatuses", [[signature]]);
-    const status = value[0] ?? null;
-    if (status && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) return status;
-    if (Date.now() >= until) return null;
-    await sleep(pollMs);
-  }
-}
-
-/** A transaction that failed on chain, decoded from its error and logs, as a refusal whose sentence starts `prefix`. */
-function failedOnChain(err: unknown, raw: RawWithLogs, prefix: string, context: Parameters<typeof decodeFailure>[2]): Refused {
-  const logs = raw.meta?.logMessages ?? [];
-  const failure = decodeFailure(err, logs, context);
-  return new Refused({ ...failure, sentence: `${prefix} ${continued(failure.sentence)}` }, logs);
-}
-
 /**
  * Waits until `signature` confirms, asking every `pollMs` for up to `waitMs`, and reads it back.
- * A transaction that failed on chain is a refusal, decoded from its error and logs.
+ * A transaction that failed on chain is a refusal, decoded from its error and logs; `hooks` names the
+ * transfer hook programs of the mints it moved, asked only then.
  */
 export async function awaitTrade(
   rpcUrl: string,
@@ -57,33 +53,30 @@ export async function awaitTrade(
     pollMs = FAST_PATH_CONFIRMATION_POLL_MS,
     waitMs = FAST_PATH_WAIT_MS,
     strategy = null,
+    words = SWAP_WORDS,
     hooks = async () => [],
-  }: { pollMs?: number; waitMs?: number; strategy?: string | null; hooks?: () => Promise<readonly string[]> } = {},
+  }: { pollMs?: number; waitMs?: number; strategy?: string | null; words?: Words; hooks?: () => Promise<readonly string[]> } = {},
 ): Promise<RawWithLogs> {
-  const status = await confirmedStatus(rpcUrl, signature, pollMs, waitMs);
-  if (!status) throw new HTTPException(504, { message: "The swap has not confirmed yet. If it lands, it joins Trades as soon as Aviary reads it." });
-  const raw = await readBack(rpcUrl, signature);
-  // The mints' transfer hooks are read only for a swap that failed, so a refusal by one is named as the hook's.
-  if (status.err !== null || raw.meta?.err) throw failedOnChain(status.err ?? raw.meta?.err, raw, "The swap failed on chain:", { strategy: strategy ?? "", hooks: await hooks().catch(() => []) });
-  return raw;
-}
-
-/**
- * Waits as the fast path does until a transaction the page's wallet sent (an unwrap, and later a
- * custom action) confirms, and answers its slot; one that failed on chain is a refusal, decoded.
- */
-export async function awaitConfirmation(
-  rpcUrl: string,
-  signature: string,
-  { pollMs = FAST_PATH_CONFIRMATION_POLL_MS, waitMs = FAST_PATH_WAIT_MS }: { pollMs?: number; waitMs?: number } = {},
-): Promise<{ signature: string; slot: number }> {
-  const status = await confirmedStatus(rpcUrl, signature, pollMs, waitMs);
-  if (!status) throw new HTTPException(504, { message: "It has not confirmed yet. If it lands, this page shows it once reloaded." });
-  if (status.err !== null) {
-    const raw = await readBack(rpcUrl, signature, "It failed on chain, and the chain has not served it yet to say why. Its explorer link shows it.");
-    throw failedOnChain(status.err, raw, "It failed on chain:", { strategy: "", act: "transaction" });
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const { value } = await rpcCall<{ value: Status[] }>(rpcUrl, "getSignatureStatuses", [[signature]]);
+    const status = value[0] ?? null;
+    if (status && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) {
+      const raw = await readBack(rpcUrl, signature, words);
+      if (status.err !== null || raw.meta?.err) {
+        // The mints' transfer hooks are read only for a transaction that failed, so a refusal by one is named as the hook's.
+        const failure = decodeFailure(status.err ?? raw.meta?.err, raw.meta?.logMessages ?? [], {
+          strategy: strategy ?? "",
+          hooks: await hooks().catch(() => []),
+          act: words === SWAP_WORDS ? "swap" : "transaction",
+        });
+        throw new Refused({ ...failure, sentence: `${words.failed} ${continued(failure.sentence)}` }, raw.meta?.logMessages ?? []);
+      }
+      return raw;
+    }
+    if (Date.now() >= until) throw new HTTPException(504, { message: words.notYet });
+    await sleep(pollMs);
   }
-  return { signature, slot: status.slot };
 }
 
 type TradeRow = typeof trades.$inferSelect;

@@ -298,7 +298,7 @@ Asking to swap never opens the wallet straight away; the trader first sees what 
 - A table of the market's swaps, newest first: when, Buy or Sell, paid, received, price, trader and a link to the transaction.
 - The 40 most recent show, with "Show earlier trades" beneath them.
 - No trades: "No swap has gone through Pipeline on this market yet."
-- On a market of three or four mints, a trade between two mints other than the pair on show is read by its own pair, as the API gives it: Buy or Sell of that pair's base, priced in that pair's quote mint, with the pair named under the price (`PIPESCOPE-140`).
+- On a market of three or four mints, a trade between two mints other than the pair on show is read by its own pair, as the API gives it: Buy or Sell of that pair's base, priced in that pair's quote mint, with the pair named under the price (`PIPESCOPE-151`).
 
 ### Explanation, actions and facts
 
@@ -323,6 +323,8 @@ Asking to swap never opens the wallet straight away; the trader first sees what 
   4. **Its mints**: for each, where its name comes from, its token program, decimals and supply, its mint and freeze authorities, its extensions, what share of the supply this market's vault holds, and its trust flags.
      SOL and USDC read "Named by Aviary. It names SOL and USDC itself, and no other token."
 - Until the explanation and the forms land beside it, the facts panel has the lower band to itself, at its full width, its parts side by side and one under another on narrow screens (`PIPESCOPE-121`).
+  Since [#123](https://github.com/imDev2023/testing-pipeline/issues/123) the forms sit on the left and the facts panel on the right, its parts one under another.
+- **A product's panel**: when the market's strategy is one of our products, its panel sits on the left of the lower band, after the trades and before the explanation, and its own forms under Actions after the strategy's, from a registry in `terminal-web` keyed by strategy program (`PIPESCOPE-147`, `apps/terminal-web/src/products/registry.ts`); no other market shows them.
 - **After an upgrade** ([`pipescope.md`](pipescope.md), When a strategy is upgraded): the notice "Upgraded on <date>; tests and explanation for this version are pending." sits under the page's head, and Canary's part and the explanation each read as pending until the new version has its own.
 
 ### Arriving from Telegram
@@ -366,8 +368,8 @@ From top to bottom, with the explanation beside the facts at desktop width.
 - **"Your swaps through Pipeline"**: when, the market, paid, received, the fees and a link to the transaction.
   Beneath: "Every swap this wallet made through Pipeline's router, on Aviary or anywhere else. Trades that bypass the router leave no swap event and are not here."
 - As built ([#122](https://github.com/imDev2023/testing-pipeline/issues/122)):
-  - wrapped SOL is not listed among the tokens: the offer names it, "Wrapped SOL" its panel, and "Unwrap" closes the wrapped-SOL accounts the wallet owns into it, empty ones too for their rent, as many as one transaction holds, the rest offered again after (`PIPESCOPE-137`);
-  - the tokens listed are those the wallet holds a non-zero balance of that a market Aviary has indexed trades, ordered by the name shown, each with its markets as pairs, base first, newest first; tokens no market trades are counted, empty token accounts not at all (`PIPESCOPE-138`);
+  - wrapped SOL is not listed among the tokens: the offer names it, "Wrapped SOL" its panel, and "Unwrap" closes the wrapped-SOL accounts the wallet owns into it, empty ones too for their rent, as many as one transaction holds, the rest offered again after (`PIPESCOPE-148`);
+  - the tokens listed are those the wallet holds a non-zero balance of that a market Aviary has indexed trades, ordered by the name shown, each with its markets as pairs, base first, newest first; tokens no market trades are counted, empty token accounts not at all (`PIPESCOPE-149`);
   - each swap's market is its pair, base first, linked; its fees are Pipeline's in the fee mint and, when charged, the integrator's in the input, named "Aviary" when it is Aviary's fee wallet; 40 swaps show, with "Show earlier swaps" beneath.
 
 ## Create market
@@ -440,7 +442,7 @@ Each of these is specified above or in another file, and none was seen running, 
 
 - Live updates: new rows arriving on the feed and on Trades, and a candle that moves as trades land.
   New rows are added at the top, the row under the pointer never moves, and nothing flashes for a reader who has asked for reduced motion.
-  As built (`PIPESCOPE-111`): while the pointer or the keyboard focus is on the table, new rows wait behind a "Show 2 new trades" button beside the table's heading and join the top as soon as it leaves; a row already shown is updated in place; a new row is washed for a moment only for a reader who allows motion; the forming candle is read again from the API at most once a second; and a dropped room is joined again after a wait that doubles from a second up to 15 s.
+  As built (`PIPESCOPE-111`): while the pointer or the keyboard focus is on the table, new rows wait behind a "Show 2 new trades" button beside the table's heading and join the top as soon as it leaves, and a resync that brings more than a page waits there too, as "Show 40+ new trades", replacing the list on leaving; a row already shown is updated in place; a new row is washed for a moment only for a reader who allows motion; the forming candle is read again from the API at most once a second; and a dropped room is joined again after a wait that doubles from a second (`LIVE_RECONNECT_FIRST_MS`) up to 15 s (`LIVE_RECONNECT_MAX_MS`).
 - A real wallet: connecting, the wallet's own prompt, a declined signature, and a wallet set to another cluster.
 - The steps after signing: sent, confirmed, and the trade appearing.
 - A form from valid metadata, simulated and signed, and the create form end to end.
@@ -478,4 +480,4 @@ Each of these is specified above or in another file, and none was seen running, 
 - [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32): the trade box has its own rule for which mint a market is quoted in ([Price direction](#price-direction)), so the bot reads `quote_mint` from the API; its Buy button already pays with that mint.
   The amount in a trade link is everything that leaves the wallet, fees included.
 - The products' panel tickets ([the tax AMM's](https://github.com/imDev2023/testing-pipeline/issues/75), [the containment hook's](https://github.com/imDev2023/testing-pipeline/issues/76), [the buy wall AMM's](https://github.com/imDev2023/testing-pipeline/issues/57) and [the lending AMM's](https://github.com/imDev2023/testing-pipeline/issues/88)): a panel is Aviary's own reading of the chain, so it is set plainly, takes its colours from the theme stylesheet, and uses no green or red.
-  A suggestion that was not prototyped: it sits on the market page between the trades and the explanation, and its forms go under Actions with the strategy's others.
+  It sits on the market page between the trades and the explanation, and its forms go under Actions with the strategy's others, as built in #123 (`PIPESCOPE-147`); a panel reads the chain through the API's one-slot read (`PIPESCOPE-146`).

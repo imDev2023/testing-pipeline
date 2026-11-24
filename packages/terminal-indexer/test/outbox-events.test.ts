@@ -40,7 +40,7 @@ const registry = (strategies: string[], markets: { address: string; strategy: st
 });
 
 it("writes a strategy_registered and a market_created event from the router's events", async () => {
-  await indexTransactions(client.db, pipelineHandler(), [registered, created]);
+  await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [registered, created]);
   expect((await readOutbox(client.db, "test")).map((e) => [e.kind, e.subject, e.slot, e.payload])).toEqual([
     ["strategy_registered", STRATEGY, BigInt(registered.slot), { metadataUri: expect.any(String) }],
     ["market_created", MARKET, BigInt(created.slot), { strategy: STRATEGY }],
@@ -49,7 +49,7 @@ it("writes a strategy_registered and a market_created event from the router's ev
 
 it("writes them from the registry snapshot for what the events missed, and never twice when the event arrives later", async () => {
   await indexRegistry(client.db, registry([SNAPSHOT_STRATEGY, STRATEGY], [{ address: SNAPSHOT_MARKET, strategy: SNAPSHOT_STRATEGY }, { address: MARKET, strategy: STRATEGY }]));
-  await indexTransactions(client.db, pipelineHandler(), [registered, created]);
+  await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [registered, created]);
   expect((await readOutbox(client.db, "test")).map((e) => [e.kind, e.subject, e.slot])).toEqual([
     ["strategy_registered", SNAPSHOT_STRATEGY, null],
     ["strategy_registered", STRATEGY, null],

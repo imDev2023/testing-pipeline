@@ -65,21 +65,33 @@ export function notPlain(data: Uint8Array): string | null {
 
 const notTradable = (message: string) => new HTTPException(422, { message });
 
-/** Reads `market` and its mints; refuses a market that is no market, a mint not read, and a mint whose transfers move less than sent or may be refused (PIPESCOPE-135). */
-export async function readTradeMarket(rpc: Rpc<SolanaRpcApi>, marketAddress: string): Promise<TradeMarket> {
+/**
+ * Reads `market` and its mints, whatever their extensions, as a custom action needs them; refuses a
+ * market that is no market and a mint that cannot be read as a token.
+ */
+export async function readMarketOnChain(rpc: Rpc<SolanaRpcApi>, marketAddress: string): Promise<TradeMarket & { data: Uint8Array[] }> {
   const at = address(marketAddress);
   const [account] = (await rpc.getMultipleAccounts([at], { encoding: "base64", commitment: "confirmed" }).send()).value;
   const market = account ? decodeMarket(bytesOf(account.data)) : null;
   if (!market) throw new HTTPException(404, { message: "Aviary knows no market created through Pipeline at this address." });
   const addresses = marketMints(market);
   const accounts = (await rpc.getMultipleAccounts(addresses, { encoding: "base64", commitment: "confirmed" }).send()).value;
+  const data: Uint8Array[] = [];
   const mints = addresses.map((mint, i): TradeMint => {
     const held = accounts[i];
     if (!held || (held.owner !== TOKEN_PROGRAM_ADDRESS && held.owner !== TOKEN_2022_PROGRAM_ADDRESS)) throw notTradable(`This market's mint ${mint} could not be read as a token, so it cannot be traded.`);
-    const data = bytesOf(held.data);
-    const why = held.owner === TOKEN_2022_PROGRAM_ADDRESS ? notPlain(data) : null;
-    if (why) throw notTradable(`This market's mint ${mint} has ${why}, so Aviary quotes and builds no swap of it.`);
-    return { address: mint, tokenProgram: held.owner, decimals: data[DECIMALS_OFFSET]!, transferHook: held.owner === TOKEN_2022_PROGRAM_ADDRESS ? transferHookProgram(data) : null };
+    data.push(bytesOf(held.data));
+    return { address: mint, tokenProgram: held.owner, decimals: data[i]![DECIMALS_OFFSET]!, transferHook: held.owner === TOKEN_2022_PROGRAM_ADDRESS ? transferHookProgram(data[i]!) : null };
   });
-  return { address: at, market, view: marketViewFromMarket(at, market, mints.map((m) => m.tokenProgram)), mints };
+  return { address: at, market, view: marketViewFromMarket(at, market, mints.map((m) => m.tokenProgram)), mints, data };
+}
+
+/** Reads `market` and its mints for a swap; refuses also a mint whose transfers move less than sent or may be refused (PIPESCOPE-135). */
+export async function readTradeMarket(rpc: Rpc<SolanaRpcApi>, marketAddress: string): Promise<TradeMarket> {
+  const { data, ...read } = await readMarketOnChain(rpc, marketAddress);
+  read.mints.forEach((mint, i) => {
+    const why = mint.tokenProgram === TOKEN_2022_PROGRAM_ADDRESS ? notPlain(data[i]!) : null;
+    if (why) throw notTradable(`This market's mint ${mint.address} has ${why}, so Aviary quotes and builds no swap of it.`);
+  });
+  return read;
 }

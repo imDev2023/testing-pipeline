@@ -207,7 +207,7 @@ export function fitTransaction(instructions: readonly Instruction[], trader: Add
 const LOOKUP_TABLE_HEADER = 56;
 
 /** The market's recorded address lookup table and its addresses, or null when it has none. */
-async function marketLookupTable(rpc: Rpc<SolanaRpcApi>, market: Address): Promise<LookupTable | null> {
+export async function marketLookupTable(rpc: Rpc<SolanaRpcApi>, market: Address): Promise<LookupTable | null> {
   const [record] = (await rpc.getMultipleAccounts([await lookupTableRecordPda(market)], { encoding: "base64", commitment: COMMITMENT }).send()).value;
   const decoded = record ? decodeMarketLookupTable(new Uint8Array(base64.encode(record.data[0]))) : null;
   if (!decoded) return null;
@@ -280,30 +280,28 @@ type Watch = {
   receivesSol: boolean;
 };
 
-async function simulate(rpc: Rpc<SolanaRpcApi>, wire: Base64EncodedWireTransaction, messageBytes: ReadonlyUint8Array, watch: Watch): Promise<Simulation> {
+/**
+ * Simulates the exact transaction to be signed (Simulation before every signature): signature checks
+ * off, the blockhash replaced, the post-state of `watched` asked for, and the network fee read for
+ * its message. An RPC that refuses the simulation itself is told plainly, never with its URL.
+ */
+export async function runSimulation(rpc: Rpc<SolanaRpcApi>, wire: Base64EncodedWireTransaction, messageBytes: ReadonlyUint8Array, watched: readonly Address[], what: string) {
   const message = getBase64Decoder().decode(messageBytes) as TransactionMessageBytesBase64;
-  let answers;
   try {
-    answers = await Promise.all([
-    rpc
-      .simulateTransaction(wire, {
-        encoding: "base64",
-        sigVerify: false,
-        replaceRecentBlockhash: true,
-        commitment: COMMITMENT,
-        accounts: { addresses: [...watch.watched], encoding: "base64" },
-      })
-      .send(),
-    rpc.getFeeForMessage(message, { commitment: COMMITMENT }).send(),
-  ]);
+    const [{ value }, fee] = await Promise.all([
+      rpc.simulateTransaction(wire, { encoding: "base64", sigVerify: false, replaceRecentBlockhash: true, commitment: COMMITMENT, accounts: { addresses: [...watched], encoding: "base64" } }).send(),
+      rpc.getFeeForMessage(message, { commitment: COMMITMENT }).send(),
+    ]);
+    return { value, networkFee: fee.value ?? 0n };
   } catch (e) {
-    // The RPC refused the simulation itself (the transaction malformed, or the RPC unavailable): told plainly, never with its URL.
     const raw = (e instanceof Error ? e.message : String(e)).replace(/https?:\/\/\S+/g, "the RPC");
-    throw new Refused({ class: "unavailable", sentence: "The swap could not be simulated, so there is nothing to sign. Try again in a moment.", name: null, number: null, message: null, program: null, raw });
+    throw new Refused({ class: "unavailable", sentence: `${what} could not be simulated, so there is nothing to sign. Try again in a moment.`, name: null, number: null, message: null, program: null, raw });
   }
-  const [{ value }, fee] = answers;
+}
+
+async function simulate(rpc: Rpc<SolanaRpcApi>, wire: Base64EncodedWireTransaction, messageBytes: ReadonlyUint8Array, watch: Watch): Promise<Simulation> {
+  const { value, networkFee } = await runSimulation(rpc, wire, messageBytes, watch.watched, "The swap");
   const logs = [...(value.logs ?? [])];
-  const networkFee = fee.value ?? 0n;
   const units = value.unitsConsumed === undefined ? null : Number(value.unitsConsumed);
   if (value.err !== null) {
     return { ok: false, failure: decodeFailure(value.err, logs, { strategy: watch.strategy, hooks: watch.hooks }), logs, compute_units: units, changes: [], network_fee: String(networkFee), new_accounts: [], market_rent: "0", paid: null, received: null };

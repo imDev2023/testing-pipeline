@@ -45,7 +45,7 @@ beforeAll(async () => {
       feeMintIndex: 255,
     }),
   });
-  await indexTransactions(client.db, pipelineHandler(), [registered]);
+  await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [registered]);
 });
 afterAll(async () => {
   await rpc?.close();

@@ -2483,7 +2483,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-135: Which mints the trade box quotes
 
 - Question: Which mints does the trade box quote and build swaps of?
-- Answer: Every mint but a Token-2022 mint with a transfer fee, no transfers or a pause switch, since the box promises exactly what leaves the wallet and what arrives; a mint with a transfer hook is quoted and traded with its hook's accounts (`PIPESCOPE-139`), and its simulation shows whether the hook allows the swap.
+- Answer: Every mint but a Token-2022 mint with a transfer fee, no transfers or a pause switch, since the box promises exactly what leaves the wallet and what arrives; a mint with a transfer hook is quoted and traded with its hook's accounts (`PIPESCOPE-150`), and its simulation shows whether the hook allows the swap.
 - Alternatives: The earlier default, plain mints only, a transfer hook refused too until hooked mints were built; quoting every mint and letting the simulation show what really moves, which leaves the breakdown's numbers wrong for transfer-fee mints.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
 - Changes by: build-time constant
@@ -2500,7 +2500,117 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
 
-### PIPESCOPE-137: Wrapped SOL on the wallet page
+### PIPESCOPE-137: How the live socket is tried again while it fails
+
+- Question: How soon is the indexer's live socket tried again when it cannot be opened or its subscription is refused, and is it reopened when it drops with no viewer left?
+- Answer: Each try that ends before the RPC confirms the subscription waits twice the last, from the 15 s alarm up to 5 minutes (`SOCKET_REOPEN_BACKOFF_MAX_MS`), and a viewer arriving meanwhile does not try ahead of it, while the every-minute reconciliation still brings each trade to the pages; a socket that drops once no room has a viewer stays closed until the next viewer opens it.
+- Alternatives: Trying again on every 15 s alarm, which asks and reconciles with a refusing RPC four times a minute for as long as anyone watches; reopening a socket that drops during the 3 minutes after the last viewer left.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214)
+
+### PIPESCOPE-138: How the live path waits on the RPC
+
+- Question: How does the indexer fetch the transactions the live socket reports when the RPC is slow to serve them or refuses?
+- Answer: Each reported transaction is asked for as soon as it is reported, at most two at a time (`RPC_WAITS.transaction.atOnce`), within one wait from its arrival (`RPC_WAITS.transaction`), and is indexed and published as soon as it is served, with no earlier transaction or slow publish holding it back; "not served yet" and a rate limit are asked again within the wait, and any other refusal or error leaves it to reconciliation at once.
+- Alternatives: Each transaction asked for in turn for up to 8 s, every error taken for "not served yet", and the batch published only once all were done, so one slow or rate-limiting answer held every live trade back.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214)
+
+### PIPESCOPE-139: Candles written again from the trades
+
+- Question: How do markets whose trades were indexed before candles were kept, or whose candles were lost since, get their candles?
+- Answer: Each new instance of the indexer, on its first run, compares every market and mint pair's priced swaps with its candles at the lengths kept forever and writes the pairs that disagree again from their trades, at every length within its retention, under the candles table's lock.
+- Alternatives: A one-time script run by hand against each database; a data migration that folds the trades in SQL, a second copy of the fold.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Candles](spec/pipescope-architecture.md#candles)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214)
+
+### PIPESCOPE-140: A market's live room only for a known market
+
+- Question: Does `/v1/live/markets/{address}` open a room for any well-formed address?
+- Answer: No: it opens a room only for a market Aviary has indexed, and answers 404 for any other address, so no address opens a room, and the indexer's socket, for nothing; when the database cannot be read, the room opens anyway, since live updates need no database.
+- Alternatives: A room for any well-formed address, which costs no database read but lets anyone hold the socket open on addresses that are no market.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Live rooms](spec/pipescope-architecture.md#live-rooms)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214)
+
+### PIPESCOPE-141: Forms from Pipeline's old actions section
+
+- Question: Does Aviary render forms from the `actions` section that Pipeline 0.2 dropped from its metadata standard, which other strategies still publish?
+- Answer: Yes: when a strategy's valid metadata has no `aviary_actions`, its `actions` section, the same shape, is read by the same validator and builder (the `strategy-actions` package) and each form carries the same instruction check, outside-the-router line and accounts; `aviary_actions` wins when a document has both.
+- Alternatives: Ignoring the old section as Pipeline does, so such a strategy shows "No forms".
+- Specified in: [`docs/spec/pipescope.md`, Custom-action and create-market forms](spec/pipescope.md#custom-action-and-create-market-forms)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
+
+### PIPESCOPE-142: Forms on devnet while some metadata is valid
+
+- Question: What does devnet show now that some strategies, our own among them, publish valid metadata?
+- Answer: Every strategy with valid metadata shows its forms and every other one the unavailable state with its reason; the create-market page lists the create forms, and its no-valid-metadata line appears only while no strategy has valid metadata, which tests check on a database where none does.
+- Alternatives: Keeping #123's devnet criterion as first written (every devnet strategy unavailable), which no longer holds.
+- Specified in: [the ticket, Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
+
+### PIPESCOPE-143: How a form's instruction is checked
+
+- Question: How does a form's result line decide whether the instruction it calls is in the deployed program?
+- Answer: By the discriminator the form sends (the metadata's own, or Anchor's from its name), looked up in the instruction list of the strategy's current version; a pass names the instruction the program runs, with the metadata's own name beside it when that differs, and a warn says "what this form calls could not be checked" when no instruction has that discriminator or no list is recorded.
+- Alternatives: Matching the metadata's instruction name against the list, which a label or name that lies about its discriminator would pass.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
+
+### PIPESCOPE-144: A new market's state keypair and its creator cap
+
+- Question: Who makes and signs with a new market's fresh state keypair, and how much SOL may the strategy's setup take from the creator?
+- Answer: The page makes the keypair for each review and signs with it after the API built and simulated the transaction, so no key reaches the API; `create_market` carries a cap of 0.1 SOL, `CREATE_MARKET_MAX_CREATOR_LAMPORTS` in `terminal-api`'s config module, and the simulation shows what the setup takes.
+- Alternatives: The API making the keypair and signing first, which would put a key on the server; a cap the creator types.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
+
+### PIPESCOPE-145: SOL around a custom action, and who signs it
+
+- Question: When does Aviary wrap and unwrap SOL around a custom action or a new market, and what may it ask to be signed?
+- Answer: When the instruction writes to the wallet's own wrapped-SOL account, the sum of the amount arguments the metadata writes in wrapped SOL is moved into it before the instruction, and an account the wallet did not hold is created first and closed back into the wallet after it, in the same transaction, while one it already held is left as it was; an instruction that needs a signature from anyone but the wallet (and a new market's state) is refused before it is simulated.
+- Alternatives: Leaving wrapped SOL to the user; wrapping for every action that names wrapped SOL anywhere.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
+
+### PIPESCOPE-146: The one-slot read for product panels
+
+- Question: How does a product's panel read a market's state and the outside accounts it needs?
+- Answer: `GET /v1/markets/{market}/state?accounts=` reads the market's state and at most 8 named accounts in one request at one slot, each account's data returned up to 64 KiB, `MARKET_READ` in `terminal-api`'s config module, so the public read is no general RPC on Aviary's key.
+- Alternatives: Each panel asking the RPC itself; no limit on the accounts named.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
+
+### PIPESCOPE-147: Where a product's panel and forms go
+
+- Question: Where does each of our products put its panel and its own forms in Aviary?
+- Answer: In a registry in `terminal-web` (`apps/terminal-web/src/products/registry.ts`) keyed by the product's strategy program: its panel on the market page's lower band after the trades and before the explanation, its forms under Actions after the strategy's metadata forms, on that program's markets and nowhere else; empty until the products' Aviary tickets fill it.
+- Alternatives: A page per product; panels chosen by the strategy's metadata, which anyone can write.
+- Specified in: [`docs/spec/pipescope-screens.md`, Explanation, actions and facts](spec/pipescope-screens.md#explanation-actions-and-facts)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
+
+### PIPESCOPE-148: Wrapped SOL on the wallet page
 
 - Question: How does the wallet page show the wrapped SOL a wallet holds?
 - Answer: Apart from the tokens it lists, as the offer to unwrap naming the amount, or the empty accounts whose rent comes back, which closes the wrapped-SOL accounts the wallet owns into it, as many as one transaction holds and the rest offered again after, simulated first and signed in the wallet; the wallet's SOL stands in the page's head.
@@ -2510,7 +2620,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-138: What the wallet page lists as held
+### PIPESCOPE-149: What the wallet page lists as held
 
 - Question: Which of a wallet's tokens does "What you hold that trades on Pipeline" list, and in what order?
 - Answer: Every token it holds a non-zero balance of, in any of its token accounts under either token program, that a market Aviary has indexed trades, with each of those markets, newest first, ordered by the name the page shows; tokens no market trades are only counted, and empty token accounts are neither listed nor counted.
@@ -2520,17 +2630,17 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-139: How a hooked mint's accounts are resolved
+### PIPESCOPE-150: How a hooked mint's accounts are resolved
 
 - Question: How does Aviary find the accounts a mint's transfer hook needs, and where does a swap carry them?
-- Answer: In one module of `terminal-api` (`trading/hooks.ts`) for swaps and custom actions alike, each transfer resolved on its own from the mint's `ExtraAccountMetaList` by Token-2022's own client, every transfer the transaction makes in the mint covered (the trader's transfer and Pipeline's and the integrator's fees taken in it), each account once with the highest role any transfer gives it; a sell's go in the router's `input_hook_accounts`, a buy's after the strategy's own accounts; a refusal by the hook is named as the hook's, and a holder's CPI Guard or required memos are named as the holder's own settings.
+- Answer: In one module of `terminal-api` (`trading/hooks.ts`) for swaps and custom actions alike, each transfer resolved on its own from the mint's `ExtraAccountMetaList` by Token-2022's own client, every transfer the transaction makes in the mint covered (the trader's transfer and Pipeline's and the integrator's fees taken in it), each account once with the highest role any transfer gives it; a sell's go in the router's `input_hook_accounts`, a buy's after the strategy's own accounts, and a custom action's after its own, for the transfers both ways between the wallet's token account the action writes and the market's vault of each hooked mint; a refusal by the hook is named as the hook's, and a holder's CPI Guard or required memos are named as the holder's own settings.
 - Alternatives: Pipeline's hosted API, which refuses to build swaps whose input mint has a transfer hook; resolving only the trader's transfer, which leaves out a hook whose accounts depend on the destination when Pipeline's fee is taken in the mint.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-140: Trades of other pairs on a market of three or four mints
+### PIPESCOPE-151: Trades of other pairs on a market of three or four mints
 
 - Question: How does a market page's Trades table read a trade between two mints other than the pair on show?
 - Answer: By the trade's own pair, as the API gives it with every trade: a Buy or a Sell of that pair's base mint, its price in that pair's quote mint, with the pair named under the price; a trade of the pair on show is read by that pair, flipped or not.
@@ -2540,17 +2650,17 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-141: The wallet page's endpoints
+### PIPESCOPE-152: The wallet page's endpoints
 
 - Question: Which endpoints serve the wallet page?
-- Answer: `GET /v1/traders/{trader}/trades`, the feed's trader page with every mint it names; `GET /v1/traders/{trader}/holdings`, the wallet's SOL, wrapped SOL and token accounts read through RPC with each listed token's markets from Postgres; `POST /v1/unwrap/prepare`, the unwrap built and simulated; and `POST /v1/confirmations`, a signature waited on as the fast path waits; the two `POST`s count against the 60-a-minute limit of quotes and prepares (`PIPESCOPE-90`).
+- Answer: `GET /v1/traders/{trader}/trades`, the feed's trader page with every mint it names; `GET /v1/traders/{trader}/holdings`, the wallet's SOL, wrapped SOL and token accounts read through RPC with each listed token's markets from Postgres; and `POST /v1/unwrap/prepare`, the unwrap built and simulated, whose signature `POST /v1/transactions` waits on as for a custom action; the prepare counts against the 60-a-minute limit of quotes and prepares (`PIPESCOPE-90`).
 - Alternatives: Reading a wallet's balances from Pipeline's hosted API, which ADR 0003 ruled out; reading them in the browser, which would put an RPC key in the page.
 - Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
 - Changes by: spec only
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-142: The unwrap's signing check
+### PIPESCOPE-153: The unwrap's signing check
 
 - Question: How is the unwrap, a new signing flow, checked in a wallet?
 - Answer: As the ticket asks, by the Playwright test wallet signing with a devnet key, here the project's devnet wallet, through the real page of the local run, as `PIPESCOPE-136` settled for the trade box; no real wallet extension in the owner's Chrome.
@@ -6059,7 +6169,6 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `BAR-29`, `TAX-22` to `TAX-28`, `HOOK-19` to `HOOK-22`, `POOL4-19` to `POOL4-21`, `LENDING-34` to `LENDING-36`: set by the sessions that cut the build tickets and not yet put to the owner, so they are those sessions' defaults until the owner has been asked.
 - `HOOK-23` to `HOOK-27`: set by the session of [Containment hook: bind a token to its home market](https://github.com/imDev2023/testing-pipeline/issues/68) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-41`: answered on 2026-11-19 in a question dialog of the session of [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66), which cannot tell whether the owner or the coordinating session answered, so it stays that session's default until the owner confirms it.
-- `PIPESCOPE-20`, `pipescope.md` and `pipescope-architecture.md` name the SDK's `buildActionInstruction` and the metadata's `actions` forms, which Pipeline 0.2.0 dropped; under `BAR-41` Aviary renders our strategies' `aviary_actions` with the `strategy-actions` package, and whether it also renders another strategy's leftover `actions` section, which Pipeline now ignores, is Aviary's call.
 - `LENDING-86`: since Pipeline 0.2 dropped the config account from `register_existing_market`, a hooked token's graduation fits a legacy transaction when its shares are locked (1,222 bytes) but not when they go to a wallet (1,254); `lending-pool.md` has the new figures, and the decision's own figures (1,287) are the lending AMM session's to update.
 - `BAR-42`, `TAX-53`, `TAX-54`: set by the session of [Tax AMM: deploy on devnet, register with Pipeline and create a demo market](https://github.com/imDev2023/testing-pipeline/issues/66) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `HOOK-30` to `HOOK-34`: set by the session of [Containment hook: unlock by the goal or the deadline](https://github.com/imDev2023/testing-pipeline/issues/70) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
@@ -6067,6 +6176,7 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `HOOK-35` to `HOOK-37`: set by the session of [Containment hook: invariant fuzzing of contained tokens](https://github.com/imDev2023/testing-pipeline/issues/71) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `TAX-30` to `TAX-34`: set by the session of [Tax AMM: create a tax market](https://github.com/imDev2023/testing-pipeline/issues/59) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `BAR-30` to `BAR-37`, `TAX-29`: set by the session of [Tax AMM: Pipeline's strategy template in our repo, with CI and a local demo run](https://github.com/imDev2023/testing-pipeline/issues/58) and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `PIPESCOPE-143` to `PIPESCOPE-147`: set by the session of [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked; `PIPESCOPE-141` and `PIPESCOPE-142` are the owner's answers of 2026-11-24 on that ticket.
 - `EXPLAINER-23` to `EXPLAINER-28`: set by the session of [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `PIPESCOPE-91`: since Pipeline 0.3 the router's config account holds no swap fee: the fee is a constant of the router, which the SDK mirrors as `PIPELINE_FEE_BPS`, and the explainer's P item reads that constant; the decision should name the SDK's constant, not the config account.
 - `LENDING-16`, `POOL4-15`, `SUITE-34`: when each keeper job runs is written in `keeper-runner.md` and again in `lending-pool.md` (When it runs) and `pool4-for-solana.md` (For the keeper runner); `lending-pool.md` still has Aviary's indexer start `rebalance`, which the runner's spec replaced with its own socket.
@@ -6098,3 +6208,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-60`: the lending AMM's `MIN_REBALANCE` of each reserve and its `KAMINO_RATE_HEADROOM_BPS` live in `programs/lending-amm/src/config.rs` and again in `packages/keeper-jobs/lending-amm.ts`, whose tests check the two agree; the program's next release can export them in its IDL, as it does the band, and the copy can go.
 - `SUITE-59` to `SUITE-62`: set by the session of [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `CANARY-47`: the check is the owner's answer 5a on [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) (`HOOK-50`); its rule, its 1-point threshold and its search were set by that session while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
+- `PIPESCOPE-137` to `PIPESCOPE-140`: set by the session of [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.

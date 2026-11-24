@@ -52,16 +52,25 @@ export const VERSION_TRANSACTION_LOOKS = 30;
 /** The indexer's live socket (PIPESCOPE-27, PIPESCOPE-28): reopened by this alarm while open, closed this long after the last viewer leaves. */
 export const SOCKET_REOPEN_ALARM_MS = 15 * SECOND;
 export const SOCKET_CLOSE_AFTER_LAST_VIEWER_MS = 3 * MINUTE;
+/**
+ * The longest wait before the socket is tried again while it keeps failing to open (an RPC that
+ * refuses `logsSubscribe`, say): each failed try waits twice the last, from SOCKET_REOPEN_ALARM_MS,
+ * so a refusing RPC is not asked, and reconciled with, every 15 seconds while anyone watches (#214).
+ * Meanwhile the every-minute reconciliation still brings each trade to the pages.
+ */
+export const SOCKET_REOPEN_BACKOFF_MAX_MS = 5 * MINUTE;
 
 /**
- * How long the indexer waits for what the RPC has not served yet (Top-pad's measured waits): a
- * transaction the live socket reported, asked for every `everyMs` for up to `waitMs` before it is
- * left to reconciliation (Helius serves a confirmed one 1.5 to 2 s after its block); and a block,
+ * How long the indexer waits for what the RPC has not served yet (Top-pad's measured waits): the
+ * transactions the live socket reported, each asked for every `everyMs`, `atOnce` of them at a time
+ * so a burst never floods the RPC, for up to `waitMs` from when its batch arrived, before each still
+ * unserved is left to reconciliation (Helius serves a confirmed one 1.5 to 2 s after its block; a rate
+ * limit is waited out, any other refusal is not asked again, #214); and a block,
  * for a transaction's place in it, asked for again after waits doubling from `firstRetryMs` to
  * `maxRetryMs`, for up to `waitMs`.
  */
 export const RPC_WAITS = {
-  transaction: { waitMs: 8 * SECOND, everyMs: 300 },
+  transaction: { waitMs: 8 * SECOND, everyMs: 300, atOnce: 2 },
   block: { waitMs: 8 * SECOND, firstRetryMs: 500, maxRetryMs: 2 * SECOND },
 } as const;
 
@@ -99,9 +108,11 @@ export const LIVE_ROOM_BATCH_MS = 100;
 
 /**
  * A live room that could not tell the indexer a viewer arrived (the indexer resetting for a deploy,
- * say) tries again after this wait, and after twice it, before leaving it to the next viewer.
+ * say) tries again ROOM_ANNOUNCE_RETRIES times, after ROOM_ANNOUNCE_RETRY_MS and then twice the last
+ * wait each time, before leaving it to the next viewer.
  */
 export const ROOM_ANNOUNCE_RETRY_MS = SECOND;
+export const ROOM_ANNOUNCE_RETRIES = 2;
 
 /** How often the trade fast path asks whether a signature has confirmed (PIPESCOPE-33). */
 export const FAST_PATH_CONFIRMATION_POLL_MS = 300;
@@ -244,3 +255,18 @@ export const CANARY = {
   /** An operator's re-run (`pnpm canary:rerun`) is taken only if its time is within this much of the Worker's clock, so an old one cannot be replayed. */
   rerunMaxSkewMs: 2 * MINUTE,
 } as const;
+
+/**
+ * A market's state read with named outside accounts at one slot, for the products' panels in Aviary
+ * (PIPESCOPE-146; docs/spec/README.md, Our products live inside Aviary): the most accounts a read may
+ * name besides the market's state, and the most bytes of one account's data it returns (a larger
+ * account comes back with its size and no data), so the public read is no general RPC on Aviary's key.
+ */
+export const MARKET_READ = { maxAccounts: 8, maxAccountBytes: 64 * 1024 } as const;
+
+/**
+ * The most SOL, in lamports, a strategy's setup may take from the creator of a new market made in
+ * Aviary's create form, which `create_market` carries as its `max_creator_lamports` (PIPESCOPE-144):
+ * 0.1 SOL, the cap our own demos create markets with; what the setup takes is shown by the simulation.
+ */
+export const CREATE_MARKET_MAX_CREATOR_LAMPORTS = 100_000_000n;

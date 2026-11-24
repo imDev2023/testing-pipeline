@@ -111,6 +111,9 @@ importers:
       hono:
         specifier: 4.13.20
         version: 4.13.20
+      strategy-actions:
+        specifier: workspace:*
+        version: link:../../packages/strategy-actions
       terminal-db:
         specifier: workspace:*
         version: link:../../packages/terminal-db
@@ -262,9 +265,9 @@ importers:
 
   packages/strategy-actions:
     dependencies:
-      '@pipeline-placeholder/sdk':
-        specifier: link:../../fixtures/pipeline/sdk/ts
-        version: link:../../fixtures/pipeline/sdk/ts
+      '@pipeline-sol/sdk':
+        specifier: 'catalog:'
+        version: 0.3.0(typescript@7.0.2)
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@7.0.2)
@@ -5864,6 +5867,15 @@ snapshots:
   '@pipeline-sol/sdk@0.3.0(typescript@6.0.3)':
     dependencies:
       '@solana/kit': 8.6.0(typescript@6.0.3)
+    transitivePeerDependencies:
+      - bufferutil
+      - fastestsmallesttextencoderdecoder
+      - typescript
+      - utf-8-validate
+
+  '@pipeline-sol/sdk@0.3.0(typescript@7.0.2)':
+    dependencies:
+      '@solana/kit': 8.6.0(typescript@7.0.2)
     transitivePeerDependencies:
       - bufferutil
       - fastestsmallesttextencoderdecoder

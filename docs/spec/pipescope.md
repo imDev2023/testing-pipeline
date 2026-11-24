@@ -115,7 +115,9 @@ Not in the first version:
 
 ## Custom-action and create-market forms
 
-- Aviary renders every `actions` form and the `init` form from any strategy's metadata, with every argument type and account source the schema allows, using the SDK's generic builders (`buildActionInstruction`, `buildCreateMarketFromMetadata`), so no strategy needs code of its own.
+- Aviary renders every action form and the `init` form from any strategy's metadata, with every argument type and account source the schema allows, so no strategy needs code of its own.
+  The `init` form is built with the SDK's `buildCreateMarketFromMetadata`.
+  Pipeline 0.2 dropped custom actions from its metadata standard and SDK, so our strategies describe theirs under `aviary_actions` (`BAR-41`), which the `strategy-actions` package validates and builds; a strategy whose valid metadata has no `aviary_actions` but still carries Pipeline's old `actions` section, the same shape, gets forms from that (`PIPESCOPE-141`).
 - Strategy metadata is untrusted user content:
   - metadata is validated with Pipeline's metadata parser, and a strategy whose metadata fails gets no forms;
   - labels and descriptions are shown as plain text, never as HTML or Markdown;

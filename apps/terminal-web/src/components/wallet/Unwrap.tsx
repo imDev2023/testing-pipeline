@@ -5,12 +5,12 @@
 // wrapped SOL the wallet holds, which tax recipients are paid in (docs/spec/tax-amm.md), and "Unwrap",
 // which builds and simulates closing the wallet's wrapped-SOL accounts, shows the SOL that would come
 // back, and only then turns on "Sign in wallet". The wallet signs and sends; the API waits for it to
-// confirm. Aviary holds no key.
+// confirm (`POST /v1/transactions`, as for a custom action). Aviary holds no key.
 import { useSignAndSendTransaction } from "@solana/react";
 import type { UiWalletAccount } from "@wallet-standard/react";
 import { getBase58Decoder, getBase64Encoder } from "@solana/kit";
 import { useCallback, useRef, useState } from "react";
-import { Confirmation, PreparedUnwrap, type Failure } from "terminal-api/contract";
+import { PreparedUnwrap, TransactionReport, type Failure } from "terminal-api/contract";
 import { ApiFailure, postToApi } from "@/api";
 import { BRAND } from "@/brand";
 import { EXPLORER, PREPARED_TRANSACTION_MAX_AGE_MS } from "@/config";
@@ -75,7 +75,7 @@ export function Unwrap({ trader, wrapped, accounts, onStart, onConfirmed, onRelo
     async (signature: string) => {
       setStep({ status: "sent", signature });
       try {
-        const done = await postToApi("/v1/confirmations", { signature }, Confirmation);
+        const done = await postToApi("/v1/transactions", { signature }, TransactionReport);
         onConfirmed(done);
       } catch (e) {
         setStep({ status: "unsettled", signature, message: failureOf(e), failure: e instanceof ApiFailure ? e.failure : null });

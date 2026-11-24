@@ -12,11 +12,14 @@
 // Where a swap's go (docs/spec/containment-hook.md, Hook accounts callers must pass): a sell's, for the
 // trader's transfers in the input mint, in the router's `input_hook_accounts`; a buy's, for the vault
 // paying the trader, after the strategy's own accounts, where the strategy finds them to pay out and
-// where the router finds them for Pipeline's fee taken in the output.
-import { getBase64Encoder, getAddressDecoder, mergeRoles, type AccountMeta, type Address, type Rpc, type SolanaRpcApi } from "@solana/kit";
-import { resolveExtraAccountMetasForExecute } from "@solana-program/token-2022";
+// where the router finds them for Pipeline's fee taken in the output. A custom action's follow its own
+// accounts, as Pipeline's strategy guide has strategies take them ("forward every account after your
+// own"), for the transfers between the wallet's token account and the market's vault of each hooked
+// mint whose wallet account the action writes.
+import { AccountRole, getBase64Encoder, getAddressDecoder, mergeRoles, type AccountMeta, type Address, type Instruction, type Rpc, type SolanaRpcApi } from "@solana/kit";
+import { findAssociatedTokenPda, resolveExtraAccountMetasForExecute } from "@solana-program/token-2022";
 import type { FeeSide } from "@pipeline-sol/sdk";
-import type { TradeMint } from "./market";
+import type { TradeMarket, TradeMint } from "./market";
 import { Refused } from "./quote";
 
 /** One transfer of a mint: from `source` to `destination`, signed for by `owner`, of `amount` base units. */
@@ -105,4 +108,28 @@ export async function swapHookAccounts(rpc: Rpc<SolanaRpcApi>, s: SwapTransfers)
     if (s.feeSide === "output") output.push({ source: s.traderOutput, destination: s.feeAccount, owner: s.trader, amount: s.pipelineFee });
   }
   return { input: await hookAccounts(rpc, s.inputMint, input), output: await hookAccounts(rpc, s.outputMint, output) };
+}
+
+/**
+ * A custom action's hook accounts, to follow its own: for each hooked mint of the market whose wallet
+ * token account the action writes, the transfers between that account and the market's vault of the
+ * mint, both ways, since a strategy's own instruction may move the mint either way (a deposit, a
+ * withdrawal); none when the action writes no such account. The amounts are not known before the
+ * strategy runs, so a hook whose accounts depend on the amount is resolved for none.
+ */
+export async function actionHookAccounts(rpc: Rpc<SolanaRpcApi>, { market, trader, action }: { market: Pick<TradeMarket, "mints" | "view">; trader: Address; action: Instruction }): Promise<AccountMeta[]> {
+  const written = new Set((action.accounts ?? []).filter((a) => a.role === AccountRole.WRITABLE || a.role === AccountRole.WRITABLE_SIGNER).map((a) => a.address));
+  let accounts: AccountMeta[] = [];
+  for (const [i, mint] of market.mints.entries()) {
+    if (!mint.transferHook) continue;
+    const [wallet] = await findAssociatedTokenPda({ owner: trader, mint: mint.address, tokenProgram: mint.tokenProgram });
+    const vault = market.view.vaults[i];
+    if (!written.has(wallet) || !vault) continue;
+    const transfers: Transfer[] = [
+      { source: wallet, destination: vault, owner: trader, amount: 0n },
+      { source: vault, destination: wallet, owner: await ownerOf(rpc, vault), amount: 0n },
+    ];
+    accounts = merged(accounts, await hookAccounts(rpc, mint, transfers));
+  }
+  return accounts;
 }

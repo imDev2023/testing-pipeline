@@ -30,7 +30,7 @@ afterAll(async () => {
 });
 
 it("keeps a transaction whose event the decoder does not know, and indexes it with reindexTransactions once the decoder learns it", async () => {
-  const older = pipelineHandler({ decode: withoutSwaps, decoderVersion: DECODER_VERSION - 1 });
+  const older = pipelineHandler({ decode: withoutSwaps, decoderVersion: DECODER_VERSION - 1, candleSeconds: [] });
   expect((await indexTransactions(client.db, older, [swap])).counts).toEqual({ unknownEvents: 1 });
   expect(await client.db.select().from(trades)).toEqual([]);
   const [kept] = await client.db.select().from(indexedTransactions).where(eq(indexedTransactions.signature, signature));
@@ -38,7 +38,7 @@ it("keeps a transaction whose event the decoder does not know, and indexes it wi
   expect(kept!.raw).toEqual(swap);
 
   // Code that knows swaps reads again what older code could not, and nothing else.
-  const result = await reindexUnknown(client.db, pipelineHandler());
+  const result = await reindexUnknown(client.db, pipelineHandler({ candleSeconds: [] }));
   expect(result.counts).toEqual({ trades: 1 });
   expect(await client.db.select({ signature: trades.signature, eventIndex: trades.eventIndex, received: trades.received }).from(trades)).toEqual([
     { signature, eventIndex: 0, received: "25056506296415" },
@@ -47,11 +47,11 @@ it("keeps a transaction whose event the decoder does not know, and indexes it wi
   expect(now).toMatchObject({ decoderVersion: DECODER_VERSION, unknownEvents: 0, raw: null });
 
   // Once known, there is nothing left to read again.
-  expect((await reindexUnknown(client.db, pipelineHandler())).counts).toEqual({});
+  expect((await reindexUnknown(client.db, pipelineHandler({ candleSeconds: [] }))).counts).toEqual({});
 });
 
 it("keeps a transaction's record when reading it again fails", async () => {
-  const older = pipelineHandler({ decode: withoutSwaps, decoderVersion: DECODER_VERSION - 1 });
+  const older = pipelineHandler({ decode: withoutSwaps, decoderVersion: DECODER_VERSION - 1, candleSeconds: [] });
   await client.db.delete(trades);
   await client.db.delete(indexedTransactions);
   await indexTransactions(client.db, older, [swap]);

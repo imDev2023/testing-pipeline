@@ -11,8 +11,7 @@ import styles from "./SiteHeader.module.css";
 
 /**
  * The header of every page: the name, the devnet tag, the links to the pages that exist and the
- * search box and the wallet button. Create market joins when its page lands
- * (docs/spec/pipescope-screens.md, "On every page").
+ * search box and the wallet button (docs/spec/pipescope-screens.md, "On every page").
  */
 export function SiteHeader() {
   return (
@@ -29,6 +28,7 @@ export function SiteHeader() {
         </div>
         <nav className={styles.links} aria-label="Pages">
           <NavLink href={ROUTES.feed}>Feed</NavLink>
+          <NavLink href={ROUTES.create}>Create market</NavLink>
           <NavLink href={ROUTES.wallet}>Wallet</NavLink>
         </nav>
         {/* Until the box reads the page's address, the same field as a plain form, which Enter still submits. */}

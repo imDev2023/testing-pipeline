@@ -4,6 +4,8 @@ export const ROUTES = {
   feedStrategies: "/?tab=strategies",
   devnetHelp: "/devnet",
   fees: "/fees",
+  create: "/create",
+  createWith: (strategy: string) => `/create?strategy=${encodeURIComponent(strategy)}`,
   keeper: "/keeper",
   wallet: "/wallet",
   search: (query: string) => `/search?q=${encodeURIComponent(query)}`,

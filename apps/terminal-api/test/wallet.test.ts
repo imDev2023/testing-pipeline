@@ -1,7 +1,7 @@
 // The wallet page's endpoints (docs/spec/pipescope-screens.md, Wallet page; pipescope-architecture.md,
 // API; #122): what a wallet holds that trades on Pipeline, read through RPC, with each token's markets
-// from Postgres and the count of tokens no market trades; its wrapped SOL, unwrapped by a transaction
-// built and simulated here, signed in the wallet; and a signature waited on until it confirms.
+// from Postgres and the count of tokens no market trades; and its wrapped SOL, unwrapped by a
+// transaction built and simulated here, signed in the wallet.
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -12,7 +12,7 @@ import { createDb, marketMints, mints } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { indexTransactions, pipelineHandler, type RawTransaction } from "terminal-indexer";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { Confirmation, Holdings, PreparedUnwrap, Refusal, type ApiError } from "../src/contract";
+import { Holdings, PreparedUnwrap, type ApiError } from "../src/contract";
 import { app } from "../src/index";
 import { bindings, executionContext } from "./fakes";
 
@@ -28,7 +28,6 @@ const UNLISTED = "6DsWfiJk2zcHAgYjsMZYULGrVgzeedtnKbdy76vReMyp";
 const EMPTIED = "3YSYe6jQ7DKfZT2bNi8ZCwV5sBfn5WU2P3Rb46PPtQXR";
 const TOKEN_ACCOUNT = "2yLyoJtMyVYu7G1uMCr8mJKzVZj53fFHrJ8Fzb5iT6st";
 const WRAPPED_ACCOUNT = "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2";
-const SIGNATURE = "4Eyg9G7jATi6KCjgYVm9u1DdYXwehmLGKrU1QFeYyBdv6QWVWdivPdQDTmG4YpsL61aEunMkFF1yYYyU8joRAwHg";
 const RENT = 2_039_280n;
 
 let database: Awaited<ReturnType<typeof createTestDatabase>>;
@@ -36,7 +35,7 @@ beforeAll(async () => {
   database = await createTestDatabase();
   const { db, close } = createDb(database.url);
   try {
-    await indexTransactions(db, pipelineHandler(), [registered, created]);
+    await indexTransactions(db, pipelineHandler({ candleSeconds: [] }), [registered, created]);
     await db.insert(mints).values([
       { address: TOKEN, readable: true, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS, decimals: 6, supply: "1000000000000000", symbol: "PE2E", name: "Pipescope E2E" },
       { address: WSOL, readable: true, tokenProgram: TOKEN_PROGRAM_ADDRESS, decimals: 9, supply: "0" },
@@ -215,27 +214,5 @@ describe("POST /v1/unwrap/prepare", () => {
     const { status, body } = await call(url, "/v1/unwrap/prepare", { method: "POST", body: JSON.stringify({ trader: WALLET }) });
     expect(status).toBe(404);
     expect((body as ApiError).error).toBe("This wallet holds no wrapped SOL to unwrap.");
-  });
-});
-
-describe("POST /v1/confirmations", () => {
-  it("waits until the transaction confirms and answers with its slot", async () => {
-    let asks = 0;
-    const { url } = await rpc({ getSignatureStatuses: () => ({ context: { slot: 9 }, value: [++asks < 2 ? null : { slot: 525_000_001, confirmations: 0, err: null, confirmationStatus: "confirmed" }] }) });
-    const { status, body } = await call(url, "/v1/confirmations", { method: "POST", body: JSON.stringify({ signature: SIGNATURE }) });
-    expect(status).toBe(200);
-    expect(Confirmation.parse(body)).toEqual({ signature: SIGNATURE, slot: 525_000_001 });
-    expect(asks).toBe(2);
-  });
-
-  it("decodes a transaction that failed on chain", async () => {
-    const { url } = await rpc({
-      getSignatureStatuses: () => ({ context: { slot: 9 }, value: [{ slot: 525_000_001, confirmations: 0, err: { InstructionError: [0, { Custom: 11 }] }, confirmationStatus: "confirmed" }] }),
-      getTransaction: () => ({ slot: 525_000_001, blockTime: null, meta: { err: { InstructionError: [0, { Custom: 11 }] }, logMessages: ["Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [1]", "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA failed: custom program error: 0xb"] }, transaction: { signatures: [SIGNATURE], message: { accountKeys: [], instructions: [] } } }),
-    });
-    const { status, body } = await call(url, "/v1/confirmations", { method: "POST", body: JSON.stringify({ signature: SIGNATURE }) });
-    expect(status).toBe(422);
-    expect(Refusal.parse(body).failure).toMatchObject({ class: "token_program_refused", name: "NonNativeHasBalance" });
-    expect(Refusal.parse(body).error).toBe("It failed on chain: the token program refused it: NonNativeHasBalance.");
   });
 });

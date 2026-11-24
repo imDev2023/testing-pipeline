@@ -15,7 +15,7 @@ import { tradeViews } from "../views";
 import { parseMints, readBalances } from "./balances";
 import { awaitTrade, provisionalTrades } from "./fastPath";
 import { feesView } from "./fees";
-import { readTradeMarket } from "./market";
+import { readMarketOnChain, readTradeMarket } from "./market";
 import { prepareSwap } from "./prepare";
 import { quoteTyped, Refused } from "./quote";
 
@@ -29,19 +29,19 @@ function amountOf(raw: string | undefined): bigint {
 }
 
 /** A query parameter or body field that must be an address: 32 bytes in base58, which Kit checks. */
-function addressOf(raw: string | undefined, name: string): string {
+export function addressOf(raw: string | undefined, name: string): string {
   if (!raw || !isAddress(raw)) throw new HTTPException(400, { message: `${name} is an address.` });
   return raw;
 }
 
-async function bodyOf<T extends z.ZodType>(c: Context<AppEnv>, schema: T): Promise<z.infer<T>> {
+export async function bodyOf<T extends z.ZodType>(c: Context<AppEnv>, schema: T): Promise<z.infer<T>> {
   const parsed = schema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new HTTPException(400, { message: `The request is not one this endpoint takes: ${parsed.error.issues.map((i) => `${i.path.join(".") || "body"} ${i.message}`).join("; ")}.` });
   return parsed.data;
 }
 
 /** A refusal from the strategy or the chain, as a 422 with the failure decoded. */
-const refused = (c: Context<AppEnv>, e: Refused) => c.json<Refusal>({ error: e.failure.sentence, failure: e.failure, logs: [...e.logs] }, 422);
+export const refused = (c: Context<AppEnv>, e: Refused) => c.json<Refusal>({ error: e.failure.sentence, failure: e.failure, logs: [...e.logs] }, 422);
 
 export function tradingRoutes(app: Hono<AppEnv>) {
   app.get("/v1/fees", (c) => c.json(Fees.parse(feesView(c.env.INTEGRATOR_FEE))));
@@ -105,7 +105,7 @@ export function tradingRoutes(app: Hono<AppEnv>) {
     };
     try {
       const [known] = market ? await withDb((db) => db.select({ strategy: markets.strategyProgram }).from(markets).where(eq(markets.address, market))) : [];
-      const hooks = async () => (market ? (await readTradeMarket(createSolanaRpc(c.env.RPC_URL), market)).mints.flatMap((m) => (m.transferHook ? [m.transferHook] : [])) : []);
+      const hooks = async () => (market ? (await readMarketOnChain(createSolanaRpc(c.env.RPC_URL), market)).mints.flatMap((m) => (m.transferHook ? [m.transferHook] : [])) : []);
       const raw = await awaitTrade(c.env.RPC_URL, signature, { strategy: known?.strategy ?? null, hooks });
       // The indexer writes it with its place in its block and tells the market's room.
       c.executionCtx.waitUntil(indexer(c.env).fastPath([signature]).catch((e: unknown) => console.error(`handing ${signature} to the indexer failed; reconciliation will index it`, e)));

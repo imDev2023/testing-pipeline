@@ -26,7 +26,7 @@ afterAll(async () => {
 describe("indexing a swap", () => {
   it("writes its trade, keyed by signature and event index, with its slot and place in the block", async () => {
     const swap = fixture("swap");
-    await indexTransactions(client.db, pipelineHandler(), [swap]);
+    await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [swap]);
     const rows = await client.db.select().from(trades);
     expect(rows).toEqual([
       {
@@ -56,7 +56,7 @@ describe("indexing a swap", () => {
 describe("indexing registrations and new markets", () => {
   it("writes the strategy from its StrategyRegistered event, with the listing fee paid", async () => {
     const registered = fixture("registered");
-    const result = await indexTransactions(client.db, pipelineHandler(), [registered]);
+    const result = await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [registered]);
     expect(result.counts).toEqual({ strategies: 1 });
     const [row] = await client.db.select().from(strategies).where(eq(strategies.program, "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"));
     expect(row).toMatchObject({
@@ -71,7 +71,7 @@ describe("indexing registrations and new markets", () => {
 
   it("sets a strategy's metadata URI from its MetadataUpdated event and names the strategy, for its document to be fetched", async () => {
     const strategy = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t";
-    const result = await indexTransactions(client.db, pipelineHandler(), [metadataUpdatedTransaction({ id: 901, slot: 524_300_000, strategy, uri: "https://example.org/v2.json" })]);
+    const result = await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [metadataUpdatedTransaction({ id: 901, slot: 524_300_000, strategy, uri: "https://example.org/v2.json" })]);
     expect(result).toEqual({ counts: { metadataUpdates: 1 }, markets: [], trades: [], strategies: [strategy] });
     const [row] = await client.db.select().from(strategies).where(eq(strategies.program, strategy));
     expect(row).toMatchObject({ metadataUri: "https://example.org/v2.json", metadataSlot: 524_300_000n });
@@ -79,7 +79,7 @@ describe("indexing registrations and new markets", () => {
 
   it("writes the market from its MarketCreated event, with its mints in the market's own order, and names it to be read", async () => {
     const created = fixture("marketCreated");
-    const result = await indexTransactions(client.db, pipelineHandler(), [created]);
+    const result = await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [created]);
     expect(result).toEqual({ counts: { markets: 1 }, markets: ["7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz"], trades: [], strategies: [] });
     const [market] = await client.db.select().from(markets).where(eq(markets.address, "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz"));
     expect(market).toMatchObject({
@@ -95,7 +95,7 @@ describe("indexing registrations and new markets", () => {
 
   it("numbers each event of a transaction by its place, so a market created and swapped at once keeps both", async () => {
     const multi = fixture("multiEvent");
-    const result = await indexTransactions(client.db, pipelineHandler(), [multi]);
+    const result = await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [multi]);
     expect(result.counts).toEqual({ markets: 1, trades: 1 });
     const rows = await client.db.select().from(trades).where(eq(trades.signature, multi.transaction.signatures[0]!));
     expect(rows.map((t) => t.eventIndex)).toEqual([1]);
@@ -105,14 +105,14 @@ describe("indexing registrations and new markets", () => {
 describe("indexing is idempotent", () => {
   it("writes a transaction once, however often it arrives", async () => {
     const swap = fixture("swap");
-    const again = await indexTransactions(client.db, pipelineHandler(), [swap, swap]);
+    const again = await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [swap, swap]);
     expect(again.counts).toEqual({});
     expect(await client.db.select().from(trades).where(eq(trades.signature, swap.transaction.signatures[0]!))).toHaveLength(1);
   });
 
   it("writes nothing for a failed transaction, which changed nothing", async () => {
     const failed = fixture("failed");
-    expect((await indexTransactions(client.db, pipelineHandler(), [failed])).counts).toEqual({});
+    expect((await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [failed])).counts).toEqual({});
     expect(await client.db.select().from(indexedTransactions).where(eq(indexedTransactions.signature, failed.transaction.signatures[0]!))).toEqual([]);
   });
 });
@@ -131,9 +131,9 @@ describe("a strategy's metadata URI", () => {
   const uri = async () => (await client.db.select().from(strategies).where(eq(strategies.program, "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t")))[0]!.metadataUri;
 
   it("follows MetadataUpdated, and an older update indexed later never overwrites a newer one", async () => {
-    await indexTransactions(client.db, pipelineHandler(), [metadataUpdate("https://example.org/newer.json", 525_000_002)]);
+    await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [metadataUpdate("https://example.org/newer.json", 525_000_002)]);
     expect(await uri()).toBe("https://example.org/newer.json");
-    await indexTransactions(client.db, pipelineHandler(), [metadataUpdate("https://example.org/older.json", 525_000_001)]);
+    await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [metadataUpdate("https://example.org/older.json", 525_000_001)]);
     expect(await uri()).toBe("https://example.org/newer.json");
   });
 });

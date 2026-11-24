@@ -29,6 +29,13 @@ export const SOL_KEPT_BACK = 0.01;
  * a minute, so an older one is built and simulated again before the wallet is asked.
  */
 export const PREPARED_TRANSACTION_MAX_AGE_MS = 45_000;
+/**
+ * After a market is created in the create form (docs/spec/pipescope-screens.md, Create market): how
+ * long the page waits for the API to have read the new market before it links its page anyway, and how
+ * often it asks.
+ */
+export const NEW_MARKET_WAIT_MS = 60_000;
+export const NEW_MARKET_ASK_EVERY_MS = 1_000;
 /** How many of the program's last log lines a failed simulation shows behind its disclosure. */
 export const FAILED_SIMULATION_LOG_LINES = 12;
 
@@ -42,10 +49,11 @@ export const CHART_OPENS_AT = "15m";
 export const CHART_CANDLE_SPACING_PX = 16;
 
 /**
- * Live updates (docs/spec/pipescope-architecture.md, Live rooms; PIPESCOPE-111): the longest wait before a dropped
- * live room is joined again (each try waits twice the last, from a second), and the shortest gap
- * between two reads of the forming candle while trades land.
+ * Live updates (docs/spec/pipescope-architecture.md, Live rooms; PIPESCOPE-111): the first and the
+ * longest wait before a dropped live room is joined again (each try waits twice the last), and the
+ * shortest gap between two reads of the forming candle while trades land.
  */
+export const LIVE_RECONNECT_FIRST_MS = 1_000;
 export const LIVE_RECONNECT_MAX_MS = 15_000;
 export const LIVE_CANDLE_REFRESH_MS = 1_000;
 

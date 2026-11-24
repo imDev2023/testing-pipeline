@@ -27,7 +27,7 @@ beforeAll(async () => {
   env = bindings({ databaseUrl: database.url, rpcUrl: "http://127.0.0.1:9/never-called" });
   const { db, close } = createDb(database.url);
   try {
-    await indexTransactions(db, pipelineHandler(), [registered, created]);
+    await indexTransactions(db, pipelineHandler({ candleSeconds: [] }), [registered, created]);
     await db.update(markets).set({ feeMint: WSOL, supportsExactOut: false }).where(eq(markets.address, MARKET));
     await db.update(marketMints).set({ vault: "2yLyoJtMyVYu7G1uMCr8mJKzVZj53fFHrJ8Fzb5iT6st", vaultAmount: "1" }).where(eq(marketMints.mint, TOKEN));
     await db.insert(mints).values([

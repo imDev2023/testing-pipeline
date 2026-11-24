@@ -6,9 +6,10 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
+import { findAssociatedTokenPda } from "@solana-program/token-2022";
 import { AccountRole, address, createSolanaRpc, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, type Address } from "@solana/kit";
 import { afterEach, describe, expect, it } from "vitest";
-import { hookAccounts, swapHookAccounts } from "../src/trading/hooks";
+import { actionHookAccounts, hookAccounts, swapHookAccounts } from "../src/trading/hooks";
 import { Refused } from "../src/trading/quote";
 import type { TradeMint } from "../src/trading/market";
 
@@ -213,3 +214,30 @@ describe("a swap's hook accounts, where the router and the strategy look for the
     expect((refused as Refused).failure.sentence).toContain(VAULT);
   });
 });
+
+describe("a custom action's hook accounts, after the action's own (Pipeline's strategies forward every account after their own)", () => {
+  const market = (mints: TradeMint[], vaults: Address[]) => ({ mints, view: { vaults } }) as unknown as Parameters<typeof actionHookAccounts>[1]["market"];
+
+  it("covers a hooked mint's transfers both ways between the wallet's token account, which the action writes, and the market's vault", async () => {
+    const list = await validationPda();
+    const [walletAccount] = await findAssociatedTokenPda({ owner: TRADER, mint: MINT, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS });
+    const { rpc } = await chain({
+      [list]: { owner: HOOK, data: validation([pda([...literal("seen"), ...accountKey(2)])]) },
+      [VAULT]: { owner: TOKEN_2022_PROGRAM_ADDRESS, data: tokenAccount(POOL) },
+    });
+    const seen = async (destination: Address) => (await getProgramDerivedAddress({ programAddress: HOOK, seeds: ["seen", encoder.encode(destination)] }))[0];
+    const action = { programAddress: at(30), accounts: [{ address: TRADER, role: AccountRole.READONLY_SIGNER }, { address: walletAccount, role: AccountRole.WRITABLE }, { address: VAULT, role: AccountRole.WRITABLE }] };
+    const accounts = await actionHookAccounts(rpc, { market: market([plain, hooked], [at(20), VAULT]), trader: TRADER, action });
+    expect(accounts.map((a) => a.address)).toEqual([await seen(VAULT), HOOK, list, await seen(walletAccount)]);
+  });
+
+  it("adds nothing when the action does not write the wallet's account of a hooked mint, or the market has none", async () => {
+    const { rpc, asked } = await chain({});
+    const [walletAccount] = await findAssociatedTokenPda({ owner: TRADER, mint: MINT, tokenProgram: TOKEN_2022_PROGRAM_ADDRESS });
+    const readOnly = { programAddress: at(30), accounts: [{ address: walletAccount, role: AccountRole.READONLY }] };
+    expect(await actionHookAccounts(rpc, { market: market([plain, hooked], [at(20), VAULT]), trader: TRADER, action: readOnly })).toEqual([]);
+    expect(await actionHookAccounts(rpc, { market: market([plain], [at(20)]), trader: TRADER, action: readOnly })).toEqual([]);
+    expect(asked).toEqual([]);
+  });
+});
+
