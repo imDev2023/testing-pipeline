@@ -10,10 +10,10 @@
 // What changed is written to the outbox for the Telegram bot (#133, #134): a market's first
 // results, each changed outcome, and the end of each run. A store takes the outbox's lock first,
 // as every outbox writer does (./outbox).
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { Db } from "./index.ts";
 import { appendOutbox, lockOutbox } from "./outbox.ts";
-import { canaryResults, canaryRunMarkets, canaryRuns } from "./schema.ts";
+import { canaryResults, canaryRunMarkets, canaryRuns, markets, programVersions } from "./schema.ts";
 
 /** One of the five outcomes (docs/spec/pipescope-canary.md, Outcomes). */
 export type CanaryOutcome = "pass" | "warn" | "fail" | "not run" | "noted";
@@ -50,6 +50,9 @@ export type CanaryTrigger = "market_created" | "strategy_version" | "router_upgr
 export type StoredCanaryResult = {
   id: string;
   runId: bigint;
+  /** The strategy version it belongs to. */
+  program: string;
+  deploySlot: bigint;
   market: string;
   check: string;
   outcome: CanaryOutcome;
@@ -162,6 +165,8 @@ export async function finishCanaryRun(db: Db, runId: bigint): Promise<void> {
 const stored = (row: typeof canaryResults.$inferSelect): StoredCanaryResult => ({
   id: row.id,
   runId: row.runId,
+  program: row.program,
+  deploySlot: row.deploySlot,
   market: row.market,
   check: row.check,
   outcome: row.outcome as CanaryOutcome,
@@ -184,6 +189,45 @@ export async function readCanaryLatest(db: Db, { market, version }: { market: st
   return rows.map(stored);
 }
 
+/**
+ * The latest results of many markets at once, each under its strategy's current version (the newest
+ * recorded), as the feed's rows and a strategy's summary read them (#125): those of the markets
+ * named, or of every market of the strategies named, and only the checks named when some are.
+ */
+export async function readCanaryCurrent(db: Db, of: { markets?: readonly string[]; strategies?: readonly string[]; checks?: readonly string[] }): Promise<StoredCanaryResult[]> {
+  if ((of.markets && !of.markets.length) || (of.strategies && !of.strategies.length) || (of.checks && !of.checks.length)) return [];
+  const current = db
+    .select({ program: programVersions.program, deploySlot: sql<bigint>`max(${programVersions.deploySlot})`.as("current_slot") })
+    .from(programVersions)
+    .groupBy(programVersions.program)
+    .as("current");
+  const conditions: (SQL | undefined)[] = [
+    eq(canaryResults.latest, true),
+    of.markets ? inArray(canaryResults.market, [...of.markets]) : undefined,
+    of.strategies ? inArray(markets.strategyProgram, [...of.strategies]) : undefined,
+    of.checks ? inArray(canaryResults.check, [...of.checks]) : undefined,
+  ];
+  const rows = await db
+    .select({ result: canaryResults })
+    .from(canaryResults)
+    .innerJoin(markets, eq(markets.address, canaryResults.market))
+    .innerJoin(current, and(eq(current.program, markets.strategyProgram), eq(current.program, canaryResults.program), eq(current.deploySlot, canaryResults.deploySlot)))
+    .where(and(...conditions))
+    .orderBy(asc(canaryResults.market), asc(canaryResults.check));
+  return rows.map((r) => stored(r.result));
+}
+
+/** The latest results of every market of one version, of the checks named when some are. */
+export async function readCanaryOfVersion(db: Db, version: CanaryVersion, checks?: readonly string[]): Promise<StoredCanaryResult[]> {
+  if (checks && !checks.length) return [];
+  const rows = await db
+    .select()
+    .from(canaryResults)
+    .where(and(eq(canaryResults.program, version.program), eq(canaryResults.deploySlot, version.deploySlot), eq(canaryResults.latest, true), checks ? inArray(canaryResults.check, [...checks]) : undefined))
+    .orderBy(asc(canaryResults.market), asc(canaryResults.check));
+  return rows.map(stored);
+}
+
 /** Every kept result of a market under one version: by check, newest first. */
 export async function readCanaryHistory(db: Db, { market, version }: { market: string; version: CanaryVersion }): Promise<StoredCanaryResult[]> {
   const rows = await db
@@ -194,15 +238,18 @@ export async function readCanaryHistory(db: Db, { market, version }: { market: s
   return rows.map(stored);
 }
 
-/** One check's outcomes across a version's markets (crates/canary/src/record.rs, `CheckRollup`). */
-export type CanaryCheckRollup = { outcomes: Partial<Record<CanaryOutcome, number>>; warn: string[]; fail: string[] };
+/**
+ * One check's outcomes across a version's markets (crates/canary/src/record.rs, `CheckRollup`), and
+ * for each market that warns or fails, its result's sentence.
+ */
+export type CanaryCheckRollup = { outcomes: Partial<Record<CanaryOutcome, number>>; warn: string[]; fail: string[]; held: { market: string; outcome: "warn" | "fail"; reason: string }[] };
 
 /** A version's roll-up from its markets' latest results (docs/spec/pipescope-canary.md, Records). */
 export type CanaryRollup = { program: string; deploySlot: bigint; markets: number; checks: Record<string, CanaryCheckRollup> };
 
 export async function readCanaryRollup(db: Db, version: CanaryVersion): Promise<CanaryRollup> {
   const rows = await db
-    .select({ market: canaryResults.market, check: canaryResults.check, outcome: canaryResults.outcome })
+    .select({ market: canaryResults.market, check: canaryResults.check, outcome: canaryResults.outcome, reason: sql<string>`coalesce(${canaryResults.record}->>'reason', '')` })
     .from(canaryResults)
     .where(and(eq(canaryResults.program, version.program), eq(canaryResults.deploySlot, version.deploySlot), eq(canaryResults.latest, true)))
     .orderBy(asc(canaryResults.check), asc(canaryResults.market));
@@ -210,11 +257,12 @@ export async function readCanaryRollup(db: Db, version: CanaryVersion): Promise<
   const markets = new Set<string>();
   for (const row of rows) {
     markets.add(row.market);
-    const check = (checks[row.check] ??= { outcomes: {}, warn: [], fail: [] });
+    const check = (checks[row.check] ??= { outcomes: {}, warn: [], fail: [], held: [] });
     const outcome = row.outcome as CanaryOutcome;
     check.outcomes[outcome] = (check.outcomes[outcome] ?? 0) + 1;
     if (outcome === "warn") check.warn.push(row.market);
     if (outcome === "fail") check.fail.push(row.market);
+    if (outcome === "warn" || outcome === "fail") check.held.push({ market: row.market, outcome, reason: row.reason });
   }
   return { program: version.program, deploySlot: version.deploySlot, markets: markets.size, checks };
 }

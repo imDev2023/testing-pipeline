@@ -9,7 +9,10 @@ import page from "@/components/strategy/Strategy.module.css";
 import { VersionHistory } from "@/components/strategy/VersionHistory";
 import { formatDate, formatInteger, shortAddress } from "@/format";
 import { ROUTES } from "@/routes";
-import { readStrategy } from "@/serverReads";
+import { readStrategy, readVersionCanary } from "@/serverReads";
+import { UpgradeNotice } from "@/components/canary/MarketCanary";
+import { CanaryHeading } from "@/components/canary/CanarySaw";
+import { VersionCanary } from "@/components/canary/VersionCanary";
 
 type Props = { params: Promise<{ address: string }> };
 
@@ -23,7 +26,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 /**
  * A strategy's page (docs/spec/pipescope-screens.md, Strategy page): its head, with the name its
  * valid metadata gives in the author's style, or its address and "Metadata unavailable"; its facts;
- * its markets; and its version history. What Canary saw comes with #125 and the explanation with #127.
+ * what Canary saw on its current version, with the upgrade notice under the head while a new version
+ * has no results yet (#125); its markets; and its version history. The explanation comes with #127.
  */
 export default async function StrategyPage({ params }: Props) {
   const { address } = await params;
@@ -38,6 +42,7 @@ export default async function StrategyPage({ params }: Props) {
     );
   }
   const strategy = read.value;
+  const canary = strategy.current_version ? await readVersionCanary(strategy.program, strategy.current_version.deploy_slot) : null;
   return (
     <div className={page.page}>
       <header className={styles.head}>
@@ -61,8 +66,24 @@ export default async function StrategyPage({ params }: Props) {
             </dd>
           </div>
         </dl>
+        {canary?.ok && <UpgradeNotice upgrade={canary.value.upgrade} />}
       </header>
       <StrategyFacts strategy={strategy} />
+      {canary === null ? (
+        <section className={page.canary} aria-label="What Canary saw on this version">
+          <CanaryHeading level={2}>What Canary saw on this version</CanaryHeading>
+          <p className={page.note}>Canary runs once this strategy&apos;s version has been read.</p>
+        </section>
+      ) : canary.ok ? (
+        <VersionCanary rollup={canary.value} />
+      ) : (
+        <section className={page.canary} aria-label="What Canary saw on this version" role="alert">
+          <CanaryHeading level={2}>What Canary saw on this version</CanaryHeading>
+          <p>
+            Could not load what Canary saw. {canary.message} <a href="">Try again</a>
+          </p>
+        </section>
+      )}
       <StrategyMarkets program={strategy.program} />
       <VersionHistory program={strategy.program} />
     </div>

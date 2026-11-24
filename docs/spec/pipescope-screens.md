@@ -129,6 +129,9 @@ A page of Aviary carries three kinds of text, and a reader has to tell them apar
 - Every result carries the sentence that code wrote for it, its numbers, and a last line naming the check, the run's date and slot and the strategy version: "Check `exit_sizes`: buys each size and sells everything bought in the same slot. Run on 10 Nov 2026, 04:54 UTC at slot 520,629,097, on the strategy version deployed in slot 520,151,724."
 - A result that was refused shows who refused it, the error's name, number and message, and the stage it was raised at.
 - The sentences are written once, by code in `terminal-api`, and served with the result, so the page, the trade box and the Telegram bot show the same words.
+- As built (`PIPESCOPE-148`): the checks' fixed order on the pages, and each check's plain name, are the prototype's: Reading the market (`readable`), Buy, then sell straight back (`exit_sizes`), What a round trip costs (`cost`), Buy, wait, then sell (`exit_hold`), Fresh wallets and insiders (`exit_wallets`), Selling tokens someone sent you (`exit_transferred`), Five buyers leaving in turn (`exit_queue`), Arriving later (`exit_late`), The clock set back to launch (`exit_launch_clock`), Token authorities acting (`token_authorities`), Supply held outside the pool (`outside_supply`, added after the prototype), Quote against swap (`quote_matches_swap`), Calling the strategy without the router (`direct_call`), Telling a test from a real trade (`transaction_accounts`), Transfer hook (`contained_mint`), Pipeline's own conformance check (`conformance`) and Instructions beyond Pipeline's own (`custom_instructions`).
+  They live in one list in `terminal-api` (`canaryView.ts`), which serves each result with its name and in that order.
+- As built: a result that runs one round trip a step is served with its steps, each size, wait, wallet or buyer with what came back or "could not sell back", which the page draws as a row with its bar in ink; every refused step a record names is served as who refused it, the program, the error's name, number and message, the stage and where Anchor says it was raised.
 
 ## On every page
 
@@ -177,6 +180,8 @@ The feed is one table of markets, newest first, with strategies on a second tab.
   5. the first other warn.
 - A market with nothing in that list shows the number alone.
 - A row never shows a count of outcomes, because a count reads as a score.
+- As built (`PIPESCOPE-149`): the phrase is written by `terminal-api` from the result's own numbers, such as "a 0.01 SOL round trip returned 48.6%", "buys of 1 SOL or more could not sell back" or "five buyers leaving in turn got back 49.5% together", or else the check's plain name; on a market of three or four mints the ordinary trade's return is that of the pair that returned least.
+  A strategy's row counts its markets that the version cannot read ("6 of 8 markets cannot be read by this version"), a count of markets and never of outcomes.
 
 ### Filters
 
@@ -292,6 +297,8 @@ Asking to swap never opens the wallet straight away; the trader first sees what 
 - **A market that refuses every trade by its own rules** keeps its trade box, under the line "This market refuses every trade by its own rules (WrongStatus: Not allowed in the curve's current status). A quote here returns the strategy's own error."
   Its rules may let it trade again, and the strategy's own answer is the best evidence of whether they do.
 - Neither is hidden from any list ([`pipescope.md`](pipescope.md), Listing).
+- As built (`PIPESCOPE-151`): "The market was left behind by an upgrade of the strategy." is said only when the market was created before its strategy's current version was deployed, since a market created on a version that cannot read it was never left behind.
+  What Canary saw is read with the page, so the head, the trade box and the facts panel agree from the first paint; when it cannot be read, Canary's part says so with Try again, and the trade box says it cannot repeat what Canary saw.
 
 ### Trades
 
@@ -325,6 +332,8 @@ Asking to swap never opens the wallet straight away; the trader first sees what 
   Since [#123](https://github.com/imDev2023/testing-pipeline/issues/123) the forms sit on the left and the facts panel on the right, its parts one under another.
 - **A product's panel**: when the market's strategy is one of our products, its panel sits on the left of the lower band, after the trades and before the explanation, and its own forms under Actions after the strategy's, from a registry in `terminal-web` keyed by strategy program (`PIPESCOPE-147`, `apps/terminal-web/src/products/registry.ts`); no other market shows them.
 - **After an upgrade** ([`pipescope.md`](pipescope.md), When a strategy is upgraded): the notice "Upgraded on <date>; tests and explanation for this version are pending." sits under the page's head, and Canary's part and the explanation each read as pending until the new version has its own.
+  As built (`PIPESCOPE-150`): the notice is shown while the strategy's current version has no Canary result of its own and an older version is recorded: on a market page created before the upgrade until that market has one, since a market made since never saw the version before, and on the strategy page until any of its markets has one; the date is the day the upgrade's transaction landed, or the day Aviary first saw the version when that transaction is not found yet.
+  The explanation's own part reads as pending until it exists ([Aviary: the explanation on the pages](https://github.com/imDev2023/testing-pipeline/issues/127)).
 
 ### Arriving from Telegram
 

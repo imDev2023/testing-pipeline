@@ -44,3 +44,8 @@
 .description {
   max-width: 760px;
 }
+
+/* What Canary saw on this version, when there is nothing to roll up: a panel like the others. */
+.canary {
+  composes: panel from "../Panel.module.css";
+}

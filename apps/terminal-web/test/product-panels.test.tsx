@@ -27,6 +27,7 @@ const market = (strategy: string, address: string): Market => ({
   strategy_name: null,
   strategy_metadata: "valid",
   flags: [],
+  canary: null,
 });
 
 const registry: ProductRegistry = {

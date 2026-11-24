@@ -1,0 +1,196 @@
+/* What Canary saw (docs/spec/pipescope-screens.md, Explanation, actions and facts): each result a
+   line that opens, its outcome in a column of its own, and its numbers as bars in ink. */
+
+.saw {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 1em;
+}
+
+/* As a panel's own heading, the size of the page's other panels' headings. */
+.panelHeading {
+  font-size: 1.05em;
+}
+
+.about {
+  color: var(--ink2);
+  max-width: 86ch;
+}
+
+.results {
+  border-bottom: 1px solid var(--rule);
+}
+
+.result,
+.folded {
+  border-top: 1px solid var(--rule);
+}
+
+.result > summary,
+.folded {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr) 14px;
+  gap: 10px;
+  padding: 10px 0;
+  align-items: start;
+}
+
+.result > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.result > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The disclosure's chevron, in the ink of the notes. */
+.result > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--ink2);
+  border-bottom: 1.5px solid var(--ink2);
+  transform: rotate(45deg);
+  margin-top: 4px;
+}
+
+.result[open] > summary::after {
+  transform: rotate(-135deg);
+  margin-top: 8px;
+}
+
+.folded {
+  grid-template-columns: 70px minmax(0, 1fr);
+}
+
+.outcomeCell {
+  padding-top: 2px;
+}
+
+.body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.name {
+  font-weight: var(--strong-weight);
+}
+
+.reason {
+  overflow-wrap: anywhere;
+}
+
+.detail {
+  display: grid;
+  gap: 10px;
+  padding: 0 0 14px var(--canary-detail-indent);
+  min-width: 0;
+}
+
+.meta {
+  color: var(--ink3);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+.more {
+  border-top: 1px solid var(--rule);
+}
+
+.more > summary {
+  cursor: pointer;
+  padding: 10px 0;
+  color: var(--ink2);
+}
+
+.bars {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 520px;
+  font-size: 13px;
+}
+
+.bars caption {
+  text-align: left;
+  color: var(--ink2);
+  padding-bottom: 4px;
+}
+
+.bars th {
+  font-weight: var(--text-weight);
+  text-align: left;
+  white-space: var(--canary-label-wrap);
+  padding: 3px 12px 3px 0;
+  vertical-align: middle;
+}
+
+.barCell {
+  width: var(--canary-bar-width);
+  vertical-align: middle;
+}
+
+.track {
+  display: block;
+  height: 10px;
+  border: 1px solid var(--rule2);
+}
+
+/* A step that could not sell back or buy: no bar, the track hatched in the rule's ink. */
+.hatched {
+  background: repeating-linear-gradient(135deg, transparent 0 4px, var(--rule2) 4px 5px);
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+}
+
+.value {
+  white-space: nowrap;
+  padding: 3px 0 3px 12px;
+  text-align: right;
+}
+
+.stuck {
+  font-weight: var(--heading-weight);
+}
+
+.refusal {
+  margin: 0;
+  display: grid;
+  max-width: 640px;
+  font-size: 13px;
+}
+
+.refusal > div {
+  display: grid;
+  grid-template-columns: var(--fact-columns);
+  gap: 2px 14px;
+  padding: 5px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.refusal dt {
+  color: var(--ink2);
+}
+
+.refusal dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.refusal code {
+  white-space: normal;
+}

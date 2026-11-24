@@ -60,6 +60,8 @@ const PROJECTS: Project<PlaywrightTestOptions>[] = [
   { name: "api", testMatch: /api\.spec\.ts/ },
   // The trade box with the Playwright test wallet: quotes, reviews and refusals, never sending (src/trade.spec.ts).
   { name: "trade", testMatch: /trade\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
+  // Canary's devnet criterion (src/canary-devnet.spec.ts), on a devnet run after Canary's sweep: never on CI's fixtures.
+  ...(RPC_MODE === "devnet" ? [{ name: "canary-devnet", testMatch: /canary-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
   // Real swaps on devnet through the trade box (src/trade-devnet.spec.ts): only when asked for, never in CI.
   ...(SWAPS ? [{ name: "swaps", testMatch: /trade-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
 ];
@@ -96,8 +98,8 @@ export default defineConfig({
     {
       // The keeper page's wallet is the tests' own, whose heartbeats they can sign (src/keeper.ts).
       // Off devnet, strategies' metadata documents are read through the fixture server too. Canary's
-      // container is not built: no page these tests check shows its results yet (#125), and its runs
-      // are checked by Canary's own demo and devnet tests.
+      // container is not built: the pages show real results the global setup stores for six markets
+      // (src/canary.ts), and Canary's runs are checked by its own demos and devnet tests.
       command: `node scripts/dev.ts --var KEEPER_WALLET:${TEST_KEEPER_WALLET}${RPC_MODE === "devnet" ? "" : ` --var TEST_METADATA_FIXTURES:http://127.0.0.1:${RPC_PORT}${METADATA_PATH}`} --enable-containers=false`,
       cwd: "../../apps/terminal-api",
       env: { RPC_URL: rpcUrl, DATABASE_URL, TERMINAL_API_PORT: String(API_PORT) },

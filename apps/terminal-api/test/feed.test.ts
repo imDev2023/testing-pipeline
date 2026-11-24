@@ -113,6 +113,8 @@ describe("GET /v1/markets", () => {
       strategy_name: null,
       strategy_metadata: "not-fetched",
       flags: [],
+      // Canary has not run it.
+      canary: null,
     });
   });
 

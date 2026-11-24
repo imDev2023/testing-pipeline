@@ -10,7 +10,8 @@
 import { decodeMint, FLAG_DESCRIPTIONS, FLAGS, type Flag, type MintExtensions } from "@pipeline-sol/sdk";
 import { address } from "@solana/kit";
 import { desc, eq, inArray, sql, type SQL } from "drizzle-orm";
-import { marketMints, metadataSnapshots, mints, programFacts, programVersions, strategies, type Db } from "terminal-db";
+import { marketMints, metadataSnapshots, mints, programFacts, programVersions, readCanaryCurrent, strategies, type Db } from "terminal-db";
+import { strategySummary } from "./canaryView";
 import { AVIARY_MINT_NAMES } from "./config";
 import type { FlagFact, MetadataStatus, MintExtension, MintFacts, Strategy } from "./contract";
 import type { MintRow } from "terminal-indexer";
@@ -111,6 +112,7 @@ export async function strategyFacts(db: Db, programs: { program: string; metadat
 /** Strategies as the API serves them, with their facts. */
 export async function strategyViews(db: Db, rows: StrategyRow[]): Promise<Strategy[]> {
   const facts = await strategyFacts(db, rows);
+  const canary = await readCanaryCurrent(db, { strategies: rows.map((s) => s.program), checks: ["readable", "cost"] });
   return rows.map((s) => {
     const f = facts.get(s.program)!;
     return {
@@ -126,6 +128,7 @@ export async function strategyViews(db: Db, rows: StrategyRow[]): Promise<Strate
       create_form: f.createForm,
       flags: f.flags,
       upgrade_authority: f.upgradeAuthority,
+      canary: strategySummary(canary.filter((r) => r.program === s.program)),
       current_version: f.currentVersion,
       verified_build: null,
     };

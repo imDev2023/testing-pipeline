@@ -34,6 +34,68 @@ const Amount = z.string().regex(/^\d+$/);
 const Address = z.string().min(32).max(44);
 const Time = z.iso.datetime({ offset: true });
 
+// ---- Canary's summaries (#125), on markets, strategies and Canary's own endpoints ----
+
+/** One of Canary's five outcomes (docs/spec/pipescope-canary.md, Outcomes). */
+export const CanaryOutcome = z.enum(["pass", "warn", "fail", "not run", "noted"]);
+export type CanaryOutcome = z.infer<typeof CanaryOutcome>;
+
+/**
+ * A step Canary saw refused (docs/spec/pipescope-screens.md, Canary outcomes): who refused it, in
+ * words ("the strategy"), the program, the error's name, number and message, the stage it was raised
+ * at, where Anchor says it was raised, and the transaction error as the VM gave it.
+ */
+export const CanaryRefusal = z.object({
+  by: z.string(),
+  program: Address.nullable(),
+  name: z.string().nullable(),
+  number: z.number().int().nullable(),
+  message: z.string().nullable(),
+  stage: z.string().nullable(),
+  origin: z.string().nullable(),
+  raw: z.string().nullable(),
+});
+export type CanaryRefusal = z.infer<typeof CanaryRefusal>;
+
+/** The ordinary trade: Canary's reference size (0.01 SOL with wrapped SOL) bought and sold straight back, and what came back, in millionths. */
+const CanaryOrdinary = z.object({ return_ppm: z.number().int(), amount_words: z.string(), stand_in: z.boolean() });
+
+/** The one result a row shows (PIPESCOPE-71): an outcome and a short phrase, never a count. */
+export const CanaryLead = z.object({ check: z.string(), outcome: CanaryOutcome, phrase: z.string() });
+export type CanaryLead = z.infer<typeof CanaryLead>;
+
+/**
+ * What a row says about Canary for a market (docs/spec/pipescope-screens.md, What a row says about
+ * Canary), from its latest results under its strategy's current version: when they ran, the ordinary
+ * trade's return, the one result chosen in the screens' order, and whether the market is stranded or
+ * refuses every trade by its own rules, with the refusal.
+ */
+export const MarketCanary = z.object({
+  run_at: Time,
+  ordinary: CanaryOrdinary.nullable(),
+  lead: CanaryLead.nullable(),
+  stranded: CanaryRefusal.nullable(),
+  refuses: CanaryRefusal.nullable(),
+});
+export type MarketCanary = z.infer<typeof MarketCanary>;
+
+/**
+ * What a strategy's row says about Canary (docs/spec/pipescope-screens.md, Feed): over its current
+ * version's markets with results, the range of the ordinary trade's return on those that trade, and
+ * how many the version cannot read.
+ */
+export const StrategyCanary = z.object({
+  run_at: Time,
+  markets: z.number().int(),
+  stranded: z.number().int(),
+  ordinary: z.object({ min_ppm: z.number().int(), max_ppm: z.number().int(), amount_words: z.string() }).nullable(),
+});
+export type StrategyCanary = z.infer<typeof StrategyCanary>;
+
+/** A strategy upgraded since Canary last ran on it (PIPESCOPE-19): its new version, and when it was deployed (or first seen). */
+export const CanaryUpgrade = z.object({ deploy_slot: z.number().int(), upgraded_at: Time });
+export type CanaryUpgrade = z.infer<typeof CanaryUpgrade>;
+
 /**
  * One of Pipeline's trust flags with its fixed description, as Pipeline's SDK words it
  * (`FLAG_DESCRIPTIONS`), so Aviary's wording is the SDK's and the hosted API's (PIPESCOPE-16).
@@ -88,6 +150,8 @@ export const Strategy = z.object({
   current_version: z.object({ deploy_slot: z.number().int(), executable_sha256: z.string().nullable(), deployed_at: Time.nullable() }).nullable(),
   /** A verified build of the current version: none until verified builds exist (#128). */
   verified_build: z.null(),
+  /** What Canary saw on its current version's markets, or null before Canary has run any of them on it. */
+  canary: StrategyCanary.nullable(),
 });
 export type Strategy = z.infer<typeof Strategy>;
 
@@ -307,6 +371,8 @@ export const Market = z.object({
   strategy_metadata: MetadataStatus.shape.status,
   /** Pipeline's trust flags for the market: its strategy's and every mint's, in the SDK's order, as Pipeline's SDK and hosted API give them. */
   flags: z.array(z.string()),
+  /** What Canary saw under its strategy's current version, or null before Canary has run it on that version. */
+  canary: MarketCanary.nullable(),
 });
 export type Market = z.infer<typeof Market>;
 
@@ -839,10 +905,6 @@ export type Balances = z.infer<typeof Balances>;
 
 // ---- Canary (#124) ----
 
-/** One of Canary's five outcomes (docs/spec/pipescope-canary.md, Outcomes). */
-export const CanaryOutcome = z.enum(["pass", "warn", "fail", "not run", "noted"]);
-export type CanaryOutcome = z.infer<typeof CanaryOutcome>;
-
 /** A program as of one deploy, as a Canary result names it. */
 const CanaryRecordVersion = z.object({ deploy_slot: z.number().int().nullable(), executable_sha256: z.string().nullable() });
 
@@ -859,6 +921,12 @@ export const CanaryResult = z.object({
   reason: z.string(),
   about: z.string(),
   ran: z.string(),
+  /** The check's plain name, as the pages list it ("Buy, then sell straight back"). */
+  name: z.string(),
+  /** A check that runs one round trip a step: each size, wait, wallet or buyer, grouped by the mint traded against the money side (its place in the market's mints). */
+  steps: z.array(z.object({ pair: z.number().int().nullable(), steps: z.array(z.object({ label: z.string(), state: z.enum(["back", "stuck", "not bought", "no round trip"]), return_ppm: z.number().int().nullable() })) })),
+  /** Every distinct step the record names as refused. */
+  refusals: z.array(CanaryRefusal),
   harness: z.string(),
   slot: z.number().int(),
   run_at: Time,
@@ -870,7 +938,8 @@ export const CanaryResult = z.object({
 export type CanaryResult = z.infer<typeof CanaryResult>;
 
 /** A strategy version, as Canary's endpoints name it. */
-const CanaryVersion = z.object({ program: Address, deploy_slot: z.number().int(), executable_sha256: z.string().nullable(), current: z.boolean() });
+/** `deployed_at` is when its deploy or upgrade landed, null until that transaction is found. */
+const CanaryVersion = z.object({ program: Address, deploy_slot: z.number().int(), executable_sha256: z.string().nullable(), deployed_at: Time.nullable(), current: z.boolean() });
 
 /**
  * `GET /v1/markets/{market}/canary[?version=<deploy slot>]`: the market's latest result of each check
@@ -880,9 +949,15 @@ const CanaryVersion = z.object({ program: Address, deploy_slot: z.number().int()
  */
 export const CanaryResults = z.object({
   market: Address,
-  version: CanaryVersion,
+  /** Null before the watch has recorded any version of the market's strategy: Canary has not run it. */
+  version: CanaryVersion.nullable(),
+  /** In the checks' fixed order (PIPESCOPE-148). */
   results: z.array(CanaryResult),
   could_not_sell_back: z.array(z.object({ check: z.string(), sentence: z.string() })),
+  /** What a row says about these results; null when there are none. */
+  summary: MarketCanary.nullable(),
+  /** The current version is an upgrade with no result for this market yet: the pages say its tests are pending. */
+  upgrade: CanaryUpgrade.nullable(),
 });
 export type CanaryResults = z.infer<typeof CanaryResults>;
 
@@ -896,7 +971,26 @@ export const CanaryRollup = z.object({
   deploy_slot: z.number().int(),
   current: z.boolean(),
   markets: z.number().int(),
-  checks: z.record(z.string(), z.object({ about: z.string(), outcomes: z.partialRecord(CanaryOutcome, z.number().int()), warn: z.array(Address), fail: z.array(Address) })),
+  /**
+   * Each check, with its plain name and its place in the checks' fixed order (`rank`, PIPESCOPE-148),
+   * how many markets got each outcome, and the markets that warn or fail, each with its sentence.
+   */
+  checks: z.record(
+    z.string(),
+    z.object({
+      name: z.string(),
+      rank: z.number().int(),
+      about: z.string(),
+      outcomes: z.partialRecord(CanaryOutcome, z.number().int()),
+      warn: z.array(Address),
+      fail: z.array(Address),
+      held: z.array(z.object({ market: Address, outcome: z.enum(["warn", "fail"]), reason: z.string() })),
+    }),
+  ),
+  /** What the strategy's row says about this version, or null before any result. */
+  summary: StrategyCanary.nullable(),
+  /** The version is the current one, an upgrade, with no result yet: the pages say its tests are pending. */
+  upgrade: CanaryUpgrade.nullable(),
   last_run: z
     .object({ trigger: z.string(), delay_ms: z.number().int(), markets: z.number().int(), started_at: Time, finished_at: Time.nullable() })
     .nullable(),
