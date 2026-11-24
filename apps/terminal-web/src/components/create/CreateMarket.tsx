@@ -49,46 +49,55 @@ export function CreateMarket() {
   return (
     <>
       <PanelFrame title="Choose a strategy" what="the registered strategies" state={state} retry={retry}>
-        {({ strategies }) => (
-          <>
-            {!strategies.some((s) => s.metadata.status === "valid") && (
-              <p className={styles.notice}>No strategy on {CLUSTER} has valid metadata today, so none offers a create form here. Their markets were created from their authors&apos; own tools.</p>
-            )}
-            <ul className={styles.choices}>
-              {strategies.map((strategy) => {
-                const why = noCreateForm(strategy);
-                return (
-                  <li key={strategy.program} className={styles.choice} data-chosen={chosen === strategy.program || undefined}>
-                    <span className={styles.who}>
-                      <StrategyName program={strategy.program} name={strategy.name} metadata={strategy.metadata.status} />
-                      <span className={styles.meta}>
-                        {formatInteger(strategy.market_count)} {strategy.market_count === 1 ? "market" : "markets"};{" "}
-                        {strategy.upgrade_authority ? (
-                          <>
-                            upgradeable by <ShortAddress address={strategy.upgrade_authority} />
-                          </>
-                        ) : strategy.flags.includes("frozen") ? (
-                          "frozen: nobody can upgrade it"
-                        ) : (
-                          "who can upgrade it is not read yet"
-                        )}
-                      </span>
-                    </span>
-                    {why ? (
-                      <span className={styles.why}>{why}</span>
-                    ) : (
-                      <button type="button" aria-pressed={chosen === strategy.program} onClick={() => choose(strategy.program)}>
-                        {chosen === strategy.program ? "Its create form is below" : "Open its create form"}
-                      </button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        )}
+        {({ strategies }) => <StrategyChooser strategies={strategies} chosen={chosen} onChoose={choose} />}
       </PanelFrame>
       {chosen && state.status === "loaded" && state.data.strategies.some((s) => s.program === chosen && s.metadata.status === "valid") && <CreateFormPanel key={chosen} program={chosen} />}
+    </>
+  );
+}
+
+/**
+ * "Choose a strategy": every registered strategy by name and short address, how many markets it has and
+ * who can upgrade it; one whose metadata may hold a create form offers to open it, one without says
+ * why; and when no strategy has valid metadata, the line saying so above the list.
+ */
+export function StrategyChooser({ strategies, chosen, onChoose }: { strategies: Strategy[]; chosen: string | null; onChoose: (program: string) => void }) {
+  return (
+    <>
+      {!strategies.some((s) => s.metadata.status === "valid") && (
+        <p className={styles.notice}>No strategy on {CLUSTER} has valid metadata today, so none offers a create form here. Their markets were created from their authors&apos; own tools.</p>
+      )}
+      <ul className={styles.choices}>
+        {strategies.map((strategy) => {
+          const why = noCreateForm(strategy);
+          return (
+            <li key={strategy.program} className={styles.choice} data-chosen={chosen === strategy.program || undefined}>
+              <span className={styles.who}>
+                <StrategyName program={strategy.program} name={strategy.name} metadata={strategy.metadata.status} />
+                <span className={styles.meta}>
+                  {formatInteger(strategy.market_count)} {strategy.market_count === 1 ? "market" : "markets"};{" "}
+                  {strategy.upgrade_authority ? (
+                    <>
+                      upgradeable by <ShortAddress address={strategy.upgrade_authority} />
+                    </>
+                  ) : strategy.flags.includes("frozen") ? (
+                    "frozen: nobody can upgrade it"
+                  ) : (
+                    "who can upgrade it is not read yet"
+                  )}
+                </span>
+              </span>
+              {why ? (
+                <span className={styles.why}>{why}</span>
+              ) : (
+                <button type="button" aria-pressed={chosen === strategy.program} onClick={() => onChoose(strategy.program)}>
+                  {chosen === strategy.program ? "Its create form is below" : "Open its create form"}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </>
   );
 }

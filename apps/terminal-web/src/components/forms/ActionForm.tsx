@@ -33,7 +33,7 @@ export function ActionForm({ form, market, deploySlot, open }: { form: Form; mar
   return (
     <details className={styles.form} open={open}>
       <summary>
-        <h3 className={styles.formTitle}>{form.label ? <AuthorText>{form.label}</AuthorText> : <code>{form.name}</code>}</h3>
+        <h3 className={styles.formTitle}>{form.label ? <AuthorText>{form.label}</AuthorText> : <code>{form.name}</code>}</h3>{" "}
         <span className={styles.calls}>
           calls <code>{callsOf(form)}</code>
         </span>

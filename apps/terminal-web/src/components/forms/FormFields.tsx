@@ -73,7 +73,11 @@ function Field({ id, arg, fields, wallet }: { id: string; arg: FormArg; fields: 
   const described = arg.description ? `${id}-description` : undefined;
   const label = (
     <span className={styles.fieldLabel}>
-      {arg.label && <AuthorText>{arg.label}</AuthorText>}
+      {arg.label && (
+        <>
+          <AuthorText>{arg.label}</AuthorText>{" "}
+        </>
+      )}
       <span className={styles.identifier}>
         <code>{arg.name}</code> {arg.type}
         {mint && decimals !== null && (

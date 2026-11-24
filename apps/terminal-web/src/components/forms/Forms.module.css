@@ -193,3 +193,16 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* "Every account it touches": the table's caption is for screen readers, so its heading is shown above it. */
+.accounts {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.subheading {
+  margin: 0;
+  font-size: 1em;
+  font-weight: var(--strong-weight);
+}
