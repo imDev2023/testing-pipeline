@@ -53,7 +53,7 @@ afterAll(async () => {
   await database?.drop();
 });
 
-const handler = () => combineHandlers(pipelineHandler(), strategyCallsHandler((program) => program === STRATEGY));
+const handler = () => combineHandlers(pipelineHandler({ candleSeconds: [] }), strategyCallsHandler((program) => program === STRATEGY));
 const calls = () => client.db.select().from(strategyCalls).orderBy(asc(strategyCalls.slot), asc(strategyCalls.instructionIndex), asc(strategyCalls.innerIndex));
 
 describe("strategyCallsHandler", () => {
@@ -70,7 +70,7 @@ describe("strategyCallsHandler", () => {
   });
 
   it("stores a custom action called straight on the strategy, and names the market whose state it touched to be read again", async () => {
-    await indexTransactions(client.db, pipelineHandler(), [registered, created]);
+    await indexTransactions(client.db, pipelineHandler({ candleSeconds: [] }), [registered, created]);
     const result = await indexTransactions(client.db, handler(), [customAction("custom-1", MARKET_STATE)]);
     expect(result).toEqual({ counts: { strategyCalls: 1 }, markets: [MARKET], trades: [], strategies: [] });
     expect(await calls()).toEqual([

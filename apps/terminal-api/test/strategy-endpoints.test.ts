@@ -58,7 +58,7 @@ beforeAll(async () => {
   rpc = await fakeRpc();
   const { db, close } = createDb(database.url);
   try {
-    const handler = combineHandlers(pipelineHandler(), strategyCallsHandler((p) => p === STRATEGY));
+    const handler = combineHandlers(pipelineHandler({ candleSeconds: [] }), strategyCallsHandler((p) => p === STRATEGY));
     await indexTransactions(db, handler, [registered, created, swap, customAction("custom-a1", 525_300_000, CALLER_A), customAction("custom-a2", 525_300_001, CALLER_A), customAction("custom-b1", 525_300_002, CALLER_B)]);
     const strategyData = await programDataPda(address(STRATEGY));
     rpc.history.push(upgradeTransaction({ kind: "deploy", program: STRATEGY, programData: strategyData, slot: 525_100_000, signature: "strategy-deploy" }));

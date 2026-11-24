@@ -748,7 +748,7 @@ export const CanaryResults = z.object({
   market: Address,
   /** Null before the watch has recorded any version of the market's strategy: Canary has not run it. */
   version: CanaryVersion.nullable(),
-  /** In the checks' fixed order (PIPESCOPE-137). */
+  /** In the checks' fixed order (PIPESCOPE-141). */
   results: z.array(CanaryResult),
   could_not_sell_back: z.array(z.object({ check: z.string(), sentence: z.string() })),
   /** What a row says about these results; null when there are none. */
@@ -769,7 +769,7 @@ export const CanaryRollup = z.object({
   current: z.boolean(),
   markets: z.number().int(),
   /**
-   * Each check, with its plain name and its place in the checks' fixed order (`rank`, PIPESCOPE-137),
+   * Each check, with its plain name and its place in the checks' fixed order (`rank`, PIPESCOPE-141),
    * how many markets got each outcome, and the markets that warn or fail, each with its sentence.
    */
   checks: z.record(

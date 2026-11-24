@@ -12,6 +12,7 @@ import { Candles, TradesPage, type Candle, type LiveEvent, type Market, type Tra
 import { ApiFailure, getFromApi } from "@/api";
 import { CHART_INTERVALS, CHART_OPENS_AT, LIVE_CANDLE_REFRESH_MS, TRADES_SHOWN } from "@/config";
 import { formatAge, formatAmount, formatDate, formatInteger, formatPrice } from "@/format";
+import { heldCount, holdArrivals, releaseHeld as released, takeResyncPage, type Held } from "@/heldTrades";
 import { afterCursor, mergeCandles, mergeTrades, readTrade, sortArrivals } from "@/liveMerge";
 import { LIVE_ROOMS, useLiveRoom } from "@/live";
 import { ShortAddress, ShortSignature } from "../Address";
@@ -29,6 +30,7 @@ const failureOf = (e: unknown) => (e instanceof ApiFailure ? e.message : "Someth
 const plural = (n: number, one: string, many: string) => `${formatInteger(n)} ${n === 1 ? one : many}`;
 
 type TradesState = { list: Trade[]; next: string | null };
+const NONE_HELD: Held = { trades: [], replaces: null };
 
 export function MarketLive({ market, canary }: { market: Market; canary: CanaryRead }) {
   const router = useRouter();
@@ -115,9 +117,13 @@ export function MarketLive({ market, canary }: { market: Market; canary: CanaryR
   const setTrades = useCallback((state: Loaded<TradesState>) => setTradesFor({ path: tradesPath, state }), [tradesPath]);
   const [tradesAttempt, setTradesAttempt] = useState(0);
   const [earlier, setEarlier] = useState<{ status: "idle" | "loading" } | { status: "failed"; message: string }>({ status: "idle" });
-  /** Trades that arrived while the pointer or the focus was on the table, so no row moved under it. */
-  const [held, setHeld] = useState<Trade[]>([]);
-  const heldNow = useRef<Trade[]>([]);
+  /** Trades that arrived while the pointer or the focus was on the table, so no row moved under it (./heldTrades). */
+  const [held, setHeld] = useState<Held>(NONE_HELD);
+  const heldNow = useRef<Held>(NONE_HELD);
+  const hold = useCallback((next: Held) => {
+    heldNow.current = next;
+    setHeld(next);
+  }, []);
   const holding = useRef(false);
   /** Trades that arrived live, drawn with a brief wash for readers who allow motion. */
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
@@ -137,46 +143,49 @@ export function MarketLive({ market, canary }: { market: Market; canary: CanaryR
     (arriving: Trade[]) => {
       const current = shownTrades.current;
       if (!current || !arriving.length) return;
-      const { fresh: fresher, updates } = sortArrivals([...current.list, ...heldNow.current], arriving);
+      const { fresh: fresher, updates } = sortArrivals([...current.list, ...heldNow.current.trades], arriving);
       // The indexer's copy of a fast-path trade replaces its provisional row where it stands.
       if (updates.length) {
-        heldNow.current = mergeTrades(heldNow.current, updates.filter((u) => heldNow.current.some((h) => h.signature === u.signature && h.event_index === u.event_index)));
-        setHeld(heldNow.current);
+        hold(holdArrivals(heldNow.current, updates.filter((u) => heldNow.current.trades.some((h) => h.signature === u.signature && h.event_index === u.event_index))));
         show({ ...current, list: mergeTrades(current.list, updates.filter((u) => current.list.some((t) => t.signature === u.signature && t.event_index === u.event_index))) });
       }
       if (!fresher.length) return;
       const now = shownTrades.current!;
       setFresh((before) => new Set([...before, ...fresher.map((t) => `${t.signature}:${t.event_index}`)]));
-      if (holding.current) {
-        heldNow.current = mergeTrades(heldNow.current, fresher);
-        setHeld(heldNow.current);
-      } else show({ ...now, list: mergeTrades(now.list, fresher) });
+      if (holding.current) hold(holdArrivals(heldNow.current, fresher));
+      else show({ ...now, list: mergeTrades(now.list, fresher) });
     },
-    [show],
+    [hold, show],
   );
 
-  /** Whatever landed since the newest trade shown, through the API; with more than a page of them, the newest page replaces the list. */
+  /**
+   * Whatever landed since the newest trade shown, through the API; with more than a page of them, the
+   * newest page replaces the list, once the reader leaves the table if they are on it.
+   */
   const resync = useCallback(async () => {
     const current = shownTrades.current;
     if (!current) {
       resyncDue.current = true;
       return;
     }
-    const after = afterCursor(mergeTrades(current.list, heldNow.current));
+    const after = afterCursor(mergeTrades(current.list, heldNow.current.trades));
     try {
       if (!after) {
         const page = await getFromApi(`${tradesPath}?limit=${TRADES_SHOWN}`, TradesPage);
         arrive(page.trades);
       } else {
         const page = await getFromApi(`${tradesPath}?limit=${TRADES_SHOWN}&after=${after}`, TradesPage);
-        if (page.next) show({ list: page.trades, next: page.next });
-        else arrive(page.trades);
+        if (page.next) {
+          const taken = takeResyncPage(shownTrades.current ?? current, heldNow.current, { trades: page.trades, next: page.next }, holding.current);
+          hold(taken.held);
+          if (taken.shown !== shownTrades.current) show(taken.shown);
+        } else arrive(page.trades);
       }
     } catch {
       // The room's next connection resyncs again.
     }
     refreshCandles();
-  }, [arrive, refreshCandles, show, tradesPath]);
+  }, [arrive, hold, refreshCandles, show, tradesPath]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -201,10 +210,12 @@ export function MarketLive({ market, canary }: { market: Market; canary: CanaryR
     holding.current = false;
     const waiting = heldNow.current;
     const current = shownTrades.current;
-    heldNow.current = [];
-    setHeld([]);
-    if (waiting.length && current) show({ ...current, list: mergeTrades(current.list, waiting) });
-  }, [show]);
+    hold(NONE_HELD);
+    if (current) {
+      const next = released(current, waiting);
+      if (next !== current) show(next);
+    }
+  }, [hold, show]);
 
   const loadEarlier = async () => {
     const current = shownTrades.current;
@@ -315,9 +326,9 @@ export function MarketLive({ market, canary }: { market: Market; canary: CanaryR
       <section className={styles.tradesArea} aria-labelledby="panel-trades" aria-busy={trades.status === "loading"}>
         <div className={styles.tradesHead}>
           <h2 id="panel-trades">Trades</h2>
-          {held.length > 0 && (
+          {heldCount(held).trades > 0 && (
             <button type="button" onClick={releaseHeld}>
-              Show {plural(held.length, "new trade", "new trades")}
+              {heldCount(held).more ? `Show ${formatInteger(heldCount(held).trades)}+ new trades` : `Show ${plural(heldCount(held).trades, "new trade", "new trades")}`}
             </button>
           )}
         </div>

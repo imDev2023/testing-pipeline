@@ -5,7 +5,7 @@
 //
 // Nothing here judges: an outcome is the binary's, and every phrase states what a record measured.
 // The order in which a page lists checks, and each check's plain name, are the screens' starting
-// copy (the prototype's, PIPESCOPE-137).
+// copy (the prototype's, PIPESCOPE-141).
 import type { StoredCanaryResult } from "terminal-db";
 
 /**

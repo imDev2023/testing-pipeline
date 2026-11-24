@@ -2,7 +2,7 @@
 // for it are gathered for LIVE_ROOM_BATCH_MS and sent to every browser in one message, and the room
 // tells the indexer when its first viewer arrives and its last one leaves.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LIVE_ROOM_BATCH_MS, ROOM_ANNOUNCE_RETRY_MS } from "../src/config";
+import { LIVE_ROOM_BATCH_MS, ROOM_ANNOUNCE_RETRIES, ROOM_ANNOUNCE_RETRY_MS } from "../src/config";
 import { LiveMessage, type LiveEvent } from "../src/contract";
 import { RoomCore, type RoomSocket } from "../src/roomCore";
 
@@ -79,8 +79,8 @@ describe("a live room", () => {
     expect(told).toEqual(["arrived", "arrived", "left"]);
   });
 
-  it("tries again when the indexer could not be told a viewer arrived, as during a deploy", async () => {
-    let refusals = 2;
+  it("tries again ROOM_ANNOUNCE_RETRIES times when the indexer could not be told a viewer arrived, as during a deploy", async () => {
+    let refusals = ROOM_ANNOUNCE_RETRIES;
     const told: string[] = [];
     const sockets: RoomSocket[] = [];
     const core = new RoomCore({
@@ -93,9 +93,26 @@ describe("a live room", () => {
     });
     sockets.push({ send: () => {} });
     const joined = core.joined();
-    await vi.advanceTimersByTimeAsync(ROOM_ANNOUNCE_RETRY_MS * 3);
+    await vi.advanceTimersByTimeAsync(ROOM_ANNOUNCE_RETRY_MS * 2 ** ROOM_ANNOUNCE_RETRIES);
     await joined;
     expect(told).toEqual(["arrived"]);
+  });
+
+  it("leaves it to the next viewer once ROOM_ANNOUNCE_RETRIES tries more were refused", async () => {
+    const sockets: RoomSocket[] = [{ send: () => {} }];
+    let tries = 0;
+    const core = new RoomCore({
+      sockets: () => sockets,
+      arrived: async () => {
+        tries++;
+        throw new Error("the indexer was reset");
+      },
+      left: async () => {},
+    });
+    const joined = core.joined().catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(ROOM_ANNOUNCE_RETRY_MS * 2 ** (ROOM_ANNOUNCE_RETRIES + 1));
+    expect(await joined).toEqual(new Error("the indexer was reset"));
+    expect(tries).toBe(ROOM_ANNOUNCE_RETRIES + 1);
   });
 
   it("keeps sending to the others when one browser's socket fails as the batch goes out", async () => {
