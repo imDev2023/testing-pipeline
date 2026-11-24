@@ -3,10 +3,18 @@
 // reconciliation the moment it opens; reopened by its 15-second alarm if it drops; closed 3 minutes
 // after the last viewer leaves, which its storage and its log record.
 import { beforeEach, describe, expect, it } from "vitest";
-import { SOCKET_CLOSE_AFTER_LAST_VIEWER_MS, SOCKET_REOPEN_ALARM_MS } from "../src/config";
+import { SOCKET_CLOSE_AFTER_LAST_VIEWER_MS, SOCKET_REOPEN_ALARM_MS, SOCKET_REOPEN_BACKOFF_MAX_MS } from "../src/config";
 import { LiveSocket, type LiveSocketDeps, type LiveSocketState } from "../src/liveSocket";
 
-type FakeSocket = { accounts: string[]; closed: boolean; report: (signature: string) => void; drop: () => void };
+type FakeSocket = {
+  accounts: string[];
+  closed: boolean;
+  report: (signature: string) => void;
+  drop: () => void;
+  /** The RPC confirms every subscription, or refuses one, as its first answer on the socket. */
+  subscribed: () => void;
+  refuse: (error: string) => void;
+};
 
 function harness(saved?: LiveSocketState) {
   const world = {
@@ -29,9 +37,18 @@ function harness(saved?: LiveSocketState) {
     accounts: () => ["PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34"],
     connect: async (accounts, on) => {
       if (world.refuse) throw new Error("the RPC answered 429 to a WebSocket upgrade");
-      const socket: FakeSocket = { accounts, closed: false, report: (s) => on.transaction(s), drop: () => {
+      const socket: FakeSocket = {
+        accounts,
+        closed: false,
+        report: (s) => on.transaction(s),
+        drop: () => {
           socket.closed = true;
           on.dropped();
+        },
+        subscribed: () => on.subscribed(),
+        refuse: (error) => {
+          socket.closed = true;
+          on.refused(error);
         },
       };
       world.sockets.push(socket);
@@ -133,6 +150,23 @@ describe("when the last viewer leaves", () => {
     expect(h.world.sockets).toHaveLength(1);
   });
 
+  it("is not reopened when it drops in those 3 minutes: it stays closed, with no reconciliation, until a viewer comes (#214)", async () => {
+    await join("market:A");
+    await leave("market:A");
+    h.world.now += 20_000;
+    h.open()[0]!.drop();
+    await alarm();
+    expect(h.world.sockets).toHaveLength(1);
+    expect(h.world.reconciled).toBe(1);
+    expect(h.world.alarm).toBeNull();
+    expect(await h.live.status()).toMatchObject({ open: false, rooms: [], closesAt: null });
+    expect(h.world.stored).toMatchObject({ closesAt: null, socket: { open: false, reason: "dropped with no viewer" } });
+    expect(h.world.log.at(-1)).toBe("live socket closed: dropped with no viewer");
+    await join("feed");
+    expect(h.open()).toHaveLength(1);
+    expect(h.world.reconciled).toBe(2);
+  });
+
   it("is noticed by the alarm when a room's viewers went without saying so", async () => {
     await join("market:A");
     h.world.viewers.set("market:A", 0);
@@ -171,6 +205,53 @@ describe("the 15-second alarm", () => {
     h.world.refuse = false;
     await alarm();
     expect(h.open()).toHaveLength(1);
+  });
+
+  it("waits twice as long before each new try while the RPC refuses the subscription, up to SOCKET_REOPEN_BACKOFF_MAX_MS, reconciling only as it tries (#214)", async () => {
+    await join("market:A");
+    const waits: number[] = [];
+    for (let tries = 1; tries <= 7; tries++) {
+      h.open()[0]!.refuse("logsSubscribe is not available on this plan");
+      expect(await h.live.status()).toMatchObject({ open: false });
+      // A viewer arriving meanwhile never tries ahead of the wait.
+      await join("feed");
+      expect(h.world.sockets).toHaveLength(tries);
+      const before = h.world.now;
+      await alarm();
+      waits.push(h.world.now - before);
+      expect(h.world.sockets).toHaveLength(tries + 1);
+    }
+    expect(waits).toEqual([1, 2, 4, 8, 16, 32, 64].map((x) => Math.min(x * SOCKET_REOPEN_ALARM_MS, SOCKET_REOPEN_BACKOFF_MAX_MS)));
+    expect(h.world.reconciled).toBe(8);
+    expect(h.world.stored).toMatchObject({ socket: { open: true } });
+    expect(h.world.log).toContain("live socket refused: logsSubscribe is not available on this plan; the alarm tries again in 30 s");
+
+    // Once the RPC confirms the subscription, a drop is tried again on the next 15-second alarm.
+    h.open()[0]!.subscribed();
+    h.open()[0]!.drop();
+    const before = h.world.now;
+    await alarm();
+    expect(h.world.now - before).toBe(SOCKET_REOPEN_ALARM_MS);
+    expect(h.open()).toHaveLength(1);
+  });
+
+  it("keeps its waits across a restart, as the object is evicted while it waits with no socket open", async () => {
+    await join("market:A");
+    h.open()[0]!.refuse("logsSubscribe is not available on this plan");
+    await alarm();
+    h.open()[0]!.refuse("logsSubscribe is not available on this plan");
+    // Evicted while it waits: a new instance, from storage alone, waits out the 30 s and doubles the next wait.
+    const restarted = harness(h.world.stored);
+    restarted.world.viewers.set("market:A", 1);
+    restarted.world.now = h.world.now + 20_000;
+    restarted.world.alarm = restarted.world.now;
+    await restarted.live.alarm();
+    expect(restarted.world.sockets).toHaveLength(0);
+    expect(restarted.world.alarm).toBe(h.world.now + 2 * SOCKET_REOPEN_ALARM_MS);
+    restarted.world.now = restarted.world.alarm!;
+    await restarted.live.alarm();
+    restarted.open()[0]!.refuse("logsSubscribe is not available on this plan");
+    expect(restarted.world.alarm).toBe(restarted.world.now + 4 * SOCKET_REOPEN_ALARM_MS);
   });
 
   it("carries on after a restart from what storage holds, opening the socket again", async () => {

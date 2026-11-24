@@ -4,7 +4,8 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
-import { createDb } from "terminal-db";
+import { eq } from "drizzle-orm";
+import { createDb, markets } from "terminal-db";
 import { canaryRoutes, startCanary } from "./canary";
 import { sweepCanary } from "./canaryTriggers";
 import type { JobName } from "./config";
@@ -12,7 +13,8 @@ import type { ApiError } from "./contract";
 import { runDueJobs, type Job } from "./dispatcher";
 import { makeExplainerKeys } from "./explainer";
 import type { Bindings } from "./env";
-import { feed } from "./feed";
+import { feed, notFound } from "./feed";
+import { dbOf, requestDb } from "./requestDb";
 import { health } from "./health";
 import { keeperRoutes } from "./keeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
@@ -54,16 +56,20 @@ app.route("/", canaryRoutes);
  * room, named, so a room woken from hibernation knows which it is.
  */
 const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const joinRoom = (c: Context<AppEnv>, room: string) => {
+const joinRoom = <E extends AppEnv>(c: Context<E>, room: string) => {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") return c.json<ApiError>({ error: "A live room is a WebSocket: open it with an upgrade." }, 426);
   const request = new Request(c.req.raw);
   request.headers.set(ROOM_HEADER, room);
   return c.env.LIVE_ROOMS.get(c.env.LIVE_ROOMS.idFromName(room)).fetch(request);
 };
 app.get("/v1/live/feed", (c) => joinRoom(c, roomOf.feed));
-app.get("/v1/live/markets/:market", (c) => {
+app.get("/v1/live/markets/:market", requestDb, async (c) => {
   const market = c.req.param("market");
   if (!ADDRESS.test(market)) return c.json<ApiError>({ error: "This is not a market's address." }, 400);
+  // A room only for a market Aviary knows, so no address opens one, and the socket, for nothing (#214).
+  // The market page read the market just before, so the database is awake already.
+  const [known] = await dbOf(c).select({ address: markets.address }).from(markets).where(eq(markets.address, market)).limit(1);
+  if (!known) throw notFound("market");
   return joinRoom(c, roomOf.market(market));
 });
 

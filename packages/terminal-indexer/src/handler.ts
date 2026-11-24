@@ -27,13 +27,14 @@ const blockDate = (raw: RawTransaction) => (raw.blockTime === null ? null : new 
  * The router's handler. `decode` and `decoderVersion` are the event decoder and its version; the
  * defaults are Pipeline's SDK and `DECODER_VERSION`, and tests pass an older decoder to see an
  * unknown event kept and indexed later. `candleSeconds` are the candle lengths each new swap is
- * folded into (the API's config module, `CANDLES`).
+ * folded into (the API's config module, `CANDLES`); it has no default, so a handler never leaves
+ * candles out without saying so (#214), and one that keeps none passes `[]`.
  */
 export function pipelineHandler({
   decode,
   decoderVersion = DECODER_VERSION,
-  candleSeconds = [],
-}: { decode?: EventDecoder; decoderVersion?: number; candleSeconds?: readonly number[] } = {}): TransactionHandler {
+  candleSeconds,
+}: { decode?: EventDecoder; decoderVersion?: number; candleSeconds: readonly number[] }): TransactionHandler {
   return async (db, raw) => {
     const result = emptyResult();
     // A failed transaction changed nothing on chain, so it has no rows.

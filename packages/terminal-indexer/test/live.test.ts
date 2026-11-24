@@ -43,7 +43,7 @@ describe("a reported transaction", () => {
     rpc = await fakeRpc([raw]);
     rpc.unserved.add(raw.transaction.signatures[0]!);
     setTimeout(() => rpc!.unserved.clear(), 400);
-    const served = await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { waitMs: 5_000, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) });
+    const served = await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { until: Date.now() + 5_000, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) });
     expect(served).toEqual(raw);
     expect(rpc.requests.filter((r) => r.method === "getTransaction").length).toBeGreaterThan(1);
   });
@@ -51,6 +51,13 @@ describe("a reported transaction", () => {
   it("is left to reconciliation when the RPC has not served it in time", async () => {
     rpc = await fakeRpc([raw]);
     rpc.unserved.add(raw.transaction.signatures[0]!);
-    expect(await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { waitMs: 300, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) })).toBeNull();
+    expect(await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { until: Date.now() + 300, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) })).toBeNull();
+  });
+
+  it("is given up at once when the RPC refuses, rather than asked for until the wait runs out (#214)", async () => {
+    rpc = await fakeRpc([raw]);
+    rpc.limited.add("getTransaction");
+    await expect(servedTransaction(rpc.url, raw.transaction.signatures[0]!, { until: Date.now() + 5_000, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) })).rejects.toThrow("RPC getTransaction failed: HTTP 429");
+    expect(rpc.requests.filter((r) => r.method === "getTransaction")).toHaveLength(1);
   });
 });

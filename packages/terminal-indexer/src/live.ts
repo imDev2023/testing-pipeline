@@ -47,19 +47,20 @@ export function parseLogsMessage(data: string): LogsMessage {
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
 /**
- * A reported transaction, asked for every `everyMs` until the RPC serves it, for up to `waitMs` (a
- * node reports a transaction before it serves it; the API's config module, `RPC_WAITS.transaction`),
- * with its place in its block from `blockIndexOf`. Null when it was not served in time, which leaves
- * it to reconciliation.
+ * A reported transaction, asked for every `everyMs` until the RPC serves it, until `until` (a node
+ * reports a transaction before it serves it; the API's config module, `RPC_WAITS.transaction`), with
+ * its place in its block from `blockIndexOf`. Null when it was not served in time, which leaves it to
+ * reconciliation. Only "not served yet" is asked again: an RPC that refuses or fails (a rate limit, an
+ * error, no answer) throws at once (#214), so one RPC in trouble never holds the live path for the
+ * whole wait.
  */
 export async function servedTransaction(
   rpcUrl: string,
   signature: string,
-  { waitMs, everyMs, blockIndexOf }: { waitMs: number; everyMs: number; blockIndexOf: (slot: number, signature: string) => Promise<number> },
+  { until, everyMs, blockIndexOf }: { until: number; everyMs: number; blockIndexOf: (slot: number, signature: string) => Promise<number> },
 ): Promise<RawTransaction | null> {
-  const until = Date.now() + waitMs;
   for (;;) {
-    const raw = await rpcCall<RawTransaction | null>(rpcUrl, "getTransaction", [signature, { encoding: "json", commitment: "confirmed", maxSupportedTransactionVersion: 0 }]).catch(() => null);
+    const raw = await rpcCall<RawTransaction | null>(rpcUrl, "getTransaction", [signature, { encoding: "json", commitment: "confirmed", maxSupportedTransactionVersion: 0 }]);
     if (raw) return { ...raw, transactionIndex: await blockIndexOf(raw.slot, signature) };
     if (Date.now() >= until) return null;
     await sleep(everyMs);

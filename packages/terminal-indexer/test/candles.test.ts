@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import { createDb, type Db } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { indexTransactions, pipelineHandler, pruneCandles, rebuildCandles, reindexTransactions, writtenCandles, type CandleRow } from "../src/index";
+import { indexTransactions, pipelineHandler, pruneCandles, rebuildCandles, reindexTransactions, repairCandles, writtenCandles, type CandleRow } from "../src/index";
 import { SWAP_MARKET, SWAP_TOKEN, swapTransaction, WSOL, type SwapSpec } from "./swaps";
 
 const SECONDS = [1, 60, 900];
@@ -105,6 +105,56 @@ describe("a rebuild from trades", () => {
     const written = await writtenCandles(client.db, SWAP_MARKET, PAIR, 60);
     expect(written.map((c) => c.trades)).toEqual([1]);
     expect(await rebuildCandles(client.db, SWAP_MARKET, PAIR, 60)).toEqual(written);
+  });
+});
+
+describe("repairing candles", () => {
+  const RETENTION = [
+    { seconds: 1, keepDays: 7 },
+    { seconds: 60, keepDays: null },
+    { seconds: 900, keepDays: null },
+  ];
+
+  it("writes the candles of trades indexed before candles were kept, at every length within its retention", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const other = "9DmcDLMpFTuG7b9GUuXXdPxq9VdrXgxuGjYfbhKXBUQB";
+    await indexTransactions(client.db, handler, [
+      swapTransaction(buy(1, 100, now - 8 * 86_400, 1n, 2n)),
+      swapTransaction(sell(2, 101, now - 3_600, 6n, 2n)),
+      swapTransaction({ ...buy(3, 102, now - 60, 5n, 10n), market: other }),
+    ]);
+    const folded = new Map<string, CandleRow[]>();
+    for (const market of [SWAP_MARKET, other]) for (const seconds of [60, 900]) folded.set(`${market}:${seconds}`, await writtenCandles(client.db, market, PAIR, seconds));
+    // A database that held these trades before migration 0003 made the table has no candle for them.
+    await client.db.execute(sql`delete from candles`);
+
+    const repaired = await repairCandles(client.db, RETENTION, now);
+
+    expect(repaired.map((r) => r.market).sort()).toEqual([SWAP_MARKET, other].sort());
+    expect(repaired.every((r) => r.mintA === SWAP_TOKEN && r.mintB === WSOL)).toBe(true);
+    for (const [key, rows] of folded) {
+      const [market, seconds] = key.split(":") as [string, string];
+      expect(await writtenCandles(client.db, market, PAIR, Number(seconds))).toEqual(rows);
+    }
+    // The week-old swap's 1 s candle is past its retention, so it is not written back.
+    expect((await writtenCandles(client.db, SWAP_MARKET, PAIR, 1)).map((c) => c.trades)).toEqual([1]);
+  });
+
+  it("rebuilds a pair whose candles miss some of its trades, and leaves the pairs that hold every trade alone", async () => {
+    const other = "9DmcDLMpFTuG7b9GUuXXdPxq9VdrXgxuGjYfbhKXBUQB";
+    await indexTransactions(client.db, handler, [
+      swapTransaction(buy(1, 100, T0 + 5, 1n, 10n)),
+      swapTransaction(buy(2, 101, T0 + 65, 1n, 20n)),
+      swapTransaction({ ...buy(3, 102, T0 + 5, 5n, 10n), market: other }),
+      // No price, so no candle: never counted as missing.
+      swapTransaction(buy(4, 103, T0 + 6, 0n, 10n)),
+    ]);
+    const minutes = await writtenCandles(client.db, SWAP_MARKET, PAIR, 60);
+    await client.db.execute(sql`delete from candles where market = ${SWAP_MARKET} and seconds = 60 and start = ${BigInt(T0 + 60)}`);
+
+    expect(await repairCandles(client.db, RETENTION, T0 + 120)).toEqual([{ market: SWAP_MARKET, mintA: SWAP_TOKEN, mintB: WSOL }]);
+    expect(await writtenCandles(client.db, SWAP_MARKET, PAIR, 60)).toEqual(minutes);
+    expect(await repairCandles(client.db, RETENTION, T0 + 120)).toEqual([]);
   });
 });
 

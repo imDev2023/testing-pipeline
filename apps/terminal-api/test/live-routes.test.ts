@@ -1,13 +1,31 @@
 // The live rooms' addresses (docs/spec/pipescope-architecture.md, Live rooms): a browser opens a
 // WebSocket on the feed's room or a market's, and the Worker hands the upgrade to that room, named.
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { createDb } from "terminal-db";
+import { createTestDatabase } from "terminal-db/testing";
+import { indexTransactions, pipelineHandler, type RawTransaction } from "terminal-indexer";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ApiError } from "../src/contract";
 import type { Bindings } from "../src/env";
 import { app } from "../src/index";
 import { ROOM_HEADER } from "../src/roomCore";
 import { bindings, executionContext } from "./fakes";
 
-const MARKET = "C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w";
+const fixture = (name: string) => JSON.parse(readFileSync(`${import.meta.dirname}/../../../packages/terminal-indexer/test/fixtures/${name}.json`, "utf8")) as RawTransaction;
+/** The market the fixtures create; another address is a well-formed one that is no market. */
+const MARKET = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
+const NOT_A_MARKET = "C5bB3UT6vFGWCqaguWnnhCR9cqn75XYM2PfQqRGR7X3w";
+
+let database: Awaited<ReturnType<typeof createTestDatabase>>;
+beforeAll(async () => {
+  database = await createTestDatabase();
+  const { db, close } = createDb(database.url);
+  await indexTransactions(db, pipelineHandler({ candleSeconds: [] }), ["registered", "marketCreated"].map(fixture));
+  await close();
+});
+afterAll(async () => {
+  await database?.drop();
+});
 
 /** The rooms' namespace, recording which room each upgrade went to and under what name. */
 function rooms() {
@@ -26,7 +44,7 @@ function rooms() {
 
 async function open(path: string, upgrade = true) {
   const { handed, namespace } = rooms();
-  const env = bindings({ databaseUrl: "postgres://never", rpcUrl: "http://127.0.0.1:9/never-called", LIVE_ROOMS: namespace });
+  const env = bindings({ databaseUrl: database.url, rpcUrl: "http://127.0.0.1:9/never-called", LIVE_ROOMS: namespace });
   const { ctx, settle } = executionContext();
   const response = await app.request(path, { headers: upgrade ? { upgrade: "websocket" } : {} }, env, ctx);
   await settle();
@@ -46,5 +64,12 @@ describe("the live rooms' addresses", () => {
     const bad = await open("/v1/live/markets/not-an-address");
     expect(bad.response.status).toBe(400);
     expect(bad.handed).toEqual([]);
+  });
+
+  it("refuse a well-formed address that is no market Aviary knows, so no room is opened for it (#214)", async () => {
+    const { response, handed } = await open(`/v1/live/markets/${NOT_A_MARKET}`);
+    expect(response.status).toBe(404);
+    expect(((await response.json()) as ApiError).error).toBe("Aviary knows no market at this address.");
+    expect(handed).toEqual([]);
   });
 });

@@ -2500,6 +2500,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
 
+### PIPESCOPE-137: How the live socket is tried again while it fails
+
+- Question: How soon is the indexer's live socket tried again when it cannot be opened or its subscription is refused, and is it reopened when it drops with no viewer left?
+- Answer: Each try that ends before the RPC confirms the subscription waits twice the last, from the 15 s alarm up to 5 minutes (`SOCKET_REOPEN_BACKOFF_MAX_MS`), and a viewer arriving meanwhile does not try ahead of it, while the every-minute reconciliation still brings each trade to the pages; a socket that drops once no room has a viewer stays closed until the next viewer opens it.
+- Alternatives: Trying again on every 15 s alarm, which asks and reconciles with a refusing RPC four times a minute for as long as anyone watches; reopening a socket that drops during the 3 minutes after the last viewer left.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214)
+
+### PIPESCOPE-138: How the live path waits on the RPC
+
+- Question: How does the indexer fetch the transactions the live socket reports when the RPC is slow to serve them or refuses?
+- Answer: The transactions reported together are asked for at once within one wait from their arrival (`RPC_WAITS.transaction`), each is indexed and published as soon as it is served, and only "not served yet" is asked again, so a refusal or an error leaves a transaction to reconciliation at once.
+- Alternatives: Each transaction asked for in turn for up to 8 s, every error taken for "not served yet", and the batch published only once all were done, so one slow or rate-limiting answer held every live trade back.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214)
+
+### PIPESCOPE-139: Candles written again from the trades
+
+- Question: How do markets whose trades were indexed before candles were kept, or whose candles were lost since, get their candles?
+- Answer: Each new instance of the indexer, on its first run, compares every market and mint pair's priced swaps with its candles at the lengths kept forever and writes the pairs that disagree again from their trades, at every length within its retention, under the candles table's lock.
+- Alternatives: A one-time script run by hand against each database; a data migration that folds the trades in SQL, a second copy of the fold.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Candles](spec/pipescope-architecture.md#candles)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214)
+
+### PIPESCOPE-140: A market's live room only for a known market
+
+- Question: Does `/v1/live/markets/{address}` open a room for any well-formed address?
+- Answer: No: it opens a room only for a market Aviary has indexed, and answers 404 for any other address, so no address opens a room, and the indexer's socket, for nothing.
+- Alternatives: A room for any well-formed address, which costs no database read but lets anyone hold the socket open on addresses that are no market.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Live rooms](spec/pipescope-architecture.md#live-rooms)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
@@ -6038,3 +6078,4 @@ They are listed here for the sessions that own those specs, not fixed in this fi
 - `SUITE-60`: the lending AMM's `MIN_REBALANCE` of each reserve and its `KAMINO_RATE_HEADROOM_BPS` live in `programs/lending-amm/src/config.rs` and again in `packages/keeper-jobs/lending-amm.ts`, whose tests check the two agree; the program's next release can export them in its IDL, as it does the band, and the copy can go.
 - `SUITE-59` to `SUITE-62`: set by the session of [Keeper runner: the lending AMM's `rebalance`](https://github.com/imDev2023/testing-pipeline/issues/96) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `CANARY-47`: the check is the owner's answer 5a on [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74) (`HOOK-50`); its rule, its 1-point threshold and its search were set by that session while building and not yet put to the owner, so they are that session's defaults until the owner or MetalLegBob has reacted.
+- `PIPESCOPE-137` to `PIPESCOPE-140`: set by the session of [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.

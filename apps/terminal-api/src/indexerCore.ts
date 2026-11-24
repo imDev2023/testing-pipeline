@@ -35,12 +35,14 @@ import {
   reconcileAccount,
   refreshMarkets,
   reindexUnknown,
+  repairCandles,
   servedTransaction,
   addResult,
   emptyResult,
   type Cursor,
   type HistorySource,
   type IndexResult,
+  type RawTransaction,
   type TransactionHandler,
 } from "terminal-indexer";
 import { indexedTransactions, markets, metadataSnapshots, programFacts, programVersions, strategies, trades } from "terminal-db";
@@ -147,9 +149,18 @@ export class IndexerCore {
     return this.cursor ?? null;
   }
 
-  /** Reconciles the router; a call while one runs waits for it rather than starting a second. */
-  reconcile(): Promise<ReconcileOutcome> {
-    this.running ??= this.reconcileOnce().finally(() => (this.running = null));
+  /**
+   * Reconciles the router; a call while one runs waits for it rather than starting a second. What the
+   * run indexed is reported to the call that started it alone, and a call that joined it is told it
+   * indexed nothing, so the same swaps are never published twice (#214), as when the cron and the
+   * live socket's open-time reconciliation share a run.
+   */
+  async reconcile(): Promise<ReconcileOutcome> {
+    if (this.running) {
+      const shared = await this.running;
+      return { ...shared, indexed: emptyResult() };
+    }
+    this.running = this.reconcileOnce().finally(() => (this.running = null));
     return this.running;
   }
 
@@ -192,6 +203,14 @@ export class IndexerCore {
           } catch (e) {
             console.error("reading again what older code could not decode failed; the next instance tries again", e);
           }
+          // And the candles of every pair whose candles miss some of its swaps, as the trades a
+          // database held before candles were kept (#214), are written again from its trades.
+          try {
+            const repaired = await repairCandles(db, CANDLES);
+            if (repaired.length) console.log(`candles written again from the trades for ${repaired.length} market pairs`);
+          } catch (e) {
+            console.error("writing candles again from the trades failed; the next instance tries again", e);
+          }
         }
         // The first run backfills the router's whole history, page after page, before it returns.
         const { result, cursor } = await reconcileAccount(db, this.source, this.handle, ROUTER, { cursor: this.cursor ?? (await readCursor(db, ROUTER)) });
@@ -233,43 +252,69 @@ export class IndexerCore {
 
   /**
    * The live path: transactions the socket reported, each fetched once the RPC serves it, with its
-   * place in its block, and indexed; one already indexed is not asked for again. A transaction not
-   * served in time is left to reconciliation, which never passes it by.
+   * place in its block, and indexed; one already indexed is not asked for again. The batch is asked
+   * for all at once, within one wait (`RPC_WAITS.transaction`), and each transaction is indexed and
+   * handed to `indexed` as soon as it is served, so one the RPC is slow to serve never holds the
+   * others back (#214). A transaction not served in time, or one the RPC refuses, is left to
+   * reconciliation, which never passes it by. Returns everything the batch indexed. Batches may run
+   * at once, as the live socket reports while an earlier one still waits: they share one database
+   * client and index one transaction at a time, in the order they are served.
    */
-  async indexSignatures(signatures: string[]): Promise<IndexResult> {
+  async indexSignatures(signatures: string[], indexed: (one: IndexResult) => Promise<void> = async () => {}): Promise<IndexResult> {
     const wanted = [...new Set(signatures)];
     if (!wanted.length) return emptyResult();
-    return this.withDb(async (db) => {
+    return this.withLiveDb(async (db) => {
       const known = new Set(
         (await chunked(wanted, (part) => db.select({ signature: indexedTransactions.signature }).from(indexedTransactions).where(inArray(indexedTransactions.signature, part)))).map((r) => r.signature),
       );
-      const indexed = emptyResult();
-      // Each on its own: one that cannot be served or indexed never loses the others, which are
-      // committed already and which reconciliation would not report again.
-      for (const signature of wanted) {
-        if (known.has(signature)) continue;
+      const all = emptyResult();
+      const until = Date.now() + RPC_WAITS.transaction.waitMs;
+      // Indexed one at a time across every batch, in the order they are served: each is committed on
+      // its own, so one that cannot be served or indexed never loses the others, which reconciliation
+      // would not report again.
+      const indexOne = async (raw: RawTransaction) => {
+        const signature = raw.transaction.signatures[0]!;
+        const one = emptyResult();
         try {
-          const raw = await servedTransaction(this.deps.rpcUrl, signature, { ...RPC_WAITS.transaction, blockIndexOf: this.blockIndexOf });
-          if (!raw) {
-            console.warn(`transaction ${signature} was not served in time; reconciliation will index it`);
-            continue;
-          }
-          addResult(indexed, await indexTransactions(db, this.handle, [raw]));
+          addResult(one, await indexTransactions(db, this.handle, [raw]));
         } catch (e) {
-          if (e instanceof IndexBatchError) addResult(indexed, e.result);
+          if (e instanceof IndexBatchError) addResult(one, e.result);
           console.error(`indexing ${signature} from the live socket failed; reconciliation will index it`, e);
         }
-      }
-      try {
-        await this.refresh(db, indexed.markets);
-      } catch (e) {
-        // They stay unread for the next run; what was indexed is still handed on.
-        console.error("reading the markets the live socket touched failed; the next run reads them", e);
-      }
-      // Fetched by the next fetch (the Indexer's, after the next reconciliation), never holding up the live path.
-      this.toFetch(indexed.strategies);
-      this.learn(indexed);
-      return indexed;
+        try {
+          await this.refresh(db, one.markets);
+        } catch (e) {
+          // They stay unread for the next run; what was indexed is still handed on.
+          console.error("reading the markets the live socket touched failed; the next run reads them", e);
+        }
+        // Fetched by the next fetch (the Indexer's, after the next reconciliation), never holding up the live path.
+        this.toFetch(one.strategies);
+        this.learn(one);
+        addResult(all, one);
+        await indexed(one).catch((e: unknown) => console.error(`handing on ${signature} from the live socket failed`, e));
+      };
+      await Promise.all(
+        wanted
+          .filter((signature) => !known.has(signature))
+          .map(async (signature) => {
+            let raw: RawTransaction | null;
+            try {
+              raw = await servedTransaction(this.deps.rpcUrl, signature, { until, everyMs: RPC_WAITS.transaction.everyMs, blockIndexOf: this.blockIndexOf });
+            } catch (e) {
+              console.error(`the RPC did not serve ${signature} from the live socket; reconciliation will index it`, e);
+              return;
+            }
+            if (!raw) {
+              console.warn(`transaction ${signature} was not served in time; reconciliation will index it`);
+              return;
+            }
+            const served = raw;
+            const mine = this.liveTurn.then(() => indexOne(served));
+            this.liveTurn = mine.catch(() => {});
+            await mine;
+          }),
+      );
+      return all;
     });
   }
 
@@ -558,6 +603,28 @@ export class IndexerCore {
   }
 
   private uses = 0;
+
+  /** The live path's turn: one served transaction indexed at a time, across batches. */
+  private liveTurn: Promise<void> = Promise.resolve();
+  /** The live path's database client, shared by the batches running now and closed when the last ends. */
+  private liveClient: { db: Db; close: () => Promise<void>; users: number } | null = null;
+
+  private async withLiveDb<T>(work: (db: Db) => Promise<T>): Promise<T> {
+    if (!this.liveClient) {
+      this.uses++;
+      this.liveClient = { ...this.deps.openDb(), users: 0 };
+    }
+    const client = this.liveClient;
+    client.users++;
+    try {
+      return await work(client.db);
+    } finally {
+      if (--client.users === 0) {
+        this.liveClient = null;
+        await client.close();
+      }
+    }
+  }
 
   private async withDb<T>(work: (db: Db) => Promise<T>): Promise<T> {
     this.uses++;

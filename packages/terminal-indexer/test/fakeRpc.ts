@@ -41,6 +41,8 @@ export type FakeRpc = {
   refuse: Set<string>;
   /** Addresses whose `getAccountInfo` fails, as an RPC that times out on one account. */
   failing: Set<string>;
+  /** Methods answered HTTP 429, as an RPC rate-limiting them. */
+  limited: Set<string>;
   close: () => Promise<void>;
 };
 
@@ -50,7 +52,7 @@ const order = (a: RawTransaction, b: RawTransaction) => a.slot - b.slot || a.tra
 const withoutIndex = ({ transactionIndex: _, ...rest }: RawTransaction) => rest;
 
 export async function fakeRpc(history: RawTransaction[] = []): Promise<FakeRpc> {
-  const fake: Omit<FakeRpc, "url" | "close"> = { requests: [], history: [...history], accounts: new Map(), slot: 525_200_000, epoch: 812, blockTime: 1_763_900_000, genesisHash: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG", rentEpoch: 0n, unserved: new Set(), refuse: new Set(), failing: new Set() };
+  const fake: Omit<FakeRpc, "url" | "close"> = { requests: [], history: [...history], accounts: new Map(), slot: 525_200_000, epoch: 812, blockTime: 1_763_900_000, genesisHash: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG", rentEpoch: 0n, unserved: new Set(), refuse: new Set(), failing: new Set(), limited: new Set() };
 
   const answer = (method: string, params: unknown[]): { result?: unknown; error?: unknown } => {
     if (fake.refuse.has(method)) return { error: { code: -32601, message: "Method not found" } };
@@ -125,6 +127,11 @@ export async function fakeRpc(history: RawTransaction[] = []): Promise<FakeRpc> 
     req.on("end", () => {
       const { id, method, params } = JSON.parse(body) as { id: number; method: string; params: unknown[] };
       fake.requests.push({ method, params });
+      if (fake.limited.has(method)) {
+        res.writeHead(429, { "content-type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id, error: { code: 429, message: "Too many requests" } }));
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
       // A rent epoch past 2^53 is written whole, as the RPC writes u64s.
       res.end(JSON.stringify({ jsonrpc: "2.0", id, ...answer(method, params) }, (_key, value: unknown) => (typeof value === "bigint" ? (JSON as unknown as { rawJSON: (t: string) => unknown }).rawJSON(value.toString()) : value)));
