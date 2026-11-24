@@ -30,11 +30,12 @@ export type FormFields = {
 /**
  * A form's values and what they read as (docs/spec/pipescope.md, Custom-action and create-market forms):
  * each argument as typed and as the argument it becomes, each address entered, and the facts of each
- * mint entered by address, read as soon as a whole address is typed.
+ * mint entered by address, read as soon as a whole address is typed. A product's own form may start
+ * with values filled in (`initial`, #57).
  */
-export function useFormFields(form: Form, market: readonly MintInfo[]): FormFields {
-  const [values, setValues] = useState<Record<string, FieldValue>>({});
-  const [inputs, setInputs] = useState<Record<string, string>>({});
+export function useFormFields(form: Form, market: readonly MintInfo[], initial?: { values?: Record<string, FieldValue>; inputs?: Record<string, string> }): FormFields {
+  const [values, setValues] = useState<Record<string, FieldValue>>(() => ({ ...initial?.values }));
+  const [inputs, setInputs] = useState<Record<string, string>>(() => ({ ...initial?.inputs }));
   const [entered, setEntered] = useState<Record<string, EnteredMint | undefined>>({});
   const [version, setVersion] = useState(0);
 

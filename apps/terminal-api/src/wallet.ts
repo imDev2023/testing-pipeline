@@ -11,7 +11,7 @@
 //   Simulation before every signature); the wallet signs it, and nothing here signs anything.
 import { NATIVE_MINT_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { getCloseAccountInstruction } from "@solana-program/token";
-import { address, createNoopSigner, createSolanaRpc, getBase64Decoder, isAddress, type Address, type Rpc, type SolanaRpcApi, type TransactionMessageBytesBase64 } from "@solana/kit";
+import { address, createNoopSigner, createSolanaRpc, isAddress, type Address, type Rpc, type SolanaRpcApi } from "@solana/kit";
 import { desc, eq, inArray } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -22,7 +22,7 @@ import { marketPair } from "./pairs";
 import { limitTrades } from "./rateLimits";
 import { dbOf, requestDb, type DbEnv } from "./requestDb";
 import { decodeFailure } from "./trading/failure";
-import { fitTransaction, TooLarge } from "./trading/prepare";
+import { fitTransaction, networkFeeOf, TooLarge } from "./trading/prepare";
 import { COMMITMENT, Refused } from "./trading/quote";
 import { mintNames } from "./views";
 
@@ -142,7 +142,7 @@ export async function prepareUnwrap(rpc: Rpc<SolanaRpcApi>, trader: Address): Pr
   try {
     answers = await Promise.all([
       rpc.simulateTransaction(wire, { encoding: "base64", sigVerify: false, replaceRecentBlockhash: true, commitment: COMMITMENT, accounts: { addresses: [trader, ...wrapped.map((o) => o.account)], encoding: "base64" } }).send(),
-      rpc.getFeeForMessage(getBase64Decoder().decode(messageBytes) as TransactionMessageBytesBase64, { commitment: COMMITMENT }).send(),
+      networkFeeOf(rpc, messageBytes),
     ]);
   } catch (e) {
     const raw = (e instanceof Error ? e.message : String(e)).replace(/https?:\/\/\S+/g, "the RPC");
@@ -162,7 +162,7 @@ export async function prepareUnwrap(rpc: Rpc<SolanaRpcApi>, trader: Address): Pr
       failure: ok ? null : decodeFailure(value.err, logs, { strategy: "", act: "transaction" }),
       logs,
       compute_units: value.unitsConsumed === undefined ? null : Number(value.unitsConsumed),
-      network_fee: String(fee.value ?? 0n),
+      network_fee: String(fee),
       // Closing an account hands its every lamport to the wallet: the wrapped SOL and its rent.
       returned: ok ? String(wrapped.reduce((n, o) => n + o.lamports, 0n)) : null,
     },

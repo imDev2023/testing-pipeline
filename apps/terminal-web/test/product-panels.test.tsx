@@ -2,6 +2,7 @@
 // SUITE-15, PIPESCOPE-147): a registry keyed by strategy program puts a product's panel on the market
 // page's lower band, after the trades and before the explanation and the forms, and its own forms
 // under Actions with the strategy's others, on that program's markets and nowhere else.
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Market } from "terminal-api/contract";
 import { describe, expect, it } from "vitest";
@@ -39,8 +40,11 @@ const registry: ProductRegistry = {
 const facts = <section aria-label="Facts">The facts panel</section>;
 
 describe("the product panels' registry", () => {
-  it("holds the products whose Aviary tickets filled it, keyed by their programs", () => {
-    expect(Object.keys(PRODUCT_PANELS)).toEqual(["Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG"]);
+  it("holds only our own products' programs, as deployments/devnet.json records them", () => {
+    const deployed = JSON.parse(readFileSync(`${import.meta.dirname}/../../../deployments/devnet.json`, "utf8")) as { programs: Record<string, { programId: string }> };
+    const ours = Object.values(deployed.programs).map((p) => p.programId);
+    expect(Object.keys(PRODUCT_PANELS).length).toBeGreaterThan(0);
+    for (const program of Object.keys(PRODUCT_PANELS)) expect(ours).toContain(program);
   });
 
   it("puts a registered product's panel before the explanation and the forms, and its forms under Actions, on its program's markets", () => {
