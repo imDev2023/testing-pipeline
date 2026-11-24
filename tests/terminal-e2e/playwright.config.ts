@@ -60,6 +60,8 @@ const PROJECTS: Project<PlaywrightTestOptions>[] = [
   { name: "api", testMatch: /api\.spec\.ts/ },
   // The trade box with the Playwright test wallet: quotes, reviews and refusals, never sending (src/trade.spec.ts).
   { name: "trade", testMatch: /trade\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
+  // Canary's devnet criterion (src/canary-devnet.spec.ts), on a devnet run after Canary's sweep: never on CI's fixtures.
+  ...(RPC_MODE === "devnet" ? [{ name: "canary-devnet", testMatch: /canary-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
   // Real swaps on devnet through the trade box (src/trade-devnet.spec.ts): only when asked for, never in CI.
   ...(SWAPS ? [{ name: "swaps", testMatch: /trade-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
 ];

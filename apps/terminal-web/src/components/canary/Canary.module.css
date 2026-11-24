@@ -87,6 +87,8 @@
 
 /* The exit-test notice: the one place besides Canary's mark where canary yellow appears. */
 .notice {
+  /* Canary yellow in both themes, so its tick box is drawn as on a light page in both. */
+  color-scheme: light;
   background: var(--canary);
   color: var(--on-canary);
   border-radius: 3px;

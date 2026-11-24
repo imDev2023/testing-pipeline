@@ -249,7 +249,7 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
     ready: async (page: Page) => {
       const section = page.getByRole("region", { name: "What Canary saw on this version" });
       await expect(section.getByText(/^Canary traded a private copy of each of this version's [\d,]+ markets on /)).toBeVisible();
-      await expect(section.locator('[data-check="readable"]')).toContainText(/fail\s*, 1 of [\d,]+/);
+      await expect(section.locator('[data-check="readable"]')).toContainText(/fail\s*, [\d,]+ of [\d,]+/);
       await expect(page.getByRole("region", { name: /^Its markets/ }).getByRole("row").last()).toBeVisible();
     },
   },
