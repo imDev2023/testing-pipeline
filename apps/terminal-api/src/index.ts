@@ -13,10 +13,12 @@ import { runDueJobs, type Job } from "./dispatcher";
 import { makeExplainerKeys } from "./explainer";
 import type { Bindings } from "./env";
 import { feed } from "./feed";
+import { formRoutes } from "./forms";
 import { health } from "./health";
 import { keeperRoutes } from "./keeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
+import { actionRoutes } from "./trading/actionRoutes";
 import { tradingRoutes } from "./trading/routes";
 import { strategyRoutes } from "./strategies";
 import { imageRoutes } from "./tokenImages";
@@ -45,6 +47,7 @@ app.get("/health", async (c) => {
 
 app.route("/", feed);
 app.route("/", strategyRoutes);
+app.route("/", formRoutes);
 app.route("/", imageRoutes);
 app.route("/", searchRoutes);
 app.route("/", canaryRoutes);
@@ -74,6 +77,7 @@ app.get("/v1/indexer", async (c) => c.json(await indexer(c.env).status()));
 export const indexer = (env: Bindings) => env.INDEXER.get(env.INDEXER.idFromName("router"));
 keeperRoutes(app);
 tradingRoutes(app);
+actionRoutes(app);
 
 /**
  * The jobs that have been built, by name; each later ticket adds its own, and ./config says how

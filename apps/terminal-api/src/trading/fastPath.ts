@@ -13,16 +13,30 @@ import { Refused } from "./quote";
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
+/** What the fast path says when a transaction fails, has not confirmed in time, or confirmed but is not served yet. */
+export type Words = { failed: string; notYet: string; notServed: string };
+const SWAP_WORDS: Words = {
+  failed: "The swap failed on chain:",
+  notYet: "The swap has not confirmed yet. If it lands, it joins Trades as soon as Aviary reads it.",
+  notServed: "The swap confirmed, but the chain has not served it yet. It joins Trades as soon as Aviary reads it.",
+};
+/** The same for a custom action or a new market, which joins no list on the page. */
+export const TRANSACTION_WORDS: Words = {
+  failed: "It failed on chain:",
+  notYet: "It has not confirmed yet. If it lands, the explorer shows it.",
+  notServed: "It confirmed, but the chain has not served it yet; the explorer shows it.",
+};
+
 type Status = { slot: number; err: unknown; confirmationStatus: "processed" | "confirmed" | "finalized" | null } | null;
 type RawWithLogs = RawTransaction & { meta: (RawTransaction["meta"] & { logMessages?: string[] | null }) | null };
 
 /** A transaction the RPC serves late, asked for again for a while (devnet can answer null just after a confirmed status). */
-async function readBack(rpcUrl: string, signature: string): Promise<RawWithLogs> {
+async function readBack(rpcUrl: string, signature: string, words: Words): Promise<RawWithLogs> {
   const until = Date.now() + RPC_WAITS.transaction.waitMs;
   for (;;) {
     const raw = await rpcCall<RawWithLogs | null>(rpcUrl, "getTransaction", [signature, { encoding: "json", commitment: "confirmed", maxSupportedTransactionVersion: 0 }]);
     if (raw) return raw;
-    if (Date.now() >= until) throw new HTTPException(504, { message: "The swap confirmed, but the chain has not served it yet. It joins Trades as soon as Aviary reads it." });
+    if (Date.now() >= until) throw new HTTPException(504, { message: words.notServed });
     await sleep(RPC_WAITS.transaction.everyMs);
   }
 }
@@ -34,21 +48,21 @@ async function readBack(rpcUrl: string, signature: string): Promise<RawWithLogs>
 export async function awaitTrade(
   rpcUrl: string,
   signature: string,
-  { pollMs = FAST_PATH_CONFIRMATION_POLL_MS, waitMs = FAST_PATH_WAIT_MS, strategy = null }: { pollMs?: number; waitMs?: number; strategy?: string | null } = {},
+  { pollMs = FAST_PATH_CONFIRMATION_POLL_MS, waitMs = FAST_PATH_WAIT_MS, strategy = null, words = SWAP_WORDS }: { pollMs?: number; waitMs?: number; strategy?: string | null; words?: Words } = {},
 ): Promise<RawWithLogs> {
   const until = Date.now() + waitMs;
   for (;;) {
     const { value } = await rpcCall<{ value: Status[] }>(rpcUrl, "getSignatureStatuses", [[signature]]);
     const status = value[0] ?? null;
     if (status && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) {
-      const raw = await readBack(rpcUrl, signature);
+      const raw = await readBack(rpcUrl, signature, words);
       if (status.err !== null || raw.meta?.err) {
         const failure = decodeFailure(status.err ?? raw.meta?.err, raw.meta?.logMessages ?? [], { strategy: strategy ?? "" });
-        throw new Refused({ ...failure, sentence: `The swap failed on chain: ${continued(failure.sentence)}` }, raw.meta?.logMessages ?? []);
+        throw new Refused({ ...failure, sentence: `${words.failed} ${continued(failure.sentence)}` }, raw.meta?.logMessages ?? []);
       }
       return raw;
     }
-    if (Date.now() >= until) throw new HTTPException(504, { message: "The swap has not confirmed yet. If it lands, it joins Trades as soon as Aviary reads it." });
+    if (Date.now() >= until) throw new HTTPException(504, { message: words.notYet });
     await sleep(pollMs);
   }
 }
