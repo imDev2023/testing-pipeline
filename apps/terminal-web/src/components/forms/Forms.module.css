@@ -214,3 +214,22 @@
   font-size: 1em;
   font-weight: var(--strong-weight);
 }
+
+/* Simulate, the form's one way forward, drawn like the trade box's "Review swap", and plainly off while a field is missing. */
+.simulate {
+  font-weight: var(--strong-weight);
+  background: var(--ink);
+  color: var(--sheet);
+  border-color: var(--ink);
+}
+
+.simulate:hover {
+  border-color: var(--ink);
+}
+
+.simulate:disabled {
+  background: var(--wash);
+  color: var(--ink3);
+  border-color: var(--rule);
+  cursor: not-allowed;
+}

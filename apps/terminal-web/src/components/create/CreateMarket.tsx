@@ -165,11 +165,11 @@ function CreateForm({ form, view }: { form: Form; view: StrategyForms }) {
       ) : (
         <div className={forms.actions}>
           {account ? (
-            <button type="button" disabled={!request} onClick={start}>
+            <button type="button" className={forms.simulate} disabled={!request} onClick={start}>
               Simulate creating the market
             </button>
           ) : (
-            <button type="button" onClick={openMenu}>
+            <button type="button" className={forms.simulate} onClick={openMenu}>
               Connect wallet
             </button>
           )}

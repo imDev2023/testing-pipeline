@@ -53,11 +53,11 @@ export function ActionForm({ form, market, deploySlot, open }: { form: Form; mar
         ) : (
           <div className={styles.actions}>
             {account ? (
-              <button type="button" disabled={!request} onClick={start} aria-describedby={request ? undefined : `${form.name}-missing`}>
+              <button type="button" className={styles.simulate} disabled={!request} onClick={start} aria-describedby={request ? undefined : `${form.name}-missing`}>
                 Simulate this action
               </button>
             ) : (
-              <button type="button" onClick={openMenu}>
+              <button type="button" className={styles.simulate} onClick={openMenu}>
                 Connect wallet
               </button>
             )}
