@@ -4,6 +4,15 @@
   gap: 28px;
 }
 
+/* The explanation beside the facts at desktop width, before them in one column (theme.css,
+   --strategy-explained-columns). */
+.explained {
+  display: grid;
+  grid-template-columns: var(--strategy-explained-columns);
+  gap: 28px 24px;
+  align-items: start;
+}
+
 .section {
   display: grid;
   gap: 12px;
@@ -43,6 +52,11 @@
 /* The author's description under the strategy's name, at a reading measure. */
 .description {
   max-width: 760px;
+}
+
+/* Aviary's note after a description cut at its cap: plain, quieter than the author's words. */
+.cut {
+  color: var(--ink3);
 }
 
 /* What Canary saw on this version, when there is nothing to roll up: a panel like the others. */

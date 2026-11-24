@@ -182,7 +182,7 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
   - a market's state with the outside accounts a product's panel names, read in one request at one slot: as built, `GET /v1/markets/{market}/state?accounts=` (`PIPESCOPE-146`), at most 8 accounts besides the market's state, each account's data up to 64 KiB, `MARKET_READ` in the config module;
   - a mint typed into the create form, read for its facts before any market holds it: as built, `GET /v1/mints/{mint}`;
   - `POST` a trade's signature (the fast path);
-  - `POST` a "This is wrong" report against an explanation key;
+  - `POST` a "This is wrong" report against an explanation key: as built, `POST /v1/explanations/{key}/reports` with an optional note, and the explanation itself at `GET /v1/strategies/{program}/explanation` (`PIPESCOPE-159`, `PIPESCOPE-160`);
   - the keeper page's `GET /keeper`, and `POST /keeper/heartbeat`, which keeps only heartbeats the keeper wallet signed ([`keeper-runner.md`](keeper-runner.md), How Aviary shows it; `SUITE-57`, `PIPESCOPE-104`).
 - **Paging** (`PIPESCOPE-105`): markets are listed newest first and trades newest first, each page ending with a `next` cursor that the following page passes as `before`, so a page never repeats or skips a row when new ones arrive; a page holds what the caller asks for up to 200 markets or 1,000 trades (the hosted API's own limit for trades), and the pages ask for what the screens' config says, 50 feed rows and 40 trades.
   Both limits are `PAGE_LIMITS` in the config module.
