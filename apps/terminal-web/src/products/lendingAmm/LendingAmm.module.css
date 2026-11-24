@@ -16,8 +16,11 @@
   gap: 4px 10px;
 }
 
+/* Set like a link, but as high as every control (44 px at phone width). */
 .again {
-  min-height: auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-min-height);
   padding: 0;
   border: 0;
   background: none;
