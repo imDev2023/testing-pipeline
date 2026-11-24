@@ -87,15 +87,23 @@ describe("Canary's records", () => {
     ]);
   });
 
-  it("rolls a version up per check from its markets' latest records, naming the markets that warn or fail", async () => {
+  it("rolls a version up per check from its markets' latest records, naming the markets that warn or fail with each one's sentence", async () => {
     await runOnce(V2, OTHER, 11, { exit_sizes: "warn", cost: "pass" });
     expect(await readCanaryRollup(client.db, V2)).toEqual({
       program: STRATEGY,
       deploySlot: 900n,
       markets: 2,
       checks: {
-        cost: { outcomes: { pass: 2 }, warn: [], fail: [] },
-        exit_sizes: { outcomes: { fail: 1, warn: 1 }, warn: [OTHER], fail: [MARKET] },
+        cost: { outcomes: { pass: 2 }, warn: [], fail: [], held: [] },
+        exit_sizes: {
+          outcomes: { fail: 1, warn: 1 },
+          warn: [OTHER],
+          fail: [MARKET],
+          held: [
+            { market: MARKET, outcome: "fail", reason: "exit_sizes is fail." },
+            { market: OTHER, outcome: "warn", reason: "exit_sizes is warn." },
+          ],
+        },
       },
     });
   });

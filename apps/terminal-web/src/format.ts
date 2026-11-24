@@ -72,3 +72,13 @@ const integer = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 export function formatInteger(value: number | bigint): string {
   return integer.format(value);
 }
+
+/** A day in UTC, as the screens write it: "23 Nov 2026". */
+export function formatDayOf(date: Date): string {
+  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+}
+
+/** A share in millionths, as Canary's returns are recorded, to one decimal place: "98.5%". */
+export function formatPercentPpm(ppm: number): string {
+  return `${(Math.round(ppm / 1_000) / 10).toFixed(1)}%`;
+}

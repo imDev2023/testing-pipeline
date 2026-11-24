@@ -3,7 +3,7 @@
 // market's snapshot through the RPC, posts it to the one container, posts again with what the
 // binary names as missing, stores the results, and goes on from its alarm after a failure.
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { canaryRunMarkets, canaryRuns, createDb, markets, programVersions, readCanaryLatest, readOutbox, strategies, strategyCalls, strategyInstructions, type CanaryRecord } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
@@ -207,6 +207,25 @@ describe("a Canary run of a strategy version", () => {
       [chains[0]!.market, "done"],
       [chains[1]!.market, "done"],
     ]);
+    expect(storage.alarm).toBeNull();
+  });
+
+  it("writes a new run when the one it remembers is gone from Postgres, as when the database was replaced, rather than retrying forever", async () => {
+    const chains = [await putMarket(rpc, { seed: 1 }), await putMarket(rpc, { seed: 2, strategySeed: 1 })];
+    await index(chains[0]!);
+    const { core, storage, fireDue } = runner(chains);
+    await core.schedule(versionOf(chains[0]!), { trigger: "sweep", markets: chains.map((c) => c.market) });
+    await core.alarm(); // the first market, under the run's first row
+    const [first] = await client.db.select().from(canaryRuns);
+    await client.db.execute(sql`truncate canary_results, canary_run_markets, canary_runs`);
+
+    await fireDue();
+    const runs = await client.db.select().from(canaryRuns);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.id).not.toBe(first!.id);
+    expect(runs[0]!.finishedAt).not.toBeNull();
+    expect((await client.db.select().from(canaryRunMarkets)).map((d) => [d.market, d.status])).toEqual([[chains[1]!.market, "done"]]);
+    expect(await readCanaryLatest(client.db, { market: chains[1]!.market, version: { program: chains[1]!.strategy, deploySlot: chains[1]!.deploySlot } })).toHaveLength(2);
     expect(storage.alarm).toBeNull();
   });
 

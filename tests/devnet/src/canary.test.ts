@@ -206,7 +206,7 @@ describe.skipIf(!ready)("Canary on devnet, in its container", () => {
         checks?: { result: string | null; status: string; strategy_executable_sha256: string | null; failed_checks: string[] } | null;
       } | null;
       const checks = hosted?.checks;
-      if (!conformance || !checks?.result || checks.strategy_executable_sha256 !== ours.version.executable_sha256) {
+      if (!conformance || !checks?.result || checks.strategy_executable_sha256 !== ours.version?.executable_sha256) {
         skipped++;
         continue;
       }

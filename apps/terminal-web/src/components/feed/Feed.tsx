@@ -4,8 +4,7 @@
 // with strategies on a second tab, each tab with its count, under a head that says how many there
 // are and that nothing is curated. Above the markets, the four filters (PIPESCOPE-05, PIPESCOPE-72),
 // kept in the page's address, with the line under them; each strategy named from its valid metadata
-// in the author's style, and every row's trust flags. The Canary column comes with #125, token names
-// with #120.
+// in the author's style, what Canary saw on each row (#125), and every row's trust flags.
 // Live (docs/spec/pipescope-architecture.md, Live rooms): the feed's room sends each market new or
 // changed; a new one joins the top, a changed one updates in place, and while the pointer or the
 // focus is on the table new rows wait, so the row under it never moves. While a filter is on, the
@@ -29,6 +28,7 @@ import { ShortAddress } from "../ShortAddress";
 import { StrategyName } from "../StrategyName";
 import { FilterBar } from "./FilterBar";
 import table from "../ListingTable.module.css";
+import { StrategyCanaryCell } from "../canary/CanaryCell";
 import styles from "./Feed.module.css";
 
 export type FeedTab = "markets" | "strategies";
@@ -357,6 +357,7 @@ function StrategiesTable({ strategies, flagDescriptions }: { strategies: Strateg
               Markets
             </th>
             <th scope="col">This version</th>
+            <th scope="col">Canary</th>
             <th scope="col">Trust flags</th>
           </tr>
         </thead>
@@ -380,6 +381,10 @@ function StrategiesTable({ strategies, flagDescriptions }: { strategies: Strateg
                 <span className={table.label}>This version</span>
                 {s.current_version ? `Slot ${formatInteger(s.current_version.deploy_slot)}` : <span className={table.none}>Not read yet</span>}
                 <span className={table.sub}>{upgradedBy(s)}</span>
+              </td>
+              <td className={table.wide}>
+                <span className={table.label}>Canary</span>
+                <StrategyCanaryCell canary={s.canary} />
               </td>
               <td className={table.wide}>
                 <span className={table.label}>Trust flags</span>

@@ -84,7 +84,7 @@ function cronTicker(): () => void {
 /** The market's results under its strategy's current version, once it has some for `deploySlot`. */
 async function resultsFor(market: Address, deploySlot: number) {
   const results = CanaryResults.parse(await getJson(`/v1/markets/${market}/canary`));
-  return results.version.deploy_slot === deploySlot && results.results.length > 0 && results;
+  return results.version?.deploy_slot === deploySlot && results.results.length > 0 && results;
 }
 
 const summary = (r: CanaryResults) => r.results.map((x) => `${x.check} ${x.outcome}`).join(", ");
@@ -148,7 +148,7 @@ try {
   for (const market of markets) {
     const now = await until(`${market}'s results on version ${v2}`, () => resultsFor(market, v2), 60_000);
     const before = CanaryResults.parse(await getJson(`/v1/markets/${market}/canary?version=${v1.deploy_slot}`));
-    if (before.version.current || before.results.length === 0 || before.results.some((r) => r.strategy_version.deploy_slot !== v1.deploy_slot)) throw new Error(`version ${v1.deploy_slot}'s results of ${market} are not kept with it`);
+    if (before.version?.current || before.results.length === 0 || before.results.some((r) => r.strategy_version.deploy_slot !== v1.deploy_slot)) throw new Error(`version ${v1.deploy_slot}'s results of ${market} are not kept with it`);
     log(`${market}: version ${v2} (current) ${summary(now)}; version ${v1.deploy_slot} (kept, not current) ${before.results.length} results`);
   }
   const rollup = CanaryRollup.parse(await getJson(`/v1/strategies/${strategy.address}/versions/${v2}/canary`));

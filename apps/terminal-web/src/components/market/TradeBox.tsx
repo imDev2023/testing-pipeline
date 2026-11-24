@@ -8,6 +8,9 @@
 // would be signed, shows what signing would change in the wallet, and only then turns on "Sign in
 // wallet". After the wallet signs and sends, the API reads the trade back (the fast path) and it
 // joins Trades. Every rate shown is the API's; every number the box uses is the screens' config's.
+// When Canary saw a buyer who could not sell back, that fact sits on canary yellow above the button,
+// which stays off until the trader ticks "I have read this", asked on every visit and stored nowhere;
+// a market that refuses every trade by its own rules says so at the top (#125).
 import { useSignAndSendTransaction } from "@solana/react";
 import type { UiWalletAccount } from "@wallet-standard/react";
 import { getBase58Decoder, getBase64Encoder } from "@solana/kit";
@@ -20,6 +23,7 @@ import { formatInteger, formatTokenAmount, shortAddress } from "@/format";
 import { formatBps, parseAmount, parseSlippage, tradeButton, balanceToUse, writeAmount } from "@/trade";
 import { LogTail } from "../LogTail";
 import { MintLabel } from "../MintLabel";
+import { ExitNotice, RefusesLine, type CanaryRead } from "../canary/MarketCanary";
 import { useWallet, type SolanaChain } from "../wallet/WalletProvider";
 import styles from "./TradeBox.module.css";
 
@@ -47,8 +51,11 @@ const failureOf = (e: unknown) => (e instanceof ApiFailure ? e.message : "Someth
 /** A decoded sentence continued after a colon: "No quote: the strategy refused it: ...". */
 const continued = (sentence: string) => (/^(The|It|Your) /.test(sentence) ? sentence[0]!.toLowerCase() + sentence.slice(1) : sentence);
 
-export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trades: Trade[]) => void }) {
+export function TradeBox({ market, canary, onTraded }: { market: Market; canary: CanaryRead; onTraded: (trades: Trade[]) => void }) {
   const ids = useId();
+  // The exit-test notice's sentences, and its tick: kept in this page's memory only, so every visit asks again.
+  const notice = canary.ok ? canary.value.could_not_sell_back.map((n) => n.sentence) : [];
+  const [noticeRead, setNoticeRead] = useState(false);
   const { account, chain, openMenu } = useWallet();
   const mintOf = useCallback((address: string) => market.mints.find((m) => m.mint === address)!, [market.mints]);
   const decimalsOf = (address: string) => mintOf(address).decimals;
@@ -166,7 +173,7 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
     connected: Boolean(account),
     amount: amount.kind,
     quote: quote.status === "loading" ? "loading" : quote.status === "ready" ? "ready" : "none",
-    noticeUnticked: false,
+    noticeUnticked: notice.length > 0 && !noticeRead,
     slippageReason: slippage.kind === "invalid" ? slippage.reason : null,
   });
 
@@ -211,6 +218,7 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
       <h2 id={`${ids}-heading`} className={styles.srOnly}>
         Swap
       </h2>
+      {canary.ok && <RefusesLine canary={canary.value} />}
 
       {/* 1. You pay, fees included */}
       <div className={styles.side}>
@@ -354,6 +362,14 @@ export function TradeBox({ market, onTraded }: { market: Market; onTraded: (trad
             setTyped("");
           }}
         />
+      )}
+
+      {/* 6. The exit-test notice, directly above the button */}
+      {showsBreakdown && <ExitNotice id={`${ids}-read`} sentences={notice} ticked={noticeRead} onTick={setNoticeRead} />}
+      {showsBreakdown && !canary.ok && (
+        <p className={styles.note} role="status">
+          Canary&apos;s results could not be read ({canary.message}), so this box cannot repeat what Canary saw. Load the page again to try again.
+        </p>
       )}
 
       {/* 7. The button, while the breakdown shows */}

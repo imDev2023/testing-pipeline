@@ -5,7 +5,7 @@
 //
 // - Holdings: the wallet's SOL and every token account it owns under both token programs, read through
 //   RPC; each token a Pipeline market trades is listed with those markets, from Postgres, and the rest
-//   are only counted. Wrapped SOL is not listed with them: the page offers to unwrap it (PIPESCOPE-148).
+//   are only counted. Wrapped SOL is not listed with them: the page offers to unwrap it (PIPESCOPE-152).
 // - Unwrap: the wrapped-SOL accounts the wallet owns closed into it, as many as one transaction the
 //   wallet pays for holds, simulated exactly as it is returned, as a swap is (docs/spec/pipescope-architecture.md,
 //   Simulation before every signature); the wallet signs it, and nothing here signs anything.

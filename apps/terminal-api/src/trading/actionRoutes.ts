@@ -73,7 +73,7 @@ export function actionRoutes(app: Hono<AppEnv>) {
       const trader = address(request.trader);
       const tokenPrograms = Object.fromEntries(market.mints.map((m) => [m.address, m.tokenProgram]));
       const built = await actionTransaction({ action, market: market.view, trader, args: request.args, inputs, tokenPrograms, rpc, walletWrappedSol: await walletWrappedSol(rpc, trader) });
-      // A hooked mint's transfers carry its hook's accounts, after the action's own (PIPESCOPE-150).
+      // A hooked mint's transfers carry its hook's accounts, after the action's own (PIPESCOPE-154).
       const hooks = await actionHookAccounts(rpc, { market, trader, action: built.action });
       const instruction = hooks.length ? { ...built.action, accounts: [...(built.action.accounts ?? []), ...hooks] } : built.action;
       const instructions = built.instructions.map((i) => (i === built.action ? instruction : i));

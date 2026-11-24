@@ -5,6 +5,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { postKeeperHeartbeat, seedKeeperRecords } from "./keeper";
 import { screenshot } from "./screenshot";
 import { CP_MARKET, REFUSING_MARKET, THREE_MINT_MARKET } from "./markets";
+import { CANARY_CURVE_STRATEGY, CANARY_MARKETS } from "./canary";
 import { OWN_ORIGINS } from "./target";
 import { connectTestWallet, installTestWallet } from "./wallet";
 
@@ -76,6 +77,13 @@ const typed = (amount: string, wallet: "connect" | "none", then: "quote" | "revi
     await expect(review.getByText("The simulation failed, so there is nothing to sign.")).toBeVisible();
     await review.getByText(/^The program's last \d+ log lines?$/).click();
   }
+};
+
+/** What Canary saw has loaded on a market page, with its mark beside its heading. */
+const canaryReady = async (page: Page) => {
+  const saw = page.getByRole("region", { name: "What Canary saw" });
+  await expect(saw.getByText(/^Canary traded a private copy of this market on /)).toBeVisible();
+  await expect(saw.getByRole("heading", { name: "What Canary saw" }).locator('[data-canary="mark"]')).toBeVisible();
 };
 
 /** One of a market page's action forms, by its author's label, opened. */
@@ -203,6 +211,66 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
   { name: "wallet", path: "/wallet", status: 200, ready: (page: Page) => expect(page.getByText(/^Connect a wallet to see what it holds that trades on Pipeline/)).toBeVisible() },
   { name: "wallet-connected", path: "/wallet", status: 200, ready: walletReady("connected"), wallet: true },
   { name: "wallet-unwrap-review", path: "/wallet", status: 200, ready: walletReady("unwrap"), wallet: true },
+  // Canary on the pages (#125): the open bonding curve's notice and tick, the outside builder's cost
+  // fail, a stranded market with no trade box, a market that refuses every trade, and a strategy's lines.
+  {
+    name: "market-canary-notice",
+    path: `/markets/${CANARY_MARKETS.open_curve}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await marketReady("none")(page);
+      await canaryReady(page);
+      const notice = swapBox(page).locator('[data-canary="notice"]');
+      await expect(notice).toContainText(/^In Canary's test on \d{1,2} [A-Z][a-z]{2} \d{4}, a wallet that bought 1 SOL or more could not sell back/);
+      await expect(notice.getByRole("checkbox", { name: "I have read this" })).not.toBeChecked();
+    },
+  },
+  {
+    name: "market-canary-cost-fail",
+    path: `/markets/${CANARY_MARKETS.outside_builder}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await factsReady(page, ["This market", "Its strategy", "Its mints"]);
+      await canaryReady(page);
+      const cost = page.locator('details[data-check="cost"]');
+      await expect(cost).toHaveAttribute("open", "");
+      await expect(cost.locator("summary")).toContainText(/fail\s*What a round trip costs/);
+      await expect(cost.getByRole("row", { name: /^0\.01 SOL 4\d\.\d% back$/ })).toBeVisible();
+    },
+  },
+  {
+    name: "market-canary-stranded",
+    path: `/markets/${CANARY_MARKETS.stranded}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await factsReady(page, ["This market", "Its strategy", "Its mints"]);
+      await canaryReady(page);
+      await expect(page.getByRole("region", { name: "This market cannot be traded" })).toContainText(/^This market cannot be traded through Pipeline\. The current version of its strategy, deployed in slot [\d,]+, cannot read this market's state/);
+      await expect(page.getByRole("region", { name: "Swap" })).toHaveCount(0);
+      await expect(page.locator("header").getByText("the strategy's current version cannot read this market")).toBeVisible();
+    },
+  },
+  {
+    name: "market-canary-refuses",
+    path: `/markets/${CANARY_MARKETS.refusing}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await factsReady(page, ["This market", "Its strategy", "Its mints"]);
+      await canaryReady(page);
+      await expect(swapBox(page).getByText("This market refuses every trade by its own rules (WrongStatus: Not allowed in the curve's current status). A quote here returns the strategy's own error.")).toBeVisible();
+    },
+  },
+  {
+    name: "strategy-canary",
+    path: `/strategies/${CANARY_CURVE_STRATEGY}`,
+    status: 200,
+    ready: async (page: Page) => {
+      const section = page.getByRole("region", { name: "What Canary saw on this version" });
+      await expect(section.getByText(/^Canary traded a private copy of each of this version's [\d,]+ markets on /)).toBeVisible();
+      await expect(section.locator('[data-check="readable"]')).toContainText(/fail\s*, [\d,]+ of [\d,]+/);
+      await expect(page.getByRole("region", { name: /^Its markets/ }).getByRole("row").last()).toBeVisible();
+    },
+  },
   {
     name: "strategy",
     path: `/strategies/${STRATEGY}`,
@@ -294,6 +362,62 @@ for (const { name, path, status, ready, wallet } of PAGES) {
     const loaded = await page.evaluate(() => [...document.fonts].filter((face) => face.status === "loaded").map((face) => face.family.replaceAll('"', "")));
     expect(loaded).toEqual(expect.arrayContaining(["Archivo", "Literata"]));
 
+    // Canary yellow only on Canary's mark beside its heading and on the trade box's notice, and nothing
+    // green or red, in any element's computed colours (docs/spec/pipescope-screens.md, Colour and theme).
+    expect(await colourViolations(page)).toEqual([]);
+
     await screenshot(page, testInfo, name);
+  });
+}
+
+/**
+ * Every computed colour on the page that breaks the screens' rule about colour: canary yellow outside
+ * Canary's mark and the trade box's notice, a Canary mark or notice anywhere else, and anything green
+ * or red. Each element and its ::before and ::after are read: text, backgrounds and their gradients,
+ * borders, outlines, SVG fills and strokes, and decorations.
+ */
+function colourViolations(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const PROPS = ["color", "background-color", "background-image", "border-top-color", "border-right-color", "border-bottom-color", "border-left-color", "outline-color", "fill", "stroke", "text-decoration-color", "column-rule-color", "box-shadow"];
+    const found: string[] = [];
+    const describe = (el: Element) => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ""}${el.className && typeof el.className === "string" ? `.${el.className.split(/\s+/)[0]}` : ""} "${(el.textContent ?? "").trim().slice(0, 40)}"`;
+    /** Each rgb() or rgba() colour in a computed value, as red, green, blue and alpha. */
+    const colours = (value: string) => [...value.matchAll(/rgba?\(([\d.]+),?\s*([\d.]+),?\s*([\d.]+)(?:\s*[,/]\s*([\d.]+))?\)/g)].map((m) => ({ r: +m[1]!, g: +m[2]!, b: +m[3]!, a: m[4] === undefined ? 1 : +m[4] }));
+    const hsl = ({ r, g, b }: { r: number; g: number; b: number }) => {
+      const [R, G, B] = [r / 255, g / 255, b / 255];
+      const max = Math.max(R, G, B);
+      const min = Math.min(R, G, B);
+      const l = (max + min) / 2;
+      const d = max - min;
+      if (d === 0) return { h: 0, s: 0, l };
+      const s = d / (1 - Math.abs(2 * l - 1));
+      const h = max === R ? 60 * (((G - B) / d) % 6) : max === G ? 60 * ((B - R) / d + 2) : 60 * ((R - G) / d + 4);
+      return { h: (h + 360) % 360, s, l };
+    };
+    const isCanary = (c: { r: number; g: number; b: number }) => c.r >= 245 && c.g >= 200 && c.g <= 225 && c.b <= 40;
+    const isGreenOrRed = (c: { r: number; g: number; b: number }) => {
+      const { h, s, l } = hsl(c);
+      return s >= 0.25 && l >= 0.12 && l <= 0.88 && (h < 20 || h > 340 || (h > 75 && h < 165));
+    };
+    for (const el of document.querySelectorAll("body *")) {
+      const inCanary = el.closest("[data-canary]") !== null;
+      for (const pseudo of [null, "::before", "::after"]) {
+        const style = getComputedStyle(el, pseudo);
+        if (pseudo && (style.content === "none" || style.content === "normal")) continue;
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        for (const prop of PROPS) {
+          for (const c of colours(style.getPropertyValue(prop))) {
+            if (c.a === 0) continue;
+            if (isCanary(c) && !inCanary) found.push(`canary yellow in ${prop} of ${describe(el)}${pseudo ?? ""}`);
+            else if (!isCanary(c) && isGreenOrRed(c)) found.push(`green or red rgb(${c.r}, ${c.g}, ${c.b}) in ${prop} of ${describe(el)}${pseudo ?? ""}`);
+          }
+        }
+      }
+    }
+    // Canary's marks sit in a heading, and its notice in the trade box, nowhere else.
+    for (const el of document.querySelectorAll('[data-canary="mark"]')) if (!el.closest("h1, h2, h3, h4")) found.push(`a Canary mark outside a heading: ${describe(el)}`);
+    for (const el of document.querySelectorAll('[data-canary="notice"]')) if (!el.closest('section[aria-labelledby]')?.querySelector("h2")?.textContent?.includes("Swap")) found.push(`a Canary notice outside the trade box: ${describe(el)}`);
+    for (const el of document.querySelectorAll("[data-canary]")) if (!["mark", "notice"].includes(el.getAttribute("data-canary") ?? "")) found.push(`an unknown Canary element: ${describe(el)}`);
+    return found;
   });
 }

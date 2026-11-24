@@ -2483,7 +2483,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-135: Which mints the trade box quotes
 
 - Question: Which mints does the trade box quote and build swaps of?
-- Answer: Every mint but a Token-2022 mint with a transfer fee, no transfers or a pause switch, since the box promises exactly what leaves the wallet and what arrives; a mint with a transfer hook is quoted and traded with its hook's accounts (`PIPESCOPE-150`), and its simulation shows whether the hook allows the swap.
+- Answer: Every mint but a Token-2022 mint with a transfer fee, no transfers or a pause switch, since the box promises exactly what leaves the wallet and what arrives; a mint with a transfer hook is quoted and traded with its hook's accounts (`PIPESCOPE-154`), and its simulation shows whether the hook allows the swap.
 - Alternatives: The earlier default, plain mints only, a transfer hook refused too until hooked mints were built; quoting every mint and letting the simulation show what really moves, which leaves the breakdown's numbers wrong for transfer-fee mints.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
 - Changes by: build-time constant
@@ -2610,7 +2610,47 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: custom-action forms, the create-market page and a place for product panels](https://github.com/imDev2023/testing-pipeline/issues/123)
 
-### PIPESCOPE-148: Wrapped SOL on the wallet page
+### PIPESCOPE-148: The checks' order and plain names on the pages
+
+- Question: In what order do the pages list Canary's checks, and by what names?
+- Answer: In the prototype's order, what a trader most needs first, from Reading the market and Buy, then sell straight back to Pipeline's own conformance check and Instructions beyond Pipeline's own, with Supply held outside the pool, added after the prototype, beside Token authorities acting; each by the prototype's plain name, in one list in `terminal-api`'s `canaryView.ts` that serves each result with its name and in that order.
+- Alternatives: The order of the checks in the Canary spec, which puts the conformance report second and the cost of a round trip eleventh; the check ids alone.
+- Specified in: [`docs/spec/pipescope-screens.md`, Canary outcomes](spec/pipescope-screens.md#canary-outcomes)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125)
+
+### PIPESCOPE-149: The phrase a row shows
+
+- Question: What short phrase stands beside the one Canary result a row shows, and which return does a market of three or four mints show?
+- Answer: A phrase `terminal-api` writes from the result's own numbers ("a 0.01 SOL round trip returned 48.6%", "buys of 1 SOL or more could not sell back"), or else the check's plain name; a market of three or four mints shows the return of the pair that returned least, and a strategy's row counts the markets its version cannot read, never outcomes.
+- Alternatives: The result's whole sentence, too long for a row; the average of the pairs' returns, which hides the worst pair.
+- Specified in: [`docs/spec/pipescope-screens.md`, What a row says about Canary](spec/pipescope-screens.md#what-a-row-says-about-canary)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125)
+
+### PIPESCOPE-150: When the upgrade notice shows
+
+- Question: When do the strategy page and its market pages carry "Upgraded on <date>; tests and explanation for this version are pending.", and what date does it name?
+- Answer: While the strategy's current version has no Canary result of its own and an older version is recorded: on a market page created before the upgrade until that market has one (a market made since never saw the version before), on the strategy page until any of its markets has one; a market whose strategy has no version recorded yet reads as not run, never as a failure; the date is the day the upgrade's transaction landed, or the day Aviary first saw the version; the explanation's own part reads as pending until it exists (#127).
+- Alternatives: Keeping the notice until the explanation exists too, which waits on the owner's approval of a paid call and could hold it for days after the tests are in.
+- Specified in: [`docs/spec/pipescope-screens.md`, Explanation, actions and facts](spec/pipescope-screens.md#explanation-actions-and-facts)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125)
+
+### PIPESCOPE-151: A stranded market's words, and Canary read with the page
+
+- Question: When does a stranded market's page say it was left behind by an upgrade, and what happens when Canary's results cannot be read?
+- Answer: It says so only when the market was created before its strategy's current version was deployed; Canary's results are read with the page, so the head, the trade box and the facts panel agree from the first paint, and when they cannot be read Canary's part says so with Try again and the trade box says it cannot repeat what Canary saw.
+- Alternatives: The sentence on every stranded market, untrue for one created on a version that cannot read it; each panel reading Canary on its own, which can leave the trade box without its notice while the facts panel shows the fail.
+- Specified in: [`docs/spec/pipescope-screens.md`, Markets that cannot trade](spec/pipescope-screens.md#markets-that-cannot-trade)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125)
+
+### PIPESCOPE-152: Wrapped SOL on the wallet page
 
 - Question: How does the wallet page show the wrapped SOL a wallet holds?
 - Answer: Apart from the tokens it lists, as the offer to unwrap naming the amount, or the empty accounts whose rent comes back, which closes the wrapped-SOL accounts the wallet owns into it, as many as one transaction holds and the rest offered again after, simulated first and signed in the wallet; the wallet's SOL stands in the page's head.
@@ -2620,7 +2660,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-149: What the wallet page lists as held
+### PIPESCOPE-153: What the wallet page lists as held
 
 - Question: Which of a wallet's tokens does "What you hold that trades on Pipeline" list, and in what order?
 - Answer: Every token it holds a non-zero balance of, in any of its token accounts under either token program, that a market Aviary has indexed trades, with each of those markets, newest first, ordered by the name the page shows; tokens no market trades are only counted, and empty token accounts are neither listed nor counted.
@@ -2630,7 +2670,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-150: How a hooked mint's accounts are resolved
+### PIPESCOPE-154: How a hooked mint's accounts are resolved
 
 - Question: How does Aviary find the accounts a mint's transfer hook needs, and where does a swap carry them?
 - Answer: In one module of `terminal-api` (`trading/hooks.ts`) for swaps and custom actions alike, each transfer resolved on its own from the mint's `ExtraAccountMetaList` by Token-2022's own client, every transfer the transaction makes in the mint covered (the trader's transfer and Pipeline's and the integrator's fees taken in it), each account once with the highest role any transfer gives it; a sell's go in the router's `input_hook_accounts`, a buy's after the strategy's own accounts, and a custom action's after its own, for the transfers both ways between the wallet's token account the action writes and the market's vault of each hooked mint; a refusal by the hook is named as the hook's, and a holder's CPI Guard or required memos are named as the holder's own settings.
@@ -2640,7 +2680,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-151: Trades of other pairs on a market of three or four mints
+### PIPESCOPE-155: Trades of other pairs on a market of three or four mints
 
 - Question: How does a market page's Trades table read a trade between two mints other than the pair on show?
 - Answer: By the trade's own pair, as the API gives it with every trade: a Buy or a Sell of that pair's base mint, its price in that pair's quote mint, with the pair named under the price; a trade of the pair on show is read by that pair, flipped or not.
@@ -2650,7 +2690,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-152: The wallet page's endpoints
+### PIPESCOPE-156: The wallet page's endpoints
 
 - Question: Which endpoints serve the wallet page?
 - Answer: `GET /v1/traders/{trader}/trades`, the feed's trader page with every mint it names; `GET /v1/traders/{trader}/holdings`, the wallet's SOL, wrapped SOL and token accounts read through RPC with each listed token's markets from Postgres; and `POST /v1/unwrap/prepare`, the unwrap built and simulated, whose signature `POST /v1/transactions` waits on as for a custom action; the prepare counts against the 60-a-minute limit of quotes and prepares (`PIPESCOPE-90`).
@@ -2660,7 +2700,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-153: The unwrap's signing check
+### PIPESCOPE-157: The unwrap's signing check
 
 - Question: How is the unwrap, a new signing flow, checked in a wallet?
 - Answer: As the ticket asks, by the Playwright test wallet signing with a devnet key, here the project's devnet wallet, through the real page of the local run, as `PIPESCOPE-136` settled for the trade box; no real wallet extension in the owner's Chrome.

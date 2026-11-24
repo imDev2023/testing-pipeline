@@ -15,7 +15,7 @@
 // tries it again after a wait, so a run goes on after a container restart from the market it was on.
 // When the chain runs other code than the version's, the run hands its markets to the strategy's
 // newer version, whose runs are the ones that count for them.
-import { canaryRunMarkets, failCanaryMarket, finishCanaryRun, programVersions, startCanaryRun, storeCanaryMarket, type CanaryRecord, type CanaryTrigger, type Db } from "terminal-db";
+import { canaryRunMarkets, canaryRuns, failCanaryMarket, finishCanaryRun, programVersions, startCanaryRun, storeCanaryMarket, type CanaryRecord, type CanaryTrigger, type Db } from "terminal-db";
 import { and, desc, eq } from "drizzle-orm";
 import { addMissing, firstSnapshot, rpcAccountReader, snapshotBody, type MissingAnswer, type Snapshot, type SnapshotInstructions } from "./canarySnapshot";
 import { CANARY } from "./config";
@@ -196,6 +196,9 @@ export class CanaryRunCore {
     const started = this.deps.now();
     const deploySlot = BigInt(version.deploySlot);
     const ours = { program: version.program, deploySlot };
+    // A run remembered from an earlier alarm whose row is gone from Postgres (the database replaced under
+    // this object) could store nothing, nor record the failure: it writes a new row and goes on.
+    if (run.runId !== null && !(await db.select({ id: canaryRuns.id }).from(canaryRuns).where(eq(canaryRuns.id, BigInt(run.runId))))[0]) run.runId = null;
     if (run.runId === null) {
       run.runId = String(await startCanaryRun(db, { version: ours, trigger: run.trigger, delayMs: run.delayMs, markets: run.markets }));
       await this.remember(run);
