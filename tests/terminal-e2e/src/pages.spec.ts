@@ -29,6 +29,8 @@ const MARKET_OLD_ACTIONS = "EdMom6pkDgCgXZFSmrEadPRnZDEyqbAg9xDVKrnusSQT";
 const TAX_MARKET = "4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c";
 const SUITE_TREASURY = "CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF";
 const TAX_AMM = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t";
+// Devnet's Counterflow strategy, whose metadata has a create form and which is none of ours.
+const COUNTERFLOW = "9jd6k8HQkcU2jxe2AcTZVLDGccbo3S8Py6e6E6Aee7QP";
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
 // Aviary's image-check token (deployments/devnet-demo-token-image.json), which the tax AMM's launch form reads.
 const TOKEN_IMAGE_CHECK = "6jtEmUreNsX6B7xwnqjB4D3bSASwTZTweL16bk8xHD7D";
@@ -292,13 +294,14 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
   { name: "create-tax-launch", path: `/create?strategy=${TAX_AMM}`, status: 200, ready: taxLaunchFilled, wallet: true },
   { name: "create", path: "/create", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Choose a strategy" }).getByRole("listitem").first()).toBeVisible() },
   {
+    // A strategy not ours, so its metadata's create form shows: devnet's Counterflow (our products show their own, PIPESCOPE-162).
     name: "create-form",
-    path: `/create?strategy=${TAX_AMM}`,
+    path: `/create?strategy=${COUNTERFLOW}`,
     status: 200,
     ready: async (page: Page) => {
       const form = page.getByRole("region", { name: "The create form" });
-      await form.getByRole("textbox", { name: /^mint_0 a mint/ }).fill(WSOL_MINT);
-      await expect(form.getByLabel("The facts of mint_0")).toBeVisible();
+      await form.getByRole("textbox", { name: /^quote_mint a mint/ }).fill(WSOL_MINT);
+      await expect(form.getByLabel("The facts of quote_mint")).toBeVisible();
     },
   },
   { name: "market-no-trades", path: `/markets/${MARKET_WITHOUT_TRADES}`, status: 200, ready: marketReady("none") },
