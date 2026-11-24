@@ -6,7 +6,7 @@
 // decoded, with its place in its block. These are the RPC calls and messages that source is made of;
 // the API's `Indexer` Durable Object holds the socket, and only while someone watches.
 import type { RawTransaction } from "./decode";
-import { rpcCall } from "./rpc";
+import { RpcError, rpcCall } from "./rpc";
 
 /** The WebSocket endpoint of an HTTP RPC endpoint: the same URL, key and all, over wss. */
 export const webSocketUrlOf = (rpcUrl: string) => rpcUrl.replace(/^http/, "ws");
@@ -50,9 +50,9 @@ const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
  * A reported transaction, asked for every `everyMs` until the RPC serves it, until `until` (a node
  * reports a transaction before it serves it; the API's config module, `RPC_WAITS.transaction`), with
  * its place in its block from `blockIndexOf`. Null when it was not served in time, which leaves it to
- * reconciliation. Only "not served yet" is asked again: an RPC that refuses or fails (a rate limit, an
- * error, no answer) throws at once (#214), so one RPC in trouble never holds the live path for the
- * whole wait.
+ * reconciliation. Only "not served yet" and a rate limit, which a burst of reports can draw, are asked
+ * again: an RPC that refuses or fails otherwise (an error, no answer) throws at once (#214), so one RPC
+ * in trouble never holds the live path for the whole wait.
  */
 export async function servedTransaction(
   rpcUrl: string,
@@ -60,7 +60,13 @@ export async function servedTransaction(
   { until, everyMs, blockIndexOf }: { until: number; everyMs: number; blockIndexOf: (slot: number, signature: string) => Promise<number> },
 ): Promise<RawTransaction | null> {
   for (;;) {
-    const raw = await rpcCall<RawTransaction | null>(rpcUrl, "getTransaction", [signature, { encoding: "json", commitment: "confirmed", maxSupportedTransactionVersion: 0 }]);
+    let raw: RawTransaction | null;
+    try {
+      raw = await rpcCall<RawTransaction | null>(rpcUrl, "getTransaction", [signature, { encoding: "json", commitment: "confirmed", maxSupportedTransactionVersion: 0 }]);
+    } catch (e) {
+      if (!(e instanceof RpcError && e.rateLimited)) throw e;
+      raw = null;
+    }
     if (raw) return { ...raw, transactionIndex: await blockIndexOf(raw.slot, signature) };
     if (Date.now() >= until) return null;
     await sleep(everyMs);

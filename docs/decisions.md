@@ -2513,10 +2513,10 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-138: How the live path waits on the RPC
 
 - Question: How does the indexer fetch the transactions the live socket reports when the RPC is slow to serve them or refuses?
-- Answer: The transactions reported together are asked for at once within one wait from their arrival (`RPC_WAITS.transaction`), each is indexed and published as soon as it is served, and only "not served yet" is asked again, so a refusal or an error leaves a transaction to reconciliation at once.
+- Answer: Each reported transaction is asked for as soon as it is reported, at most two at a time (`RPC_WAITS.transaction.atOnce`), within one wait from its arrival (`RPC_WAITS.transaction`), and is indexed and published as soon as it is served, with no earlier transaction or slow publish holding it back; "not served yet" and a rate limit are asked again within the wait, and any other refusal or error leaves it to reconciliation at once.
 - Alternatives: Each transaction asked for in turn for up to 8 s, every error taken for "not served yet", and the batch published only once all were done, so one slow or rate-limiting answer held every live trade back.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
-- Changes by: spec only
+- Changes by: build-time constant
 - Status: default
 - Decided: 2026-11-24 in [Aviary: follow-ups found in #118's candles and live rooms](https://github.com/imDev2023/testing-pipeline/issues/214)
 
@@ -2533,7 +2533,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-140: A market's live room only for a known market
 
 - Question: Does `/v1/live/markets/{address}` open a room for any well-formed address?
-- Answer: No: it opens a room only for a market Aviary has indexed, and answers 404 for any other address, so no address opens a room, and the indexer's socket, for nothing.
+- Answer: No: it opens a room only for a market Aviary has indexed, and answers 404 for any other address, so no address opens a room, and the indexer's socket, for nothing; when the database cannot be read, the room opens anyway, since live updates need no database.
 - Alternatives: A room for any well-formed address, which costs no database read but lets anyone hold the socket open on addresses that are no market.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Live rooms](spec/pipescope-architecture.md#live-rooms)
 - Changes by: spec only

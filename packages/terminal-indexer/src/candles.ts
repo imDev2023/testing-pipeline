@@ -266,7 +266,8 @@ const CANDLE_INSERT_ROWS = 1_000;
  * Writes again, from the trades, the candles of every pair whose candles do not hold all its swaps
  * (#214): the trades a database held before migration 0003 made the table, which no fold ever
  * reached, or any candle lost since. A pair is compared at each length kept forever, where its
- * candles' trade counts must add up to its priced swaps; one that disagrees is rebuilt whole at every
+ * candles' trade counts must add up to its priced swaps, once the totals of every pair disagree
+ * there (a pair over by as many as another is short, which no fold makes, passes); one that disagrees is rebuilt whole at every
  * length in `retention`, leaving out candles already past their length's retention, and the others
  * are not touched. Each rebuild holds the candles table's lock, so a swap folded meanwhile waits for
  * it and lands on the rebuilt candles, or was committed before it and is in them. Returns the pairs
@@ -275,11 +276,21 @@ const CANDLE_INSERT_ROWS = 1_000;
 export async function repairCandles(db: Db, retention: CandleRetention, now: number = Math.floor(Date.now() / 1000)): Promise<CandlePair[]> {
   const forever = retention.filter((r) => r.keepDays === null).map((r) => r.seconds);
   if (!forever.length) return [];
+  const priced = sql`${trades.netSent} > 0 and ${trades.received} > 0 and ${trades.inputMint} <> ${trades.outputMint}`;
+  // Two totals first, so a run where every swap is in its candles, as on almost every run, reads one
+  // row from each table rather than one per pair.
+  const [{ swaps: allSwaps }] = (await db.select({ swaps: sql<number>`count(*)::int` }).from(trades).where(priced)) as [{ swaps: number }];
+  const totals = await db
+    .select({ seconds: candles.seconds, n: sql<number>`coalesce(sum(${candles.trades}), 0)::int` })
+    .from(candles)
+    .where(inArray(candles.seconds, forever))
+    .groupBy(candles.seconds);
+  if (forever.every((seconds) => (totals.find((t) => t.seconds === seconds)?.n ?? 0) === allSwaps)) return [];
   // Grouped by input and output and put in pair order here, since Postgres's collation need not sort addresses as `pairOrder` does.
   const swapCounts = await db
     .select({ market: trades.market, inputMint: trades.inputMint, outputMint: trades.outputMint, n: sql<number>`count(*)::int` })
     .from(trades)
-    .where(sql`${trades.netSent} > 0 and ${trades.received} > 0 and ${trades.inputMint} <> ${trades.outputMint}`)
+    .where(priced)
     .groupBy(trades.market, trades.inputMint, trades.outputMint);
   const keyOf = (market: string, mintA: string, mintB: string) => `${market} ${mintA} ${mintB}`;
   const pairs = new Map<string, CandlePair>();

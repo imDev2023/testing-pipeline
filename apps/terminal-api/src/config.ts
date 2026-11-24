@@ -62,14 +62,15 @@ export const SOCKET_REOPEN_BACKOFF_MAX_MS = 5 * MINUTE;
 
 /**
  * How long the indexer waits for what the RPC has not served yet (Top-pad's measured waits): the
- * transactions the live socket reported, all asked for at once, every `everyMs`, for up to `waitMs`
- * from when the batch arrived, before each still unserved is left to reconciliation (Helius serves a
- * confirmed one 1.5 to 2 s after its block; a refusal is not asked again, #214); and a block,
+ * transactions the live socket reported, each asked for every `everyMs`, `atOnce` of them at a time
+ * so a burst never floods the RPC, for up to `waitMs` from when its batch arrived, before each still
+ * unserved is left to reconciliation (Helius serves a confirmed one 1.5 to 2 s after its block; a rate
+ * limit is waited out, any other refusal is not asked again, #214); and a block,
  * for a transaction's place in it, asked for again after waits doubling from `firstRetryMs` to
  * `maxRetryMs`, for up to `waitMs`.
  */
 export const RPC_WAITS = {
-  transaction: { waitMs: 8 * SECOND, everyMs: 300 },
+  transaction: { waitMs: 8 * SECOND, everyMs: 300, atOnce: 2 },
   block: { waitMs: 8 * SECOND, firstRetryMs: 500, maxRetryMs: 2 * SECOND },
 } as const;
 

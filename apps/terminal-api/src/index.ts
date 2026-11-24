@@ -56,20 +56,27 @@ app.route("/", canaryRoutes);
  * room, named, so a room woken from hibernation knows which it is.
  */
 const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const isUpgrade = <E extends AppEnv>(c: Context<E>) => c.req.header("upgrade")?.toLowerCase() === "websocket";
+const notUpgrade = <E extends AppEnv>(c: Context<E>) => c.json<ApiError>({ error: "A live room is a WebSocket: open it with an upgrade." }, 426);
 const joinRoom = <E extends AppEnv>(c: Context<E>, room: string) => {
-  if (c.req.header("upgrade")?.toLowerCase() !== "websocket") return c.json<ApiError>({ error: "A live room is a WebSocket: open it with an upgrade." }, 426);
   const request = new Request(c.req.raw);
   request.headers.set(ROOM_HEADER, room);
   return c.env.LIVE_ROOMS.get(c.env.LIVE_ROOMS.idFromName(room)).fetch(request);
 };
-app.get("/v1/live/feed", (c) => joinRoom(c, roomOf.feed));
+app.get("/v1/live/feed", (c) => (isUpgrade(c) ? joinRoom(c, roomOf.feed) : notUpgrade(c)));
 app.get("/v1/live/markets/:market", requestDb, async (c) => {
   const market = c.req.param("market");
   if (!ADDRESS.test(market)) return c.json<ApiError>({ error: "This is not a market's address." }, 400);
-  // A room only for a market Aviary knows, so no address opens one, and the socket, for nothing (#214).
-  // The market page read the market just before, so the database is awake already.
-  const [known] = await dbOf(c).select({ address: markets.address }).from(markets).where(eq(markets.address, market)).limit(1);
-  if (!known) throw notFound("market");
+  if (!isUpgrade(c)) return notUpgrade(c);
+  // A room only for a market Aviary knows, so no address opens one, and the socket, for nothing
+  // (PIPESCOPE-140). Live updates need no database, so when it cannot be read the room opens anyway.
+  try {
+    const [known] = await dbOf(c).select({ address: markets.address }).from(markets).where(eq(markets.address, market)).limit(1);
+    if (!known) throw notFound("market");
+  } catch (e) {
+    if (e instanceof HTTPException) throw e;
+    console.error(`reading whether ${market} is a market failed; its room opens anyway`, e);
+  }
   return joinRoom(c, roomOf.market(market));
 });
 

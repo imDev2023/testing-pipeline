@@ -7,10 +7,10 @@ import { encodeAccount, getStrategyCodec, PIPELINE_PROGRAM_ADDRESS } from "@pipe
 import { address } from "@solana/kit";
 import { candles, createDb, markets, metadataSnapshots, mints, strategies, trades } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
-import { DECODER_VERSION, indexTransactions, pipelineHandler, type RawTransaction, type TransactionHandler } from "terminal-indexer";
+import { DECODER_VERSION, historySource, indexTransactions, pipelineHandler, type HistorySource, type RawTransaction, type TransactionHandler } from "terminal-indexer";
 import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CANDLES, LIVE_ROOM_TRADES_MAX } from "../src/config";
+import { CANDLES, LIVE_ROOM_TRADES_MAX, RPC_WAITS } from "../src/config";
 import { IndexerCore } from "../src/indexerCore";
 import { memoryImages, metadataWeb } from "./fakes";
 
@@ -73,6 +73,27 @@ describe("reconciliation of the router", () => {
     const [cron, socket] = await Promise.all([indexer.reconcile(), indexer.reconcile()]);
     expect([...cron.indexed.trades, ...socket.indexed.trades]).toEqual([{ signature: swap.transaction.signatures[0], eventIndex: 0 }]);
     expect(socket.cursor).toEqual(cron.cursor);
+  });
+
+  it("runs again after a run it joined, so the socket's open-time call covers what landed after that run read the chain (#214)", async () => {
+    const real = historySource(rpc.url, RPC_WAITS.block);
+    let joined: Promise<{ indexed: { trades: unknown[] } }> | null = null;
+    const source: HistorySource = {
+      hasAfter: (account, cursor) => real.hasAfter(account, cursor),
+      after: async (account, cursor, limit) => {
+        const page = await real.after(account, cursor, limit);
+        // The cron's run has read the chain; a swap lands, and the socket's call arrives and joins it.
+        if (!joined && rpc.history.length === 2) {
+          rpc.history.push(swap);
+          joined = indexer.reconcile();
+        }
+        return page;
+      },
+    };
+    const indexer = new IndexerCore({ rpcUrl: rpc.url, openDb: () => createDb(database.url), webFetch: metadataWeb().fetch, images: memoryImages(), source });
+    const cron = await indexer.reconcile();
+    expect(cron.indexed.trades).toEqual([]);
+    expect((await joined!).indexed.trades).toEqual([{ signature: swap.transaction.signatures[0], eventIndex: 0 }]);
   });
 
   it("closes every database client it opens, even when indexing fails", async () => {
@@ -276,11 +297,37 @@ describe("the live path, when the RPC is slow or refuses (#214)", () => {
     expect(openDb).toHaveBeenCalledTimes(1);
   });
 
-  it("gives up at once on a transaction the RPC refuses, rather than asking until the wait runs out", async () => {
+  it("waits out a rate limit within the wait, as a burst of reports can draw one", async () => {
     const { indexer } = core();
     await indexer.reconcile();
     rpc.history.push(swap);
     rpc.limited.add("getTransaction");
+    setTimeout(() => rpc.limited.clear(), 700);
+    expect((await indexer.indexSignatures([swap.transaction.signatures[0]!])).trades).toEqual([{ signature: swap.transaction.signatures[0], eventIndex: 0 }]);
+  });
+
+  it("asks for at most RPC_WAITS.transaction.atOnce reported transactions at a time, so a burst never floods the RPC", async () => {
+    const { swapTransaction, SWAP_TOKEN, WSOL } = await import("terminal-indexer/swaps");
+    const burst = [1, 2, 3, 4, 5, 6].map((id) => swapTransaction({ id, slot: 525_139_990 + id, blockIndex: 0, at: 1_795_367_000 + id, input: WSOL, output: SWAP_TOKEN, netSent: 5n, received: 7n }));
+    const { indexer } = core();
+    await indexer.reconcile();
+    rpc.history.push(...burst);
+    for (const t of burst) rpc.unserved.add(t.transaction.signatures[0]!);
+    rpc.requests.length = 0;
+    const done = Promise.all(burst.map((t) => indexer.indexSignatures([t.transaction.signatures[0]!])));
+    await new Promise((settle) => setTimeout(settle, 900));
+    // Each asked every 300 ms: six at once would ask about 24 times in 900 ms, the cap's few about a third of that.
+    const asked = rpc.requests.filter((r) => r.method === "getTransaction").length;
+    expect(asked).toBeLessThanOrEqual(RPC_WAITS.transaction.atOnce * 5);
+    rpc.unserved.clear();
+    expect((await done).flatMap((r) => r.trades)).toHaveLength(6);
+  });
+
+  it("gives up at once on a transaction the RPC refuses, rather than asking until the wait runs out", async () => {
+    const { indexer } = core();
+    await indexer.reconcile();
+    rpc.history.push(swap);
+    rpc.refuse.add("getTransaction");
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const started = Date.now();
     const indexed = await indexer.indexSignatures([swap.transaction.signatures[0]!]);
@@ -289,8 +336,46 @@ describe("the live path, when the RPC is slow or refuses (#214)", () => {
     expect(indexed.trades).toEqual([]);
     expect(rpc.requests.filter((r) => r.method === "getTransaction")).toHaveLength(1);
     // Reconciliation, which never passes a transaction by, indexes it once the RPC answers again.
-    rpc.limited.clear();
+    rpc.refuse.clear();
     expect((await indexer.reconcile()).indexed.trades).toEqual([{ signature: swap.transaction.signatures[0], eventIndex: 0 }]);
+  });
+});
+
+describe("the live path's batches (#214)", () => {
+  it("count each as a use of the database, so a batch that joined another's client still has Canary's outbox read after it", async () => {
+    const { swapTransaction, SWAP_TOKEN, WSOL } = await import("terminal-indexer/swaps");
+    const [a, b] = [1, 2].map((id) => swapTransaction({ id, slot: 525_139_990 + id, blockIndex: 0, at: 1_795_367_000 + id, input: WSOL, output: SWAP_TOKEN, netSent: 5n, received: 7n }));
+    const { indexer } = core();
+    await indexer.reconcile();
+    rpc.history.push(a!, b!);
+    rpc.unserved.add(b!.transaction.signatures[0]!);
+    setTimeout(() => rpc.unserved.clear(), 600);
+    const before = indexer.databaseUses();
+    const first = indexer.indexSignatures([b!.transaction.signatures[0]!]);
+    const second = indexer.indexSignatures([a!.transaction.signatures[0]!]);
+    await Promise.all([first, second]);
+    expect(indexer.databaseUses() - before).toBe(2);
+  });
+
+  it("never hold the next transaction's indexing behind a slow publish of the one before", async () => {
+    const { swapTransaction, SWAP_TOKEN, WSOL } = await import("terminal-indexer/swaps");
+    const [a, b] = [1, 2].map((id) => swapTransaction({ id, slot: 525_139_990 + id, blockIndex: 0, at: 1_795_367_000 + id, input: WSOL, output: SWAP_TOKEN, netSent: 5n, received: 7n }));
+    const { indexer } = core();
+    await indexer.reconcile();
+    rpc.history.push(a!, b!);
+    let secondHanded: () => void = () => {};
+    const handedSecond = new Promise<void>((done) => (secondHanded = done));
+    const order: string[] = [];
+    let firstWait = "";
+    const indexed = await indexer.indexSignatures([a!.transaction.signatures[0]!, b!.transaction.signatures[0]!], async (one) => {
+      order.push(one.trades[0]!.signature);
+      // The first publish waits until the second transaction has been handed on: it can only if indexing goes on meanwhile.
+      if (order.length === 1) firstWait = await Promise.race([handedSecond.then(() => "the second was handed on"), new Promise<string>((settle) => setTimeout(() => settle("timed out"), 3_000))]);
+      else secondHanded();
+    });
+    expect(indexed.trades).toHaveLength(2);
+    expect(order).toHaveLength(2);
+    expect(firstWait).toBe("the second was handed on");
   });
 });
 

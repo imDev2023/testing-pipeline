@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createDb } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { indexTransactions, pipelineHandler, type RawTransaction } from "terminal-indexer";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ApiError } from "../src/contract";
 import type { Bindings } from "../src/env";
 import { app } from "../src/index";
@@ -42,9 +42,12 @@ function rooms() {
   return { handed, namespace: namespace as unknown as Bindings["LIVE_ROOMS"] };
 }
 
-async function open(path: string, upgrade = true) {
+/** A database no client can reach: nothing listens on port 9. */
+const UNREACHABLE = "postgres://terminal:terminal@127.0.0.1:9/terminal";
+
+async function open(path: string, upgrade = true, databaseUrl = database.url) {
   const { handed, namespace } = rooms();
-  const env = bindings({ databaseUrl: database.url, rpcUrl: "http://127.0.0.1:9/never-called", LIVE_ROOMS: namespace });
+  const env = bindings({ databaseUrl, rpcUrl: "http://127.0.0.1:9/never-called", LIVE_ROOMS: namespace });
   const { ctx, settle } = executionContext();
   const response = await app.request(path, { headers: upgrade ? { upgrade: "websocket" } : {} }, env, ctx);
   await settle();
@@ -71,5 +74,14 @@ describe("the live rooms' addresses", () => {
     expect(response.status).toBe(404);
     expect(((await response.json()) as ApiError).error).toBe("Aviary knows no market at this address.");
     expect(handed).toEqual([]);
+  });
+
+  it("answer a request that is no upgrade without reading the database, and still join a room when the database cannot be read (#214)", async () => {
+    const plain = await open(`/v1/live/markets/${MARKET}`, false, UNREACHABLE);
+    expect(plain.response.status).toBe(426);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Live updates need no database: a viewer reconnecting while it is down still rejoins its room.
+    expect((await open(`/v1/live/markets/${MARKET}`, true, UNREACHABLE)).handed).toEqual([{ id: `id:market:${MARKET}`, name: `market:${MARKET}` }]);
+    log.mockRestore();
   });
 });

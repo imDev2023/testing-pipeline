@@ -150,12 +150,16 @@ export class IndexerCore {
   }
 
   /**
-   * Reconciles the router; a call while one runs waits for it rather than starting a second. What the
-   * run indexed is reported to the call that started it alone, and a call that joined it is told it
-   * indexed nothing, so the same swaps are never published twice (#214), as when the cron and the
-   * live socket's open-time reconciliation share a run.
+   * Reconciles the router, one run at a time. A call that arrives while a run goes on waits for it,
+   * then runs again, since that run may have read the chain before what the call is for (the live
+   * socket's open-time call is for what landed before its subscription, #214); a run started after
+   * the call arrived covers it, and the call joins that one. What a run indexed is reported to the call
+   * that started it alone, and a call that joined it is told it indexed nothing, so the same swaps are
+   * never published twice.
    */
   async reconcile(): Promise<ReconcileOutcome> {
+    const before = this.running;
+    if (before) await before.catch(() => undefined);
     if (this.running) {
       const shared = await this.running;
       return { ...shared, indexed: emptyResult() };
@@ -291,18 +295,23 @@ export class IndexerCore {
         this.toFetch(one.strategies);
         this.learn(one);
         addResult(all, one);
-        await indexed(one).catch((e: unknown) => console.error(`handing on ${signature} from the live socket failed`, e));
+        // Published outside the turn, so a slow publish never holds the next transaction's indexing.
+        handing.push(indexed(one).catch((e: unknown) => console.error(`handing on ${signature} from the live socket failed`, e)));
       };
+      const handing: Promise<void>[] = [];
       await Promise.all(
         wanted
           .filter((signature) => !known.has(signature))
           .map(async (signature) => {
             let raw: RawTransaction | null;
+            const release = await this.fetchSlot();
             try {
               raw = await servedTransaction(this.deps.rpcUrl, signature, { until, everyMs: RPC_WAITS.transaction.everyMs, blockIndexOf: this.blockIndexOf });
             } catch (e) {
               console.error(`the RPC did not serve ${signature} from the live socket; reconciliation will index it`, e);
               return;
+            } finally {
+              release();
             }
             if (!raw) {
               console.warn(`transaction ${signature} was not served in time; reconciliation will index it`);
@@ -314,6 +323,7 @@ export class IndexerCore {
             await mine;
           }),
       );
+      await Promise.all(handing);
       return all;
     });
   }
@@ -604,16 +614,30 @@ export class IndexerCore {
 
   private uses = 0;
 
+  /** Reported transactions being asked for now, and those waiting for a turn, at most `RPC_WAITS.transaction.atOnce` at a time. */
+  private fetching = 0;
+  private fetchQueue: (() => void)[] = [];
+
+  /** Waits for a turn to ask the RPC for a reported transaction; the function returned gives it up. */
+  private async fetchSlot(): Promise<() => void> {
+    if (this.fetching >= RPC_WAITS.transaction.atOnce) await new Promise<void>((turn) => this.fetchQueue.push(turn));
+    else this.fetching++;
+    return () => {
+      const next = this.fetchQueue.shift();
+      if (next) next();
+      else this.fetching--;
+    };
+  }
+
   /** The live path's turn: one served transaction indexed at a time, across batches. */
   private liveTurn: Promise<void> = Promise.resolve();
   /** The live path's database client, shared by the batches running now and closed when the last ends. */
   private liveClient: { db: Db; close: () => Promise<void>; users: number } | null = null;
 
+  /** Each batch counts as a use of the database, the first opening the client and the others joining it, so a job's caller reads Canary's outbox after each. */
   private async withLiveDb<T>(work: (db: Db) => Promise<T>): Promise<T> {
-    if (!this.liveClient) {
-      this.uses++;
-      this.liveClient = { ...this.deps.openDb(), users: 0 };
-    }
+    this.uses++;
+    if (!this.liveClient) this.liveClient = { ...this.deps.openDb(), users: 0 };
     const client = this.liveClient;
     client.users++;
     try {

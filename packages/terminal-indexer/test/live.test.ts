@@ -56,8 +56,15 @@ describe("a reported transaction", () => {
 
   it("is given up at once when the RPC refuses, rather than asked for until the wait runs out (#214)", async () => {
     rpc = await fakeRpc([raw]);
-    rpc.limited.add("getTransaction");
-    await expect(servedTransaction(rpc.url, raw.transaction.signatures[0]!, { until: Date.now() + 5_000, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) })).rejects.toThrow("RPC getTransaction failed: HTTP 429");
+    rpc.refuse.add("getTransaction");
+    await expect(servedTransaction(rpc.url, raw.transaction.signatures[0]!, { until: Date.now() + 5_000, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) })).rejects.toThrow("RPC getTransaction failed: Method not found");
     expect(rpc.requests.filter((r) => r.method === "getTransaction")).toHaveLength(1);
+  });
+
+  it("is asked for again through a rate limit, which passes, within the wait (#214)", async () => {
+    rpc = await fakeRpc([raw]);
+    rpc.limited.add("getTransaction");
+    setTimeout(() => rpc!.limited.clear(), 350);
+    expect(await servedTransaction(rpc.url, raw.transaction.signatures[0]!, { until: Date.now() + 5_000, everyMs: 100, blockIndexOf: blockPositions(rpc.url, WAITS) })).toEqual(raw);
   });
 });

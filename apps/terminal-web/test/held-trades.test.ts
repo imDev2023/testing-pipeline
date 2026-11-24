@@ -51,6 +51,19 @@ describe("a resync that brings a full page", () => {
   });
 });
 
+describe("a full page from a resync sent before newer trades arrived (#214)", () => {
+  it("keeps the trades that arrived while it was on its way, which are newer than the page, at its top", () => {
+    // The room delivered slot 61 while the resync was in flight; the page stops at 60.
+    const held = holdArrivals(none, [trade(61)]);
+    const waiting = takeResyncPage(shown, held, fullPage, true);
+    expect(slots(waiting.held.trades)).toEqual([61, 60, 59, 58]);
+    expect(slots(releaseHeld(waiting.shown, waiting.held).list)).toEqual([61, 60, 59, 58]);
+
+    const listed = { list: [trade(61), ...shown.list], next: shown.next };
+    expect(slots(takeResyncPage(listed, none, fullPage, false).shown.list)).toEqual([61, 60, 59, 58]);
+  });
+});
+
 describe("trades held while the reader is on the table", () => {
   it("join the top of the list when they leave it, keeping its cursor to earlier trades", () => {
     const held = holdArrivals(holdArrivals(none, [trade(12)]), [trade(11), trade(12)]);

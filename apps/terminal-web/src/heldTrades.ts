@@ -22,12 +22,19 @@ export function holdArrivals(held: Held, arriving: readonly Trade[]): Held {
 /**
  * A resync through the API that returned a full page, so more landed than it holds: the page
  * replaces the list, at once when the reader is not on the table, else once they leave it. The page
- * is the newest trades, past every one listed or waiting, so it takes their place.
+ * takes the place of every trade listed or waiting, apart from those newer than it, which the room
+ * delivered while the resync was on its way and which stay at its top.
  */
 export function takeResyncPage(shown: TradesShown, held: Held, page: { trades: Trade[]; next: string | null }, holding: boolean): { shown: TradesShown; held: Held } {
-  if (!holding) return { shown: { list: page.trades, next: page.next }, held: { trades: [], replaces: null } };
-  return { shown, held: { trades: mergeTrades([], page.trades), replaces: { next: page.next } } };
+  const [newest] = mergeTrades([], page.trades);
+  const newer = newest ? mergeTrades(shown.list, held.trades).filter((t) => isNewer(t, newest)) : [];
+  const trades = mergeTrades(page.trades, newer);
+  if (!holding) return { shown: { list: trades, next: page.next }, held: { trades: [], replaces: null } };
+  return { shown, held: { trades, replaces: { next: page.next } } };
 }
+
+/** Whether `trade` comes after `than` in the chain: it sorts first, newest first, and is another trade. */
+const isNewer = (trade: Trade, than: Trade) => (trade.signature !== than.signature || trade.event_index !== than.event_index) && mergeTrades([than], [trade])[0] === trade;
 
 /** The list once the reader leaves the table: the trades waiting at its top, or in its place when they replace it. */
 export function releaseHeld(shown: TradesShown, held: Held): TradesShown {
