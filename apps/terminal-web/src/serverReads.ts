@@ -3,7 +3,7 @@
 // its title read the API once.
 import { notFound } from "next/navigation";
 import { cache } from "react";
-import { Market, StrategyDetail } from "terminal-api/contract";
+import { CanaryResults, CanaryRollup, Market, StrategyDetail } from "terminal-api/contract";
 import { ApiFailure, getFromApi } from "./api";
 
 /** The thing at an address, the 404 page when the API knows none, or the failure to show. */
@@ -18,3 +18,19 @@ async function readOrNotFound<T>(read: () => Promise<T>): Promise<{ ok: true; va
 
 export const readMarket = cache((address: string) => readOrNotFound(() => getFromApi(`/v1/markets/${encodeURIComponent(address)}`, Market)));
 export const readStrategy = cache((program: string) => readOrNotFound(() => getFromApi(`/v1/strategies/${encodeURIComponent(program)}`, StrategyDetail)));
+
+/**
+ * What Canary saw, read with the page so the trade box, the head and the facts panel agree from the
+ * first paint (#125): a market's latest results, or a strategy version's roll-up. A failure is kept to
+ * show where the results would be, never a 404 for the page.
+ */
+async function readOrFailure<T>(read: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+  try {
+    return { ok: true, value: await read() };
+  } catch (e) {
+    return { ok: false, message: e instanceof ApiFailure ? e.message : "Something went wrong on this page." };
+  }
+}
+
+export const readMarketCanary = cache((address: string) => readOrFailure(() => getFromApi(`/v1/markets/${encodeURIComponent(address)}/canary`, CanaryResults)));
+export const readVersionCanary = cache((program: string, deploySlot: number) => readOrFailure(() => getFromApi(`/v1/strategies/${encodeURIComponent(program)}/versions/${deploySlot}/canary`, CanaryRollup)));

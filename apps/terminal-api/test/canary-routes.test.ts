@@ -122,7 +122,7 @@ describe("GET /v1/markets/{market}/canary", () => {
     const { status, body } = await get(`/v1/markets/${OPEN}/canary`);
     expect(status).toBe(200);
     const results = CanaryResults.parse(body);
-    expect(results.version).toEqual({ program: CURVE, deploy_slot: 520_151_724, executable_sha256: "bb".repeat(32), current: true });
+    expect(results.version).toEqual({ program: CURVE, deploy_slot: 520_151_724, executable_sha256: "bb".repeat(32), deployed_at: null, current: true });
     expect(results.results.map((r) => [r.check, r.outcome])).toEqual([
       ["exit_sizes", "warn"],
       ["cost", "pass"],

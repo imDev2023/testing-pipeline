@@ -94,7 +94,7 @@ canaryRoutes.get("/v1/markets/:market/canary", async (c) => {
   return c.json(
     CanaryResults.parse({
       market,
-      version: { program: version.program, deploy_slot: Number(version.deploySlot), executable_sha256: version.executableSha256, current },
+      version: { program: version.program, deploy_slot: Number(version.deploySlot), executable_sha256: version.executableSha256, deployed_at: version.blockTime?.toISOString() ?? null, current },
       results: latest.map(resultView),
       could_not_sell_back: current ? couldNotSellBack(latest) : [],
       summary: marketSummary(latest),

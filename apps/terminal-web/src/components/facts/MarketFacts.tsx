@@ -3,7 +3,8 @@
 // The market page's facts panel (docs/spec/pipescope-screens.md, "Explanation, actions and facts";
 // PIPESCOPE-16): under the line that says what it is, the parts of Aviary's own reading, "This
 // market", "Its strategy" and "Its mints", each worded as Pipeline's SDK words its trust flags. No
-// score and no verdict. "What Canary saw" joins as its first part with Canary on the pages (#125).
+// score and no verdict. "What Canary saw" is its first part, across the panel's width, from the
+// results the page read with it (#125).
 import { Fragment, useCallback } from "react";
 import { MarketFacts as MarketFactsAnswer, type MintFacts } from "terminal-api/contract";
 import { getFromApi } from "@/api";
@@ -18,11 +19,13 @@ import { AuthorText } from "../Voice";
 import { FactList, FactPart } from "./Facts";
 import styles from "./Facts.module.css";
 import { StrategyFactList } from "./StrategyFactList";
+import { CanaryHeading, CanarySaw } from "../canary/CanarySaw";
+import type { CanaryRead } from "../canary/MarketCanary";
 
 const WRAPPED_SOL = "So11111111111111111111111111111111111111112";
 const plural = (n: number, one: string, many: string) => `${formatInteger(n)} ${n === 1 ? one : many}`;
 
-export function MarketFacts({ market }: { market: string }) {
+export function MarketFacts({ market, canary }: { market: string; canary: CanaryRead }) {
   const load = useCallback((signal: AbortSignal) => getFromApi(`/v1/markets/${encodeURIComponent(market)}/facts`, MarketFactsAnswer, { signal }), [market]);
   return (
     <Panel title="Facts" what="this market's facts" load={load}>
@@ -32,6 +35,18 @@ export function MarketFacts({ market }: { market: string }) {
           <>
             <p className={styles.note}>Read from the chain and measured by {BRAND.name}. No score, and no verdict.</p>
             <div className={styles.parts}>
+              <div className={styles.whole}>
+                {canary.ok ? (
+                  <CanarySaw canary={canary.value} mints={m.mints} />
+                ) : (
+                  <section className={styles.part} aria-label="What Canary saw">
+                    <CanaryHeading>What Canary saw</CanaryHeading>
+                    <p role="alert">
+                      Could not load what Canary saw. {canary.message} <a href="">Try again</a>
+                    </p>
+                  </section>
+                )}
+              </div>
               <FactPart title="This market">
                 <FactList
                   facts={[

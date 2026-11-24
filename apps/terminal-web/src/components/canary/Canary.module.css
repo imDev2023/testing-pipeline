@@ -1,0 +1,135 @@
+/* Canary on the pages (docs/spec/pipescope-screens.md, Canary outcomes and Colour and theme): every
+   outcome in the ink of its text, and canary yellow only on Canary's mark and the trade box's notice
+   (theme.css, --canary). */
+
+.outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.shape {
+  flex: none;
+}
+
+.fail .word {
+  font-weight: 750;
+}
+
+.warn .word {
+  font-weight: 620;
+}
+
+.quiet {
+  color: var(--ink2);
+}
+
+/* Canary's mark: a small square of canary yellow edged in ink, beside the heading of Canary's results. */
+.mark {
+  display: inline-block;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  background: var(--canary);
+  border: 1px solid var(--ink);
+}
+
+/* A row's cell: the ordinary trade's return, then the one result chosen. */
+.cell {
+  display: grid;
+  gap: 2px;
+}
+
+.back {
+  font-weight: var(--strong-weight);
+}
+
+.lead {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  color: var(--ink2);
+  font-size: 13px;
+}
+
+.lead .outcome {
+  transform: translateY(1px);
+}
+
+.phrase {
+  min-width: 0;
+}
+
+.none {
+  color: var(--ink3);
+}
+
+/* A notice of Aviary's own, plainly: an upgrade's pending tests, a market that refuses every trade. */
+.plainNotice {
+  padding: 10px 12px;
+  border: 1px solid var(--rule2);
+  border-left: 4px solid var(--ink);
+  border-radius: 3px;
+  background: var(--sheet);
+  max-width: 84ch;
+}
+
+/* A fact a page's head carries as an outcome. */
+.headFact {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+/* The exit-test notice: the one place besides Canary's mark where canary yellow appears. */
+.notice {
+  background: var(--canary);
+  color: var(--on-canary);
+  border-radius: 3px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.tick {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: var(--strong-weight);
+  min-height: var(--control-min-height);
+  cursor: pointer;
+}
+
+.tick input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--on-canary);
+}
+
+/* A stranded market's panel, in the trade box's place. */
+.stranded {
+  grid-area: trade;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--ink);
+  border-radius: 6px;
+  padding: 16px 20px 18px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  max-width: 560px;
+}
+
+.holdings {
+  display: grid;
+  gap: 2px;
+}
+
+.holdingsLabel {
+  color: var(--ink2);
+}

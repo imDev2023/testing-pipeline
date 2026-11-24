@@ -1,0 +1,110 @@
+/* What Canary saw on this version (docs/spec/pipescope-screens.md, Strategy page): a line a check,
+   its name and what it does beside the counts of markets, a line with a finding opening beneath. */
+
+/* A panel like the page's others: a heading over its box. */
+.section {
+  composes: panel from "../Panel.module.css";
+  min-width: 0;
+}
+
+.about {
+  color: var(--ink2);
+  max-width: 86ch;
+}
+
+.lines {
+  border-bottom: 1px solid var(--rule);
+}
+
+.line {
+  border-top: 1px solid var(--rule);
+}
+
+.line > summary,
+div.line {
+  display: grid;
+  grid-template-columns: var(--canary-line-columns);
+  grid-template-areas: var(--canary-line-areas);
+  gap: 6px 16px;
+  padding: 10px 0;
+  align-items: start;
+}
+
+.line > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.line > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The disclosure's chevron, in the ink of the notes; a line with nothing beneath it keeps the room. */
+.line > summary::after,
+div.line::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--ink2);
+  border-bottom: 1.5px solid var(--ink2);
+  transform: rotate(45deg);
+  margin-top: 4px;
+  grid-area: chevron;
+}
+
+div.line::after {
+  border: 0;
+}
+
+.line[open] > summary::after {
+  transform: rotate(-135deg);
+  margin-top: 8px;
+}
+
+.what {
+  grid-area: what;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.name {
+  font-weight: var(--strong-weight);
+}
+
+.does {
+  color: var(--ink2);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+.counts {
+  grid-area: counts;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  align-items: baseline;
+}
+
+.count {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.held {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.held li {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  overflow-wrap: anywhere;
+}

@@ -115,6 +115,17 @@
      description, and a fact's name beside its value; one under the other at 720 px and narrower. */
   --flag-fact-columns: max-content minmax(0, 1fr);
   --fact-columns: minmax(8em, 34%) minmax(0, 1fr);
+
+  /* Canary's results (components/canary/CanarySaw.module.css): an opened result's detail starts under
+     its name, and each step's bar takes this share of its row; at 720 px and narrower the detail
+     starts under the outcome and a step's label may wrap. */
+  --canary-detail-indent: 80px;
+  --canary-bar-width: 44%;
+  --canary-label-wrap: nowrap;
+  /* A strategy page's line for a check: its name and what it does, the counts of markets, the chevron;
+     at 720 px and narrower the counts go under the name. */
+  --canary-line-columns: minmax(0, 5fr) minmax(0, 6fr) 14px;
+  --canary-line-areas: "what counts chevron";
 }
 
 :root[data-theme="light"] {
@@ -164,5 +175,10 @@
     --chart-height: 280px;
     --flag-fact-columns: minmax(0, 1fr);
     --fact-columns: minmax(0, 1fr);
+    --canary-detail-indent: 0;
+    --canary-bar-width: 30%;
+    --canary-label-wrap: normal;
+    --canary-line-columns: minmax(0, 1fr) 12px;
+    --canary-line-areas: "what chevron" "counts counts";
   }
 }

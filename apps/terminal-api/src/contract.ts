@@ -735,7 +735,8 @@ export const CanaryResult = z.object({
 export type CanaryResult = z.infer<typeof CanaryResult>;
 
 /** A strategy version, as Canary's endpoints name it. */
-const CanaryVersion = z.object({ program: Address, deploy_slot: z.number().int(), executable_sha256: z.string().nullable(), current: z.boolean() });
+/** `deployed_at` is when its deploy or upgrade landed, null until that transaction is found. */
+const CanaryVersion = z.object({ program: Address, deploy_slot: z.number().int(), executable_sha256: z.string().nullable(), deployed_at: Time.nullable(), current: z.boolean() });
 
 /**
  * `GET /v1/markets/{market}/canary[?version=<deploy slot>]`: the market's latest result of each check

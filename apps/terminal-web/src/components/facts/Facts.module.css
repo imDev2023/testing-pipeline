@@ -82,6 +82,12 @@
   align-items: start;
 }
 
+/* A part across the panel's whole width: What Canary saw, first. */
+.whole {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
 .lines {
   display: grid;
   gap: 4px;

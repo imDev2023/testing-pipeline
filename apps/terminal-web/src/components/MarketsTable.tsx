@@ -1,6 +1,7 @@
 // A table of markets (docs/spec/pipescope-screens.md, Feed): the feed's, and a strategy's own on its
 // page, which leaves out the strategy column (Strategy page, "Its markets"). Each row's strategy is
-// named as every page names it, and its trust flags are the market's, Pipeline's SDK's words on hover.
+// named as every page names it, what Canary saw is the ordinary trade's return and at most one result
+// (#125), and its trust flags are the market's, Pipeline's SDK's words on hover.
 import Link from "next/link";
 import type { Market, MarketMint } from "terminal-api/contract";
 import { formatAge, formatDate, formatInteger, formatTokenAmount } from "@/format";
@@ -10,6 +11,7 @@ import { FlagList } from "./Flags";
 import { MintLabel } from "./MintLabel";
 import { ShortAddress } from "./ShortAddress";
 import { StrategyName } from "./StrategyName";
+import { CanaryCell } from "./canary/CanaryCell";
 
 const plural = (n: number, one: string, many: string) => `${formatInteger(n)} ${n === 1 ? one : many}`;
 
@@ -62,6 +64,7 @@ export function MarketsTable({
             <th scope="col" className={table.num}>
               Volume, 24h
             </th>
+            <th scope="col">Canary</th>
             <th scope="col">Trust flags</th>
           </tr>
         </thead>
@@ -109,6 +112,10 @@ export function MarketsTable({
                       <span className={table.sub}>{plural(m.stats_24h.trades, "trade", "trades")}</span>
                     </>
                   )}
+                </td>
+                <td className={table.wide}>
+                  <span className={table.label}>Canary</span>
+                  <CanaryCell canary={m.canary} />
                 </td>
                 <td className={table.wide}>
                   <span className={table.label}>Trust flags</span>
