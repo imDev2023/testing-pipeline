@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Form, StrategyForms } from "terminal-api/contract";
 import { describe, expect, it } from "vitest";
 import { WalletProvider } from "@/components/wallet/WalletProvider";
-import { BuyWallCreate, FeeSplit } from "@/products/buyWall/BuyWallCreate";
+import { BuyWallCreate, BuyWallCreateForm, FeeSplit } from "@/products/buyWall/BuyWallCreate";
 import { CREATE_FORM_DEFAULTS } from "@/products/buyWall/config";
 import { PRODUCT_PANELS } from "@/products/registry";
 import { BUY_WALL } from "./fixtures/buyWall";
@@ -54,7 +54,7 @@ const textOf = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;|&
 const html = () =>
   renderToStaticMarkup(
     <WalletProvider chain="solana:devnet">
-      <BuyWallCreate view={view} />
+      <BuyWallCreateForm view={view} />
     </WalletProvider>,
   );
 

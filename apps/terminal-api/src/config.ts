@@ -44,6 +44,12 @@ export const JOB_INTERVAL_MINUTES = {
 export type JobName = keyof typeof JOB_INTERVAL_MINUTES;
 
 /**
+ * How many transactions of a strategy's history one reconciliation run reads again for its events
+ * alone, for a strategy indexed before strategy events were stored (#88), until it reaches the newest.
+ */
+export const EVENTS_BACKFILL_PER_RUN = 500;
+
+/**
  * How many ProgramData watches look again for a strategy version's deploy transaction the RPC had
  * not served when the version was recorded, before leaving it without one (PIPESCOPE-113).
  */
@@ -181,6 +187,9 @@ export const PAGE_LIMITS = {
 /** The longest search the API takes, in characters: past any address or name it keeps (PIPESCOPE-124). */
 export const SEARCH_QUERY_MAX = 100;
 
+/** The longest note a "This is wrong" report may carry, in characters (PIPESCOPE-160). */
+export const REPORT_NOTE_MAX = 600;
+
 /** The most signers an instruction lists in `GET /v1/strategies/{program}/instructions`, most calls first; the answer counts them all. */
 export const INSTRUCTION_SIGNERS_SHOWN = 100;
 
@@ -281,3 +290,12 @@ export const MARKET_READ = { maxAccounts: 8, maxAccountBytes: 64 * 1024 } as con
  * 0.1 SOL, the cap our own demos create markets with; what the setup takes is shown by the simulation.
  */
 export const CREATE_MARKET_MAX_CREATOR_LAMPORTS = 100_000_000n;
+
+/**
+ * The lending AMM in Aviary (#88; docs/spec/lending-pool.md, "Aviary's panel" and "Creation
+ * parameters"): the create form's defaults, the one place they are written (LENDING-104), an LP fee
+ * of 30 bps (0.30%) and `lent_index` 1, since the form takes the other mint first and the lent mint
+ * second, as the strategy's metadata `init` orders the market state's seeds; and how many of a
+ * market's events one page of its history holds.
+ */
+export const LENDING_AMM = { create: { lpFeeBps: 30, lentIndex: 1 }, historyPage: 25 } as const;

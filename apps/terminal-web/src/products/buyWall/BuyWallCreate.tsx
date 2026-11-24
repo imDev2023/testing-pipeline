@@ -8,8 +8,8 @@
 // seeded in one transaction, which Aviary prepares and simulates before the wallet signs it.
 import { generateKeyPairSigner, getTransactionDecoder, getTransactionEncoder, partiallySignTransaction, type KeyPairSigner } from "@solana/kit";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PreparedMarket, type Form, type StrategyForms } from "terminal-api/contract";
-import { postToApi } from "@/api";
+import { PreparedMarket, StrategyForms, type Form } from "terminal-api/contract";
+import { getFromApi, postToApi } from "@/api";
 import { BRAND } from "@/brand";
 import { NewMarket } from "@/components/create/NewMarket";
 import create from "@/components/create/Create.module.css";
@@ -22,6 +22,7 @@ import forms from "@/components/forms/Forms.module.css";
 import { TransactionReview } from "@/components/forms/TransactionReview";
 import { useFormFields } from "@/components/forms/useFormFields";
 import { useReview } from "@/components/forms/useReview";
+import { PanelFrame, useLoad } from "@/components/Panel";
 import { AuthorText } from "@/components/Voice";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { formatTokenAmount } from "@/format";
@@ -75,10 +76,22 @@ export function FeeSplit({ feeBps, wallSplitBps }: { feeBps: number | null; wall
   );
 }
 
-export function BuyWallCreate({ view }: { view: StrategyForms }) {
-  const form = view.init!;
+/** The create page's panel for the buy wall AMM: its forms read from its metadata, then its own create form (PIPESCOPE-162). */
+export function BuyWallCreate({ program }: { program: string }) {
+  const load = useCallback((signal: AbortSignal) => getFromApi(`/v1/strategies/${program}/forms`, StrategyForms, { signal }), [program]);
+  const { state, retry } = useLoad(load);
+  return (
+    <PanelFrame title="The create form" what="the buy wall AMM's create form" state={state} retry={retry}>
+      {(view) => <BuyWallCreateForm view={view} />}
+    </PanelFrame>
+  );
+}
+
+/** The create form from the strategy's forms: its `init` form with IMD's values, and its seed. */
+export function BuyWallCreateForm({ view }: { view: StrategyForms }) {
+  const form = view.init;
   const seed = view.actions.find((a) => a.kind === "add_liquidity" && a.name === "seed") ?? null;
-  if (!seed) return <p role="alert">This strategy&apos;s metadata describes no seed action, so {BRAND.name} cannot create and seed a market from it in one transaction.</p>;
+  if (!form || !seed) return <p role="alert">This strategy&apos;s metadata describes no create form with a seed action, so {BRAND.name} cannot create and seed a market from it in one transaction.</p>;
   return <CreateAndSeed form={form} seed={seed} view={view} />;
 }
 

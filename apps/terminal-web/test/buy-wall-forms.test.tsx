@@ -7,6 +7,7 @@ import type { MarketKeeper } from "terminal-api/contract";
 import { describe, expect, it } from "vitest";
 import { WalletProvider } from "@/components/wallet/WalletProvider";
 import { BuyWallFormsBody, jobFormValues } from "@/products/buyWall/BuyWallForms";
+import { PRODUCT_PANELS } from "@/products/registry";
 import { demoMarket, demoRead } from "./fixtures/buyWall";
 
 const FEE_RECIPIENT = "4Q3DcWHTGaN6d6vVdTUxW4KEsD5iZky5wtgxNzf3bUzu";
@@ -82,6 +83,12 @@ describe("the buy wall AMM's keeper jobs", () => {
 });
 
 describe("the recipients' handover forms", () => {
+  it("stand in for the strategy's metadata forms of the jobs and the handovers, which Actions then leaves out, keeping the seed's", () => {
+    const place = PRODUCT_PANELS["BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6"]!;
+    expect([...(place.replaces ?? [])].sort()).toEqual(["pay_rewards", "place_wall", "set_fee_recipient", "set_rewards_recipient", "settle", "sweep_fees"]);
+    expect(place.replaces).not.toContain("seed");
+  });
+
   it("offers each role's handover only to the wallet holding it", () => {
     const none = render(keeper([]), SOMEONE);
     expect(none).not.toContain("Hand over the fee recipient role");

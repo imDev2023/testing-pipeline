@@ -10,7 +10,8 @@
         "./contract": "./src/contract.ts",
         "./config": "./src/config.ts",
         "./amounts": "./src/trading/amounts.ts",
-        "./products/buy-wall": "./src/products/buyWall.ts"
+        "./products/buy-wall": "./src/products/buyWall.ts",
+        "./lending-amm": "./src/products/lendingAmm/contract.ts"
     },
     "scripts": {
         "dev": "node scripts/dev.ts",
@@ -29,6 +30,7 @@
         "drizzle-orm": "0.45.4",
         "hono": "4.13.20",
         "keeper-jobs": "workspace:*",
+        "lending-amm-scripts": "workspace:*",
         "strategy-actions": "workspace:*",
         "terminal-db": "workspace:*",
         "terminal-explainer": "workspace:*",
@@ -40,6 +42,7 @@
         "@types/node": "24.19.2",
         "jsonc-parser": "3.3.1",
         "postgres": "3.4.9",
+        "tsx": "4.23.15",
         "typescript": "6.0.3",
         "undici": "7.30.2",
         "vitest": "5.1.1",

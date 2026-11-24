@@ -315,6 +315,34 @@ export const strategyCalls = pgTable(
 );
 
 /**
+ * Every event a strategy program logged in a successful transaction (Indexer, "Strategy-program
+ * events"; #88): the data of each `Program data:` line the program wrote itself, in the order the
+ * logs give, kept whole so a product's panel decodes its own events (a market's history) without
+ * going back to the chain. `subject` is the 32 bytes after an Anchor event's discriminator read as
+ * an address, which for our strategies' events is the market state they are about, so a market's
+ * events are found without decoding every one; for another program it is whatever comes first.
+ */
+export const strategyEvents = pgTable(
+  "strategy_events",
+  {
+    signature: text("signature").notNull(),
+    /** Its place among the transaction's events from strategy programs, from 0, in log order. */
+    position: smallint("position").notNull(),
+    program: text("program").notNull(),
+    /** The event's first eight bytes in hex, which for an Anchor event name it; null when it has fewer. */
+    discriminator: text("discriminator"),
+    /** Bytes 8 to 40 as an address, or null when it has fewer. */
+    subject: text("subject"),
+    /** The event's bytes, base64. */
+    data: text("data").notNull(),
+    slot: bigint("slot", { mode: "bigint" }).notNull(),
+    blockIndex: integer("block_index"),
+    blockTime: timestamp("block_time", { withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.signature, t.position] }), index("strategy_events_subject").on(t.program, t.subject, t.slot.desc())],
+);
+
+/**
  * What the indexer saw happen, for whoever acts on it (Indexer, "Events for what follows"): a new
  * strategy, a new market, a new strategy version and a router upgrade, each written once, in the
  * order seen. Canary's runs and the Telegram bot's queue each read on from their own cursor in

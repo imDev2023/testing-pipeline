@@ -53,6 +53,8 @@ import { AVIARY_MINT_NAMES, WRAPPED_SOL } from "./config";
 import { mintFacts } from "./facts";
 import { ROUTER } from "./indexerCore";
 import { PRODUCT_EVIDENCE, ProductNotRead, type ReadAccounts } from "./products";
+import { lendingEvidence } from "./products/lendingAmm/facts";
+import { LENDING_AMM_PROGRAM } from "./products/lendingAmm/read";
 import { readStrategyInstructions } from "./strategies";
 
 const MONTH_PAD = (n: number) => String(n).padStart(2, "0");
@@ -276,7 +278,7 @@ const rpcReader =
   };
 
 /** The evidence of a strategy's current version, and what its key row records beside it. */
-async function buildEvidence(db: Db, at: Current, read: ReadAccounts | null): Promise<{ evidence: EvidenceItem[]; representative: string | null; addressesAi: boolean }> {
+async function buildEvidence(db: Db, at: Current, rpcUrl: string | undefined): Promise<{ evidence: EvidenceItem[]; representative: string | null; addressesAi: boolean }> {
   const [router] = await db.select({ upgradeAuthority: programFacts.upgradeAuthority }).from(programFacts).where(eq(programFacts.program, ROUTER));
   const program = await programItems(db, at);
   const market = await marketItems(db, at);
@@ -289,11 +291,36 @@ async function buildEvidence(db: Db, at: Current, read: ReadAccounts | null): Pr
     removed: snapshot.status === "valid" ? (snapshot.removed as Removed) : null,
     instructions: program.instructions,
   });
-  const product = await productItems(db, at.program, market.representative, read);
+  // Our own products add what their panels show, read for the sampled market: the lending AMM's (#88) and the buy wall AMM's (#57).
+  const product =
+    at.program === LENDING_AMM_PROGRAM ? await lendingEvidence(db, market.representative, rpcUrl) : await productItems(db, at.program, market.representative, rpcUrl ? rpcReader(rpcUrl) : null);
   const facts = [...program.facts, ...author.facts, ...market.facts, ...product, ...(program.custom ? [program.custom] : [])];
   const evidence = assembleEvidence({ pipeline: pipelineRules({ routerUpgradeAuthority: router?.upgradeAuthority ?? null }), facts, canary, author: author.author });
   return { evidence, representative: market.representative, addressesAi: author.addressesAi };
 }
+
+/**
+ * The key a strategy's current version has now, as the `explainerKeys` job makes it, with whether
+ * its author text addresses AI tools by Aviary's own detector (EXPLAINER-14); null with why there is
+ * none: no version read yet, or a changed metadata link not fetched yet. A page shows an explanation
+ * only for this key (#127), so an explanation made before the version, its author text or its Canary
+ * outcomes changed is never shown for the new state.
+ */
+export async function currentExplainerKey(db: Db, program: string, metadataUri: string): Promise<{ key: string; deploySlot: bigint; addressesAi: boolean } | { key: null; deploySlot: bigint | null; addressesAi: boolean }> {
+  const at = await current(db, program, metadataUri);
+  if (at === "no-version") return { key: null, deploySlot: null, addressesAi: false };
+  if (at === "metadata-not-fetched") {
+    const [version] = await db.select({ deploySlot: programVersions.deploySlot }).from(programVersions).where(and(eq(programVersions.program, program), eq(programVersions.role, "strategy"))).orderBy(desc(programVersions.deploySlot)).limit(1);
+    return { key: null, deploySlot: version!.deploySlot, addressesAi: false };
+  }
+  const key = await explainerKey({ program, deploySlot: at.version.deploySlot, author: keyAuthorOf(at.snapshot), canary: at.outcomes });
+  return { key: key.id, deploySlot: at.version.deploySlot, addressesAi: snapshotAddressesAi(at.snapshot) };
+}
+
+/** Whether a metadata snapshot's author text addresses AI tools, by the same detector the evidence runs. */
+const snapshotAddressesAi = (snapshot: Snapshot): boolean =>
+  snapshot.status === "valid" &&
+  authorEvidence({ status: "valid", metadata: snapshot.document as StrategyMetadata, normalised: authorOf(snapshot), removed: snapshot.removed as Removed, instructions: null }).addressesAi;
 
 /**
  * Makes the key of each strategy's current version (of `programs`, or of every strategy), and for
@@ -322,7 +349,7 @@ export async function makeExplainerKeys(db: Db, { programs, rpcUrl }: { programs
     }
     let built;
     try {
-      built = await buildEvidence(db, at, rpcUrl ? rpcReader(rpcUrl) : null);
+      built = await buildEvidence(db, at, rpcUrl);
     } catch (e) {
       if (!(e instanceof ProductNotRead)) throw e;
       console.error(`explainer: ${program}'s key waits for its product's facts: ${e.message}`);

@@ -6,6 +6,7 @@ import { postKeeperHeartbeat, seedKeeperRecords } from "./keeper";
 import { screenshot } from "./screenshot";
 import { CP_MARKET, REFUSING_MARKET, THREE_MINT_MARKET } from "./markets";
 import { CANARY_CURVE_STRATEGY, CANARY_MARKETS } from "./canary";
+import { EXPLAINED_MARKET, EXPLAINED_STRATEGY, HOSTILE_TEXT } from "./explanation";
 import { OWN_ORIGINS } from "./target";
 import { connectTestWallet, installTestWallet } from "./wallet";
 
@@ -32,6 +33,8 @@ const WSOL_MINT = "So11111111111111111111111111111111111111112";
 // A market no swap has gone through, and one with a single swap, whose lone candle the chart still draws.
 const MARKET_WITHOUT_TRADES = "DH7QCdTHGsjHcsm7SgXYRgdQvX34VT8oMQkFWVoCe3SQ";
 const MARKET_WITH_ONE_TRADE = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
+// The lending AMM's demo market (#87), with its panel and its history (#88).
+const MARKET_LENDING = "AMJ4eVWMgqc9hZMmKDipbvwU6EQkmAvhUf4F42dNSDuu";
 
 /** A token image has loaded and has a picture: one that failed is complete too, so its width says. */
 const imageLoaded = (img: Locator) => expect.poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
@@ -112,6 +115,52 @@ const actionReviewed = (label: string, inputs: Record<string, string>, args: Rec
   await form.scrollIntoViewIfNeeded();
 };
 
+
+/** The explanation panel, once it has loaded. */
+const explanation = async (page: Page) => {
+  const panel = page.getByRole("region", { name: "Explanation" });
+  await expect(panel).toHaveAttribute("aria-busy", "false");
+  return panel;
+};
+
+/** An explanation is shown under its code-written label, with its unknowns open and its points closed. */
+const explained = async (page: Page) => {
+  const panel = await explanation(page);
+  await expect(panel.getByText(/^Written by an AI on \d{1,2} [A-Z][a-z]{2} \d{4} from on-chain data and Canary results for this strategy version \(deployed in slot [\d,]+\)\. It can be wrong\. It is not an audit, a safety rating or advice\.$/)).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "What the evidence does not settle" })).toBeVisible();
+  await expect(panel.locator("details").filter({ has: page.getByText(/^Read the full explanation \(\d+ points?\)$/) })).not.toHaveAttribute("open");
+  await expect(panel.getByRole("button", { name: "This is wrong" })).toBeVisible();
+  return panel;
+};
+
+/** A chip, clicked, opens the evidence and marks the row with its id, in view with the focus on it. */
+const chipShowsRow = async (page: Page, chip: Locator) => {
+  const id = (await chip.textContent())!;
+  // As tall to the touch as every other control: 44 px on phones, 32 px wider (--control-min-height).
+  const reach = (page.viewportSize()?.width ?? 0) <= 720 ? 20 : 14;
+  await chip.scrollIntoViewIfNeeded();
+  const hits = await chip.evaluate((el, dy) => {
+    const r = el.getBoundingClientRect();
+    return [-dy, dy].map((d) => document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2 + d) === el);
+  }, reach);
+  expect(hits).toEqual([true, true]);
+  await chip.click();
+  const row = page.locator(`#explanation-evidence-${id}`);
+  await expect(row).toHaveAttribute("data-marked", "true");
+  await expect(row).toBeInViewport();
+  await expect(row).toBeFocused();
+  await expect(row.locator("code")).toHaveText(id);
+  await expect(page.locator("[data-marked]")).toHaveCount(1);
+};
+
+/** A version with no explanation says so, with the line on when one is written. */
+const unexplained = async (page: Page) => {
+  const panel = await explanation(page);
+  await expect(panel.getByText("No explanation for this version yet.", { exact: true })).toBeVisible();
+  await expect(panel.getByText(/^An explanation is written once for each strategy version, .+ Opening a page never makes one\.$/)).toBeVisible();
+  await expect(panel.getByRole("button", { name: "This is wrong" })).toHaveCount(0);
+};
+
 /** The wallet page with the test wallet connected from its own button: every panel loaded, and with "unwrap" its unwrap reviewed. */
 const walletReady = (then: "connected" | "unwrap") => async (page: Page) => {
   await connectTestWallet(page, page.getByRole("main").getByRole("button", { name: "Connect wallet" }));
@@ -160,6 +209,20 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
     ready: async (page: Page) => {
       await marketReady("chart")(page);
       await imageLoaded(page.getByRole("heading", { level: 1 }).locator("img"));
+    },
+  },
+  {
+    name: "market-lending",
+    path: `/markets/${MARKET_LENDING}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await marketReady("chart")(page);
+      const panel = page.getByRole("region", { name: "Lending AMM", exact: true });
+      await expect(panel.getByText(/^Read from the market state and Kamino's reserve at slot [\d,]+\./)).toBeVisible();
+      for (const part of ["Lent side", "Buffer", "Kamino reserve", "LP shares"]) await expect(panel.getByRole("heading", { name: part, exact: true })).toBeVisible();
+      // Its events are stored by the strategies' reconciliation, every five minutes, which the suite's setup does not wait for; the API's tests and the devnet run check what it lists.
+      await expect(page.getByRole("region", { name: "Lending AMM history" })).toHaveAttribute("aria-busy", "false");
+      await expect(page.getByRole("region", { name: "Actions" }).getByRole("heading", { name: "Add liquidity", exact: true })).toBeVisible();
     },
   },
   {
@@ -252,6 +315,7 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
       const notice = swapBox(page).locator('[data-canary="notice"]');
       await expect(notice).toContainText(/^In Canary's test on \d{1,2} [A-Z][a-z]{2} \d{4}, a wallet that bought 1 SOL or more could not sell back/);
       await expect(notice.getByRole("checkbox", { name: "I have read this" })).not.toBeChecked();
+      await unexplained(page);
     },
   },
   {
@@ -298,6 +362,7 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
       await expect(section.getByText(/^Canary traded a private copy of each of this version's [\d,]+ markets on /)).toBeVisible();
       await expect(section.locator('[data-check="readable"]')).toContainText(/fail\s*, [\d,]+ of [\d,]+/);
       await expect(page.getByRole("region", { name: /^Its markets/ }).getByRole("row").last()).toBeVisible();
+      await unexplained(page);
     },
   },
   {
@@ -319,6 +384,42 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
     ready: async (page: Page) => {
       await expect(page.getByText("Metadata unavailable, so it is listed under its address")).toBeVisible();
       await factsReady(page, ["Its program", "Its trust flags", "Instructions beyond Pipeline's own"]);
+      // Its explanation carries a point with markup, as the validator never lets through: it reads as text.
+      const panel = await explained(page);
+      await panel.getByText(/^Read the full explanation/).click();
+      await expect(panel.getByText(HOSTILE_TEXT, { exact: true })).toBeVisible();
+      expect(await panel.locator("script, strong, b, em, a").count()).toBe(0);
+    },
+  },
+  {
+    name: "strategy-explained",
+    path: `/strategies/${EXPLAINED_STRATEGY}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await factsReady(page, ["Its program", "Its trust flags", "Instructions beyond Pipeline's own"]);
+      const panel = await explained(page);
+      // Beside the facts at desktop width, above them in one column.
+      const [at, facts] = [await panel.boundingBox(), await page.getByRole("region", { name: "Facts" }).boundingBox()];
+      if ((page.viewportSize()?.width ?? 0) > 1080) expect(Math.abs(at!.y - facts!.y)).toBeLessThan(2);
+      else expect(at!.y + at!.height).toBeLessThanOrEqual(facts!.y);
+      // Its version was upgraded and has its explanation but no Canary results yet: only the tests are pending.
+      await expect(page.getByText(/^Upgraded on \d{1,2} [A-Z][a-z]{2} \d{4}; /)).toHaveText(/; tests for this version are pending\.$/);
+      await chipShowsRow(page, panel.locator("p").getByRole("button", { name: /^Show evidence / }).first());
+    },
+  },
+  {
+    name: "market-explained",
+    path: `/markets/${EXPLAINED_MARKET}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await marketReady("chart")(page);
+      const panel = await explained(page);
+      await expect(panel.getByText(/^It describes the strategy version, not this market: where it says "the sampled market", it means the strategy's busiest one\./)).toBeVisible();
+      // A summary chip, far above its row on a long page, brings the row into view; then a point's.
+      await chipShowsRow(page, panel.locator("p").getByRole("button", { name: /^Show evidence / }).first());
+      await panel.getByText(/^Read the full explanation/).click();
+      await expect(panel.getByRole("heading", { name: "Who can change it" })).toBeVisible();
+      await chipShowsRow(page, panel.locator("li[data-basis]").getByRole("button", { name: /^Show evidence / }).last());
     },
   },
   {

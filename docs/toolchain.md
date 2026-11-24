@@ -874,6 +874,7 @@ The Playwright suite and the devnet tests that do not run Canary pass `--enable-
 - `tests/terminal-e2e/demo/canary-runs.ts` is the local demo: a strategy and two markets on a local validator running devnet's router, an upgrade run on both, and the container killed under the run and resumed by the alarm; its header has the steps (its strategy comes from `demo/build-test-strategy.sh fixtures/canary-demo`).
 - `tests/terminal-e2e/demo/canary-pending.ts` (#125) is the upgrade notice's demo on the same kind of local run, with the web app beside the API: the strategy page and its market pages, read in headless Chromium, carry the notice from the moment the watch records an upgrade until the new version's first results arrive; its header has the steps.
 - The Playwright suite runs no container, so its global setup stores real Canary records of six devnet markets (`tests/terminal-e2e/src/canary.ts`) under the versions the recording holds, and refuses to go on when the recording has moved past them.
+- It calls no model either, so its global setup makes every strategy's explainer key and gives two of them an explanation under their real current key (`apps/terminal-api/scripts/seed-test-explanations.ts`, through `tests/terminal-e2e/src/explanation.ts`): one that passes the validator, and one with markup the validator would refuse, to show it renders as text (#127).
 - `tests/devnet/src/canary.test.ts` runs the container against devnet: a sweep of every market measured, conformance against Pipeline's hosted checks, the container's lack of network, and a new market's runs.
 - `crates/canary/scripts/measure-instances.sh` times the image capped at the `basic`, `lite` and `standard-1` sizes on recorded snapshots, with no network.
 - Locally the container's port takes a connection before the binary listens (Docker's port proxy), so `CanaryContainer` waits for the binary's `/health` after each start before it posts a run.
@@ -947,6 +948,12 @@ DATABASE_URL=<a fresh migrated database> E2E_API_PORT=8871 E2E_WEB_PORT=3171 pnp
 `pnpm --filter terminal-e2e wallet:devnet` (`E2E_WALLET_DEVNET`, never in CI) holds the project's devnet wallet in the test wallet, compares every page of its swaps on the wallet page with Pipeline's hosted `/v1/traders/{address}/trades`, and unwraps its wrapped SOL from the page; the signature goes to `tests/terminal-e2e/test-results/unwrap.json`.
 The wallet page's tests on the recorded fixtures (`src/wallet.spec.ts`) review an unwrap for the test trader, so before recording give it wrapped SOL with `pnpm --filter terminal-e2e wrap-sol` (0.01 SOL of `e2e-trader.json`'s, by default), after any `swaps:devnet` run, since a sale into SOL through the trade box closes that account.
 The three-mint market's tests (`src/trade.spec.ts`, #122) review a swap in each direction on devnet's Counterflow market `FNdAWctS...` for the test trader, so it must hold all three mints when recording: `swaps:devnet` trades them first.
+
+### The lending AMM in Aviary on devnet
+
+`pnpm --filter terminal-e2e lending:devnet` (`E2E_LENDING_DEVNET`, never in CI) is the lending AMM panel's devnet run (#88): the Playwright test wallet holds `e2e-trader.json` and, through the local run's pages, creates a lending AMM market from the create form, adds, rebalances, removes in cash and in kind and locks; checks the panel's two largest sells against the strategy's own quote; turns the WSOL reserve's emergency mode on and off and has the test borrower borrow and repay with `scripts/kamino-devnet` (run `npm ci` there first); and creates a market of a token our containment hook binds with the project wallet.
+It moves our shared devnet Kamino reserve for a few minutes and puts it back after, whatever happens; the signatures go to `tests/terminal-e2e/test-results/lending.json`.
+Creating the market spends about 1.6 SOL of the test trader's, so `LENDING_MARKET=<market>` reruns the later steps on a market an earlier run made.
 
 ### The buy wall AMM's panel on devnet
 

@@ -11,6 +11,7 @@ export * from "./accounts";
 export * from "./calls";
 export * from "./candles";
 export * from "./decode";
+export * from "./events";
 export * from "./handler";
 export * from "./history";
 export * from "./instructions";

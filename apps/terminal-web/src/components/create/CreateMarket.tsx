@@ -14,6 +14,7 @@ import { getFromApi, postToApi } from "@/api";
 import { CLUSTER } from "@/config";
 import { formatInteger, formatTokenAmount } from "@/format";
 import { PRODUCT_PANELS } from "@/products/registry";
+import { NewMarket } from "./NewMarket";
 import { ROUTES } from "@/routes";
 import { PanelFrame, useLoad } from "../Panel";
 import { ShortAddress } from "../ShortAddress";
@@ -29,7 +30,6 @@ import { TransactionReview } from "../forms/TransactionReview";
 import { useFormFields } from "../forms/useFormFields";
 import { useReview } from "../forms/useReview";
 import styles from "./Create.module.css";
-import { NewMarket } from "./NewMarket";
 
 /** Why a strategy offers no create form, from its listed metadata status, or null when its forms may hold one. */
 function noCreateForm(strategy: Strategy): string | null {
@@ -102,17 +102,20 @@ export function StrategyChooser({ strategies, chosen, onChoose }: { strategies: 
 }
 
 function CreateFormPanel({ program }: { program: string }) {
+  // One of our products builds its own create form, with what its markets need in the same transaction (PIPESCOPE-147).
+  const Product = PRODUCT_PANELS[program]?.Create;
+  if (Product) return <Product program={program} />;
+  return <MetadataCreateFormPanel program={program} />;
+}
+
+function MetadataCreateFormPanel({ program }: { program: string }) {
   const load = useCallback((signal: AbortSignal) => getFromApi(`/v1/strategies/${program}/forms`, StrategyForms, { signal }), [program]);
   const { state, retry } = useLoad(load);
   return (
     <PanelFrame title="The create form" what="its create form" state={state} retry={retry}>
       {(view) =>
         view.init ? (
-          (() => {
-            // One of our products brings its own create form (#57); any other strategy gets the one built from its metadata.
-            const Own = PRODUCT_PANELS[program]?.Create;
-            return Own ? <Own view={view} /> : <CreateForm form={view.init} view={view} />;
-          })()
+          <CreateForm form={view.init} view={view} />
         ) : (
           <div className={forms.unavailable}>
             <p>{view.unavailable && view.unavailable !== "actions-invalid" ? `No create form: its metadata is unavailable (${UNAVAILABLE_WHY[view.unavailable]}).` : "No create form: its metadata describes none."}</p>

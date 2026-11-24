@@ -15,7 +15,8 @@
 // Before the tests, src/global-setup.ts fires the cron and waits for the indexer's first run.
 //
 // `pnpm --filter terminal-e2e swaps:devnet` adds real swaps through the trade box (E2E_SWAPS), and
-// `wallet:devnet` the wallet page's devnet demo (E2E_WALLET_DEVNET).
+// `wallet:devnet` the wallet page's devnet demo (E2E_WALLET_DEVNET), and `lending:devnet` the lending
+// AMM's devnet run (E2E_LENDING_DEVNET, #88).
 //
 // Every page test runs at 1440, 390 and 360 px wide in the light and the dark theme, and saves a
 // screenshot of each page to screenshots/<width>-<theme>/.
@@ -37,6 +38,9 @@ if (SWAPS && RPC_MODE !== "devnet") throw new Error("E2E_SWAPS sends real devnet
 // E2E_WALLET_DEVNET adds the wallet page's devnet project (#122), which unwraps the project wallet's wrapped SOL.
 const WALLET_DEVNET = Boolean(process.env.E2E_WALLET_DEVNET);
 if (WALLET_DEVNET && RPC_MODE !== "devnet") throw new Error("E2E_WALLET_DEVNET sends a real devnet transaction: run it with E2E_RPC=devnet.");
+// E2E_LENDING_DEVNET adds the lending AMM's devnet project (#88), which creates and works a market and moves our devnet Kamino reserve.
+const LENDING_DEVNET = Boolean(process.env.E2E_LENDING_DEVNET);
+if (LENDING_DEVNET && RPC_MODE !== "devnet") throw new Error("E2E_LENDING_DEVNET sends real devnet transactions: run it with E2E_RPC=devnet.");
 
 const WIDTHS = [
   { width: 1440, height: 900 },
@@ -76,6 +80,7 @@ const PROJECTS: Project<PlaywrightTestOptions>[] = [
   ...(SWAPS ? [{ name: "swaps", testMatch: /trade-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
   // The project wallet's swaps against the hosted API and its wrapped SOL unwrapped on devnet (src/wallet-devnet.spec.ts): only when asked for, never in CI.
   ...(WALLET_DEVNET ? [{ name: "wallet-devnet", testMatch: /wallet-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
+  ...(LENDING_DEVNET ? [{ name: "lending-devnet", testMatch: /lending-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
 ];
 
 /** A project with a client address of its own, in the range set aside for tests (198.18.0.0/15). */

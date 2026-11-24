@@ -107,6 +107,13 @@
   --create-choice-columns: minmax(0, 1fr) auto;
   /* Its lower band: the forms beside the facts panel. */
   --market-low-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* The strategy page's explanation beside its facts (components/strategy/Strategy.module.css); one
+     column, the explanation first, at 1080 px and narrower. */
+  --strategy-explained-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* An explanation's evidence (components/explanation/Explanation.module.css): an item's id, what it
+     is and its value side by side; at 720 px and narrower the value goes under the id and the label. */
+  --evidence-columns: 3.2em minmax(7em, 30%) minmax(0, 1fr);
+  --evidence-areas: "id label value";
   /* The trade box stays in view while the page scrolls, at desktop width only. */
   --trade-box-position: sticky;
 
@@ -147,6 +154,7 @@
     --market-top-columns: minmax(0, 1fr);
     --market-top-areas: "chart" "trade" "trades";
     --market-low-columns: minmax(0, 1fr);
+    --strategy-explained-columns: minmax(0, 1fr);
     --chart-height: 320px;
     --trade-box-position: static;
   }
@@ -181,6 +189,8 @@
     --flag-fact-columns: minmax(0, 1fr);
     --fact-columns: minmax(0, 1fr);
     --create-choice-columns: minmax(0, 1fr);
+    --evidence-columns: 3.2em minmax(0, 1fr);
+    --evidence-areas: "id label" "id value";
     --canary-detail-indent: 0;
     --canary-bar-width: 30%;
     --canary-label-wrap: normal;

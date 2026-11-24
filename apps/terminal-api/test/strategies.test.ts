@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { PIPELINE_PROGRAM_ADDRESS, programDataPda } from "@pipeline-sol/sdk";
 import { address, getBase58Decoder } from "@solana/kit";
 import { asc, eq } from "drizzle-orm";
-import { createDb, markets, programFacts, programVersions, readOutbox, strategyCalls, strategyInstructions } from "terminal-db";
+import { createDb, indexerCursors, markets, programFacts, programVersions, readOutbox, strategyCalls, strategyEvents, strategyInstructions } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import type { RawTransaction } from "terminal-indexer";
 import { fakeRpc, type FakeRpc } from "terminal-indexer/testing";
@@ -213,8 +213,8 @@ describe("the ProgramData watch", () => {
   });
 });
 
-/** A custom action called straight on the strategy by `caller`. */
-function customAction(signature: string, slot: number, caller: string): RawTransaction {
+/** A custom action called straight on the strategy by `caller`, logging `events` as the strategy's own data lines. */
+function customAction(signature: string, slot: number, caller: string, events: string[] = []): RawTransaction {
   return {
     slot,
     blockTime: 1_795_500_000,
@@ -227,7 +227,7 @@ function customAction(signature: string, slot: number, caller: string): RawTrans
         instructions: [{ programIdIndex: 1, accounts: [0], data: getBase58Decoder().decode(disc("distribute")) }],
       },
     },
-    meta: { err: null, innerInstructions: [], loadedAddresses: { writable: [], readonly: [] } },
+    meta: { err: null, innerInstructions: [], loadedAddresses: { writable: [], readonly: [] }, logMessages: [`Program ${STRATEGY} invoke [1]`, ...events.map((e) => `Program data: ${e}`), `Program ${STRATEGY} success`] },
   };
 }
 
@@ -258,6 +258,32 @@ describe("reconciliation of strategy programs", () => {
     rpc.history.push(customAction("custom-2", 525_700_000, "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2"));
     expect((await indexer.reconcileStrategies()).indexed.counts).toEqual({ strategyCalls: 1 });
     expect(openDb).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores a strategy's events with its calls, and reads an older database's history again for them once, without moving its cursor", async () => {
+    const event = Buffer.alloc(48, 7).toString("base64");
+    const { indexer } = core();
+    await indexer.reconcile();
+    rpc.history.push(customAction("custom-events", 525_300_000, "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt", [event]));
+    await indexer.reconcileStrategies();
+    const events = () => reader.db.select({ signature: strategyEvents.signature, position: strategyEvents.position, data: strategyEvents.data }).from(strategyEvents).orderBy(asc(strategyEvents.slot), asc(strategyEvents.signature), asc(strategyEvents.position));
+    const stored = await events();
+    // The market's creation logs the strategy's own event too, and the custom action its one.
+    expect(stored.length).toBeGreaterThan(1);
+    expect(stored.at(-1)).toEqual({ signature: "custom-events", position: 0, data: event });
+    const cursor = async () => (await reader.db.select().from(indexerCursors).where(eq(indexerCursors.account, STRATEGY)))[0]!.signature;
+    expect(await cursor()).toBe("custom-events");
+
+    // As a database indexed before #88: its strategy cursor past every transaction, and no events stored.
+    await reader.db.delete(strategyEvents);
+    await reader.db.delete(indexerCursors).where(eq(indexerCursors.account, `events-done:${STRATEGY}`));
+    const after = core();
+    const outcome = await after.indexer.reconcileStrategies();
+    expect(outcome.quiet).toBe(false);
+    expect(await events()).toEqual(stored);
+    expect(await cursor()).toBe("custom-events");
+    // Done once: the next run asks Postgres nothing about it and stores nothing new.
+    expect((await after.indexer.reconcileStrategies()).quiet).toBe(true);
   });
 
   it("watches a strategy from the moment the router's reconciliation indexes its registration", async () => {

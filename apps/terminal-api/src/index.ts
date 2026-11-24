@@ -12,6 +12,7 @@ import type { JobName } from "./config";
 import type { ApiError } from "./contract";
 import { runDueJobs, type Job } from "./dispatcher";
 import { makeExplainerKeys } from "./explainer";
+import { explanationRoutes } from "./explanation";
 import type { Bindings } from "./env";
 import { feed, notFound } from "./feed";
 import { formRoutes } from "./forms";
@@ -21,6 +22,7 @@ import { keeperRoutes } from "./keeper";
 import { marketKeeperRoutes } from "./marketKeeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
+import { lendingAmmRoutes } from "./products/lendingAmm/routes";
 import { actionRoutes } from "./trading/actionRoutes";
 import { tradingRoutes } from "./trading/routes";
 import { strategyRoutes } from "./strategies";
@@ -56,6 +58,7 @@ app.route("/", imageRoutes);
 app.route("/", searchRoutes);
 app.route("/", walletRoutes);
 app.route("/", canaryRoutes);
+app.route("/", explanationRoutes);
 
 /**
  * The live rooms (./liveRoom): a page opens a WebSocket here and the Worker hands the upgrade to the
@@ -95,6 +98,7 @@ keeperRoutes(app);
 marketKeeperRoutes(app);
 tradingRoutes(app);
 actionRoutes(app);
+lendingAmmRoutes(app);
 
 /**
  * The jobs that have been built, by name; each later ticket adds its own, and ./config says how

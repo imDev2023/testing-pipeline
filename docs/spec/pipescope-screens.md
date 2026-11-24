@@ -331,10 +331,10 @@ Asking to swap never opens the wallet straight away; the trader first sees what 
      SOL and USDC read "Named by Aviary. It names SOL and USDC itself, and no other token."
 - Until the explanation and the forms land beside it, the facts panel has the lower band to itself, at its full width, its parts side by side and one under another on narrow screens (`PIPESCOPE-121`).
   Since [#123](https://github.com/imDev2023/testing-pipeline/issues/123) the forms sit on the left and the facts panel on the right, its parts one under another.
-- **A product's panel**: when the market's strategy is one of our products, its panel sits on the left of the lower band, after the trades and before the explanation, and its own forms under Actions after the strategy's, from a registry in `terminal-web` keyed by strategy program (`PIPESCOPE-147`, `apps/terminal-web/src/products/registry.ts`); no other market shows them.
+- **A product's panel**: when the market's strategy is one of our products, its panel sits on the left of the lower band, after the trades and before the explanation, and its own forms under Actions after the strategy's, from a registry in `terminal-web` keyed by strategy program (`PIPESCOPE-147`, `apps/terminal-web/src/products/registry.ts`); no other market shows them; a product may name the metadata forms its own fill in, which Actions then leaves out, and give its own create form, which the create-market page shows in place of the metadata's (`PIPESCOPE-162`).
 - **After an upgrade** ([`pipescope.md`](pipescope.md), When a strategy is upgraded): the notice "Upgraded on <date>; tests and explanation for this version are pending." sits under the page's head, and Canary's part and the explanation each read as pending until the new version has its own.
   As built (`PIPESCOPE-150`): the notice is shown while the strategy's current version has no Canary result of its own and an older version is recorded: on a market page created before the upgrade until that market has one, since a market made since never saw the version before, and on the strategy page until any of its markets has one; the date is the day the upgrade's transaction landed, or the day Aviary first saw the version when that transaction is not found yet.
-  The explanation's own part reads as pending until it exists ([Aviary: the explanation on the pages](https://github.com/imDev2023/testing-pipeline/issues/127)).
+  The explanation's own part reads as pending until it exists ([Aviary: the explanation on the pages](https://github.com/imDev2023/testing-pipeline/issues/127)): as built, it says "No explanation for this version yet." until the new version's key has its explanation, and from then on the notice reads "Upgraded on <date>; tests for this version are pending." until Canary's results arrive, so it never contradicts the explanation below it (`PIPESCOPE-159`).
 
 ### Arriving from Telegram
 
@@ -364,6 +364,7 @@ From top to bottom, with the explanation beside the facts at desktop width.
    The newest reads "The current version. The results and explanation on this page are for it."
    An older one keeps its own results, labelled as that version's.
 
+- As built (`PIPESCOPE-161`, [#127](https://github.com/imDev2023/testing-pipeline/issues/127)): the explanation sits beside the facts above 1080 px and above them at 1080 px and narrower, as on the market page; in the full explanation a stated point has a solid bullet, an inferred one a hollow bullet and the word "inferred", and an author point a bullet and a sentence in the author's colour, upright since only Literata's upright face is served, with "the author's words" beside it, under a key to the three.
 - The layout that was drawn and not chosen was a grid of markets against checks.
   It needs a pointer to read a cell, which a phone does not have, and a strategy with 23 markets does not fit one.
 

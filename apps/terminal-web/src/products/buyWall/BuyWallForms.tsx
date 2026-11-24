@@ -33,6 +33,13 @@ import { refreshBuyWall, tokenOf, useBuyWallRead } from "./useBuyWallRead";
 import styles from "./BuyWall.module.css";
 
 type Due = MarketKeeper["due"][number];
+
+/**
+ * The strategy's metadata forms these forms fill in (PIPESCOPE-162), which Actions then leaves out: the
+ * four keeper jobs and both handovers, so a handover is offered only to the wallet holding the role
+ * and nobody types a payout's wallet. The seed's form stays, for a market created elsewhere.
+ */
+export const BUY_WALL_FORMS = ["place_wall", "settle", "pay_rewards", "sweep_fees", "set_fee_recipient", "set_rewards_recipient"] as const;
 /** The wallets a payout pays: the market's recipients, and the program's designer and suite wallets. */
 export type PayoutWallets = { fee: string | null; rewards: string | null; designer: string | null; suite: string };
 type FormValues = { args: Record<string, string>; inputs: Record<string, string> };
