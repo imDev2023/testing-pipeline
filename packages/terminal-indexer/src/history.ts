@@ -179,16 +179,18 @@ const RECONCILE_PAGE = 100;
  * passed over; one that cannot be indexed stops it there (the batch error is thrown), so the cursor
  * never moves past a transaction that was not indexed. `cursor` is where the caller knows it stands
  * (read from Postgres when not given); `limit` stops it after that many transactions, for a caller
- * that comes back, and `complete` says whether it reached the newest.
+ * that comes back, and `complete` says whether it reached the newest. `cursorKey` keeps the cursor
+ * under another name than the account's, for a second pass over its history with another handler
+ * (the strategy events' backfill) that must not move the account's own cursor.
  */
 export async function reconcileAccount(
   db: Db,
   source: HistorySource,
   handle: TransactionHandler,
   account: string,
-  { cursor: known, limit = Infinity }: { cursor?: Cursor | null; limit?: number } = {},
+  { cursor: known, limit = Infinity, cursorKey = account }: { cursor?: Cursor | null; limit?: number; cursorKey?: string } = {},
 ): Promise<{ result: IndexResult; cursor: Cursor | null; complete: boolean }> {
-  let cursor = known === undefined ? await readCursor(db, account) : known;
+  let cursor = known === undefined ? await readCursor(db, cursorKey) : known;
   const result = emptyResult();
   let seen = 0;
   for (;;) {
@@ -201,7 +203,7 @@ export async function reconcileAccount(
       const { signature, slot, blockIndex } = cursor!;
       await db
         .insert(indexerCursors)
-        .values({ account, signature, slot: BigInt(slot), blockIndex })
+        .values({ account: cursorKey, signature, slot: BigInt(slot), blockIndex })
         .onConflictDoUpdate({ target: indexerCursors.account, set: { signature, slot: BigInt(slot), blockIndex, updatedAt: sql`now()` } });
     }
     seen += transactions.length;

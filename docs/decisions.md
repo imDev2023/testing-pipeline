@@ -2750,6 +2750,26 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
 
+### PIPESCOPE-162: A product's forms in place of the metadata's
+
+- Question: May one of our products' own forms stand in for the strategy's metadata forms and its create form?
+- Answer: Yes: a product names the metadata forms its own fill in (`replaces` in `apps/terminal-web/src/products/registry.ts`), which Actions then leaves out, and may give its own create form (`Create`), which the create-market page shows in place of the metadata's.
+- Alternatives: Showing the metadata forms beside the product's, which repeats each action with raw inputs.
+- Specified in: [`docs/spec/pipescope-screens.md`, Explanation, actions and facts](spec/pipescope-screens.md#explanation-actions-and-facts)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
+### PIPESCOPE-163: Strategy-program events
+
+- Question: Does the indexer keep the events strategy programs log, and in what form?
+- Answer: Yes: every `Program data:` line a strategy program writes itself in a successful transaction, whole, in `strategy_events` with the 32 bytes after its discriminator as its subject, for products to decode their own; the live path stores strategy calls and events as reconciliation does.
+- Alternatives: Reading a market's history from the chain on each page view; decoding each product's events in the indexer.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
@@ -6223,6 +6243,96 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-22 in [Lending AMM: deploy on devnet, register with Pipeline and run a demo market](https://github.com/imDev2023/testing-pipeline/issues/87)
 
+### LENDING-104: The create form's defaults
+
+- Question: Where do the lending AMM create form's pre-filled LP fee and `lent_index` live, and what are they?
+- Answer: An LP fee of 30 bps and `lent_index` 1 (the form takes the token first and the lent mint second), in `terminal-api`'s config module as `LENDING_AMM.create`, which the page reads through `GET /v1/lending-amm/create` and never writes.
+- Alternatives: Writing the defaults in the page's own config, which the pages' rule of one place for every value refuses.
+- Specified in: [`docs/spec/lending-pool.md`, Aviary's panel](spec/lending-pool.md#aviarys-panel)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
+### LENDING-105: Where the panel is worked out
+
+- Question: Where are the lending AMM panel's figures worked out from the chain?
+- Answer: In `terminal-api` (`src/products/lendingAmm/`), from one `getMultipleAccounts` at one slot after a first read of the market state, with the keeper runner's copy of the program's rules, served at `GET /v1/markets/{market}/lending-amm` and shared with the explainer's facts.
+- Alternatives: Decoding the generic one-slot read (`PIPESCOPE-146`) in the browser, which would put the program's rules in the page and leave the explainer a copy of its own.
+- Specified in: [`docs/spec/lending-pool.md`, Aviary's panel](spec/lending-pool.md#aviarys-panel)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
+### LENDING-106: How the largest sells are stated
+
+- Question: How does the panel state the largest sell the buffer pays alone and the largest Kamino can pay on top?
+- Answer: As amounts of the other token typed in the trade box (the fees taken on the input counted), each the largest input the program's pricing pays within the edge, found by binary search, and as "every sell the market can take" when no input reaches it; none while the market has no liquidity, the reserve fails its check or is too stale to trade.
+- Alternatives: Amounts of the lent mint paid out, which a seller cannot type; a price impact in percent.
+- Specified in: [`docs/spec/lending-pool.md`, Aviary's panel](spec/lending-pool.md#aviarys-panel)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
+### LENDING-107: Kamino's supply rate on the panel
+
+- Question: Which supply rate does the panel show for the reserve?
+- Answer: Kamino's SDK's borrow-interest part of the supply rate at the reserve's stored state: utilisation times the curve's borrow rate there, linear between its points, times one less the protocol take rate, a year, with no projection and without the reward distribution's part.
+- Alternatives: The SDK's estimate projected to the current time, or the rate with rewards added.
+- Specified in: [`docs/spec/lending-pool.md`, Aviary's panel](spec/lending-pool.md#aviarys-panel)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
+### LENDING-108: Kamino's refresh around Aviary's lending forms
+
+- Question: When does Aviary put klend's `refresh_reserve` in a lending AMM action's transaction?
+- Answer: First, for a deposit into a market holding cTokens and for `rebalance` (except while Kamino redeems nothing or the lending market's emergency mode is on), as the keeper runner does; and alone, as a form anyone may send, once the reserve is older than half of `TRADE_MAX_RESERVE_AGE_SLOTS`.
+- Alternatives: Leaving the refresh to the keeper runner, which fails every deposit into a market holding cTokens made from Aviary while the runner is not running.
+- Specified in: [`docs/spec/lending-pool.md`, Aviary's panel](spec/lending-pool.md#aviarys-panel)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
+### LENDING-109: The lending AMM's own forms
+
+- Question: Which lending AMM actions does Aviary fill in itself, and what happens to the metadata's forms of them?
+- Answer: `add_liquidity`, `remove_liquidity` in cash and in kind, `lock_lp` and `rebalance`, filled in from the panel's read and built from the strategy's metadata, standing in for the metadata's own forms of them; `remove_lent_side` stays a metadata form.
+- Alternatives: Showing both, the metadata forms with their raw inputs above Aviary's filled-in ones; filling in `remove_lent_side` too, which is for a frozen or refusing other mint only.
+- Specified in: [`docs/spec/lending-pool.md`, Aviary's panel](spec/lending-pool.md#aviarys-panel)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
+### LENDING-110: SOL back from a cash removal
+
+- Question: Is the SOL a cash removal pays unwrapped in its transaction?
+- Answer: Yes when the wallet holds no wrapped-SOL account of its own, which the removal creates and closes back into the wallet; one the wallet holds keeps what the removal pays, as for every custom action (`PIPESCOPE-145`).
+- Alternatives: Always closing the wallet's wrapped-SOL account after the removal, which would also unwrap wrapped SOL the wallet kept for itself.
+- Specified in: [`docs/spec/lending-pool.md`, Aviary's panel](spec/lending-pool.md#aviarys-panel)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
+### LENDING-111: Where the market's history shows
+
+- Question: Where does Aviary list a lending AMM market's history, and how much at once?
+- Answer: In a panel of its own under the lending AMM panel, the strategy's events on the market newest first, each a sentence with who and its transaction, 25 a page (`LENDING_AMM.historyPage`).
+- Alternatives: Mixing the strategy's events into the market page's trades table.
+- Specified in: [`docs/spec/lending-pool.md`, Aviary's panel](spec/lending-pool.md#aviarys-panel)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
+### LENDING-112: The lending AMM in the explainer's evidence
+
+- Question: What does the explainer's evidence add for a lending AMM version?
+- Answer: The sampled market's panel facts, read at one slot when the key is made, and the spec's three risks as fixed text, all F items; the risks alone, and a line saying the panel was not read, when the chain cannot be read.
+- Alternatives: Leaving the panel's facts to the model to infer from the vaults, which hold the buffer and not the lent value.
+- Specified in: [`docs/spec/lending-pool.md`, Aviary's panel](spec/lending-pool.md#aviarys-panel)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
+
 ## Not decided yet
 
 Open on 2026-11-10; the session that settles each one adds its blocks above.
@@ -6235,6 +6345,7 @@ Open on 2026-11-10; the session that settles each one adds its blocks above.
 Places where a spec disagrees with a later answer, spreads one value over several places, or fixes in prose something that should be one named value.
 They are listed here for the sessions that own those specs, not fixed in this file's PR.
 
+- `LENDING-104` to `LENDING-112`, `PIPESCOPE-162` and `PIPESCOPE-163`: set by the session of [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-19`: the owner approved burning LP shares as the way to make liquidity protocol-owned; the spec adds `lock_lp` for that and has a burn hand its value to the remaining LPs, a refinement the owner was not asked about.
 - `BAR-18`, `BAR-27`, `POOL4-19`, `LENDING-34`: `README.md` makes the hardening ticket each program's last build ticket, and the owner's answer for the tax AMM and the containment hook puts it after the deploy; the buy wall AMM and the lending AMM harden before their first deploy, a choice of their sessions.
   One order belongs in `README.md`, with a product's departure and its reason in that product's file.

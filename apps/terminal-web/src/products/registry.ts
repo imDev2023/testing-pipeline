@@ -7,10 +7,14 @@
 // other tickets). It reads the chain through the API's one-slot read of a market's state with the
 // outside accounts it names (`GET /v1/markets/{market}/state`, PIPESCOPE-146).
 //
-// Empty until the products' Aviary tickets fill it: the tax AMM's (#75), the containment hook's
-// (#76), the buy wall AMM's (#57) and the lending AMM's (#88).
+// Filled by the products' Aviary tickets: the lending AMM's (#88); the tax AMM's (#75), the
+// containment hook's (#76) and the buy wall AMM's (#57) add theirs.
 import type { ComponentType } from "react";
 import type { Market } from "terminal-api/contract";
+import { LendingAmmCreate } from "./lendingAmm/LendingCreate";
+import { LENDING_FORMS, LendingAmmForms } from "./lendingAmm/LendingForms";
+import { LendingAmmPanel } from "./lendingAmm/LendingPanel";
+import { LENDING_AMM_PROGRAM } from "./lendingAmm/program";
 
 /** What one product adds to its markets' pages. */
 export type ProductPlace = {
@@ -18,9 +22,15 @@ export type ProductPlace = {
   Panel?: ComponentType<{ market: Market }>;
   /** Its own forms, under Actions after the strategy's metadata forms. */
   Forms?: ComponentType<{ market: Market }>;
+  /** The metadata forms its own forms fill in, which Actions then leaves out of the strategy's list. */
+  replaces?: readonly string[];
+  /** Its own create form on the create-market page, in place of the metadata's. */
+  Create?: ComponentType<{ program: string }>;
 };
 
 /** The products by strategy program. */
 export type ProductRegistry = Readonly<Record<string, ProductPlace>>;
 
-export const PRODUCT_PANELS: ProductRegistry = {};
+export const PRODUCT_PANELS: ProductRegistry = {
+  [LENDING_AMM_PROGRAM]: { Panel: LendingAmmPanel, Forms: LendingAmmForms, replaces: LENDING_FORMS, Create: LendingAmmCreate },
+};

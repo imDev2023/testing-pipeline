@@ -30,7 +30,7 @@ export function MarketLowBand({
       <div className={bands.lowMain}>
         {product?.Panel && <product.Panel market={market} />}
         <Explanation program={market.strategy} onMarket read={explanation} />
-        <Actions market={market} productForms={product?.Forms ? <product.Forms market={market} /> : null} />
+        <Actions market={market} productForms={product?.Forms ? <product.Forms market={market} /> : null} replaced={product?.replaces} />
       </div>
       {facts}
     </div>

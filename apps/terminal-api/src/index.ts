@@ -21,6 +21,7 @@ import { health } from "./health";
 import { keeperRoutes } from "./keeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
+import { lendingAmmRoutes } from "./products/lendingAmm/routes";
 import { actionRoutes } from "./trading/actionRoutes";
 import { tradingRoutes } from "./trading/routes";
 import { strategyRoutes } from "./strategies";
@@ -95,6 +96,7 @@ export const indexer = (env: Bindings) => env.INDEXER.get(env.INDEXER.idFromName
 keeperRoutes(app);
 tradingRoutes(app);
 actionRoutes(app);
+lendingAmmRoutes(app);
 
 /**
  * The jobs that have been built, by name; each later ticket adds its own, and ./config says how
@@ -134,7 +136,7 @@ async function canarySweep(env: Bindings): Promise<void> {
 async function explainerKeys(env: Bindings): Promise<void> {
   const { db, close } = createDb(env.HYPERDRIVE.connectionString);
   try {
-    const { made, revived, waiting } = await makeExplainerKeys(db);
+    const { made, revived, waiting } = await makeExplainerKeys(db, { rpcUrl: env.RPC_URL });
     if (made.length || revived.length || waiting.length) console.log("explainer keys", { made, revived, waiting });
   } finally {
     await close();
