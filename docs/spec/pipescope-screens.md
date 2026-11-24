@@ -305,6 +305,7 @@ Asking to swap never opens the wallet straight away; the trader first sees what 
 - A table of the market's swaps, newest first: when, Buy or Sell, paid, received, price, trader and a link to the transaction.
 - The 40 most recent show, with "Show earlier trades" beneath them.
 - No trades: "No swap has gone through Pipeline on this market yet."
+- On a market of three or four mints, a trade between two mints other than the pair on show is read by its own pair, as the API gives it: Buy or Sell of that pair's base, priced in that pair's quote mint, with the pair named under the price (`PIPESCOPE-155`).
 
 ### Explanation, actions and facts
 
@@ -333,7 +334,7 @@ Asking to swap never opens the wallet straight away; the trader first sees what 
 - **A product's panel**: when the market's strategy is one of our products, its panel sits on the left of the lower band, after the trades and before the explanation, and its own forms under Actions after the strategy's, from a registry in `terminal-web` keyed by strategy program (`PIPESCOPE-147`, `apps/terminal-web/src/products/registry.ts`); no other market shows them.
 - **After an upgrade** ([`pipescope.md`](pipescope.md), When a strategy is upgraded): the notice "Upgraded on <date>; tests and explanation for this version are pending." sits under the page's head, and Canary's part and the explanation each read as pending until the new version has its own.
   As built (`PIPESCOPE-150`): the notice is shown while the strategy's current version has no Canary result of its own and an older version is recorded: on a market page created before the upgrade until that market has one, since a market made since never saw the version before, and on the strategy page until any of its markets has one; the date is the day the upgrade's transaction landed, or the day Aviary first saw the version when that transaction is not found yet.
-  The explanation's own part reads as pending until it exists ([Aviary: the explanation on the pages](https://github.com/imDev2023/testing-pipeline/issues/127)): as built, it says "No explanation for this version yet." until the new version's key has its explanation, and from then on the notice reads "Upgraded on <date>; tests for this version are pending." until Canary's results arrive, so it never contradicts the explanation below it (`PIPESCOPE-153`).
+  The explanation's own part reads as pending until it exists ([Aviary: the explanation on the pages](https://github.com/imDev2023/testing-pipeline/issues/127)): as built, it says "No explanation for this version yet." until the new version's key has its explanation, and from then on the notice reads "Upgraded on <date>; tests for this version are pending." until Canary's results arrive, so it never contradicts the explanation below it (`PIPESCOPE-159`).
 
 ### Arriving from Telegram
 
@@ -363,7 +364,7 @@ From top to bottom, with the explanation beside the facts at desktop width.
    The newest reads "The current version. The results and explanation on this page are for it."
    An older one keeps its own results, labelled as that version's.
 
-- As built (`PIPESCOPE-155`, [#127](https://github.com/imDev2023/testing-pipeline/issues/127)): the explanation sits beside the facts above 1080 px and above them at 1080 px and narrower, as on the market page; in the full explanation a stated point has a solid bullet, an inferred one a hollow bullet and the word "inferred", and an author point a bullet and a sentence in the author's colour, upright since only Literata's upright face is served, with "the author's words" beside it, under a key to the three.
+- As built (`PIPESCOPE-161`, [#127](https://github.com/imDev2023/testing-pipeline/issues/127)): the explanation sits beside the facts above 1080 px and above them at 1080 px and narrower, as on the market page; in the full explanation a stated point has a solid bullet, an inferred one a hollow bullet and the word "inferred", and an author point a bullet and a sentence in the author's colour, upright since only Literata's upright face is served, with "the author's words" beside it, under a key to the three.
 - The layout that was drawn and not chosen was a grid of markets against checks.
   It needs a pointer to read a cell, which a phone does not have, and a strategy with 23 markets does not fit one.
 
@@ -376,6 +377,10 @@ From top to bottom, with the explanation beside the facts at desktop width.
   Beneath: "1 token in this wallet is not listed because no Pipeline market trades it. Balances are in tokens; there are no dollar prices on devnet."
 - **"Your swaps through Pipeline"**: when, the market, paid, received, the fees and a link to the transaction.
   Beneath: "Every swap this wallet made through Pipeline's router, on Aviary or anywhere else. Trades that bypass the router leave no swap event and are not here."
+- As built ([#122](https://github.com/imDev2023/testing-pipeline/issues/122)):
+  - wrapped SOL is not listed among the tokens: the offer names it, "Wrapped SOL" its panel, and "Unwrap" closes the wrapped-SOL accounts the wallet owns into it, empty ones too for their rent, as many as one transaction holds, the rest offered again after (`PIPESCOPE-152`);
+  - the tokens listed are those the wallet holds a non-zero balance of that a market Aviary has indexed trades, ordered by the name shown, each with its markets as pairs, base first, newest first; tokens no market trades are counted, empty token accounts not at all (`PIPESCOPE-153`);
+  - each swap's market is its pair, base first, linked; its fees are Pipeline's in the fee mint and, when charged, the integrator's in the input, named "Aviary" when it is Aviary's fee wallet; 40 swaps show, with "Show earlier swaps" beneath.
 
 ## Create market
 

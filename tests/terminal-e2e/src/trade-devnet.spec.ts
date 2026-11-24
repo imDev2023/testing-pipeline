@@ -1,6 +1,6 @@
 // The devnet demo of #121: with the Playwright test wallet holding the test trader's devnet key, a
 // buy paid in SOL and a sell back go through the trade box on Pipeline's example constant-product
-// market. Each trade must reach Trades within seconds through the fast path; 0.1 SOL typed must be
+// market; and #122's: a market of three mints is traded between each pair, in all six directions. Each trade must reach Trades within seconds through the fast path; 0.1 SOL typed must be
 // exactly what leaves the wallet for the swap, split as the screens show; and the fee wallet's
 // wrapped-SOL account must receive the integrator fee on the buy and nothing on the sell. It sends
 // real devnet transactions, so its project exists only when asked for (`pnpm --filter terminal-e2e
@@ -11,7 +11,7 @@ import { address, createSolanaRpc } from "@solana/kit";
 import { Fees, TradesPage, type Trade } from "terminal-api/contract";
 import { screenshot } from "./screenshot";
 import { API } from "./target";
-import { CP_MARKET, WSOL } from "./markets";
+import { CP_MARKET, THREE_MINT_MARKET, THREE_MINT_PAIRS, THREE_MINTS, WSOL } from "./markets";
 import { connectTestWallet, installTestWallet, testTraderSigner, TEST_TRADER } from "./wallet";
 
 const rpc = () => createSolanaRpc(process.env.RPC_URL ?? "");
@@ -38,6 +38,22 @@ async function onChain(signature: string) {
 }
 
 const swaps: Record<string, unknown> = {};
+/** Writes every signature so far to test-results/swaps.json, for the PR. */
+const save = () => {
+  mkdirSync(`${import.meta.dirname}/../test-results`, { recursive: true });
+  writeFileSync(`${import.meta.dirname}/../test-results/swaps.json`, `${JSON.stringify(swaps, (_, v: unknown) => (typeof v === "bigint" ? String(v) : v), 2)}\n`);
+};
+
+/** The trade as the indexer wrote it, with its place in its block, once it has. */
+async function indexedOn(market: string, signature: string): Promise<Trade> {
+  for (let attempt = 0; ; attempt++) {
+    const { trades } = TradesPage.parse(await (await fetch(`${API}/v1/markets/${market}/trades?limit=10`)).json());
+    const found = trades.find((t) => t.signature === signature && t.block_index !== null);
+    if (found) return found;
+    if (attempt > 30) throw new Error(`${signature} was not indexed`);
+    await new Promise((done) => setTimeout(done, 1_000));
+  }
+}
 
 test.describe.configure({ mode: "serial" });
 
@@ -76,15 +92,7 @@ test.describe("swaps through the trade box on devnet", () => {
     const feesAfterBuy = await feeAccountBalance();
 
     // The trade the fast path served is the indexer's, with the screens' split: 0.1 SOL in all.
-    const indexed = async (signature: string): Promise<Trade> => {
-      for (let attempt = 0; ; attempt++) {
-        const { trades } = TradesPage.parse(await (await fetch(`${API}/v1/markets/${CP_MARKET}/trades?limit=10`)).json());
-        const found = trades.find((t) => t.signature === signature && t.block_index !== null);
-        if (found) return found;
-        if (attempt > 30) throw new Error(`${signature} was not indexed`);
-        await new Promise((done) => setTimeout(done, 1_000));
-      }
-    };
+    const indexed = (signature: string) => indexedOn(CP_MARKET, signature);
     const bought = await indexed(buy.signature);
     expect(BigInt(bought.net_sent) + BigInt(bought.pipeline_fee) + BigInt(bought.integrator_fee)).toBe(100_000_000n);
     expect(bought).toMatchObject({ net_sent: "99255583", pipeline_fee: "248139", integrator_fee: "496278", side: "buy" });
@@ -115,8 +123,35 @@ test.describe("swaps through the trade box on devnet", () => {
       buy: { ...buy, trade: bought, wallet_lamports: buyChain, fee_account_received: String(feesAfterBuy - feesBefore) },
       sell: { ...sell, trade: sold, fee_account_received: String(feesAfterSell - feesAfterBuy) },
     });
-    mkdirSync(`${import.meta.dirname}/../test-results`, { recursive: true });
-    writeFileSync(`${import.meta.dirname}/../test-results/swaps.json`, `${JSON.stringify(swaps, (_, v: unknown) => (typeof v === "bigint" ? String(v) : v), 2)}\n`);
+    save();
     console.log(JSON.stringify({ buy: buy.signature, buy_seconds: buy.seconds, sell: sell.signature, sell_seconds: sell.seconds }));
+  });
+
+  test("a market of three mints traded between each pair, in all six directions (#122)", async ({ page }) => {
+    test.setTimeout(600_000);
+    await installTestWallet(page, await testTraderSigner());
+    // The market's QUOTE is Pipeline's example token: bought first with 0.05 SOL on the example market, through the trade box too.
+    await page.goto(`/markets/${CP_MARKET}`);
+    await connectTestWallet(page, page.getByRole("banner").getByRole("button", { name: "Connect wallet" }));
+    await box(page).getByLabel("You pay, fees included").fill("0.05");
+    await expect(box(page).getByRole("button", { name: "Review swap" })).toBeEnabled();
+    const quoteBought = await swap(page, "three-buy-quote");
+    await page.goto(`/markets/${THREE_MINT_MARKET}`);
+    await expect(page.getByRole("banner").getByRole("button", { name: /E69P\.\.\.JnAW/ })).toBeVisible();
+    const done: { from: string; to: string; signature: string; seconds: number; trade: Trade }[] = [];
+    for (const [i, { from, to, amount }] of THREE_MINT_PAIRS.entries()) {
+      if (i > 0) await box(page).getByRole("button", { name: "Make another swap" }).click();
+      await box(page).getByLabel("Mint to pay with").selectOption(THREE_MINTS[from]);
+      await box(page).getByLabel("Mint to receive").selectOption(THREE_MINTS[to]);
+      await box(page).getByLabel("You pay, fees included").fill(amount);
+      await expect(box(page).getByRole("button", { name: "Review swap" })).toBeEnabled();
+      const traded = await swap(page, `three-${from}-${to}`);
+      const trade = await indexedOn(THREE_MINT_MARKET, traded.signature);
+      expect(trade).toMatchObject({ input_mint: THREE_MINTS[from], output_mint: THREE_MINTS[to], integrator_fee: "0" });
+      done.push({ from, to, ...traded, trade });
+    }
+    swaps.three_mints = { market: THREE_MINT_MARKET, trader: TEST_TRADER, quote_bought: quoteBought, swaps: done };
+    save();
+    console.log(JSON.stringify(done.map((d) => ({ [`${d.from}->${d.to}`]: d.signature, seconds: d.seconds }))));
   });
 });

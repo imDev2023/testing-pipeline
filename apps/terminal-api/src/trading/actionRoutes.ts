@@ -20,6 +20,7 @@ import { limitTrades } from "../rateLimits";
 import { keptImages } from "../tokenImages";
 import { actionTransaction, createMarketTransaction, prepareTransaction, walletWrappedSol } from "./action";
 import { awaitTrade, TRANSACTION_WORDS } from "./fastPath";
+import { actionHookAccounts } from "./hooks";
 import { readMarketOnChain } from "./market";
 import { Refused } from "./quote";
 import { addressOf, bodyOf, refused } from "./routes";
@@ -72,13 +73,18 @@ export function actionRoutes(app: Hono<AppEnv>) {
       const trader = address(request.trader);
       const tokenPrograms = Object.fromEntries(market.mints.map((m) => [m.address, m.tokenProgram]));
       const built = await actionTransaction({ action, market: market.view, trader, args: request.args, inputs, tokenPrograms, rpc, walletWrappedSol: await walletWrappedSol(rpc, trader) });
-      const prepared = await prepareTransaction(rpc, { instructions: built.instructions, trader, strategy, market: market.address, what: "This action" });
+      // A hooked mint's transfers carry its hook's accounts, after the action's own (PIPESCOPE-154).
+      const hooks = await actionHookAccounts(rpc, { market, trader, action: built.action });
+      const instruction = hooks.length ? { ...built.action, accounts: [...(built.action.accounts ?? []), ...hooks] } : built.action;
+      const instructions = built.instructions.map((i) => (i === built.action ? instruction : i));
+      const hookPrograms = market.mints.flatMap((m) => (m.transferHook ? [m.transferHook] : []));
+      const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: market.address, what: "This action", hooks: hookPrograms });
       return c.json(
         PreparedAction.parse({
           market: request.market,
           action: action.name,
           check: checkForm(await actionDiscriminator(action), source.list),
-          accounts: accountsOf(built.action),
+          accounts: accountsOf(instruction),
           wrapped_sol: String(built.wrapped),
           ...prepared,
         }),

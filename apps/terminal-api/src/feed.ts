@@ -9,12 +9,12 @@ import { FLAGS } from "@pipeline-sol/sdk";
 import { marketMints, markets, mints, strategies, trades, type Db } from "terminal-db";
 import { writtenCandles, type CandleRow } from "terminal-indexer";
 import { CANDLES, PAGE_LIMITS, VOLUME_WINDOW_SECONDS, WRAPPED_SOL } from "./config";
-import { Candles, Market, MarketFacts, MarketsPage, StrategiesList, StrategyDetail, TradesPage } from "./contract";
+import { Candles, Market, MarketFacts, MarketsPage, StrategiesList, StrategyDetail, TraderTradesPage, TradesPage } from "./contract";
 import { flagFacts, marketFlagsSql, mintFacts, strategyColumns as factColumns, strategyViews } from "./facts";
 import { dbOf, requestDb, type DbEnv } from "./requestDb";
 import { marketPair } from "./pairs";
 import { priceOf } from "./prices";
-import { marketViews, tradeViews } from "./views";
+import { marketViews, mintNames, tradeViews } from "./views";
 
 type FeedEnv = DbEnv;
 
@@ -212,7 +212,12 @@ feed.get("/v1/markets/:market/trades", async (c) => {
   return c.json(await tradesPage(c, database, eq(trades.market, market)));
 });
 
-feed.get("/v1/traders/:trader/trades", async (c) => c.json(await tradesPage(c, db(c), eq(trades.trader, c.req.param("trader")))));
+// The wallet page's swaps (#122): a trader's page, with every mint it names.
+feed.get("/v1/traders/:trader/trades", async (c) => {
+  const database = db(c);
+  const page = await tradesPage(c, database, eq(trades.trader, c.req.param("trader")));
+  return c.json(TraderTradesPage.parse({ ...page, mints: await mintNames(database, page.trades.flatMap((t) => [t.input_mint, t.output_mint])) }));
+});
 
 // ---- Candles ----
 

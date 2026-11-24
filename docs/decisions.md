@@ -2483,12 +2483,12 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-135: Which mints the trade box quotes
 
 - Question: Which mints does the trade box quote and build swaps of?
-- Answer: Plain mints only: a Token-2022 mint with a transfer fee, a transfer hook, no transfers or a pause switch gets no quote, since the box promises exactly what leaves the wallet and what arrives; hooked mints come with their own ticket.
-- Alternatives: Quoting every mint and letting the simulation show what really moves, which leaves the breakdown's numbers wrong for transfer-fee mints.
+- Answer: Every mint but a Token-2022 mint with a transfer fee, no transfers or a pause switch, since the box promises exactly what leaves the wallet and what arrives; a mint with a transfer hook is quoted and traded with its hook's accounts (`PIPESCOPE-154`), and its simulation shows whether the hook allows the swap.
+- Alternatives: The earlier default, plain mints only, a transfer hook refused too until hooked mints were built; quoting every mint and letting the simulation show what really moves, which leaves the breakdown's numbers wrong for transfer-fee mints.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
 - Changes by: build-time constant
-- Status: default
-- Decided: 2026-11-23 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
+- Status: changed 2026-11-24
+- Decided: 2026-11-23 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121); changed 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
 ### PIPESCOPE-136: The trade box's real-wallet check
 
@@ -2650,7 +2650,67 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125)
 
-### PIPESCOPE-152: Where an evidence chip points
+### PIPESCOPE-152: Wrapped SOL on the wallet page
+
+- Question: How does the wallet page show the wrapped SOL a wallet holds?
+- Answer: Apart from the tokens it lists, as the offer to unwrap naming the amount, or the empty accounts whose rent comes back, which closes the wrapped-SOL accounts the wallet owns into it, as many as one transaction holds and the rest offered again after, simulated first and signed in the wallet; the wallet's SOL stands in the page's head.
+- Alternatives: Listing wrapped SOL among the tokens that trade on Pipeline, beside the offer, which would show the same SOL twice; closing only the wallet's associated wrapped-SOL account, leaving any other.
+- Specified in: [`docs/spec/pipescope-screens.md`, Wallet page](spec/pipescope-screens.md#wallet-page)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
+
+### PIPESCOPE-153: What the wallet page lists as held
+
+- Question: Which of a wallet's tokens does "What you hold that trades on Pipeline" list, and in what order?
+- Answer: Every token it holds a non-zero balance of, in any of its token accounts under either token program, that a market Aviary has indexed trades, with each of those markets, newest first, ordered by the name the page shows; tokens no market trades are only counted, and empty token accounts are neither listed nor counted.
+- Alternatives: Counting empty token accounts as tokens not listed; ordering by balance, which mixes tokens of different worth on devnet.
+- Specified in: [`docs/spec/pipescope-screens.md`, Wallet page](spec/pipescope-screens.md#wallet-page)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
+
+### PIPESCOPE-154: How a hooked mint's accounts are resolved
+
+- Question: How does Aviary find the accounts a mint's transfer hook needs, and where does a swap carry them?
+- Answer: In one module of `terminal-api` (`trading/hooks.ts`) for swaps and custom actions alike, each transfer resolved on its own from the mint's `ExtraAccountMetaList` by Token-2022's own client, every transfer the transaction makes in the mint covered (the trader's transfer and Pipeline's and the integrator's fees taken in it), each account once with the highest role any transfer gives it; a sell's go in the router's `input_hook_accounts`, a buy's after the strategy's own accounts, and a custom action's after its own, for the transfers both ways between the wallet's token account the action writes and the market's vault of each hooked mint; a refusal by the hook is named as the hook's, and a holder's CPI Guard or required memos are named as the holder's own settings.
+- Alternatives: Pipeline's hosted API, which refuses to build swaps whose input mint has a transfer hook; resolving only the trader's transfer, which leaves out a hook whose accounts depend on the destination when Pipeline's fee is taken in the mint.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
+
+### PIPESCOPE-155: Trades of other pairs on a market of three or four mints
+
+- Question: How does a market page's Trades table read a trade between two mints other than the pair on show?
+- Answer: By the trade's own pair, as the API gives it with every trade: a Buy or a Sell of that pair's base mint, its price in that pair's quote mint, with the pair named under the price; a trade of the pair on show is read by that pair, flipped or not.
+- Alternatives: Reading every trade against the pair on show, which counted any trade not paid in its quote mint as a Sell, at a price in mints the pair does not hold; leaving such trades out of the table.
+- Specified in: [`docs/spec/pipescope-screens.md`, Trades](spec/pipescope-screens.md#trades)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
+
+### PIPESCOPE-156: The wallet page's endpoints
+
+- Question: Which endpoints serve the wallet page?
+- Answer: `GET /v1/traders/{trader}/trades`, the feed's trader page with every mint it names; `GET /v1/traders/{trader}/holdings`, the wallet's SOL, wrapped SOL and token accounts read through RPC with each listed token's markets from Postgres; and `POST /v1/unwrap/prepare`, the unwrap built and simulated, whose signature `POST /v1/transactions` waits on as for a custom action; the prepare counts against the 60-a-minute limit of quotes and prepares (`PIPESCOPE-90`).
+- Alternatives: Reading a wallet's balances from Pipeline's hosted API, which ADR 0003 ruled out; reading them in the browser, which would put an RPC key in the page.
+- Specified in: [`docs/spec/pipescope-architecture.md`, API](spec/pipescope-architecture.md#api)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
+
+### PIPESCOPE-157: The unwrap's signing check
+
+- Question: How is the unwrap, a new signing flow, checked in a wallet?
+- Answer: As the ticket asks, by the Playwright test wallet signing with a devnet key, here the project's devnet wallet, through the real page of the local run, as `PIPESCOPE-136` settled for the trade box; no real wallet extension in the owner's Chrome.
+- Alternatives: `PIPESCOPE-94`'s run in a real wallet extension set to devnet, driven in the owner's Chrome, with screenshots.
+- Specified in: [the ticket, Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
+
+### PIPESCOPE-158: Where an evidence chip points
 
 - Question: Which fact row does an explanation's evidence chip highlight?
 - Answer: A row of the evidence the explanation was given, listed under it in a closed disclosure, "The evidence it was given (N items)", each row its id, what it is, its value as the model read it and where Aviary read it; a chip opens the list, marks that row, brings it into view and moves the focus to it.
@@ -2660,7 +2720,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
 
-### PIPESCOPE-153: Which explanation a page shows
+### PIPESCOPE-159: Which explanation a page shows
 
 - Question: Which explanation does a strategy page or a market page show, and when does the notice about text addressed to AI tools show?
 - Answer: The explanation of the key the strategy's current version has at the moment the page is read, worked out as the `explainerKeys` job works it out, once the approve command wrote it, and then the upgrade notice says only "tests for this version are pending"; otherwise "No explanation for this version yet.", and the notice about text addressed to AI tools whenever Aviary's detector finds such text in the current metadata or the shown explanation's own flag is set.
@@ -2670,7 +2730,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
 
-### PIPESCOPE-154: A "This is wrong" report
+### PIPESCOPE-160: A "This is wrong" report
 
 - Question: What does a "This is wrong" report carry, and what can be reported?
 - Answer: A report is `POST /v1/explanations/{key}/reports` against any key that has an explanation, with an optional note of up to 600 characters (`REPORT_NOTE_MAX` in the API's config module), counted against the 10 reports a minute per address of `PIPESCOPE-90`; `pnpm explainer:reports` lists it with its key, the strategy version and the note.
@@ -2680,7 +2740,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
 
-### PIPESCOPE-155: How the explanation is set beside the facts
+### PIPESCOPE-161: How the explanation is set beside the facts
 
 - Question: How is the explanation laid out beside the facts, and how is a point marked by its basis?
 - Answer: On the strategy page the explanation sits beside the facts above 1080 px and above them at 1080 px and narrower, as on the market page; a point stated by the evidence has a solid bullet, an inferred one a hollow bullet and the word "inferred", and an author point a bullet and a sentence in the author's colour, upright since only Literata's upright face is served, with "the author's words" beside it, under a key to the three bullets.

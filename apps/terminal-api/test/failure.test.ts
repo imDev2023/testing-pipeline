@@ -100,3 +100,30 @@ describe("a crash no log line explains", () => {
     expect(decodeFailure({ InstructionError: [3, "ProgramFailedToComplete"] }, [], { strategy: STRATEGY }).sentence).toBe('A program crashed instead of answering: {"InstructionError":[3,"ProgramFailedToComplete"]}.');
   });
 });
+
+describe("a hooked mint's refusals (#122; docs/spec/containment-hook.md, Hook accounts callers must pass)", () => {
+  const HOOK = "aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv";
+  const TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+
+  it("names the token's transfer hook as the program that refused, by its own error", () => {
+    const failure = decodeFailure({ InstructionError: [2, { Custom: 32343 }] }, [
+      `Program ${ROUTER} invoke [1]`,
+      `Program ${TOKEN_2022} invoke [2]`,
+      `Program ${HOOK} invoke [3]`,
+      "Program log: transfer rejected: neither source nor destination is whitelisted",
+      `Program ${HOOK} failed: custom program error: 0x7e57`,
+      `Program ${TOKEN_2022} failed: custom program error: 0x7e57`,
+      `Program ${ROUTER} failed: custom program error: 0x7e57`,
+    ], { strategy: STRATEGY, hooks: [HOOK] });
+    expect(failure.class).toBe("hook_refused");
+    expect(failure.sentence).toBe("The token's transfer hook refused it: error 32343.");
+    expect(failure.program).toBe(HOOK);
+  });
+
+  it("names a holder's CPI Guard and required memos, the two settings of their own that stop a sale through the router", () => {
+    const refusal = (code: number) =>
+      decodeFailure({ InstructionError: [2, { Custom: code }] }, [`Program ${ROUTER} invoke [1]`, `Program ${TOKEN_2022} invoke [2]`, `Program ${TOKEN_2022} failed: custom program error: 0x${code.toString(16)}`, `Program ${ROUTER} failed: custom program error: 0x${code.toString(16)}`], { strategy: STRATEGY });
+    expect(refusal(42)).toMatchObject({ class: "token_program_refused", name: "CpiGuardTransferBlocked", sentence: "Your token account has Token-2022's CPI Guard on, which stops Pipeline's router moving your tokens: turn it off in your wallet to trade through Pipeline." });
+    expect(refusal(36)).toMatchObject({ class: "token_program_refused", name: "NoMemo", sentence: "Your token account requires a memo on every transfer into it, which a swap through Pipeline's router does not carry: turn that off in your wallet to trade through Pipeline." });
+  });
+});

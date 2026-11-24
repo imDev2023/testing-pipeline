@@ -7,7 +7,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { Balances, PreparedSwap, Quote } from "terminal-api/contract";
 import { formatTokenAmount } from "../../../apps/terminal-web/src/format";
-import { CP_MARKET, CP_TOKEN, REFUSING_MARKET, WSOL } from "./markets";
+import { CP_MARKET, CP_TOKEN, REFUSING_MARKET, THREE_MINT_MARKET, THREE_MINT_PAIRS, THREE_MINTS, WSOL } from "./markets";
 import { API } from "./target";
 import { connectTestWallet, installTestWallet, TEST_TRADER, type TestWallet } from "./wallet";
 
@@ -189,6 +189,49 @@ test.describe("the trade box", () => {
     await expect(swap.getByRole("button", { name: "Review swap" })).toBeDisabled();
     await expect(swap.getByText("There is no quote to build a swap from.")).toBeVisible();
   });
+});
+
+test.describe("a market of three mints (#122)", () => {
+  const { quote, x, bear } = THREE_MINTS;
+
+  test("lists every mint on both sides, and choosing the mint the other side has moves the other side", async ({ page }) => {
+    await openMarket(page, THREE_MINT_MARKET);
+    const pay = box(page).getByLabel("Mint to pay with");
+    const receive = box(page).getByLabel("Mint to receive");
+    for (const side of [pay, receive]) await expect(side.locator("option")).toHaveCount(3);
+    // The default pair is QUOTE for BEAR: the box pays BEAR, the quote mint, and receives QUOTE, the base.
+    await expect(pay).toHaveValue(bear);
+    await expect(receive).toHaveValue(quote);
+    await pay.selectOption(quote);
+    await expect(receive).toHaveValue(bear);
+    await receive.selectOption(x);
+    await expect(pay).toHaveValue(quote);
+    await receive.selectOption(quote);
+    await expect(pay).toHaveValue(x);
+  });
+
+  for (const { from, to, amount } of THREE_MINT_PAIRS) {
+    test(`quotes ${amount} typed from ${from.toUpperCase()} to ${to.toUpperCase()} and reviews the swap, its simulation passing`, async ({ page }) => {
+      await openMarket(page, THREE_MINT_MARKET, "connect");
+      await box(page).getByLabel("Mint to pay with").selectOption(THREE_MINTS[from]);
+      await box(page).getByLabel("Mint to receive").selectOption(THREE_MINTS[to]);
+      await expect(box(page).getByLabel("Mint to pay with")).toHaveValue(THREE_MINTS[from]);
+      await typeAmount(page, amount);
+      // No Aviary fee on a swap paid in neither SOL nor USDC, and Pipeline's taken from the input: the market declares no fee mint.
+      await expect(costs(page).getByText("Aviary fee, none on this swap: only charged when you pay in SOL or USDC")).toBeVisible();
+      await expect(costs(page).getByText("of what goes into the market")).toBeVisible();
+      await expect(row(costs(page), "Leaves your wallet")).toContainText(`${amount} `);
+      await expect(row(costs(page), "Expected output")).toHaveText(/^[\d.,]+[MB]? /);
+      const preparing = page.waitForResponse((r) => r.url().endsWith("/v1/swaps/prepare"));
+      await box(page).getByRole("button", { name: "Review swap" }).click();
+      const prepared = PreparedSwap.parse(await (await preparing).json());
+      expect(prepared.quote).toMatchObject({ input_mint: THREE_MINTS[from], output_mint: THREE_MINTS[to], fee_side: "input", integrator_fee_bps: 0 });
+      expect(prepared.simulation.failure).toBeNull();
+      const review = page.getByRole("region", { name: "Review this swap" });
+      await expect(review.getByText(/^The simulation went through\. It used [\d,]+ compute units\./)).toBeVisible();
+      await expect(review.getByRole("button", { name: "Sign in wallet" })).toBeEnabled();
+    });
+  }
 });
 
 test.describe("the Fees page", () => {

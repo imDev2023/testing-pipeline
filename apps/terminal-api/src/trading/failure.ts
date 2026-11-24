@@ -33,7 +33,12 @@ const TOKEN_ERRORS = [
   "NonNativeNotSupported",
 ];
 
-const TOO_LITTLE = "Your wallet holds too little for this swap.";
+/** Token-2022's errors past the classic program's, which a holder's own account settings raise against a swap. */
+const HOLDER_SETTINGS: ReadonlyMap<number, { name: string; sentence: string }> = new Map([
+  [36, { name: "NoMemo", sentence: "Your token account requires a memo on every transfer into it, which a swap through Pipeline's router does not carry: turn that off in your wallet to trade through Pipeline." }],
+  [42, { name: "CpiGuardTransferBlocked", sentence: "Your token account has Token-2022's CPI Guard on, which stops Pipeline's router moving your tokens: turn it off in your wallet to trade through Pipeline." }],
+]);
+
 
 const between = (text: string, start: string, end: string): string | null => {
   const from = text.indexOf(start);
@@ -49,17 +54,27 @@ const quoted = (name: string, message: string | null) => (message ? `${name}, "$
 /** A decoded sentence continued after a colon: "The swap failed on chain: the strategy refused it: ...". */
 export const continued = (sentence: string) => (/^(The|It|Your) /.test(sentence) ? sentence[0]!.toLowerCase() + sentence.slice(1) : sentence);
 
-export function decodeFailure(error: unknown, logs: readonly string[], { strategy }: { strategy: string }): Failure {
+/**
+ * `strategy` is the market's strategy program, and `hooks` the transfer hook programs of the mints the
+ * transaction moves, so a refusal by either is named as theirs; `act` is what the transaction is, as a
+ * wallet holding too little is told it ("too little for this swap").
+ */
+export function decodeFailure(
+  error: unknown,
+  logs: readonly string[],
+  { strategy, hooks = [], act = "swap" }: { strategy: string; hooks?: readonly string[]; act?: "swap" | "transaction" },
+): Failure {
+  const TOO_LITTLE = `Your wallet holds too little for this ${act}.`;
   // Kit's RPC reads every number in an error as a bigint, which JSON has no word for.
   const raw = typeof error === "string" ? error : JSON.stringify(error, (_, v: unknown) => (typeof v === "bigint" ? Number(v) : v));
   const base = { name: null, number: null, message: null, program: null, raw };
 
   // Refused before any program ran: the fee payer cannot pay.
   if (raw === "InsufficientFundsForFee" || raw.includes('"InsufficientFundsForFee"')) {
-    return { ...base, class: "too_little", sentence: "Your wallet holds too little for this swap: it cannot pay the network fee." };
+    return { ...base, class: "too_little", sentence: `Your wallet holds too little for this ${act}: it cannot pay the network fee.` };
   }
   if (raw === "AccountNotFound" || raw.includes('"AccountNotFound"')) {
-    return { ...base, class: "too_little", sentence: "Your wallet holds too little for this swap: it has never held SOL, so it cannot pay the network fee." };
+    return { ...base, class: "too_little", sentence: `Your wallet holds too little for this ${act}: it has never held SOL, so it cannot pay the network fee.` };
   }
 
   // The innermost program fails first; its callers then report the same failure.
@@ -97,10 +112,13 @@ export function decodeFailure(error: unknown, logs: readonly string[], { strateg
   }
   if (program === strategy && number !== null && CANNOT_READ.has(number)) return { ...named, class: "cannot_read_state", sentence: `The strategy cannot read this market's state: ${words}.` };
   if (program === strategy) return { ...named, class: "strategy_refused", sentence: `The strategy refused it: ${words}.` };
+  if (program !== null && hooks.includes(program)) return { ...named, class: "hook_refused", sentence: `The token's transfer hook refused it: ${words.replace(/\.$/, "")}.` };
   if (program === PIPELINE_PROGRAM_ADDRESS) return { ...named, class: "router_refused", sentence: `Pipeline's router refused it: ${words}.` };
   if (program === TOKEN_PROGRAM_ADDRESS || program === TOKEN_2022_PROGRAM_ADDRESS) {
     const name = code !== null ? (TOKEN_ERRORS[code] ?? null) : null;
     if (name === "InsufficientFunds") return { ...named, name, class: "too_little", sentence: TOO_LITTLE };
+    const setting = program === TOKEN_2022_PROGRAM_ADDRESS && code !== null ? HOLDER_SETTINGS.get(code) : undefined;
+    if (setting) return { ...named, name: setting.name, class: "token_program_refused", sentence: setting.sentence };
     return { ...named, name, class: "token_program_refused", sentence: `The token program refused it: ${name ?? words}.` };
   }
   if (program === SYSTEM_PROGRAM_ADDRESS && (code === 1 || logs.some((l) => l.includes("insufficient lamports")))) {

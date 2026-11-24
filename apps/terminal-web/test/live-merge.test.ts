@@ -65,6 +65,46 @@ describe("reading a trade for the pair on show", () => {
   it("has no price when a mint's decimals are unknown", () => {
     expect(readTrade(trade(1, 0), { base: TOKEN, quote: SOL }, { [SOL]: 9, [TOKEN]: null }).price).toBeNull();
   });
+
+  it("names the pair a trade's price is in: the pair on show, flipped or not", () => {
+    expect(readTrade(trade(1, 0), { base: TOKEN, quote: SOL }, decimals).pricedIn).toEqual({ base: TOKEN, quote: SOL, onShow: true });
+    expect(readTrade(trade(1, 0), { base: SOL, quote: TOKEN }, decimals).pricedIn).toEqual({ base: SOL, quote: TOKEN, onShow: true });
+  });
+
+  describe("on a market of three mints (#122)", () => {
+    // Counterflow's order: QUOTE, X, BEAR; the pair on show is X for QUOTE.
+    const QUOTE = "JDjofR4qaaKLxhHc8YvfEQvJK7vryJC2kKjiLnZZ9GQi";
+    const X = "DHV6HBt5uahFGYE1D2kWDX7bt2n5aeWvqoYmnagtavHj";
+    const BEAR = "8JJThUNA5iPcAuZtLQP4PywLf5QR8eFZhAC6bwdtvG1L";
+    const three = { [QUOTE]: 6, [X]: 9, [BEAR]: 9 };
+    const onShow = { base: X, quote: QUOTE };
+
+    it("reads a trade between two mints other than the pair on show by its own pair, as the API gives it, not as a sell", () => {
+      // X sold for BEAR: by the quote mint order BEAR, later in the market's order, is that trade's quote, so it sold X.
+      const read = readTrade(trade(1, 0, 0, { input_mint: X, output_mint: BEAR, net_sent: "2000000000", received: "500000000", quote_mint: BEAR, base_mint: X, side: "sell" }), onShow, three);
+      expect(read.side).toBe("Sell");
+      expect(read.price).toBeCloseTo(0.5 / 2, 12);
+      expect(read.pricedIn).toEqual({ base: X, quote: BEAR, onShow: false });
+
+      const bought = readTrade(trade(1, 0, 0, { input_mint: BEAR, output_mint: QUOTE, net_sent: "1000000000", received: "3000000", quote_mint: QUOTE, base_mint: BEAR, side: "sell" }), onShow, three);
+      expect(bought.side).toBe("Sell");
+      expect(bought.pricedIn).toEqual({ base: BEAR, quote: QUOTE, onShow: false });
+      expect(bought.price).toBeCloseTo(3 / 1, 12);
+    });
+
+    it("reads a buy of BEAR paid in QUOTE as a buy, priced in QUOTE for one BEAR, never in the pair on show's mints", () => {
+      const read = readTrade(trade(1, 0, 0, { input_mint: QUOTE, output_mint: BEAR, net_sent: "3000000", received: "1000000000", quote_mint: QUOTE, base_mint: BEAR, side: "buy" }), onShow, three);
+      expect(read.side).toBe("Buy");
+      expect(read.pricedIn).toEqual({ base: BEAR, quote: QUOTE, onShow: false });
+      expect(read.price).toBeCloseTo(3, 12);
+    });
+
+    it("still reads a trade of the pair on show by the pair on show, flipped too", () => {
+      const sold = trade(1, 0, 0, { input_mint: X, output_mint: QUOTE, net_sent: "1000000000", received: "2000000", quote_mint: QUOTE, base_mint: X, side: "sell" });
+      expect(readTrade(sold, onShow, three)).toMatchObject({ side: "Sell", pricedIn: { base: X, quote: QUOTE, onShow: true } });
+      expect(readTrade(sold, { base: QUOTE, quote: X }, three)).toMatchObject({ side: "Buy", pricedIn: { base: QUOTE, quote: X, onShow: true } });
+    });
+  });
 });
 
 describe("merging candles", () => {

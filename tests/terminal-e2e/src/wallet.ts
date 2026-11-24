@@ -6,7 +6,7 @@
 // exposed function, so a test decides per request whether the "user" approves or declines.
 //
 // The key is the devnet test trader's, ~/.config/testing-pipeline/devnet/e2e-trader.json, and only
-// on devnet runs is it read: on the recorded fixtures (CI) the wallet holds the trader's address and no
+// on devnet runs and local demo runs (which send to the local validator) is it read: on the recorded fixtures (CI) the wallet holds the trader's address and no
 // key, so it connects, quotes and reviews exactly as recorded, and can decline but never sign.
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -23,6 +23,7 @@ import {
   type KeyPairSigner,
   type Transaction,
 } from "@solana/kit";
+import { SEND_RPC } from "./target.ts";
 
 export const TEST_WALLET_NAME = "Aviary Test Wallet";
 /** The test trader's address: ~/.config/testing-pipeline/devnet/e2e-trader.json's public key, which holds devnet SOL. */
@@ -127,12 +128,22 @@ export async function connectTestWallet(page: Page, button: Locator) {
   await item.click();
 }
 
-/** Installs the wallet into a page; call before the first navigation. Without a signer it declines every signature. */
+/** The project's devnet wallet, ~/.config/testing-pipeline/devnet/wallet.json, as a signer: the wallet page's devnet test unwraps its wrapped SOL (#122). */
+export async function projectWalletSigner(): Promise<KeyPairSigner> {
+  const file = `${homedir()}/.config/testing-pipeline/devnet/wallet.json`;
+  if (!existsSync(file)) throw new Error(`the project's devnet wallet is not at ${file}`);
+  return createKeyPairSignerFromBytes(new Uint8Array(JSON.parse(readFileSync(file, "utf8")) as number[]));
+}
+
+/**
+ * Installs the wallet into a page; call before the first navigation. It holds the signer's address,
+ * the test trader's by default; without a signer it holds the test trader's and declines every signature.
+ */
 export async function installTestWallet(page: Page, signer: KeyPairSigner | null): Promise<TestWallet> {
   let decline = false;
   const wallet: TestWallet = { requests: [], sent: [], declineNext: () => void (decline = true) };
   const decodeTx = getTransactionDecoder();
-  const rpc = signer ? createSolanaRpc(process.env.RPC_URL ?? "") : null;
+  const rpc = signer ? createSolanaRpc(SEND_RPC) : null;
   await page.exposeFunction("__testWalletSignAndSend", async (b64: string) => {
     const tx = decodeTx.decode(getBase64Encoder().encode(b64));
     wallet.requests.push(tx);
@@ -146,6 +157,7 @@ export async function installTestWallet(page: Page, signer: KeyPairSigner | null
     wallet.sent.push(signature);
     return signature;
   });
-  await page.addInitScript(register, { name: TEST_WALLET_NAME, icon: ICON, address: TEST_TRADER, publicKey: Array.from(getAddressEncoder().encode(TEST_TRADER as never)) } satisfies InitArgs);
+  const holds = signer?.address ?? TEST_TRADER;
+  await page.addInitScript(register, { name: TEST_WALLET_NAME, icon: ICON, address: holds, publicKey: Array.from(getAddressEncoder().encode(holds as never)) } satisfies InitArgs);
   return wallet;
 }

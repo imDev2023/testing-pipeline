@@ -925,6 +925,30 @@ The trade box's other tests (`src/trade.spec.ts`) never send, so they run on the
 Record the fixtures on an empty database (`DATABASE_URL` naming a new one), or the recording lacks the history a fresh CI database asks for.
 The production build is checked for the test wallet with `pnpm --filter terminal-web check:no-test-wallet` after it is built.
 
+### Aviary's hooked-mints demo
+
+The local demo run of [#122](https://github.com/imDev2023/testing-pipeline/issues/122): markets of Pipeline's `test-strategy-cp` trading wrapped SOL against Token-2022 mints hooked by Pipeline's `test-hook` (an allowlist with one extra account) and `test-hook-refill` (four fixed extra accounts, two writable), bought and sold from the trade box with the Playwright test wallet, each prepared swap checked for the accounts the mint's `ExtraAccountMetaList` names.
+From the repo's root, each long-running command in a shell of its own (agents: `run_in_background`, stopped with TaskStop):
+
+```sh
+scripts/fetch-router.sh && scripts/fetch-pipeline.sh sdk programs
+tests/terminal-e2e/demo/hooked-validator.sh fixtures/hooked-demo/ledger --rpc-port 8977 \
+  --faucet-port 9977 --gossip-port 8987 --dynamic-port-range 8400-8450
+pnpm --filter terminal-e2e hooked:setup     # the markets, into fixtures/hooked-demo/markets.json
+DATABASE_URL=<a fresh migrated database> E2E_API_PORT=8871 E2E_WEB_PORT=3171 pnpm --filter terminal-e2e hooked:local
+```
+
+- `hooked-validator.sh` loads devnet's router (refused unless it matches the pin) with its config, `test-strategy-cp` at its own address upgradeable by the demo's throwaway key `fixtures/hooked-demo/authority.json`, and the two hooks; it needs no workspace program built.
+- `hooked:setup` registers the strategy, makes both mints, their hooks' lists and markets, seeds them with the strategy's `deposit`, and funds the test trader, Aviary's fee wallet (which pays for quotes' simulations) and its wrapped-SOL account, read from `apps/terminal-api/wrangler.jsonc`.
+- `hooked:local` runs Playwright with `E2E_RPC=local` (`E2E_LOCAL_RPC`, default `http://127.0.0.1:8977`): the API reads the validator and the test wallet sends to it; the signatures go to `tests/terminal-e2e/test-results/hooked.json`.
+  Pick ports no other session holds: on 2026-11-24 another worktree's API held 8851.
+
+### The wallet page on devnet
+
+`pnpm --filter terminal-e2e wallet:devnet` (`E2E_WALLET_DEVNET`, never in CI) holds the project's devnet wallet in the test wallet, compares every page of its swaps on the wallet page with Pipeline's hosted `/v1/traders/{address}/trades`, and unwraps its wrapped SOL from the page; the signature goes to `tests/terminal-e2e/test-results/unwrap.json`.
+The wallet page's tests on the recorded fixtures (`src/wallet.spec.ts`) review an unwrap for the test trader, so before recording give it wrapped SOL with `pnpm --filter terminal-e2e wrap-sol` (0.01 SOL of `e2e-trader.json`'s, by default), after any `swaps:devnet` run, since a sale into SOL through the trade box closes that account.
+The three-mint market's tests (`src/trade.spec.ts`, #122) review a swap in each direction on devnet's Counterflow market `FNdAWctS...` for the test trader, so it must hold all three mints when recording: `swaps:devnet` trades them first.
+
 ## Known problems
 
 - **Node 26 and public devnet WebSockets.**

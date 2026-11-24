@@ -4,7 +4,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { postKeeperHeartbeat, seedKeeperRecords } from "./keeper";
 import { screenshot } from "./screenshot";
-import { CP_MARKET, REFUSING_MARKET } from "./markets";
+import { CP_MARKET, REFUSING_MARKET, THREE_MINT_MARKET } from "./markets";
 import { CANARY_CURVE_STRATEGY, CANARY_MARKETS } from "./canary";
 import { EXPLAINED_MARKET, EXPLAINED_STRATEGY, HOSTILE_TEXT } from "./explanation";
 import { OWN_ORIGINS } from "./target";
@@ -159,6 +159,18 @@ const unexplained = async (page: Page) => {
   await expect(panel.getByRole("button", { name: "This is wrong" })).toHaveCount(0);
 };
 
+/** The wallet page with the test wallet connected from its own button: every panel loaded, and with "unwrap" its unwrap reviewed. */
+const walletReady = (then: "connected" | "unwrap") => async (page: Page) => {
+  await connectTestWallet(page, page.getByRole("main").getByRole("button", { name: "Connect wallet" }));
+  await expect(page.getByRole("region", { name: "What you hold that trades on Pipeline" }).getByRole("table")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Your swaps through Pipeline" }).getByRole("table")).toBeVisible();
+  const unwrap = page.getByRole("region", { name: "Wrapped SOL" });
+  await expect(unwrap.getByRole("button", { name: "Unwrap" })).toBeVisible();
+  if (then === "connected") return;
+  await unwrap.getByRole("button", { name: "Unwrap" }).click();
+  await expect(unwrap.getByRole("button", { name: "Sign in wallet" })).toBeEnabled();
+};
+
 const PAGES: { name: string; path: string; status: number; ready: (page: Page) => Promise<unknown>; wallet?: boolean }[] = [
   { name: "feed", path: "/", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1)).toBeVisible() },
   {
@@ -240,6 +252,12 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
   { name: "market-trade-review", path: `/markets/${CP_MARKET}`, status: 200, ready: typed("0.1", "connect", "review"), wallet: true },
   { name: "market-trade-too-little", path: `/markets/${CP_MARKET}`, status: 200, ready: typed("500", "connect", "failed"), wallet: true },
   { name: "market-trade-refused", path: `/markets/${REFUSING_MARKET}`, status: 200, ready: typed("0.01", "connect", "refused"), wallet: true },
+  // A market of three mints (#122), whose trades between two mints other than the pair on show are priced in their own pair.
+  { name: "market-three-mints", path: `/markets/${THREE_MINT_MARKET}`, status: 200, ready: marketReady("chart") },
+  // The wallet page (#122): without a wallet; with the test wallet, its head, its wrapped SOL, what it holds and its swaps; and its unwrap reviewed.
+  { name: "wallet", path: "/wallet", status: 200, ready: (page: Page) => expect(page.getByText(/^Connect a wallet to see what it holds that trades on Pipeline/)).toBeVisible() },
+  { name: "wallet-connected", path: "/wallet", status: 200, ready: walletReady("connected"), wallet: true },
+  { name: "wallet-unwrap-review", path: "/wallet", status: 200, ready: walletReady("unwrap"), wallet: true },
   // Canary on the pages (#125): the open bonding curve's notice and tick, the outside builder's cost
   // fail, a stranded market with no trade box, a market that refuses every trade, and a strategy's lines.
   {
