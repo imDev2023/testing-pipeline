@@ -8,6 +8,8 @@
 // indexes is published to the rooms with a viewer (./liveRoom).
 import { DurableObject } from "cloudflare:workers";
 import { createDb } from "terminal-db";
+import { startCanary } from "./canary";
+import { drainCanaryOutbox } from "./canaryTriggers";
 import { logsSubscribeRequest, parseLogsMessage, RpcError, type IndexResult } from "terminal-indexer";
 import type { Bindings } from "./env";
 import { IndexerCore, ROUTER } from "./indexerCore";
@@ -46,6 +48,42 @@ export class Indexer extends DurableObject<Bindings> {
 
   private queue: string[] = [];
   private draining: Promise<void> | null = null;
+
+  private canaryDrain: Promise<void> = Promise.resolve();
+
+  /**
+   * After a job that woke Postgres, Canary's triggers read the outbox on from their cursor
+   * (./canaryTriggers), so the database is never woken only to look (PIPESCOPE-127). The drain runs
+   * behind the job, which returns (and publishes its trades) without waiting for it.
+   */
+  private async afterJob<T>(work: () => Promise<T>): Promise<T> {
+    const before = this.indexer().databaseUses();
+    try {
+      return await work();
+    } finally {
+      if (this.indexer().databaseUses() !== before) this.ctx.waitUntil(this.drainOutbox());
+    }
+  }
+
+  /**
+   * Reads Canary's triggers from the outbox: every drain goes through this one object, one at a
+   * time, so no event is read by two drains at once (the sweep job asks for it here too).
+   */
+  async drainOutbox(): Promise<void> {
+    this.canaryDrain = this.canaryDrain.then(() => this.drainCanary());
+    await this.canaryDrain;
+  }
+
+  private async drainCanary(): Promise<void> {
+    const { db, close } = createDb(this.env.HYPERDRIVE.connectionString);
+    try {
+      await drainCanaryOutbox(db, startCanary(this.env), Date.now());
+    } catch (e) {
+      this.failed("starting Canary's runs from the outbox", e);
+    } finally {
+      await close();
+    }
+  }
 
   private indexer(): IndexerCore {
     this.core ??= new IndexerCore({
@@ -120,7 +158,7 @@ export class Indexer extends DurableObject<Bindings> {
     while (this.queue.length) {
       const batch = this.queue.splice(0, this.queue.length);
       try {
-        await this.publish(await this.indexer().indexSignatures(batch));
+        await this.publish(await this.afterJob(() => this.indexer().indexSignatures(batch)));
       } catch (e) {
         this.failed("indexing what the live socket reported", e);
       }
@@ -155,7 +193,7 @@ export class Indexer extends DurableObject<Bindings> {
   async reconcile(version?: string): Promise<IndexerStatus> {
     this.checkVersion(version);
     try {
-      const { indexed } = await this.indexer().reconcile();
+      const { indexed } = await this.afterJob(() => this.indexer().reconcile());
       this.reconciledAt = new Date().toISOString();
       // What reconciliation found reaches the pages too: the socket's misses, and every trade while it is closed.
       await this.publish(indexed).catch((e: unknown) => this.failed("publishing what reconciliation indexed", e));
@@ -172,7 +210,7 @@ export class Indexer extends DurableObject<Bindings> {
   async snapshot(version?: string): Promise<IndexerStatus> {
     this.checkVersion(version);
     try {
-      await this.indexer().snapshot();
+      await this.afterJob(() => this.indexer().snapshot());
       this.snapshotAt = new Date().toISOString();
       await this.fetchMetadata();
     } catch (e) {
@@ -186,7 +224,7 @@ export class Indexer extends DurableObject<Bindings> {
   async reconcileStrategies(version?: string): Promise<IndexerStatus> {
     this.checkVersion(version);
     try {
-      await this.indexer().reconcileStrategies();
+      await this.afterJob(() => this.indexer().reconcileStrategies());
       this.strategiesReconciledAt = new Date().toISOString();
     } catch (e) {
       this.failed("reconciling the strategy programs", e);
@@ -199,7 +237,7 @@ export class Indexer extends DurableObject<Bindings> {
   async watchPrograms(version?: string): Promise<IndexerStatus> {
     this.checkVersion(version);
     try {
-      await this.indexer().watchPrograms();
+      await this.afterJob(() => this.indexer().watchPrograms());
       this.watchedAt = new Date().toISOString();
     } catch (e) {
       this.failed("watching the programs' deploys", e);

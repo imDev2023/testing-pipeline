@@ -490,3 +490,93 @@ export const Keeper = z.object({
   records: z.object({ ok: z.boolean(), error: z.string().nullable() }),
 });
 export type Keeper = z.infer<typeof Keeper>;
+
+// ---- Canary (#124) ----
+
+/** One of Canary's five outcomes (docs/spec/pipescope-canary.md, Outcomes). */
+export const CanaryOutcome = z.enum(["pass", "warn", "fail", "not run", "noted"]);
+export type CanaryOutcome = z.infer<typeof CanaryOutcome>;
+
+/** A program as of one deploy, as a Canary result names it. */
+const CanaryRecordVersion = z.object({ deploy_slot: z.number().int().nullable(), executable_sha256: z.string().nullable() });
+
+/**
+ * One Canary result (docs/spec/pipescope-canary.md, Records), with the sentences code writes for it
+ * (docs/spec/pipescope-screens.md, Canary outcomes), so the page, the trade box and the Telegram bot
+ * show the same words: `reason`, the binary's sentence; `about`, what the check does; `ran`, when and
+ * on which version it ran.
+ */
+export const CanaryResult = z.object({
+  id: z.string(),
+  check: z.string(),
+  outcome: CanaryOutcome,
+  reason: z.string(),
+  about: z.string(),
+  ran: z.string(),
+  harness: z.string(),
+  slot: z.number().int(),
+  run_at: Time,
+  strategy_version: CanaryRecordVersion,
+  router_version: CanaryRecordVersion,
+  inputs: z.unknown(),
+  numbers: z.unknown(),
+});
+export type CanaryResult = z.infer<typeof CanaryResult>;
+
+/** A strategy version, as Canary's endpoints name it. */
+const CanaryVersion = z.object({ program: Address, deploy_slot: z.number().int(), executable_sha256: z.string().nullable(), current: z.boolean() });
+
+/**
+ * `GET /v1/markets/{market}/canary[?version=<deploy slot>]`: the market's latest result of each check
+ * under its strategy's current version, or the version asked for, and the "could not sell back"
+ * notice of the current version's results (CANARY-21), one sentence per result it rests on, each
+ * stating its condition; empty when none does.
+ */
+export const CanaryResults = z.object({
+  market: Address,
+  version: CanaryVersion,
+  results: z.array(CanaryResult),
+  could_not_sell_back: z.array(z.object({ check: z.string(), sentence: z.string() })),
+});
+export type CanaryResults = z.infer<typeof CanaryResults>;
+
+/**
+ * `GET /v1/strategies/{program}/versions/{slot}/canary`: the version's roll-up from its markets'
+ * latest results, per check how many markets got each outcome and which warn or fail (a count for
+ * one check, never a score), and its newest run.
+ */
+export const CanaryRollup = z.object({
+  program: Address,
+  deploy_slot: z.number().int(),
+  current: z.boolean(),
+  markets: z.number().int(),
+  checks: z.record(z.string(), z.object({ about: z.string(), outcomes: z.partialRecord(CanaryOutcome, z.number().int()), warn: z.array(Address), fail: z.array(Address) })),
+  last_run: z
+    .object({ trigger: z.string(), delay_ms: z.number().int(), markets: z.number().int(), started_at: Time, finished_at: Time.nullable() })
+    .nullable(),
+});
+export type CanaryRollup = z.infer<typeof CanaryRollup>;
+
+/**
+ * `GET /v1/strategies/{program}/versions/{slot}/canary/schedule`: the runs the version's
+ * `CanaryRun` still holds, earliest first, such as a new market's runs 1 hour and 1 day on.
+ */
+export const CanarySchedule = z.object({
+  program: Address,
+  deploy_slot: z.number().int(),
+  runs: z.array(z.object({ trigger: z.string(), delay_ms: z.number().int(), due_at: Time, markets: z.number().int(), done: z.number().int(), started: z.boolean() })),
+});
+export type CanarySchedule = z.infer<typeof CanarySchedule>;
+
+/**
+ * `POST /v1/canary/reruns`: the owner's re-run (`pnpm canary:rerun`), a payload naming a market or a
+ * strategy, signed by the operator wallet (`CANARY_OPERATOR`) over `canaryRerunMessage(payload)`.
+ */
+export const CanaryRerun = z.object({ payload: z.string().max(1024), signature: z.string().min(64).max(100) }).strict();
+export const CanaryRerunPayload = z
+  .object({ market: Address.optional(), strategy: Address.optional(), wallet: Address, at: Time })
+  .strict()
+  .refine((p) => (p.market === undefined) !== (p.strategy === undefined), "A re-run names a market or a strategy.");
+export type CanaryRerunPayload = z.infer<typeof CanaryRerunPayload>;
+export const CANARY_RERUN_DOMAIN = "canary-rerun/v1";
+export const canaryRerunMessage = (payload: string): Uint8Array => new TextEncoder().encode(`${CANARY_RERUN_DOMAIN}\n${payload}`);

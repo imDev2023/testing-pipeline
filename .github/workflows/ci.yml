@@ -249,7 +249,7 @@ jobs:
         run: source scripts/toolchain-env.sh && cd programs && cargo kani --workspace -j --output-format=terse
 
   canary:
-    name: canary (fmt, clippy, tests)
+    name: canary (fmt, clippy, tests, image)
     needs: changes
     if: needs.changes.outputs.canary == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
@@ -294,6 +294,10 @@ jobs:
         run: cd crates && cargo clippy --all-targets -- -D warnings
       - name: Tests (LiteSVM through devnet's router)
         run: cd crates && cargo test
+      - name: Canary's container image builds, and its binary starts with no network (crates/canary/Dockerfile)
+        run: |
+          docker build --platform linux/amd64 -t terminal-canary:ci -f crates/canary/Dockerfile crates
+          docker run --rm --platform linux/amd64 --network none --entrypoint /usr/local/bin/canary terminal-canary:ci --help
 
   # Aviary (docs/spec/pipescope-architecture.md, Build tickets): type-check, lint, the unit tests on
   # a Postgres service, and Playwright on a local build of both Workers, whose API reads recorded

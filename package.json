@@ -16,7 +16,8 @@
         "terminal:dev:web": "pnpm --filter terminal-web preview",
         "terminal:db:migrate": "pnpm --filter terminal-db migrate",
         "terminal:lint": "eslint apps/terminal-api apps/terminal-web packages/terminal-db packages/terminal-explainer packages/terminal-indexer tests/terminal-e2e tests/devnet",
-        "terminal:e2e": "pnpm --filter terminal-e2e e2e"
+        "terminal:e2e": "pnpm --filter terminal-e2e e2e",
+        "canary:rerun": "node apps/terminal-api/scripts/canary-rerun.ts"
     },
     "devDependencies": {
         "@eslint/js": "10.0.1",

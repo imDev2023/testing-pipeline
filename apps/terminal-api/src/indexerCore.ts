@@ -552,7 +552,15 @@ export class IndexerCore {
     });
   }
 
+  /** How many times this instance has opened Postgres: a job that moved it woke the database, so what follows may read it too (Canary's triggers, ./indexer). */
+  databaseUses(): number {
+    return this.uses;
+  }
+
+  private uses = 0;
+
   private async withDb<T>(work: (db: Db) => Promise<T>): Promise<T> {
+    this.uses++;
     const { db, close } = this.deps.openDb();
     try {
       return await work(db);

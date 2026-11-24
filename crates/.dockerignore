@@ -1,0 +1,4 @@
+# The context of Canary's image (canary/Dockerfile) is this folder; only the sources go in.
+target/
+canary/tests/
+**/*.so

@@ -19,7 +19,13 @@
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   // KEEPER_WALLET: the keeper runner's wallet, whose page /keeper is and whose signed heartbeats are
   // kept (docs/spec/keeper-runner.md, "The keeper wallet").
-  "vars": { "CLUSTER": "devnet", "KEEPER_WALLET": "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2" },
+  // CANARY_OPERATOR: the project's devnet wallet, whose signed requests alone re-run Canary
+  // (`pnpm canary:rerun`, POST /v1/canary/reruns).
+  "vars": {
+    "CLUSTER": "devnet",
+    "KEEPER_WALLET": "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
+    "CANARY_OPERATOR": "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt"
+  },
   // RPC_URL is the one secret here (PIPESCOPE-37): the Helius devnet URL, which carries the key.
   // `wrangler dev` reads it from the environment, which direnv fills from the project's .env.
   "secrets": { "required": ["RPC_URL"] },
@@ -27,17 +33,33 @@
   // `wrangler dev` connects straight to the database that DATABASE_URL names, passed in by
   // scripts/dev.ts as CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE.
   "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "00000000000000000000000000000000" }],
-  // The indexer, one SQLite-backed Durable Object (docs/spec/pipescope-architecture.md, Indexer), and
-  // the live rooms, one per market and one for the feed, holding browsers' hibernatable WebSockets.
+  // The indexer, one SQLite-backed Durable Object (docs/spec/pipescope-architecture.md, Indexer), the
+  // live rooms, one per market and one for the feed, holding browsers' hibernatable WebSockets, and
+  // Canary's runs, one per strategy version, with its container's object ("Canary runner").
   "durable_objects": {
     "bindings": [
       { "name": "INDEXER", "class_name": "Indexer" },
-      { "name": "LIVE_ROOMS", "class_name": "LiveRoom" }
+      { "name": "LIVE_ROOMS", "class_name": "LiveRoom" },
+      { "name": "CANARY_RUNS", "class_name": "CanaryRun" },
+      { "name": "CANARY_CONTAINER", "class_name": "CanaryContainer" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Indexer"] },
-    { "tag": "v2", "new_sqlite_classes": ["LiveRoom"] }
+    { "tag": "v2", "new_sqlite_classes": ["LiveRoom"] },
+    { "tag": "v3", "new_sqlite_classes": ["CanaryRun", "CanaryContainer"] }
+  ],
+  // Canary's binary (crates/canary/Dockerfile, built from crates/) as one container on `basic` (a
+  // quarter of a vCPU, 1 GiB, 4 GB of disk), one at a time (CANARY-24); its sleep and its internet
+  // access off are set on the class, apps/terminal-api/src/canaryContainer.ts.
+  "containers": [
+    {
+      "class_name": "CanaryContainer",
+      "image": "../../crates/canary/Dockerfile",
+      "image_build_context": "../../crates",
+      "instance_type": "basic",
+      "max_instances": 1
+    }
   ],
   // Public caches up to 60 s stale and the copies of token images (PIPESCOPE-88); simulated locally.
   "kv_namespaces": [{ "binding": "TERMINAL_CACHE" }],
