@@ -13,8 +13,8 @@ export type CanaryRead = { ok: true; value: CanaryResults } | { ok: false; messa
 
 /**
  * The notice under the head of a strategy page and its market pages, until the new version has results
- * of its own; once the new version has its explanation (#127), it says only the tests are pending, so
- * it never contradicts the explanation shown below it.
+ * of its own; once the new version has its explanation (#127), or when the page could not tell, it
+ * says only the tests are pending, so it never contradicts the explanation shown below it.
  */
 export function UpgradeNotice({ upgrade, explained = false }: { upgrade: CanaryUpgrade | null; explained?: boolean }) {
   if (!upgrade) return null;

@@ -4,7 +4,8 @@
 // explanation, a report against its key, with an optional note, which reaches the owner through
 // `pnpm explainer:reports`. The API limits reports per address and says how long to wait.
 import { useId, useState, type FormEvent } from "react";
-import { ExplanationReportReceived, REPORT_NOTE_MAX } from "terminal-api/contract";
+import { REPORT_NOTE_MAX } from "terminal-api/config";
+import { ExplanationReportReceived } from "terminal-api/contract";
 import { ApiFailure, postToApi } from "@/api";
 import { BRAND } from "@/brand";
 import styles from "./Explanation.module.css";

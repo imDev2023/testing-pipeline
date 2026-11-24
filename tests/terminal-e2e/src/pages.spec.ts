@@ -126,7 +126,7 @@ const explained = async (page: Page) => {
   const panel = await explanation(page);
   await expect(panel.getByText(/^Written by an AI on \d{1,2} [A-Z][a-z]{2} \d{4} from on-chain data and Canary results for this strategy version \(deployed in slot [\d,]+\)\. It can be wrong\. It is not an audit, a safety rating or advice\.$/)).toBeVisible();
   await expect(panel.getByRole("heading", { name: "What the evidence does not settle" })).toBeVisible();
-  await expect(panel.locator("details").filter({ has: page.getByText(/^Read the full explanation \(\d+ points\)$/) })).not.toHaveAttribute("open");
+  await expect(panel.locator("details").filter({ has: page.getByText(/^Read the full explanation \(\d+ points?\)$/) })).not.toHaveAttribute("open");
   await expect(panel.getByRole("button", { name: "This is wrong" })).toBeVisible();
   return panel;
 };
@@ -134,6 +134,14 @@ const explained = async (page: Page) => {
 /** A chip, clicked, opens the evidence and marks the row with its id, in view with the focus on it. */
 const chipShowsRow = async (page: Page, chip: Locator) => {
   const id = (await chip.textContent())!;
+  // As tall to the touch as every other control: 44 px on phones, 32 px wider (--control-min-height).
+  const reach = (page.viewportSize()?.width ?? 0) <= 720 ? 20 : 14;
+  await chip.scrollIntoViewIfNeeded();
+  const hits = await chip.evaluate((el, dy) => {
+    const r = el.getBoundingClientRect();
+    return [-dy, dy].map((d) => document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2 + d) === el);
+  }, reach);
+  expect(hits).toEqual([true, true]);
   await chip.click();
   const row = page.locator(`#explanation-evidence-${id}`);
   await expect(row).toHaveAttribute("data-marked", "true");
@@ -344,6 +352,8 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
       await marketReady("chart")(page);
       const panel = await explained(page);
       await expect(panel.getByText(/^It describes the strategy version, not this market: where it says "the sampled market", it means the strategy's busiest one\./)).toBeVisible();
+      // A summary chip, far above its row on a long page, brings the row into view; then a point's.
+      await chipShowsRow(page, panel.locator("p").getByRole("button", { name: /^Show evidence / }).first());
       await panel.getByText(/^Read the full explanation/).click();
       await expect(panel.getByRole("heading", { name: "Who can change it" })).toBeVisible();
       await chipShowsRow(page, panel.locator("li[data-basis]").getByRole("button", { name: /^Show evidence / }).last());

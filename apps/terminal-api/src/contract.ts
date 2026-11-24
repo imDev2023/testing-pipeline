@@ -2,6 +2,7 @@
 // client of the API (docs/spec/pipescope-architecture.md, "terminal-web"). Every endpoint is
 // labelled unstable until v1 ships (PIPESCOPE-32).
 import { z } from "zod";
+import { REPORT_NOTE_MAX } from "./config";
 
 /** `GET /health`: healthy only when the database and the RPC both answer. */
 export const Health = z.object({
@@ -1066,10 +1067,7 @@ export const StrategyExplanation = z.object({
 });
 export type StrategyExplanation = z.infer<typeof StrategyExplanation>;
 
-/** The longest note a "This is wrong" report may carry, in characters. */
-export const REPORT_NOTE_MAX = 600;
-
-/** `POST /v1/explanations/{key}/reports`: "This is wrong", with what the reader says is wrong, if anything. */
+/** `POST /v1/explanations/{key}/reports`: "This is wrong", with what the reader says is wrong, if anything, up to REPORT_NOTE_MAX characters (./config). */
 export const ExplanationReport = z.object({ note: z.string().max(REPORT_NOTE_MAX).optional() }).strict();
 export type ExplanationReport = z.infer<typeof ExplanationReport>;
 

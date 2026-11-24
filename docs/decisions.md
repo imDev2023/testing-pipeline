@@ -2673,7 +2673,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-154: A "This is wrong" report
 
 - Question: What does a "This is wrong" report carry, and what can be reported?
-- Answer: A report is `POST /v1/explanations/{key}/reports` against any key that has an explanation, with an optional note of up to 600 characters (`REPORT_NOTE_MAX` in the API's contract), counted against the 10 reports a minute per address of `PIPESCOPE-90`; `pnpm explainer:reports` lists it with its key, the strategy version and the note.
+- Answer: A report is `POST /v1/explanations/{key}/reports` against any key that has an explanation, with an optional note of up to 600 characters (`REPORT_NOTE_MAX` in the API's config module), counted against the 10 reports a minute per address of `PIPESCOPE-90`; `pnpm explainer:reports` lists it with its key, the strategy version and the note.
 - Alternatives: A report with no note; reports only against the version's current key, which would refuse a reader whose page was open while the key changed.
 - Specified in: [`docs/spec/pipescope-explainer.md`, Presentation](spec/pipescope-explainer.md#presentation)
 - Changes by: spec only

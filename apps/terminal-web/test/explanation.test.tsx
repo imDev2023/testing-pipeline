@@ -157,3 +157,30 @@ describe("a strategy's description cut at its cap", () => {
     expect(textOf(renderToStaticMarkup(<StrategyDescription text="A whole description." cut={false} />))).toBe("A whole description.");
   });
 });
+
+describe("an explanation of one point and one item of evidence", () => {
+  const sample = samples["constant-product"]!;
+  const output = { ...sample.outputs.pass, claims: sample.outputs.pass.claims.slice(0, 1) };
+  const html = renderToStaticMarkup(<ExplanationView data={served(output, sample.evidence.slice(0, 1))} />);
+
+  it("counts them in the singular", () => {
+    expect(textOf(html)).toContain("Read the full explanation (1 point)");
+    expect(textOf(html)).toContain("The evidence it was given (1 item)");
+  });
+
+  it("gives every element a class it has, never \"undefined\"", () => {
+    expect(html).not.toMatch(/class="[^"]*undefined/);
+  });
+
+  it("labels its unknowns by an id no other panel on the page shares", () => {
+    const two = renderToStaticMarkup(
+      <>
+        <ExplanationView data={served(output, sample.evidence)} />
+        <ExplanationView data={served(output, sample.evidence)} />
+      </>,
+    );
+    const labels = [...two.matchAll(/aria-labelledby="([^"]+)"[^>]*><h3 id="\1"/g)].map((m) => m[1]);
+    expect(labels).toHaveLength(2);
+    expect(new Set(labels).size).toBe(2);
+  });
+});

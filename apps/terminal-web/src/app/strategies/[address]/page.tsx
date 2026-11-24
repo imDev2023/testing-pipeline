@@ -46,7 +46,9 @@ export default async function StrategyPage({ params }: Props) {
   }
   const strategy = read.value;
   const [canary, explanation] = await Promise.all([strategy.current_version ? readVersionCanary(strategy.program, strategy.current_version.deploy_slot) : null, readStrategyExplanation(strategy.program)]);
-  const explained = explanation.ok && explanation.value.explanation !== null;
+  // The notice names the explanation as pending only when the read says there is none: when the read
+  // failed the panel loads it on its own and may show one.
+  const explained = !explanation.ok || explanation.value.explanation !== null;
   return (
     <div className={page.page}>
       <header className={styles.head}>

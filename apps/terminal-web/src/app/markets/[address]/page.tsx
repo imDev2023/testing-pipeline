@@ -52,7 +52,7 @@ export default async function MarketPage({ params }: Props) {
   const quote = mint(value.quote_mint);
   return (
     <div className={bands.page}>
-      <MarketHead market={value} base={base} quote={quote} canary={canary} explained={explanation.ok && explanation.value.explanation !== null} />
+      <MarketHead market={value} base={base} quote={quote} canary={canary} explained={!explanation.ok || explanation.value.explanation !== null} />
       <div className={`${bands.top} ${bands.withTrade}`}>
         {/* The chart's length and Flip are read from the page's address. */}
         <Suspense fallback={null}>

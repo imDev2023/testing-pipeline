@@ -12,7 +12,7 @@
 // evidence it was given, whose row a chip opens and marks; and "This is wrong". Every sentence the
 // model wrote is a text node in the serif, never markup. With no explanation for the version, one
 // line says so; the notice about text addressed to AI tools shows either way.
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useId, useRef, useState, type ReactNode } from "react";
 import { StrategyExplanation, type ExplanationClaim, type ExplanationSentence } from "terminal-api/contract";
 import { getFromApi } from "@/api";
 import { PanelFrame, useLoad } from "../Panel";
@@ -35,6 +35,9 @@ export const TOPIC_TITLES: Readonly<Record<ExplanationClaim["topic"], string>> =
   protection: "What protects your trade",
   author: "What its author says",
 };
+
+/** "1 point", "5 points". */
+const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
 /** The id of an evidence row on the page, which a chip points at. */
 export const evidenceRowId = (id: string) => `explanation-evidence-${id}`;
@@ -87,18 +90,23 @@ function ExplanationBody({ data, onMarket }: { data: StrategyExplanation; onMark
 
 function Shown({ explanation, notice, onMarket }: { explanation: Shown; notice: ReactNode; onMarket: boolean }) {
   const [marked, setMarked] = useState<string | null>(null);
+  const unknownsHeading = useId();
   const evidence = useRef<HTMLDetailsElement>(null);
   const known = new Set(explanation.evidence.map((e) => e.id));
 
-  /** A chip: opens the evidence, marks the row it cites, and brings it into view with the focus on it. */
+  /**
+   * A chip: opens the evidence, marks the row it cites, and brings it into view with the focus on it.
+   * The page jumps rather than glides: on a long phone page a smooth scroll is cut short by the
+   * panels around it settling, and stops with the row still out of sight; a jump also moves nothing
+   * for a reader who asked for reduced motion.
+   */
   const show = useCallback((id: string) => {
     setMarked(id);
     if (evidence.current) evidence.current.open = true;
     requestAnimationFrame(() => {
       const row = document.getElementById(evidenceRowId(id));
       if (!row) return;
-      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      row.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
+      row.scrollIntoView({ block: "center", behavior: "instant" });
       row.focus({ preventScroll: true });
     });
   }, []);
@@ -119,8 +127,8 @@ function Shown({ explanation, notice, onMarket }: { explanation: Shown; notice: 
         ))}
       </p>
       {onMarket && <p className={styles.note}>{MARKET_LINE}</p>}
-      <section className={styles.part} aria-labelledby="explanation-unknowns">
-        <h3 id="explanation-unknowns" className={styles.partTitle}>
+      <section className={styles.part} aria-labelledby={unknownsHeading}>
+        <h3 id={unknownsHeading} className={styles.partTitle}>
           What the evidence does not settle
         </h3>
         {explanation.unknowns.length ? (
@@ -130,7 +138,7 @@ function Shown({ explanation, notice, onMarket }: { explanation: Shown; notice: 
         )}
       </section>
       <details className={styles.more}>
-        <summary>Read the full explanation ({explanation.claims.length} points)</summary>
+        <summary>Read the full explanation ({count(explanation.claims.length, "point")})</summary>
         <p className={styles.key} aria-hidden="true">
           <span className={`${styles.keyItem} ${styles.confirmed}`}>stated by the evidence</span>
           <span className={`${styles.keyItem} ${styles.inferred}`}>inferred from it</span>
@@ -151,7 +159,7 @@ function Shown({ explanation, notice, onMarket }: { explanation: Shown; notice: 
         ))}
       </details>
       <details className={styles.more} ref={evidence}>
-        <summary>The evidence it was given ({explanation.evidence.length} items)</summary>
+        <summary>The evidence it was given ({count(explanation.evidence.length, "item")})</summary>
         <p className={styles.note}>What the model read, each item under the id its sentences cite, with where Aviary read it. Author text is set in the author&apos;s style and is not verified.</p>
         <div className={styles.evidence} role="list" aria-label="The evidence it was given">
           {explanation.evidence.map((e) => (
