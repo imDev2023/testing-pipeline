@@ -184,6 +184,14 @@
   font-weight: var(--strong-weight);
 }
 
+/* The pair a trade between two other mints of the market is priced in, under its price. */
+.pricedIn {
+  display: block;
+  color: var(--ink3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .more {
   display: grid;
   gap: 8px;

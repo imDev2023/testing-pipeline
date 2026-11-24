@@ -27,6 +27,25 @@ async function readBack(rpcUrl: string, signature: string): Promise<RawWithLogs>
   }
 }
 
+/** The signature's status once it has confirmed, asking every `pollMs` for up to `waitMs`; null when it has not by then. */
+async function confirmedStatus(rpcUrl: string, signature: string, pollMs: number, waitMs: number): Promise<NonNullable<Status> | null> {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const { value } = await rpcCall<{ value: Status[] }>(rpcUrl, "getSignatureStatuses", [[signature]]);
+    const status = value[0] ?? null;
+    if (status && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) return status;
+    if (Date.now() >= until) return null;
+    await sleep(pollMs);
+  }
+}
+
+/** A transaction that failed on chain, decoded from its error and logs, as a refusal whose sentence starts `prefix`. */
+function failedOnChain(err: unknown, raw: RawWithLogs, prefix: string, context: Parameters<typeof decodeFailure>[2]): Refused {
+  const logs = raw.meta?.logMessages ?? [];
+  const failure = decodeFailure(err, logs, context);
+  return new Refused({ ...failure, sentence: `${prefix} ${continued(failure.sentence)}` }, logs);
+}
+
 /**
  * Waits until `signature` confirms, asking every `pollMs` for up to `waitMs`, and reads it back.
  * A transaction that failed on chain is a refusal, decoded from its error and logs.
@@ -36,21 +55,26 @@ export async function awaitTrade(
   signature: string,
   { pollMs = FAST_PATH_CONFIRMATION_POLL_MS, waitMs = FAST_PATH_WAIT_MS, strategy = null }: { pollMs?: number; waitMs?: number; strategy?: string | null } = {},
 ): Promise<RawWithLogs> {
-  const until = Date.now() + waitMs;
-  for (;;) {
-    const { value } = await rpcCall<{ value: Status[] }>(rpcUrl, "getSignatureStatuses", [[signature]]);
-    const status = value[0] ?? null;
-    if (status && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) {
-      const raw = await readBack(rpcUrl, signature);
-      if (status.err !== null || raw.meta?.err) {
-        const failure = decodeFailure(status.err ?? raw.meta?.err, raw.meta?.logMessages ?? [], { strategy: strategy ?? "" });
-        throw new Refused({ ...failure, sentence: `The swap failed on chain: ${continued(failure.sentence)}` }, raw.meta?.logMessages ?? []);
-      }
-      return raw;
-    }
-    if (Date.now() >= until) throw new HTTPException(504, { message: "The swap has not confirmed yet. If it lands, it joins Trades as soon as Aviary reads it." });
-    await sleep(pollMs);
-  }
+  const status = await confirmedStatus(rpcUrl, signature, pollMs, waitMs);
+  if (!status) throw new HTTPException(504, { message: "The swap has not confirmed yet. If it lands, it joins Trades as soon as Aviary reads it." });
+  const raw = await readBack(rpcUrl, signature);
+  if (status.err !== null || raw.meta?.err) throw failedOnChain(status.err ?? raw.meta?.err, raw, "The swap failed on chain:", { strategy: strategy ?? "" });
+  return raw;
+}
+
+/**
+ * Waits as the fast path does until a transaction the page's wallet sent (an unwrap, and later a
+ * custom action) confirms, and answers its slot; one that failed on chain is a refusal, decoded.
+ */
+export async function awaitConfirmation(
+  rpcUrl: string,
+  signature: string,
+  { pollMs = FAST_PATH_CONFIRMATION_POLL_MS, waitMs = FAST_PATH_WAIT_MS }: { pollMs?: number; waitMs?: number } = {},
+): Promise<{ signature: string; slot: number }> {
+  const status = await confirmedStatus(rpcUrl, signature, pollMs, waitMs);
+  if (!status) throw new HTTPException(504, { message: "It has not confirmed yet. If it lands, this page shows it once reloaded." });
+  if (status.err !== null) throw failedOnChain(status.err, await readBack(rpcUrl, signature), "It failed on chain:", { strategy: "", act: "transaction" });
+  return { signature, slot: status.slot };
 }
 
 type TradeRow = typeof trades.$inferSelect;

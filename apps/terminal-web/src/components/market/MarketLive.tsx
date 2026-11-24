@@ -437,6 +437,12 @@ function TradesTable({
               <td className={table.num}>
                 <span className={table.label}>Price</span>
                 {read.price === null ? <span className={table.none}>not read</span> : formatPrice(read.price)}
+                {/* A trade between two other mints of the market is priced in its own pair, which is named. */}
+                {!read.pricedIn.onShow && (
+                  <span className={styles.pricedIn}>
+                    {label(read.pricedIn.quote)} for one {label(read.pricedIn.base)}
+                  </span>
+                )}
               </td>
               <td>
                 <span className={table.label}>Trader</span>

@@ -21,6 +21,7 @@ import { tradingRoutes } from "./trading/routes";
 import { strategyRoutes } from "./strategies";
 import { imageRoutes } from "./tokenImages";
 import { searchRoutes } from "./search";
+import { walletRoutes } from "./wallet";
 
 export type AppEnv = { Bindings: Bindings };
 
@@ -47,6 +48,7 @@ app.route("/", feed);
 app.route("/", strategyRoutes);
 app.route("/", imageRoutes);
 app.route("/", searchRoutes);
+app.route("/", walletRoutes);
 app.route("/", canaryRoutes);
 
 /**

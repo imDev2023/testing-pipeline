@@ -25,10 +25,10 @@ export const QUOTE_PAUSE_MS = 350;
 /** SOL kept back for network fees and rent when the trader uses their whole balance. */
 export const SOL_KEPT_BACK = 0.01;
 /**
- * How old a prepared swap may be when the trader asks to sign it: its blockhash lasts about a minute,
- * so an older one is built and simulated again before the wallet is asked.
+ * How old a prepared swap or unwrap may be when the trader asks to sign it: its blockhash lasts about
+ * a minute, so an older one is built and simulated again before the wallet is asked.
  */
-export const PREPARED_SWAP_MAX_AGE_MS = 45_000;
+export const PREPARED_TRANSACTION_MAX_AGE_MS = 45_000;
 /** How many of the program's last log lines a failed simulation shows behind its disclosure. */
 export const FAILED_SIMULATION_LOG_LINES = 12;
 

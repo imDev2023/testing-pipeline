@@ -15,9 +15,10 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { Balances, Fees, PreparedSwap, Quote, TradeReport, type Failure, type Market, type Trade } from "terminal-api/contract";
 import { ApiFailure, getFromApi, postToApi } from "@/api";
 import { BRAND } from "@/brand";
-import { DEFAULT_SLIPPAGE_PERCENT, EXPLORER, FAILED_SIMULATION_LOG_LINES, PREPARED_SWAP_MAX_AGE_MS, QUOTE_PAUSE_MS, SLIPPAGE_CHOICES_PERCENT } from "@/config";
+import { DEFAULT_SLIPPAGE_PERCENT, EXPLORER, PREPARED_TRANSACTION_MAX_AGE_MS, QUOTE_PAUSE_MS, SLIPPAGE_CHOICES_PERCENT } from "@/config";
 import { formatInteger, formatTokenAmount, shortAddress } from "@/format";
 import { formatBps, parseAmount, parseSlippage, tradeButton, balanceToUse, writeAmount } from "@/trade";
+import { LogTail } from "../LogTail";
 import { MintLabel } from "../MintLabel";
 import { useWallet, type SolanaChain } from "../wallet/WalletProvider";
 import styles from "./TradeBox.module.css";
@@ -617,18 +618,6 @@ function FailedSimulation({ prepared, onBack }: { prepared: PreparedSwap; onBack
   );
 }
 
-/** The last lines of a program's log behind a disclosure, as a failed simulation shows them. */
-function LogTail({ logs }: { logs: readonly string[] }) {
-  const tail = logs.slice(-FAILED_SIMULATION_LOG_LINES);
-  if (!tail.length) return null;
-  return (
-    <details className={styles.logs}>
-      <summary>The program&apos;s last {tail.length === 1 ? "log line" : `${tail.length} log lines`}</summary>
-      <pre>{tail.join("\n")}</pre>
-    </details>
-  );
-}
-
 /** Step 3: Sign in wallet, beside Back. The wallet signs and sends; a decline returns here with nothing changed. */
 function SignControls({
   account,
@@ -645,7 +634,7 @@ function SignControls({
   const signAndSend = useSignAndSendTransaction(account, chain);
   const sign = async () => {
     // A blockhash lasts about a minute: an older build is made and simulated again before the wallet is asked.
-    if (Date.now() - at > PREPARED_SWAP_MAX_AGE_MS) return onRebuild();
+    if (Date.now() - at > PREPARED_TRANSACTION_MAX_AGE_MS) return onRebuild();
     onSigning();
     let signature: string;
     try {

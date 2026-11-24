@@ -8,7 +8,7 @@ import { createDb, marketMints, markets, mints, trades } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { indexTransactions, pipelineHandler, type RawTransaction } from "terminal-indexer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Market, MarketsPage, Strategy, StrategiesList, TradesPage, type ApiError } from "../src/contract";
+import { Market, MarketsPage, Strategy, StrategiesList, TraderTradesPage, TradesPage, type ApiError } from "../src/contract";
 import { app } from "../src/index";
 import { bindings, executionContext } from "./fakes";
 
@@ -174,8 +174,19 @@ describe("trades", () => {
     expect(all.trades.map((t) => t.signature)).toEqual([swap.transaction.signatures[0], EARLIER_SELL]);
     const first = TradesPage.parse((await get(`/v1/traders/${TRADER}/trades?limit=1`)).body);
     expect(first.trades).toEqual([expected]);
-    const rest = TradesPage.parse((await get(`/v1/traders/${TRADER}/trades?limit=100&before=${encodeURIComponent(first.next!)}`)).body);
-    expect(rest).toEqual({ trades: [all.trades[1]], next: null });
+    const rest = TraderTradesPage.parse((await get(`/v1/traders/${TRADER}/trades?limit=100&before=${encodeURIComponent(first.next!)}`)).body);
+    expect(rest.trades).toEqual([all.trades[1]]);
+    expect(rest.next).toBeNull();
+  });
+
+  it("names every mint a trader's page of swaps holds, with its decimals, for the wallet page (#122)", async () => {
+    const page = TraderTradesPage.parse((await get(`/v1/traders/${TRADER}/trades`)).body);
+    expect(page.mints).toEqual([
+      { mint: TOKEN, symbol: null, token: null, decimals: 6 },
+      { mint: WSOL, symbol: "SOL", token: null, decimals: 9 },
+    ]);
+    const none = TraderTradesPage.parse((await get(`/v1/traders/${MARKET}/trades`)).body);
+    expect(none).toEqual({ trades: [], next: null, mints: [] });
   });
 
   it("answers a 404 for the trades of a market that is none", async () => {

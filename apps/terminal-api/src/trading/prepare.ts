@@ -4,7 +4,9 @@
 // wrapped-SOL account when they pay in it, the market's fee account for the mint Pipeline's fee is
 // taken in created when it does not exist yet (`init_fee_account`), the router's `swap` with our
 // integrator fee only when the input is a fee mint, and the wrapped-SOL account closed again so SOL
-// in and out is plain SOL. That exact transaction is then simulated with the trader as fee payer,
+// in and out is plain SOL. A mint with a transfer hook gets the accounts its hook needs for each
+// transfer the swap makes in it (./hooks): a sell's in the router's input hook accounts, a buy's after
+// the strategy's own. That exact transaction is then simulated with the trader as fee payer,
 // signature checks off and the blockhash replaced, and returned with its outcome, compute units and
 // what it would change in the wallet. Nothing here signs anything: Aviary holds no keys.
 import { decodeMarketLookupTable, feeAccountPda, initFeeAccount, lookupTableRecordPda, NATIVE_MINT_ADDRESS, swap, TradeMode, TOKEN_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
@@ -36,6 +38,7 @@ import type { BalanceChange, PreparedSwap, Simulation } from "../contract";
 import type { IntegratorFeeVar } from "../env";
 import { minimumReceived } from "./amounts";
 import { decodeFailure } from "./failure";
+import { swapHookAccounts } from "./hooks";
 import type { TradeMarket } from "./market";
 import { COMMITMENT, quoteTyped, Refused } from "./quote";
 
@@ -82,6 +85,22 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
     );
   }
   if (feeAccountMissing) instructions.push(await initFeeAccount({ payer: trader, market: market.address, mint: feeMint.address, tokenProgram: feeMint.tokenProgram }));
+  const hooks = await swapHookAccounts(rpc, {
+    trader,
+    inputMint,
+    outputMint,
+    traderInput,
+    traderOutput,
+    inputVault: market.view.vaults[trade.inputIndex]!,
+    outputVault: market.view.vaults[trade.outputIndex]!,
+    feeAccount,
+    feeSide,
+    integratorAccount,
+    amountIn: trade.amount,
+    amountOut: BigInt(quote.strategy_amount_out),
+    pipelineFee: BigInt(quote.pipeline_fee),
+    integratorFee: BigInt(quote.integrator_fee),
+  });
   instructions.push(
     await swap(
       {
@@ -96,7 +115,9 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
         inputTokenProgram: inputMint.tokenProgram,
         outputTokenProgram: outputMint.tokenProgram,
         integratorFeeAccount: integratorAccount,
-        strategyAccounts,
+        // A buy's hook accounts follow the strategy's own, where the strategy finds them to pay out.
+        strategyAccounts: [...strategyAccounts, ...hooks.output],
+        inputHookAccounts: hooks.input,
       },
       // Exact-in reads only `amountIn`; `amountOut` carries the strategy's quoted output, as Pipeline's own builder sets it.
       { mode: TradeMode.ExactIn, amountIn: trade.amount, amountOut: BigInt(quote.strategy_amount_out), minAmountOut, integratorFeeBps: quote.integrator_fee_bps, extra: trade.extra },
@@ -117,6 +138,7 @@ export async function prepareSwap(rpc: Rpc<SolanaRpcApi>, setting: IntegratorFee
   const { wire, messageBytes } = fitted;
   const simulation = await simulate(rpc, wire, messageBytes, {
     strategy: market.view.strategyProgram,
+    hooks: [inputMint.transferHook, outputMint.transferHook].filter((h): h is Address => h !== null),
     watched,
     before,
     mints: [null, inputMint.address, outputMint.address],
@@ -246,6 +268,8 @@ export function measure(input: {
 
 type Watch = {
   strategy: string;
+  /** The transfer hook programs of the two mints, so a refusal by one is named as the hook's. */
+  hooks: readonly Address[];
   /** The wallet, its input and output token accounts, and the market's fee account for the fee mint. */
   watched: readonly [Address, Address, Address, Address];
   before: readonly Held[];
@@ -282,7 +306,7 @@ async function simulate(rpc: Rpc<SolanaRpcApi>, wire: Base64EncodedWireTransacti
   const networkFee = fee.value ?? 0n;
   const units = value.unitsConsumed === undefined ? null : Number(value.unitsConsumed);
   if (value.err !== null) {
-    return { ok: false, failure: decodeFailure(value.err, logs, { strategy: watch.strategy }), logs, compute_units: units, changes: [], network_fee: String(networkFee), new_accounts: [], market_rent: "0", paid: null, received: null };
+    return { ok: false, failure: decodeFailure(value.err, logs, { strategy: watch.strategy, hooks: watch.hooks }), logs, compute_units: units, changes: [], network_fee: String(networkFee), new_accounts: [], market_rent: "0", paid: null, received: null };
   }
   // A closed account comes back holding no lamports: it is gone.
   const after: Held[] = (value.accounts ?? []).map((a) => (a && a.lamports > 0n ? { lamports: a.lamports, data: a.data as readonly [string, string] } : null));

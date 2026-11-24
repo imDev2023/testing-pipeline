@@ -518,7 +518,7 @@ export type Fees = z.infer<typeof Fees>;
  * the program that raised it, and the raw error to show beneath.
  */
 export const Failure = z.object({
-  class: z.enum(["too_little", "strategy_refused", "router_refused", "token_program_refused", "other_refused", "cannot_read_state", "crash", "out_of_compute", "unavailable", "too_large"]),
+  class: z.enum(["too_little", "strategy_refused", "router_refused", "token_program_refused", "hook_refused", "other_refused", "cannot_read_state", "crash", "out_of_compute", "unavailable", "too_large"]),
   sentence: z.string(),
   name: z.string().nullable(),
   number: z.number().int().nullable(),
@@ -633,6 +633,66 @@ export type TradeReport = z.infer<typeof TradeReport>;
 /** `GET /v1/traders/{trader}/balances?mints=`: what the wallet holds in each mint asked; for wrapped SOL, its plain SOL, which a swap wraps. */
 export const Balances = z.object({ trader: Address, balances: z.array(z.object({ mint: Address, amount: Amount })) });
 export type Balances = z.infer<typeof Balances>;
+
+// ---- The wallet page (docs/spec/pipescope-screens.md, Wallet page; #122) ----
+
+/** A mint as a list names it: Aviary's own name (SOL, USDC), else the token's, with its decimals (null until read). */
+export const MintName = z.object({ mint: Address, symbol: z.string().nullable(), token: TokenName.nullable(), decimals: z.number().int().nullable() });
+export type MintName = z.infer<typeof MintName>;
+
+/** `GET /v1/traders/{trader}/trades`: a page of the wallet's swaps through Pipeline, with every mint they name. */
+export const TraderTradesPage = TradesPage.extend({ mints: z.array(MintName) });
+export type TraderTradesPage = z.infer<typeof TraderTradesPage>;
+
+/**
+ * `GET /v1/traders/{trader}/holdings`: what the wallet holds, read through RPC: its SOL; its wrapped
+ * SOL, which the page offers to unwrap; each other token it holds that a Pipeline market trades, with
+ * those markets (their pairs in `markets`, every mint named in `mints`); and how many tokens it holds
+ * that no Pipeline market trades.
+ */
+export const Holdings = z.object({
+  trader: Address,
+  sol: Amount,
+  wrapped_sol: z.object({ amount: Amount, accounts: z.array(Address) }).nullable(),
+  holdings: z.array(MintName.extend({ decimals: z.number().int(), amount: Amount, markets: z.array(Address) })),
+  markets: z.array(z.object({ address: Address, base_mint: Address, quote_mint: Address })),
+  mints: z.array(MintName),
+  not_listed: z.number().int(),
+});
+export type Holdings = z.infer<typeof Holdings>;
+
+/** `POST /v1/unwrap/prepare`: unwrap the wrapped SOL of the wallet that will sign. */
+export const PrepareUnwrapRequest = z.object({ trader: Address }).strict();
+export type PrepareUnwrapRequest = z.infer<typeof PrepareUnwrapRequest>;
+
+/**
+ * The unwrap prepared: the wrapped-SOL accounts it closes and what they hold, the unsigned transaction
+ * only when its simulation passed, and the simulation: the wallet's SOL before and after, the network
+ * fee, and the SOL that comes back (`returned`, null when it failed), the wrapped SOL and its rent.
+ */
+export const PreparedUnwrap = z.object({
+  trader: Address,
+  accounts: z.array(Address),
+  wrapped: Amount,
+  transaction: z.string().nullable(),
+  simulation: z.object({
+    ok: z.boolean(),
+    failure: Failure.nullable(),
+    logs: z.array(z.string()),
+    compute_units: z.number().int().nullable(),
+    network_fee: Amount,
+    sol_before: Amount,
+    sol_after: Amount.nullable(),
+    returned: Amount.nullable(),
+  }),
+});
+export type PreparedUnwrap = z.infer<typeof PreparedUnwrap>;
+
+/** `POST /v1/confirmations`: a signature the page's wallet sent, which the API waits on until it confirms. */
+export const ConfirmationRequest = z.object({ signature: TradeSignature.shape.signature }).strict();
+export type ConfirmationRequest = z.infer<typeof ConfirmationRequest>;
+export const Confirmation = z.object({ signature: z.string(), slot: z.number().int() });
+export type Confirmation = z.infer<typeof Confirmation>;
 
 // ---- Canary (#124) ----
 

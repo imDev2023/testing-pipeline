@@ -6,7 +6,7 @@ import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { markets} from "terminal-db";
 import { marketMints, mints, strategies, trades, type Db } from "terminal-db";
 import { AVIARY_MINT_NAMES, VOLUME_WINDOW_SECONDS } from "./config";
-import type { Market, Trade } from "./contract";
+import type { Market, MintName, Trade } from "./contract";
 import { orderedFlags, strategyFacts } from "./facts";
 import { marketPair, tradePair } from "./pairs";
 import { keptImages, tokenNameOf } from "./tokenImages";
@@ -121,5 +121,17 @@ export async function tradeViews(database: Db, rows: TradeRow[]): Promise<Trade[
       base_mint: base,
       side,
     };
+  });
+}
+
+/** Each mint named as a list shows it, Aviary's own name or the token's with its kept image, and its decimals; in address order. */
+export async function mintNames(database: Db, addresses: readonly string[]): Promise<MintName[]> {
+  const wanted = [...new Set(addresses)].sort();
+  if (!wanted.length) return [];
+  const rows = await database.select({ address: mints.address, decimals: mints.decimals, symbol: mints.symbol, name: mints.name, tokenUri: mints.tokenUri }).from(mints).where(inArray(mints.address, wanted));
+  const images = await keptImages(database, rows.map((r) => r.tokenUri));
+  return wanted.map((mint) => {
+    const read = rows.find((r) => r.address === mint);
+    return { mint, symbol: AVIARY_MINT_NAMES[mint] ?? null, token: tokenNameOf(mint, read, images), decimals: read?.decimals ?? null };
   });
 }
