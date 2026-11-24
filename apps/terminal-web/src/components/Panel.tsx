@@ -53,7 +53,8 @@ export function StaticPanel({ title, children }: { title: string; children: Reac
   );
 }
 
-export function PanelFrame<T>({ title, what, state, retry, children }: { title: string; what: string; state: Loaded<T>; retry: () => void; children: (data: T) => ReactNode }) {
+/** `after` is shown under the panel's own content whatever its state, as content that does not wait for it. */
+export function PanelFrame<T>({ title, what, state, retry, children, after }: { title: string; what: string; state: Loaded<T>; retry: () => void; children: (data: T) => ReactNode; after?: ReactNode }) {
   const heading = headingOf(title);
   return (
     <section className={styles.panel} aria-labelledby={heading} aria-busy={state.status === "loading"}>
@@ -72,6 +73,7 @@ export function PanelFrame<T>({ title, what, state, retry, children }: { title: 
         </div>
       )}
       {state.status === "loaded" && children(state.data)}
+      {after}
     </section>
   );
 }

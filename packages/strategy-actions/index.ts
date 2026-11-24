@@ -23,7 +23,7 @@ import {
     type MarketView,
     type MetadataAccount,
     type MetadataArg,
-} from '@pipeline-placeholder/sdk';
+} from '@pipeline-sol/sdk';
 
 /** The top-level metadata key our strategies describe their custom actions under. */
 export const AVIARY_ACTIONS_KEY = 'aviary_actions';

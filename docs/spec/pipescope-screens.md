@@ -322,6 +322,8 @@ Asking to swap never opens the wallet straight away; the trader first sees what 
   4. **Its mints**: for each, where its name comes from, its token program, decimals and supply, its mint and freeze authorities, its extensions, what share of the supply this market's vault holds, and its trust flags.
      SOL and USDC read "Named by Aviary. It names SOL and USDC itself, and no other token."
 - Until the explanation and the forms land beside it, the facts panel has the lower band to itself, at its full width, its parts side by side and one under another on narrow screens (`PIPESCOPE-121`).
+  Since [#123](https://github.com/imDev2023/testing-pipeline/issues/123) the forms sit on the left and the facts panel on the right, its parts one under another.
+- **A product's panel**: when the market's strategy is one of our products, its panel sits on the left of the lower band, after the trades and before the explanation, and its own forms under Actions after the strategy's, from a registry in `terminal-web` keyed by strategy program (`PIPESCOPE-147`, `apps/terminal-web/src/products/registry.ts`); no other market shows them.
 - **After an upgrade** ([`pipescope.md`](pipescope.md), When a strategy is upgraded): the notice "Upgraded on <date>; tests and explanation for this version are pending." sits under the page's head, and Canary's part and the explanation each read as pending until the new version has its own.
 
 ### Arriving from Telegram
@@ -473,4 +475,4 @@ Each of these is specified above or in another file, and none was seen running, 
 - [Telegram bot for Pipescope](https://github.com/imDev2023/testing-pipeline/issues/32): the trade box has its own rule for which mint a market is quoted in ([Price direction](#price-direction)), so the bot reads `quote_mint` from the API; its Buy button already pays with that mint.
   The amount in a trade link is everything that leaves the wallet, fees included.
 - The products' panel tickets ([the tax AMM's](https://github.com/imDev2023/testing-pipeline/issues/75), [the containment hook's](https://github.com/imDev2023/testing-pipeline/issues/76), [the buy wall AMM's](https://github.com/imDev2023/testing-pipeline/issues/57) and [the lending AMM's](https://github.com/imDev2023/testing-pipeline/issues/88)): a panel is Aviary's own reading of the chain, so it is set plainly, takes its colours from the theme stylesheet, and uses no green or red.
-  A suggestion that was not prototyped: it sits on the market page between the trades and the explanation, and its forms go under Actions with the strategy's others.
+  It sits on the market page between the trades and the explanation, and its forms go under Actions with the strategy's others, as built in #123 (`PIPESCOPE-147`); a panel reads the chain through the API's one-slot read (`PIPESCOPE-146`).

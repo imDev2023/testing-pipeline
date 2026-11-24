@@ -78,6 +78,8 @@ export const Strategy = z.object({
   /** Its valid metadata's description, normalised and capped (EXPLAINER-08); author text too. */
   description: z.string().nullable(),
   metadata: MetadataStatus,
+  /** Whether its valid metadata describes a create form (`init`), so the create page can say why one that does not offers none. */
+  create_form: z.boolean(),
   /** Pipeline's trust flags for the strategy, in the SDK's order: its program's and its metadata's. */
   flags: z.array(z.string()),
   /** Who can upgrade its program, or null when it is frozen (or not read yet: then `flags` holds neither `upgradeable` nor `frozen`). */
@@ -145,6 +147,113 @@ export const StrategyInstruction = z.object({
 export type StrategyInstruction = z.infer<typeof StrategyInstruction>;
 export const StrategyInstructions = z.object({ program: Address, deploy_slot: z.number().int().nullable(), anchor: z.boolean().nullable(), instructions: z.array(StrategyInstruction) });
 export type StrategyInstructions = z.infer<typeof StrategyInstructions>;
+
+/**
+ * Where an account of a form comes from: one of Pipeline's metadata account sources, parsed by its
+ * SDK (`parseAccountSource`), so a page can say what it is in words ("your wallet", "the market's
+ * vault for SOL", "an address derived from the program itself") and resolve the market's own.
+ */
+export type AccountSource =
+  | { kind: "wallet" | "market_state" | "market" | "strategy_program" | "system_program" | "associated_token_program" | "seeder" | "lp_recipient" }
+  | { kind: "mint" | "vault" | "token_program" | "wallet_token_account" | "escrow"; index: number }
+  | { kind: "fixed"; address: string }
+  | { kind: "input"; name: string }
+  | { kind: "pda"; program: string; seeds: PdaSeed[] }
+  | { kind: "ata"; owner: AccountSource; mint: AccountSource }
+  | { kind: "token_program_of"; mint: AccountSource };
+/** One seed of a `pda:` source: text, bytes in hex, an account's address, or an argument's encoding. */
+export type PdaSeed = { kind: "str"; text: string } | { kind: "hex"; hex: string } | { kind: "key"; source: AccountSource } | { kind: "arg"; name: string };
+export const AccountSource: z.ZodType<AccountSource> = z.lazy(() =>
+  z.union([
+    z.object({ kind: z.enum(["wallet", "market_state", "market", "strategy_program", "system_program", "associated_token_program", "seeder", "lp_recipient"]) }),
+    z.object({ kind: z.enum(["mint", "vault", "token_program", "wallet_token_account", "escrow"]), index: z.number().int() }),
+    z.object({ kind: z.literal("fixed"), address: Address }),
+    z.object({ kind: z.literal("input"), name: z.string() }),
+    z.object({ kind: z.literal("pda"), program: z.string(), seeds: z.array(PdaSeed) }),
+    z.object({ kind: z.literal("ata"), owner: AccountSource, mint: AccountSource }),
+    z.object({ kind: z.literal("token_program_of"), mint: AccountSource }),
+  ]),
+);
+export const PdaSeed: z.ZodType<PdaSeed> = z.lazy(() =>
+  z.union([z.object({ kind: z.literal("str"), text: z.string() }), z.object({ kind: z.literal("hex"), hex: z.string() }), z.object({ kind: z.literal("key"), source: AccountSource }), z.object({ kind: z.literal("arg"), name: z.string() })]),
+);
+
+/**
+ * Whether the instruction a form sends is in the strategy's current version (PIPESCOPE-92,
+ * PIPESCOPE-143): looked up by the discriminator it sends in the version's instruction list, so
+ * `instruction` is the name the program itself gives the instruction that runs, whatever the form's
+ * label or name say; a warn when no instruction with that discriminator was found in the program, or
+ * no list is recorded for it.
+ */
+export const FormCheck = z.object({
+  outcome: z.enum(["pass", "warn"]),
+  instruction: z.string().nullable(),
+  reason: z.enum(["found", "not-in-program", "no-instruction-list"]),
+});
+export type FormCheck = z.infer<typeof FormCheck>;
+
+/** One field of a form: the argument's name and type (identifiers), with its author's label and description (author text). */
+export const FormArg = z.object({
+  name: z.string(),
+  type: z.enum(["u8", "u16", "u32", "u64", "i64", "bool", "pubkey", "bytes", "string"]),
+  label: z.string().nullable(),
+  description: z.string().nullable(),
+  /** The account source naming the mint whose decimals an amount is written in, when the metadata names one. */
+  decimals_of: AccountSource.nullable(),
+});
+export type FormArg = z.infer<typeof FormArg>;
+
+/** One account a form's instruction touches: the metadata's name for it (shown as an identifier), where it comes from, and its role. */
+export const FormAccount = z.object({ name: z.string(), source: AccountSource, writable: z.boolean(), signer: z.boolean() });
+export type FormAccount = z.infer<typeof FormAccount>;
+
+/**
+ * A form built from a strategy's metadata (docs/spec/pipescope.md, Custom-action and create-market
+ * forms): an action, or the create form. Its label and descriptions are author text, normalised as
+ * every author text is (EXPLAINER-08) and shown as plain text in the author's style.
+ */
+export const Form = z.object({
+  /** The instruction's name as the metadata gives it: the action's, or `pipeline_init_market` for the create form. */
+  name: z.string(),
+  label: z.string().nullable(),
+  description: z.string().nullable(),
+  /** The action's kind as the metadata gives it (`add_liquidity`, `claim`...), author text; null for the create form. */
+  kind: z.string().nullable(),
+  /** The 8 bytes that pick the instruction, in hex: the metadata's own, or Anchor's from the name. */
+  discriminator: z.string().regex(/^[0-9a-f]{16}$/),
+  check: FormCheck,
+  args: z.array(FormArg),
+  accounts: z.array(FormAccount),
+  /** The addresses the user enters (`input:` sources), each marked when it is used as a mint, so a page shows that mint's facts. */
+  inputs: z.array(z.object({ name: z.string(), mint: z.boolean() })),
+  /** The create form's market state: `new_keypair` (a fresh keypair, made and kept in the page, signs) or an account source; null for an action. */
+  market_state: z.union([z.literal("new_keypair"), AccountSource]).nullable(),
+});
+export type Form = z.infer<typeof Form>;
+
+/**
+ * `GET /v1/strategies/{program}/forms`: a strategy's forms, from its newest metadata as Pipeline's
+ * validator accepted it (PIPESCOPE-20, PIPESCOPE-21). Its actions come from `aviary_actions` (BAR-41)
+ * or, when the metadata has none, from the `actions` section Pipeline's validator now ignores
+ * (PIPESCOPE-141). `unavailable` says why there are no forms: the metadata is unavailable (no
+ * forms at all), or the actions section failed its validator (no action forms; the create form
+ * stays); `errors` is what the fetcher or the validator said, untrusted text, since it can quote the
+ * document. `instructions_beyond_pipeline` counts the current version's instructions that are not
+ * Pipeline's own, null when no list is recorded.
+ */
+export const StrategyForms = z.object({
+  program: Address,
+  /** The strategy version the forms were checked against, null when the indexer has recorded none. */
+  deploy_slot: z.number().int().nullable(),
+  metadata: MetadataStatus.shape.status,
+  actions_section: z.enum(["aviary_actions", "actions"]).nullable(),
+  unavailable: z.enum(["metadata-not-fetched", "metadata-missing", "metadata-unreachable", "metadata-invalid", "actions-invalid"]).nullable(),
+  errors: z.array(z.string()),
+  instructions_beyond_pipeline: z.number().int().nullable(),
+  actions: z.array(Form),
+  init: Form.nullable(),
+});
+export type StrategyForms = z.infer<typeof StrategyForms>;
 
 /**
  * A token's own name and picture, from its mint's on-chain token metadata (PIPESCOPE-22, PIPESCOPE-82):
@@ -259,6 +368,30 @@ export const MarketFacts = z.object({
   mints: z.array(MintFacts),
 });
 export type MarketFacts = z.infer<typeof MarketFacts>;
+
+/**
+ * `GET /v1/markets/{market}/state?accounts=`: the market's state and the outside accounts a product's
+ * panel names (a comma-separated list, at most MARKET_READ.maxAccounts), all read in one request at
+ * one slot, so a panel never mixes two moments of the chain (PIPESCOPE-146). Each account's data is
+ * base64; an account larger than MARKET_READ.maxAccountBytes comes back with its size and no data.
+ */
+export const MarketRead = z.object({
+  market: Address,
+  slot: z.number().int(),
+  accounts: z.array(
+    z.object({
+      address: Address,
+      role: z.enum(["market_state", "named"]),
+      exists: z.boolean(),
+      owner: Address.nullable(),
+      lamports: Amount.nullable(),
+      executable: z.boolean().nullable(),
+      size: z.number().int().nullable(),
+      data: z.string().nullable(),
+    }),
+  ),
+});
+export type MarketRead = z.infer<typeof MarketRead>;
 
 /** A mint found by search: Aviary's name for it or its own, and every market it trades on. */
 export const SearchMint = z.object({
@@ -518,7 +651,7 @@ export type Fees = z.infer<typeof Fees>;
  * the program that raised it, and the raw error to show beneath.
  */
 export const Failure = z.object({
-  class: z.enum(["too_little", "strategy_refused", "router_refused", "token_program_refused", "other_refused", "cannot_read_state", "crash", "out_of_compute", "unavailable", "too_large"]),
+  class: z.enum(["too_little", "strategy_refused", "router_refused", "token_program_refused", "other_refused", "cannot_read_state", "crash", "out_of_compute", "unavailable", "too_large", "needs_signer", "bad_input"]),
   sentence: z.string(),
   name: z.string().nullable(),
   number: z.number().int().nullable(),
@@ -612,6 +745,76 @@ export const PreparedSwap = z.object({
   simulation: Simulation,
 });
 export type PreparedSwap = z.infer<typeof PreparedSwap>;
+
+/**
+ * The simulation of a prepared custom action or new market (docs/spec/pipescope-architecture.md,
+ * Simulation before every signature): what signing would change in the wallet, its SOL and each token
+ * account it owns that the transaction writes, and the token accounts it gains, with their rent.
+ */
+export const TransactionSimulation = Simulation.pick({ ok: true, failure: true, logs: true, compute_units: true, changes: true, network_fee: true, new_accounts: true });
+export type TransactionSimulation = z.infer<typeof TransactionSimulation>;
+
+/** A value typed into a form's field: an integer, an address, hex bytes or text as a string, or a boolean. */
+const FormValue = z.union([z.string().max(4096), z.boolean()]);
+/** What a form was filled with: each argument by name, and each address the user enters (`input:` sources) by name. */
+const FormValues = { args: z.record(z.string(), FormValue), inputs: z.record(z.string(), Address) };
+
+/** `POST /v1/actions/prepare`: a custom action of a market's strategy, by its metadata name, for the wallet that will sign it. */
+export const PrepareActionRequest = z.object({ market: Address, action: z.string().min(1).max(64), ...FormValues, trader: Address }).strict();
+export type PrepareActionRequest = z.infer<typeof PrepareActionRequest>;
+
+/** One account a prepared instruction touches, resolved to its address. */
+export const ResolvedAccount = z.object({ address: Address, writable: z.boolean(), signer: z.boolean() });
+
+/**
+ * A prepared custom action: the strategy's instruction as built (its accounts resolved), the SOL
+ * wrapped for it (PIPESCOPE-145), and the unsigned transaction, only when its simulation passed. It is
+ * signed directly on the strategy, outside the router's swap protections.
+ */
+export const PreparedAction = z.object({
+  market: Address,
+  action: z.string(),
+  check: FormCheck,
+  accounts: z.array(ResolvedAccount),
+  wrapped_sol: Amount,
+  transaction: z.string().nullable(),
+  simulation: TransactionSimulation,
+});
+export type PreparedAction = z.infer<typeof PreparedAction>;
+
+/**
+ * `POST /v1/markets/prepare`: a new market from a strategy's create form. `market_state` is the new
+ * market state's address when the form makes one: its keypair is made in the page, which signs with
+ * it after the wallet's prompt is built, so no key leaves the page (PIPESCOPE-144).
+ */
+export const PrepareMarketRequest = z.object({ strategy: Address, ...FormValues, market_state: Address.optional(), trader: Address }).strict();
+export type PrepareMarketRequest = z.infer<typeof PrepareMarketRequest>;
+
+/** A prepared new market: its address and market state, whether that state must sign, the create form's check, and the unsigned transaction when its simulation passed. */
+export const PreparedMarket = z.object({
+  strategy: Address,
+  market: Address,
+  market_state: Address,
+  market_state_signs: z.boolean(),
+  check: FormCheck,
+  accounts: z.array(ResolvedAccount),
+  wrapped_sol: Amount,
+  /** The most SOL the strategy's setup may take from the creator, which `create_market` carries (PIPESCOPE-144). */
+  max_creator_lamports: Amount,
+  transaction: z.string().nullable(),
+  simulation: TransactionSimulation,
+});
+export type PreparedMarket = z.infer<typeof PreparedMarket>;
+
+/** `POST /v1/transactions`: a custom action's or a new market's signature, from the page that sent it, waited on until it confirms. */
+export const TransactionSignature = z
+  .object({ signature: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,90}$/), market: Address.optional(), strategy: Address.optional() })
+  .strict();
+export type TransactionSignature = z.infer<typeof TransactionSignature>;
+
+/** A sent transaction, confirmed: its slot. */
+export const TransactionReport = z.object({ signature: z.string(), slot: z.number().int() });
+export type TransactionReport = z.infer<typeof TransactionReport>;
 
 /** `POST /v1/trades`: a trade's signature, from the page that sent it (the fast path, PIPESCOPE-33). */
 export const TradeSignature = z

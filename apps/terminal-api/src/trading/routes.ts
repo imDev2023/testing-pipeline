@@ -29,19 +29,19 @@ function amountOf(raw: string | undefined): bigint {
 }
 
 /** A query parameter or body field that must be an address: 32 bytes in base58, which Kit checks. */
-function addressOf(raw: string | undefined, name: string): string {
+export function addressOf(raw: string | undefined, name: string): string {
   if (!raw || !isAddress(raw)) throw new HTTPException(400, { message: `${name} is an address.` });
   return raw;
 }
 
-async function bodyOf<T extends z.ZodType>(c: Context<AppEnv>, schema: T): Promise<z.infer<T>> {
+export async function bodyOf<T extends z.ZodType>(c: Context<AppEnv>, schema: T): Promise<z.infer<T>> {
   const parsed = schema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new HTTPException(400, { message: `The request is not one this endpoint takes: ${parsed.error.issues.map((i) => `${i.path.join(".") || "body"} ${i.message}`).join("; ")}.` });
   return parsed.data;
 }
 
 /** A refusal from the strategy or the chain, as a 422 with the failure decoded. */
-const refused = (c: Context<AppEnv>, e: Refused) => c.json<Refusal>({ error: e.failure.sentence, failure: e.failure, logs: [...e.logs] }, 422);
+export const refused = (c: Context<AppEnv>, e: Refused) => c.json<Refusal>({ error: e.failure.sentence, failure: e.failure, logs: [...e.logs] }, 422);
 
 export function tradingRoutes(app: Hono<AppEnv>) {
   app.get("/v1/fees", (c) => c.json(Fees.parse(feesView(c.env.INTEGRATOR_FEE))));
