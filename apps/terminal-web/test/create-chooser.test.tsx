@@ -16,6 +16,7 @@ const strategy = (program: string, status: Strategy["metadata"]["status"], name:
   market_count: 3,
   name,
   description: null,
+  create_form: status === "valid",
   metadata: { status, uri: `https://example.com/${program}.json`, url: null, fetched_at: null, checked_at: null, errors: [], warnings: [], sha256: null, removed: null },
   flags: ["upgradeable"],
   upgrade_authority: "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe",
@@ -36,11 +37,19 @@ describe("the strategy chooser", () => {
   });
 
   it("offers the create form of a strategy with valid metadata, and drops the line", () => {
-    const html = renderToStaticMarkup(<StrategyChooser strategies={[strategy("J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t", "valid", "Aviary Tax AMM"), strategy("ETrmQd3NUmW4xh9uGRbC1F8XoDb2wEJYBGVwF6xGfx4Z", "not-fetched", null)]} chosen="J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t" onChoose={() => {}} />);
+    const html = renderToStaticMarkup(
+      <StrategyChooser
+        strategies={[strategy("J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t", "valid", "Aviary Tax AMM"), strategy("ETrmQd3NUmW4xh9uGRbC1F8XoDb2wEJYBGVwF6xGfx4Z", "not-fetched", null), strategy("4iXya1F7TozDVKnBCCjUL1pHe1xgneC2qqhVjW4rEFNo", "valid", "PipeUp Launchpad", { create_form: false })]}
+        chosen="J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"
+        onChoose={() => {}}
+      />,
+    );
     const text = textOf(html);
     expect(text).not.toContain(LINE);
     expect(text).toContain("Aviary Tax AMM J4sA...nW9t 3 markets; upgradeable by Gf8t...WsPe Its create form is below");
     expect(text).toContain("No create form: its metadata is unavailable (Aviary has not fetched it yet).");
+    expect(text).toContain("PipeUp Launchpad 4iXy...EFNo 3 markets; upgradeable by Gf8t...WsPe No create form: its metadata describes none.");
+    expect(html.match(/<button/g)).toHaveLength(1);
     expect(html).toMatch(/aria-pressed="true"/);
   });
 });

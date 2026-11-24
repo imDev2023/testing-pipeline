@@ -33,8 +33,8 @@ import styles from "./Create.module.css";
 
 /** Why a strategy offers no create form, from its listed metadata status, or null when its forms may hold one. */
 function noCreateForm(strategy: Strategy): string | null {
-  if (strategy.metadata.status === "valid") return null;
-  return `No create form: its metadata is unavailable (${UNAVAILABLE_WHY[`metadata-${strategy.metadata.status}`]}).`;
+  if (strategy.metadata.status !== "valid") return `No create form: its metadata is unavailable (${UNAVAILABLE_WHY[`metadata-${strategy.metadata.status}`]}).`;
+  return strategy.create_form ? null : "No create form: its metadata describes none.";
 }
 
 export function CreateMarket() {
@@ -51,7 +51,7 @@ export function CreateMarket() {
       <PanelFrame title="Choose a strategy" what="the registered strategies" state={state} retry={retry}>
         {({ strategies }) => <StrategyChooser strategies={strategies} chosen={chosen} onChoose={choose} />}
       </PanelFrame>
-      {chosen && state.status === "loaded" && state.data.strategies.some((s) => s.program === chosen && s.metadata.status === "valid") && <CreateFormPanel key={chosen} program={chosen} />}
+      {chosen && state.status === "loaded" && state.data.strategies.some((s) => s.program === chosen && s.create_form) && <CreateFormPanel key={chosen} program={chosen} />}
     </>
   );
 }

@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { createDb, metadataSnapshots, programVersions, strategies, strategyInstructions } from "terminal-db";
 import { createTestDatabase } from "terminal-db/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { StrategyForms, type ApiError } from "../src/contract";
+import { StrategiesList, StrategyDetail, StrategyForms, type ApiError } from "../src/contract";
 import { app } from "../src/index";
 import { bindings, executionContext } from "./fakes";
 
@@ -66,7 +66,7 @@ async function strategy(program: string, snapshot: Partial<typeof metadataSnapsh
 beforeAll(async () => {
   database = await createTestDatabase();
   env = bindings({ databaseUrl: database.url, rpcUrl: "http://127.0.0.1:9/never-called" });
-  await strategy(TAX, { document: TAX_METADATA });
+  await strategy(TAX, { document: TAX_METADATA, normalised: { name: "Aviary Tax AMM", description: null, category: null, tags: [], init: { description: null, args: [] }, audits: [] } });
   const { aviary_actions: _ours, ...withoutOurs } = TAX_METADATA;
   await strategy(OLD_ACTIONS, { document: { ...withoutOurs, actions: [action("set_taxes", "Old section's taxes")] }, warnings: ["actions: custom actions are no longer part of the schema and are ignored"] });
   await strategy(BOTH, { document: { ...TAX_METADATA, actions: [action("set_taxes", "Old section's taxes")] } });
@@ -199,6 +199,23 @@ describe("GET /v1/strategies/{program}/forms", () => {
     const program = "aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv";
     await strategy(program, { document: TAX_METADATA, uri: "https://example.com/the-old-uri.json" });
     expect(StrategyForms.parse((await forms(program)).body)).toMatchObject({ metadata: "not-fetched", unavailable: "metadata-not-fetched", actions: [], init: null });
+  });
+
+  it("tells the strategy lists whether a strategy offers a create form, so the create page says why one does not", async () => {
+    const program = "4iXya1F7TozDVKnBCCjUL1pHe1xgneC2qqhVjW4rEFNo";
+    const { init: _init, ...withoutInit } = TAX_METADATA;
+    await strategy(program, { document: withoutInit, normalised: { name: "No create form", description: null, category: null, tags: [], init: null, audits: [] } });
+    const read = async (p: string) => {
+      const { ctx, settle } = executionContext();
+      const response = await app.request(p, {}, env, ctx);
+      await settle();
+      return (await response.json()) as unknown;
+    };
+    expect(StrategyDetail.parse(await read(`/v1/strategies/${program}`)).create_form).toBe(false);
+    expect(StrategyDetail.parse(await read(`/v1/strategies/${UNREACHABLE}`)).create_form).toBe(false);
+    const list = StrategiesList.parse(await read("/v1/strategies"));
+    expect(list.strategies.find((s) => s.program === TAX)!.create_form).toBe(true);
+    expect(list.strategies.find((s) => s.program === program)!.create_form).toBe(false);
   });
 
   it("answers 404 for an address that is no strategy", async () => {

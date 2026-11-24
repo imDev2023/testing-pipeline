@@ -43,7 +43,7 @@ export const marketFlagsSql: SQL = sql`(
 
 type StrategyRow = { program: string; metadataUri: string; feePaid: string | null; registeredAt: Date; registeredSignature: string | null; marketCount: number };
 type SnapshotRow = typeof metadataSnapshots.$inferSelect;
-type Normalised = { name?: string; description?: string | null } | null;
+type Normalised = { name?: string; description?: string | null; init?: unknown } | null;
 
 /** The newest metadata snapshot of each program named. */
 async function newestSnapshots(db: Db, programs: string[]): Promise<Map<string, SnapshotRow>> {
@@ -73,7 +73,7 @@ function metadataStatus(uri: string, snapshot: SnapshotRow | undefined): Metadat
 }
 
 /** What a strategy's facts rest on, read for several strategies at once: its newest metadata, its program's facts and its version in force. */
-export type StrategyFacts = { name: string | null; description: string | null; metadata: MetadataStatus; flags: Flag[]; upgradeAuthority: string | null; currentVersion: Strategy["current_version"] };
+export type StrategyFacts = { name: string | null; description: string | null; createForm: boolean; metadata: MetadataStatus; flags: Flag[]; upgradeAuthority: string | null; currentVersion: Strategy["current_version"] };
 
 export async function strategyFacts(db: Db, programs: { program: string; metadataUri: string }[]): Promise<Map<string, StrategyFacts>> {
   const names = programs.map((p) => p.program);
@@ -97,6 +97,7 @@ export async function strategyFacts(db: Db, programs: { program: string; metadat
         {
           name: normalised?.name || null,
           description: normalised?.description ?? null,
+          createForm: normalised?.init != null,
           metadata,
           flags: orderedFlags([...(facts?.flags ?? []), ...(metadataFlag ? [metadataFlag] : [])]),
           upgradeAuthority: facts?.upgradeAuthority ?? null,
@@ -122,6 +123,7 @@ export async function strategyViews(db: Db, rows: StrategyRow[]): Promise<Strate
       name: f.name,
       description: f.description,
       metadata: f.metadata,
+      create_form: f.createForm,
       flags: f.flags,
       upgrade_authority: f.upgradeAuthority,
       current_version: f.currentVersion,

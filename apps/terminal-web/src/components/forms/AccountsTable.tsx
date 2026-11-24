@@ -25,9 +25,18 @@ export function AccountsTable({ form, context }: { form: Form; context: MintCont
         ]}
         rows={form.accounts.map((account, i) => ({
           key: `${i}-${account.name}`,
+          // One element a cell, so a cell drawn as a labelled block at narrow widths keeps its value in one piece.
           cells: {
-            name: <code>{account.name}</code>,
-            what: <AccountWords source={account.source} context={context} />,
+            name: (
+              <span>
+                <code>{account.name}</code>
+              </span>
+            ),
+            what: (
+              <span>
+                <AccountWords source={account.source} context={context} />
+              </span>
+            ),
             writable: account.writable ? "yes" : "no",
             signer: account.signer ? "yes" : "no",
           },

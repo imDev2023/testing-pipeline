@@ -126,6 +126,14 @@
   flex: 1;
   min-width: 0;
   max-width: 34em;
+  padding: 0 10px;
+  background: var(--sheet);
+  border: 1px solid var(--rule2);
+  border-radius: 4px;
+}
+
+.control input[type="text"][aria-invalid="true"] {
+  border-color: var(--ink);
 }
 
 .control input[type="checkbox"] {

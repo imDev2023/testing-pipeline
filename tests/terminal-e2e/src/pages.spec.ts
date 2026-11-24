@@ -20,12 +20,11 @@ const MARKET_HOOKED = "8XUe71aQTkUrP8SZfL2Z6PuXgdzYe9szTLEqiExrVyMW";
 const MARKET_TOKEN_IMAGE = "4DZbJgcdZyZUoYxKsN8atmMjTipBQ3zd6Yjzkp2i5HsR";
 // Markets whose strategy's metadata is unreachable, fails Pipeline's validator, or holds Pipeline's old
 // `actions` section (PIPESCOPE-141); and the tax AMM's demo market (deployments/devnet-demo-tax-amm.json),
-// with its demo token, the tax side, and the suite share's wallet, whose slot anyone may pay out.
+// whose tax side is wrapped SOL, and the suite share's wallet, whose slot anyone may pay out.
 const MARKET_METADATA_UNREACHABLE = "ChLMN5jumUA3E9WBmoXUNma3SJk4sgUmWpzhAS2ifv69";
 const MARKET_METADATA_INVALID = "CmDa9bCsmeDHNUp2KYv9DEGMA2nhQcxCkwQoZ7GfagVh";
 const MARKET_OLD_ACTIONS = "EdMom6pkDgCgXZFSmrEadPRnZDEyqbAg9xDVKrnusSQT";
 const TAX_MARKET = "4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c";
-const TAX_TOKEN = "4KA1vmioSNTyGu2fsH1vaUQDMa3cC5jYDdGaRLUcHJdo";
 const SUITE_TREASURY = "CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF";
 const TAX_AMM = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t";
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
@@ -134,7 +133,7 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
     ready: async (page: Page) => {
       await marketReady("chart")(page);
       await expect(page.getByText("No forms. Aviary builds a strategy's forms from its metadata, and this strategy's metadata is unavailable: the link could not be fetched.")).toBeVisible();
-      await page.getByText("What fetching the link found").click();
+      await page.getByRole("region", { name: "Actions" }).getByText("What fetching the link found").click();
     },
   },
   {
@@ -144,7 +143,7 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
     ready: async (page: Page) => {
       await marketReady("chart")(page);
       await expect(page.getByText(/this strategy's metadata is unavailable: the document did not pass Pipeline's validator\.$/)).toBeVisible();
-      await page.getByText("What Pipeline's validator said").click();
+      await page.getByRole("region", { name: "Actions" }).getByText("What Pipeline's validator said").click();
     },
   },
   {
@@ -160,7 +159,7 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
     name: "market-forms-review",
     path: `/markets/${TAX_MARKET}`,
     status: 200,
-    ready: actionReviewed("Pay out a tax slot", { tax_mint: TAX_TOKEN, recipient: SUITE_TREASURY }, { slot: "5" }, "passed"),
+    ready: actionReviewed("Pay out a tax slot", { tax_mint: WSOL_MINT, recipient: SUITE_TREASURY }, { slot: "5" }, "passed"),
     wallet: true,
   },
   {

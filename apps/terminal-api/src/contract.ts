@@ -78,6 +78,8 @@ export const Strategy = z.object({
   /** Its valid metadata's description, normalised and capped (EXPLAINER-08); author text too. */
   description: z.string().nullable(),
   metadata: MetadataStatus,
+  /** Whether its valid metadata describes a create form (`init`), so the create page can say why one that does not offers none. */
+  create_form: z.boolean(),
   /** Pipeline's trust flags for the strategy, in the SDK's order: its program's and its metadata's. */
   flags: z.array(z.string()),
   /** Who can upgrade its program, or null when it is frozen (or not read yet: then `flags` holds neither `upgradeable` nor `frozen`). */
