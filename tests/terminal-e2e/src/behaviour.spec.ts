@@ -1,8 +1,11 @@
 // How the shell behaves (docs/spec/pipescope-screens.md, "Colour and theme" and "On every page"):
 // the theme follows the device and the footer overrides it, every colour and typeface comes from
-// theme.css, panels load and fail on their own, and the "nothing there" page names the address.
+// theme.css, panels load and fail on their own, and the "nothing there" page names the address; and
+// "This is wrong" under an explanation reaches the owner's reports list (#127).
+import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "@playwright/test";
-import { MarketsPage, StrategiesList, StrategyVersions } from "terminal-api/contract";
+import { MarketsPage, StrategiesList, StrategyExplanation, StrategyVersions } from "terminal-api/contract";
+import { EXPLAINED_STRATEGY } from "./explanation";
 import { KEEPER_SIGNATURE, postKeeperHeartbeat, seedKeeperRecords, TEST_KEEPER_WALLET } from "./keeper";
 import { API } from "./target";
 
@@ -106,7 +109,9 @@ test.describe("the feed", () => {
     const created = (await first.getByText(/ago$/).boundingBox())!;
     await page.mouse.click(created.x + created.width / 2, created.y + created.height / 2);
     await expect(page).toHaveURL(`/markets/${markets[0]!.address}`);
-    await expect(page.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${markets[0]!.address}?cluster=devnet`);
+    // The head's link: the facts panel below carries its own Explorer links for the market and its mints.
+    const head = page.getByRole("main").locator("header").first();
+    await expect(head.getByRole("link", { name: "Explorer" })).toHaveAttribute("href", `https://explorer.solana.com/address/${markets[0]!.address}?cluster=devnet`);
   });
 
   test("a market's strategy opens the strategy, from inside the market's row", async ({ page, request }) => {
@@ -386,5 +391,25 @@ test.describe("strategy names", () => {
     for (const [program, name] of Object.entries(ours)) expect(strategies.find((s) => s.program === program), program).toMatchObject({ name, metadata: { status: "valid" }, flags: ["upgradeable"] });
     await page.goto("/?tab=strategies");
     for (const name of Object.values(ours)) await expect(page.getByRole("region", { name: "Strategies" }).getByText(name, { exact: true })).toBeVisible();
+  });
+});
+
+test.describe("\"This is wrong\"", () => {
+  test("sends a report against the explanation's key, which `pnpm explainer:reports` lists with the key and the note", async ({ page }) => {
+    const served = StrategyExplanation.parse(await (await page.request.get(`${API}/v1/strategies/${EXPLAINED_STRATEGY}/explanation`)).json());
+    const key = served.explanation!.key;
+    await page.goto(`/strategies/${EXPLAINED_STRATEGY}`);
+    const panel = page.getByRole("region", { name: "Explanation" });
+    await panel.getByRole("button", { name: "This is wrong" }).click();
+    const note = `End-to-end report ${Date.now()}: the second sentence <b>names</b> the wrong authority.`;
+    await panel.getByLabel("What is wrong with this explanation? (optional)").fill(note);
+    await panel.getByRole("button", { name: "Send report" }).click();
+    await expect(panel.getByRole("status")).toHaveText(/^Report sent\. It reaches .+'s owner with this explanation's key, which names the strategy version, the prompt and the model it came from\.$/);
+    await expect(panel.getByRole("button", { name: "This is wrong" })).toHaveCount(0);
+
+    const listed = execFileSync("pnpm", ["--silent", "explainer:reports"], { cwd: `${import.meta.dirname}/../../..`, encoding: "utf8", env: process.env });
+    const line = listed.split("\n").findIndex((l) => l.includes(`key ${key} (done) of ${EXPLAINED_STRATEGY}`));
+    expect(line).toBeGreaterThan(-1);
+    expect(listed.split("\n")[line + 1]!.trim()).toBe(JSON.stringify(note));
   });
 });

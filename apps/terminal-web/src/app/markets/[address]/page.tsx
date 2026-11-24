@@ -11,7 +11,7 @@ import { StrategyName } from "@/components/StrategyName";
 import { MintLabel } from "@/components/MintLabel";
 import { formatDate, shortAddress } from "@/format";
 import { ROUTES } from "@/routes";
-import { readMarket, readMarketCanary } from "@/serverReads";
+import { readMarket, readMarketCanary, readStrategyExplanation } from "@/serverReads";
 import { StrandedHead, UpgradeNotice, type CanaryRead } from "@/components/canary/MarketCanary";
 import type { Market, MarketMint } from "terminal-api/contract";
 
@@ -28,7 +28,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 /**
  * A market's page (docs/spec/pipescope-screens.md, Market page): its head, then the top band, the
  * chart with the trades beneath it, live, and the trade box in the column beside them; then the lower
- * band, a product's panel and the strategy's forms beside the facts panel, with the explanation joining them (#127). What Canary
+ * band, a product's panel, the strategy version's explanation (#127) and the strategy's forms beside
+ * the facts panel. What Canary
  * saw is read with the page: a stranded market's head carries its fail and it gets no trade box, the
  * trade box repeats a failed exit test, and after an upgrade the notice sits under the head (#125).
  */
@@ -45,24 +46,25 @@ export default async function MarketPage({ params }: Props) {
     );
   }
   const value = read.value;
+  const explanation = await readStrategyExplanation(value.strategy);
   const mint = (address: string) => value.mints.find((m) => m.mint === address)!;
   const base = mint(value.base_mint);
   const quote = mint(value.quote_mint);
   return (
     <div className={bands.page}>
-      <MarketHead market={value} base={base} quote={quote} canary={canary} />
+      <MarketHead market={value} base={base} quote={quote} canary={canary} explained={!explanation.ok || explanation.value.explanation !== null} />
       <div className={`${bands.top} ${bands.withTrade}`}>
         {/* The chart's length and Flip are read from the page's address. */}
         <Suspense fallback={null}>
           <MarketLive market={value} canary={canary} />
         </Suspense>
       </div>
-      <MarketLowBand market={value} facts={<MarketFacts market={value.address} canary={canary} />} />
+      <MarketLowBand market={value} explanation={explanation} facts={<MarketFacts market={value.address} canary={canary} />} />
     </div>
   );
 }
 
-function MarketHead({ market, base, quote, canary }: { market: Market; base: MarketMint; quote: MarketMint; canary: CanaryRead }) {
+function MarketHead({ market, base, quote, canary, explained }: { market: Market; base: MarketMint; quote: MarketMint; canary: CanaryRead; explained: boolean }) {
   return (
     <header className={styles.head}>
       <h1>
@@ -86,7 +88,7 @@ function MarketHead({ market, base, quote, canary }: { market: Market; base: Mar
         </div>
       </dl>
       {canary.ok && canary.value.summary?.stranded && <StrandedHead />}
-      {canary.ok && <UpgradeNotice upgrade={canary.value.upgrade} />}
+      {canary.ok && <UpgradeNotice upgrade={canary.value.upgrade} explained={explained} />}
     </header>
   );
 }

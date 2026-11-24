@@ -5,8 +5,10 @@
 // every run asks the RPC the same questions and the recorded fixtures always hold the answers (the
 // router's first reconciliation backfills its whole history, and the watch's first run records every
 // strategy's versions); then it waits until both have run, and stores Canary's results for six
-// markets, since the suite runs no Canary container (src/canary.ts).
+// markets, since the suite runs no Canary container (src/canary.ts), and explanations for two
+// strategies, since it calls no model (src/explanation.ts).
 import { seedCanaryResults } from "./canary";
+import { seedExplanations } from "./explanation";
 import { API } from "./target";
 
 const TIMEOUT_MS = 180_000;
@@ -30,7 +32,8 @@ export default async function globalSetup() {
   for (;;) {
     const status = (await (await fetch(`${API}/v1/indexer`)).json()) as Status;
     // Then Canary's results, which need the strategies' versions the watch records (src/canary.ts).
-    if (status.reconciledAt && status.watchedAt) return seedCanaryResults();
+    // Then the explanations, whose keys hold Canary's outcomes (src/explanation.ts).
+    if (status.reconciledAt && status.watchedAt) return seedCanaryResults().then(seedExplanations);
     if (status.lastError) throw new Error(`the indexer failed: ${status.lastError}`);
     if (Date.now() > deadline) throw new Error(`the indexer had not reconciled after ${TIMEOUT_MS / 1000} s`);
     await new Promise((done) => setTimeout(done, 1_000));

@@ -1,4 +1,4 @@
-// Aviary's own address lookup table (PIPESCOPE-160): the addresses every market's transactions share,
+// Aviary's own address lookup table (PIPESCOPE-164): the addresses every market's transactions share,
 // so a transaction that would not fit otherwise does, such as a tax market's launch, which creates the
 // market, its fee accounts and its seed in one transaction (docs/spec/tax-amm.md, "Creating a market").
 import { readFileSync } from "node:fs";

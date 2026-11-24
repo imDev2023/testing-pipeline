@@ -11,7 +11,7 @@
 //   each kind, and from Postgres today's spend, the latest jobs and the held and parked ones. A
 //   database or an RPC that does not answer leaves the rest standing.
 // - `GET /v1/markets/{market}/keeper`: the runner's latest record of each job and slot on one market,
-//   which the market's panel shows beside its due jobs (PIPESCOPE-162).
+//   which the market's panel shows beside its due jobs (PIPESCOPE-166).
 import { address, createSolanaRpc } from "@solana/kit";
 import type { Hono } from "hono";
 import { createDb, readKeeperRecords, readMarketKeeperJobs, type KeeperJobRead, type KeeperRecords } from "terminal-db";
@@ -128,7 +128,7 @@ export function keeperRoutes(app: Hono<AppEnv>) {
   });
 }
 
-/** `GET /v1/markets/{market}/keeper`: the runner's latest record of each job and slot on one market (PIPESCOPE-162). */
+/** `GET /v1/markets/{market}/keeper`: the runner's latest record of each job and slot on one market (PIPESCOPE-166). */
 function marketKeeperRoute(app: Hono<AppEnv>) {
   app.get("/v1/markets/:market/keeper", async (c) => {
     const market = addressOf(c.req.param("market"), "market");

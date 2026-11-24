@@ -1,7 +1,7 @@
 // The tax AMM's launch form, apart from its drawing (docs/spec/tax-amm.md, "In Aviary" and "Creating a
 // market"; #75): what the creator types becomes the market's creation parameters, its seed and the hash
 // of its terms, and the request that creates the market, its fee accounts and its seed in one
-// transaction (PIPESCOPE-159). The token is mint 0 and SOL or USDC mint 1, and the tax side defaults to
+// transaction (PIPESCOPE-163). The token is mint 0 and SOL or USDC mint 1, and the tax side defaults to
 // the quote mint, so recipients are paid in SOL or USDC rather than in the token they would sell.
 //
 // The form checks only what it needs to show the split and build the request: each field filled and

@@ -105,7 +105,7 @@ export async function actionTransaction(input: ActionInput): Promise<{ instructi
 }
 
 /**
- * The new market opened in the same transaction as it is created (PIPESCOPE-159): its mints and their
+ * The new market opened in the same transaction as it is created (PIPESCOPE-163): its mints and their
  * vaults in the market's order, which the product's own form works out before the market exists, and
  * the actions of its metadata to run on it once the router has created it and its fee accounts, such
  * as the seed that opens a tax market for trading.

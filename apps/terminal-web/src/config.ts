@@ -88,7 +88,7 @@ export const SEARCH_EXAMPLES = [
 ] as const;
 
 /**
- * The tax AMM's launch form (docs/spec/tax-amm.md, "In Aviary"; PIPESCOPE-158): what its fields hold
+ * The tax AMM's launch form (docs/spec/tax-amm.md, "In Aviary"; PIPESCOPE-162): what its fields hold
  * when it opens, each a default the creator changes. The token is paired with SOL and taxed in it, so
  * recipients are paid in SOL rather than in the token they would sell; a 3% buy tax and a 5% sell
  * tax, each free to move between 0 and the program's cap (`MAX_TAX_BPS`, read from its IDL); the

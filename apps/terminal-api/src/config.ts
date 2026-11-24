@@ -181,6 +181,9 @@ export const PAGE_LIMITS = {
 /** The longest search the API takes, in characters: past any address or name it keeps (PIPESCOPE-124). */
 export const SEARCH_QUERY_MAX = 100;
 
+/** The longest note a "This is wrong" report may carry, in characters (PIPESCOPE-160). */
+export const REPORT_NOTE_MAX = 600;
+
 /** The most signers an instruction lists in `GET /v1/strategies/{program}/instructions`, most calls first; the answer counts them all. */
 export const INSTRUCTION_SIGNERS_SHOWN = 100;
 

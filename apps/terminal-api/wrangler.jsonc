@@ -29,7 +29,7 @@
   // deploy: the API returns the rate it built each swap with, so the pages never write it.
   "vars": {
     "CLUSTER": "devnet",
-    // Aviary's frozen address lookup table on this cluster (PIPESCOPE-160), made by scripts/lookup-table.ts; empty for none.
+    // Aviary's frozen address lookup table on this cluster (PIPESCOPE-164), made by scripts/lookup-table.ts; empty for none.
     "AVIARY_LOOKUP_TABLE": "3s6YeCtZRoQ3i9MBTRUE5dQn6uvC7AK6qFr8B6oWZsyz",
     "KEEPER_WALLET": "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
     "CANARY_OPERATOR": "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt",

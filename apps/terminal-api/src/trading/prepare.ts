@@ -60,7 +60,7 @@ export type PrepareInput = {
   typed: bigint;
   slippageBps: number;
   trader: Address;
-  /** Aviary's own lookup table, when this deployment names one (PIPESCOPE-160). */
+  /** Aviary's own lookup table, when this deployment names one (PIPESCOPE-164). */
   aviaryTable: Address | null;
 };
 
@@ -183,7 +183,7 @@ export class TooLarge extends Error {}
 /**
  * An address lookup table a transaction may be shortened by, with whose it is: the market's own,
  * recorded with Pipeline's router, or Aviary's, a frozen table of addresses every market shares
- * (PIPESCOPE-160).
+ * (PIPESCOPE-164).
  */
 export type LookupTable = { address: Address; addresses: readonly Address[]; whose: "market" | "aviary" };
 type Fitted = { wire: Base64EncodedWireTransaction; messageBytes: ReadonlyUint8Array; version: "legacy" | 0 };

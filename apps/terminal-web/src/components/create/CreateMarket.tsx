@@ -102,7 +102,7 @@ export function StrategyChooser({ strategies, chosen, onChoose }: { strategies: 
 }
 
 /**
- * The chosen strategy's forms: one of our products' own create form when it has one (PIPESCOPE-158),
+ * The chosen strategy's forms: one of our products' own create form when it has one (PIPESCOPE-162),
  * then the strategy's generic create form from its metadata, when its metadata may hold one.
  */
 export function ChosenForms({ program, strategies, registry }: { program: string; strategies: Strategy[]; registry: ProductRegistry }) {

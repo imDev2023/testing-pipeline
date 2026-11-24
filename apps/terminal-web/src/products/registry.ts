@@ -7,7 +7,7 @@
 // other tickets). It reads the chain through the API's one-slot read of a market's state with the
 // outside accounts it names (`GET /v1/markets/{market}/state`, PIPESCOPE-146).
 //
-// A product may also add its own create form to the create-market page (PIPESCOPE-158), shown above
+// A product may also add its own create form to the create-market page (PIPESCOPE-162), shown above
 // the strategy's generic create form when its strategy is chosen, which stays beneath it.
 //
 // Filled by the products' Aviary tickets: the tax AMM's (#75); the containment hook's (#76), the buy

@@ -84,7 +84,7 @@ export const markets = pgTable(
  * A market's mints in the market's own order, each with its vault and what the vault held when last
  * read, and, for a strategy whose vaults hold more than its liquidity (a tax market's tax-side vault
  * also holds tax not yet paid out), the strategy's own reserve read from its market state at the same
- * slot (PIPESCOPE-161); null when Aviary has no reader for the strategy's state.
+ * slot (PIPESCOPE-165); null when Aviary has no reader for the strategy's state.
  */
 export const marketMints = pgTable(
   "market_mints",

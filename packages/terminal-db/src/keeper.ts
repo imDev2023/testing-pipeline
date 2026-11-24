@@ -191,7 +191,7 @@ export async function readKeeperRecords(db: Db, options: { wallet: string; now: 
 /**
  * The latest record of each job and slot the keeper wallet's runner holds for one market, newest
  * first, for the market's panel: what the runner last did about each job it has met there (sent, held
- * by a cap, parked with its error, or found no longer due), PIPESCOPE-162.
+ * by a cap, parked with its error, or found no longer due), PIPESCOPE-166.
  */
 export async function readMarketKeeperJobs(db: Db, options: { wallet: string; market: string }): Promise<KeeperJobRead[]> {
   const rows = await db

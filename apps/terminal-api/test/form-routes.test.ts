@@ -198,7 +198,7 @@ describe("POST /v1/markets/prepare", () => {
     expect((await post("/v1/markets/prepare", { strategy: MISSING, args: {}, inputs: {}, trader: TRADER })).status).toBe(404);
   });
 
-  describe("opening the new market in the same transaction (PIPESCOPE-159)", () => {
+  describe("opening the new market in the same transaction (PIPESCOPE-163)", () => {
     const then = (actions: unknown[]) => ({ mints: [MINT, MISSING], vaults: [RESERVE, ORACLE], actions });
 
     it("answers 404 for an action the strategy's metadata does not describe, before anything is built", async () => {

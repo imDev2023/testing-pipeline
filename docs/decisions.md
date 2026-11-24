@@ -2710,7 +2710,47 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-158: A product's own create form
+### PIPESCOPE-158: Where an evidence chip points
+
+- Question: Which fact row does an explanation's evidence chip highlight?
+- Answer: A row of the evidence the explanation was given, listed under it in a closed disclosure, "The evidence it was given (N items)", each row its id, what it is, its value as the model read it and where Aviary read it; a chip opens the list, marks that row, brings it into view and moves the focus to it.
+- Alternatives: A row of the live facts panel, which describes the chain as it is now rather than as the model read it, gives its rows no evidence ids, and has no rows for Pipeline's rules, Canary's roll-up or the author text.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Presentation](spec/pipescope-explainer.md#presentation)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-159: Which explanation a page shows
+
+- Question: Which explanation does a strategy page or a market page show, and when does the notice about text addressed to AI tools show?
+- Answer: The explanation of the key the strategy's current version has at the moment the page is read, worked out as the `explainerKeys` job works it out, once the approve command wrote it, and then the upgrade notice says only "tests for this version are pending"; otherwise "No explanation for this version yet.", and the notice about text addressed to AI tools whenever Aviary's detector finds such text in the current metadata or the shown explanation's own flag is set.
+- Alternatives: The newest explanation recorded for the strategy, which would keep showing one written before its author text or its Canary outcomes changed.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Presentation](spec/pipescope-explainer.md#presentation)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-160: A "This is wrong" report
+
+- Question: What does a "This is wrong" report carry, and what can be reported?
+- Answer: A report is `POST /v1/explanations/{key}/reports` against any key that has an explanation, with an optional note of up to 600 characters (`REPORT_NOTE_MAX` in the API's config module), counted against the 10 reports a minute per address of `PIPESCOPE-90`; `pnpm explainer:reports` lists it with its key, the strategy version and the note.
+- Alternatives: A report with no note; reports only against the version's current key, which would refuse a reader whose page was open while the key changed.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Presentation](spec/pipescope-explainer.md#presentation)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-161: How the explanation is set beside the facts
+
+- Question: How is the explanation laid out beside the facts, and how is a point marked by its basis?
+- Answer: On the strategy page the explanation sits beside the facts above 1080 px and above them at 1080 px and narrower, as on the market page; a point stated by the evidence has a solid bullet, an inferred one a hollow bullet and the word "inferred", and an author point a bullet and a sentence in the author's colour, upright since only Literata's upright face is served, with "the author's words" beside it, under a key to the three bullets.
+- Alternatives: The facts above the explanation on phones; author points in italic, which the browser would have to fake.
+- Specified in: [`docs/spec/pipescope-screens.md`, Strategy page](spec/pipescope-screens.md#strategy-page)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-162: A product's own create form
 
 - Question: Where does one of our products' own create form go on the create-market page?
 - Answer: In the registry of product panels as `Create`, keyed by the strategy's program, shown first under its own heading when that strategy is chosen, with the strategy's generic create form from its metadata kept beneath it.
@@ -2720,7 +2760,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
 
-### PIPESCOPE-159: A new market opened in the transaction that creates it
+### PIPESCOPE-163: A new market opened in the transaction that creates it
 
 - Question: How does a product's create form open its market in the same transaction that creates it?
 - Answer: `POST /v1/markets/prepare` takes `then`, the new market's mints and vaults in order as the product's form works them out, and adds the router's `init_fee_account` for each mint and up to two actions of the strategy's metadata by name, each built against the market as it will be, with its own wrapped SOL; vaults not among the create form's accounts and mints it was not filled with are refused.
@@ -2730,7 +2770,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
 
-### PIPESCOPE-160: Aviary's own address lookup table
+### PIPESCOPE-164: Aviary's own address lookup table
 
 - Question: How does a transaction too large as a legacy one fit when its market has recorded no lookup table, as a new market never has?
 - Answer: Aviary keeps one frozen lookup table per cluster of the accounts transactions pass and do not invoke (the router's event authority and config, wrapped SOL, the cluster's USDC, Token-2022, the rent sysvar and every strategy's record when it was made), named by `AVIARY_LOOKUP_TABLE`, on devnet `3s6YeCtZRoQ3i9MBTRUE5dQn6uvC7AK6qFr8B6oWZsyz`, and every prepared transaction may use it beside the market's own.
@@ -2740,7 +2780,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
 
-### PIPESCOPE-161: Liquidity from a strategy's own reserves
+### PIPESCOPE-165: Liquidity from a strategy's own reserves
 
 - Question: What liquidity does Aviary show for a market whose vaults hold more than its liquidity?
 - Answer: The strategy's own reserve of each mint, read by the indexer from the market state at the slot it reads the vaults, by a reader keyed by the strategy's program (`packages/terminal-indexer/src/reserves.ts`), kept beside what the vault holds; the feed, the facts, Canary's part and the feed's liquidity filter show and filter on it where there is one, else on what the vault holds.
@@ -2750,7 +2790,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
 
-### PIPESCOPE-162: The keeper runner's records on a market's panel
+### PIPESCOPE-166: The keeper runner's records on a market's panel
 
 - Question: How does a market's panel show what the keeper runner last did about each of its due jobs?
 - Answer: `GET /v1/markets/{market}/keeper` answers the runner's latest record of each job and slot on the market from `keeper_run_jobs`, and the panel shows it beside each job: sent or landed with its age, held by a cap, parked with its error, or that the runner has recorded none.
