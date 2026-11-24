@@ -6,11 +6,12 @@ import { Suspense } from "react";
 import { NavLink } from "./NavLink";
 import { SearchBox } from "./search/SearchBox";
 import searchStyles from "./search/SearchBox.module.css";
+import { WalletButton } from "./wallet/WalletButton";
 import styles from "./SiteHeader.module.css";
 
 /**
  * The header of every page: the name, the devnet tag, the links to the pages that exist and the
- * search box. Create market, Wallet and the wallet button join as their pages land
+ * search box and the wallet button. Create market and Wallet join as their pages land
  * (docs/spec/pipescope-screens.md, "On every page").
  */
 export function SiteHeader() {
@@ -39,6 +40,7 @@ export function SiteHeader() {
         >
           <SearchBox />
         </Suspense>
+        <WalletButton />
       </div>
     </header>
   );

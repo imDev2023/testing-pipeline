@@ -11,6 +11,8 @@
 //
 // Before the tests, src/global-setup.ts fires the cron and waits for the indexer's first run.
 //
+// `pnpm --filter terminal-e2e swaps:devnet` adds real swaps through the trade box (E2E_SWAPS).
+//
 // Every page test runs at 1440, 390 and 360 px wide in the light and the dark theme, and saves a
 // screenshot of each page to screenshots/<width>-<theme>/.
 import { defineConfig, devices } from "@playwright/test";
@@ -23,6 +25,10 @@ if (!DATABASE_URL) throw new Error("DATABASE_URL is not set: it names the Docker
 const rpcUrl = RPC_MODE === "devnet" ? process.env.RPC_URL : `http://127.0.0.1:${RPC_PORT}`;
 if (!rpcUrl) throw new Error("RPC_URL is not set: run with the project's .env loaded, or set E2E_RPC=fixtures.");
 if (RPC_MODE === "record" && !process.env.RPC_URL) throw new Error("E2E_RPC=record needs RPC_URL: run with the project's .env loaded.");
+
+// E2E_SWAPS adds the project that sends real swaps on devnet, with the test trader's key.
+const SWAPS = Boolean(process.env.E2E_SWAPS);
+if (SWAPS && RPC_MODE !== "devnet") throw new Error("E2E_SWAPS sends real devnet swaps: run it with E2E_RPC=devnet.");
 
 const WIDTHS = [
   { width: 1440, height: 900 },
@@ -58,6 +64,10 @@ export default defineConfig({
     // Live updates: swaps landed on devnet, or announced on the fixture socket (src/live.ts).
     { name: "live", testMatch: /live\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
     { name: "api", testMatch: /api\.spec\.ts/ },
+    // The trade box with the Playwright test wallet: quotes, reviews and refusals, never sending (src/trade.spec.ts).
+    { name: "trade", testMatch: /trade\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
+    // Real swaps on devnet through the trade box (src/trade-devnet.spec.ts): only when asked for, never in CI.
+    ...(SWAPS ? [{ name: "swaps", testMatch: /trade-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
   ],
   webServer: [
     // The fixture RPC, first, so the API can read it from its first request.

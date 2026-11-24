@@ -12,13 +12,14 @@ import { Candles, TradesPage, type Candle, type LiveEvent, type Market, type Tra
 import { ApiFailure, getFromApi } from "@/api";
 import { CHART_INTERVALS, CHART_OPENS_AT, LIVE_CANDLE_REFRESH_MS, TRADES_SHOWN } from "@/config";
 import { formatAge, formatAmount, formatDate, formatInteger, formatPrice } from "@/format";
-import { afterCursor, mergeCandles, mergeTrades, readTrade } from "@/liveMerge";
+import { afterCursor, mergeCandles, mergeTrades, readTrade, sortArrivals } from "@/liveMerge";
 import { LIVE_ROOMS, useLiveRoom } from "@/live";
 import { ShortAddress, ShortSignature } from "../Address";
 import { MintLabel } from "../MintLabel";
 import type { Loaded } from "../Panel";
 import table from "../ListingTable.module.css";
 import { CandleChart } from "./CandleChart";
+import { TradeBox } from "./TradeBox";
 import styles from "./Market.module.css";
 
 type Interval = (typeof CHART_INTERVALS)[number];
@@ -135,14 +136,20 @@ export function MarketLive({ market }: { market: Market }) {
     (arriving: Trade[]) => {
       const current = shownTrades.current;
       if (!current || !arriving.length) return;
-      const shownIds = new Set(current.list.map((t) => `${t.signature}:${t.event_index}`));
-      const fresher = arriving.filter((t) => !shownIds.has(`${t.signature}:${t.event_index}`));
+      const { fresh: fresher, updates } = sortArrivals([...current.list, ...heldNow.current], arriving);
+      // The indexer's copy of a fast-path trade replaces its provisional row where it stands.
+      if (updates.length) {
+        heldNow.current = mergeTrades(heldNow.current, updates.filter((u) => heldNow.current.some((h) => h.signature === u.signature && h.event_index === u.event_index)));
+        setHeld(heldNow.current);
+        show({ ...current, list: mergeTrades(current.list, updates.filter((u) => current.list.some((t) => t.signature === u.signature && t.event_index === u.event_index))) });
+      }
       if (!fresher.length) return;
+      const now = shownTrades.current!;
       setFresh((before) => new Set([...before, ...fresher.map((t) => `${t.signature}:${t.event_index}`)]));
       if (holding.current) {
         heldNow.current = mergeTrades(heldNow.current, fresher);
         setHeld(heldNow.current);
-      } else show({ ...current, list: mergeTrades(current.list, fresher) });
+      } else show({ ...now, list: mergeTrades(now.list, fresher) });
     },
     [show],
   );
@@ -223,6 +230,15 @@ export function MarketLive({ market }: { market: Market }) {
     onOpen: () => void resync(),
   });
 
+  /** A trade the trade box sent, read back by the fast path: at the top of Trades now, replaced in place once the indexer has it. */
+  const traded = useCallback(
+    (arriving: Trade[]) => {
+      arrive(arriving.filter((t) => t.market === market.address));
+      refreshCandles();
+    },
+    [arrive, refreshCandles, market.address],
+  );
+
   // ---- The chart's panel ----
   const baseMint = mintOf(pair.base);
   const quoteMint = mintOf(pair.quote);
@@ -285,6 +301,12 @@ export function MarketLive({ market }: { market: Market }) {
           </>
         )}
       </section>
+
+      {market.mints.every((m) => m.decimals !== null) ? (
+        <TradeBox market={market} onTraded={traded} />
+      ) : (
+        <p className={`${styles.panel} ${styles.tradeArea}`}>This market&apos;s mints have not been read yet, so it cannot be quoted. Try again in a minute.</p>
+      )}
 
       <section className={styles.tradesArea} aria-labelledby="panel-trades" aria-busy={trades.status === "loading"}>
         <div className={styles.tradesHead}>

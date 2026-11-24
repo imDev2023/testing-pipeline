@@ -1,0 +1,304 @@
+/* The trade box (docs/spec/pipescope-screens.md, Trade box), in the theme's tokens: a panel in the
+   market page's right column that stays in view at desktop width, and at most 560 px wide in the one
+   column of narrower screens (theme.css's market tokens). */
+.box {
+  grid-area: trade;
+  position: var(--trade-box-position);
+  top: 16px;
+  width: 100%;
+  max-width: 560px;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 16px 20px 18px;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.side {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sideLabel {
+  color: var(--ink2);
+  font-weight: var(--strong-weight);
+  padding: 0;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.amount {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 1.3em;
+  font-weight: var(--strong-weight);
+  background: var(--sheet);
+  border: 1px solid var(--rule2);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+output.amount {
+  background: transparent;
+  border-color: var(--rule);
+}
+
+.noQuote {
+  color: var(--ink3);
+  font-weight: var(--text-weight);
+  font-size: 0.8em;
+}
+
+.mint {
+  min-height: 44px;
+  max-width: 160px;
+  padding: 0 8px;
+  background: var(--sheet);
+  border: 1px solid var(--rule2);
+  border-radius: 4px;
+  font-weight: var(--strong-weight);
+}
+
+.under {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+  color: var(--ink3);
+}
+
+.under:empty {
+  display: none;
+}
+
+.linkButton {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--rule2);
+  text-underline-offset: 3px;
+}
+
+.linkButton:hover {
+  text-decoration-color: var(--ink);
+}
+
+.switch {
+  justify-self: start;
+  color: var(--ink2);
+  background: transparent;
+}
+
+.refused {
+  display: grid;
+  gap: 4px;
+}
+
+.raw {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink2);
+}
+
+.slippage {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.choices button {
+  padding: 0 12px;
+  color: var(--ink2);
+}
+
+.choices button[aria-pressed="true"],
+.other input[data-chosen] {
+  background: var(--ink);
+  color: var(--sheet);
+  border-color: var(--ink);
+}
+
+.other {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink2);
+}
+
+.other input {
+  width: 72px;
+  padding: 0 8px;
+  background: var(--sheet);
+  border: 1px solid var(--rule2);
+  border-radius: 4px;
+}
+
+.other input[data-chosen]::placeholder {
+  color: var(--sheet);
+}
+
+.costs,
+.review {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--rule);
+  padding-top: 12px;
+  min-width: 0;
+}
+
+.costsHeading {
+  font-size: 1em;
+}
+
+.rows {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+/* Each row: its name on the left, wrapping within its column, and its value on the right, on one line. */
+.rows > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.rows dt {
+  color: var(--ink2);
+}
+
+.rows dd {
+  margin: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.rowNote {
+  display: block;
+  font-size: 0.86em;
+  color: var(--ink3);
+}
+
+.wide {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.total {
+  border-top: 1px solid var(--rule);
+  padding-top: 4px;
+}
+
+.total dt,
+.total dd {
+  color: var(--ink);
+  font-weight: var(--strong-weight);
+}
+
+.none {
+  color: var(--ink3);
+}
+
+.action {
+  display: grid;
+  gap: 6px;
+}
+
+.primary {
+  min-height: 44px;
+  font-weight: var(--strong-weight);
+  background: var(--ink);
+  color: var(--sheet);
+  border-color: var(--ink);
+}
+
+.primary:hover {
+  border-color: var(--ink);
+}
+
+.primary:disabled {
+  background: var(--wash);
+  color: var(--ink3);
+  border-color: var(--rule);
+  cursor: not-allowed;
+}
+
+.reviewActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.reviewActions:has(> :only-child) {
+  grid-template-columns: auto;
+  justify-content: start;
+}
+
+.note {
+  color: var(--ink3);
+}
+
+.failedSim {
+  display: grid;
+  gap: 8px;
+}
+
+.decoded {
+  font-weight: var(--strong-weight);
+}
+
+.logs summary {
+  cursor: pointer;
+  color: var(--ink2);
+}
+
+.logs pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  background: var(--wash);
+  border-radius: 4px;
+  font-family: var(--font-code);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.closing {
+  color: var(--ink3);
+  font-size: 0.92em;
+}

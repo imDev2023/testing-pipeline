@@ -31,6 +31,12 @@ export type Bindings = {
   /** The keeper runner's wallet (docs/spec/keeper-runner.md, "The keeper wallet"): the keeper page shows it, and only its signed heartbeats are kept. */
   KEEPER_WALLET: string;
   /**
+   * The integrator fee (PIPESCOPE-10 to PIPESCOPE-13): its rate in basis points, the fee wallet Aviary
+   * knows only by address, and that wallet's token account for each fee mint, whose keys are the fee
+   * mints. A var per environment, so it changes by a configuration deploy (./trading/fees reads it).
+   */
+  INTEGRATOR_FEE: IntegratorFeeVar;
+  /**
    * Only in the end-to-end tests (tests/terminal-e2e): the fixture server's address, through which
    * the metadata fetcher reads recorded documents instead of the web, as the API reads recorded RPC
    * answers there (PIPESCOPE-102). Never set in a deployment.
@@ -43,3 +49,5 @@ export type Bindings = {
   /** The operator wallet, whose signed requests alone re-run Canary (`pnpm canary:rerun`). */
   CANARY_OPERATOR: string;
 };
+
+export type IntegratorFeeVar = { bps: number; wallet: string; accounts: Record<string, string> };

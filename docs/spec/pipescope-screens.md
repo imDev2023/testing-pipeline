@@ -35,6 +35,8 @@ Every value below is a default that can change, and each lives in exactly one pl
 | Highest slippage the trader may type | 50% | Screens' config module |
 | Pause after the last keystroke before a quote is asked | 350 ms | Screens' config module |
 | SOL kept back when the trader uses their whole balance | 0.01 SOL | Screens' config module |
+| Oldest a prepared swap may be when the trader signs, before it is built again | 45 s | Screens' config module |
+| Log lines a failed simulation or a refused quote shows behind its disclosure | the last 12 | Screens' config module |
 | Candle lengths on the chart | 1 m, 5 m, 15 m, 1 h, 4 h and 1 d | Screens' config module |
 | Candle length a chart opens at | 15 m | Screens' config module |
 | Room the chart gives each candle | 16 px | Screens' config module |
@@ -250,6 +252,7 @@ From top to bottom:
 - **The button** reads, in turn: "Connect wallet"; "Enter an amount", off; "Getting a quote", off; "Review swap".
   When it is off for a reason the trader can act on, the reason is under it: "Tick the box above to say you have read it." or "There is no quote to build a swap from."
 - **A refused quote** shows in the box, decoded, with the raw error beneath: "No quote: the strategy refused. `WrongStatus`: Not allowed in the curve's current status".
+  The quote is itself a simulation, so the program's last log lines go behind a disclosure beneath it, as a failed simulation's do; with no quote there is nothing to review.
 - **The exit-test notice** ([`pipescope.md`](pipescope.md), A failed exit test in the trade box) sits directly above the button, on canary yellow: "In Canary's test on 10 Nov 2026, a wallet that bought 1 SOL or more could not sell back; buys of 0.1 SOL and less sold back. The strategy refused the sale: WrongStatus, "Not allowed in the curve's current status"."
   Beneath it is one tick box, "I have read this", and the button stays off until it is ticked.
   The tick is asked again on every visit to the page and is stored nowhere.

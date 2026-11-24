@@ -3,6 +3,7 @@ export const ROUTES = {
   feed: "/",
   feedStrategies: "/?tab=strategies",
   devnetHelp: "/devnet",
+  fees: "/fees",
   keeper: "/keeper",
   search: (query: string) => `/search?q=${encodeURIComponent(query)}`,
   market: (address: string) => `/markets/${address}`,

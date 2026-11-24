@@ -105,6 +105,11 @@ export const ROOM_ANNOUNCE_RETRY_MS = SECOND;
 
 /** How often the trade fast path asks whether a signature has confirmed (PIPESCOPE-33). */
 export const FAST_PATH_CONFIRMATION_POLL_MS = 300;
+/**
+ * How long the fast path waits for a signature to confirm before it answers that it has not yet: a
+ * transaction's blockhash lasts about a minute, after which it can no longer land.
+ */
+export const FAST_PATH_WAIT_MS = 60 * SECOND;
 
 /**
  * The metadata fetcher's limits (PIPESCOPE-36): `https:` only, a body of at most `maxBytes`, an
@@ -126,6 +131,9 @@ export const TOKEN_IMAGE = {
   types: ["image/png", "image/jpeg", "image/webp"],
   maxBytes: 1024 * 1024,
 } as const;
+
+/** Solana's base fee for each signature a transaction carries, in lamports, which the Fees page states. */
+export const LAMPORTS_PER_SIGNATURE = 5_000;
 
 /** Wrapped SOL, and the cluster's USDC: Circle's devnet mint (docs/spec/pipescope.md, The integrator fee). */
 export const WRAPPED_SOL = "So11111111111111111111111111111111111111112";

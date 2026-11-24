@@ -4,7 +4,7 @@
 // sell of the base mint on show, at its price in the quote mint.
 import type { Candle, Market, Trade } from "terminal-api/contract";
 import { describe, expect, it } from "vitest";
-import { afterCursor, mergeCandles, mergeTrades, placeMarkets, readTrade } from "../src/liveMerge";
+import { afterCursor, mergeCandles, mergeTrades, placeMarkets, readTrade, sortArrivals } from "../src/liveMerge";
 
 const SOL = "So11111111111111111111111111111111111111112";
 const TOKEN = "4gqiCkoxxD72nbXGc7XtxQx4UjBHD3KiJyXpMvEZ6u8c";
@@ -98,5 +98,24 @@ describe("placing markets on the feed", () => {
     const { markets, added } = placeMarkets(shown, [market("Z", "2026-11-20T12:00:00.000Z", 1)]);
     expect(added).toEqual([]);
     expect(markets).toEqual(shown);
+  });
+});
+
+describe("trades arriving on a page (the fast path's provisional rows, PIPESCOPE-118)", () => {
+  it("are new when not shown, and updates in place when they replace a provisional row of the same trade", () => {
+    const provisional = trade(20, null);
+    const shown = [provisional, trade(19, 3)];
+    const indexed = { ...provisional, block_index: 7 };
+    const { fresh, updates } = sortArrivals(shown, [indexed, trade(21, 0), trade(19, 3)]);
+    expect(fresh.map((t) => t.signature)).toEqual(["sig-21-0-0"]);
+    expect(updates).toEqual([indexed]);
+    expect(mergeTrades(shown, updates).find((t) => t.signature === provisional.signature)?.block_index).toBe(7);
+  });
+
+  it("never let a provisional copy replace a row the indexer has already placed", () => {
+    const placed = trade(20, 7);
+    const { fresh, updates } = sortArrivals([placed], [{ ...placed, block_index: null }]);
+    expect(fresh).toEqual([]);
+    expect(updates).toEqual([]);
   });
 });

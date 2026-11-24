@@ -4,6 +4,7 @@ import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 import { BRAND } from "@/brand";
+import { Providers } from "@/components/Providers";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/SiteHeader";
 import { isChosenTheme, THEME_COOKIE } from "@/theme";
@@ -24,9 +25,11 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     // The theme control changes `data-theme` after hydration on purpose; that is not a mismatch.
     <html lang="en" data-theme={theme === "device" ? undefined : theme} suppressHydrationWarning>
       <body>
-        <SiteHeader />
-        <main id="main">{children}</main>
-        <SiteFooter theme={theme} />
+        <Providers>
+          <SiteHeader />
+          <main id="main">{children}</main>
+          <SiteFooter theme={theme} />
+        </Providers>
       </body>
     </html>
   );

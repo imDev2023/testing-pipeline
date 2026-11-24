@@ -10,6 +10,7 @@
         "typecheck": "tsc -p .",
         "e2e": "playwright test",
         "record": "E2E_RPC=record playwright test",
+        "swaps:devnet": "E2E_SWAPS=1 E2E_RPC=devnet playwright test --project swaps",
         "demo:versions": "node demo/strategy-versions.ts",
         "demo:canary": "node demo/canary-runs.ts"
     },

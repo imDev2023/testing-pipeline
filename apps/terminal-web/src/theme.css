@@ -103,6 +103,8 @@
   --market-top-columns: minmax(0, 1fr) 388px;
   --market-top-areas: "chart trade" "trades trade";
   --chart-height: 380px;
+  /* The trade box stays in view while the page scrolls, at desktop width only. */
+  --trade-box-position: sticky;
 
   /* A token's image and Aviary's marks for SOL and USDC: a fixed square beside the name, centred on
      the line's lower-case letters at any text size (components/MintLabel.module.css; PIPESCOPE-82). */
@@ -130,6 +132,7 @@
     --market-top-columns: minmax(0, 1fr);
     --market-top-areas: "chart" "trade" "trades";
     --chart-height: 320px;
+    --trade-box-position: static;
   }
 }
 

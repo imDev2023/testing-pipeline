@@ -47,6 +47,9 @@ async function recordDocument(url: string, accept: string): Promise<RecordedDocu
   return { status: response.status, headers, body: body.toString("base64") };
 }
 
+/** Whether a request is a read pinned to a slot, as Canary's snapshots are (apps/terminal-api/src/canarySnapshot.ts). */
+const pinnedToSlot = (params: unknown) => Array.isArray(params) && params.some((p) => typeof p === "object" && p !== null && "minContextSlot" in p);
+
 /** A request's key: its method and parameters, which is all a recorded answer depends on. */
 const keyOf = (method: string, params: unknown) => `${method} ${JSON.stringify(params ?? [])}`;
 
@@ -139,7 +142,9 @@ export function serveRpc(options: { upstream?: string } = {}): Promise<Server> {
           const { result, error } = (await upstream.json()) as { result?: unknown; error?: unknown };
           answer = error === undefined ? { result } : { error };
           // Nor is "not there yet": a transaction or block asked for just after it lands is served a moment later.
-          if (error === undefined && result !== null) {
+          // Nor a read pinned to a slot (`minContextSlot`): Canary's snapshots of a strategy's ProgramData,
+          // a megabyte each, which no test reads and which would take the file past GitHub's 100 MB.
+          if (error === undefined && result !== null && !pinnedToSlot(params)) {
             recording[key] = answer;
             writeFileSync(FIXTURES, serialise(recording));
           }

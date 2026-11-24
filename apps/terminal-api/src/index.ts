@@ -17,6 +17,7 @@ import { health } from "./health";
 import { keeperRoutes } from "./keeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
+import { tradingRoutes } from "./trading/routes";
 import { strategyRoutes } from "./strategies";
 import { imageRoutes } from "./tokenImages";
 import { searchRoutes } from "./search";
@@ -72,6 +73,7 @@ app.get("/v1/indexer", async (c) => c.json(await indexer(c.env).status()));
 /** The one indexer, by name, so every caller reaches the same instance. */
 export const indexer = (env: Bindings) => env.INDEXER.get(env.INDEXER.idFromName("router"));
 keeperRoutes(app);
+tradingRoutes(app);
 
 /**
  * The jobs that have been built, by name; each later ticket adds its own, and ./config says how

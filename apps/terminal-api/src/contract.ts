@@ -26,6 +26,7 @@ export type Health = z.infer<typeof Health>;
 
 /** Every refusal and failure: one sentence a page can show as it is. */
 export const ApiError = z.object({ error: z.string(), retryAfterSeconds: z.number().int().optional() });
+// A refusal from a strategy or the chain also carries the failure decoded (Failure, below) as `failure`.
 export type ApiError = z.infer<typeof ApiError>;
 
 /** A u64 token amount, as a string of an integer in the mint's smallest units. */
@@ -490,6 +491,148 @@ export const Keeper = z.object({
   records: z.object({ ok: z.boolean(), error: z.string().nullable() }),
 });
 export type Keeper = z.infer<typeof Keeper>;
+
+// ---- Trading (docs/spec/pipescope-architecture.md, Trading path) ----
+
+/** A fee mint: the integrator fee is charged only on swaps paying in one, into the fee wallet's account for it. */
+export const FeeMint = z.object({ mint: Address, symbol: z.string(), account: Address });
+export type FeeMint = z.infer<typeof FeeMint>;
+
+/**
+ * `GET /v1/fees`: every rate a page shows (PIPESCOPE-10 to PIPESCOPE-13, PIPESCOPE-91): Pipeline's own,
+ * the router's, and Aviary's integrator fee with the mints it is charged in and the wallet it goes to.
+ */
+export const Fees = z.object({
+  pipeline_fee_bps: z.number().int(),
+  integrator_fee_bps: z.number().int(),
+  fee_wallet: Address,
+  fee_mints: z.array(FeeMint),
+  /** Solana's network fee for each signature, in lamports. */
+  network_fee_per_signature: z.number().int(),
+});
+export type Fees = z.infer<typeof Fees>;
+
+/**
+ * A refused quote or a failed simulation, decoded (docs/spec/pipescope-screens.md, "On every page"):
+ * its class, the sentence a page shows, the Anchor error's name, number and message when there is one,
+ * the program that raised it, and the raw error to show beneath.
+ */
+export const Failure = z.object({
+  class: z.enum(["too_little", "strategy_refused", "router_refused", "token_program_refused", "other_refused", "cannot_read_state", "crash", "out_of_compute", "unavailable", "too_large"]),
+  sentence: z.string(),
+  name: z.string().nullable(),
+  number: z.number().int().nullable(),
+  message: z.string().nullable(),
+  program: z.string().nullable(),
+  raw: z.string(),
+});
+export type Failure = z.infer<typeof Failure>;
+
+/** A refusal from a strategy or the chain: the sentence, the failure decoded with its raw error, and the program's log lines when a simulation gave them. */
+export const Refusal = ApiError.extend({ failure: Failure, logs: z.array(z.string()).optional() });
+export type Refusal = z.infer<typeof Refusal>;
+
+/**
+ * `GET /v1/quote?market=&input_mint=&output_mint=&amount=&trader=`: a quote for the amount typed, which
+ * is everything that leaves the wallet for the swap (PIPESCOPE-76), from an RPC simulation of the
+ * strategy's `pipeline_quote` (PIPESCOPE-34), with the rates it was worked out at (PIPESCOPE-91).
+ */
+export const Quote = z.object({
+  market: Address,
+  input_mint: Address,
+  output_mint: Address,
+  /** The amount typed: what leaves the wallet, fees included. */
+  amount: Amount,
+  /** Which side Pipeline's fee is taken on: the input, or the output on a trade into the market's fee mint. */
+  fee_side: z.enum(["input", "output"]),
+  pipeline_fee_bps: z.number().int(),
+  /** The integrator fee's rate on this swap: 0 unless the trader pays in a fee mint. */
+  integrator_fee_bps: z.number().int(),
+  /** What goes into the market. */
+  net_sent: Amount,
+  /** Pipeline's fee, in `pipeline_fee_mint`: the input mint, or the output mint on a trade into the market's fee mint. */
+  pipeline_fee: Amount,
+  pipeline_fee_mint: Address,
+  integrator_fee: Amount,
+  /** Everything that leaves the wallet for the swap: at most the amount typed. */
+  total_spend: Amount,
+  /** What the strategy sends. */
+  strategy_amount_out: Amount,
+  /** What the trader is expected to receive: the strategy's output, less Pipeline's fee when it is taken there. */
+  expected_out: Amount,
+  compute_units: z.number().int().nullable(),
+});
+export type Quote = z.infer<typeof Quote>;
+
+/** `POST /v1/swaps/prepare`: the swap to build, for the trader who will sign it. */
+export const PrepareSwapRequest = z
+  .object({
+    market: Address,
+    input_mint: Address,
+    output_mint: Address,
+    amount: Amount,
+    /** The slippage accepted, in basis points, below 100%; the highest a page offers is its own (the screens' config module). */
+    slippage_bps: z.number().int().min(0).max(9_999),
+    trader: Address,
+  })
+  .strict();
+export type PrepareSwapRequest = z.infer<typeof PrepareSwapRequest>;
+
+/** How one account the wallet owns changes: SOL when `mint` is null, else a token account. */
+export const BalanceChange = z.object({ mint: Address.nullable(), account: Address, before: Amount, after: Amount });
+export type BalanceChange = z.infer<typeof BalanceChange>;
+
+/** The simulation of the exact transaction returned (docs/spec/pipescope-architecture.md, Simulation before every signature). */
+export const Simulation = z.object({
+  ok: z.boolean(),
+  failure: Failure.nullable(),
+  logs: z.array(z.string()),
+  compute_units: z.number().int().nullable(),
+  /** What signing would change in the wallet: its SOL and each token account the transaction touches. */
+  changes: z.array(BalanceChange),
+  /** The network fee, in lamports. */
+  network_fee: Amount,
+  /** Token accounts the transaction creates for the wallet and keeps, with the rent each holds. */
+  new_accounts: z.array(z.object({ account: Address, mint: Address, rent: Amount })),
+  /** The rent of the market's fee account for the fee mint, which the swap creates and pays for when it does not exist yet; 0 otherwise. */
+  market_rent: Amount,
+  /** What the swap takes from the wallet in the mint paid, and gives in the mint received, measured in the simulation; null when it failed. */
+  paid: Amount.nullable(),
+  received: Amount.nullable(),
+});
+export type Simulation = z.infer<typeof Simulation>;
+
+/** The prepared swap: its quote, the minimum after slippage, and the unsigned transaction, only when its simulation passed. */
+export const PreparedSwap = z.object({
+  quote: Quote,
+  slippage_bps: z.number().int(),
+  min_amount_out: Amount,
+  /** The unsigned transaction, base64, exactly as simulated; null when the simulation failed, so there is nothing to sign. */
+  transaction: z.string().nullable(),
+  simulation: Simulation,
+});
+export type PreparedSwap = z.infer<typeof PreparedSwap>;
+
+/** `POST /v1/trades`: a trade's signature, from the page that sent it (the fast path, PIPESCOPE-33). */
+export const TradeSignature = z
+  .object({
+    signature: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,90}$/),
+    /** The market traded, so a swap that failed on chain is decoded with its strategy named. */
+    market: Address.optional(),
+  })
+  .strict();
+export type TradeSignature = z.infer<typeof TradeSignature>;
+
+/**
+ * The fast path's answer: the transaction's swaps, read back once it confirmed, each under a provisional
+ * order key (no place in its block yet, `block_index` null) that the indexer replaces in place.
+ */
+export const TradeReport = z.object({ signature: z.string(), slot: z.number().int(), trades: z.array(Trade) });
+export type TradeReport = z.infer<typeof TradeReport>;
+
+/** `GET /v1/traders/{trader}/balances?mints=`: what the wallet holds in each mint asked; for wrapped SOL, its plain SOL, which a swap wraps. */
+export const Balances = z.object({ trader: Address, balances: z.array(z.object({ mint: Address, amount: Amount })) });
+export type Balances = z.infer<typeof Balances>;
 
 // ---- Canary (#124) ----
 

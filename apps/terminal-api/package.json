@@ -8,7 +8,8 @@
     },
     "exports": {
         "./contract": "./src/contract.ts",
-        "./config": "./src/config.ts"
+        "./config": "./src/config.ts",
+        "./amounts": "./src/trading/amounts.ts"
     },
     "scripts": {
         "dev": "node scripts/dev.ts",
@@ -19,6 +20,8 @@
     "dependencies": {
         "@cloudflare/containers": "0.3.7",
         "@pipeline-sol/sdk": "catalog:",
+        "@solana-program/system": "0.16.0",
+        "@solana-program/token": "0.18.0",
         "@solana/kit": "8.6.0",
         "drizzle-orm": "0.45.4",
         "hono": "4.13.20",

@@ -4,7 +4,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { postKeeperHeartbeat, seedKeeperRecords } from "./keeper";
 import { screenshot } from "./screenshot";
+import { CP_MARKET, REFUSING_MARKET } from "./markets";
 import { OWN_ORIGINS } from "./target";
+import { connectTestWallet, installTestWallet } from "./wallet";
 
 const UNKNOWN_ADDRESS = "6efYq3Jt7k2bQxW9pLm4nR8sV1uZcA5dHgE2oTiwdnYp";
 
@@ -43,7 +45,26 @@ const marketReady = (chart: "chart" | "none") => async (page: Page) => {
   }
 };
 
-const PAGES = [
+/** The trade box on Pipeline's example market, 0.1 SOL typed: quoted, and with the test wallet, reviewed or failed. */
+const swapBox = (page: Page) => page.getByRole("region", { name: "Swap" });
+const typed = (amount: string, wallet: "connect" | "none", then: "quote" | "review" | "failed" | "refused") => async (page: Page) => {
+  await marketReady("chart")(page);
+  if (wallet === "connect") await connectTestWallet(page, page.getByRole("banner").getByRole("button", { name: "Connect wallet" }));
+  await swapBox(page).getByLabel("You pay, fees included").fill(amount);
+  if (then === "refused") return void (await expect(swapBox(page).getByText(/^No quote: /)).toBeVisible());
+  await expect(page.getByRole("region", { name: "What this swap costs" }).getByText("Leaves your wallet")).toBeVisible();
+  await expect(swapBox(page).getByRole("button", { name: wallet === "connect" ? "Review swap" : "Connect wallet" })).toBeEnabled();
+  if (then === "quote") return;
+  await swapBox(page).getByRole("button", { name: "Review swap" }).click();
+  const review = page.getByRole("region", { name: "Review this swap" });
+  if (then === "review") await expect(review.getByRole("button", { name: "Sign in wallet" })).toBeEnabled();
+  else {
+    await expect(review.getByText("The simulation failed, so there is nothing to sign.")).toBeVisible();
+    await review.getByText(/^The program's last \d+ log lines?$/).click();
+  }
+};
+
+const PAGES: { name: string; path: string; status: number; ready: (page: Page) => Promise<unknown>; wallet?: boolean }[] = [
   { name: "feed", path: "/", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1)).toBeVisible() },
   {
     name: "feed-filtered",
@@ -66,6 +87,10 @@ const PAGES = [
     },
   },
   { name: "market-no-trades", path: `/markets/${MARKET_WITHOUT_TRADES}`, status: 200, ready: marketReady("none") },
+  { name: "market-trade-quote", path: `/markets/${CP_MARKET}`, status: 200, ready: typed("0.1", "none", "quote"), wallet: true },
+  { name: "market-trade-review", path: `/markets/${CP_MARKET}`, status: 200, ready: typed("0.1", "connect", "review"), wallet: true },
+  { name: "market-trade-too-little", path: `/markets/${CP_MARKET}`, status: 200, ready: typed("500", "connect", "failed"), wallet: true },
+  { name: "market-trade-refused", path: `/markets/${REFUSING_MARKET}`, status: 200, ready: typed("0.01", "connect", "refused"), wallet: true },
   {
     name: "strategy",
     path: `/strategies/${STRATEGY}`,
@@ -97,6 +122,7 @@ const PAGES = [
   { name: "search-token-image", path: "/search?q=image%20check", status: 200, ready: (page: Page) => imageLoaded(page.getByRole("region", { name: /^Mints/ }).locator("img").first()) },
   { name: "search-nothing-typed", path: "/search", status: 200, ready: (page: Page) => expect(page.getByRole("list", { name: "Examples" })).toBeVisible() },
   { name: "search-no-match", path: "/search?q=Nothing0Here", status: 200, ready: (page: Page) => expect(page.getByText(/^Nothing registered with Pipeline on devnet matches/)).toBeVisible() },
+  { name: "fees", path: "/fees", status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "An example" })).toBeVisible() },
   { name: "devnet-help", path: "/devnet", status: 200, ready: (page: Page) => expect(page.getByRole("heading", { name: "Get devnet USDC" })).toBeVisible() },
   { name: "keeper", path: "/keeper", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Latest jobs" }).getByRole("table")).toBeVisible() },
   { name: "nothing-there", path: `/markets/${UNKNOWN_ADDRESS}`, status: 404, ready: (page: Page) => expect(page.getByText(UNKNOWN_ADDRESS)).toBeVisible() },
@@ -109,10 +135,12 @@ test.beforeAll(async () => {
   await postKeeperHeartbeat();
 });
 
-for (const { name, path, status, ready } of PAGES) {
+for (const { name, path, status, ready, wallet } of PAGES) {
   test(`${name} wears the shell, stays inside the window and calls only Aviary's own origins`, async ({ page }, testInfo) => {
     const requested: string[] = [];
     page.on("request", (request) => requested.push(request.url()));
+    // The Playwright test wallet, holding no key: it connects and reviews as recorded, and never signs.
+    if (wallet) await installTestWallet(page, null);
 
     const response = await page.goto(path);
     expect(response?.status()).toBe(status);
@@ -128,12 +156,16 @@ for (const { name, path, status, ready } of PAGES) {
     await expect(header.getByText("devnet", { exact: true })).toBeVisible();
     await expect(header.getByRole("searchbox", { name: "Search" })).toBeVisible();
 
-    // The footer: the three styles of "Who is speaking", the devnet line, Devnet help and the theme control.
+    // The header's wallet button.
+    await expect(header.getByRole("button", { name: /^(Connect wallet|E69P\.\.\.JnAW)$/ })).toBeVisible();
+
+    // The footer: the three styles of "Who is speaking", the devnet line, Fees, Devnet help and the theme control.
     const footer = page.getByRole("contentinfo");
     await expect(footer.getByText(/^Plain text was read from the chain or measured by /)).toBeVisible();
     await expect(footer.getByText("Text set like this was written by an AI from those facts.")).toBeVisible();
     await expect(footer.getByText("Text like this was written by a strategy's or token's author and is not verified.")).toBeVisible();
     await expect(footer.getByText(/^Devnet only\. .+ never holds your keys: every transaction is signed in your own wallet, after a simulation you see first\.$/)).toBeVisible();
+    await expect(footer.getByRole("link", { name: "Fees" })).toHaveAttribute("href", "/fees");
     await expect(footer.getByRole("link", { name: "Devnet help" })).toBeVisible();
     await expect(footer.getByRole("link", { name: "Keeper" })).toHaveAttribute("href", "/keeper");
     await expect(footer.getByRole("radio")).toHaveCount(3);

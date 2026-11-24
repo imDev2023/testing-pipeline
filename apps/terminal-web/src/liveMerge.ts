@@ -17,6 +17,23 @@ export function mergeTrades(shown: readonly Trade[], arriving: readonly Trade[])
   return [...byId.values()].sort(newerFirst);
 }
 
+/**
+ * Trades arriving, from a room, a resync or the fast path, sorted against those shown: `fresh` ones
+ * not shown yet, which join the top, and `updates`, the indexer's copy of a trade shown under the fast
+ * path's provisional order key (no place in its block yet), which replaces it in place.
+ */
+export function sortArrivals(shown: readonly Trade[], arriving: readonly Trade[]): { fresh: Trade[]; updates: Trade[] } {
+  const byId = new Map(shown.map((t) => [idOf(t), t]));
+  const fresh: Trade[] = [];
+  const updates: Trade[] = [];
+  for (const t of arriving) {
+    const current = byId.get(idOf(t));
+    if (!current) fresh.push(t);
+    else if (current.block_index === null && t.block_index !== null) updates.push(t);
+  }
+  return { fresh, updates };
+}
+
 /** The API's `after` cursor for the newest trade shown, from which a reconnecting page resyncs; null with none. */
 export function afterCursor(shown: readonly Trade[]): string | null {
   const newest = [...shown].sort(newerFirst)[0];
