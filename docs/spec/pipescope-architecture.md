@@ -172,7 +172,7 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
   - markets, a market's facts, trades and candles, with the feed's filters (liquidity, volume, age and Pipeline's trust flags);
   - search by name, mint, market address or strategy address, from Postgres: as built, `GET /v1/search?q=&limit=` (`PIPESCOPE-124`), each group counted in full and served up to `PAGE_LIMITS.search`;
   - a token image at `GET /images/<hash>`, from KV alone (Data);
-  - a wallet's swaps through Pipeline, from our trades, and its balances in mints that trade in Pipeline markets, read through RPC;
+  - a wallet's swaps through Pipeline, from our trades, and its balances in mints that trade in Pipeline markets, read through RPC: as built (`PIPESCOPE-141`), `GET /v1/traders/{trader}/trades` with every mint its page names, and `GET /v1/traders/{trader}/holdings`, with `POST /v1/unwrap/prepare` building and simulating the unwrap and `POST /v1/confirmations` waiting on a signature the page's wallet sent, the two `POST`s counted with quotes and prepares;
   - a quote while the trader types;
   - `POST` prepare for a swap, a custom action and a new market, each returning the unsigned transaction with its simulation's outcome and balance changes;
   - `POST` a trade's signature (the fast path);
@@ -201,10 +201,17 @@ As built in [#121](https://github.com/imDev2023/testing-pipeline/issues/121):
 - A prepared swap older than 45 s when the trader asks to sign is built and simulated again before the wallet is asked, since its blockhash would soon expire (`PIPESCOPE-134`).
 - The swap carries the strategy's quoted output in its `amount_out` argument, which exact-in does not read, as Pipeline's own builder does, so its router instruction is the hosted API's (`PIPESCOPE-93`).
 - `GET /v1/traders/{trader}/balances` reads the wallet's balance in up to four mints through RPC for the trade box, answering wrapped SOL with plain SOL, since a swap paying in it wraps SOL for the trader.
-- Only plain mints are quoted: a Token-2022 mint with a transfer fee, a transfer hook, no transfers or a pause switch gets no quote, since the box promises exactly what leaves the wallet and what arrives; [hooked mints](https://github.com/imDev2023/testing-pipeline/issues/122) add the transfer hook (`PIPESCOPE-135`).
+- A Token-2022 mint with a transfer fee, no transfers or a pause switch gets no quote, since the box promises exactly what leaves the wallet and what arrives; a mint with a transfer hook is quoted and traded since [hooked mints](https://github.com/imDev2023/testing-pipeline/issues/122) (`PIPESCOPE-135`, changed on 2026-11-24).
 - The swap is a legacy transaction when it fits in 1,232 bytes, as Pipeline's builder makes it, and otherwise a version 0 transaction shortened by the market's recorded address lookup table; one that fits neither way is refused with that reason.
 
 - Transfer-hook extra accounts are resolved by our own code for buys, sells and sweeps, from each mint's `ExtraAccountMetaList`, because neither Pipeline's SDK nor its Rust client does it ([How the containment hook works with the router and unlocks](https://github.com/imDev2023/testing-pipeline/issues/10)).
+
+As built in [#122](https://github.com/imDev2023/testing-pipeline/issues/122) (`PIPESCOPE-139`):
+
+- The one module is `terminal-api`'s `trading/hooks.ts`, for swaps and custom actions alike: `hookAccounts` resolves the transfers a transaction makes in one mint, each on its own from the mint's `ExtraAccountMetaList` by Token-2022's own client (`resolveExtraAccountMetasForExecute` from `@solana-program/token-2022`), each account once with the highest role any transfer gives it, followed by the hook program and the validation account; a mint with no transfer hook program needs nothing and asks the chain nothing.
+- A swap covers every transfer the router and the strategy make in a hooked mint: a sell's trader-to-vault transfer, and Pipeline's and the integrator's fees when taken in the input, go in the router's `input_hook_accounts`; a buy's vault-to-trader transfer, signed for by the vault's owner read from the vault, and Pipeline's fee when taken in the output, follow the strategy's own accounts, where the strategy finds them to pay out and the router finds them for that fee.
+- A refusal by a mint's transfer hook is named as the hook's (`hook_refused`), and Token-2022's CPI Guard and required memos are named as the holder's own settings ([`containment-hook.md`](containment-hook.md), Hook accounts callers must pass).
+- Checked on a local validator running devnet's router (`tests/terminal-e2e/demo/hooked-mints.ts`): markets of Pipeline's `test-strategy-cp` with mints hooked by Pipeline's `test-hook` and `test-hook-refill` were bought and sold from the trade box with the test wallet, each prepared swap carrying exactly the accounts the mint's list names, with their roles.
 - Custom actions and market creation are prepared and simulated the same way, with the SDK's generic builders (`buildActionInstruction`, `buildCreateMarketFromMetadata`) from the strategy's validated metadata after the discriminator check; a custom action is signed directly on the strategy, outside the router's protections.
 
 ### Simulation before every signature

@@ -8,27 +8,35 @@
 // - `fixtures` (the default in CI): recorded devnet answers from fixtures/devnet-rpc.json, and the
 //   strategies' metadata documents from fixtures/metadata.json, no network.
 // - `record`: live devnet and the web through the fixture server, which records every answer it passes on.
+// - `local`: a local validator running devnet's router (E2E_LOCAL_RPC), for the hooked-mints demo run
+//   (`pnpm --filter terminal-e2e hooked:local`, #122), whose one project buys and sells hooked mints
+//   through the trade box (src/trade-hooked.spec.ts); docs/toolchain.md, "Aviary's hooked-mints demo".
 //
 // Before the tests, src/global-setup.ts fires the cron and waits for the indexer's first run.
 //
-// `pnpm --filter terminal-e2e swaps:devnet` adds real swaps through the trade box (E2E_SWAPS).
+// `pnpm --filter terminal-e2e swaps:devnet` adds real swaps through the trade box (E2E_SWAPS), and
+// `wallet:devnet` the wallet page's devnet demo (E2E_WALLET_DEVNET).
 //
 // Every page test runs at 1440, 390 and 360 px wide in the light and the dark theme, and saves a
 // screenshot of each page to screenshots/<width>-<theme>/.
 import { defineConfig, devices } from "@playwright/test";
-import { API, API_PORT, RPC_MODE, WEB, WEB_PORT } from "./src/target";
+import { API, API_PORT, LOCAL_RPC, RPC_MODE, WEB, WEB_PORT } from "./src/target";
 import { TEST_KEEPER_WALLET } from "./src/keeper";
 import { METADATA_PATH, RPC_PORT } from "./src/rpc";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is not set: it names the Docker Postgres (docs/toolchain.md, \"Aviary's local run\").");
-const rpcUrl = RPC_MODE === "devnet" ? process.env.RPC_URL : `http://127.0.0.1:${RPC_PORT}`;
+const rpcUrl = RPC_MODE === "devnet" ? process.env.RPC_URL : RPC_MODE === "local" ? LOCAL_RPC : `http://127.0.0.1:${RPC_PORT}`;
+const LOCAL = RPC_MODE === "local";
 if (!rpcUrl) throw new Error("RPC_URL is not set: run with the project's .env loaded, or set E2E_RPC=fixtures.");
 if (RPC_MODE === "record" && !process.env.RPC_URL) throw new Error("E2E_RPC=record needs RPC_URL: run with the project's .env loaded.");
 
 // E2E_SWAPS adds the project that sends real swaps on devnet, with the test trader's key.
 const SWAPS = Boolean(process.env.E2E_SWAPS);
 if (SWAPS && RPC_MODE !== "devnet") throw new Error("E2E_SWAPS sends real devnet swaps: run it with E2E_RPC=devnet.");
+// E2E_WALLET_DEVNET adds the wallet page's devnet project (#122), which unwraps the project wallet's wrapped SOL.
+const WALLET_DEVNET = Boolean(process.env.E2E_WALLET_DEVNET);
+if (WALLET_DEVNET && RPC_MODE !== "devnet") throw new Error("E2E_WALLET_DEVNET sends a real devnet transaction: run it with E2E_RPC=devnet.");
 
 const WIDTHS = [
   { width: 1440, height: 900 },
@@ -50,7 +58,10 @@ export default defineConfig({
   reporter: [["list"]],
   outputDir: "./test-results",
   use: { baseURL: WEB, trace: "retain-on-failure", ...devices["Desktop Chrome"] },
-  projects: [
+  projects: LOCAL
+    ? // A local demo run: the hooked mints, bought and sold through the trade box, and nothing else, since the pages' other tests read devnet's markets.
+      [{ name: "hooked", testMatch: /trade-hooked\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }]
+    : [
     ...WIDTHS.flatMap((viewport) =>
       THEMES.map((colorScheme) => ({
         name: `${viewport.width}-${colorScheme}`,
@@ -67,11 +78,15 @@ export default defineConfig({
     // The trade box with the Playwright test wallet: quotes, reviews and refusals, never sending (src/trade.spec.ts).
     { name: "trade", testMatch: /trade\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
     // Real swaps on devnet through the trade box (src/trade-devnet.spec.ts): only when asked for, never in CI.
+    // The wallet page with the Playwright test wallet: holdings, swaps and the unwrap reviewed, never sending (src/wallet.spec.ts, #122).
+    { name: "wallet", testMatch: /wallet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } },
     ...(SWAPS ? [{ name: "swaps", testMatch: /trade-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
-  ],
+    // The project wallet's swaps against the hosted API and its wrapped SOL unwrapped on devnet (src/wallet-devnet.spec.ts): only when asked for, never in CI.
+    ...(WALLET_DEVNET ? [{ name: "wallet-devnet", testMatch: /wallet-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
+      ],
   webServer: [
     // The fixture RPC, first, so the API can read it from its first request.
-    ...(RPC_MODE === "devnet"
+    ...(RPC_MODE === "devnet" || LOCAL
       ? []
       : [
           {
@@ -86,7 +101,7 @@ export default defineConfig({
       // Off devnet, strategies' metadata documents are read through the fixture server too. Canary's
       // container is not built: no page these tests check shows its results yet (#125), and its runs
       // are checked by Canary's own demo and devnet tests.
-      command: `node scripts/dev.ts --var KEEPER_WALLET:${TEST_KEEPER_WALLET}${RPC_MODE === "devnet" ? "" : ` --var TEST_METADATA_FIXTURES:http://127.0.0.1:${RPC_PORT}${METADATA_PATH}`} --enable-containers=false`,
+      command: `node scripts/dev.ts --var KEEPER_WALLET:${TEST_KEEPER_WALLET}${RPC_MODE === "devnet" || LOCAL ? "" : ` --var TEST_METADATA_FIXTURES:http://127.0.0.1:${RPC_PORT}${METADATA_PATH}`} --enable-containers=false`,
       cwd: "../../apps/terminal-api",
       env: { RPC_URL: rpcUrl, DATABASE_URL, TERMINAL_API_PORT: String(API_PORT) },
       url: `${API}/health`,
