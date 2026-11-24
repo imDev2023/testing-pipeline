@@ -253,7 +253,7 @@ export function phraseOf(r: StoredCanaryResult): string {
   switch (r.check) {
     case "cost": {
       const ordinary = ordinaryTrade([r]);
-      if (ordinary) return `a ${ordinary.amount_words} round trip returned ${percentOf(ordinary.return_ppm)}`;
+      if (ordinary) return `${ordinary.amount_words.endsWith(" SOL") ? `a ${ordinary.amount_words} round trip` : `a round trip of ${ordinary.amount_words}`} returned ${percentOf(ordinary.return_ppm)}`;
       break;
     }
     case "exit_sizes": {

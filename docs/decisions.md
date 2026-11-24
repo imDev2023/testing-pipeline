@@ -2500,6 +2500,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: trade plain mints](https://github.com/imDev2023/testing-pipeline/issues/121)
 
+### PIPESCOPE-137: The checks' order and plain names on the pages
+
+- Question: In what order do the pages list Canary's checks, and by what names?
+- Answer: In the prototype's order, what a trader most needs first, from Reading the market and Buy, then sell straight back to Pipeline's own conformance check and Instructions beyond Pipeline's own, with Supply held outside the pool, added after the prototype, beside Token authorities acting; each by the prototype's plain name, in one list in `terminal-api`'s `canaryView.ts` that serves each result with its name and in that order.
+- Alternatives: The order of the checks in the Canary spec, which puts the conformance report second and the cost of a round trip eleventh; the check ids alone.
+- Specified in: [`docs/spec/pipescope-screens.md`, Canary outcomes](spec/pipescope-screens.md#canary-outcomes)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125)
+
+### PIPESCOPE-138: The phrase a row shows
+
+- Question: What short phrase stands beside the one Canary result a row shows, and which return does a market of three or four mints show?
+- Answer: A phrase `terminal-api` writes from the result's own numbers ("a 0.01 SOL round trip returned 48.6%", "buys of 1 SOL or more could not sell back"), or else the check's plain name; a market of three or four mints shows the return of the pair that returned least, and a strategy's row counts the markets its version cannot read, never outcomes.
+- Alternatives: The result's whole sentence, too long for a row; the average of the pairs' returns, which hides the worst pair.
+- Specified in: [`docs/spec/pipescope-screens.md`, What a row says about Canary](spec/pipescope-screens.md#what-a-row-says-about-canary)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-24 in [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125)
+
+### PIPESCOPE-139: When the upgrade notice shows
+
+- Question: When do the strategy page and its market pages carry "Upgraded on <date>; tests and explanation for this version are pending.", and what date does it name?
+- Answer: While the strategy's current version has no Canary result of its own and an older version is recorded: on a market page until that market has one, on the strategy page until any of its markets has one; the date is the day the upgrade's transaction landed, or the day Aviary first saw the version; the explanation's own part reads as pending until it exists (#127).
+- Alternatives: Keeping the notice until the explanation exists too, which waits on the owner's approval of a paid call and could hold it for days after the tests are in.
+- Specified in: [`docs/spec/pipescope-screens.md`, Explanation, actions and facts](spec/pipescope-screens.md#explanation-actions-and-facts)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125)
+
+### PIPESCOPE-140: A stranded market's words, and Canary read with the page
+
+- Question: When does a stranded market's page say it was left behind by an upgrade, and what happens when Canary's results cannot be read?
+- Answer: It says so only when the market was created before its strategy's current version was deployed; Canary's results are read with the page, so the head, the trade box and the facts panel agree from the first paint, and when they cannot be read Canary's part says so with Try again and the trade box says it cannot repeat what Canary saw.
+- Alternatives: The sentence on every stranded market, untrue for one created on a version that cannot read it; each panel reading Canary on its own, which can leave the trade box without its notice while the facts panel shows the fail.
+- Specified in: [`docs/spec/pipescope-screens.md`, Markets that cannot trade](spec/pipescope-screens.md#markets-that-cannot-trade)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: Canary's results on the pages and the trade box's exit-test notice](https://github.com/imDev2023/testing-pipeline/issues/125)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims

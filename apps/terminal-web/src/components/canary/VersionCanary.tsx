@@ -29,7 +29,9 @@ function opening(rollup: CanaryRollup): string {
   if (s.stranded > 0) parts.push(`${s.stranded === s.markets ? (s.markets === 1 ? "It" : "All of them") : `${formatInteger(s.stranded)} of ${formatInteger(s.markets)}`} cannot be read by this version.`);
   if (s.ordinary) {
     const range = s.ordinary.min_ppm === s.ordinary.max_ppm ? formatPercentPpm(s.ordinary.min_ppm) : `${formatPercentPpm(s.ordinary.min_ppm)} to ${formatPercentPpm(s.ordinary.max_ppm)}`;
-    parts.push(`On the markets that trade, a ${s.ordinary.amount_words} buy sold straight back returned ${range}.`);
+    // "a 0.01 SOL buy", or on markets with no SOL side "a buy of 100 tokens".
+    const buy = s.ordinary.amount_words.endsWith(" SOL") ? `a ${s.ordinary.amount_words} buy` : `a buy of ${s.ordinary.amount_words}`;
+    parts.push(`On the markets that trade, ${buy} sold straight back returned ${range}.`);
   } else parts.push("None of them trades.");
   parts.push("Canary detects; it cannot prove a strategy safe.");
   return parts.join(" ");
@@ -58,7 +60,8 @@ export function VersionCanary({ rollup }: { rollup: CanaryRollup }) {
                   <span className={styles.counts}>
                     {ORDER.filter((o) => line.outcomes[o]).map((o) => (
                       <span key={o} className={styles.count}>
-                        <Outcome outcome={o} /> <span>{share(line.outcomes[o]!, rollup.markets)}</span>
+                        <Outcome outcome={o} />
+                        <span>, {share(line.outcomes[o]!, rollup.markets)}</span>
                       </span>
                     ))}
                   </span>

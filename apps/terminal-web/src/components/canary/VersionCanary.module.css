@@ -88,7 +88,7 @@ div.line::after {
 
 .count {
   display: inline-flex;
-  gap: 6px;
+  gap: 0;
   align-items: baseline;
   white-space: nowrap;
 }

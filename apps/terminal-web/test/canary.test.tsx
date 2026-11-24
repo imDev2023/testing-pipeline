@@ -156,9 +156,9 @@ describe("What Canary saw on this version", () => {
     expect(order.slice(0, 3)).toEqual(["readable", "exit_sizes", "cost"]);
     expect(order.at(-1)).toBe("custom_instructions");
     const readable = html.slice(html.indexOf('data-check="readable"'), html.indexOf('data-check="exit_sizes"'));
-    expect(textOf(readable)).toMatch(/^.*Reading the market .* fail 1 of 3 pass 2 of 3/);
+    expect(textOf(readable)).toMatch(/^.*Reading the market .* fail , 1 of 3 pass , 2 of 3/);
     const contained = html.slice(html.indexOf('data-check="contained_mint"'), html.indexOf('data-check="conformance"'));
-    expect(textOf(contained)).toContain("not run all 3 markets");
+    expect(textOf(contained)).toContain("not run , all 3 markets");
     for (const m of marks(html)) expect(OUTCOMES).toContain(m.word);
     expect(marks(html)).toHaveLength((html.match(/<svg/g) ?? []).length);
   });

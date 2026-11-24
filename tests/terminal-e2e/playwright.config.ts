@@ -84,8 +84,8 @@ export default defineConfig({
     {
       // The keeper page's wallet is the tests' own, whose heartbeats they can sign (src/keeper.ts).
       // Off devnet, strategies' metadata documents are read through the fixture server too. Canary's
-      // container is not built: no page these tests check shows its results yet (#125), and its runs
-      // are checked by Canary's own demo and devnet tests.
+      // container is not built: the pages show real results the global setup stores for six markets
+      // (src/canary.ts), and Canary's runs are checked by its own demos and devnet tests.
       command: `node scripts/dev.ts --var KEEPER_WALLET:${TEST_KEEPER_WALLET}${RPC_MODE === "devnet" ? "" : ` --var TEST_METADATA_FIXTURES:http://127.0.0.1:${RPC_PORT}${METADATA_PATH}`} --enable-containers=false`,
       cwd: "../../apps/terminal-api",
       env: { RPC_URL: rpcUrl, DATABASE_URL, TERMINAL_API_PORT: String(API_PORT) },
