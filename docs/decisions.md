@@ -4145,6 +4145,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
 
+### TAX-63: Canary's warns on a market with a virtual reserve
+
+- Question: Which of Canary's warns may a tax market with a virtual reserve show besides those of every tax market?
+- Answer: `conformance`, when `pipeline-check`'s `quotes` sizes its large sale past the real reserve, which the program refuses, and `outside_supply`, both findings the spec already accepts for a virtual reserve (H036, H086), named in the tax AMM's Canary checks for such markets only.
+- Alternatives: Changing Canary's `conformance` to pass explicit amounts to `pipeline-check` on such markets, a Canary ticket of its own; holding the criterion to the markets #75 launched, which already meet it.
+- Specified in: [`docs/spec/tax-amm.md`, Canary checks](spec/tax-amm.md#canary-checks)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
+
 ## Containment hook (HOOK)
 
 ### HOOK-01: Transfers while contained

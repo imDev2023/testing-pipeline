@@ -445,6 +445,10 @@ The bar asks our strategies to pass Canary checks on devnet: no fail on any mark
 - `token_authorities`: a warn while a mint of the market keeps an authority that could act on holders, such as a launcher's mint authority or USDC's freeze authority; that is a fact about the mint, which the tax AMM allows and Aviary shows.
 - `custom_instructions` notes `seed`, `distribute`, `set_taxes`, `set_recipients` and `renounce_tax_authority`; Canary lists them and does not call them, so a tax authority changing rates inside its range is not exercised.
 - On the home market of a contained token, the containment hook's own warns apply as well (`docs/spec/containment-hook.md`, "Canary checks").
+- On a market with a virtual reserve only (`TAX-63`, owner, 2026-11-24):
+  - `conformance`: a warn when `pipeline-check`'s `quotes` sizes its large sale from the vault's balance, past what the real reserve can pay out, which the program refuses (`InsufficientLiquidity`); the virtual side is priced but never paid out ("Virtual reserve"), and the tests and the release gate check such markets with explicit amounts, while Canary runs `pipeline-check` at its default sizes on every market.
+  - `outside_supply`: a warn when supply held outside the pool could be sold into the real quote buyers paid in, the finding "Locked for good" accepts (H036, H086).
+  - Seen on 2026-11-24 on the ten single-sided tax markets on devnet, all launched by the containment hook's tickets, by [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75), which found no fail on any of the tax AMM's 15 markets.
 - No other check may warn or fail on a tax market we create.
 
 ### Build tickets
