@@ -2,7 +2,7 @@
     "name": "terminal-explainer",
     "private": true,
     "type": "module",
-    "description": "Aviary's explainer: its rules module and the author-text normaliser, with the hostile metadata fixtures; the prompt and the validator join with the explainer jobs (docs/spec/pipescope-explainer.md)",
+    "description": "Aviary's explainer: its rules module, the system prompt rendered from it, the output schema, the validator, the evidence's author and Pipeline parts, the model request and the key, with the recorded samples and the hostile fixtures (docs/spec/pipescope-explainer.md)",
     "engines": {
         "node": ">=24 <25"
     },

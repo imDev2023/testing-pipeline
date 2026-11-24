@@ -1,0 +1,358 @@
+{
+  "sample": "iwao",
+  "title": "Strategy 9mAV...a1UF",
+  "program": "9mAV3pMKXx67poy98jHizWM6TEeKJ5g48ZeD83xFa1UF",
+  "deploySlot": 520136342,
+  "evidence": [
+    {
+      "id": "P1",
+      "group": "Pipeline",
+      "label": "Pipeline fee",
+      "value": "0.25% of each swap's input, charged by the router on every hop and paid to Pipeline's treasury.",
+      "source": "Pipeline docs/INTEGRATOR-GUIDE.md; constant text kept by Aviary"
+    },
+    {
+      "id": "P2",
+      "group": "Pipeline",
+      "label": "Router protections on swaps",
+      "value": "The router moves your input into the strategy's vault, refuses the swap if you would receive less than your minimum, and never takes more than the amount you signed. You do not sign the call to the strategy, so it can pay you but cannot take from your accounts.",
+      "source": "Pipeline docs/ROUTER.md; constant text"
+    },
+    {
+      "id": "P3",
+      "group": "Pipeline",
+      "label": "Custom actions",
+      "value": "Any strategy instruction other than a swap is signed directly on the strategy; the router's protections and fee do not apply to it.",
+      "source": "Pipeline docs/STRATEGY-GUIDE.md section 5; constant text"
+    },
+    {
+      "id": "P4",
+      "group": "Pipeline",
+      "label": "Bypass",
+      "value": "A strategy may allow trades that skip the router; those pay no Pipeline fee and leave no swap event.",
+      "source": "Pipeline docs/STRATEGY-GUIDE.md rule 4; constant text"
+    },
+    {
+      "id": "P5",
+      "group": "Pipeline",
+      "label": "Vetting",
+      "value": "Pipeline does not vet strategies; anyone can register one.",
+      "source": "Pipeline docs/INTEGRATOR-GUIDE.md section 5; constant text"
+    },
+    {
+      "id": "P6",
+      "group": "Pipeline",
+      "label": "Router control on devnet",
+      "value": "The router is upgradeable. Its upgrade authority 2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ is also its admin, who can pause swaps, market creation and registration.",
+      "source": "Router ProgramData 3dpKiLED... and Config BmdeX3kW... read 2026-11-09 at slot 520324283"
+    },
+    {
+      "id": "F1",
+      "group": "Program",
+      "label": "Program",
+      "value": "9mAV3pMKXx67poy98jHizWM6TEeKJ5g48ZeD83xFa1UF",
+      "source": "read 2026-11-09, slot 520324319"
+    },
+    {
+      "id": "F2",
+      "group": "Program",
+      "label": "Upgrade authority",
+      "value": "FWbhWcufRWM3CsVb6MixpwtNXWMYQbhQo3uWEfg4vrKq; not frozen, so this key can replace the code",
+      "source": "ProgramData BjCwNzgB..., slot 520324319"
+    },
+    {
+      "id": "F3",
+      "group": "Program",
+      "label": "This version",
+      "value": "Deployed in slot 520136342, 2026-11-08 20:08 UTC, and never upgraded; hash 062e4c0b...b1cfa",
+      "source": "ProgramData header; solana-verify get-program-hash"
+    },
+    {
+      "id": "F4",
+      "group": "Program",
+      "label": "Verified build",
+      "value": "None, and no public source was found.",
+      "source": "no verification record; source repository not public (GitHub API, 2026-11-09)"
+    },
+    {
+      "id": "F5",
+      "group": "Program",
+      "label": "Instructions in the deployed program",
+      "value": "The 5 Pipeline requires, plus its own buy and sell, create_market, initialize_factory, split_fees, buyback, deepen_quote, deepen_token, publish_manifest and set_metadata.",
+      "source": "names compiled into the program binary"
+    },
+    {
+      "id": "F6",
+      "group": "Program",
+      "label": "Factory authority",
+      "value": "FWbhWcufRWM3CsVb6MixpwtNXWMYQbhQo3uWEfg4vrKq, the same key as the upgrade authority. The program holds the message \"Only the factory authority may do this\".",
+      "source": "Factory account DYX4TRth..., slot 520329719; program binary"
+    },
+    {
+      "id": "F7",
+      "group": "Program",
+      "label": "Strategy metadata",
+      "value": "The link stored in the router returns HTTP 404.",
+      "source": "Strategy account 5A1ihzM8...; fetched 2026-11-09 08:39 UTC"
+    },
+    {
+      "id": "F8",
+      "group": "Program",
+      "label": "Markets",
+      "value": "4 registered with Pipeline; the program has created 6.",
+      "source": "router Market accounts; program transactions"
+    },
+    {
+      "id": "F9",
+      "group": "Market",
+      "label": "Sampled market",
+      "value": "4FXwjRnDPA8YrBYRtpJfoJJbT7ahZJePBuSPDQMTKezd, the most trades of the 4; created 2026-11-08 20:58 UTC by FWbhWcufRWM3CsVb6MixpwtNXWMYQbhQo3uWEfg4vrKq; no exact-out trades",
+      "source": "Market account; tx 4Q8iVMvX..."
+    },
+    {
+      "id": "F10",
+      "group": "Market",
+      "label": "Token DFH22wDYRAb8zijHanSihXfZyRJHF7R9UiSCRC8D8szr",
+      "value": "SPL Token; supply 218.906219418; mint authority: the market itself (the supply grows on buys and shrinks on sales); freeze authority: none",
+      "source": "mint account, slot 520327026"
+    },
+    {
+      "id": "F11",
+      "group": "Market",
+      "label": "Vaults",
+      "value": "0.358870908 SOL and 0 tokens",
+      "source": "vault accounts EhnPCaKo..., 9yeRznRv..., slot 520327026"
+    },
+    {
+      "id": "F12",
+      "group": "Market",
+      "label": "Pipeline's fee account for this market",
+      "value": "Holds 217.906219418 tokens, 99.54% of the token's supply, collected as the Pipeline fee on the market's one sale through Pipeline.",
+      "source": "fee account bh3BbBW4..., slot 520329429"
+    },
+    {
+      "id": "F13",
+      "group": "Observed",
+      "label": "Trading",
+      "value": "Sampled market: 16 trades through Pipeline (15 buys, 1 sale) and 23 directly on the program's own buy and sell (13 buys, 10 sales), 2026-11-08 20:58 to 21:00 UTC. All markets: 50 through Pipeline, 52 direct.",
+      "source": "every router and program transaction since 2026-11-08"
+    },
+    {
+      "id": "F14",
+      "group": "Observed",
+      "label": "Fees",
+      "value": "Each trade, routed or direct, put 0.30% of its SOL side into the market's fee vault. split_fees moved fee-vault SOL half to the factory treasury and half to FWbhWcufRWM3CsVb6MixpwtNXWMYQbhQo3uWEfg4vrKq; buyback moved treasury SOL half to that key and half to another market.",
+      "source": "txs 4syjaL7S..., 43xiCGEX..., 3ouRjiEi..., 43ZdFat5..."
+    },
+    {
+      "id": "F15",
+      "group": "Observed",
+      "label": "Who traded",
+      "value": "Every trader wallet checked was first funded by FWbhWcufRWM3CsVb6MixpwtNXWMYQbhQo3uWEfg4vrKq, which also paid the fee of every direct trade.",
+      "source": "oldest transaction of each wallet"
+    },
+    {
+      "id": "C1",
+      "group": "Canary",
+      "label": "Round trip, tiny size",
+      "value": "Run on 2026-11-09: 0.00001 SOL bought 4.064593969 tokens; selling them back against the same state returned 48.99% of the input. Past trades show the same gap: a buy at 139 and a sale at 67 lamports per token.",
+      "source": "simulated quotes, slots 520329043 to 520329049, 2026-11-09; txs 3CegiE2M..., 2xoQqWwV..."
+    },
+    {
+      "id": "C2",
+      "group": "Canary",
+      "label": "Large sale quote",
+      "value": "Run on 2026-11-09: Quoting a sale larger than the token's supply crashed the program (an arithmetic overflow) instead of returning an error.",
+      "source": "simulation, slot 520328109, 2026-11-09"
+    },
+    {
+      "id": "C3",
+      "group": "Canary",
+      "label": "Bypass",
+      "value": "Run on 2026-11-09: Calling the strategy's Pipeline swap directly, with another key in place of the router's market signer, was refused.",
+      "source": "simulation, slot 520328111, 2026-11-09"
+    },
+    {
+      "id": "C4",
+      "group": "Canary",
+      "label": "Exact-out",
+      "value": "Run on 2026-11-09: Refused: exact-in only.",
+      "source": "simulation, slot 520328909, 2026-11-09"
+    },
+    {
+      "id": "C5",
+      "group": "Canary",
+      "label": "Exit test",
+      "value": "Not run yet: buying then selling from the same wallet with committed trades, at several sizes, after moving the clock forward, and after each authority uses its powers.",
+      "source": "Canary checks ticket"
+    }
+  ],
+  "outputs": {
+    "pass": {
+      "summary": [
+        {
+          "text": "In Canary's probe on 2026-11-09, selling straight after a tiny buy returned 48.99% of the SOL paid, so a round trip here loses about half.",
+          "evidence": [
+            "C1"
+          ]
+        },
+        {
+          "text": "The program has its own buy and sell that skip Pipeline, and so far more trades went that way than through Pipeline.",
+          "evidence": [
+            "F5",
+            "F13"
+          ]
+        },
+        {
+          "text": "The key FWbh...vrKq can replace the code at any time, and has received half of the trading fees split so far.",
+          "evidence": [
+            "F2",
+            "F14"
+          ]
+        }
+      ],
+      "claims": [
+        {
+          "topic": "does",
+          "basis": "inferred",
+          "text": "Each market appears to mint its token on buys and remove it on sales: the market itself holds the mint authority.",
+          "evidence": [
+            "F10"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "Besides Pipeline's instructions, the program has its own buy and sell, which trade without Pipeline's fee or swap record.",
+          "evidence": [
+            "F5",
+            "P4"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "On the sampled market, 16 trades went through Pipeline and 23 directly; across its markets, 50 went through Pipeline and 52 directly.",
+          "evidence": [
+            "F13"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "Each trade, routed or direct, puts 0.30% of its SOL side into the market's fee vault.",
+          "evidence": [
+            "F14"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "Pipeline's fee account for this market holds 99.54% of the token's supply, taken as Pipeline's fee on the market's one sale through Pipeline.",
+          "evidence": [
+            "F12"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The key FWbh...vrKq can replace the program's code at any time; it has not done so since deploying it on 2026-11-08.",
+          "evidence": [
+            "F2",
+            "F3"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The same key is the factory authority, and each time fees were split or used for buybacks, half went to its account.",
+          "evidence": [
+            "F6",
+            "F14"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The sampled token has no freeze authority, and only the market itself can mint it.",
+          "evidence": [
+            "F10"
+          ]
+        },
+        {
+          "topic": "canary",
+          "basis": "confirmed",
+          "text": "On 2026-11-09, 0.00001 SOL bought 4.064593969 tokens and selling them back returned 48.99% of the SOL; past trades show a buy at 139 and a sale at 67 lamports per token.",
+          "evidence": [
+            "C1"
+          ]
+        },
+        {
+          "topic": "canary",
+          "basis": "confirmed",
+          "text": "Quoting a sale larger than the token's supply crashed the program instead of returning an error.",
+          "evidence": [
+            "C2"
+          ]
+        },
+        {
+          "topic": "canary",
+          "basis": "confirmed",
+          "text": "A call to its Pipeline swap that skipped the router was refused, and exact-out trades are not supported.",
+          "evidence": [
+            "C3",
+            "C4"
+          ]
+        },
+        {
+          "topic": "protection",
+          "basis": "confirmed",
+          "text": "Through Pipeline, the router refuses a trade that would pay you less than the minimum you set.",
+          "evidence": [
+            "P2"
+          ]
+        },
+        {
+          "topic": "protection",
+          "basis": "confirmed",
+          "text": "The program's own buy and sell are signed directly on it, outside the router's protections.",
+          "evidence": [
+            "P3",
+            "F5"
+          ]
+        },
+        {
+          "topic": "author",
+          "basis": "confirmed",
+          "text": "Its author's metadata link returns an error, and no public source was found.",
+          "evidence": [
+            "F7",
+            "F4"
+          ]
+        }
+      ],
+      "unknowns": [
+        {
+          "text": "With no public or verified source, the price curve, and why a sale pays about half of a buy, are unknown.",
+          "evidence": [
+            "F4",
+            "C1"
+          ]
+        },
+        {
+          "text": "Which actions only the factory authority may call.",
+          "evidence": [
+            "F6"
+          ]
+        },
+        {
+          "text": "Whether a sale works later or at larger sizes: the full exit test has not run.",
+          "evidence": [
+            "C5"
+          ]
+        }
+      ],
+      "author_text_addresses_ai": false
+    }
+  }
+}

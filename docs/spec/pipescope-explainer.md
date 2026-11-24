@@ -16,6 +16,9 @@ The owner judged hand-written samples for the four devnet strategies and a hosti
 - One explanation per key: program id, ProgramData slot (the strategy version), hash of the normalised author text, hash of the Canary outcomes (results only, not run times), prompt version and model.
 - A new key arises from a strategy upgrade (the ProgramData watch), a `MetadataUpdated` event, a change in Canary outcomes, or a new prompt or model version.
 - A page view never makes one, and a Canary re-run with the same outcomes makes nothing new.
+- `terminal-api`'s `explainerKeys` job works out each strategy's current key every 5 minutes, so each of those changes makes a key within one interval; a strategy whose metadata link changed waits until the new document is fetched, so no key is made from text it no longer names (`EXPLAINER-23`).
+- The author-text hash is of the normalised author text (none when the metadata is not valid) with the metadata status and whether it has a seeding section, which the evidence also states; the Canary-outcomes hash is of each latest result's market, check and outcome on the version, in any order.
+- Only a strategy's current key stays pending: a newer key takes the older pending key out of the queue as superseded, and a key that becomes current again (an outcome that flipped back) returns to it, so the owner is never asked to pay for an explanation that would not be shown (`EXPLAINER-23`).
 - An explanation is shown only for its own key; an older version's explanation is never shown for a newer version.
 
 ### Approval queue
@@ -42,8 +45,12 @@ The model receives evidence items, each with an id, a label and a value; Aviary 
 - None of the four devnet strategies has a verified build (2026-11-09), so none gets S items, even the constant product, whose source is public and consistent with the deployed program.
 - Instruction names compiled into a binary are facts about the binary, but what an instruction does, read from its name, is inference: such claims are "inferred" and say "appears to".
 - Author text is normalised in code before the model sees it: control and text-direction characters stripped, each field capped (name 64 characters, description 600, action label 64), images dropped, and links neither passed to the model nor fetched; what the normaliser removed is reported as an F item.
-  The normaliser, in `packages/terminal-explainer`, strips every control and format character (Unicode `Cc` and `Cf`), caps the create form's and each argument's description as a description and each label and tag as a label, and leaves out the source, the conformance report and the security contact (`EXPLAINER-22`); the pages show the author text it leaves, so what Aviary shows and what the model reads are the same.
-- Each metadata action's discriminator is cross-checked in code against the program's instruction list, and the result is an F item ("The action labelled X calls the instruction deposit"), so a lying label is caught by code, not left to the model.
+  The normaliser, in `packages/terminal-explainer`, strips every control and format character (Unicode `Cc` and `Cf`), caps the create form's and each argument's description as a description and each label, tag and the category as a label, and leaves out the source, the conformance report and the security contact (`EXPLAINER-22`); the pages show the author text it leaves, so what Aviary shows and what the model reads are the same.
+- What the metadata says it calls is cross-checked in code against the version's instruction list, and the result is an F item, so a lying label is caught by code, not left to the model.
+  Pipeline's metadata standard has no custom actions since SDK 0.3, so the sections checked are the two that call an instruction: the create form (`init`), which builds the call to `PipelineInitMarket`, and seeding (`seed`), which `PipelineSeedLiquidity` runs; the indexer keeps an instruction's name only when its discriminator is in the code, so a name in the list is a discriminator found (`EXPLAINER-24`).
+  Each create-form label is tied to its argument in an F item that names the label by its A item's id, never quoting it ("The label in A4 is on the argument withdraw_authority, of type pubkey"), so author text never moves into an F item.
+- The A items are the name, the description, the category, each tag, the create form's description and each argument's label and description, and each outside review the author lists (who and when); F items also give what the normaliser removed and the result of Aviary's own detector for text addressed to AI tools (`EXPLAINER-24`).
+- C items are the representative market's latest result of each check (its run date and slot, the outcome, the binary's reason and the inputs), one item for every check's outcomes across the version's markets, and one naming the checks not run yet on the representative market; a version Canary has not run on has one item saying so; the representative market's tie after swaps and its SOL vault is broken by address (`EXPLAINER-28`).
 - Author text reaches the model JSON-encoded in a tool result labelled with its origin; everything else is in the user message.
 
 ### Pipeline's trust facts and metadata standard
@@ -140,7 +147,7 @@ Code checks every output before it is shown; the prototype's `logic.js` is the r
 
 1. Every summary sentence and claim cites at least one id.
 2. Every cited id exists in the input.
-3. Every number, date, time and address in a sentence appears in the evidence that sentence cites; a shortened address must match a full address in that evidence by its first and last four characters.
+3. Every number, date, time and address in a sentence appears in the evidence that sentence cites, in an item's label or value, which is what the model read (where Aviary read an item is never sent, so it is no evidence for the model's words; `EXPLAINER-26`); a shortened address must match a full address in that evidence by its first and last four characters.
 4. Plain text: no links, domain names, Markdown or HTML, and no evidence id written into the text.
 5. No banned term from rule 3 of the prompt, and no advice or prediction phrase such as "you can always", "should buy" or "expected return".
 6. A claim that cites author text says it is the author's, a claim with basis "author" cites at least one A item, and a claim with basis "inferred" says "appears to".
@@ -178,7 +185,11 @@ Approved as written in the samples (owner, 2026-11-10).
 
 - `claude-haiku-5-5` (owner's choice, 2026-11-10), with structured outputs through `output_config.format`, adaptive thinking at effort `high`, and no citations feature, which cannot be combined with structured outputs.
 - Measured on the samples: about 2,600 to 2,800 input tokens including the system prompt, and 800 to 1,000 output tokens of JSON before thinking; verified source excerpts can add up to about 10,000 input tokens.
-- At $0.10 per million input tokens and $0.50 per million output tokens (prompts up to 100,000 tokens; from the Claude API reference cached on 2026-10-06, to be confirmed on the pricing page before the first paid run), an explanation costs under $0.01 including a retry, and 200 a month cost under $2.
+- At $0.10 per million input tokens and $0.50 per million output tokens (prompts up to 100,000 tokens; confirmed on Anthropic's pricing page on 2026-11-24), an explanation costs under $0.01 including a retry, and 200 a month cost under $2.
+- The free token-counting endpoint counted the twelve eval inputs at 3,701 to 4,414 input tokens on 2026-11-24 (`pnpm explainer:count`), 2.41 characters of request a token.
+- The owner-approved first paid run (2026-11-24, `pnpm explainer:eval`) sent the five samples and the seven hostile inputs: 11 of 12 passed the validator, 5 on the first try and 6 on the retry, and bonding-curve failed twice on length alone (two claims of 50 and 46 words); 19 calls read 159,749 tokens and wrote 142,124, about 7,480 a call with thinking, and cost $0.087, about $0.005 an explanation that passes first time and $0.011 with a retry, since the retry reads the first answer back.
+  The owner kept Haiku 5.5 (2026-11-24): a key that fails twice shows the facts panel alone.
+- A pending key's estimated cost is its request's characters at 2.4 a token, and 8,000 output tokens a call (the JSON and the thinking before it), for a first try and its retry; the approve command asks with the sum and the most the calls could cost at the token ceiling, and reports what was spent (`EXPLAINER-25`).
 - The first paid run, approved by the owner, sends the five sample inputs from the prototype and the hostile fixture set through the model and measures how many outputs pass the validator; if any input fails twice, the owner decides whether to move to a larger model.
 
 ## One place for every value
@@ -188,7 +199,9 @@ The prompt's rules and the validator must never disagree, so both are built from
 - the banned terms and the advice and prediction phrases (`EXPLAINER-11`);
 - the length limits: summary sentences and words, claims and their words, unknowns and their words (`EXPLAINER-12`);
 - the caps on author text: name, description and action label (`EXPLAINER-08`);
-- the prompt version and the model's id (`EXPLAINER-10`, `EXPLAINER-18`), which are part of the key.
+- the prompt version and the model's id (`EXPLAINER-10`, `EXPLAINER-18`), which are part of the key, and how the model is called (effort, token ceiling);
+- the model's price and how a pending key's cost is estimated (`EXPLAINER-25`);
+- the patterns of Aviary's own detector for text addressed to AI tools, and the notice it raises (`EXPLAINER-14`).
 
 - The system prompt above is rendered from that module's values, and a test checks that the rendered text equals the text in this file, so a change to a rule changes the prompt version.
 - `terminal-api` (the evidence builder and the key), `pnpm explainer:approve` and the CI tests all import the same module; nothing else writes a model id, a term or a limit.

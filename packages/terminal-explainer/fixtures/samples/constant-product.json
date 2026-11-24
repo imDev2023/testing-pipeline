@@ -1,0 +1,320 @@
+{
+  "sample": "constant-product",
+  "title": "Strategy yRpt...oUFx",
+  "program": "yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx",
+  "deploySlot": 520151682,
+  "evidence": [
+    {
+      "id": "P1",
+      "group": "Pipeline",
+      "label": "Pipeline fee",
+      "value": "0.25% of each swap's input, charged by the router on every hop and paid to Pipeline's treasury.",
+      "source": "Pipeline docs/INTEGRATOR-GUIDE.md; constant text kept by Aviary"
+    },
+    {
+      "id": "P2",
+      "group": "Pipeline",
+      "label": "Router protections on swaps",
+      "value": "The router moves your input into the strategy's vault, refuses the swap if you would receive less than your minimum, and never takes more than the amount you signed. You do not sign the call to the strategy, so it can pay you but cannot take from your accounts.",
+      "source": "Pipeline docs/ROUTER.md; constant text"
+    },
+    {
+      "id": "P3",
+      "group": "Pipeline",
+      "label": "Custom actions",
+      "value": "Any strategy instruction other than a swap is signed directly on the strategy; the router's protections and fee do not apply to it.",
+      "source": "Pipeline docs/STRATEGY-GUIDE.md section 5; constant text"
+    },
+    {
+      "id": "P4",
+      "group": "Pipeline",
+      "label": "Bypass",
+      "value": "A strategy may allow trades that skip the router; those pay no Pipeline fee and leave no swap event.",
+      "source": "Pipeline docs/STRATEGY-GUIDE.md rule 4; constant text"
+    },
+    {
+      "id": "P5",
+      "group": "Pipeline",
+      "label": "Vetting",
+      "value": "Pipeline does not vet strategies; anyone can register one.",
+      "source": "Pipeline docs/INTEGRATOR-GUIDE.md section 5; constant text"
+    },
+    {
+      "id": "P6",
+      "group": "Pipeline",
+      "label": "Router control on devnet",
+      "value": "The router is upgradeable. Its upgrade authority 2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ is also its admin, who can pause swaps, market creation and registration.",
+      "source": "Router ProgramData 3dpKiLED... and Config BmdeX3kW... read 2026-11-09 at slot 520324283"
+    },
+    {
+      "id": "F1",
+      "group": "Program",
+      "label": "Program",
+      "value": "yRptCdde1du1JYR2DcNFtLC1fkp5Asd6rE3XSvZoUFx",
+      "source": "read 2026-11-09, slot 520324308"
+    },
+    {
+      "id": "F2",
+      "group": "Program",
+      "label": "Upgrade authority",
+      "value": "2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ; not frozen, so this key can replace the code",
+      "source": "ProgramData GukXAxpn..., slot 520324309"
+    },
+    {
+      "id": "F3",
+      "group": "Program",
+      "label": "This version",
+      "value": "Deployed in slot 520151682, 2026-11-08 21:10 UTC; hash f43d1f5d...3954c",
+      "source": "ProgramData header; solana-verify get-program-hash"
+    },
+    {
+      "id": "F4",
+      "group": "Program",
+      "label": "Version history",
+      "value": "Fourth version: deployed 2026-11-07 18:30 UTC, upgraded 3 times on 2026-11-08, all by 2yJJsmhvs2SBsKVtiKCG4wBJNoTH67aRNMhSwkupvUHZ",
+      "source": "loader transactions 4bsJjPFj..., 4AT5EEke..., 4Px92oc7..., Y1yAiDPj..."
+    },
+    {
+      "id": "F5",
+      "group": "Program",
+      "label": "Verified build",
+      "value": "None. A public source exists in Pipeline's repository, but the deployed program has not been verified against it.",
+      "source": "no OtterSec or Program Metadata record on devnet"
+    },
+    {
+      "id": "F6",
+      "group": "Program",
+      "label": "Instructions in the deployed program",
+      "value": "7: the 5 Pipeline requires, the optional pipeline_seed_liquidity, and deposit. No instruction named withdraw.",
+      "source": "names compiled into the program binary"
+    },
+    {
+      "id": "F7",
+      "group": "Program",
+      "label": "Strategy metadata",
+      "value": "None usable: the link stored in the router returns HTTP 404 (a placeholder).",
+      "source": "Strategy account HVfuHwJS...; fetched 2026-11-09 08:39 UTC"
+    },
+    {
+      "id": "F8",
+      "group": "Program",
+      "label": "Markets",
+      "value": "20, registered since 2026-11-07 18:30 UTC",
+      "source": "router Market accounts, slot 520324323"
+    },
+    {
+      "id": "F9",
+      "group": "Program",
+      "label": "Markets this version cannot read",
+      "value": "2 of 20: the two created on 2026-11-07 use an older layout and fail every quote and swap since the upgrade of 2026-11-08 21:10 UTC.",
+      "source": "simulated quotes, slots 520328352 to 520328451"
+    },
+    {
+      "id": "F10",
+      "group": "Market",
+      "label": "Sampled market",
+      "value": "5A7chnyqWn3vDzaN8L7aaoMGxmE7YfjKBcKag5SSfv4T, the largest SOL vault of the 20; created 2026-11-08 11:33 UTC by a bonding-curve graduation",
+      "source": "Market account; tx ykke3HnJ..."
+    },
+    {
+      "id": "F11",
+      "group": "Market",
+      "label": "Token 4oJJyeB4gyLU6bguKV4ucWhYiiJK4LCCea2oB8Rh8tpq",
+      "value": "Token-2022 with a 1% transfer fee on every transfer and no maximum per transfer. Mint authority and fee authority: B1dQr5PSH9BB6vnZc8LGaGjyx4oPYBibWZ2x8pREjiZE. Freeze authority: none.",
+      "source": "mint account, slot 520327026"
+    },
+    {
+      "id": "F12",
+      "group": "Market",
+      "label": "Other token",
+      "value": "Wrapped SOL; no mint or freeze authority",
+      "source": "mint account"
+    },
+    {
+      "id": "F13",
+      "group": "Market",
+      "label": "Vaults",
+      "value": "271,021.619603 tokens and 0.31 SOL",
+      "source": "vault accounts CEWCRBc7..., 75jj5nmh..., slot 520327026"
+    },
+    {
+      "id": "F14",
+      "group": "Observed",
+      "label": "Trading",
+      "value": "Sampled market: 1 swap through Pipeline (0.01 SOL in, 2026-11-08 11:33 UTC). All 20 markets: 26 swaps through Pipeline from 7 wallets.",
+      "source": "every router transaction since 2026-11-07"
+    },
+    {
+      "id": "F15",
+      "group": "Observed",
+      "label": "Custom actions called",
+      "value": "deposit: 19 direct calls across the markets",
+      "source": "every strategy transaction since 2026-11-07"
+    },
+    {
+      "id": "C1",
+      "group": "Canary",
+      "label": "Round trip, tiny size",
+      "value": "Run on 2026-11-09: 0.00001 SOL bought 8.716124 tokens; selling them back against the same state returned 99.39% of the input, before Pipeline's fee and the token's transfer fee.",
+      "source": "simulated quotes, slots 520329027 to 520329029, 2026-11-09"
+    },
+    {
+      "id": "C2",
+      "group": "Canary",
+      "label": "Bypass",
+      "value": "Run on 2026-11-09: Calling the strategy's swap directly, with another key in place of the router's market signer, was refused.",
+      "source": "simulation, slot 520328099, 2026-11-09"
+    },
+    {
+      "id": "C3",
+      "group": "Canary",
+      "label": "Exit test",
+      "value": "Not run yet: buying then selling from the same wallet with committed trades, at several sizes, after moving the clock forward, and after each authority uses its powers.",
+      "source": "Canary checks ticket"
+    }
+  ],
+  "outputs": {
+    "pass": {
+      "summary": [
+        {
+          "text": "The key 2yJJ...vUHZ can replace this strategy's code at any time, and this is its fourth version since 2026-11-07.",
+          "evidence": [
+            "F2",
+            "F4"
+          ]
+        },
+        {
+          "text": "In the market sampled here, the token takes a 1% fee on every transfer, which its creator can change, on top of Pipeline's 0.25% fee.",
+          "evidence": [
+            "F11",
+            "P1"
+          ]
+        },
+        {
+          "text": "Canary's first probe on 2026-11-09 saw a tiny buy sold straight back return 99.39% of the input.",
+          "evidence": [
+            "C1"
+          ]
+        }
+      ],
+      "claims": [
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "Besides Pipeline's 5 required instructions and its optional seeding one, the program has one more, called deposit.",
+          "evidence": [
+            "F6"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "inferred",
+          "text": "deposit appears to let anyone add tokens to a market, and no instruction appears to take them back out.",
+          "evidence": [
+            "F6",
+            "F15"
+          ]
+        },
+        {
+          "topic": "does",
+          "basis": "confirmed",
+          "text": "Across its 20 markets, 26 swaps have gone through Pipeline, from 7 wallets.",
+          "evidence": [
+            "F8",
+            "F14"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The key 2yJJ...vUHZ can replace the program's code at any time, for every market at once.",
+          "evidence": [
+            "F2"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "It has upgraded the program 3 times; since the last upgrade on 2026-11-08, 2 of the 20 markets cannot be quoted or traded.",
+          "evidence": [
+            "F4",
+            "F9"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "The same key is the router's upgrade authority and admin, who can pause swaps.",
+          "evidence": [
+            "F2",
+            "P6"
+          ]
+        },
+        {
+          "topic": "control",
+          "basis": "confirmed",
+          "text": "In the sampled market, the token's creator B1dQ...jiZE can still mint more of it and change its 1% transfer fee; nobody can freeze token accounts.",
+          "evidence": [
+            "F11"
+          ]
+        },
+        {
+          "topic": "canary",
+          "basis": "confirmed",
+          "text": "On 2026-11-09, 0.00001 SOL sold straight back returned 99.39% of the input, before Pipeline's fee and the token's transfer fee.",
+          "evidence": [
+            "C1"
+          ]
+        },
+        {
+          "topic": "canary",
+          "basis": "confirmed",
+          "text": "A call to the strategy's swap that skipped the router was refused, so its swaps cannot avoid the router.",
+          "evidence": [
+            "C2"
+          ]
+        },
+        {
+          "topic": "protection",
+          "basis": "confirmed",
+          "text": "When you trade through Pipeline, the router refuses the swap if you would get less than your minimum, and never takes more than you signed.",
+          "evidence": [
+            "P2"
+          ]
+        },
+        {
+          "topic": "protection",
+          "basis": "confirmed",
+          "text": "deposit is signed directly on the strategy, so the router does not protect it.",
+          "evidence": [
+            "P3",
+            "F6"
+          ]
+        },
+        {
+          "topic": "author",
+          "basis": "confirmed",
+          "text": "Its author has published no description: the metadata link returns an error.",
+          "evidence": [
+            "F7"
+          ]
+        }
+      ],
+      "unknowns": [
+        {
+          "text": "There is no verified source, so how it prices trades is known only from its probes.",
+          "evidence": [
+            "F5"
+          ]
+        },
+        {
+          "text": "Whether a sale works at larger sizes, after time passes, or after the authorities act: the full exit test has not run.",
+          "evidence": [
+            "C3"
+          ]
+        }
+      ],
+      "author_text_addresses_ai": false
+    }
+  }
+}

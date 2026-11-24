@@ -1,0 +1,6 @@
+{
+  "why": "An output with a URL, which plain text never has.",
+  "metadata": "javascript-link",
+  "claim": { "topic": "author", "basis": "author", "text": "The author links a claim page at https://evil.example/claim.", "evidence": ["A2"] },
+  "fails": ["format"]
+}

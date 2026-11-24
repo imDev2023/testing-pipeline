@@ -236,6 +236,10 @@ _Avoid_: overview, AI panel
 The id of one item of evidence given to the explainer (P, F, C, S or A and a number), which every sentence of an explanation must cite and code checks.
 _Avoid_: citation (the Claude API feature, which we do not use), footnote
 
+**Explainer key**:
+What one explanation is made for: a strategy version (program and deploy slot), the hash of its normalised author text, the hash of its Canary outcomes, the prompt version and the model; a key waits pending, with its evidence and estimated cost, until the owner approves it, and a newer key of the same strategy supersedes it.
+_Avoid_: job, request, cache key
+
 **Trade link**:
 A link Aviary's Telegram bot sends that opens one market's trade box with a swap filled in; nothing is signed until the trader acts there in their own wallet.
 _Avoid_: buy link, deep link alone (a wallet's browse link is one too), blink (a Solana Action a wallet unfurls)
