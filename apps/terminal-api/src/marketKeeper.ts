@@ -16,14 +16,14 @@ import { MarketKeeper } from "./contract";
 import type { AppEnv } from "./index";
 import { addressOf } from "./trading/routes";
 
-/** Outcomes that mean the runner's transaction landed, whatever the job then did. */
-const LANDED = new Set(["sent", "nothing-to-do"]);
+/** Records after which a job is no longer due: its transaction landed, or the runner found nothing left to do. */
+const ENDS_DUE = new Set(["sent", "nothing-to-do", "no-longer-due"]);
 
 /** The runner's last attempt at a unit, and since when it has seen it due without landing it. */
 function attemptsOf(unit: KeeperUnitRead | undefined): Pick<MarketKeeper["due"][number], "last" | "due_since"> {
   const latest = unit?.rows[0];
   if (!latest) return { last: null, due_since: null };
-  const sinceLanded = unit.rows.findIndex((r) => LANDED.has(r.outcome));
+  const sinceLanded = unit.rows.findIndex((r) => ENDS_DUE.has(r.outcome));
   const waiting = sinceLanded === -1 ? unit.rows : unit.rows.slice(0, sinceLanded);
   return {
     last: { at: latest.at.toISOString(), outcome: latest.outcome, signature: latest.signature, error: latest.error, cap: latest.cap },

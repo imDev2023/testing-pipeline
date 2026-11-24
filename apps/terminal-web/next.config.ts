@@ -5,7 +5,8 @@ import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  transpilePackages: ["terminal-api"],
+  // terminal-api's product readings import the programs' generated clients, TypeScript as written.
+  transpilePackages: ["terminal-api", "buy-wall-amm-scripts"],
   images: { unoptimized: true },
   // Next's dev badge would sit over the pages the end-to-end tests photograph.
   devIndicators: false,

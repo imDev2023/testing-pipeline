@@ -12,7 +12,7 @@ import { actionNamed } from "strategy-actions";
 import { describe, expect, it } from "vitest";
 import { createAndSeedTransaction, createMarketTransaction, marketViewAfterCreate } from "../src/trading/action";
 import { fitTransaction } from "../src/trading/prepare";
-import { Refused } from "../src/trading/quote";
+import type { Refused } from "../src/trading/quote";
 
 const METADATA = JSON.parse(readFileSync(`${import.meta.dirname}/../../../programs/buy-wall-amm/metadata.json`, "utf8")) as Record<string, unknown>;
 const BUY_WALL = address("BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6");

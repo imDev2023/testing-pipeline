@@ -324,3 +324,6 @@ export const BUY_WALL_RISKS: readonly Fact[] = [
   ["Risk: the buy wall can sit well below the price", "After a fall in price the buy wall can sit well below the price, because its floor rises only about 4% a day."],
   ["Risk: the rewards recipient can trade the cap down", "The rewards recipient can trade the cap down itself and take the reward share of that fall at once, though never more than the budget the reward share and the cap floor set."],
 ].map(([label, value]) => ({ group: "Buy wall AMM", label: label!, value: value!, source: "the buy wall AMM's design (docs/spec/pool4-for-solana.md, Aviary's panel), the same for every market" }));
+
+export { BUY_WALL_AMM_PROGRAM_ADDRESS } from "buy-wall-amm-scripts/client/programs/buyWallAmm.ts";
+export { DESIGNER_SHARE_BPS, SUITE_SHARE_BPS } from "buy-wall-amm-scripts/client/constants/buyWallAmm.ts";

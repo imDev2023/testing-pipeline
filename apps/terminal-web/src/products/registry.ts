@@ -7,10 +7,14 @@
 // other tickets). It reads the chain through the API's one-slot read of a market's state with the
 // outside accounts it names (`GET /v1/markets/{market}/state`, PIPESCOPE-146).
 //
-// Empty until the products' Aviary tickets fill it: the tax AMM's (#75), the containment hook's
-// (#76), the buy wall AMM's (#57) and the lending AMM's (#88).
+// Filled by the products' Aviary tickets: the buy wall AMM's (#57); the tax AMM's (#75), the
+// containment hook's (#76) and the lending AMM's (#88) join it.
 import type { ComponentType } from "react";
-import type { Market } from "terminal-api/contract";
+import type { Market, StrategyForms } from "terminal-api/contract";
+import { BUY_WALL_AMM_PROGRAM_ADDRESS } from "terminal-api/products/buy-wall";
+import { BuyWallCreate } from "./buyWall/BuyWallCreate";
+import { BuyWallForms } from "./buyWall/BuyWallForms";
+import { BuyWallPanel } from "./buyWall/BuyWallPanel";
 
 /** What one product adds to its markets' pages. */
 export type ProductPlace = {
@@ -18,9 +22,13 @@ export type ProductPlace = {
   Panel?: ComponentType<{ market: Market }>;
   /** Its own forms, under Actions after the strategy's metadata forms. */
   Forms?: ComponentType<{ market: Market }>;
+  /** Its own create form, on the create page in place of the generic one built from its metadata (#57). */
+  Create?: ComponentType<{ view: StrategyForms }>;
 };
 
 /** The products by strategy program. */
 export type ProductRegistry = Readonly<Record<string, ProductPlace>>;
 
-export const PRODUCT_PANELS: ProductRegistry = {};
+export const PRODUCT_PANELS: ProductRegistry = {
+  [BUY_WALL_AMM_PROGRAM_ADDRESS]: { Panel: BuyWallPanel, Forms: BuyWallForms, Create: BuyWallCreate },
+};

@@ -7,14 +7,13 @@
 // new market's page once Aviary has read it. When no strategy has valid metadata, the page says so
 // above the list.
 import { generateKeyPairSigner, getTransactionDecoder, getTransactionEncoder, partiallySignTransaction, type KeyPairSigner } from "@solana/kit";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Market, PreparedMarket, StrategiesList, StrategyForms, type Form, type Strategy } from "terminal-api/contract";
+import { useCallback, useRef, useState } from "react";
+import { PreparedMarket, StrategiesList, StrategyForms, type Form, type Strategy } from "terminal-api/contract";
 import { getFromApi, postToApi } from "@/api";
-import { BRAND } from "@/brand";
-import { CLUSTER, NEW_MARKET_ASK_EVERY_MS, NEW_MARKET_WAIT_MS } from "@/config";
+import { CLUSTER } from "@/config";
 import { formatInteger, formatTokenAmount } from "@/format";
+import { PRODUCT_PANELS } from "@/products/registry";
 import { ROUTES } from "@/routes";
 import { PanelFrame, useLoad } from "../Panel";
 import { ShortAddress } from "../ShortAddress";
@@ -30,6 +29,7 @@ import { TransactionReview } from "../forms/TransactionReview";
 import { useFormFields } from "../forms/useFormFields";
 import { useReview } from "../forms/useReview";
 import styles from "./Create.module.css";
+import { NewMarket } from "./NewMarket";
 
 /** Why a strategy offers no create form, from its listed metadata status, or null when its forms may hold one. */
 function noCreateForm(strategy: Strategy): string | null {
@@ -108,7 +108,11 @@ function CreateFormPanel({ program }: { program: string }) {
     <PanelFrame title="The create form" what="its create form" state={state} retry={retry}>
       {(view) =>
         view.init ? (
-          <CreateForm form={view.init} view={view} />
+          (() => {
+            // One of our products brings its own create form (#57); any other strategy gets the one built from its metadata.
+            const Own = PRODUCT_PANELS[program]?.Create;
+            return Own ? <Own view={view} /> : <CreateForm form={view.init} view={view} />;
+          })()
         ) : (
           <div className={forms.unavailable}>
             <p>{view.unavailable && view.unavailable !== "actions-invalid" ? `No create form: its metadata is unavailable (${UNAVAILABLE_WHY[view.unavailable]}).` : "No create form: its metadata describes none."}</p>
@@ -186,34 +190,3 @@ function CreateForm({ form, view }: { form: Form; view: StrategyForms }) {
 
 const NO_MINTS: never[] = [];
 const SOL_DECIMALS = 9;
-
-/** The new market's page, linked once Aviary has read the market, or after the wait in any case. */
-function NewMarket({ market }: { market: string }) {
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    let stopped = false;
-    const until = Date.now() + NEW_MARKET_WAIT_MS;
-    const ask = async () => {
-      while (!stopped && Date.now() < until) {
-        try {
-          await getFromApi(`/v1/markets/${market}`, Market);
-          break;
-        } catch {
-          await new Promise((done) => setTimeout(done, NEW_MARKET_ASK_EVERY_MS));
-        }
-      }
-      if (!stopped) setReady(true);
-    };
-    void ask();
-    return () => {
-      stopped = true;
-    };
-  }, [market]);
-  return ready ? (
-    <p>
-      <Link href={ROUTES.market(market)}>Open the new market&apos;s page</Link>
-    </p>
-  ) : (
-    <p>{BRAND.name} is reading the new market; its page is linked here as soon as it has.</p>
-  );
-}

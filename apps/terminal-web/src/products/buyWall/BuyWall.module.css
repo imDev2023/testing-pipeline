@@ -1,0 +1,54 @@
+/* The buy wall AMM's panel: its parts side by side while the band is wide, one under another when narrow. */
+.parts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 20px 28px;
+  align-items: start;
+}
+
+/* The forms under Actions: the due jobs, then each handover the connected wallet may make. */
+.forms {
+  display: grid;
+  gap: 18px;
+}
+
+.group {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.jobs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.job {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  min-width: 0;
+}
+
+.jobText {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The create form's whole fee split, set apart from the fields it follows. */
+.split {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  max-width: 70ch;
+}
