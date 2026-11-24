@@ -72,6 +72,13 @@ describe("createAndSeedTransaction", () => {
     }
   });
 
+  it("refuses a create form that handles the wallet's wrapped SOL itself, never dropping create_market", async () => {
+    const built = await created(TOKEN_PROGRAM_ADDRESS);
+    const wrapping = { ...built, instructions: [built.instructions[0]!, built.instructions[0]!] };
+    const refusal = await createAndSeedTransaction({ create: wrapping, view: viewOf(built), seed: actionNamed(METADATA, "seed"), trader: TRADER, args: SEED, inputs: {} }).catch((e: unknown) => e);
+    expect((refusal as Refused).failure).toMatchObject({ class: "bad_input", sentence: "This create form handles your wrapped SOL itself, so Aviary cannot seed the market in the same transaction." });
+  });
+
   it("refuses a seed action that is not the strategy's add_liquidity action", async () => {
     const built = await created(TOKEN_PROGRAM_ADDRESS);
     const refusal = await createAndSeedTransaction({ create: built, view: viewOf(built), seed: actionNamed(METADATA, "settle"), trader: TRADER, args: {}, inputs: {} }).catch((e: unknown) => e);

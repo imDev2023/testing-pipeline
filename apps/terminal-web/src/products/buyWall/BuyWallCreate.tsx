@@ -26,7 +26,8 @@ import { AuthorText } from "@/components/Voice";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { formatTokenAmount } from "@/format";
 import type { MintInfo } from "@/formValues";
-import { DESIGNER_SHARE_BPS, SUITE_SHARE_BPS } from "terminal-api/products/buy-wall";
+import { DESIGNER_SHARE_BPS, percentOf, SUITE_SHARE_BPS } from "terminal-api/products/buy-wall";
+import { hashOf } from "./BuyWallForms";
 import { CREATE_FORM_DEFAULTS } from "./config";
 import styles from "./BuyWall.module.css";
 
@@ -89,10 +90,13 @@ function CreateAndSeed({ form, seed, view }: { form: Form; seed: Form; view: Str
   const fields = useFormFields(form, NO_MINTS, { values: DEFAULT_VALUES });
   const { values, setValue } = fields;
 
-  // The recipients and the seeder start as the connected wallet, once one is connected, unless typed already.
+  // The recipients and the seeder start as the connected wallet, once one is connected, and follow it
+  // when another is connected, unless the creator typed something else there.
+  const filledWith = useRef<string | null>(null);
   useEffect(() => {
     if (!trader) return;
-    for (const name of WALLET_ARGS) if (!values[name]) setValue(name, trader);
+    for (const name of WALLET_ARGS) if (!values[name] || values[name] === filledWith.current) setValue(name, trader);
+    filledWith.current = trader;
   }, [trader]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The seed's amounts are in the token entered above and in wrapped SOL, the market's mints 0 and 1.
@@ -120,7 +124,7 @@ function CreateAndSeed({ form, seed, view }: { form: Form; seed: Form; view: Str
     return new Uint8Array(getTransactionEncoder().encode(signed));
   }, []);
   const [created, setCreated] = useState<string | null>(null);
-  const { review, start, handlers } = useReview({ prepare, about: { strategy: view.program }, version: fields.version * 10_000 + seedFields.version, trader, onConfirmed: (prepared) => setCreated(prepared.market) });
+  const { review, start, handlers } = useReview({ prepare, about: { strategy: view.program }, version: hashOf(`${fields.version}:${seedFields.version}`), trader, onConfirmed: (prepared) => setCreated(prepared.market) });
   const mintOf = (mint: string) => (mint === WRAPPED_SOL.mint ? WRAPPED_SOL : token?.mint === mint ? token : null);
   const missing = !token ? "Enter the token's mint above, then the seed's amounts." : (fields.missing ?? seedFields.missing);
 
@@ -136,7 +140,7 @@ function CreateAndSeed({ form, seed, view }: { form: Form; seed: Form; view: Str
         </p>
       )}
       <p className={forms.note}>
-        The fee, the reward share, the cap floor and the cap decay start at IMD&apos;s own launch values for Pool4: a 1% fee, a 15% reward share, a cap floor of 20% and a cap decay of 20% a day. Half the market&apos;s part of the fee goes to the buy wall. The recipients and the seeder start as your wallet. Change any of them before you sign; none can change after.
+        The fee, the reward share, the cap floor and the cap decay start at IMD&apos;s own launch values for Pool4: a {percentOf(CREATE_FORM_DEFAULTS.fee_bps)} fee, a {percentOf(CREATE_FORM_DEFAULTS.reward_share_bps)} reward share, a cap floor of {percentOf(CREATE_FORM_DEFAULTS.cap_floor_bps)} and a cap decay of {percentOf(CREATE_FORM_DEFAULTS.cap_decay_bps)} a day. {percentOf(CREATE_FORM_DEFAULTS.wall_split_bps)} of the market&apos;s part of the fee goes to the buy wall. The recipients and the seeder start as your wallet. Change any of them before you sign; none can change after.
       </p>
       <FormFields form={form} fields={fields} wallet={trader} />
       <FeeSplit feeBps={number("fee_bps")} wallSplitBps={number("wall_split_bps")} />

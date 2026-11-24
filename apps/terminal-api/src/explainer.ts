@@ -52,7 +52,7 @@ import { CHECK_ABOUT } from "./canarySentences";
 import { AVIARY_MINT_NAMES, WRAPPED_SOL } from "./config";
 import { mintFacts } from "./facts";
 import { ROUTER } from "./indexerCore";
-import { PRODUCT_EVIDENCE, type ReadAccounts } from "./products";
+import { PRODUCT_EVIDENCE, ProductNotRead, type ReadAccounts } from "./products";
 import { readStrategyInstructions } from "./strategies";
 
 const MONTH_PAD = (n: number) => String(n).padStart(2, "0");
@@ -254,13 +254,14 @@ async function productItems(db: Db, program: string, representative: string | nu
   if (!representative) return [...product.risks];
   const [row] = await db.select({ marketState: markets.marketState }).from(markets).where(eq(markets.address, representative));
   const mintRows = await db.select({ mint: marketMints.mint }).from(marketMints).where(eq(marketMints.market, representative)).orderBy(asc(marketMints.position));
-  const unread = (why: string): Fact => ({ group: "Market", label: "Sampled market's state", value: why, source: "the sampled market's state account" });
-  if (!row || !read) return [unread("Not read by Aviary for this explanation."), ...product.risks];
+  // Without the panel's facts the evidence would be poorer for good, since a recorded key is never rebuilt: a read that fails makes the key wait for a later run.
+  if (!row || !read) throw new ProductNotRead("no RPC to read the sampled market's state");
   try {
     return [...(await product.facts({ marketState: row.marketState, mints: mintRows.map((m) => m.mint) }, read)), ...product.risks];
   } catch (e) {
-    console.error("explainer: reading the sampled market's state failed", e instanceof Error ? e.name : typeof e);
-    return [unread("Aviary could not read it: the RPC did not answer."), ...product.risks];
+    if (e instanceof ProductNotRead) throw e;
+    // The error can quote the RPC's URL, which carries the key: say only what kind of failure it was.
+    throw new ProductNotRead(`reading the sampled market's state failed (${e instanceof Error ? e.name : typeof e})`);
   }
 }
 
@@ -297,13 +298,15 @@ async function buildEvidence(db: Db, at: Current, read: ReadAccounts | null): Pr
 /**
  * Makes the key of each strategy's current version (of `programs`, or of every strategy), and for
  * each key not recorded yet builds its evidence and records it pending. Says which strategies got a
- * new key, and which wait for their metadata's new link to be fetched.
+ * new key, which wait for their metadata's new link to be fetched, and which wait for their product's
+ * facts, which could not be read this time (#57).
  */
-export async function makeExplainerKeys(db: Db, { programs, rpcUrl }: { programs?: string[]; rpcUrl?: string } = {}): Promise<{ made: string[]; revived: string[]; waiting: string[] }> {
+export async function makeExplainerKeys(db: Db, { programs, rpcUrl }: { programs?: string[]; rpcUrl?: string } = {}): Promise<{ made: string[]; revived: string[]; waiting: string[]; unread: string[] }> {
   const rows = await db.select({ program: strategies.program, metadataUri: strategies.metadataUri }).from(strategies).where(programs ? inArray(strategies.program, programs) : undefined);
   const made: string[] = [];
   const revived: string[] = [];
   const waiting: string[] = [];
+  const unread: string[] = [];
   for (const { program, metadataUri } of rows) {
     const at = await current(db, program, metadataUri);
     if (at === "no-version") continue;
@@ -317,10 +320,19 @@ export async function makeExplainerKeys(db: Db, { programs, rpcUrl }: { programs
       if (await reviveExplainerKey(db, key.id)) revived.push(program);
       continue;
     }
-    const { evidence, representative, addressesAi } = await buildEvidence(db, at, rpcUrl ? rpcReader(rpcUrl) : null);
+    let built;
+    try {
+      built = await buildEvidence(db, at, rpcUrl ? rpcReader(rpcUrl) : null);
+    } catch (e) {
+      if (!(e instanceof ProductNotRead)) throw e;
+      console.error(`explainer: ${program}'s key waits for its product's facts: ${e.message}`);
+      unread.push(program);
+      continue;
+    }
+    const { evidence, representative, addressesAi } = built;
     const cost = estimateCost({ program, deploySlot: at.version.deploySlot, evidence });
     const { id, ...parts } = key;
     if (await recordExplainerKey(db, { key: id, ...parts, evidence, representativeMarket: representative, authorTextAddressesAi: addressesAi, estimatedInputTokens: cost.inputTokens, estimatedCostUsd: cost.usd })) made.push(program);
   }
-  return { made: made.sort(), revived: revived.sort(), waiting: waiting.sort() };
+  return { made: made.sort(), revived: revived.sort(), waiting: waiting.sort(), unread: unread.sort() };
 }

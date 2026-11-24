@@ -15,7 +15,7 @@ import Link from "next/link";
 import { isAddress } from "@solana/kit";
 import { useCallback, useId, useMemo, useState } from "react";
 import { MarketKeeper, PreparedAction, type Market, type MarketRead } from "terminal-api/contract";
-import { readBuyWall, readBuyWallState, mintSupply, type BuyWallReading } from "terminal-api/products/buy-wall";
+import { readBuyWall, type BuyWallReading } from "terminal-api/products/buy-wall";
 import { getFromApi, postToApi } from "@/api";
 import { ShortAddress } from "@/components/Address";
 import forms from "@/components/forms/Forms.module.css";
@@ -28,7 +28,7 @@ import type { MintInfo } from "@/formValues";
 import { formatAge, formatTokenAmount } from "@/format";
 import { formatSol, outcomeText, waitingReason } from "@/keeperText";
 import { ROUTES } from "@/routes";
-import { bytesOf } from "./BuyWallPanel";
+import { decodedRead, UNREADABLE } from "./BuyWallPanel";
 import { refreshBuyWall, tokenOf, useBuyWallRead } from "./useBuyWallRead";
 import styles from "./BuyWall.module.css";
 
@@ -73,22 +73,21 @@ export function BuyWallForms({ market }: { market: Market }) {
 
 /** The forms from a read of the market and its due jobs; `wallet` is the connected wallet's address. */
 export function BuyWallFormsBody({ market, read, keeper, wallet, now }: { market: Market; read: MarketRead; keeper: Loaded<MarketKeeper>; wallet: string | null; now: Date }) {
-  const [stateAccount, mintAccount] = read.accounts;
-  const state = stateAccount?.data ? readBuyWallState(bytesOf(stateAccount.data)) : null;
-  const mint = mintAccount?.data ? mintSupply(bytesOf(mintAccount.data)) : null;
-  if (!state || !mint) return <p role="alert">This market&apos;s state is not a buy wall market state, so it has no buy wall forms.</p>;
-  const reading = readBuyWall(state, { supply: mint.supply, now: BigInt(Math.floor(now.getTime() / 1000)) });
+  // A job pressed here stays on screen until its review is left, so its confirmation and link are
+  // not lost when the next read of the market finds it done; a handover likewise, after the role has moved.
+  const [pressed, setPressed] = useState<Record<string, Due>>({});
+  const [handing, setHanding] = useState<Record<string, true>>({});
+  const decoded = decodedRead(read);
+  if (!decoded) return <p role="alert">{UNREADABLE}</p>;
+  const { state, mint } = decoded;
+  const reading = readBuyWall(state, { supply: mint.supply, now: decoded.now });
   const wallets = walletsOf(reading);
   const token = market.mints.find((m) => m.mint === tokenOf(market));
   const tokens = (raw: string) => `${formatTokenAmount(BigInt(raw), mint.decimals)}`;
   const tokenLabel = token ? <TokenName market={market} /> : <ShortAddress address={state.tokenMint} />;
-  // A job pressed here stays on screen until its review is left, so its confirmation and link are
-  // not lost when the next read of the market finds it done.
-  const [pressed, setPressed] = useState<Record<string, Due>>({});
   const due = keeper.status === "loaded" ? keeper.data.due : [];
   const shown = [...due, ...Object.values(pressed).filter((p) => !due.some((d) => d.key === p.key))];
-  // A handover is offered only to the wallet holding the role, and stays on screen while its review is open, after the role has moved.
-  const [handing, setHanding] = useState<Record<string, true>>({});
+  // A handover is offered only to the wallet holding the role.
   const roles = (
     [
       { action: "set_fee_recipient", role: "fee recipient", holds: wallet !== null && wallet === wallets.fee },
@@ -249,7 +248,7 @@ function ActionButton({ market, action, values, label, describedBy, disabled = f
 }
 
 /** A form's values as the number `useReview` leaves a review on when it changes. */
-function hashOf(text: string): number {
+export function hashOf(text: string): number {
   let hash = 0;
   for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
   return hash;

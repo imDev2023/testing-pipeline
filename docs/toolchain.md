@@ -948,6 +948,21 @@ DATABASE_URL=<a fresh migrated database> E2E_API_PORT=8871 E2E_WEB_PORT=3171 pnp
 The wallet page's tests on the recorded fixtures (`src/wallet.spec.ts`) review an unwrap for the test trader, so before recording give it wrapped SOL with `pnpm --filter terminal-e2e wrap-sol` (0.01 SOL of `e2e-trader.json`'s, by default), after any `swaps:devnet` run, since a sale into SOL through the trade box closes that account.
 The three-mint market's tests (`src/trade.spec.ts`, #122) review a swap in each direction on devnet's Counterflow market `FNdAWctS...` for the test trader, so it must hold all three mints when recording: `swaps:devnet` trades them first.
 
+### The buy wall AMM's panel on devnet
+
+The devnet run of [#57](https://github.com/imDev2023/testing-pipeline/issues/57), `tests/terminal-e2e/demo/buy-wall.ts`, never in CI: with the Playwright test wallet holding the test trader's key, it makes a Token-2022 token with a cleared transfer hook, creates and seeds a market of it from the create page's buy wall form, trades it through the trade box, presses each keeper job that falls due from the panel's buttons, hands the fee recipient role to the project wallet, then trades the demo market and presses its due jobs, with screenshots at 1440 and 390 px in both themes.
+It spends about 3.1 SOL of the test trader's (the seed's 1 SOL stays in the new market for good), so fund it first with `devnet-airdrop`, or from the project wallet when the faucets refuse.
+Start Aviary's local run on ports of its own (with `MINIFLARE_WORKERD_PATH` set as above), then from the repo's root:
+
+```sh
+(apps/terminal-api) TERMINAL_API_PORT=8857 node scripts/dev.ts --enable-containers=false
+(apps/terminal-web) NEXT_PUBLIC_API_URL=http://localhost:8857 pnpm exec opennextjs-cloudflare build && pnpm exec opennextjs-cloudflare preview --port 3157
+DEMO_API=http://localhost:8857 DEMO_WEB=http://localhost:3157 node tests/terminal-e2e/demo/buy-wall.ts
+```
+
+- Each signature and what each review showed go to `tests/terminal-e2e/test-results/buy-wall-demo.json`, the screenshots to `tests/terminal-e2e/screenshots/demo/buy-wall/`.
+- The keeper runner, when it runs, sends `place_wall` about a second after a swap, so stop it first or the run finds that job already done.
+
 ## Known problems
 
 - **Node 26 and public devnet WebSockets.**

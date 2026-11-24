@@ -6,11 +6,11 @@ import type { MarketRead } from "terminal-api/contract";
 import { describe, expect, it } from "vitest";
 import { BuyWallPanelBody } from "@/products/buyWall/BuyWallPanel";
 import { PRODUCT_PANELS } from "@/products/registry";
-import { BUY_WALL, DEMO, demoMarket, demoRead } from "./fixtures/buyWall";
+import { BUY_WALL, DEMO, DEMO_TIME, demoMarket, demoRead, readAt } from "./fixtures/buyWall";
 
 /** The panel's text, its tags dropped and its spaces folded. */
 const textOf = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;|&apos;/g, "'").replace(/\s+/g, " ").replace(/ ([,.;:])/g, "$1");
-const render = (read: MarketRead = demoRead, now = 1_795_228_910n) => textOf(renderToStaticMarkup(<BuyWallPanelBody market={demoMarket} read={read} now={now} />));
+const render = (read: MarketRead = demoRead) => textOf(renderToStaticMarkup(<BuyWallPanelBody market={demoMarket} read={read} />));
 
 describe("the buy wall AMM's panel", () => {
   it("is registered for the buy wall AMM's program, with its panel and its forms", () => {
@@ -42,9 +42,9 @@ describe("the buy wall AMM's panel", () => {
     expect(text).toContain("Allowance built up 51,480 9qTA...mbd7");
   });
 
-  it("shows the allowance as it has built up since the market's last update, at most one day's", () => {
-    expect(render(demoRead, 1_795_228_910n + 3_600n)).toContain("Allowance built up 59,810 9qTA...mbd7");
-    expect(render(demoRead, 1_795_228_910n + 864_000n)).toContain("Allowance built up 200,000 9qTA...mbd7, a full day's");
+  it("shows the allowance as it has built up by the chain's clock, read at the same slot, at most one day's", () => {
+    expect(render(readAt(DEMO_TIME + 3_600n))).toContain("Allowance built up 59,810 9qTA...mbd7");
+    expect(render(readAt(DEMO_TIME + 864_000n))).toContain("Allowance built up 200,000 9qTA...mbd7, a full day's");
   });
 
   it("shows retired tokens, rewards owed and the tokens burned as a share of the supply", () => {
@@ -73,8 +73,9 @@ describe("the buy wall AMM's panel", () => {
     expect(text).toContain("Rewards recipient 7GDw...ibjd");
   });
 
-  it("says when the market's state is not a buy wall market state", () => {
-    const broken = { ...demoRead, accounts: [{ ...demoRead.accounts[0]!, data: Buffer.alloc(1024).toString("base64") }, demoRead.accounts[1]!] };
-    expect(render(broken)).toContain("not a buy wall market state");
+  it("says when the read cannot be decoded: no buy wall market state, or no clock", () => {
+    const broken = { ...demoRead, accounts: [{ ...demoRead.accounts[0]!, data: Buffer.alloc(1024).toString("base64") }, ...demoRead.accounts.slice(1)] };
+    expect(render(broken)).toContain("Aviary could not read this market as a buy wall market");
+    expect(render({ ...demoRead, accounts: demoRead.accounts.slice(0, 2) })).toContain("could not read this market as a buy wall market");
   });
 });

@@ -10,13 +10,14 @@
 // plain SOL as in a swap (PIPESCOPE-145). Nothing is prepared that needs a signature the wallet cannot
 // give: a new market's fresh state keypair is made and kept in the page, which signs with it
 // (PIPESCOPE-144). Aviary holds no keys.
-import { buildCreateMarketFromMetadata, decodeMarket, initFeeAccount, marketViewFromMarket, NATIVE_MINT_ADDRESS, resolveAccountSource, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, type ArgValue, type MarketView, type MetadataInit, type SourceContext } from "@pipeline-sol/sdk";
+import { buildCreateMarketFromMetadata, decodeMarket, initFeeAccount, marketViewFromMarket, NATIVE_MINT_ADDRESS, PIPELINE_PROGRAM_ADDRESS, resolveAccountSource, TOKEN_2022_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, type ArgValue, type MarketView, type MetadataInit, type SourceContext } from "@pipeline-sol/sdk";
 import { getTransferSolInstruction } from "@solana-program/system";
 import { findAssociatedTokenPda, getCloseAccountInstruction, getCreateAssociatedTokenIdempotentInstruction, getSyncNativeInstruction } from "@solana-program/token";
 import { AccountRole, createNoopSigner, getAddressDecoder, getBase64Encoder, type Address, type GetAccountInfoApi, type Instruction, type Rpc, type SolanaRpcApi } from "@solana/kit";
 import { buildActionInstruction, type AviaryAction } from "strategy-actions";
 import type { BalanceChange, TransactionSimulation } from "../contract";
 import { decodeFailure } from "./failure";
+import { transferHookProgram, type TradeMint } from "./market";
 import { fitTransaction, marketLookupTable, runSimulation, TooLarge, type LookupTable } from "./prepare";
 import { COMMITMENT, Refused } from "./quote";
 
@@ -158,12 +159,14 @@ export async function createAndSeedTransaction(input: FormValues & {
   const { create, view, seed, trader } = input;
   if (seed.kind !== "add_liquidity") throw refusal("bad_input", `${seed.name} is not a seed: only an add_liquidity action can follow a new market's creation.`);
   // A create form that wraps SOL of its own would need a second wrapping around the seed's; none of our strategies' does.
-  if (create.wrapped > 0n) throw refusal("bad_input", "This create form takes wrapped SOL itself, so Aviary cannot seed the market in the same transaction.");
-  const [createMarket] = create.instructions;
+  // A create form that touches the wallet's wrapped SOL itself would need its own wrapping around the seed's; none of our strategies' does.
+  if (create.wrapped > 0n || create.instructions.length !== 1) throw refusal("bad_input", "This create form handles your wrapped SOL itself, so Aviary cannot seed the market in the same transaction.");
+  const createMarket = create.instructions.find((i) => i.programAddress === PIPELINE_PROGRAM_ADDRESS);
+  if (!createMarket) throw refusal("bad_input", "This create form builds no call to Pipeline's create_market.");
   const fees = await Promise.all(view.mints.map((mint, i) => initFeeAccount({ payer: trader, market: view.market, mint, tokenProgram: view.tokenPrograms[i]! })));
   const seeded = await actionTransaction({ action: seed, market: view, trader, args: input.args, inputs: input.inputs, tokenPrograms: input.tokenPrograms, rpc: input.rpc, walletWrappedSol: input.walletWrappedSol });
   const at = seeded.instructions.indexOf(seeded.action);
-  return { instructions: [...seeded.instructions.slice(0, at), createMarket!, ...fees, ...seeded.instructions.slice(at)], seed: seeded.action, wrapped: seeded.wrapped };
+  return { instructions: [...seeded.instructions.slice(0, at), createMarket, ...fees, ...seeded.instructions.slice(at)], seed: seeded.action, wrapped: seeded.wrapped };
 }
 
 type Held = { lamports: bigint; owner: string; data: readonly [string, string] } | null;
@@ -211,7 +214,7 @@ export function measureWallet(input: { trader: Address; watched: readonly Addres
 export async function newMarketView(
   rpc: Rpc<SolanaRpcApi>,
   input: { instructions: Instruction[]; trader: Address; market: Address; strategy: string },
-): Promise<{ ok: true; view: MarketView } | { ok: false; simulation: TransactionSimulation }> {
+): Promise<{ ok: true; view: MarketView; mints: TradeMint[] } | { ok: false; simulation: TransactionSimulation }> {
   const { value: lifetime } = await rpc.getLatestBlockhash({ commitment: COMMITMENT }).send();
   let fitted;
   try {
@@ -233,11 +236,18 @@ export async function newMarketView(
   const unreadable = refusal("bad_input", "Creating this market left no market Aviary could read, so it cannot build the seed on it.");
   if (!decoded) throw unreadable;
   const mints = decoded.mints.slice(0, decoded.mintCount);
-  const { value: owners } = await rpc.getMultipleAccounts(mints, { encoding: "base64", commitment: COMMITMENT, dataSlice: { offset: 0, length: 0 } }).send();
-  const tokenPrograms = Object.fromEntries(mints.flatMap((m, i) => (owners[i] ? [[m, owners[i]!.owner]] : [])));
-  const view = marketViewAfterCreate(input.market, data!, tokenPrograms);
+  // Each mint's program, decimals and transfer hook, as a trade reads them, so the seed's transfers carry a hooked mint's accounts.
+  const { value: held } = await rpc.getMultipleAccounts(mints, { encoding: "base64", commitment: COMMITMENT }).send();
+  const tradeMints: TradeMint[] = [];
+  mints.forEach((m, i) => {
+    const account = held[i];
+    if (!account) return;
+    const bytes = new Uint8Array(base64.encode(account.data[0]));
+    tradeMints.push({ address: m, tokenProgram: account.owner, decimals: bytes[44] ?? 0, transferHook: account.owner === TOKEN_2022_PROGRAM_ADDRESS ? transferHookProgram(bytes) : null });
+  });
+  const view = marketViewAfterCreate(input.market, data!, Object.fromEntries(tradeMints.map((m) => [m.address, m.tokenProgram])));
   if (!view) throw unreadable;
-  return { ok: true, view };
+  return { ok: true, view, mints: tradeMints };
 }
 
 /**

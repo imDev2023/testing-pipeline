@@ -6,7 +6,7 @@
 // market state at one slot through the API's one-slot read (PIPESCOPE-146), never from vault balances
 // or events, which count retired tokens, the wall, idle SOL and unpaid fees as liquidity. It reads
 // the state through terminal-api's reading of the buy wall AMM, which the explainer's facts use too.
-import { readBuyWall, readBuyWallState, mintSupply, priceNumber, type BuyWallReading, type BuyWallState } from "terminal-api/products/buy-wall";
+import { clockTime, FLOOR_CRAWL_BPS, readBuyWall, readBuyWallState, mintSupply, percentOf, priceNumber, type BuyWallReading, type BuyWallState } from "terminal-api/products/buy-wall";
 import { getBase64Encoder } from "@solana/kit";
 import type { ReactNode } from "react";
 import type { Market, MarketMint, MarketRead } from "terminal-api/contract";
@@ -15,6 +15,7 @@ import { FactList, FactPart } from "@/components/facts/Facts";
 import facts from "@/components/facts/Facts.module.css";
 import { TokenAmount } from "@/components/MarketsTable";
 import { PanelFrame } from "@/components/Panel";
+import { BRAND } from "@/brand";
 import { formatDate, formatInteger, formatPrice, formatTokenAmount } from "@/format";
 import { useBuyWallRead } from "./useBuyWallRead";
 import styles from "./BuyWall.module.css";
@@ -30,20 +31,31 @@ const percent = (fraction: number) => `${share.format(fraction * 100)}%`;
 const bps = (value: bigint | number) => percent(Number(value) / 10_000);
 
 export function BuyWallPanel({ market }: { market: Market }) {
-  const { state, retry, now } = useBuyWallRead(market);
+  const { state, retry } = useBuyWallRead(market);
   return (
     <PanelFrame title="Buy wall AMM" what="the market's state" state={state} retry={retry}>
-      {(read) => <BuyWallPanelBody market={market} read={read} now={now()} />}
+      {(read) => <BuyWallPanelBody market={market} read={read} />}
     </PanelFrame>
   );
 }
 
-/** The panel's content from a read of the market's state and its token's mint at one slot; `now` is the chain's time in Unix seconds. */
-export function BuyWallPanelBody({ market, read, now }: { market: Market; read: MarketRead; now: bigint }) {
-  const [stateAccount, mintAccount] = read.accounts;
+/** What the panel and the forms say when the read cannot be decoded. */
+export const UNREADABLE = `${BRAND.name} could not read this market as a buy wall market: its state, its token's mint or the chain's clock is missing or not what it should be.`;
+
+/** The decoded read: the market state, its token's supply and decimals, and the chain's time at the read's slot, or null when any is missing. */
+export function decodedRead(read: MarketRead): { state: BuyWallState; mint: { supply: bigint; decimals: number }; now: bigint } | null {
+  const [stateAccount, mintAccount, clockAccount] = read.accounts;
   const state = stateAccount?.data ? readBuyWallState(bytesOf(stateAccount.data)) : null;
   const mint = mintAccount?.data ? mintSupply(bytesOf(mintAccount.data)) : null;
-  if (!state || !mint) return <p role="alert">This market&apos;s state is not a buy wall market state, so there is nothing of the buy wall AMM to show.</p>;
+  const now = clockAccount?.data ? clockTime(bytesOf(clockAccount.data)) : null;
+  return state && mint && now !== null ? { state, mint, now } : null;
+}
+
+/** The panel's content from a read of the market's state, its token's mint and the Clock at one slot. */
+export function BuyWallPanelBody({ market, read }: { market: Market; read: MarketRead }) {
+  const decoded = decodedRead(read);
+  if (!decoded) return <p role="alert">{UNREADABLE}</p>;
+  const { state, mint, now } = decoded;
   const reading = readBuyWall(state, { supply: mint.supply, now });
   const token = market.mints.find((m) => m.mint === state.tokenMint) ?? { mint: state.tokenMint, symbol: null, token: null, decimals: mint.decimals };
   return (
@@ -80,7 +92,7 @@ function WallPart({ reading, token, decimals }: { reading: BuyWallReading; token
             : { name: "Buy wall", value: "Not placed yet" },
           wall.placed && { name: "In the wall", value: <Sol raw={wall.sol} /> },
           wall.placed && { name: "Bought since placed", value: <><Tokens raw={wall.bought} token={token} decimals={decimals} />, for <Sol raw={wall.spent} /></> },
-          { name: "Wall's floor", value: <><Price sqrt={wall.floor} decimals={decimals} /> <Sub>the wall is placed no higher; it rises about 4% a day toward the price</Sub></> },
+          { name: "Wall's floor", value: <><Price sqrt={wall.floor} decimals={decimals} /> <Sub>the wall is placed no higher; it rises about {percentOf(FLOOR_CRAWL_BPS)} a day toward the price</Sub></> },
           { name: "Idle SOL", value: <><Sol raw={wall.idle} /> <Sub>waiting to be placed as the wall</Sub></> },
         ]}
       />

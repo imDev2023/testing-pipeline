@@ -908,11 +908,12 @@ export const PreparedMarket = z.object({
   market_state_signs: z.boolean(),
   check: FormCheck,
   accounts: z.array(ResolvedAccount),
+  /** SOL wrapped for the transaction: the create form's, or the seed's when one is sent with it. */
   wrapped_sol: Amount,
   /** The most SOL the strategy's setup may take from the creator, which `create_market` carries (PIPESCOPE-144). */
   max_creator_lamports: Amount,
-  /** The seed action sent with it, or null for a market created alone. */
-  seed: z.string().nullable(),
+  /** The seed sent with it (#57): its action's name, the check of the instruction it sends and every account it touches; null for a market created alone. */
+  seed: z.object({ action: z.string(), check: FormCheck, accounts: z.array(ResolvedAccount) }).nullable(),
   transaction: z.string().nullable(),
   simulation: TransactionSimulation,
 });

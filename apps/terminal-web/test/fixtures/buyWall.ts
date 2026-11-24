@@ -45,5 +45,14 @@ const account = (a: { address: string; owner: string; data: string }, role: "mar
   size: Buffer.from(a.data, "base64").length,
   data: a.data,
 });
-export const demoRead: MarketRead = { market: DEMO.market, slot: DEMO.slot, accounts: [account(DEMO.market_state, "market_state"), account(DEMO.token_mint, "named")] };
-
+/** The Clock sysvar's account as the read gives it, its unix_timestamp at `now`. */
+const clockAccount = (now: bigint) => {
+  const data = Buffer.alloc(40);
+  data.writeBigInt64LE(now, 32);
+  return { address: "SysvarC1ock11111111111111111111111111111111", role: "named" as const, exists: true, owner: "Sysvar1111111111111111111111111111111111111", lamports: "1169280", executable: false, size: 40, data: data.toString("base64") };
+};
+/** The demo market's last update, its `decay_time`. */
+export const DEMO_TIME = 1_795_228_910n;
+/** The one-slot read of the demo market's state, its token's mint and the Clock, the Clock at `now`. */
+export const readAt = (now: bigint): MarketRead => ({ market: DEMO.market, slot: DEMO.slot, accounts: [account(DEMO.market_state, "market_state"), account(DEMO.token_mint, "named"), clockAccount(now)] });
+export const demoRead: MarketRead = readAt(DEMO_TIME);

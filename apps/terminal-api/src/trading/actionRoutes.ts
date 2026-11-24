@@ -146,16 +146,23 @@ export function actionRoutes(app: Hono<AppEnv>) {
         max_creator_lamports: String(CREATE_MARKET_MAX_CREATOR_LAMPORTS),
       });
       let instructions = built.instructions;
+      let seeded: { wrapped: bigint; seed: PreparedMarket["seed"]; hooks: string[] } | null = null;
       if (seedAction && request.seed) {
+        const seedCheck = checkForm(await actionDiscriminator(seedAction), source.list);
         // The market the seed is built on, as create_market leaves it: simulated alone first, its failure the answer when it fails.
         const alone = await newMarketView(rpc, { instructions: built.instructions, trader, market: built.market, strategy });
         if (!alone.ok) {
-          return c.json(PreparedMarket.parse({ ...marketBase(), seed: seedAction.name, transaction: null, simulation: alone.simulation }));
+          return c.json(PreparedMarket.parse({ ...marketBase(), seed: { action: seedAction.name, check: seedCheck, accounts: [] }, transaction: null, simulation: alone.simulation }));
         }
-        instructions = (await createAndSeedTransaction({ create: built, view: alone.view, seed: seedAction, trader, args: request.seed.args, inputs: seedInputs, rpc, walletWrappedSol: await walletWrappedSol(rpc, trader) })).instructions;
+        const both = await createAndSeedTransaction({ create: built, view: alone.view, seed: seedAction, trader, args: request.seed.args, inputs: seedInputs, rpc, walletWrappedSol: await walletWrappedSol(rpc, trader) });
+        // A hooked mint's transfers in the seed carry its hook's accounts, after the seed's own, as every action's do (PIPESCOPE-154).
+        const hooks = await actionHookAccounts(rpc, { market: { mints: alone.mints, view: alone.view }, trader, action: both.seed });
+        const seed = hooks.length ? { ...both.seed, accounts: [...(both.seed.accounts ?? []), ...hooks] } : both.seed;
+        instructions = both.instructions.map((i) => (i === both.seed ? seed : i));
+        seeded = { wrapped: both.wrapped, seed: { action: seedAction.name, check: seedCheck, accounts: accountsOf(seed) }, hooks: alone.mints.flatMap((m) => (m.transferHook ? [m.transferHook] : [])) };
       }
-      const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: null, what: seedAction ? "Creating and seeding this market" : "Creating this market" });
-      return c.json(PreparedMarket.parse({ ...marketBase(), seed: seedAction?.name ?? null, ...prepared }));
+      const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: null, what: seeded ? "Creating and seeding this market" : "Creating this market", hooks: seeded?.hooks });
+      return c.json(PreparedMarket.parse({ ...marketBase(), ...(seeded ? { wrapped_sol: String(seeded.wrapped) } : {}), seed: seeded?.seed ?? null, ...prepared }));
     } catch (e) {
       if (e instanceof Refused) return refused(c, e);
       throw e;

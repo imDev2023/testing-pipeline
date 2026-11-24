@@ -14,6 +14,8 @@ const DEMO = JSON.parse(readFileSync(`${import.meta.dirname}/fixtures/buy-wall-d
 const BUY_WALL = "BmXEmoN2PubGxDFae8BzxKZv4ZPaXULWYVGGLHsZg4V6";
 const WSOL = "So11111111111111111111111111111111111111112";
 const CREATOR = "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt";
+const CLOCK = "SysvarC1ock11111111111111111111111111111111";
+const mintAccount = () => ({ owner: TOKEN_PROGRAM_ADDRESS, data: new Uint8Array(Buffer.from(DEMO.token_mint.data, "base64")), lamports: 1_461_600 });
 
 let database: Awaited<ReturnType<typeof createTestDatabase>>;
 let client: { db: Db; close: () => Promise<void> };
@@ -34,7 +36,10 @@ beforeAll(async () => {
     { market: DEMO.market, position: 1, mint: WSOL, vault: "AsXnGex7us8spZKJ75ygGAk5y9Ghg22dCmNAtr4fgRig", vaultAmount: "11270777495" },
   ]);
   rpc.accounts.set(DEMO.market_state.address, { owner: BUY_WALL, data: new Uint8Array(Buffer.from(DEMO.market_state.data, "base64")), lamports: 8_017_920 });
-  rpc.accounts.set(DEMO.token_mint.address, { owner: TOKEN_PROGRAM_ADDRESS, data: new Uint8Array(Buffer.from(DEMO.token_mint.data, "base64")), lamports: 1_461_600 });
+  // The Clock sysvar at the demo market's last update plus an hour: its unix_timestamp is its fifth field.
+  const clock = new Uint8Array(40);
+  new DataView(clock.buffer).setBigInt64(32, 1_795_228_910n + 3_600n, true);
+  rpc.accounts.set(CLOCK, { owner: "Sysvar1111111111111111111111111111111111111", data: clock, lamports: 1_169_280 });
 });
 
 afterAll(async () => {
@@ -44,7 +49,19 @@ afterAll(async () => {
 });
 
 describe("a buy wall strategy's evidence", () => {
+  it("waits for a later run when the sampled market cannot be read, rather than keep evidence without the panel's facts", async () => {
+    // The token's mint is not there yet: no key is made, so the next run tries again.
+    const { made, unread } = await makeExplainerKeys(client.db, { rpcUrl: rpc.url });
+    expect(made).toEqual([]);
+    expect(unread).toEqual([BUY_WALL]);
+    expect(await client.db.select().from(explainerKeys)).toHaveLength(0);
+    // And with no RPC to read it with.
+    expect((await makeExplainerKeys(client.db)).unread).toEqual([BUY_WALL]);
+  });
+
   it("carries the panel's facts of the sampled market, read at one slot, and the three risks", async () => {
+    rpc.accounts.set(DEMO.token_mint.address, mintAccount());
+    rpc.requests.length = 0;
     const { made } = await makeExplainerKeys(client.db, { rpcUrl: rpc.url });
     expect(made).toEqual([BUY_WALL]);
     const [key] = await client.db.select().from(explainerKeys);
@@ -67,5 +84,7 @@ describe("a buy wall strategy's evidence", () => {
     for (const e of product) expect(e.id).toMatch(/^F\d+$/);
     expect(product[0]).toMatchObject({ value: "0.00000890267 SOL per token.", source: `the sampled market's state, read at slot ${rpc.slot}` });
     expect(rpc.requests.filter((r) => r.method === "getMultipleAccounts")).toHaveLength(1);
+    // The allowance is brought up to the chain's clock read at that slot: an hour past the market's last update.
+    expect(product.find((e) => e.label === "Inventory cap")!.value).toContain("59812.692236 tokens of cap decay allowance are built up.");
   });
 });

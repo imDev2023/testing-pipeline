@@ -134,8 +134,8 @@ async function canarySweep(env: Bindings): Promise<void> {
 async function explainerKeys(env: Bindings): Promise<void> {
   const { db, close } = createDb(env.HYPERDRIVE.connectionString);
   try {
-    const { made, revived, waiting } = await makeExplainerKeys(db, { rpcUrl: env.RPC_URL });
-    if (made.length || revived.length || waiting.length) console.log("explainer keys", { made, revived, waiting });
+    const { made, revived, waiting, unread } = await makeExplainerKeys(db, { rpcUrl: env.RPC_URL });
+    if (made.length || revived.length || waiting.length || unread.length) console.log("explainer keys", { made, revived, waiting, unread });
   } finally {
     await close();
   }

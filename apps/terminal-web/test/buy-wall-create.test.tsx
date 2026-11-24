@@ -71,7 +71,7 @@ describe("the buy wall AMM's create form", () => {
   it("starts with IMD's launch values filled in", () => {
     const page = html();
     for (const [name, value] of Object.entries(CREATE_FORM_DEFAULTS)) expect(page, name).toMatch(new RegExp(`id="[^"]*-arg-${name}"[^>]*value="${value}"`));
-    expect(textOf(page)).toContain("IMD's own launch values for Pool4");
+    expect(textOf(page)).toContain("IMD's own launch values for Pool4: a 1% fee, a 15% reward share, a cap floor of 20% and a cap decay of 20% a day. 50% of the market's part of the fee goes to the buy wall.");
   });
 
   it("asks for the seed's amounts with the market's parameters, to create and seed it in one transaction", () => {

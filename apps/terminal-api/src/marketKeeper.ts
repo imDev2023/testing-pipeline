@@ -45,7 +45,15 @@ export function marketKeeperRoutes(app: Hono<AppEnv>) {
 
       const rpc = createSolanaRpc(c.env.RPC_URL);
       const state = address(row.state);
-      const read = (wanted: Address[]) => rpc.getMultipleAccounts(wanted, { encoding: "base64", commitment: "confirmed" }).send();
+      const read = async (wanted: Address[]) => {
+        try {
+          return await rpc.getMultipleAccounts(wanted, { encoding: "base64", commitment: "confirmed" }).send();
+        } catch (e) {
+          // The error can quote the URL, which carries the key: log only what kind of failure it was.
+          console.error("market keeper: the RPC did not answer", e instanceof Error ? e.name : typeof e);
+          throw new HTTPException(503, { message: "The RPC did not answer, so which keeper jobs are due could not be read. Try again in a moment." });
+        }
+      };
       let { context, value } = await read([state]);
       let data = dataOf(value[0] ?? null);
       // A product whose rules watch other accounts reads them again with the state, so its rules see one moment of the chain.

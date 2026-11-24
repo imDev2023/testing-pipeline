@@ -1,11 +1,12 @@
 "use client";
 
-// One read of a buy wall market for its panel and its forms (#57): the market's state and its token's
-// mint, at one slot, through the API's one-slot read (`GET /v1/markets/{market}/state`, PIPESCOPE-146),
+// One read of a buy wall market for its panel and its forms (#57): the market's state, its token's mint
+// and the Clock sysvar, whose time the cap decay allowance is brought up to, at one slot, through the API's one-slot read (`GET /v1/markets/{market}/state`, PIPESCOPE-146),
 // read again every BUY_WALL_REFRESH_MS, after the market's trades arrive in its live room, and when a
 // form's transaction confirms (`refreshBuyWall`). The panel and the forms on one page share each read.
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { MarketRead, type Market } from "terminal-api/contract";
+import { CLOCK_SYSVAR } from "terminal-api/products/buy-wall";
 import { getFromApi } from "@/api";
 import type { Loaded } from "@/components/Panel";
 import { LIVE_ROOMS, useLiveRoom } from "@/live";
@@ -36,7 +37,7 @@ function read(market: Market): Promise<void> {
     entry.state = state;
     for (const listener of entry.listeners) listener();
   };
-  entry.reading = getFromApi(`/v1/markets/${encodeURIComponent(market.address)}/state?accounts=${tokenOf(market)}`, MarketRead)
+  entry.reading = getFromApi(`/v1/markets/${encodeURIComponent(market.address)}/state?accounts=${tokenOf(market)},${CLOCK_SYSVAR}`, MarketRead)
     .then(
       (data) => publish({ status: "loaded", data }),
       // A read that fails after one that worked keeps what was shown; the next read may answer.
@@ -58,8 +59,8 @@ export function refreshBuyWall(market: string): void {
 
 const LOADING: Loaded<MarketRead> = { status: "loading" };
 
-/** The latest read of a buy wall market, with `now`, the time the allowance is brought up to, in Unix seconds. */
-export function useBuyWallRead(market: Market): { state: Loaded<MarketRead>; retry: () => void; now: () => bigint } {
+/** The latest read of a buy wall market. */
+export function useBuyWallRead(market: Market): { state: Loaded<MarketRead>; retry: () => void } {
   const again = useCallback(() => void read(market), [market]);
   const subscribe = useCallback(
     (listener: () => void) => {
@@ -94,5 +95,5 @@ export function useBuyWallRead(market: Market): { state: Loaded<MarketRead>; ret
     onOpen: () => {},
   });
 
-  return { state, retry: again, now: () => BigInt(Math.floor(Date.now() / 1000)) };
+  return { state, retry: again };
 }
